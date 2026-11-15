@@ -835,7 +835,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()` と、ランチャーがブリッジを探す `find_tool()` | `launch/connect.hpp` |
+| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()`、ランチャーがブリッジを探す `find_tool()`、`no_bridge_here()`（LIN、Windows 以外の CAN）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（各ブリッジに 1 回だけ聞く）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |

@@ -914,10 +914,18 @@ void connect(const Options& o)
             vehicle_sil::process::CaptureOptions{120s, 1u << 20, o.work_dir});
         expect_code(missing, 1, "check --connect without the bridges");
         const std::string launcherDir = shown_path(o.launch.parent_path());
+        // The CAN bridge runs on Windows only: elsewhere there is nothing to build.
+#ifdef _WIN32
+        const std::string can = "--connect needs vehicle_sil_vector_xl_bridge, which is neither next to vehicle_sil_launch (" +
+                                launcherDir + ") nor on PATH";
+#else
+        const std::string can = "--connect needs vehicle_sil_vector_xl_bridge, and the Vector XL bridge is for Windows: on "
+                                "this computer the network runs on SIL Kit only: leave --connect J1939_CAN1 out (or give "
+                                "J1939_CAN1=none)";
+#endif
         require(contains(missing.standard_output, "--connect needs vehicle_sil_ethernet_bridge, which is neither next to "
                                                   "vehicle_sil_launch (" + launcherDir + ") nor on PATH") &&
-                    contains(missing.standard_output, "--connect needs vehicle_sil_vector_xl_bridge, which is neither next to "
-                                                      "vehicle_sil_launch (" + launcherDir + ") nor on PATH"),
+                    contains(missing.standard_output, can),
                 "check --connect without the bridges wrote:\n" + missing.standard_output);
     }
     log("CHECK --connect: the bridges on PATH and next to the launcher, not in the working directory -> ok");
@@ -1111,13 +1119,19 @@ void connections(const Options& o)
                 contains(failed.standard_output, " [driver-missing]\n"),
             "connections with bridges that cannot list wrote:\n" + failed.standard_output);
 
-    // Without the bridges (the launcher of the build, PATH without them): tool-missing.
+    // Without the bridges (the launcher of the build, PATH without them): tool-missing, which is an
+    // answer (exit code 0); the CAN bridge, elsewhere than on Windows: none for the kind, as LIN.
     const Captured missing = launch(o, {"connections", "--json", file});
-    expect_code(missing, 1, "connections without the bridges");
+    expect_code(missing, 0, "connections without the bridges");
     const std::string launcherDir = shown_path(o.launch.parent_path());
     for (const std::string& part : std::vector<std::string>{
-             "  \"result\": \"failed\",\n",
+             "  \"result\": \"listed\",\n",
+#ifdef _WIN32
              "      \"tool\": \"vehicle_sil_vector_xl_bridge\",\n      \"tool_path\": null,\n",
+#else
+             "      \"name\": \"J1939_CAN1\",\n      \"kind\": \"can\",\n      \"tool\": null,\n      \"tool_path\": null,\n"
+             "      \"list\": null\n",
+#endif
              "          \"code\": \"tool-missing\",\n          \"message\": " +
                  json_string("vehicle_sil_ethernet_bridge is neither next to vehicle_sil_launch (" + launcherDir +
                              ") nor on PATH: build it (docs/ethernet-bridge.md) and put it next to vehicle_sil_launch, or its "

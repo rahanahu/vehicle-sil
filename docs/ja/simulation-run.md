@@ -336,7 +336,8 @@ vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 
 - `--network <name>` は、そのネットワークだけを出します。ファイルにない名前は使い方の誤りです。
 - ファイルは機種なしで読みます。どの機種もファイルのネットワークを持つからです。`--variant` は使い方の誤りです。
-- ファイルのほかの誤りでは、一覧は止まりません。誤りは `check` が出します。
+- ファイルの誤りでは、一覧は止まりません。読めたネットワークを出し、その後に、`check` と同じファイルの誤りを出します（終了コード 1）。
+- ランチャーは、各ブリッジを、`--connect` と同じく、ブリッジ自身のディレクトリで起動します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。
 
 Windows で、Vector XL のブリッジが入っていないときの例です。
 
@@ -355,14 +356,15 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 |---|---|
 | `<network> (<kind>; <bridge>, <backend>: <library>):` | ネットワークと、そのブリッジ、ブリッジが言う backend とライブラリーの版です。 |
 | `--connect ...` | ブリッジが使える先です。引数を `check` か `run` に写します。後ろは、名前が違えば先の名前と、ブリッジがその先について言うことです。 |
-| `cannot be used: <target>  (<reason>)` | ブリッジが一覧に出すが使えない先（ループバック）か、`--connect` が受けない先（SIL Kit だけを意味する `none`、`-` で始まる名前）です。 |
+| `cannot be used: <target>  (<reason>)` | ブリッジが一覧に出すが使えない先（ループバック）か、`--connect` が受けない先です。SIL Kit だけを意味する `none`（理由は、代わりに書く pcap の名前か、ほかの名前のないインターフェースでは名前を変えることを言います）、`-` で始まる名前、そのほか `connect-target` が断る値です。 |
+| `cannot be connected with --connect: ...` | ネットワークの名前に `=` があるか、`--` で始まるので、`--connect` でそのネットワークを指せません。ネットワークの名前を変えます。 |
 | `note: ...` | ブリッジが足すこと（ネットワークのアダプターを出さない Npcap）か、sh 向けにだけ引用した先（下）です。 |
 | `cannot list: <message> [<code>]` | 一覧を作れませんでした（下の code）。 |
 | `nothing listed: ...` | ブリッジがこの PC で何も出しません。 |
-| `<network> (lin): SIL Kit only` | LIN のブリッジはありません。 |
+| `<network> (<kind>): SIL Kit only (<why>)` | この PC にはそのネットワークのブリッジがありません。LIN のブリッジはなく、`can` のネットワークの Vector XL のブリッジは Windows でだけ動きます。動かない OS でも、見つかったブリッジ（試験用のビルド）は使います。 |
 | `<network>: its kind in the file has an error` | 何が誤りかは `check` が言います。 |
 
-`--connect` の行の引数は、sh（bash、zsh）、PowerShell、cmd のどれでも同じに読める書き方です。ASCII の英字、数字、`_ - . : / = +` だけならそのまま、それ以外は二重引用符で囲みます。`"`、`$`、`` ` ``、`%`、`!`、制御文字を含む先と、`\` が最後にあるか `"`、`$`、`` ` ``、`\` の前にある先は、全部に通じる書き方がありません。その行は sh 向け（`'...'`）に書き、`note:` の行でそう言います。
+`--connect` の行の引数は、sh（bash、zsh）、PowerShell、cmd のどれでも同じに読める書き方です。ASCII の英字、数字、`_ - . : / = +` だけならそのまま、それ以外は二重引用符で囲みます。`"`、`$`、`` ` ``、`%`、`!`、引用符 `“` `”` `„`（U+201C、U+201D、U+201E。PowerShell は `"` と同じに読みます）、制御文字を含む先と、`\` が最後にあるか `"`、`$`、`` ` ``、`\` の前にある先は、全部に通じる書き方がありません。その行は sh 向け（`'...'`）に書き、`note:` の行でそう言います。
 
 #### `connections --json`
 
@@ -371,7 +373,7 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
   "vehicle_sil_connections": 1,
   "vehicle_sil": "<version>",
   "file": "simulation.yaml",
-  "result": "failed",
+  "result": "listed",
   "networks": [
     {
       "name": "ETH_EXT",
@@ -440,28 +442,28 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 | `vehicle_sil_connections` | この形の版です（1）。 |
 | `vehicle_sil` | vehicle-sil の版です。 |
 | `file` | 渡されたとおりのファイルです。 |
-| `result` | `listed`: すべての一覧を作れました。`failed`: 作れない一覧があったか、ファイルのネットワークの種類に誤りがあります。`unreadable`: ファイルを読めません。`usage`: コマンドラインの誤りです。 |
+| `result` | `listed`: この PC にあるブリッジは、すべて一覧を作れました（ないブリッジ `tool-missing` は答えの一部です）。`failed`: あるブリッジが一覧を作れなかったか、ファイルに誤りがあります（ネットワークの種類の誤りも）。`unreadable`: ファイルを読めません。`usage`: コマンドラインの誤りです。 |
 | `networks[]` | ファイルの順のネットワークです。`--network` があれば、その 1 つです。 |
 | `networks[].name` | ネットワークの名前です。 |
 | `networks[].kind` | `can`、`ethernet`、`lin`。ファイルの種類に誤りがあれば `null` です。 |
-| `networks[].tool` | ブリッジの実行ファイルです。`lin` と種類の分からないものは `null` です。 |
+| `networks[].tool` | ブリッジの実行ファイルです。この PC にそのネットワークのブリッジがないもの（`lin`、Windows 以外の `can`）と、種類の分からないものは `null` です。 |
 | `networks[].tool_path` | ランチャーが見つけた場所です。見つからないとき、ブリッジがないときは `null` です。 |
-| `networks[].list` | ブリッジが書いたとおりの一覧で、キーはすべてそのまま渡します。形は「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」と「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」です。一覧を出さないブリッジには、ランチャーが同じ形の一覧を作ります（下）。`lin` と種類の分からないものは `null` です。 |
-| `findings` | ファイルを読めない理由か、使い方の誤りです（`check --json` と同じ形）。ほかは空です。 |
+| `networks[].list` | ブリッジが書いたとおりの一覧で、キーはすべてそのまま渡します。形は「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」と「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」です。一覧を出さないブリッジには、ランチャーが同じ形の一覧を作ります（下）。`tool` が `null` のものは `null` です。 |
+| `findings` | ファイルを読めない理由、使い方の誤り、ファイルの誤りです（`check --json` と同じ形）。ほかは空です。 |
 
-`usable: true` の先の `value` は、`--connect <network>=<value>` がそのまま受ける値です（プログラムは、シェルを通さずに 1 つの引数として渡します）。ブリッジから一覧を受け取れないときは、ランチャーが、先なしで誤りを入れた一覧を作ります。ブリッジ自身の code（`library-missing`、`permission-denied`、`backend-unavailable`、`driver-missing`、`failed`）は、ブリッジの一覧に入って来ます。
+`usable: true` の先の `value` は、`--connect <network>=<value>` がそのまま受ける値です（プログラムは、シェルを通さずに 1 つの引数として渡します）。`--connect` が受けない先（上の `cannot be used` と `cannot be connected` の行）は、ランチャーが `usable: false` にして `reason` を入れるので、文と JSON は同じことを言います。ブリッジから一覧を受け取れないときは、ランチャーが、先なしで誤りを入れた一覧を作ります。ブリッジ自身の code（`library-missing`、`permission-denied`、`backend-unavailable`、`driver-missing`、`failed`）は、ブリッジの一覧に入って来ます。
 
 | `error.code` | いつ |
 |---|---|
-| `tool-missing` | ブリッジが `vehicle_sil_launch` の隣にも `PATH` にもありません。 |
+| `tool-missing` | ブリッジが `vehicle_sil_launch` の隣にも `PATH` にもありません。これは答えで、失敗ではありません（終了コードは 0 のまま）。 |
 | `tool-cannot-start` | ブリッジを起動できません。Windows では、起動の前に終了状態 `0xC0000135` か `0xC0000139` で終わったときも（DLL がないか、版が違います。Vector XL のブリッジには Vector XL Driver Library の `vxlapi64.dll` が要ります）。 |
 | `tool-timeout` | ブリッジが 30 秒の間に終わりませんでした。 |
-| `tool-bad-output` | ブリッジが、ランチャーの読める一覧を書きませんでした（ほかの vehicle-sil のブリッジ）。文は、ブリッジの標準エラーの、理由を書いた行を引きます。 |
+| `tool-bad-output` | ブリッジが、ランチャーの読める一覧を書きませんでした（ほかの vehicle-sil のブリッジ）。64 段より深い入れ子も。文は、ブリッジの標準エラーの、理由を書いた行を引きます。 |
 
 | 終了コード | 場合 |
 |---|---|
-| 0 | すべての一覧を作れました（LIN のネットワークには一覧は要りません）。 |
-| 1 | 作れない一覧があったか、ファイルのネットワークの種類に誤りがあります。 |
+| 0 | この PC にあるブリッジは、すべて一覧を作れました。ないブリッジ（`tool-missing`）と、この PC にブリッジのないネットワーク（LIN、Windows 以外の CAN）は、答えの一部です。 |
+| 1 | あるブリッジが一覧を作れなかった（`tool-cannot-start`、`tool-timeout`、`tool-bad-output`、ブリッジ自身の誤り）か、ファイルに誤りがあります。 |
 | 3 | ファイルを読めません。 |
 | 4 | 使い方の誤りです。 |
 

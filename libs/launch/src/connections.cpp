@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
 #include <map>
 #include <sstream>
 #include <system_error>
@@ -78,6 +79,10 @@ public:
                 target.usable = boolean(usable, at + ".usable");
             }
             target.reason = optional_text(item, "reason", at).value_or("");
+            if (const ryml::id_type ethernet = find(item, "ethernet"); ethernet != ryml::NONE && tree_.is_map(ethernet))
+            {
+                target.pcap_name = optional_text(ethernet, "pcap_name", at + ".ethernet").value_or("");
+            }
             out.targets.push_back(std::move(target));
         }
         if (const ryml::id_type notes = find(root_, "notes"); notes != ryml::NONE && !is_null(notes))
@@ -228,24 +233,124 @@ void write_node(JsonWriter& w, std::string_view key, const ryml::Tree& tree, rym
     w.string(key, value);
 }
 
-/// `text` for a line: control characters as \xNN.
+/// Writes the list `node` (its object) as the member `key`, every key as write_node() does, but for
+/// the targets that the launcher made unusable (ListedTarget::refused): "usable": false and their
+/// "reason" (added if the bridge wrote none).
+void write_list(JsonWriter& w, std::string_view key, const ryml::Tree& tree, ryml::id_type node, const TargetList& list)
+{
+    w.begin_object(key);
+    for (auto child = tree.first_child(node); child != ryml::NONE; child = tree.next_sibling(child))
+    {
+        const std::string name = detail::to_string(tree.key(child));
+        if (name.empty())
+        {
+            continue;
+        }
+        if (name != "targets" || !tree.is_seq(child))
+        {
+            write_node(w, name, tree, child);
+            continue;
+        }
+        w.begin_array(name);
+        std::size_t index = 0;
+        for (auto item = tree.first_child(child); item != ryml::NONE; item = tree.next_sibling(item), ++index)
+        {
+            const ListedTarget* target = index < list.targets.size() && list.targets[index].refused ? &list.targets[index] : nullptr;
+            if (target == nullptr || !tree.is_map(item))
+            {
+                write_node(w, {}, tree, item);
+                continue;
+            }
+            w.begin_object();
+            bool usable = false;
+            bool reason = false;
+            for (auto member = tree.first_child(item); member != ryml::NONE; member = tree.next_sibling(member))
+            {
+                const std::string m = detail::to_string(tree.key(member));
+                if (m == "usable")
+                {
+                    w.boolean(m, false);
+                    usable = true;
+                }
+                else if (m == "reason")
+                {
+                    w.string(m, target->reason);
+                    reason = true;
+                }
+                else if (!m.empty())
+                {
+                    write_node(w, m, tree, member);
+                }
+            }
+            if (!usable)
+            {
+                w.boolean("usable", false);
+            }
+            if (!reason)
+            {
+                w.string("reason", target->reason);
+            }
+            w.end_object();
+        }
+        w.end_array();
+    }
+    w.end_object();
+}
+
+/// `text` of a bridge for a line, harmless on a terminal: C0 controls, DEL, and every byte above
+/// 0x7F of a text that is not UTF-8, as \xNN; the controls of detail::unicode_control_at() (C1,
+/// the direction of text) as \u{NNNN}.
 std::string shown(std::string_view text)
 {
     static constexpr char kHex[] = "0123456789ABCDEF";
+    const bool utf8 = vehicle_sil::detail::is_utf8(text);
     std::string out;
-    for (const char c : text)
+    for (std::size_t i = 0; i < text.size(); ++i)
     {
-        const auto byte = static_cast<unsigned char>(c);
-        if (byte < 0x20 || byte == 0x7F)
+        const auto byte = static_cast<unsigned char>(text[i]);
+        if (const std::size_t control = utf8 ? detail::unicode_control_at(text.substr(i)) : 0; control != 0)
+        {
+            // U+0080..U+009F: C2 xx; U+202A..U+202E, U+2066..U+2069: E2 80|81 xx.
+            const unsigned code = control == 2 ? static_cast<unsigned char>(text[i + 1])
+                                               : 0x2000u + ((static_cast<unsigned char>(text[i + 1]) & 0x3Fu) << 6) +
+                                                     (static_cast<unsigned char>(text[i + 2]) & 0x3Fu);
+            char u[16];
+            std::snprintf(u, sizeof(u), "\\u{%04X}", code);
+            out += u;
+            i += control - 1;
+        }
+        else if (byte < 0x20 || byte == 0x7F || (!utf8 && byte >= 0x80))
         {
             out += std::string("\\x") + kHex[byte >> 4] + kHex[byte & 0xF];
         }
         else
         {
-            out += c;
+            out += text[i];
         }
     }
     return out;
+}
+
+/// The depth of the deepest object or array in `tree` under `node` (1 for one that holds scalars).
+std::size_t depth_of(const ryml::Tree& tree, ryml::id_type node)
+{
+    std::size_t deepest = 0;
+    std::vector<std::pair<ryml::id_type, std::size_t>> open{{node, 1}};
+    while (!open.empty())
+    {
+        const auto [at, depth] = open.back();
+        open.pop_back();
+        if (!tree.is_container(at))
+        {
+            continue;
+        }
+        deepest = std::max(deepest, depth);
+        for (auto child = tree.first_child(at); child != ryml::NONE; child = tree.next_sibling(child))
+        {
+            open.emplace_back(child, depth + 1);
+        }
+    }
+    return deepest;
 }
 
 /// The line of a tool's standard error that says why (detail::LastLine), or "".
@@ -261,16 +366,19 @@ std::string last_line(const std::string& text)
     return last.text();
 }
 
-/// Why --connect does not take `value` as the target of a network of `kind`, or empty.
-std::optional<std::string> refused_target(NetworkKind kind, std::string_view value)
+/// Why --connect cannot name the network `name`, or empty: it takes the name up to the first '=',
+/// and the command line takes an argument that starts with "--" for an option.
+std::optional<std::string> network_problem(std::string_view name)
 {
-    if (value == kNoTarget)
+    if (name.find('=') != std::string_view::npos)
     {
-        return std::string("--connect takes none for SIL Kit only: give this target by another name that the bridge takes");
+        return std::string("the network's name has '=', and --connect takes the network's name up to the first '=': "
+                           "rename the network (a name without '=')");
     }
-    if (auto problem = target_problem(kind, value))
+    if (name.rfind("--", 0) == 0)
     {
-        return "--connect does not take it: " + *problem;
+        return std::string("the network's name starts with '--', which the command line takes for an option: rename the "
+                           "network");
     }
     return std::nullopt;
 }
@@ -283,14 +391,22 @@ std::string list_text(const NetworkConnections& network)
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> refused;
     std::vector<std::string> notes;
+    // A name that --connect cannot give: one line for the network, not one per target.
+    const std::optional<std::string> unnamed = network_problem(network.name);
+    if (unnamed && !list.targets.empty())
+    {
+        refused.push_back("  cannot be connected with --connect: " + *unnamed);
+    }
     for (const ListedTarget& target : list.targets)
     {
-        std::optional<std::string> why = target.usable ? refused_target(*network.kind, target.value) : std::nullopt;
-        if (!target.usable || why)
+        if (unnamed)
         {
-            const std::string reason = !target.usable ? (target.reason.empty() ? std::string("the bridge cannot use it") : target.reason)
-                                                      : *why;
-            refused.push_back("  cannot be used: " + shown(target.value) + "  (" + shown(reason) + ")");
+            continue;
+        }
+        if (!target.usable)
+        {
+            refused.push_back("  cannot be used: " + shown(target.value) + "  (" +
+                              shown(target.reason.empty() ? std::string("the bridge cannot use it") : target.reason) + ")");
             continue;
         }
         const std::string argument = network.name + "=" + target.value;
@@ -303,8 +419,8 @@ std::string list_text(const NetworkConnections& network)
         {
             connect += quoted_for_sh(argument);
             notes.push_back("  note: the line of " + shown(target.value) +
-                            " is quoted for sh: PowerShell and cmd read one of \" $ ` % ! \\ in it otherwise, so quote it as "
-                            "your shell needs");
+                            " is quoted for sh: PowerShell and cmd read one of \" $ ` % ! \\ \xE2\x80\x9C \xE2\x80\x9D \xE2\x80\x9E in it "
+                            "otherwise, so quote it as your shell needs");
         }
         std::string about = target.label != target.value && !target.label.empty() ? shown(target.label) : std::string{};
         if (!target.detail.empty())
@@ -328,7 +444,7 @@ std::string list_text(const NetworkConnections& network)
     }
     if (!list.error_code.empty())
     {
-        out += "  cannot list: " + shown(list.error_message) + " [" + list.error_code + "]\n";
+        out += "  cannot list: " + shown(list.error_message) + " [" + shown(list.error_code) + "]\n";
     }
     else if (list.targets.empty())
     {
@@ -367,6 +483,10 @@ TargetList read_target_list(std::string_view json)
     try
     {
         const detail::YamlDocument doc(json);
+        if (doc.root() != ryml::NONE && depth_of(doc.tree(), doc.root()) > kMaxListDepth)
+        {
+            throw DescriptionError("it is nested deeper than " + std::to_string(kMaxListDepth) + " levels");
+        }
         TargetList out = TargetReader(doc).read();
         out.json = std::string(json);
         return out;
@@ -438,6 +558,43 @@ TargetList interpret_list(NetworkKind kind, std::string_view tool, const Describ
     }
 }
 
+std::optional<std::string> refused_target(std::string_view network, NetworkKind kind, const ListedTarget& target)
+{
+    if (std::optional<std::string> problem = network_problem(network))
+    {
+        return problem;
+    }
+    if (target.value == kNoTarget)
+    {
+        return target.pcap_name.empty() || target.pcap_name == kNoTarget
+                   ? std::string("--connect takes none for SIL Kit only, so an interface of this name cannot be connected: "
+                                 "rename the interface")
+                   : "--connect takes none for SIL Kit only: give this adapter by its pcap name, " + target.pcap_name;
+    }
+    if (std::optional<std::string> problem = target_problem(kind, target.value))
+    {
+        return "--connect does not take it: " + *problem;
+    }
+    return std::nullopt;
+}
+
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list)
+{
+    for (ListedTarget& target : list.targets)
+    {
+        if (!target.usable)
+        {
+            continue;
+        }
+        if (std::optional<std::string> why = refused_target(network, kind, target))
+        {
+            target.usable = false;
+            target.reason = std::move(*why);
+            target.refused = true;
+        }
+    }
+}
+
 std::optional<Finding> unknown_network(const SimulationConfig& config, std::string_view network)
 {
     std::vector<std::string> names;
@@ -465,7 +622,7 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
                                                const ConnectTools& tools)
 {
     // Each bridge once: where it is, and its list.
-    std::map<std::string, std::pair<std::filesystem::path, TargetList>, std::less<>> asked;
+    std::map<std::string, std::pair<std::filesystem::path, std::optional<TargetList>>, std::less<>> asked;
     std::vector<NetworkConnections> out;
     for (const NetworkConfig& n : config.networks)
     {
@@ -481,24 +638,36 @@ std::vector<NetworkConnections> connections_of(const SimulationConfig& config, c
             continue;
         }
         entry.kind = n.kind;
-        entry.tool = std::string(bridge_tool(n.kind));
-        if (entry.tool.empty())
+        const std::optional<std::string> none = no_bridge_here(n.kind, tools.can_bridge);
+        const std::string tool(bridge_tool(n.kind));
+        auto it = asked.find(tool);
+        if (!tool.empty() && it == asked.end())
         {
+            std::optional<std::filesystem::path> path = tools.find ? tools.find(tool) : std::nullopt;
+            std::optional<TargetList> list;
+            if (path)
+            {
+                list = interpret_list(n.kind, tool, tools.describe(*path, list_arguments(n.kind)));
+            }
+            else if (!none)
+            {
+                list = failed_list(tool, "tool-missing", tool + " is " + tool_not_found(tools.launcher_dir) + ": " +
+                                                            tool_missing_fix(n.kind));
+            }
+            it = asked.emplace(tool, std::make_pair(path.value_or(std::filesystem::path{}), std::move(list))).first;
+        }
+        // No bridge for the kind here (LIN; CAN but on Windows): SIL Kit only, unless one was found
+        // anyway (a build for tests).
+        if (it == asked.end() || !it->second.second)
+        {
+            entry.no_bridge = none.value_or("");
             out.push_back(std::move(entry));
             continue;
         }
-        auto it = asked.find(entry.tool);
-        if (it == asked.end())
-        {
-            std::optional<std::filesystem::path> path = tools.find ? tools.find(entry.tool) : std::nullopt;
-            TargetList list =
-                !path ? failed_list(entry.tool, "tool-missing",
-                                    entry.tool + " is " + tool_not_found(tools.launcher_dir) + ": " + tool_missing_fix(n.kind))
-                      : interpret_list(n.kind, entry.tool, tools.describe(*path, list_arguments(n.kind)));
-            it = asked.emplace(entry.tool, std::make_pair(path.value_or(std::filesystem::path{}), std::move(list))).first;
-        }
+        entry.tool = tool;
         entry.tool_path = it->second.first;
         entry.list = it->second.second;
+        refuse_targets(n.name, n.kind, *entry.list);
         out.push_back(std::move(entry));
     }
     return out;
@@ -536,17 +705,30 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
     tools.launcher_dir = options.tool_directory;
     tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
     tools.describe = [&options](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.list_timeout, {});
+        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.list_timeout,
+                        bridge_working_directory(tool));
     };
     report.per_network = connections_of(*read.config, options.network, tools);
+    // The file's errors, as check reports them: a network with an error may be missing above.
+    for (Finding& finding : read.findings)
+    {
+        if (finding.severity == Severity::Error)
+        {
+            report.findings.push_back(std::move(finding));
+        }
+    }
     return report;
 }
 
 bool ConnectionsReport::incomplete() const
 {
-    return std::any_of(per_network.begin(), per_network.end(), [](const NetworkConnections& n) {
-        return !n.kind || (n.list && !n.list->error_code.empty());
-    });
+    // No bridge on this computer (tool-missing) is part of the answer, not a failure.
+    return std::any_of(per_network.begin(), per_network.end(),
+                       [](const NetworkConnections& n) {
+                           return !n.kind ||
+                                  (n.list && !n.list->error_code.empty() && n.list->error_code != "tool-missing");
+                       }) ||
+           std::any_of(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Error; });
 }
 
 int ConnectionsReport::exit_code() const
@@ -577,6 +759,12 @@ std::optional<std::string> quoted_for_shells(std::string_view word)
         const auto byte = static_cast<unsigned char>(word[i]);
         const char c = word[i];
         if (byte < 0x20 || byte == 0x7F || c == '"' || c == '$' || c == '`' || c == '%' || c == '!')
+        {
+            return std::nullopt;
+        }
+        // PowerShell takes the quotation marks U+201C, U+201D and U+201E for '"' (E2 80 9C..9E).
+        if (byte == 0xE2 && i + 2 < word.size() && static_cast<unsigned char>(word[i + 1]) == 0x80 &&
+            static_cast<unsigned char>(word[i + 2]) >= 0x9C && static_cast<unsigned char>(word[i + 2]) <= 0x9E)
         {
             return std::nullopt;
         }
@@ -618,7 +806,7 @@ std::string format_connections_text(const ConnectionsReport& report)
         }
         if (!network.list)
         {
-            out += network.name + " (" + to_string(*network.kind) + "): SIL Kit only (there is no bridge for LIN)\n";
+            out += network.name + " (" + to_string(*network.kind) + "): SIL Kit only (" + network.no_bridge + ")\n";
             continue;
         }
         const TargetList& list = *network.list;
@@ -629,6 +817,12 @@ std::string format_connections_text(const ConnectionsReport& report)
         }
         out += network.name + " (" + to_string(*network.kind) + "; " + shown(about) + "):\n";
         out += list_text(network);
+    }
+    if (!report.findings.empty())
+    {
+        // The file's errors: what check says of it too.
+        out += "\n" + detail::findings_text(report.file, report.findings) +
+               "the file has errors: the list above has the networks that could be read\n";
     }
     return out;
 }
@@ -670,7 +864,7 @@ std::string format_connections_json(const ConnectionsReport& report)
                 const detail::YamlDocument doc(network.list->json);
                 if (const ryml::id_type root = doc.root(); root != ryml::NONE && doc.tree().is_map(root))
                 {
-                    write_node(w, "list", doc.tree(), root);
+                    write_list(w, "list", doc.tree(), root, *network.list);
                     written = true;
                 }
             }

@@ -391,9 +391,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         ConnectTools tools;
         tools.launcher_dir = options.tool_directory;
         tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
+        // In the bridge's own directory, not the configuration file's (bridge_working_directory()).
         tools.describe = [&](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
             return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.describe_timeout,
-                                std::filesystem::absolute(base));
+                            bridge_working_directory(tool));
         };
         ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());

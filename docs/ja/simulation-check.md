@@ -114,7 +114,7 @@
 | `connect-target` | 誤り | `--connect` の先が、空、256 バイトより長い、UTF-8 でない、制御文字を含む、`-` で始まる、のどれかです。CAN のネットワークでは、`virtual:<n>` か `physical:<n>`（`<n>` は 1 から）でもありません。 | `vehicle_sil_launch connections <file>` が出す先か、`none` を書きます。 |
 | `connect-name-taken` | 誤り | ファイルの participant が、つなぐネットワークのブリッジの名前（`bridge.<network>`）を持っています。 | その participant の名前を変えます。 |
 | `connect-filter` | 誤り | つなぐイーサネットのネットワークに `external.ethertypes` も `external.all_frames` もなく、そこにいる ECU の MAC アドレスをランチャーが並べられません（出力しない ECU がいる、`role: test` でない `describe: false` の participant がいる、出力した ECU が 1 つもない。`role: test` の participant は数えません）。 | そのネットワークに `external.ethertypes` か `external.all_frames: true` を書く（`role: test` の participant のフレームも通すときも）か、そこにいる各 ECU に MAC アドレスを持たせます。 |
-| `connect-tool-missing` | 誤り | つなぐネットワークのブリッジが、`vehicle_sil_launch` の隣にも、`PATH` の絶対パスのディレクトリにもありません。 | ブリッジをビルドし、`vehicle_sil_launch` の隣に置くか、そのディレクトリを `PATH` に入れます。 |
+| `connect-tool-missing` | 誤り | つなぐネットワークのブリッジが、`vehicle_sil_launch` の隣にも、`PATH` の絶対パスのディレクトリにもありません。Windows 以外の `can` のネットワークでは、Vector XL のブリッジは Windows 用だと言います。 | ブリッジをビルドし、`vehicle_sil_launch` の隣に置くか、そのディレクトリを `PATH` に入れます。Windows 以外の `can` では、そのネットワークの `--connect` を外します。 |
 | `connect-tool-failed` | 誤り | `--connect` の引数でのブリッジの `--describe` が失敗した（終了コード、時間切れ、説明でない出力）か、ブリッジが別の名前やネットワークを出力しました。 | 指摘の文にあるブリッジの行のとおりに直す（先、`external`）か、`vehicle_sil_launch` と同じ vehicle-sil のブリッジを使います。 |
 | `connect-loop` | 誤り | 有効な `role: bridge` の participant が、つなぐネットワークを `--describe` に出力しています（2 つのブリッジの間でフレームが回ります）。 | どちらかを外します（`--disable <name>` か、その `--connect` を外す）。 |
 | `connect-maybe-loop` | 警告 | 有効な `role: bridge` の participant が `describe: false` で、つなぐネットワークがあります（そのネットワークを中継するかもしれません）。 | そのネットワークを中継するなら、2 つのブリッジのどちらかを外します。 |

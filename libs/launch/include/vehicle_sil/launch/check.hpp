@@ -278,8 +278,11 @@ struct ConnectTools
     /// The first place `find` looks (CheckOptions::tool_directory), for the message when it finds nothing.
     std::filesystem::path launcher_dir{};
     /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>;
-    /// list_arguments()).
+    /// list_arguments()), in bridge_working_directory().
     std::function<DescribeRun(const std::filesystem::path&, const std::vector<std::string>&)> describe;
+    /// Whether the bridge of a can network runs on this OS (no_bridge_here()). Where it does not, a
+    /// bridge that `find` finds anyway (a build for tests) is still used.
+    bool can_bridge = kCanBridgeOnThisOs;
 };
 
 /// The findings of the --connect requests and the networks they connect (in the order of the

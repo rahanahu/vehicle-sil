@@ -355,9 +355,13 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
             else
             {
+                const std::optional<std::string> none = no_bridge_here(network->kind, tools->can_bridge);
                 add(Severity::Error, "connect-tool-missing", network->line,
-                    prefix + "--connect needs " + outside.tool + ", which is " + tool_not_found(tools->launcher_dir) +
-                        ": " + tool_missing_fix(network->kind),
+                    none ? prefix + "--connect needs " + outside.tool + ", and " + *none +
+                               ": on this computer the network runs on SIL Kit only: leave --connect " + network->name +
+                               " out (or give " + network->name + "=none)"
+                         : prefix + "--connect needs " + outside.tool + ", which is " + tool_not_found(tools->launcher_dir) +
+                               ": " + tool_missing_fix(network->kind),
                     "", network->name);
             }
         }

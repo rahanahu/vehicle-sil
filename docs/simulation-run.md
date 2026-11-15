@@ -336,7 +336,8 @@ vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 
 - `--network <name>` lists that network only. A name that the file does not have is a usage error.
 - The file is read without a variant, because every variant has the networks of the file. `--variant` is a usage error.
-- Other errors in the file do not stop the list: `check` reports them.
+- Errors in the file do not stop the list: the networks that could be read are listed, and the file's errors follow, as `check` reports them (exit code 1).
+- The launcher starts each bridge in the bridge's own directory, as for `--connect` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md).
 
 An example on Windows, where the Vector XL bridge is not installed:
 
@@ -355,14 +356,15 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
 |---|---|
 | `<network> (<kind>; <bridge>, <backend>: <library>):` | The network, its bridge, and the backend and library version that the bridge reports. |
 | `--connect ...` | A target that the bridge can use. Copy the argument to `check` or `run`. After it: the target's name if it differs, and what the bridge says about it. |
-| `cannot be used: <target>  (<reason>)` | A target that the bridge lists but cannot use (the loopback), or one that `--connect` does not take (`none`, which means SIL Kit only, or a name that starts with `-`). |
+| `cannot be used: <target>  (<reason>)` | A target that the bridge lists but cannot use (the loopback), or one that `--connect` does not take: `none`, which means SIL Kit only (the reason gives the adapter's pcap name to use instead, or says to rename the interface where it has no other name), a name that starts with `-`, and the other values that `connect-target` refuses. |
+| `cannot be connected with --connect: ...` | The network's name has `=` or starts with `--`, so `--connect` cannot name it: rename the network. |
 | `note: ...` | What the bridge adds (Npcap that offers no network adapter), or a target quoted for sh only (below). |
 | `cannot list: <message> [<code>]` | The list could not be made (see the codes below). |
 | `nothing listed: ...` | The bridge lists nothing on this computer. |
-| `<network> (lin): SIL Kit only` | There is no bridge for LIN. |
+| `<network> (<kind>): SIL Kit only (<why>)` | There is no bridge for the network on this computer: none for LIN, and the Vector XL bridge of a `can` network runs on Windows only. Where it does not run, a bridge that is found anyway (a build for tests) is used. |
 | `<network>: its kind in the file has an error` | `check` says what is wrong. |
 
-The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!` or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
+The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!`, the quotation marks `“` `”` `„` (U+201C, U+201D, U+201E, which PowerShell reads as `"`) or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
 
 #### `connections --json`
 
@@ -371,7 +373,7 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
   "vehicle_sil_connections": 1,
   "vehicle_sil": "<version>",
   "file": "simulation.yaml",
-  "result": "failed",
+  "result": "listed",
   "networks": [
     {
       "name": "ETH_EXT",
@@ -440,28 +442,28 @@ The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell
 | `vehicle_sil_connections` | The version of this form (1). |
 | `vehicle_sil` | The vehicle-sil version. |
 | `file` | The file as given. |
-| `result` | `listed`: every list was made. `failed`: a list could not be made, or a network's kind in the file has an error. `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
+| `result` | `listed`: every bridge that is on this computer made its list (a bridge that is not, `tool-missing`, is part of the answer). `failed`: a bridge that is there could not make its list, or the file has errors (also a network's kind). `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
 | `networks[]` | The networks in the order of the file; with `--network`, that one. |
 | `networks[].name` | The network's name. |
 | `networks[].kind` | `can`, `ethernet` or `lin`; `null` if its kind in the file has an error. |
-| `networks[].tool` | The bridge's executable; `null` for `lin` and an unknown kind. |
+| `networks[].tool` | The bridge's executable; `null` where there is no bridge for the network on this computer (`lin`, and `can` elsewhere than on Windows) and for an unknown kind. |
 | `networks[].tool_path` | Where the launcher found it; `null` if it did not, or there is no bridge. |
-| `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)" and "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` for `lin` and an unknown kind. |
-| `findings` | Why the file cannot be read, or the usage error, as in `check --json`; otherwise empty. |
+| `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)" and "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` where `tool` is `null`. |
+| `findings` | Why the file cannot be read, the usage error, or the errors of the file, as in `check --json`; otherwise empty. |
 
-`value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell). When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.
+`value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell): the launcher sets `usable: false` and the `reason` of a target that `--connect` does not take (the `cannot be used` and `cannot be connected` lines above), so the text and the JSON say the same. When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.
 
 | `error.code` | When |
 |---|---|
-| `tool-missing` | The bridge is neither next to `vehicle_sil_launch` nor on `PATH`. |
+| `tool-missing` | The bridge is neither next to `vehicle_sil_launch` nor on `PATH`. This is an answer, not a failure: the exit code stays 0. |
 | `tool-cannot-start` | The bridge could not be started. On Windows also when it ends with exit status `0xC0000135` or `0xC0000139` before it starts (a DLL is missing or of another version; the Vector XL bridge needs `vxlapi64.dll` of the Vector XL Driver Library). |
 | `tool-timeout` | The bridge did not end within 30 seconds. |
-| `tool-bad-output` | The bridge wrote no list that the launcher reads (a bridge of another vehicle-sil). The message quotes the line of its stderr that says why. |
+| `tool-bad-output` | The bridge wrote no list that the launcher reads (a bridge of another vehicle-sil), or nested deeper than 64 levels. The message quotes the line of its stderr that says why. |
 
 | Exit code | Case |
 |---|---|
-| 0 | Every list was made (a LIN network needs none). |
-| 1 | A list could not be made, or a network's kind in the file has an error. |
+| 0 | Every bridge that is on this computer made its list. A bridge that is not there (`tool-missing`) and a network without a bridge here (LIN, CAN elsewhere than on Windows) are part of the answer. |
+| 1 | A bridge that is there could not make its list (`tool-cannot-start`, `tool-timeout`, `tool-bad-output`, or the bridge's own error), or the file has errors. |
 | 3 | The file cannot be read. |
 | 4 | Usage error. |
 

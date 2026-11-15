@@ -835,7 +835,7 @@ Public headers:
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, and `find_tool()`, where the launcher looks for a bridge | `launch/connect.hpp` |
+| `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, `find_tool()`, where the launcher looks for a bridge, `no_bridge_here()` (LIN; CAN elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |

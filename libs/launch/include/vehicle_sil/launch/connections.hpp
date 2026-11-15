@@ -39,6 +39,10 @@ struct ListedTarget
     std::string detail; ///< what else the bridge says about it
     bool usable = true;
     std::string reason{}; ///< why it cannot be used ("" if usable)
+    /// ethernet: the pcap name the bridge reports ("ethernet"."pcap_name"), or "".
+    std::string pcap_name{};
+    /// The launcher made it usable: false (refuse_targets()): the outputs say so in the JSON too.
+    bool refused = false;
 
     friend bool operator==(const ListedTarget&, const ListedTarget&) = default;
 };
@@ -60,8 +64,11 @@ struct TargetList
     std::string json{};
 };
 
+/// The deepest nesting of objects and arrays that read_target_list() takes.
+inline constexpr std::size_t kMaxListDepth = 64;
+
 /// Reads a list that a bridge wrote. Throws DescriptionError, saying what is wrong, for anything
-/// that is not a list of version kTargetsFormat.
+/// that is not a list of version kTargetsFormat, or nested deeper than kMaxListDepth.
 [[nodiscard]] TargetList read_target_list(std::string_view json);
 
 /// A list that the launcher makes for `tool`: no targets, and the error `code` with `message`.
@@ -74,39 +81,56 @@ struct TargetList
 /// wrote no list that the launcher reads; the message has its line that says why).
 [[nodiscard]] TargetList interpret_list(NetworkKind kind, std::string_view tool, const DescribeRun& run);
 
+/// Why `--connect <network>=<value>` cannot connect `network` (of `kind`) at `target`, or empty:
+/// the network's name has '=' or starts with "--" (the command line cannot name it), or
+/// target_problem(), or the value is kNoTarget (with the pcap name to give instead, or else
+/// that the interface needs another name).
+[[nodiscard]] std::optional<std::string> refused_target(std::string_view network, NetworkKind kind,
+                                                        const ListedTarget& target);
+
+/// Makes each usable target of `list` that refused_target() refuses unusable, with that reason
+/// (ListedTarget::refused): so the text and the JSON say the same, and a usable target's value is
+/// what --connect takes.
+void refuse_targets(std::string_view network, NetworkKind kind, TargetList& list);
+
 /// One network of the file and where it can be connected.
 struct NetworkConnections
 {
     std::string name;
     /// Empty if the file's kind of it has an error (the check reports it): nothing is listed.
     std::optional<NetworkKind> kind{};
-    std::string tool{};                  ///< bridge_tool(); "" for LIN and an unknown kind
+    std::string tool{};                  ///< bridge_tool(); "" if there is none here
     std::filesystem::path tool_path{};   ///< where find_tool() found it; empty: not found, or no tool
-    std::optional<TargetList> list{};    ///< empty for LIN and an unknown kind
+    std::optional<TargetList> list{};    ///< empty if there is no bridge here, or the kind is unknown
+    /// Why there is no bridge for it on this computer (no_bridge_here()), or "".
+    std::string no_bridge{};
 };
 
 /// What `vehicle_sil_launch connections` found.
 struct ConnectionsReport
 {
     std::string file; ///< as the user named it
-    /// The file was read as a configuration (its other errors do not matter here).
+    /// The file was read as a configuration.
     bool readable = false;
     /// The command line was wrong (findings say why; code "usage").
     bool usage = false;
     std::vector<NetworkConnections> per_network{}; ///< in the file's order; with --network, that one
-    /// Why the file could not be read, or the usage errors.
+    /// Why the file could not be read, the usage errors, or the errors of a file that was read
+    /// (as check reports them; the networks listed are those it could read).
     std::vector<Finding> findings{};
 
-    /// The network whose kind could not be read, or whose list has an error.
+    /// A bridge that is there could not make its list (any error but tool-missing), a network's
+    /// kind could not be read, or the file has an error.
     [[nodiscard]] bool incomplete() const;
-    /// 4 usage, 3 the file cannot be read, 1 a list has an error (incomplete()), else 0.
+    /// 4 usage, 3 the file cannot be read, 1 incomplete(), else 0.
     [[nodiscard]] int exit_code() const;
 };
 
 /// The networks of `config` (with `network`, that one only: it must be one of them) and their
 /// lists: each bridge is looked for and asked once (`tools`: find, describe for the run of the
 /// list), also for two networks of its kind; a bridge that is not found has the failed list
-/// tool-missing.
+/// tool-missing, or, where there is no bridge for the kind on this OS (`tools.can_bridge`), no
+/// list (NetworkConnections::no_bridge). Each list goes through refuse_targets().
 [[nodiscard]] std::vector<NetworkConnections> connections_of(const SimulationConfig& config,
                                                              const std::optional<std::string>& network,
                                                              const ConnectTools& tools);
@@ -131,8 +155,9 @@ struct ConnectionsOptions
 
 /// `word` as one argument that sh (bash, zsh), PowerShell and cmd all read as it is: unchanged if
 /// it has only letters, digits and _ - . : / = + (ASCII); else in double quotes if it has none of
-/// " $ ` % ! and no control character, and no \ before one of " $ ` \ or at its end; else empty
-/// (no one form works in all of them).
+/// " $ ` % ! nor the quotation marks that PowerShell takes for " (U+201C, U+201D, U+201E), no
+/// control character, and no \ before one of " $ ` \ or at its end; else empty (no one form works
+/// in all of them).
 [[nodiscard]] std::optional<std::string> quoted_for_shells(std::string_view word);
 
 /// `word` quoted for sh: in single quotes, each ' as '\''.

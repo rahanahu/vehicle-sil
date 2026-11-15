@@ -575,7 +575,8 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 - `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an adapter named `none` by its pcap name.
 - Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
 - Quote the whole argument when the target has spaces: `--connect "ETH_EXT=vEthernet (A)"`.
-- The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer.
+- The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer. It starts a bridge (its `--describe`, its list for `connections`, its run) in the bridge's own directory, never in the directory of the configuration file, so that a DLL put into a folder received from someone is not loaded. The participants of the file start in the directory of the configuration file, as before.
+- The bridge of a `can` network (the Vector XL bridge) runs on Windows only. Elsewhere, `connect-tool-missing` says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
 - A real bus does not wait for the virtual time: with `--connect`, a speed other than 1 gets the warning `connect-not-real-time` (`check`: the file's `speed`; `run`: `--speed`, or else the file's), and `run --start-paused` the warning `connect-start-paused`.
@@ -992,7 +993,7 @@ When each exit code occurs:
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
 | 1 | If the scenario file of `--scenario` does not exist, the exit code is 1 for both `check` and `run` (unlike a missing configuration file, which gives 3). |
-| 1 | For `connections`, a list could not be made, or a network's kind in the file has an error. |
+| 1 | For `connections`, a bridge that is on this computer could not make its list, or the file has errors (a bridge that is not there is not an error). |
 | 3 | The configuration file does not exist, a syntax error, an unknown format version and so on. |
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |

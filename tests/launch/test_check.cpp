@@ -2980,10 +2980,12 @@ struct FakeTools
     std::vector<std::string> missing;   ///< tools that are not found
     std::optional<DescribeRun> answer;  ///< instead of the right description
     std::vector<std::string> runs;      ///< "<tool path> <arguments>"
+    bool can_bridge = true;             ///< ConnectTools::can_bridge (as on Windows)
     ConnectTools tools()
     {
         ConnectTools t;
         t.launcher_dir = "/opt/vsil/bin";
+        t.can_bridge = can_bridge;
         t.find = [this](std::string_view name) -> std::optional<std::filesystem::path> {
             if (std::find(missing.begin(), missing.end(), name) != missing.end())
             {
@@ -3191,7 +3193,15 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
                "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, which is neither "
                "next to vehicle_sil_launch (/opt/vsil/bin) nor on PATH: build it with the Vector XL Driver Library "
                "(docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH\n");
+    // Not on Windows: there is nothing to build; found anyway (a build for tests), it is used.
+    fake.can_bridge = false;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, and the Vector XL "
+               "bridge is for Windows: on this computer the network runs on SIL Kit only: leave --connect CAN1 out (or "
+               "give CAN1=none)\n");
     fake.missing.clear();
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake), "");
+    fake.can_bridge = true;
     DescribeRun refused;
     refused.command_text = "vehicle_sil_vector_xl_bridge --network CAN1 ...";
     refused.exit_code = 2;
