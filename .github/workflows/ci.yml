@@ -16,9 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push replaces the run of a pull request. On main every merge keeps its own run (its group is
-  # the commit): a merge that follows another within minutes must not cancel the run of the one before.
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # A newer push replaces the run of a pull request. On main a run is never stopped, but only one runs at a
+  # time and only the newest waits: when several merges follow each other within minutes, the merges between
+  # the running one and the newest get no run of their own (theirs is cancelled while it waits), and the
+  # newest one's run checks them together. If it fails, run the ones between by hand to find which merge it was.
+  # (release.yml wants this workflow's run on the tagged commit: re-run a cancelled one before tagging it.)
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The runners are small (4 CPUs): the tests' upper bounds of waiting for something that will happen are 3
