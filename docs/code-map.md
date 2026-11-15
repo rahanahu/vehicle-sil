@@ -654,7 +654,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
 | Transfer sniffer | `src/transfer_sniffer.cpp` |
-| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, checks on the form of an announcement; the timeouts are `ProtocolTiming` in `types.hpp`) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
 | `Listener`, which sits in the seat | `src/listener.cpp` |
 
@@ -695,6 +695,7 @@ Main classes and functions:
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
 | The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| The names of a `Peer`'s monitoring outputs (`peer.*`, `j1939.<network>.*`), which `Peer` registers and the launcher reads | `ecu/monitor_names.hpp` |
 | `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
@@ -1469,7 +1470,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Control API | `run --control` | [The launcher's Control Server](#the-launchers-control-server) |
 | Control API | Read-only access while a scenario runs | [The Control Server during a scenario](#the-control-server-during-a-scenario) |
 | Control API | `GetSnapshot` | [Reading time and values together](#reading-time-and-values-together) |
-| Control API | `wire.cpp`, `kVersion` | [Messages between Agent and Hub](#messages-between-agent-and-hub) |
+| Control API | `wire.cpp`, `kVersion`, `kRevision` | [Messages between Agent and Hub](#messages-between-agent-and-hub) |
 | Control API | `control_silkit`, the start window | [The SIL Kit transport and the start window](#the-sil-kit-transport-and-the-start-window) |
 | Bridges | Shutdown, exit codes, health lines | [Bridge shutdown and exit codes](#bridge-shutdown-and-exit-codes) |
 | Bridges | Output and error messages of the Ethernet Bridge | [Ethernet Bridge output](#ethernet-bridge-output) |
@@ -2251,9 +2252,13 @@ Where to change:
 
 Rules:
 
-- If you change the layout, raise `kVersion` in `control/wire.hpp`. The decoder accepts only its own version.
-- If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
-- Never change the hello from its start up to the participant name, in any version. This lets a peer with a different version read the name.
+- Do not change version 1. ECUs built with vehicle-sil 0.1.0 speak it.
+- To add a field to version 2, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
+- A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kNewestVersion` and keep reading the older versions.
+- `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
+- The smallest size of each element differs by version (`kLeastV1`, `kLeastV2`). The decoder checks a count against it before it reads anything. Update it when an element gets a field.
+- If you only add a kind that the other side can safely ignore, raise neither the version nor the revision. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
+- Never change the eight bytes of the header, the participant name right after the header of a hello, or the session right after the header of every other message, in any version. This lets a peer with a different version read the name, and lets an ECU see whom a message is for.
 
 Documentation to update:
 
@@ -2262,6 +2267,8 @@ Documentation to update:
 Tests:
 
 - `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
+- `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit in both versions.
+- `^control\.wire_building_`: building the step messages of a step allocates nothing once the buffer has grown (a binary of its own, `tests/control/test_wire_allocation.cpp`).
 - `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
 
 ### The SIL Kit transport and the start window

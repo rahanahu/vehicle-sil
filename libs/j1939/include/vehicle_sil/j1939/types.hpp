@@ -81,6 +81,54 @@ inline constexpr Pgn kPgnTransportData{0xEB00u};
 /// The longest message the transport protocol carries.
 inline constexpr std::size_t kMaxTransportLength = 1785;
 
+/// Reason byte of a transport Connection Abort.
+enum class AbortReason : std::uint8_t
+{
+    None = 0,              ///< No abort (a transfer that was not aborted).
+    Busy = 1,              ///< Already in a connection with the sender; cannot take another one.
+    ResourcesNeeded = 2,   ///< The system needs the resources of the session.
+    Timeout = 3,
+    CtsWhileSending = 4,   ///< A clear-to-send came before the packets of the last one were sent.
+    RetransmitLimit = 5,   ///< Too many retransmission requests.
+    UnexpectedData = 6,    ///< A data packet came when none was expected.
+    BadSequence = 7,       ///< A sequence number that cannot be recovered from.
+    DuplicateSequence = 8,
+    TooLarge = 9,          ///< The message is longer than the receiver can take.
+    Other = 250,           ///< Any other error.
+};
+
+/// The times and the count of the transport protocol and the wait after an address claim, as a
+/// Network uses them (NetworkOptions::timing). A TransferSniffer derives its timeouts from them
+/// (SnifferOptions::timeout, broadcast_timeout).
+///
+/// NOT COMPARED WITH THE STANDARD. The defaults are this repository's values; this project has
+/// not checked them against the standard, which is why they can be set. Change them when the
+/// ECUs on your bus use other values. A timeout is reached only when more than the time has
+/// passed (a frame exactly at the deadline is taken). Every value must be greater than 0
+/// (std::invalid_argument from the Network's constructor).
+struct ProtocolTiming
+{
+    /// T1: how long a receiver waits for the next data packet, of a broadcast (BAM) from its
+    /// announcement or last packet, of a connection (RTS/CTS) from its last packet.
+    SimDuration t1 = std::chrono::milliseconds(750);
+    /// T2: how long a receiver waits for the first data packet after its clear-to-send.
+    SimDuration t2 = std::chrono::milliseconds(1250);
+    /// T3: how long a sender waits for the receiver's answer after its RTS or after the last
+    /// packet of a window (a clear-to-send or the end-of-message acknowledgement).
+    SimDuration t3 = std::chrono::milliseconds(1250);
+    /// T4: how long a sender waits for the next clear-to-send after one that holds the
+    /// connection (no packets asked for).
+    SimDuration t4 = std::chrono::milliseconds(1050);
+    /// The retransmission requests a receiver sends within one window; when one more would be
+    /// needed it aborts (AbortReason::RetransmitLimit). 0: it aborts at the first missing packet.
+    std::uint8_t max_retransmit_requests = 2;
+    /// How long a node that must wait after its Address Claimed holds what it sends (see the
+    /// comment of the class Node).
+    SimDuration address_claim_wait = std::chrono::milliseconds(250);
+
+    [[nodiscard]] friend constexpr bool operator==(const ProtocolTiming&, const ProtocolTiming&) noexcept = default;
+};
+
 /// The fields of a 29-bit J1939 identifier.
 struct Identifier
 {

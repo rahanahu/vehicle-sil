@@ -323,15 +323,18 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
     o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
     double x = 0.0;
     {
-        // "peer." is reserved at the declaration (also without monitoring, as on the local buses).
+        // "peer." and "j1939." are reserved at the declaration (also without monitoring, as on
+        // the local buses).
         Peer peer(o);
         CHECK(throws_with<std::invalid_argument>([&] { peer.input("peer.speed", &x); }, "\"peer.speed\" starts with \"peer.\""));
-        CHECK_EQ(peer.agent().schema().size(), std::size_t{1}); // ecu.connected only
-        // A clash with a network's monitoring output shows when the schema is completed (here:
-        // start()); nothing is added, the message names the peer and the way out, and the peer is
-        // not started.
         static_cast<void>(peer.j1939("CAN").add_node({0x21}));
-        peer.input("j1939.CAN.bus_state", &x);
+        CHECK(throws_with<std::invalid_argument>([&] { peer.input("j1939.CAN.bus_state", &x); },
+                                                 "\"j1939.CAN.bus_state\" starts with \"j1939.\""));
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{1}); // ecu.connected only
+        // A name registered on the agent itself is not checked there: a clash with a network's
+        // monitoring output shows when the schema is completed (here: start()); nothing is added,
+        // the message names the peer and the way out, and the peer is not started.
+        peer.agent().input("j1939.CAN.bus_state", &x);
         CHECK(throws_with<std::invalid_argument>([&] { peer.start(); }, "\"Clash\""));
         CHECK(throws_with<std::invalid_argument>([&] { peer.agent().complete_schema(); }, "PeerOptions::monitor = false"));
         CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
@@ -349,7 +352,8 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
         Peer peer(plain);
         CHECK(throws<std::invalid_argument>([&] { peer.input("peer.speed", &x); }));
         static_cast<void>(peer.j1939("CAN").add_node({0x21}));
-        peer.input("j1939.CAN.bus_state", &x); // no monitoring: no clash
+        CHECK(throws<std::invalid_argument>([&] { peer.input("j1939.CAN.bus_state", &x); })); // reserved all the same
+        peer.agent().input("j1939.CAN.bus_state", &x); // no monitoring: no clash
         peer.agent().complete_schema();
         CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
         // The schema is complete: the message names the peer and why.
@@ -423,6 +427,39 @@ TEST_CASE(control_peer_agent_refuses_a_network_the_monitoring_would_miss)
     }
 }
 
+TEST_CASE(control_peer_agent_reserves_the_bus_monitoring_prefixes_with_and_without_monitoring)
+{
+    // The prefixes do not depend on PeerOptions::monitor: an ECU that runs without monitoring
+    // here runs with it elsewhere, and the launcher reads "j1939.<network>.frames_sent" by name.
+    InProcessRegistry registry;
+    for (const bool monitor : {true, false})
+    {
+        PeerOptions o;
+        o.participant = "Reserved";
+        o.registry_uri = registry.uri;
+        o.monitor = monitor;
+        Peer peer(o);
+        static_cast<void>(peer.j1939("CAN").add_node({0x21}));
+        double x = 0.0;
+        for (const std::string prefix : {"peer.", "j1939.", "can.", "lin.", "eth."})
+        {
+            const std::string name = prefix + "CAN.frames_sent";
+            CHECK(throws_with<std::invalid_argument>([&] { peer.output(name, &x); },
+                                                     "\"" + name + "\" starts with \"" + prefix + "\", which is reserved"));
+        }
+        peer.output("my.j1939.x", &x);
+        peer.output("spy.missed", &x);
+        peer.agent().complete_schema();
+        const auto has = [&](const char* wanted) {
+            const auto& schema = peer.agent().schema();
+            return std::any_of(schema.begin(), schema.end(), [&](const VariableInfo& info) { return info.name == wanted; });
+        };
+        CHECK(has("my.j1939.x"));
+        CHECK(has("spy.missed"));
+        CHECK_EQ(has("j1939.CAN.frames_sent"), monitor);
+    }
+}
+
 TEST_CASE(control_peer_agent_monitoring_names_a_renamed_network_as_the_simulation_does)
 {
     // PeerOptions::network_names: the outputs and the events of the network that the code names
@@ -439,7 +476,7 @@ TEST_CASE(control_peer_agent_monitoring_names_a_renamed_network_as_the_simulatio
         peer.set_agent_options(AgentOptions{.sample_period = SimDuration::zero()});
         peer.j1939("J1939_CAN").add_node({0x00, j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});
         peer.j1939("Plain");
-        peer.input("j1939.J1939_CAN.bus_state", &x); // the code's name is free for the ECU's own variables
+        peer.agent().input("j1939.J1939_CAN.bus_state", &x); // the code's name does not clash
         CHECK(&peer.network("J1939_CAN") == &peer.network(peer.network_names().front()));
         CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
         CHECK(!peer.failed());
@@ -467,10 +504,10 @@ TEST_CASE(control_peer_agent_monitoring_names_a_renamed_network_as_the_simulatio
         CHECK(peer.describe().networks.front().name == "J1939_CAN");
     }
     {
-        // A variable of the ECU with the simulation's name clashes: the message says where the name comes from.
+        // A variable on the agent with the simulation's name clashes: the message says where the name comes from.
         Peer peer(o);
         static_cast<void>(peer.j1939("J1939_CAN").add_node({0x21}));
-        peer.input("j1939.VehicleCAN.bus_state", &x);
+        peer.agent().input("j1939.VehicleCAN.bus_state", &x);
         CHECK(throws_with<std::invalid_argument>(
             [&] { peer.agent().complete_schema(); },
             "the ECU declares a variable 'j1939.VehicleCAN.bus_state', the name of a monitoring output of the peer (rename "

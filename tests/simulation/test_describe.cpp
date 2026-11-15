@@ -295,3 +295,49 @@ TEST_CASE(describe_reserved_variable_names_are_refused_alike)
         CHECK_EQ(ecu.describe().variables.size(), 5u);
     }
 }
+
+TEST_CASE(describe_bus_monitoring_prefixes_are_refused_alike)
+{
+    // "j1939." (a Peer's monitoring outputs of its J1939 networks) and "can.", "lin.", "eth."
+    // (kept for the monitoring of the other buses) are refused at the declaration on both
+    // implementations; the message names the ECU, the variable, the prefix and the way out.
+    for (const bool silkit : {false, true})
+    {
+        Simulation sim(on(silkit));
+        Ecu& ecu = sim.add_ecu("Named", 10ms);
+        static_cast<void>(ecu.j1939("VehicleCAN"));
+        int x = 0;
+        for (const std::string prefix : {"j1939.", "can.", "lin.", "eth."})
+        {
+            for (const auto& declare : std::vector<std::function<void()>>{
+                     [&] { ecu.input(prefix + "speed", &x); },
+                     [&] { ecu.output(prefix + "VehicleCAN.frames_sent", &x); },
+                     [&] { ecu.output(prefix, [] { return 1; }); },
+                     [&] { ecu.input_enum(prefix + "mode", &x, {{"a", 0}}); },
+                     [&] { ecu.output_enum(prefix + "state", [] { return 0; }, {{"a", 0}}); },
+                     [&] { ecu.input(prefix + "get", [] { return 1.0; }, [](double) {}); }})
+            {
+                CHECK(vehicle_sil::unit::throws_if<std::invalid_argument>(declare, [&](const std::invalid_argument& e) {
+                    const std::string what = e.what();
+                    return what.find("\"Named\"") != std::string::npos &&
+                           what.find("\" starts with \"" + prefix + "\", which is reserved for the monitoring outputs of ") !=
+                               std::string::npos &&
+                           what.find(": choose a name that does not start with it") != std::string::npos;
+                }));
+            }
+        }
+        CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>(
+            [&] { ecu.output("j1939.engine_speed", &x); },
+            "the variable name \"j1939.engine_speed\" starts with \"j1939.\", which is reserved for the monitoring "
+            "outputs of a Peer's J1939 networks (\"j1939.<network>.frames_sent\" and the like; PeerOptions::monitor): "
+            "choose a name that does not start with it"));
+        CHECK_EQ(ecu.describe().variables.size(), 1u); // ecu.connected
+        // Names that contain a prefix later, or only look alike, are the ECU's; "spy." is not reserved.
+        for (const char* name : {"my.j1939.x", "engine.can.speed", "j1939", "can", "canbus.x", "linear.x", "ethernet.x",
+                                 "J1939.x", "spy.missed", "spy.mine"})
+        {
+            ecu.output(name, &x);
+        }
+        CHECK_EQ(ecu.describe().variables.size(), 11u);
+    }
+}

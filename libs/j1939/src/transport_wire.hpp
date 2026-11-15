@@ -27,14 +27,8 @@ inline constexpr std::uint8_t kEndOfMessageAck = 19;
 inline constexpr std::uint8_t kBam = 32;
 inline constexpr std::uint8_t kAbort = 255;
 
-// Timeouts: between the packets of a transfer (T1), for the first packet after a clear-to-send
-// (T2), for the receiver's answer (T3) and for the next clear-to-send after one that holds the
-// connection (T4).
-inline constexpr SimDuration kT1 = std::chrono::milliseconds(750);
-inline constexpr SimDuration kT2 = std::chrono::milliseconds(1250);
-inline constexpr SimDuration kT3 = std::chrono::milliseconds(1250);
-inline constexpr SimDuration kT4 = std::chrono::milliseconds(1050);
-inline constexpr std::uint8_t kMaxRetransmitRequests = 2;
+// The timeouts (T1..T4) and the retransmission requests per window are NetworkOptions::timing
+// (ProtocolTiming in types.hpp).
 
 /// The number of data packets of a message of `length` bytes.
 [[nodiscard]] constexpr std::uint16_t packets_for(std::size_t length) noexcept
@@ -96,7 +90,7 @@ enum class Shape : std::uint8_t
 
 /// true for the groups that are single-frame only: a message of such a group that was assembled
 /// from a transfer is not handed on (the engine's receiver ends the transfer without a message,
-/// the sniffer reports SniffEnd::Refused).
+/// the sniffer reports SniffResult::Refused).
 [[nodiscard]] constexpr bool single_frame_only(Pgn pgn) noexcept
 {
     return pgn == kPgnAddressClaimed || pgn == kPgnRequest;
