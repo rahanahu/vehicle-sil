@@ -416,16 +416,16 @@ Messages flow in this order: the hello; the start window before the first step (
 
 The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
+Every message starts with the format version, `kVersion` (2). Both sides write `kVersion` and read only `kVersion`; nothing is negotiated. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of another version: the Hub reports it (`LinkState::VersionMismatch`) and makes no peer of it. An Agent drops every message of another version.
 
-- Version 1 is fixed. Its bytes are what ECUs built with vehicle-sil 0.1.0 send and expect.
-- Version 2 can get new fields without a new version:
+- Version 1 (vehicle-sil 0.1.0) is not read any more. An ECU built with vehicle-sil 0.1.0 under a newer Hub, or a newer ECU under the Hub of 0.1.0, takes part in the simulation, but its variables cannot be read or written.
+- The format can get new fields without a new version:
   - Each variable, write, result and event starts with its size in bytes.
   - The last byte of the header is the revision of the writer (`kRevision`).
   - A new field goes at the end of its element, or at the end of the message if it belongs to the message, and `kRevision` goes up by one.
   - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
   - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer looks at the other side's revision before it sends one.
-- Version 2 carries two fields that version 1 has no place for: how many writes of a command were applied (`CommandResult::applied_writes`), and which write a refusal is about (`SubmitResult::failed_write`). Decoded from version 1, both are empty.
+- A result says how many writes of a command were applied (`CommandResult::applied_writes`), and a refusal says which write it is about (`SubmitResult::failed_write`); either can be empty (not said).
 - Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
 - The decoder never throws and never reads outside the bytes it is given.
@@ -588,7 +588,7 @@ If a participant ended in order (reached Shutdown) but its last word did not arr
 | An Agent that does not know the answer | Drops the answer and ends as before |
 | An Agent whose Hub does not answer | Waits the full wait time, then ends |
 
-In both cases the format version (`kVersion`) is the same, so they can connect.
+Neither case depends on the format version: the answer is a kind of its own, added without a new version.
 
 ### Peers that send no hello
 

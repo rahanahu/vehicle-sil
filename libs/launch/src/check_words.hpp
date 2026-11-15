@@ -5,10 +5,12 @@
 // Internal.
 #pragma once
 
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/j1939/types.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -72,6 +74,16 @@ inline std::string hex2(unsigned value)
     char buffer[8];
     std::snprintf(buffer, sizeof(buffer), "0x%02X", value & 0xFFu);
     return buffer;
+}
+
+/// What to do about an ECU whose control agent speaks `version` of the control messages, not
+/// control::wire::kVersion: which side is the older one, and what to build or use again
+/// (control-link-version of the check and of the run).
+inline std::string control_version_fix(std::int64_t version)
+{
+    return version < control::wire::kVersion
+               ? "the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
+               : "the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one";
 }
 
 } // namespace vehicle_sil::launch::detail

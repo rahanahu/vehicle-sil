@@ -113,7 +113,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `version-mismatch` | Note | The vehicle-sil version that the executable was built with differs from the version of `vehicle_sil_launch`. | If they do not work together, rebuild with the same version. |
 | `coarse-time-step` | Warning | The file has `speed` (a number) and `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
 | `control-link-not-offered` | Note | An ECU with variables does not report in its `--describe` output that it exposes them to the simulation (`--no-control`, or an old executable without `control`). | To read and write the variables, remove `--no-control`, or rebuild the ECU with a newer vehicle-sil. |
-| `control-link-version` | Warning | The message format version (or the transport) reported by an ECU with variables differs from that of `vehicle_sil_launch`. | Build the ECU and `vehicle_sil_launch` with the same version of vehicle-sil. |
+| `control-link-version` | Warning | An ECU with variables reports another message format version than `vehicle_sil_launch`, or another transport than `silkit`. The simulation runs, but `run` cannot read or write that ECU's variables. The message says which side is older. | If the ECU is older, rebuild it with the vehicle-sil of `vehicle_sil_launch`. If it is newer, use a `vehicle_sil_launch` of its vehicle-sil version or a newer one. For another transport, make the executable offer its variables over `silkit`. |
 | `variable-map-unknown` | Error | The `from` variable of a mapping in `variables` does not exist in the executable. | Correct the `from` name (the finding message gives a close name or the list of the executable's variables). |
 | `variable-map-type` | Error | The form of the mapping does not fit the type of the variable. | Write `scale`, `offset` for integer or real variables, and `map` for integer or enum variables. |
 | `variable-map-value` | Error | The executable's variable cannot take a value in `map` (not an item of the enum, or out of range). | Change the values in `map` to values the variable can take. |
@@ -538,7 +538,7 @@ participants:
       ],
       "control": {
         "transport": "silkit",
-        "wire_version": 1
+        "wire_version": 2
       }
     }
   ],

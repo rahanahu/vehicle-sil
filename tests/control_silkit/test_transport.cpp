@@ -849,51 +849,57 @@ TEST_CASE(a_hello_of_another_version_is_reported_and_makes_no_peer)
     const InProcessRegistry registry;
     HubSide side(registry.uri, {"A"});
     TestEcu a("A", registry.uri);
-    // A participant outside the simulation's lifecycle that says hello in a later version.
-    auto old = SilKit::CreateParticipant(
-        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)), "Newer",
-        registry.uri);
+    // Participants outside the simulation's lifecycle that say hello in a later version and in an
+    // earlier one (an ECU built with an older vehicle-sil).
     namespace detail = vehicle_sil::control_silkit::detail;
-    auto* publisher = old->CreateDataPublisher(detail::kHelloTopic, detail::spec(detail::kHelloTopic), 1);
-    wire::Hello hello;
-    hello.participant = "Newer";
-    hello.session = 5;
-    wire::Bytes bytes;
-    std::string why;
-    CHECK(wire::encode_hello(hello, bytes, why));
-    bytes[4] = static_cast<std::uint8_t>(wire::kNewestVersion + 1);
-    bytes.push_back(0x55); // whatever that version adds
-    publisher->Publish(detail::span_of(bytes));
+    const auto say_hello = [&registry](const std::string& name, std::uint16_t version, std::uint64_t session) {
+        auto participant = SilKit::CreateParticipant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)), name,
+            registry.uri);
+        auto* publisher = participant->CreateDataPublisher(detail::kHelloTopic, detail::spec(detail::kHelloTopic), 1);
+        wire::Hello hello;
+        hello.participant = name;
+        hello.session = session;
+        wire::Bytes bytes;
+        std::string why;
+        CHECK(wire::encode_hello(hello, bytes, why));
+        bytes[4] = static_cast<std::uint8_t>(version);
+        bytes.push_back(0x55); // whatever that version has there
+        publisher->Publish(detail::span_of(bytes));
+        return participant;
+    };
+    auto newer = say_hello("Newer", wire::kVersion + 1, 5);
+    auto older = say_hello("Older", wire::kVersion - 1, 6);
     // And something that is no message at all.
-    auto* noise = old->CreateDataPublisher("noise", detail::spec(detail::kStepTopic), 0);
+    auto* noise = newer->CreateDataPublisher("noise", detail::spec(detail::kStepTopic), 0);
 
     HelloReport hellos;
     side.controller->set_start_window([&](const StartWindow& window) {
         // Returns as soon as each has answered one way or the other, long before the deadline.
-        hellos = side.transport->wait_for_hellos({"Newer", "A"}, Wall::now() + 60s, [&window] { return window.cancelled(); });
+        hellos = side.transport->wait_for_hellos({"Newer", "Older", "A"}, Wall::now() + 60s, [&window] { return window.cancelled(); });
     });
     const auto begin = Wall::now();
     start_together(*side.controller, {a.peer.get()}, 60s);
     CHECK(Wall::now() - begin < 30s);
-    CHECK(hellos.mismatched == std::vector<std::string>{"Newer"});
+    CHECK((hellos.mismatched == std::vector<std::string>{"Newer", "Older"}));
     CHECK(hellos.connected == std::vector<std::string>{"A"});
     CHECK(hellos.missing.empty());
-    bool found = false;
+    std::size_t found = 0;
     for (const auto& link : side.transport->links())
     {
-        if (link.participant == "Newer")
+        if (link.participant == "Newer" || link.participant == "Older")
         {
-            found = true;
+            ++found;
             CHECK(link.state == LinkState::VersionMismatch);
-            CHECK_EQ(link.version, static_cast<std::uint16_t>(wire::kNewestVersion + 1));
+            CHECK_EQ(link.version, static_cast<std::uint16_t>(link.participant == "Newer" ? wire::kVersion + 1 : wire::kVersion - 1));
         }
     }
-    CHECK(found);
+    CHECK_EQ(found, std::size_t{2});
     CHECK_EQ(side.hub.peers().size(), std::size_t{1});
 
     const wire::Bytes junk{'n', 'o', 't', ' ', 'a', ' ', 'm', 'e', 's', 's', 'a', 'g', 'e'};
     noise->Publish(detail::span_of(junk));
-    CHECK(eventually([&] { return side.transport->stats().undecodable >= 2; }, 20s));
+    CHECK(eventually([&] { return side.transport->stats().undecodable >= 3; }, 20s));
     // The simulation is not disturbed.
     side.controller->run_until(at(20ms));
     CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
@@ -1632,7 +1638,7 @@ TEST_CASE(hellos_beyond_the_bounds_are_refused_and_counted)
     wire::Bytes bytes;
     std::string why;
     CHECK(wire::encode_hello(newer, bytes, why));
-    bytes[4] = static_cast<std::uint8_t>(wire::kNewestVersion + 1);
+    bytes[4] = static_cast<std::uint8_t>(wire::kVersion + 1);
     flood.hello_out->Publish(topics::span_of(bytes));
     CHECK(eventually([&] { return side.transport->stats().refused_hellos == 7; }, 30s));
     CHECK_EQ(side.transport->links().size(), std::size_t{4});
@@ -1884,4 +1890,51 @@ TEST_CASE(a_write_to_an_agent_that_has_not_said_it_receives_commands_is_refused_
     wire::encode_session(wire::Kind::Ready, 4242, bytes);
     quiet.submitted_out->Publish(topics::span_of(bytes));
     CHECK(eventually([&] { return side.transport->stats().unknown == unknown + 1; }, 30s));
+}
+
+// An agent reads only its own version: a probe or a command for it in an older or a newer
+// version is not answered (nor taken for one of another agent: it cannot be read that far).
+TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_another_version)
+{
+    const InProcessRegistry registry;
+    RawHub hub(registry.uri);
+    TestEcu a("A", registry.uri, {.virtual_time = false, .last_word_wait = 0ms});
+    a.peer->start();
+    const std::uint64_t session = a.transport->session();
+    const auto in_version = [](wire::Bytes bytes, std::uint16_t version) {
+        bytes[4] = static_cast<std::uint8_t>(version);
+        bytes[5] = static_cast<std::uint8_t>(version >> 8);
+        return bytes;
+    };
+    wire::Bytes probe;
+    wire::encode_session(wire::Kind::Probe, session, probe);
+    wire::Bytes command;
+    CHECK(wire::encode_command(wire::CommandMessage{session, Command{1, {{"cmd", Value{std::int64_t{5}}}}, {}, {}}}, command));
+    // Until the probes arrive at all (the subscriptions of the two directions are made one by
+    // one): a probe for another agent, in this version.
+    wire::Bytes elsewhere;
+    wire::encode_session(wire::Kind::Probe, session + 1, elsewhere);
+    CHECK(eventually(
+        [&] {
+            hub.command_out->Publish(topics::span_of(elsewhere));
+            return a.transport->stats().ignored >= 1;
+        },
+        30s));
+    CHECK_EQ(a.transport->stats().undecodable, std::uint64_t{0});
+    std::uint64_t undecodable = 0;
+    for (const std::uint16_t version : {std::uint16_t{wire::kVersion - 1}, std::uint16_t{wire::kVersion + 1}})
+    {
+        hub.command_out->Publish(topics::span_of(in_version(probe, version)));
+        hub.command_out->Publish(topics::span_of(in_version(command, version)));
+        undecodable += 2;
+        CHECK(eventually([&] { return a.transport->stats().undecodable == undecodable; }, 30s));
+    }
+    CHECK_EQ(a.transport->stats().commands, std::uint64_t{0});
+    {
+        const std::lock_guard lock(hub.mutex);
+        CHECK(hub.ready.empty());
+    }
+    // In its own version: answered.
+    CHECK(eventually([&] { return hub.probe("A").has_value(); }, 30s));
+    a.end();
 }

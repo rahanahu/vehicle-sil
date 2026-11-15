@@ -154,6 +154,7 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 - `not_offered` の ECU は待ちません。
 - `--describe` の出力では公開しないのに hello を受信した participant は、`connected` です。
 - どの状態でも、シミュレーションは動きます（`--strict` では警告が失敗です）。
+- `vehicle_sil_launch` が変数を読み書きできるのは、メッセージの形式のバージョンが自分と同じ ECU の実行ファイルだけです。vehicle-sil 0.1.0 でビルドした ECU と新しいランチャー、新しい ECU と 0.1.0 のランチャーの組み合わせでは、ECU はシミュレーションに加わりますが、変数を読み書きできません。照合が `control-link-version` を出します。
 
 ### 始まる前の待ち
 
@@ -656,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 - 別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている。
 - 実行中に参加した participant の hello を、まだ受信していなかった。
 
-`control-link-version` が出たら、同じバージョンの vehicle-sil でビルドします。
+`control-link-version` が出たら、どちらが古いかが文に出ます。ECU のほうが古ければ `vehicle_sil_launch` の vehicle-sil でビルドし直し、新しければ ECU の vehicle-sil と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。
 
 `variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、実行の行（`log`）にも 1 回書きます。始まった時点で接続している ECU は始まったときに、その後に接続した ECU は実行の終わりに書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
 
@@ -986,7 +987,7 @@ passed: 0 errors, 1 warning, 1 note
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       },
       {
@@ -1062,7 +1063,7 @@ passed: 0 errors, 1 warning, 1 note
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       }
     ],

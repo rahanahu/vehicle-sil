@@ -154,6 +154,7 @@ Each participant has one of 5 connection states. The state appears in `participa
 - `run` does not wait for a `not_offered` ECU.
 - A participant whose `--describe` output does not offer variables but that sends hello is `connected`.
 - The simulation runs in every state (with `--strict`, warnings are failures).
+- `vehicle_sil_launch` reads and writes the variables only of ECU executables whose message format version is its own. An ECU built with vehicle-sil 0.1.0 under a newer launcher, or a newer ECU under the launcher of 0.1.0, takes part in the simulation, but its variables cannot be read or written; the check reports `control-link-version`.
 
 ### Waiting before the start
 
@@ -656,7 +657,7 @@ Notes on individual codes:
 - Another program writes to the same topics (`vehicle_sil.control.*`).
 - The hello of a participant that joined during the run had not arrived yet.
 
-If `control-link-version` appears, build with the same vehicle-sil version.
+If `control-link-version` appears, the message says which side is older: rebuild an older ECU with the vehicle-sil of `vehicle_sil_launch`, or use a `vehicle_sil_launch` of a newer ECU's vehicle-sil version.
 
 With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`): at the start for an ECU that is connected by then, and at the end of the run for one that connected later. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
 
@@ -986,7 +987,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       },
       {
@@ -1062,7 +1063,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       }
     ],
