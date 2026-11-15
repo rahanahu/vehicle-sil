@@ -390,8 +390,10 @@ public:
     /// `give_up`, if set, is asked while it waits (on the calling thread, every few milliseconds):
     /// a non-empty answer ends the wait at once with std::runtime_error that has the answer (for
     /// a required participant that has gone, which the lifecycle would wait for until the
-    /// timeout, or for limits of the caller's own). `timeout` kNoStartLimit: no limit but
-    /// `give_up`.
+    /// timeout, or for limits of the caller's own). An answer that comes when this participant
+    /// has begun meanwhile (its first step or SIL Kit's starting handler has run) is not taken:
+    /// the simulation did start, however it looks to the caller by now (a short one may be over),
+    /// and start() returns as above. `timeout` kNoStartLimit: no limit but `give_up`.
     void start(std::chrono::milliseconds timeout, const std::function<std::string()>& give_up = {});
 
     /// Stops the lifecycle and waits (bounded by shutdown_timeout) for it to shut down.

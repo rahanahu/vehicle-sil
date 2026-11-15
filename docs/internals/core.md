@@ -32,7 +32,7 @@ To keep this guarantee, the wait in `start()` keeps 2 orderings.
 
 First, it waits until the state leaves ReadyToRun. For a participant without time synchronization, SIL Kit calls the starting handler in ReadyToRun and switches to Running only after the handler returns. So `start()` does not return on the flag that says the handler was called; it waits until the state has left ReadyToRun.
 
-Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, when the wait sees a stopping or ended state, it reads the flags again, so that a run that passed through Running and stopped after the flags were read does not count as a failure.
+Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, when the wait sees a stopping or ended state, it reads the flags again, so that a run that passed through Running and stopped after the flags were read does not count as a failure. For the same reason it reads the flags again when `give_up` tells it to stop waiting: `give_up` looks at the simulation later than the wait did, and a short run can have begun and ended in between. If this participant has begun, the answer is not taken and `start()` returns as for any start.
 
 The tests `core.participant_start_*` check both orders, using a test hook in `libs/core/src/participant_runtime_probe.hpp` to force the order (only tests use it; it is not installed).
 
@@ -90,7 +90,7 @@ CommunicationReady handlers need this guarantee when the start fails before Runn
 
 | When CommunicationReady arrives | Handlers |
 |---|---|
-| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). In virtual time, the stop that `stop()` kept is passed at the first step, and the lifecycle stops there |
+| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). The stop that `stop()` kept is passed where the lifecycle can take it, and the lifecycle stops there: in virtual time at the first step, otherwise when the participant gets to Running |
 | While `stop()` waits for the shutdown | Called as usual |
 
 The tests are `core.communication_ready_after_stop_*` and `core.communication_ready_handler_that_runs_is_waited_for_by_stop`.

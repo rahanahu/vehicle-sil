@@ -210,14 +210,14 @@ bool RunStart::manual_ready(SimulationController& controller) const
     });
 }
 
-void RunStart::note_control()
+void RunStart::note_control(control_silkit::HubTransport& transport)
 {
     std::optional<ControlStart> start;
     {
         const std::lock_guard lock(shared_.found_mutex);
         start = shared_.control_start;
     }
-    control_.note_links(outcome_, start, [this](std::size_t i) { return participants_.in_run(i); });
+    control_.note_links(outcome_, start, transport.links(), [this](std::size_t i) { return participants_.in_run(i); });
 }
 
 bool StrangerWait::look(const std::string& name, State state, std::chrono::steady_clock::time_point now)
@@ -277,7 +277,7 @@ void RunStart::tell_strangers(SimulationController& controller)
     }
 }
 
-bool RunStart::wait_for_start(SimulationController& controller)
+bool RunStart::wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ctx_.config.start_timeout_ms);
     // The participants someone starts by hand have no time limit: they may take any time.
@@ -405,7 +405,7 @@ bool RunStart::wait_for_start(SimulationController& controller)
         out_.say("the simulation did not start: " + outcome_.start_error);
         return false;
     }
-    note_control();
+    note_control(transport);
     {
         const std::lock_guard lock(shared_.found_mutex);
         outcome_.before_start_error = shared_.before_start_error;

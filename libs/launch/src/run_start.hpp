@@ -114,8 +114,8 @@ public:
     }
 
     /// Waits until every required participant has joined, then starts the simulation. false if
-    /// it did not start (the outcome says why).
-    [[nodiscard]] bool wait_for_start(SimulationController& controller);
+    /// it did not start (the outcome says why). `transport`: for the control links after the start.
+    [[nodiscard]] bool wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport);
 
     /// The simulation ran, and was aborted because what was to be done before it failed: the
     /// participants are ended as after a run.
@@ -141,8 +141,8 @@ private:
     /// or further).
     [[nodiscard]] bool manual_ready(SimulationController& controller) const;
     /// After the start: where each participant's control agent stands (RunControl::note_links()),
-    /// from what the window found.
-    void note_control();
+    /// from what the window found and, for the agents it did not wait for, the links now.
+    void note_control(control_silkit::HubTransport& transport);
     /// --timeout-ms passed before the simulation started (a run that waits for a participant started
     /// by hand): `waiting_for` says for what. Returns false (it did not start).
     bool start_timed_out(const std::string& waiting_for);

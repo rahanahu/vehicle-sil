@@ -1220,7 +1220,14 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         }
         if (give_up)
         {
-            if (std::string why = give_up(); !why.empty())
+            // give_up() looks at the simulation after the looks above, and the simulation goes on
+            // meanwhile: a short one can have begun and ended, and a participant that is stopping
+            // then looks to the caller like one that left before the start. The flags say whether
+            // this one began: if so, the next round decides (it returns, or waits for Running
+            // while the starting handler is still there), and "give up" is not taken.
+            if (std::string why = give_up();
+                !why.empty() && !step_entered_.load(std::memory_order_acquire)
+                && !starting_entered_.load(std::memory_order_acquire))
             {
                 throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name +
                                          "': the start was given up, state: " + orch::to_string(current) + ": " + why);
@@ -1433,7 +1440,8 @@ void ParticipantRuntime::deliver_stop(bool now, std::chrono::steady_clock::time_
             stop_delivered_.store(true, std::memory_order_release); // it ends anyway
         }
         // Before Running, SIL Kit ignores Stop() (with a warning): the request is kept and
-        // delivered by start() once Running is reached or, with virtual time, by the first step.
+        // delivered once Running is reached (by start(), or by on_status() when start() does not
+        // wait any more) or, with virtual time, by the first step.
     }
     catch (const std::exception&)
     {
@@ -1815,14 +1823,17 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         }
     }
     // This participant's own status comes here too: a stop requested after a step failure
-    // waited for the Error (deliver_stop()).
+    // waited for the Error (deliver_stop()), and one requested before Running waits for Running.
+    // start() passes that one on while it waits, and the first step does with virtual time; when
+    // start() has given up (a timeout) and there are no steps, this is the only place left.
+    // deliver_stop() keeps a request for the first step where it has to, and passes it on once.
     if (status.participantName == options_.participant_name)
     {
         if (has_finished(PeerStatus{status.state}))
         {
             notify_stop_observer(); // also a stop that another participant asked for
         }
-        if (status.state == orch::ParticipantState::Error)
+        if (status.state == orch::ParticipantState::Error || status.state == orch::ParticipantState::Running)
         {
             deliver_stop(false);
         }

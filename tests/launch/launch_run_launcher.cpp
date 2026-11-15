@@ -3727,11 +3727,18 @@ void variable_map(const Options& o)
     expect_code(late, 1, "run with a mapping that the agent's variables do not fit");
     const std::string said_late = lf(late.standard_error);
     const std::string result_late = lf(late.standard_output);
+    // The launcher does not wait for the agent of a participant with describe: false: the line is
+    // said at the start if the agent is connected by then, and else after the simulation.
     require(contains(said_late,
                      "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
                      "control agent announced and are not applied: body.fill: the executable has no variable 'levle'. In "
                      "this run those variables are read under the executable's names and values, and a write to a name of "
-                     "these mappings is refused\n"),
+                     "these mappings is refused\n") ||
+                contains(said_late,
+                         "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
+                         "control agent announced, which connected after the simulation had started, and were not applied: "
+                         "body.fill: the executable has no variable 'levle'. In this run those variables were read under the "
+                         "executable's names and values, and a write to a name of these mappings was refused\n"),
             "the line of the run about the mapping:\n" + said_late);
     require(contains(result_late, "note: sim.yaml:9: participant 'Body': variables is not compared for a participant with "
                                   "describe: false") &&

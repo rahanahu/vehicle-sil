@@ -379,7 +379,7 @@ Writes:
 - Ranges are compared in the executable's values (the ends of the shown range are products, so they can be 1 ulp off from values written in decimal; the ends shown in the list are rounded to 15 digits).
 - The scenario check uses the same test (`MappedSchema::in_range()` calls `to_actual()`).
 - Writes to the `name` and `from` of a mapping that was not applied are refused before the list is searched (`MappedSchema::not_writable()`). Reading them works as before.
-- For the participants connected at the start, the launcher reports each mapping that was not applied once, in a run line (`RunControl::note_links()`).
+- The launcher reports each mapping that was not applied once, in a run line and in the result: at the start for the participants connected by then (`RunControl::note_links()`, which looks at the links again after the start for a participant that the start window did not wait for), and at the end of the run for those that connected later (`RunControl::note_late_maps()`).
 - The converted `Command` is sent only to that incarnation (after a restart, it is dropped).
 - The operation record (`request`) keeps the names and values that the client wrote.
 

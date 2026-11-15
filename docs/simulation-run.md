@@ -140,7 +140,7 @@ If the configuration file has `participants[].variables` (a variable map), that 
 
 ### Connection state (`state`)
 
-Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started and is not updated when the state changes later.
+Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started and is not updated when the state changes later. For a participant whose hello `run` does not wait for (see [Waiting before the start](#waiting-before-the-start)), it is the state just after the start, when every participant is at its first step.
 
 | `state` | Meaning | Reading and writing variables | Finding |
 |---|---|---|---|
@@ -159,11 +159,12 @@ Each participant has one of 5 connection states. The state appears in `participa
 
 Once all required participants have joined, they all wait before the first step. During that wait, `run` waits for hello and the reply "can take commands" from every ECU that meets all of these conditions:
 
-- It has variables.
-- Its `--describe` output says that it exposes them, with the same version as `vehicle_sil_launch`.
+- Its `--describe` output says that it has a connection to its variables, with the same version as `vehicle_sil_launch`. This includes an ECU without variables: `run` reads the counts of its networks over the same connection.
 - It is required and not disabled.
 
-Because of the order in which SIL Kit connects participants, hello has normally arrived before this wait starts, so there is normally no wait. `run` waits, for up to 5000 ms, only when an ECU that says it exposes variables has not sent hello. A Ctrl+C or a stop command during the wait ends it. If all participants joined just before the `start_timeout_ms` deadline, this wait can extend past `start_timeout_ms`.
+`run` does not wait for a `describe: false` participant, because it cannot know whether that participant has such a connection. If its hello arrives after the start, `control_link` stays `none`, and the entries of its `variables` map that do not match are still reported (`variable-map-not-applied`).
+
+Because of the order in which SIL Kit connects participants, hello has normally arrived before this wait starts, so there is normally no wait. `run` waits, for up to 5000 ms, only when an ECU that says it has the connection has not sent hello. A Ctrl+C or a stop command during the wait ends it. If all participants joined just before the `start_timeout_ms` deadline, this wait can extend past `start_timeout_ms`.
 
 ### Guarantees during the run
 
@@ -475,7 +476,7 @@ The network traffic counts (the `traffic:` line and table of the human-readable 
 - A run that ended by a stop request, `--timeout-ms`, a participant's failure or a participant that stopped the simulation (the virtual time at which it ended, `sim_ms`, differs, and so do the counts).
 - A network on which a participant that does not run in virtual time (a real-time `Peer`, a bridge) sends frames (the receivers' counts differ).
 - A participant that joined later (`manual`, `required: false`), or one that was started again (whether it is counted, and why not, differ).
-- A short run with an ECU that declares no variables (`run` does not wait for the connection to that ECU's variables, so if it connects late, the ECU is `no-sample` or `no-control-link`).
+- A short run with a `describe: false` participant (`run` does not wait for the connection to that participant's variables, so if it connects late, the participant is `no-sample` or `no-control-link`).
 
 Line endings are LF on every OS. When writing to the Windows console, both `check` and `run` show the text as UTF-8 characters, whatever the console code page.
 
@@ -657,7 +658,7 @@ Notes on individual codes:
 
 If `control-link-version` appears, build with the same vehicle-sil version.
 
-With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`) when the ECU connects. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
+With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`): at the start for an ECU that is connected by then, and at the end of the run for one that connected later. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
 
 When `before-start` appears, the simulation had started and was aborted at once.
 

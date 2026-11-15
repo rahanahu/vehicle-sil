@@ -32,7 +32,7 @@ SIL Kit の participant と lifecycle を持つ `ParticipantRuntime` につい�
 
 1 つ目は、ReadyToRun を離れるまで待つことです。時刻同期のない participant では、SIL Kit は starting のハンドラーを ReadyToRun で呼び、戻ってから Running にします。`start()` は、ハンドラーが呼ばれたフラグだけでは戻らず、状態が ReadyToRun を離れるまで待ちます。
 
-2 つ目は、フラグと状態を読む順です。待ちの中では、フラグ（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る経路ができます。逆に、フラグを読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときはフラグを読み直します。
+2 つ目は、フラグと状態を読む順です。待ちの中では、フラグ（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る経路ができます。逆に、フラグを読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときはフラグを読み直します。`give_up` が「待つのをやめる」と答えたときも、同じ理由でフラグを読み直します。`give_up` がシミュレーションを見るのは待ちが状態を読んだ後なので、短い実行はその間に始まって終わっていることがあります。この participant が始まっていれば、その答えは採らず、`start()` は始まったものとして戻ります。
 
 この 2 つの順は、`libs/core/src/participant_runtime_probe.hpp` のテスト用のフック（テストだけが使う。インストールしない）で順を決めて、`core.participant_start_*` が確認します。
 
@@ -90,7 +90,7 @@ CommunicationReady のハンドラーにこの保証が必要なのは、開始�
 
 | CommunicationReady が来る時点 | ハンドラーの扱い |
 |---|---|
-| `stop()` が戻った後 | 呼ばずに先へ進む（コントローラーは始まらず、ステップのハンドラーも呼ばない）。仮想時間では、`stop()` が預かった停止を最初のステップで渡し、そこで止まる |
+| `stop()` が戻った後 | 呼ばずに先へ進む（コントローラーは始まらず、ステップのハンドラーも呼ばない）。`stop()` が預かった停止を、lifecycle が受け取れる所で渡し、そこで止まる: 仮想時間では最初のステップ、それ以外では Running になったとき |
 | `stop()` が終了を待っている間 | ふつうに呼ぶ |
 
 確認するテストは、`core.communication_ready_after_stop_*` と `core.communication_ready_handler_that_runs_is_waited_for_by_stop` です。
