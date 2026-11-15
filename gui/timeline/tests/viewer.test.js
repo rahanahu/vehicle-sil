@@ -656,8 +656,118 @@ test('values are written the way the launcher writes them', () => {
   assert.equal(T.fmtMs(12.5), '12.5 ms');
 });
 
-test('viewer.js can be put inline in a page: it has no closing script tag and no comment opener', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'viewer.js'), 'utf8');
-  assert.doesNotMatch(source, /<\/script/i);
-  assert.doesNotMatch(source, /<!--/);
+test('viewer.js and messages.js can be put inline in a page: no closing script tag, no comment opener', () => {
+  for (const name of ['viewer.js', 'messages.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
+    assert.doesNotMatch(source, /<\/script/i, name);
+    assert.doesNotMatch(source, /<!--/, name);
+  }
+});
+
+// --- the words of the page (messages.js)
+
+const M = require('../messages.js');
+const PAGE = fs.readFileSync(path.join(__dirname, '..', 'timeline.html'), 'utf8');
+const VIEWER = fs.readFileSync(path.join(__dirname, '..', 'viewer.js'), 'utf8');
+/** Keys that viewer.js makes from a prefix and a value of the file (t(`status.${...}`) and the like). */
+const MADE = ['status.', 'type.', 'word.', 'col.'];
+
+/** Arguments that answer every name with a marker, so that a text that forgets one shows "undefined". */
+const ANY_ARGS = new Proxy({}, { get: (_, name) => (name === 'count' ? 2 : `<${String(name)}>`) });
+
+test('the dictionary has the same keys in English and Japanese, each of the same kind', () => {
+  assert.deepEqual(Object.keys(M).sort(), ['en', 'ja']);
+  assert.deepEqual(Object.keys(M.ja).sort(), Object.keys(M.en).sort());
+  for (const key of Object.keys(M.en)) {
+    for (const lang of ['en', 'ja']) {
+      const value = M[lang][key];
+      assert.equal(typeof value, typeof M.en[key], `${lang} ${key}`);
+      assert.equal(Array.isArray(value), Array.isArray(M.en[key]), `${lang} ${key}`);
+      if (typeof value === 'function') {
+        const text = value(ANY_ARGS);
+        assert.equal(typeof text, 'string', `${lang} ${key}`);
+        assert.doesNotMatch(text, /undefined|\[object/, `${lang} ${key}: ${text}`);
+      } else if (Array.isArray(value)) {
+        for (const part of value) {
+          if (Array.isArray(part))
+            assert.ok(['strong', 'em', 'code'].includes(part[0]), `${lang} ${key}`);
+          else assert.equal(typeof part, 'string', `${lang} ${key}`);
+        }
+      } else {
+        assert.equal(typeof value, 'string', `${lang} ${key}`);
+      }
+    }
+    // A Japanese text that is the English one is a key not translated (a few words are the same in both).
+    if (typeof M.en[key] === 'string' && /[a-z]{4,} [a-z]{2,}/i.test(M.en[key]))
+      assert.notEqual(M.ja[key], M.en[key], `ja ${key} is the English text`);
+  }
+});
+
+test('every key the page names is in the dictionary, and every key of the dictionary is used', () => {
+  const named = new Set();
+  for (const match of VIEWER.matchAll(/'([a-z][A-Za-z]*\.[A-Za-z_]+)'/g)) named.add(match[1]);
+  for (const match of PAGE.matchAll(/data-(?:text|label)="([^"]+)"/g)) named.add(match[1]);
+  const keys = new Set(Object.keys(M.en));
+  const missing = [...named].filter((k) => !keys.has(k) && k.split('.')[0] !== 'node');
+  assert.deepEqual(missing, [], 'keys that viewer.js or timeline.html name and messages.js lacks');
+  for (const prefix of MADE) {
+    assert.ok(VIEWER.includes(`\`${prefix}\${`), `viewer.js makes the keys ${prefix}...`);
+  }
+  const unused = [...keys].filter((k) => !named.has(k) && !MADE.some((p) => k.startsWith(p)));
+  assert.deepEqual(unused, [], 'keys of messages.js that nothing uses');
+});
+
+test('timeline.html has no text of its own: all of it comes from the dictionary', () => {
+  const body = PAGE.slice(PAGE.indexOf('<body'))
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<noscript>[\s\S]*?<\/noscript>/g, '') // shown without JavaScript, so in both languages
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]*>/g, '');
+  assert.equal(body.trim(), '');
+  assert.doesNotMatch(
+    PAGE,
+    /\s(?:title|aria-label|placeholder|alt)="/,
+    'attributes with text: use data-label',
+  );
+});
+
+test('the language is ?lang= when the page has it, else the browser one, else English', () => {
+  assert.equal(T.pickLanguage('?lang=ja', ['en-US']), 'ja');
+  assert.equal(T.pickLanguage('?src=x&lang=en', ['ja']), 'en');
+  assert.equal(T.pickLanguage('?lang=fr', ['ja-JP', 'en']), 'ja');
+  assert.equal(T.pickLanguage('', ['fr-FR', 'EN-gb']), 'en');
+  assert.equal(T.pickLanguage('', ['fr']), 'en');
+  assert.equal(T.pickLanguage(undefined, undefined), 'en');
+});
+
+test('in Japanese, the words of a refused file, a failed write and the read-out are Japanese', () => {
+  T.setLanguage('ja');
+  try {
+    assert.match(T.readTimeline('{', 'a.json').error, /^「a\.json」は JSON ではありません/);
+    assert.match(T.readTimeline({}, null).error, /時間の軸のファイルではありません/);
+    const at = { value: 3, state: 'not-applied', kept: { value: 1 } };
+    assert.equal(
+      T.readoutText('sent', at, { type: 'integer' }),
+      '送った値 3（入らなかった。ECU の値は 1）',
+    );
+    const f = {
+      at: 40,
+      writes: [{ at: 40, applied: false, point: null, cause: true, pointDropped: false }],
+    };
+    const words = T.writeWords(f);
+    assert.equal(words.heading, '40 ms の書き込み');
+    assert.equal(words.cause(f.writes[0]), '送っていない: 失敗の原因');
+    assert.equal(T.statusWord('passed'), '通った');
+    assert.equal(T.statusWord('later'), 'later'); // a status the page does not know stays as the file writes it
+    assert.equal(
+      T.compareText([
+        { op: 'ge', value: 1 },
+        { op: 'le', value: 2 },
+      ]),
+      'ge 1 かつ le 2',
+    );
+  } finally {
+    T.setLanguage('en');
+  }
+  assert.equal(T.writeWords({ at: 5, writes: [] }).heading, 'Writes for 5 ms');
 });

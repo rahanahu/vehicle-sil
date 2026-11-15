@@ -1,7 +1,8 @@
-// The timeline page (gui/timeline/timeline.html and viewer.js) with the timeline references that the
+// The timeline page (gui/timeline/timeline.html, viewer.js and messages.js) with the timeline references that the
 // launcher's tests compare (tests/launch/timeline), and the page's fixtures (gui/timeline/tests/fixtures) for
 // what the references do not have. The page is a plain file, not part of the app: the test serves it at an
-// address of its own, under the Content-Security-Policy that the GUI server sends.
+// address of its own, under the Content-Security-Policy that the GUI server sends. The browser's language is
+// English here (the page follows it when the address has no ?lang=); one test asks for Japanese with ?lang=ja.
 import { Locator, Page, expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,6 +17,8 @@ const EMBEDDED = '<script type="application/json" id="timeline-data"></script>';
 /** The policy of the GUI server (gui/server/src/vehicle_sil_gui/server.py), which will serve the page too. */
 const CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'";
+
+test.use({ locale: 'en-US' });
 
 /** Serves the page at ORIGIN and the references at ORIGIN/data/; collects console errors. */
 async function serve(page: Page): Promise<string[]> {
@@ -302,5 +305,29 @@ test('timeline page: text from the file stays text, and files it cannot read are
   await expect(page.getByRole('alert')).toContainText(
     "?src= must name a file on this page's own server (http://timeline.test)",
   );
+  expect(problems).toEqual([]);
+});
+
+test('timeline page: ?lang=ja shows it in Japanese, and a long read-out is shown in full', async ({
+  page,
+}) => {
+  const problems = await serve(page);
+  await page.goto(
+    `${ORIGIN}/timeline.html?src=tests/fixtures/state_not_applied.timeline.json&lang=ja`,
+  );
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  await expect(page.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+    /^手順 \d+ が [\d.]+ ms で失敗しました$/,
+  );
+  await expect(page.getByRole('button', { name: 'ファイルを開く' })).toBeVisible();
+  await expect(page.getByTestId('failed-writes')).toContainText('入らなかった');
+  await expect(page.locator('#chart')).toHaveAttribute('aria-label', /^シナリオの手順と変数/);
+  await page.getByRole('button', { name: '実行の全体' }).click();
+  await page.locator('#chart').focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+  // The longest read-out of the lane: it wraps instead of being cut.
+  const readout = lane(page, 'Body.mode').locator('.readout');
+  await expect(readout).toHaveText(/^送った値 on \(1\)（ECU に入ったか不明）/);
+  expect(await readout.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
   expect(problems).toEqual([]);
 });

@@ -170,6 +170,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | 設定ファイルの一覧                                         | `ConfigList`、`ConfigFile`                                                                                                                                                                                                      |
 | エラーの形                                                 | `ServerProblem`                                                                                                                                                                                                                 |
 | 指摘                                                       | `Finding`、`Severity`                                                                                                                                                                                                           |
+| ランチャーのキーと通信量                                   | `FromLauncher`、`LauncherFields`、`RunTraffic`、`TrafficNetwork`、`TrafficParticipant`、`TrafficUnplaced`、`ParticipantRole`                                                                                                    |
 | 自分で起動する participant（`manual`）                     | `FEATURE_MANUAL`                                                                                                                                                                                                                |
 | セッションのコピーの `SessionView.scenario`                | `ScenarioView`                                                                                                                                                                                                                  |
 
@@ -218,12 +219,22 @@ await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, star
 - タイムアウトは、拒否されたのではなく、レスポンスが来なかっただけです。開始なら、サーバーは実行を始めたかもしれず、始まったかはセッションのコピー（WebSocket）でわかります（`client.run.error` もそう言います）。
 - 転送（リダイレクト）には従いません。
 
+### ランチャーのキー（`raw`）
+
+チェックの結果、実行の結果、指摘、ランチャーのイベントはランチャーが書いたもので、ライブラリはそのキーをすべて渡します。型のあるフィールド（例: 実行の結果の `traffic`、`participants[].log`、チェックの参加者の `role`）は、このライブラリの版ではなく、ランチャーの形式の版（`vehicle_sil_check`、`vehicle_sil_run`、`vehicle_sil_events`）に従います。ランチャーから読んだオブジェクトには、どれにも `raw` があります。届いたままのランチャーのオブジェクトで、型にないキーもここにあります。`raw` は読み取り専用で、列挙されません（`JSON.stringify` とスプレッドには入りません）。値は型を確かめていない JSON です。型を確かめてから使い、HTML としてではなく文字列として出してください。
+
+```ts
+const result = client.session.session.get()?.result; // RunResult | null
+for (const network of result?.traffic?.networks ?? []) console.log(network.name, network.delivered);
+const strict = result?.raw?.['strict']; // 型のないキー: unknown
+```
+
 ### 読めない通知の扱い
 
 読み取りは部分ごとです。
 
 - 要約とイベントの一部が読めなくても、読める部分を使い、読めない部分の名前を `SessionView.unreadable` に入れます。
-- 知らない通知とイベントは、状態に反映せずに通します（`client.connection.onBatch` には、読む前のものがすべて届きます）。
+- 知らない通知とイベントは、状態に反映せずに通し、`onMessages` には渡しません（`client.connection.onBatch` には、読む前のものがすべて届きます。ライブラリの知らないイベントは、ここで読みます）。
 - JSON として読めない通知は、通知を出して `hello` から受け直します。
 
 ### Node から使う、通信を差し替える

@@ -5,5 +5,6 @@ const target = `http://127.0.0.1:${process.env.GUI_PORT ?? '8765'}`;
 
 export default {
   '/api/': { target },
+  '/timeline/': { target },
   '^/ws$': { target, ws: true },
 };

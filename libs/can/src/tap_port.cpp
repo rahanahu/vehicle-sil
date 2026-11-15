@@ -59,6 +59,12 @@ void TapPort::set_listener(TapListener* listener)
     {
         return;
     }
+    if (listener != nullptr && listener_ != nullptr)
+    {
+        throw std::logic_error("vehicle_sil::can::TapPort::set_listener(): this TapPort already has a TapListener (a "
+                               "TapPort has one); read the frames from that listener (one testkit::FrameLog per "
+                               "TapPort), or remove it first with set_listener(nullptr)");
+    }
     if (listener_ != nullptr)
     {
         listener_->tap_ = nullptr;

@@ -330,7 +330,7 @@ The `TapPort` reports the following 3 kinds to `TapListener::on_tap()`, in the o
 - Calling `send()`, `release_before()`, `release_events_before()` or `set_listener()` of the same `TapPort` from inside the listener is a `std::logic_error`.
 - The time domain and the wakeup are those of the wrapped port.
 - Use the `TapPort` from the driver's thread, like the wrapped port.
-- There is one listener.
+- There is one listener. `set_listener()` with another listener while one is set is a `std::logic_error` that says so, and the first one keeps listening: read the frames from that one (one `testkit::FrameLog` per `TapPort`), or remove it with `set_listener(nullptr)` first. Setting the same listener again changes nothing.
 - The listener and the `TapPort` each remember the registration, so either can be destroyed first.
 
 ## SIL Kit port (`SilKitCanPort`)
