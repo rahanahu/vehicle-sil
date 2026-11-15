@@ -55,8 +55,9 @@ public:
     [[nodiscard]] bool start_children(const std::string& uri, Which which);
 
     /// Notes the participants whose process has ended since the last look; returns the first
-    /// required one or bridge (stops_run()) among them (or -1).
-    int look_at_children(bool before_start);
+    /// required one or bridge (stops_run()) among them (or -1). With `bridges_only`, it looks at
+    /// the bridges alone and leaves the others for a later look.
+    int look_at_children(bool before_start, bool bridges_only = false);
 
     /// When the watch has found the simulation over (not aborted, not interrupted): notes the
     /// processes that have ended since the last look, and marks each bridge whose process has ended

@@ -271,13 +271,13 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
     held.say("  " + line);
 }
 
-int RunParticipants::look_at_children(bool before_start)
+int RunParticipants::look_at_children(bool before_start, bool bridges_only)
 {
     int ended = -1;
     for (std::size_t i = 0; i < children_.size(); ++i)
     {
         ParticipantRun& run = outcome_.participants[i];
-        if (!children_[i] || run.exit)
+        if (!children_[i] || run.exit || (bridges_only && !stops_run(run)))
         {
             continue;
         }
@@ -419,7 +419,9 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
 
 void RunParticipants::note_bridges_ended_with_run()
 {
-    static_cast<void>(look_at_children(false));
+    // Only the bridges: the end of the other participants is noted, and written, when they are
+    // ended, after the phase "stopping".
+    static_cast<void>(look_at_children(false, true));
     for (ParticipantRun& run : outcome_.participants)
     {
         if (stops_run(run) && run.exit && ended_by_itself(run))
