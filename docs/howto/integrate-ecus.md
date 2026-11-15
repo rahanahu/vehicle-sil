@@ -28,6 +28,7 @@ The build puts these files in that directory:
 | `simulation.two-buses.yaml` | `simulation.yaml` with the network name of the dashboard ECU added to `networks` | 3, 5 |
 | `simulation.fixed.yaml` | `simulation.yaml` with the dashboard ECU replaced by the rebuilt one | 4, 5 |
 | `scenarios/engine_speed.yaml` | A scenario that verifies that the dashboard ECU receives the engine speed | 5 |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` with a second instance of the engine ECU | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
 | `../ecu_main/engine/vehicle_sil_engine_ecu` | The engine ECU | 2–5 |
 | `dashboard_v1/vehicle_sil_dashboard_v1_ecu` | The dashboard ECU as first delivered | 2, 3 |
 | `../ecu_main/dashboard/vehicle_sil_dashboard_ecu` | The rebuilt dashboard ECU | 4, 5 |
@@ -57,12 +58,12 @@ Do steps 1–5 in order. Read the remaining sections when you need them.
 | Stop a run partway, or limit a run that does not end | Ctrl+C, `--timeout-ms` | [Stop the simulation](#stop-the-simulation) |
 | Read the result from a script or CI | `--json`, `--events` | [Use from scripts](#use-from-scripts---json---events) |
 | Run in sync with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
-| Run 2 instances of the same ECU | Arguments in `command` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
+| Run 2 instances of the same ECU | `j1939_nodes` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
 | Start tools not built with `ecu_main()` together with the ECUs | `describe: false` | [Add tools not built with `ecu_main()`](#add-tools-not-built-with-ecu_main) |
 
 ## Step 1: Agree on names and share them
 
-Before anyone starts building ECUs, decide the items in the table below and share them with every ECU author. For how to choose when in doubt, see [Decisions to make before you start](design-choices.md). All of them are values in the ECU code: if they do not match after you receive the executables, the ECU must be rebuilt.
+Before anyone starts building ECUs, decide the items in the table below and share them with every ECU author. For how to choose when in doubt, see [Decisions to make before you start](design-choices.md). All of them are values in the ECU code: if they do not match after you receive the executables, the ECU must be rebuilt. Two exceptions need no rebuild: `network_names` maps a network name (below), and `j1939_nodes` gives a second instance of the same executable another J1939 address and NAME (see [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu)).
 
 | Decision | Rule | Finding code if they do not match |
 |---|---|---|
@@ -274,7 +275,7 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU's name differs, write the `network_names` line that the finding gives, or go to step 4. If the kind differs, go to step 4. |
 | `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, write the `network_names` line that the finding gives, or go to step 4. |
 | `[step-mismatch]` | `step_ms` differs from the ECU's step size. | If the configuration file differs from the value you were given, fix the configuration file. If the ECU differs, go to step 4. |
-| `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
+| `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Fix them in `j1939_nodes` of the configuration file, as the example in the finding shows. When the finding says "this file cannot change them", go to step 4. |
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
 | `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
 | `[version-mismatch]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
@@ -322,7 +323,7 @@ The values below are built into the ECU, and the configuration file cannot chang
 |---|---|---|
 | The ECUs use different network names (and you do not map them with `network_names`) | The author of the ECU whose name differs from the one agreed in step 1 | Change the name passed to `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()` to the agreed name. |
 | A network kind differs | The author of the ECU whose kind differs from the agreed one | Connect to a bus of the agreed kind. |
-| J1939 addresses or NAMEs overlap | The author of the ECU that differs from the list of step 1 | Change the node's address or NAME to the value in the list. |
+| J1939 addresses or NAMEs overlap, and the finding says "this file cannot change them" (the executable does not take `j1939_nodes`, or its code puts 2 nodes at one address) | The author of the ECU that differs from the list of step 1 | Change the node's address or NAME to the value in the list. |
 | The step size differs from the value you were given | The author of that ECU | Confirm which value is correct, and fix the ECU if it is wrong. |
 | `--describe` fails | The author of that ECU | Investigate the cause from the end of stderr that the finding includes (send it with the request). |
 
@@ -679,23 +680,74 @@ For the definition of lateness, how to choose the tolerance, and how time steps 
 
 ## Run two instances of the same ECU
 
-If you list the same executable as 2 participants, `--name` gives them different participant names, but the J1939 NAME, the address and the variable names stay the same. If both are on the same network, `check` reports `name-conflict`. The configuration file alone cannot fix this either, so ask the ECU author to make the NAME and address configurable through arguments.
+If you list the same executable as 2 participants, `--name` gives them different participant names, and each has its own variables. The J1939 address and NAME are the ones in the ECU's code, so the 2 instances overlap: `check` reports `name-conflict`, and the finding gives the `j1939_nodes` entry that gives one of them another address and identity number. You write that entry in the configuration file. The ECU is not rebuilt.
+
+`simulation.second-engine.yaml` is `simulation.fixed.yaml` with a second engine ECU, `Engine2`. Both engines have their node at 0x00 in the code, which the participant table of `check` shows as `J1939_CAN (j1939 0x00)` before the entry is written.
+
+Write the entry under the second participant only. `address` and `identity_number` are the new values; the first instance keeps the values in the code:
+
+<!-- examples/integrate_ecus/simulation.second-engine.yaml: the participant Engine2 -->
+```yaml
+  - name: Engine2
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+    j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }]
+```
+
+```sh
+vehicle_sil_launch check simulation.second-engine.yaml
+```
+
+### Verify the second instance
+
+`J1939_CAN (j1939 0x01<-0x00)` shows the new address of `Engine2` and the address in its code. The note `j1939-node-changed` lists what changes. The exit code is 0.
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.second-engine.yaml -->
+```text
+simulation.second-engine.yaml: 3 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Engine2      10 ms  J1939_CAN (j1939 0x01<-0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Engine2, Dashboard
+
+note: simulation.second-engine.yaml:16: participant 'Engine2': j1939_nodes changes its nodes: on 'J1939_CAN', the node at 0x00 in its code is at 0x01, with the NAME 0x00000000FE000002 (0x00000000FE000001 in its code). Only Engine2 changes, and the check cannot see who relies on the old values: an ECU whose code has 0x00 written in it for Engine2 (as a destination, or to tell senders apart) still uses 0x00, and Engine2's own code may still have 0x00 in a filter or in the data it sends, and an ECU that looks Engine2 up by its whole NAME 0x00000000FE000001 does not find it; if messages do not reach Engine2 or are taken for another ECU's, the author of that code has to change it [j1939-node-changed]
+
+passed: 0 errors, 0 warnings, 1 note
+```
+
+| Topic | Details |
+|---|---|
+| `from` | The address in the ECU's code (the one the table shows without `j1939_nodes`), not the new address. You can leave it out when the ECU has one node on the network. Write it when the ECU has more nodes there, or to keep the entry on that address if the ECU author moves the node. |
+| An entry that changes nothing | `{ network: J1939_CAN, from: 0x00 }` removes a common entry in a variant. |
+| What does not change | What other ECUs have in their code about this ECU: its address and its whole NAME. The note `j1939-node-changed` says this for each participant. |
+| The example's dashboard | The dashboard ECU receives the engine speed by its PGN and does not look at the sender's address, so it receives the speeds of both engines and shows the one that arrived last. To tell the engines apart, the dashboard ECU must look at the sender's address or NAME; that is a change in its code. |
+| The executable does not take `j1939_nodes` | `check` reports `j1939-node-unsupported`. Ask the ECU author to rebuild it with the vehicle-sil version that `vehicle_sil_launch version` prints. |
+
+For every key and rule, see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](../simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes).
+
+### When `j1939_nodes` is not enough
+
+`j1939_nodes` changes the address, the identity number, the function instance and the ECU instance of the nodes that the ECU adds while it is set up. To change other fields of the NAME (the ones that describe the product), the number of nodes, or the addresses and NAMEs of other ECUs that this ECU has in its code, the ECU needs arguments of its own:
 
 | Task | Who | Details |
 |---|---|---|
 | Add ECU-specific arguments to the ECU | The ECU author | In `main()`, take the ECU-specific arguments out of `argv` and pass the rest to `ecu_main()` (see "`ecu_main`" in [ecu-executable.md](../ecu-executable.md#ecu_main)). |
 | Write the arguments in the configuration file | The integrator | Write them in `command`, after the executable. |
 
-For example, the configuration file looks like this. `--address` and `--identity-number` are examples of arguments that the ECU author defines; the example engine ECU does not have them.
+For example, the configuration file looks like this. `--peer-address` is an example of an argument that the ECU author defines; the example engine ECU does not have it.
 
 ```yaml
   - name: Engine2
-    command: [engine/vehicle_sil_engine_ecu, --address, "0x01", --identity-number, "2"]
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu, --peer-address, "0x28"]
 ```
 
 | Topic | Details |
 |---|---|
-| How `check` handles them | Both `check` and `run` start the ECU with the arguments in `command`, so the check covers the address and NAME of the node that those arguments create. |
+| How `check` handles them | Both `check` and `run` start the ECU with the arguments in `command`, so the check covers the addresses and NAMEs of the nodes that those arguments create. |
 | Names you cannot use | The names of the `ecu_main()` arguments (see "Arguments and exit codes" in [ecu-executable.md](../ecu-executable.md#arguments-and-exit-codes)) |
 | Unknown arguments | `ecu_main()` exits with exit code 4 when it sees an argument it does not know, so always take the ECU-specific arguments out in `main()`. |
 | `--help` | The `--help` of `ecu_main()` does not list ECU-specific arguments, so ask the ECU author to describe them in the ECU's documentation. |

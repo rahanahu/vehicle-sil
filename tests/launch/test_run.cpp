@@ -1682,20 +1682,56 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
     check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
 }
 
+TEST_CASE(a_participant_is_started_with_its_j1939_nodes_after_its_network_names)
+{
+    using vehicle_sil::launch::detail::participant_arguments;
+    const auto words = [](const std::vector<std::string>& list) {
+        std::string out;
+        for (const std::string& word : list)
+        {
+            out += "[" + word + "]";
+        }
+        return out + "\n";
+    };
+    SimulationConfig config;
+    ParticipantConfig p;
+    p.name = "Engine2";
+    p.command = {"engine/engine_ecu"};
+    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config, false));
+    const std::string own = "[--name][Engine2][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
+    // After --map-network, in the file's order; an entry that changes nothing is not given.
+    p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}};
+    p.j1939_nodes = {J1939NodeEntry{{"VehicleCAN", j1939::NodeOverride{0x00, 0x01, 2, {}, {}}}, 7},
+                     J1939NodeEntry{{"VehicleCAN", j1939::NodeOverride{0x21, {}, {}, {}, {}}}, 8},
+                     J1939NodeEntry{{"BodyCAN", j1939::NodeOverride{{}, 0xFE, {}, {}, {}}}, 9}};
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+               own + "[--map-network][VehicleCAN=J1939_CAN][--j1939-node][VehicleCAN=from:0x00,address:0x01,identity_number:2]"
+                     "[--j1939-node][BodyCAN=address:254]\n");
+    // describe: false: after its command with the placeholders replaced.
+    p.describe = false;
+    p.command = {"tools/remote", "--uri", "{registry_uri}"};
+    p.network_names.clear();
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
+               "[--uri][silkit://127.0.0.1:8500][--j1939-node][VehicleCAN=from:0x00,address:0x01,identity_number:2]"
+               "[--j1939-node][BodyCAN=address:254]\n");
+}
+
 TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
 {
     using vehicle_sil::launch::detail::shell_command_line;
     const std::vector<std::string> args{"--name", "Engine", "--registry-uri", "silkit://127.0.0.1:8500", "", "a b",
-                                        "it's", "say \"hi\"", "C:\\dir\\", "%PATH%", "R&D"};
+                                        "it's", "say \"hi\"", "C:\\dir\\", "%PATH%", "R&D",
+                                        "VehicleCAN=from:0x00,address:0x01", "a;b"};
 #ifdef _WIN32
-    // As CommandLineToArgvW reads it back: backslashes double only before a quote.
+    // As CommandLineToArgvW reads it back: backslashes double only before a quote. A word with ','
+    // or ';' in quotes too: PowerShell reads a,b as an array (two arguments) and ';' as an end.
     check_text(shell_command_line("C:\\My ECUs\\engine.exe", args) + "\n",
                "\"C:\\My ECUs\\engine.exe\" --name Engine --registry-uri silkit://127.0.0.1:8500 \"\" \"a b\" it's "
-               "\"say \\\"hi\\\"\" C:\\dir\\ %PATH% \"R&D\"\n");
+               "\"say \\\"hi\\\"\" C:\\dir\\ %PATH% \"R&D\" \"VehicleCAN=from:0x00,address:0x01\" \"a;b\"\n");
 #else
     check_text(shell_command_line("/opt/my ecus/engine", args) + "\n",
                "'/opt/my ecus/engine' --name Engine --registry-uri silkit://127.0.0.1:8500 '' 'a b' 'it'\\''s' "
-               "'say \"hi\"' 'C:\\dir\\' %PATH% 'R&D'\n");
+               "'say \"hi\"' 'C:\\dir\\' %PATH% 'R&D' VehicleCAN=from:0x00,address:0x01 'a;b'\n");
 #endif
 }
 

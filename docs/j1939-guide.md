@@ -913,13 +913,39 @@ To check the communication between other ECUs in a scenario, add an ECU that sen
 
 What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
 
-`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). Write what to watch in a watcher class and add it to the `Spy`.
+`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). For a message with a type (see "Data layout (Codec)"), `watch<M>()` writes each signal and when the message came, with no code of your own. For anything else, write what to watch in a watcher class and add it to the `Spy`.
 
-`tests/spy/test_spy.cpp` contains this example without `main()` and tests it. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+The example watches two messages of a made-up calibration protocol (a tool writes a value to the ECU 0x21, which answers with the address and the value it now holds) and every Proprietary A message of 0x21. The messages are defined in YAML, and `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` in CMake turns them into `cal_messages.hpp` (link `cal_messages` and `vehicle_sil::spy`; the code below includes `cal_messages.hpp` and `vehicle_sil/spy/watch.hpp`). The tests build and run the two blocks below (`tests/spy/cal_messages.yaml`, `tests/spy/guide_example.hpp`) and check that this guide shows them unchanged. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+
+<!-- tests/spy/cal_messages.yaml -->
+
+```yaml
+namespace: cal
+indicators: none
+messages:
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x01}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: value, start_bit: 24, length: 16, scale: 0.1, unit: V}
+  - name: WriteAnswer
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x81}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+      - {name: value, start_bit: 32, length: 16, scale: 0.1, unit: V}
+```
+
+<!-- tests/spy/guide_example.hpp -->
 
 ```cpp
+namespace j1939 = vehicle_sil::j1939;
+using namespace std::chrono_literals;
+
 namespace cal {
-inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
 
 class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
@@ -937,13 +963,51 @@ private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0
 class CalSpy {
 public:
     explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.watch<cal::Write>("write", {.from = 0xF9, .to = 0x21});               // write.address, write.value, write.count ...
+        spy_.watch<cal::WriteAnswer>("answer", {.from = 0x21, .stale_after = 500ms}); // answer.result ..., answer.stale
         spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
     }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
+```
 
+```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
+
+To judge a conversation between other ECUs (did each request get its answer, how soon, with the right values), write the analysis in a watcher. Its handler gets the messages in the order heard and turns them into types with `M::decode()`, its members keep the state, `on_step` finds what did not come in time, and its variables carry the verdict for `expect` in a scenario and for the GUI. A message that came over a connection or a BAM reaches the same handler in the same form. The example below uses the declarations of the one above. It checks each `Write` of the tool 0xF9 against the `WriteAnswer` of the ECU 0x21, which repeats the address and the value it now holds. The tests run it for an answer that matches, no answer, a different value, an answer that came over a connection and a second Write before the answer.
+
+<!-- tests/spy/guide_analysis.hpp -->
+
+```cpp
+class WriteCheck {                  // judges each Write of the tool 0xF9 to the ECU 0x21 by the ECU's WriteAnswer
+public:
+    WriteCheck(vehicle_sil::spy::Scope& s, vehicle_sil::SimDuration limit) : limit_(limit) {
+        s.on_message(cal::kPgn, [this](const j1939::Message& m) {          // in the order heard; also long messages
+            if (const auto w = cal::Write::decode(m.data); w && m.source == 0xF9 && m.destination == 0x21) {
+                if (asked_) { ++no_answer_; }                               // a new Write before the answer
+                asked_ = w; asked_at_ = m.time;
+            } else if (const auto a = cal::WriteAnswer::decode(m.data); a && asked_ && m.source == 0x21 && m.destination == 0xF9) {
+                ++answered_; answer_ms_ = (m.time - asked_at_) / 1ms;
+                if (a->address.raw() != asked_->address.raw() || a->value.raw() != asked_->value.raw()) { ++mismatches_; }
+                asked_.reset();
+            }
+        });
+        s.on_step([this](vehicle_sil::SimTime now) {                        // every step, after its messages
+            if (asked_ && now - asked_at_ > limit_) { ++no_answer_; asked_.reset(); }
+        });
+        s.output("answered", &answered_); s.output("no_answer", &no_answer_); s.output("mismatches", &mismatches_);
+        s.output("answer_ms", &answer_ms_, {.unit = "ms", .description = "Time to the latest answer (-1: none yet)"});
+    }
+private:
+    vehicle_sil::SimDuration limit_;
+    std::optional<cal::Write> asked_{};             // the Write waiting for its answer
+    vehicle_sil::SimTime asked_at_{};
+    std::int64_t answered_ = 0, no_answer_ = 0, mismatches_ = 0, answer_ms_ = -1;
+};
+```
+
+Add it in `CalSpy`'s constructor with `spy_.add<WriteCheck>("check", 200ms);`. A scenario then checks the verdict like any variable: `expect: { CalSpy.check.no_answer: 0, CalSpy.check.mismatches: 0 }` and `expect: { CalSpy.check.answer_ms: { le: 50 } }`.
 
 | How it receives | Use | What it sees |
 |---|---|---|
@@ -951,6 +1015,22 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 | On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
 
 - `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
+- `watch<M>(name, options)` watches the typed message `M`: a type that `vehicle_sil_add_j1939_codec()` generated, or one written by hand in the same form. It needs the header `vehicle_sil/spy/watch.hpp` (and `vehicle_sil::j1939_codec`, which the target of the generated messages links). It takes the messages of `M`'s PGN that decode as `M` (long enough, and with `M`'s selector if it has one), only from `options.from` and only to `options.to` when they are given (`j1939::kGlobalAddress` for broadcasts), and writes these variables:
+
+  | Variable | Type | What it holds |
+  |---|---|---|
+  | `<name>.<signal>` | Integer or real | The signal's latest valid value, with the unit of the definition. An integer for an enumeration (its raw value; the names of its values are not written) and for a signal with scale 1 and a whole offset whose valid values all fit a 64-bit signed integer; a real number otherwise (such as a 64-bit counter). 0 until a valid value came; a value that is not valid leaves it as it was |
+  | `<name>.<signal>.state` | Enum | Only for a signal that can hold a value that is not valid (special values, a valid range narrower than its bits, an enumeration): what the latest message held. `none` (no message yet), `valid`, `error`, `not_available`, `special`, `out_of_range`, `undefined` |
+  | `<name>.count` | Integer | Messages heard |
+  | `<name>.last_ms` | Integer | Time of the latest message, in whole ms (-1: none yet) |
+  | `<name>.period_ms` | Integer | Time between the latest message and the one before, in whole ms (-1: fewer than 2) |
+  | `<name>.size` | Integer | Bytes of the latest message (a message that came longer than the type keeps its length) |
+  | `<name>.invalid` | Integer | Messages with a signal that was not valid |
+  | `<name>.stale` | Bool | Only with `options.stale_after`: true while no message came for more than that (before the first one: since the ECU's first step). It changes in the ECU's steps, so it shows up to one step late |
+
+  - "Latest" is by `Message::time`. A message older than the latest one (the message of a connection is passed after the receiver's acknowledgement, so possibly after a single frame that came later) is counted in `count` and `invalid` and changes nothing else. Of two messages with the same time (sent in one step of the sender), the one passed later is the latest, and `period_ms` is 0.
+  - A signal named like one of the items (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `state`) is a build error that says so ("a signal of M is named like an item the watch publishes ..."; the compiler shows which signal). Rename the signal in the definition.
+  - `watch()` returns the `spy::Watch<M>&`; its `count()` and `latest()` (the latest message as `M`) are for code of your own. The names, the empty name, the name of the missed-traffic prefix and "after the run started" are refused as with `add()`, and a `stale_after` that is not above 0 is a `std::invalid_argument` ("... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<name>.stale""). If the ECU has one of the watch's variables already (for example `write.count` from other code), `watch()` adds none of them and throws `std::invalid_argument` ("... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)").
 - `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
   - `on_message(pgn, handler)`, `on_any_message`, `on_transfer_end`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
   - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
@@ -963,24 +1043,33 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
     ```
 
   - `now()`: the time of the ECU's last step. In a variable's getter it is the time of the step being sampled, so "how many ms since the last message" is the difference between `now()` and the last `Message::time` (the result depends on the granularity of the step size). In a handler it is the time of the previous step; use `Message::time` there.
+  - `has_variable(item)`: true if the ECU has `<name>.<item>` already. A watcher that writes several variables can check them all first, so that it fails before the first (variables cannot be taken back).
   - Add watchers, and register their handlers and variables, in the constructor of the ECU class. After the run has started, these are a `std::logic_error` ("... after the run started: add the watchers in the ECU class's constructor"). A wrong name is a `std::invalid_argument`: a name used a second time, an empty name, a name that starts or ends with `.`, or the name of the missed-traffic prefix (below). The message says how to fix it.
 - From inside a watcher's constructor, you can `add()` another watcher through the `Spy&` it received (a watcher composed of watchers). The added watcher is destroyed after the composing one (the `Spy` destroys watchers in the reverse order in which `add()` returned). If the constructor throws, the handlers and `on_step` functions it registered so far are removed, and the watchers it added are destroyed.
-- Missed-traffic variables: the `Spy` writes the counts of the `Listener` and the `Network` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, it can tell "did not come" from "missed".
+- Missed-traffic variables: the `Spy` writes the counts of the `Listener` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, no transfer that the `Spy` followed broke off. It does not tell on which side a frame was lost: a BAM packet that the sender never put on the bus also counts (in `transport_bam_dropped` or `transport_bam_replaced`). Transfers whose end never came are in `spy.timed_out`.
 
   | Variable | What it counts |
   |---|---|
-  | `spy.missed` | The sum of the 8 below. While it stays 0, the `Network` dropped none of the frames it received; the BAM and connections that the `Network` and the `Listener` started to follow were not lost to a packet that was repeated, out of order or missing before a later one came, or to a lack of free places; and every message passed has the receiver's bytes. It does not tell you that every transfer came to its end (for what it cannot see, see below) |
+  | `spy.missed` | The sum of the 5 below up to `spy.conflicting_packets` and of 4 counts of the `Network` (`receive_overflows`, `transport_rejected`, `transport_bam_dropped`, `transport_bam_replaced` in the next table). While it stays 0, the `Network` dropped none of the frames it received; the BAM and connections that the `Network` and the `Listener` started to follow were not lost to a packet that was repeated, out of order or missing before a later one came, to the same sender's next announcement, or to a lack of free places; and every message passed has the receiver's bytes. It does not tell you that every transfer came to its end (for what it cannot see, see below) |
   | `spy.no_session` | Connections not followed because no place was free (the number followed at the same time is `ListenerOptions::sniffer.sessions`, default 32) |
   | `spy.incomplete` | Connections with missed packets |
   | `spy.replaced` | Connections announced again before they ended |
   | `spy.lost` | Connections no longer followed because a node of the same participant took the address |
   | `spy.conflicting_packets` | Packets with the sequence number of an earlier packet but different bytes (see "Messages that may differ from the receiver's" below) |
-  | `spy.receive_overflows` | Frames that the `Network` could not accept (`NetworkOptions::receive_capacity`) |
-  | `spy.transport_rejected` | BAM that the `Network` did not start to reassemble (a malformed announcement, no free session), and RTS that a node of the same participant refused (busy with another PGN, too large, malformed, no free place) |
-  | `spy.transport_bam_dropped` | BAM that the `Network` dropped in the middle of reassembly (missing, repeated or out-of-order packets) |
+  | `spy.timed_out` | Connections between other ECUs whose last packets did not come (timed out). Not in the sum: you cannot tell whether the sender stopped or the packets were missed |
+
+  The counts of the `Network` are in `Network::statistics()`, and an ECU that runs as a participant (`ecu_main`, the launcher) also writes them to the variables `j1939.<network>.<count>` (see "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring)). The `Spy` does not write them again.
+
+  | Count of the `Network` | What it counts | In `spy.missed` |
+  |---|---|---|
+  | `receive_overflows` | Frames that the `Network` could not accept (`NetworkOptions::receive_capacity`) | Yes |
+  | `transport_rejected` | BAM that the `Network` did not start to reassemble (a malformed announcement, no free session), and RTS that a node of the same participant refused (busy with another PGN, too large, malformed, no free place) | Yes |
+  | `transport_bam_dropped` | BAM that the `Network` dropped in the middle of reassembly (missing, repeated or out-of-order packets) | Yes |
+  | `transport_bam_replaced` | BAM that the same sender's next announcement replaced before its last packet came | Yes |
+  | `transport_timeouts` | BAM whose last packets did not come, and the timeouts of the nodes of this participant | No |
 
   - What they cannot see: frames that arrive while the spy ECU is disconnected from the bus (`ecu.connected` is false) are dropped before the `Network` and counted nowhere. They also leave out `frames_ignored` of `Network::statistics()` (11-bit frames and so on; on a bus that also carries 11-bit frames it always grows) and connections that were already running when the spy started listening, so that it never heard their announcement (`orphan_data` of `sniffer_statistics()`).
-  - They also cannot see a transfer whose end never came. A BAM or a connection whose last packets did not come times out, and you cannot tell whether the sender stopped or the packets were missed. BAM timeouts are counted in `transport_timeouts` of `Network::statistics()`, which is not in the sum because it also counts the timeouts of the nodes of this participant; connections between other ECUs are counted in `timed_out` of `sniffer_statistics()`. A BAM that the next announcement of the same sender replaced before its last packet came is counted nowhere.
+  - They also cannot see a transfer whose end never came. A BAM or a connection whose last packets did not come times out, and you cannot tell whether the sender stopped or the packets were missed. So `spy.timed_out` and `transport_timeouts` are outside the sum: check them in a scenario where every transfer must come to its end (`spy.timed_out: 0`).
   - `SpyOptions::statistics_as` (default `"spy"`) changes the prefix. An empty prefix writes none of these variables.
 - Lifetime: variables cannot be withdrawn, so make a `Spy` that writes variables a member of the ECU class, and keep it alive as long as the ECU (as in the example; the classes that `ecu_main` and `Simulation::add()` create are destroyed after the ECU's networks and variables). If a `Spy` that wrote variables is destroyed before its ECU, the next step of that ECU stops with a `std::logic_error` before it reads the variables ("vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ..."). When the `Spy` is destroyed, it removes the handlers and `on_step` functions of each watcher and then destroys the watcher (from the one whose `add()` returned last), and finally destroys the `Listener` it created.
 - A `Network` has one `Listener` (a second one is a `std::logic_error`). To share the `Listener` with other code, create it yourself and pass it as `Spy(ecu, network, listener)`. To put 2 `Spy` objects on that `Listener`, set `SpyOptions::statistics_as` of the second one to `""`.

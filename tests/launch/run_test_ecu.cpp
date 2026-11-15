@@ -53,6 +53,9 @@
 //   j1939 <network> <address>  has the J1939 network <network> (the name in its code) with one node at
 //                           <address> (decimal, no NAME), which sends one message (PGN 0xFF20, to all)
 //                           in every 10 ms step (may be given for several networks)
+//   j1939name <network> <address> <identity number>  the same with a node that has a NAME (Manufacturer
+//                           Code 0x7F0, not arbitrary address capable, the other fields 0): it claims
+//                           its address, so two of them with the same values are a name-conflict
 // With the file "test-ecu-old" in its working directory, the participants it names (words separated
 // by spaces) are executables of a vehicle-sil before --map-network: their --describe has no
 // "features" (and the raw CAN network "OLD_CAN"), and started for a run they write
@@ -226,6 +229,16 @@ public:
                 int address = 0;
                 in >> network >> address;
                 nodes_.push_back(&ecu.j1939(network).add_node({.address = static_cast<std::uint8_t>(address)}));
+            }
+            else if (word == "j1939name")
+            {
+                std::string network;
+                int address = 0;
+                std::uint32_t identity = 0;
+                in >> network >> address >> identity;
+                vehicle_sil::j1939::Name name;
+                name.set_manufacturer_code(0x7F0).set_identity_number(identity);
+                nodes_.push_back(&ecu.j1939(network).add_node({.address = static_cast<std::uint8_t>(address), .name = name}));
             }
             else if (word == "hear")
             {

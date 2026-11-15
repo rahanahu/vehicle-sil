@@ -154,6 +154,7 @@ def simulation_mappings() -> dict[str, dict]:
         "variable": variable,
         "variant": variant,
         "variant participant": variant["properties"]["participants"]["additionalProperties"],
+        "j1939 node": definitions["j1939_nodes"]["items"],
     }
 
 
@@ -381,6 +382,38 @@ CONFIG_SAMPLES = [
     ("a key of network_names that is not in networks", CONFIG_HEAD + P + "    network_names: { Bodi: CAN_1 }\n", "check only"),
     ("one name of the executable under two keys of network_names",
      CONFIG_HEAD + "  - { name: Other, kind: can }\n" + P + "    network_names: { Body: CAN_1, Other: CAN_1 }\n", "check only"),
+    ("j1939 nodes in hexadecimal and in decimal, the ends of the ranges, an entry that changes nothing",
+     CONFIG_HEAD + P + "    j1939_nodes:\n      - { network: Body, from: 0x00, address: 0xFE, identity_number: 2097151 }\n"
+     "      - { network: Body, from: 254, address: 0, identity_number: 0, function_instance: 31, ecu_instance: 7 }\n"
+     "      - { network: Body, from: 0x1f, function_instance: 0, ecu_instance: 0 }\n"
+     "      - { network: Body, from: 0x21 }\n", "valid"),
+    ("j1939 nodes of a variant",
+     CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { j1939_nodes: [{ network: Body, address: 1 }] } } } }\n",
+     "valid"),
+    ("j1939 nodes that is a mapping", CONFIG_HEAD + P + "    j1939_nodes: { network: Body, address: 1 }\n", "invalid"),
+    ("an entry of j1939_nodes without network", CONFIG_HEAD + P + "    j1939_nodes: [{ address: 1 }]\n", "invalid"),
+    ("an address of 255", CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: 255 }]\n", "invalid"),
+    ("an identity number above its range",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, identity_number: 0x200000 }]\n", "invalid"),
+    ("an ECU instance above its range", CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, ecu_instance: 8 }]\n", "invalid"),
+    ("an address in quotes", CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: \"0x01\" }]\n", "invalid"),
+    ("an address in hexadecimal with a capital X, which YAML reads as a text",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: 0X01 }]\n", "invalid"),
+    ("j1939 nodes with the other integers of YAML 1.2: a leading zero (ten), a sign, octal",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, from: 010, address: +1, identity_number: 0o10 }]\n", "valid"),
+    ("an address in binary, which YAML reads as a text",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: 0b11 }]\n", "invalid"),
+    ("an address with an underscore, which YAML reads as a text",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: 1_0 }]\n", "invalid"),
+    ("an address in hexadecimal with a sign, which YAML reads as a text",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, address: +0x10 }]\n", "invalid"),
+    ("a network of j1939_nodes with =", CONFIG_HEAD + P + "    j1939_nodes: [{ network: \"a=b\", address: 1 }]\n",
+     "invalid"),
+    ("a network of j1939_nodes that is not in networks",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Bodi, address: 1 }]\n", "check only"),
+    ("two entries of j1939_nodes for one node",
+     CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, from: 0, address: 1 }, { network: Body, from: 0x00, address: 2 }]\n",
+     "check only"),
 ]
 
 # For the two ECUs of examples/ecu_main: Engine.engine.throttle (real input, 0 to 100), Engine.engine.speed (integer
@@ -819,6 +852,8 @@ class SchemaFiles(unittest.TestCase):
                                 f"{doc} has no `variants.<variant>.{key}` (the table of the variants)")
             for key in keys_of(mappings["variable"]):
                 self.assertIn(key, words, f"{doc} does not name the key {key} of a variable mapping")
+            for key in keys_of(mappings["j1939 node"]):
+                self.assertIn(key, words, f"{doc} does not name the key {key} of an entry of j1939_nodes")
 
         for path in scenario_pages:
             doc = path.relative_to(ROOT).as_posix()
@@ -1023,6 +1058,7 @@ class SchemaAndLauncher(unittest.TestCase):
             "variable": CONFIG_HEAD + P + "    variables: { a.b: { from: x, zz_probe: 1 } }\n",
             "variant": CONFIG_HEAD + P + "variants: { small: { zz_probe: 1 } }\n",
             "variant participant": CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { zz_probe: 1 } } } }\n",
+            "j1939 node": CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, zz_probe: 1 }]\n",
         }
         mappings = simulation_mappings()
         self.assertEqual(set(probes), set(mappings))

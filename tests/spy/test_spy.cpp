@@ -127,11 +127,16 @@ TEST_CASE(watcher_variables_are_named_after_it_and_count_what_it_hears)
     CHECK(info_of(rig.ecu, "block.count").causality == vehicle_sil::control::Causality::Output);
     // The counters of what the Listener missed, under "spy." by default.
     for (const char* name : {"spy.missed", "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
-                             "spy.conflicting_packets", "spy.receive_overflows", "spy.transport_rejected",
-                             "spy.transport_bam_dropped"})
+                             "spy.conflicting_packets", "spy.timed_out"})
     {
         CHECK_EQ(integer_of(rig.ecu, name), 0);
         CHECK(!info_of(rig.ecu, name).description.empty());
+    }
+    // The Network's counters are the participant's "j1939.<network>.*" (a Peer's monitoring), not the Spy's.
+    for (const char* name : {"spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped",
+                             "spy.transport_bam_replaced", "spy.transport_timeouts"})
+    {
+        CHECK(!has_variable(rig.ecu, name));
     }
     CHECK_EQ(spy.missed(), 0u);
     CHECK_EQ(rig.network.statistics().frames_sent, 0u);
@@ -295,11 +300,13 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
 {
     const auto check_sum = [](Rig& rig, const Spy& spy) {
         std::int64_t parts = 0;
-        for (const char* name : {"spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost", "spy.conflicting_packets",
-                                 "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped"})
+        for (const char* name : {"spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost", "spy.conflicting_packets"})
         {
             parts += integer_of(rig.ecu, name);
         }
+        const auto& network = rig.network.statistics();
+        parts += static_cast<std::int64_t>(network.receive_overflows + network.transport_rejected +
+                                           network.transport_bam_dropped + network.transport_bam_replaced);
         CHECK_EQ(integer_of(rig.ecu, "spy.missed"), parts);
         CHECK_EQ(static_cast<std::int64_t>(spy.missed()), parts);
         CHECK(parts > 0);
@@ -384,7 +391,7 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
             rig.inject(at(1ms) + i * 100us, frame(6, kPgnPropB, kA, kGlobal, {static_cast<std::uint8_t>(i)}));
         }
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.receive_overflows"), 2);
+        CHECK_EQ(rig.network.statistics().receive_overflows, 2u);
         check_sum(rig, spy);
     }
     {
@@ -396,7 +403,7 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
         rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
         rig.inject(at(2ms), bam(kC, 20, kPgnPropB));
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.transport_rejected"), 1);
+        CHECK_EQ(rig.network.statistics().transport_rejected, 1u);
         check_sum(rig, spy);
     }
     {
@@ -408,9 +415,39 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
         rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
         rig.inject(at(3ms), dt(kA, kGlobal, 3, message));
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.transport_bam_dropped"), 1);
+        CHECK_EQ(rig.network.statistics().transport_bam_dropped, 1u);
         check_sum(rig, spy);
     }
+    {
+        // A broadcast that the same sender's next announcement replaced before its last packet.
+        Rig rig;
+        Spy& spy = make_spy(rig);
+        const Bytes message = payload(20);
+        rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
+        rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
+        rig.inject(at(3ms), bam(kA, 20, kPgnPropB));
+        rig.bench.run_until(at(20ms));
+        CHECK_EQ(rig.network.statistics().transport_bam_replaced, 1u);
+        CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 1);
+        check_sum(rig, spy);
+    }
+}
+
+TEST_CASE(timed_out_counts_connections_whose_end_never_came_outside_missed)
+{
+    Rig rig;
+    Spy& spy = make_spy(rig);
+    const Bytes message = payload(20);
+    rig.inject(at(1ms), rts(kA, kB, 20, kPgnPropA));
+    rig.inject(at(2ms), cts(kB, kA, 3, 1, kPgnPropA));
+    rig.inject(at(3ms), dt(kA, kB, 1, message)); // then nothing: the connection times out
+    rig.inject(at(4ms), bam(kC, 20, kPgnPropB));
+    rig.inject(at(5ms), dt(kC, kGlobal, 1, message)); // then nothing: the broadcast times out
+    rig.bench.run_until(at(3s));
+    CHECK_EQ(integer_of(rig.ecu, "spy.timed_out"), 1);
+    CHECK_EQ(rig.network.statistics().transport_timeouts, 1u);
+    CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 0);
+    CHECK_EQ(spy.missed(), 0u);
 }
 
 TEST_CASE(statistics_as_names_the_counters_or_leaves_them_out)
@@ -809,61 +846,4 @@ TEST_CASE(spy_changes_nothing_on_the_bus_and_sends_nothing)
         CHECK_EQ(with.spy_frames_sent, 0u);
         CHECK_EQ(with.spy_count, static_cast<std::int64_t>(without.records.size()));
     }
-}
-
-// The example of docs/j1939-guide.md ("Listen-only participants"), as written there but main().
-namespace guide {
-
-namespace j1939 = vehicle_sil::j1939;
-using namespace std::chrono_literals;
-
-namespace cal {
-inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
-}
-
-class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
-public:
-    BlockWatch(vehicle_sil::spy::Scope& s, j1939::Address from) {
-        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // the Scope keeps the registration (no removal to write)
-            if (m.source != from || m.time < latest_) { return; }        // the order of delivery can vary: compare times to find the newest
-            latest_ = m.time; ++count_; bytes_ = static_cast<int>(m.data.size());
-        });
-        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // becomes "block.count"
-    }
-private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0;
-};
-
-class CalSpy {
-public:
-    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
-        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
-    }                                                                               // the Spy writes spy.missed and its breakdown
-private: vehicle_sil::spy::Spy spy_;
-};
-
-} // namespace guide
-
-TEST_CASE(guide_example_publishes_what_it_hears)
-{
-    LocalBench bench;
-    Ecu& ecu = bench.add_ecu("CalSpy", 5ms);
-    ecu.emplace<guide::CalSpy>(ecu);
-    const auto inject = [&](SimTime t, const J1939Frame& f) { CHECK(bench.inject(kBus, t, to_can(f)) == vehicle_sil::can::SendResult::Accepted); };
-    inject(at(1ms), frame(6, kPgnPropA, kA, kB, {1, 2, 3, 4}));
-    inject(at(2ms), frame(6, kPgnPropA, kC, kB, {1})); // from another ECU: not counted
-    const Bytes message = payload(20);
-    SimTime t = at(10ms);
-    inject(t, rts(kA, kB, 20, kPgnPropA));
-    inject(t += 1ms, cts(kB, kA, 3, 1, kPgnPropA));
-    for (const auto& f : dts(kA, kB, message, 1, 3))
-    {
-        inject(t += 1ms, f);
-    }
-    inject(t += 1ms, eoma(kB, kA, 20, kPgnPropA));
-    bench.run_until(at(50ms));
-    CHECK_EQ(integer_of(ecu, "block.count"), 2);
-    CHECK_EQ(integer_of(ecu, "block.bytes"), 20);
-    CHECK(info_of(ecu, "block.bytes").unit == "bytes");
-    CHECK_EQ(integer_of(ecu, "spy.missed"), 0);
-    CHECK_EQ(integer_of(ecu, "spy.no_session"), 0);
 }

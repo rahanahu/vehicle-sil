@@ -12,7 +12,7 @@ These are recommendations, not rules. The [`check` command](integrate-ecus.md#st
 | [What goes on the bus and what becomes a variable](#what-goes-on-the-bus-and-what-becomes-a-variable) | Values that ECUs exchange go on the bus. Values that you feed in from outside, and internal values that you want to see, become variables. |
 | [Which variables to read for verification](#which-variables-to-read-for-verification) | Read the sender or the receiver, depending on what you want to verify. |
 | [Network names](#network-names) | Pick one name per bus, and keep it as a constant in a shared header. |
-| [Addresses and NAMEs](#addresses-and-names) | If an ECU may run as 2 or more instances, let it take its address and NAME as arguments. |
+| [Addresses and NAMEs](#addresses-and-names) | Constants are fine, also for an ECU that may run as 2 or more instances. Read the node's own address from the node, and do not keep other ECUs' addresses and whole NAMEs as constants. |
 | [Variable names](#variable-names) | Use the form `<ECU>.<signal>`, and give each variable a unit and a range. |
 | [Code shared between ECUs](#code-shared-between-ecus) | Share only the message numbers and how values are packed. |
 
@@ -61,10 +61,14 @@ One name is one bus. ECUs that use the same name connect to the same bus. ECUs w
 
 ## Addresses and NAMEs
 
-J1939 addresses and NAMEs are also values in the ECU's code.
+J1939 addresses and NAMEs are also values in the ECU's code. Constants are fine, for an ECU that runs as a single instance and for one that may run as 2 or more instances (one ECU per wheel or per axle, for example). When the same executable runs twice, the integrator gives the second instance another address and NAME with `j1939_nodes` in the configuration file (see "Run two instances of the same ECU" in [Integrate and run several ECUs](integrate-ecus.md#run-two-instances-of-the-same-ecu)).
 
-- For an ECU that runs as a single instance, constants are fine.
-- If an executable may run as 2 or more instances (one ECU per wheel or per axle, for example), let it take its address and NAME as arguments from the start. If you add this later, `check` reports `name-conflict` for the 2 instances, the configuration file cannot fix it, and the integrator has to wait for the rebuilt ECU (see "Run two instances of the same ECU" in [Integrate and run several ECUs](integrate-ecus.md#run-two-instances-of-the-same-ecu)).
+For that to work, the ECU author keeps to these rules:
+
+- Read a node's own address with `node.address()`, not from a constant of your own, also for filters and for values in the data you send.
+- Do not keep the addresses of other ECUs as constants: find them by NAME, or take them as arguments.
+- Do not keep the whole NAME of another ECU as a constant: compare the NAME that `Network::name_at()` reports without the identity number and the 2 instance fields, or take it as an argument.
+- Take arguments of your own only for what `j1939_nodes` cannot change: the other fields of the NAME (the ones that describe the product) and the number of nodes.
 - In examples, tests and documentation, use a Manufacturer Code that does not look like the code of a real company.
 
 ## Variable names

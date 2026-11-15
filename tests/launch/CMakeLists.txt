@@ -10,6 +10,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_check.cpp
     test_config.cpp
     test_events.cpp
+    test_j1939_nodes_match.cpp
     test_run.cpp
     test_scenario.cpp
     test_scenario_line.cpp
@@ -18,7 +19,8 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
        vehicle_sil_cli # the other tools' exit codes and durations (test_shared_values.cpp)
-       vehicle_sil::signal) # the shapes as the launcher makes them (test_scenario_line.cpp: scenario_shapes.hpp)
+       vehicle_sil::signal # the shapes as the launcher makes them (test_scenario_line.cpp: scenario_shapes.hpp)
+       vehicle_sil::j1939) # the network that applies j1939_nodes too (test_j1939_nodes_match.cpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
@@ -26,7 +28,8 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The sources of the launcher (its library and its tool) read the networks of a description in
-# one place (seen_networks(), which applies a participant's network_names), and where --describe's
+# one place (seen_networks(), which applies a participant's network_names and j1939_nodes; the J1939
+# nodes are members of the networks, so this keeps their values in the code from the rules too), and where --describe's
 # JSON is read and written back; the check itself must reject a read anywhere else (also one
 # through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
@@ -145,6 +148,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       interrupt
       interrupt_ending
       interrupt_twice
+      j1939_nodes
       killed
       late
       live

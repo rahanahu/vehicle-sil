@@ -5,9 +5,10 @@
 # after a line "<!-- ... -->" there:
 #   the files      simulation.yaml and scenarios/engine_speed.yaml are the guide's blocks;
 #                  simulation.two-buses.yaml and simulation.fixed.yaml have the lines the guide shows;
-#                  simulation.network-names.yaml is simulation.yaml with the guide's Dashboard
+#                  simulation.network-names.yaml is simulation.yaml with the guide's Dashboard;
+#                  simulation.second-engine.yaml has the guide's Engine2 (with j1939_nodes)
 #   --describe     every key of the guide's excerpt has the value vehicle_sil_dashboard_v1_ecu writes
-#   check          of the four configurations (exit codes 1, 0, 0, 0), with --disable Dashboard, and
+#   check          of the five configurations (exit codes 1, 0, 0, 0, 0), with --disable Dashboard, and
 #                  --json (every key of the guide's excerpt): the outputs are the guide's
 #   run            of simulation.two-buses.yaml and simulation.fixed.yaml, alone (exit code 0 both,
 #                  the dashboard's lines differ) and with the scenario (exit codes 1 and 0)
@@ -151,6 +152,15 @@ string(SUBSTRING "${first}" 0 ${at} first)
 string(REGEX REPLACE "#[^\n]*\n" "" first "${first}${expected}")
 string(REGEX REPLACE "#[^\n]*\n" "" text "${text}")
 expect_same("examples/integrate_ecus/simulation.network-names.yaml without its comments" "${text}" "${first}")
+read_lf(text "${EXAMPLE}/simulation.second-engine.yaml")
+block_after(expected "examples/integrate_ecus/simulation.second-engine.yaml: the participant Engine2")
+expect_within("examples/integrate_ecus/simulation.second-engine.yaml" "${text}" "\n${expected}  - name: Dashboard\n")
+# and without it, simulation.fixed.yaml (comments aside).
+string(REPLACE "${expected}" "" text "${text}")
+string(REGEX REPLACE "#[^\n]*\n" "" text "${text}")
+read_lf(fixed "${EXAMPLE}/simulation.fixed.yaml")
+string(REGEX REPLACE "#[^\n]*\n" "" fixed "${fixed}")
+expect_same("examples/integrate_ecus/simulation.second-engine.yaml without Engine2 and its comments" "${text}" "${fixed}")
 
 # The ECU as first handed over.
 run_in_dir(0 "${DASHBOARD_V1}" --describe)
@@ -177,6 +187,9 @@ expect_same("the output of vehicle_sil_launch check simulation.fixed.yaml" "${ou
 run_in_dir(0 "${LAUNCH}" check simulation.network-names.yaml)
 block_after(expected "integrate ECUs: vehicle_sil_launch check simulation.network-names.yaml")
 expect_same("the output of vehicle_sil_launch check simulation.network-names.yaml" "${output}" "${expected}")
+run_in_dir(0 "${LAUNCH}" check simulation.second-engine.yaml)
+block_after(expected "integrate ECUs: vehicle_sil_launch check simulation.second-engine.yaml")
+expect_same("the output of vehicle_sil_launch check simulation.second-engine.yaml" "${output}" "${expected}")
 run_in_dir(0 "${LAUNCH}" check simulation.fixed.yaml --disable Dashboard)
 block_after(expected "integrate ECUs: vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard")
 expect_same("the output of vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard" "${output}" "${expected}")

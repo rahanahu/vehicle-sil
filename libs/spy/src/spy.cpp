@@ -101,6 +101,13 @@ void Scope::on_step(std::function<void(SimTime now)> fn)
 
 SimTime Scope::now() const noexcept { return state_.shared->now; }
 
+bool Scope::has_variable(std::string_view item) const
+{
+    const std::string name = state_.name + "." + std::string(item);
+    const auto variables = ecu().describe().variables; // reads the declarations without closing them
+    return std::any_of(variables.begin(), variables.end(), [&](const auto& info) { return info.name == name; });
+}
+
 // --- Spy ---------------------------------------------------------------------------------------
 
 Spy::Spy(Ecu& ecu, j1939::Network& network, SpyOptions options) : Spy(ecu, network, nullptr, std::move(options)) {}
@@ -244,7 +251,6 @@ void Spy::publish_statistics()
         return;
     }
     const auto& sniffer = listener_.sniffer_statistics();
-    const auto& network = network_.statistics();
     const std::string& p = statistics_as_;
     std::size_t made = 0;
     const auto made_one = [&] {
@@ -258,11 +264,13 @@ void Spy::publish_statistics()
     try
     {
         ecu_.output(p + ".missed", [this] { return as_variable(missed()); },
-                    {.description = "What the Spy's Listener missed: the sum of the eight " + p +
-                                    ".* counters beside it (0: while the ECU was on its buses, no frame was "
-                                    "dropped and no transfer was lost for a packet that was repeated, out of "
-                                    "order or missing before a later one came; a transfer whose last packets "
-                                    "never came is not counted)"});
+                    {.description = "What the Spy's Listener missed: the sum of " + p + ".no_session, .incomplete, "
+                                    ".replaced, .lost and .conflicting_packets and of the network's receive_overflows, "
+                                    "transport_rejected, transport_bam_dropped and transport_bam_replaced "
+                                    "(j1939.<network>.*). 0: while the ECU was on its buses, no frame was dropped and "
+                                    "no transfer was lost for a missing, repeated or out-of-order packet, a next "
+                                    "announcement or lack of a place. Transfers whose last packets never came are not "
+                                    "in it (" + p + ".timed_out, j1939.<network>.transport_timeouts)"});
         made_one();
         ecu_.output(p + ".no_session", [&sniffer] { return as_variable(sniffer.no_session); },
                     {.description = "Connections between other ECUs not followed: no free place "
@@ -282,18 +290,9 @@ void Spy::publish_statistics()
                     {.description = "Packets seen twice with different bytes: the message handed on may differ "
                                     "from the one the receiver took"});
         made_one();
-        ecu_.output(p + ".receive_overflows", [&network] { return as_variable(network.receive_overflows); },
-                    {.description = "Frames the network dropped: its receive queue was full "
-                                    "(NetworkOptions::receive_capacity)"});
-        made_one();
-        ecu_.output(p + ".transport_rejected", [&network] { return as_variable(network.transport_rejected); },
-                    {.description = "Broadcasts the network did not start to assemble (a malformed announcement, no "
-                                    "free session) and connections a node of this participant refused (busy, too "
-                                    "large, malformed, no free session)"});
-        made_one();
-        ecu_.output(p + ".transport_bam_dropped", [&network] { return as_variable(network.transport_bam_dropped); },
-                    {.description = "Broadcasts the network dropped while assembling them: a packet missing, "
-                                    "repeated or out of order"});
+        ecu_.output(p + ".timed_out", [&sniffer] { return as_variable(sniffer.timed_out); },
+                    {.description = "Connections between other ECUs whose last packets never came (not in " + p +
+                                    ".missed: the sender may have stopped, or the Listener missed them)"});
         made_one();
     }
     catch (const std::invalid_argument& e)
@@ -315,7 +314,7 @@ std::uint64_t Spy::missed() const noexcept
     const auto& s = listener_.sniffer_statistics();
     const auto& n = network_.statistics();
     return s.no_session + s.incomplete + s.replaced + s.lost + s.conflicting_packets + n.receive_overflows +
-           n.transport_rejected + n.transport_bam_dropped;
+           n.transport_rejected + n.transport_bam_dropped + n.transport_bam_replaced;
 }
 
 void Spy::require_set_up(const char* who, const char* what) const
@@ -377,9 +376,10 @@ void Spy::abandon_add(Slot& slot) noexcept
     {
         try
         {
-            why = std::string(kSpy) + "::add() " + in_quotes(slot.state.name) +
+            why = std::string(kSpy) + "::" + slot.kind + " " + in_quotes(slot.state.name) +
                   ": the watcher's constructor threw after variables were published that refer to it (or to the "
-                  "watchers it added): do not run the ECU after a failed add(); fix what made the constructor throw";
+                  "watchers it added): do not run the ECU after a failed " + slot.kind +
+                  "; fix what made the constructor throw";
         }
         catch (...)
         {
