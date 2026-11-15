@@ -71,7 +71,7 @@ Before anyone starts building ECUs, decide the items in the table below and shar
 | J1939 NAME | Each ECU has a different value. | `name-conflict` |
 | Step size | The ECU author decides it and tells the integrator (the person who writes the configuration file). | `step-mismatch` |
 
-The configuration file cannot change a network name. An ECU connects to a bus by naming it in its code, as in `ecu.j1939("J1939_CAN")`. In this version, the configuration file has no way to map the name an ECU uses to a different name. If 2 ECUs use different names, one of them must be rebuilt.
+An ECU connects to a bus by naming it in its code, as in `ecu.j1939("J1939_CAN")`. If 2 ECUs use different names for one bus, the configuration file can map one ECU's name onto the other with `network_names`, without a rebuild (see "Matching network names" in [simulation-config.md](../simulation-config.md#matching-network-names-network_names)). With names agreed beforehand, no configuration file needs such a mapping.
 
 The example uses these decisions:
 
@@ -187,7 +187,7 @@ Dashboard    5 ms   VehicleCAN (j1939 0x28)
 network    kind  participants
 J1939_CAN  can   Engine
 
-error: simulation.yaml:12: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), which is not in networks. Another network of kind can in this simulation is 'J1939_CAN' (line 6, used by Engine): if 'VehicleCAN' is meant to be that bus, the names must be the same, and the configuration cannot rename a network, so the author of one of the ECUs changes the name in its code (the name passed to can() or j1939()) and builds it again; if 'VehicleCAN' is a bus of its own, add it to networks with kind: can [unknown-network]
+error: simulation.yaml:12: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), which is not in networks. Another network of kind can in this simulation is 'J1939_CAN' (line 6, used by Engine): if 'VehicleCAN' is meant to be that bus, say so in this file: add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' (<simulation's name>: <executable's name>; the executable stays as it is); if 'VehicleCAN' is a bus of its own, add it to networks with kind: can [unknown-network]
 warning: simulation.yaml:6: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
 
 failed: 1 error, 1 warning, 0 notes
@@ -210,16 +210,18 @@ A finding has one of 3 severities:
 | `warning` | Still passes (fails with `--strict`) | Runs |
 | `note` | Still passes | Runs |
 
-The `error` line in the example reports that `VehicleCAN`, which the dashboard ECU uses, is not in `networks`. In this example, the configuration file cannot fix it. The dashboard ECU has to receive the engine speed, so both ECUs must be on the same bus, and only the ECU code can change the name that an ECU uses. Go to step 4.
+The `error` line in the example reports that `VehicleCAN`, which the dashboard ECU uses, is not in `networks`. The dashboard ECU has to receive the engine speed, so both ECUs must be on the same bus.
 
 The `error` line names 2 fixes, because it cannot know which bus `VehicleCAN` is meant to be:
 
 | If `VehicleCAN` is meant to be | Fix | Where to fix |
 |---|---|---|
-| The same bus as `J1939_CAN` | Make the 2 ECUs use the same name. | The ECU code (the configuration file cannot do this) |
+| The same bus as `J1939_CAN` | Map the dashboard ECU's name onto `J1939_CAN`: add `network_names: { J1939_CAN: VehicleCAN }` to the participant `Dashboard`. Or make the 2 ECUs use the same name. | The configuration file (see "Matching network names" in [simulation-config.md](../simulation-config.md#matching-network-names-network_names)), or the ECU code (step 4) |
 | A separate bus | Add `VehicleCAN` to `networks`. | The configuration file |
 
 The second fix makes `check` pass, but the 2 ECUs end up on separate buses and do not communicate (see "[If you add the name to `networks`](#if-you-add-the-name-to-networks)" below).
+
+This guide takes the agreed name instead of a mapping: in step 4, the author of the dashboard ECU changes the name in the code. With the mapping instead, `check` passes with the current executable, the participant table shows `J1939_CAN <- VehicleCAN (j1939 0x28)` for `Dashboard`, and you can skip step 4 (see "[If the ECU cannot be rebuilt](#if-the-ecu-cannot-be-rebuilt)" below).
 
 ### If you add the name to `networks`
 
@@ -252,8 +254,8 @@ network     kind  participants
 J1939_CAN   can   Engine
 VehicleCAN  can   Dashboard
 
-warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, the ECUs name it differently, and the configuration cannot rename a network, so the author of one of them changes the name in its code [single-participant]
-warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, the ECUs name it differently, and the configuration cannot rename a network, so the author of one of them changes the name in its code [single-participant]
+warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'J1939_CAN' from networks and add network_names: { VehicleCAN: J1939_CAN } to the participant 'Engine' [single-participant]
+warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'VehicleCAN' from networks and add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' [single-participant]
 
 passed: 0 errors, 2 warnings, 0 notes
 ```
@@ -269,21 +271,55 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[unknown-key]`, `[missing-key]`, `[value]` | A key or value in the configuration file is wrong. | Fix the configuration file as the finding says. |
 | `[executable]` | There is no executable at the path in `command`. | Correct the path in the configuration file, or put the executable there. |
 | `[launcher-argument]` | `command` contains an argument that `vehicle_sil_launch` adds, such as `--name`. | Remove that argument from `command` in the configuration file. |
-| `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU differs, go to step 4. |
-| `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, go to step 4. |
+| `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU's name differs, write the `network_names` line that the finding gives, or go to step 4. If the kind differs, go to step 4. |
+| `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, write the `network_names` line that the finding gives, or go to step 4. |
 | `[step-mismatch]` | `step_ms` differs from the ECU's step size. | If the configuration file differs from the value you were given, fix the configuration file. If the ECU differs, go to step 4. |
 | `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
 | `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
 | `[version-mismatch]`, `[control-link-version]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
 
+### If the ECU cannot be rebuilt
+
+If the author cannot rebuild the dashboard ECU in time, map its name in the configuration file instead of step 4. `simulation.network-names.yaml` is `simulation.yaml` with one line added to the participant `Dashboard`. In `network_names`, the key is the simulation's name and the value is the executable's name:
+
+<!-- examples/integrate_ecus/simulation.network-names.yaml: the participant Dashboard -->
+```yaml
+  - name: Dashboard
+    command: [dashboard_v1/vehicle_sil_dashboard_v1_ecu]
+    step_ms: 5
+    network_names: { J1939_CAN: VehicleCAN }
+```
+
+```sh
+vehicle_sil_launch check simulation.network-names.yaml
+```
+
+The check passes with the executable as first handed over, and both ECUs are on `J1939_CAN`. `J1939_CAN <- VehicleCAN` in the participant table shows the mapping. The exit code is 0.
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.network-names.yaml -->
+```text
+simulation.network-names.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN <- VehicleCAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+Every configuration file that uses this executable needs the same line. When an ECU rebuilt under the agreed name arrives, replace the executable and remove the line.
+
 ## Step 4: Ask ECU authors to fix what the configuration cannot
 
-The values below are built into the ECU, and the configuration file cannot change them. If they do not match, ask the ECU author to change the code and rebuild.
+The values below are built into the ECU, and the configuration file cannot change them (a network name is the exception: `network_names` maps it, as step 3 shows). If they do not match, ask the ECU author to change the code and rebuild.
 
 | Mismatch | Whom to ask | What to ask for |
 |---|---|---|
-| The ECUs use different network names | The author of the ECU whose name differs from the one agreed in step 1 | Change the name passed to `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()` to the agreed name. |
+| The ECUs use different network names (and you do not map them with `network_names`) | The author of the ECU whose name differs from the one agreed in step 1 | Change the name passed to `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()` to the agreed name. |
 | A network kind differs | The author of the ECU whose kind differs from the agreed one | Connect to a bus of the agreed kind. |
 | J1939 addresses or NAMEs overlap | The author of the ECU that differs from the list of step 1 | Change the node's address or NAME to the value in the list. |
 | The step size differs from the value you were given | The author of that ECU | Confirm which value is correct, and fix the ECU if it is wrong. |
@@ -302,7 +338,7 @@ A request contains these 4 items:
 
 The example request:
 
-> The dashboard ECU connects to the J1939 network under the name `VehicleCAN`. The agreed name is `J1939_CAN`, and the engine ECU uses it. With different names, the 2 ECUs end up on separate buses and the dashboard ECU cannot receive the engine speed. The configuration file cannot change the name. Could you change `ecu.j1939("VehicleCAN")` in the code to `ecu.j1939("J1939_CAN")` and rebuild with vehicle-sil 0.1.0? Before you deliver it, verify that `networks[].name` in the `--describe` output is `J1939_CAN`. Here is the `check` finding: (the `error:` line from step 3)
+> The dashboard ECU connects to the J1939 network under the name `VehicleCAN`. The agreed name is `J1939_CAN`, and the engine ECU uses it. With different names, the 2 ECUs end up on separate buses and the dashboard ECU cannot receive the engine speed, unless every configuration file maps the name. Could you change `ecu.j1939("VehicleCAN")` in the code to `ecu.j1939("J1939_CAN")` and rebuild with vehicle-sil 0.1.0? Before you deliver it, verify that `networks[].name` in the `--describe` output is `J1939_CAN`. Here is the `check` finding: (the `error:` line from step 3)
 
 When you receive the rebuilt executable, replace the old one and run `check` again. In the example, the rebuilt dashboard ECU is in `../ecu_main/dashboard/`, so `simulation.fixed.yaml` changes the `command` of `Dashboard` to this line:
 

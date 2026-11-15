@@ -147,12 +147,37 @@ struct ParticipantResult
     std::filesystem::path executable{};
 };
 
+/// A network of a participant as the simulation sees it: what its executable described, under
+/// the name its entry gives it.
+struct SeenNetwork
+{
+    /// As described, but `name` is the simulation's name (a key of the entry's network_names if
+    /// one renames it, else the executable's name).
+    NetworkDescription network;
+    /// The name in the executable's code (--describe's).
+    std::string executable_name;
+    /// The line of the network_names entry that renames it; 0: none does.
+    std::size_t line = 0;
+    [[nodiscard]] bool renamed() const { return executable_name != network.name; }
+};
+
+/// The participant's networks as the simulation sees them: those its executable described, in
+/// that order, each under its name in the simulation (renamed_networks() of its entry applied; a
+/// line that names no network of the executable changes nothing). The one place that applies
+/// network_names to a description: the check's rules, its table and the "networks" of its JSON
+/// read the networks of a description only through it. (run gives the same lines to the
+/// executable: map_network_arguments().)
+[[nodiscard]] std::vector<SeenNetwork> seen_networks(const ParticipantConfig& participant, const ReportedEcu& ecu);
+
 /// Compares the configuration with what the participants reported (`results` in the order of
 /// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs (on a
 /// CAN network), LIN masters (on a LIN network), MAC addresses (on an Ethernet network), unused
 /// networks and networks with one
 /// participant, participants that were not checked or are disabled, vehicle-sil versions other
-/// than `launcher_version`. The rules of a network are those of its kind only: a description
+/// than `launcher_version`. A network is under its name in the simulation (seen_networks()) in
+/// every rule, and the entry's network_names are compared with the description (an executable
+/// that does not take --map-network, a name the executable does not have, two of its networks
+/// under one name). The rules of a network are those of its kind only: a description
 /// with J1939 nodes on a use other than j1939 is not checked for them (read_description()
 /// refuses it). A disabled
 /// participant (ParticipantConfig::enabled, whatever its result) is not on any network and holds

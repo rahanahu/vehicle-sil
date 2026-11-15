@@ -71,7 +71,7 @@ ECU を作り始める前に、次の表のものを決めて、ECU を作る人
 | J1939 の NAME | ECU ごとに違う値にします。 | `name-conflict` |
 | ステップ幅 | ECU を作る人が決めて、設定ファイルを書く人に伝えます。 | `step-mismatch` |
 
-ネットワーク名は、設定ファイルでは変えられません。ECU は、コードの中で `ecu.j1939("J1939_CAN")` のように名前を指定してバスに接続します。このバージョンの設定ファイルには、ECU が使う名前を別の名前に対応させる書き方がありません。2 つの ECU の名前が違えば、どちらかを作り直すことになります。
+ECU は、コードの中で `ecu.j1939("J1939_CAN")` のように名前を指定してバスに接続します。2 つの ECU が 1 つのバスを違う名前で呼んでいるときは、設定ファイルの `network_names` で、片方の ECU の名前をもう片方の名前に対応させられます（作り直しは要りません。[simulation-config.md](../simulation-config.md) の「ネットワークの名前を合わせる」）。名前を事前に決めておけば、どの設定ファイルにも、この対応は要りません。
 
 例では、次のように決めたとします。
 
@@ -187,7 +187,7 @@ Dashboard    5 ms   VehicleCAN (j1939 0x28)
 network    kind  participants
 J1939_CAN  can   Engine
 
-error: simulation.yaml:12: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), which is not in networks. Another network of kind can in this simulation is 'J1939_CAN' (line 6, used by Engine): if 'VehicleCAN' is meant to be that bus, the names must be the same, and the configuration cannot rename a network, so the author of one of the ECUs changes the name in its code (the name passed to can() or j1939()) and builds it again; if 'VehicleCAN' is a bus of its own, add it to networks with kind: can [unknown-network]
+error: simulation.yaml:12: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), which is not in networks. Another network of kind can in this simulation is 'J1939_CAN' (line 6, used by Engine): if 'VehicleCAN' is meant to be that bus, say so in this file: add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' (<simulation's name>: <executable's name>; the executable stays as it is); if 'VehicleCAN' is a bus of its own, add it to networks with kind: can [unknown-network]
 warning: simulation.yaml:6: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
 
 failed: 1 error, 1 warning, 0 notes
@@ -210,16 +210,18 @@ failed: 1 error, 1 warning, 0 notes
 | `warning` | 成功のままです（`--strict` を付けると失敗）。 | 実行します。 |
 | `note` | 成功のままです。 | 実行します。 |
 
-例の `error` の行は、表示の ECU が使う `VehicleCAN` が `networks` にないことを報告しています。この例は、設定ファイルでは直せません。エンジンの回転数を表示の ECU が受信するので、2 つの ECU は同じバスにいなければならず、ECU が使う名前を変えられるのは ECU のコードだけだからです。手順 4 に進みます。
+例の `error` の行は、表示の ECU が使う `VehicleCAN` が `networks` にないことを報告しています。エンジンの回転数を表示の ECU が受信するので、2 つの ECU は同じバスにいなければなりません。
 
 `error` の行が直し方を 2 つ示すのは、`VehicleCAN` がどのバスのつもりかを `check` が知らないからです。
 
 | `VehicleCAN` が | 直し方 | 直す場所 |
 |---|---|---|
-| `J1939_CAN` と同じバスのつもり | 2 つの ECU の名前をそろえます。 | ECU のコード（設定ファイルではできません） |
+| `J1939_CAN` と同じバスのつもり | 表示の ECU の名前を `J1939_CAN` に対応させます。participant `Dashboard` に `network_names: { J1939_CAN: VehicleCAN }` を追加します。または、2 つの ECU の名前をそろえます。 | 設定ファイル（[simulation-config.md](../simulation-config.md) の「ネットワークの名前を合わせる」）か、ECU のコード（手順 4） |
 | 別のバス | `networks` に `VehicleCAN` を追加します。 | 設定ファイル |
 
 2 つ目の直し方では `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。
+
+このガイドでは、対応を書かずに、決めた名前にそろえます。手順 4 で、表示の ECU を作った人がコードの名前を変えます。対応を書く場合は、いまの実行ファイルのまま `check` が通り、participant の表の `Dashboard` の行は `J1939_CAN <- VehicleCAN (j1939 0x28)` になります。手順 4 は要りません（下の「[ビルドし直せないとき](#ビルドし直せないとき)」）。
 
 ### `networks` に名前を追加した場合
 
@@ -252,8 +254,8 @@ network     kind  participants
 J1939_CAN   can   Engine
 VehicleCAN  can   Dashboard
 
-warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, the ECUs name it differently, and the configuration cannot rename a network, so the author of one of them changes the name in its code [single-participant]
-warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, the ECUs name it differently, and the configuration cannot rename a network, so the author of one of them changes the name in its code [single-participant]
+warning: simulation.two-buses.yaml:7: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 9, only Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'J1939_CAN' from networks and add network_names: { VehicleCAN: J1939_CAN } to the participant 'Engine' [single-participant]
+warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on it, so what it sends there reaches no one: add the other participants of this network, or remove it; the network 'J1939_CAN' (line 7, only Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: remove 'VehicleCAN' from networks and add network_names: { J1939_CAN: VehicleCAN } to the participant 'Dashboard' [single-participant]
 
 passed: 0 errors, 2 warnings, 0 notes
 ```
@@ -269,21 +271,55 @@ passed: 0 errors, 2 warnings, 0 notes
 | `[unknown-key]`、`[missing-key]`、`[value]` | 設定ファイルのキーか値が間違っています。 | 設定ファイルを、指摘の文のとおりに直します。 |
 | `[executable]` | `command` のパスに実行ファイルがありません。 | 設定ファイルのパスを直すか、実行ファイルを置きます。 |
 | `[launcher-argument]` | `command` に、`--name` など `vehicle_sil_launch` が追加する引数を書いています。 | 設定ファイルの `command` から、その引数を削除します。 |
-| `[unknown-network]`、`[kind-mismatch]` | ECU が使うネットワークの名前か種類が、`networks` と違います。 | 手順 1 で決めた名前と違うのが設定ファイルなら設定ファイル、ECU なら手順 4 です。 |
-| `[single-participant]`、`[unused-network]` | ネットワークに ECU が 1 つしかないか、1 つもありません。 | ECU を無効にしたせいなら、そのままで構いません。名前の違いが原因なら手順 4 です。 |
+| `[unknown-network]`、`[kind-mismatch]` | ECU が使うネットワークの名前か種類が、`networks` と違います。 | 手順 1 で決めた名前と違うのが設定ファイルなら設定ファイルを直します。ECU の名前が違うなら、指摘の文が言う `network_names` の行を書くか、手順 4 です。種類が違うなら手順 4 です。 |
+| `[single-participant]`、`[unused-network]` | ネットワークに ECU が 1 つしかないか、1 つもありません。 | ECU を無効にしたせいなら、そのままで構いません。名前の違いが原因なら、指摘の文が言う `network_names` の行を書くか、手順 4 です。 |
 | `[step-mismatch]` | `step_ms` が、ECU のステップ幅と違います。 | 伝えてもらった値と違うのが設定ファイルなら設定ファイル、ECU なら手順 4 です。 |
 | `[address-conflict]`、`[address-shared]`、`[name-conflict]` | 同じネットワークで、J1939 のアドレスか NAME が重なっています。 | 手順 4 です。 |
 | `[describe-failed]`、`[describe-output]`、`[describe-timeout]` | ECU が `--describe` に正しく応答しません。 | 手順 4 です。`ecu_main()` で作っていないツールなら、`describe: false` を書きます。 |
 | `[describe-version]`、`[describe-unknown-value]` | ECU と `vehicle_sil_launch` で、vehicle-sil のバージョンが違います。 | 指摘の文にある古いほうを、新しくします。 |
 | `[version-mismatch]`、`[control-link-version]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
 
+### ビルドし直せないとき
+
+表示の ECU を作った人が間に合うようにビルドし直せないときは、手順 4 の代わりに、設定ファイルで名前を対応させます。`simulation.network-names.yaml` は、`simulation.yaml` の participant `Dashboard` に 1 行を足したものです。`network_names` のキーはシミュレーションでの名前、値は実行ファイルの名前です。
+
+<!-- examples/integrate_ecus/simulation.network-names.yaml: the participant Dashboard -->
+```yaml
+  - name: Dashboard
+    command: [dashboard_v1/vehicle_sil_dashboard_v1_ecu]
+    step_ms: 5
+    network_names: { J1939_CAN: VehicleCAN }
+```
+
+```sh
+vehicle_sil_launch check simulation.network-names.yaml
+```
+
+最初に受け取った実行ファイルのまま照合が通り、2 つの ECU は `J1939_CAN` に乗ります。participant の表の `J1939_CAN <- VehicleCAN` が対応を示します。終了コードは 0 です。
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.network-names.yaml -->
+```text
+simulation.network-names.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN <- VehicleCAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+この実行ファイルを使う設定ファイルには、どれにも同じ行が要ります。決めた名前でビルドし直した ECU が届いたら、実行ファイルを差し替えて、この行を消します。
+
 ## 手順 4: 設定ファイルでは直せない不整合を依頼する
 
-次の値は ECU のビルドに入っていて、設定ファイルでは変えられません。合わないときは、ECU を作った人に、コードを変えてビルドし直してもらいます。
+次の値は ECU のビルドに入っていて、設定ファイルでは変えられません（ネットワーク名は例外で、手順 3 のとおり `network_names` で対応させられます）。合わないときは、ECU を作った人に、コードを変えてビルドし直してもらいます。
 
 | 不整合 | 依頼する相手 | 依頼する内容 |
 |---|---|---|
-| ネットワーク名が ECU の間で違う | 手順 1 で決めた名前と違う ECU を作った人 | `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前を、決めた名前に変えます。 |
+| ネットワーク名が ECU の間で違う（`network_names` で対応させない） | 手順 1 で決めた名前と違う ECU を作った人 | `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前を、決めた名前に変えます。 |
 | ネットワークの種類が違う | 決めた種類と違う ECU を作った人 | 決めた種類のバスに接続するように変えます。 |
 | J1939 のアドレスか NAME が重なる | 手順 1 の一覧と違う ECU を作った人 | ノードのアドレスか NAME を、一覧の値に変えます。 |
 | ステップ幅が、伝えてもらった値と違う | その ECU を作った人 | どちらの値が正しいかを確認し、ECU が違うなら直します。 |
@@ -302,7 +338,7 @@ passed: 0 errors, 2 warnings, 0 notes
 
 例の依頼は、次のようになります。
 
-> 表示の ECU は、J1939 のネットワークに `VehicleCAN` という名前で接続しています。決めた名前は `J1939_CAN` で、エンジンの ECU はこの名前を使っています。名前が違うと 2 つの ECU は別のバスに分かれ、エンジンの回転数を受信できません。設定ファイルでは名前を変えられないので、コードの `ecu.j1939("VehicleCAN")` を `ecu.j1939("J1939_CAN")` に変えて、vehicle-sil 0.1.0 でビルドし直してください。渡す前に、`--describe` の `networks[].name` が `J1939_CAN` になっていることを確認してください。`check` の指摘は次のとおりです。（手順 3 の `error:` の行）
+> 表示の ECU は、J1939 のネットワークに `VehicleCAN` という名前で接続しています。決めた名前は `J1939_CAN` で、エンジンの ECU はこの名前を使っています。名前が違うと、どの設定ファイルにも名前の対応を書かない限り、2 つの ECU は別のバスに分かれ、エンジンの回転数を受信できません。コードの `ecu.j1939("VehicleCAN")` を `ecu.j1939("J1939_CAN")` に変えて、vehicle-sil 0.1.0 でビルドし直してください。渡す前に、`--describe` の `networks[].name` が `J1939_CAN` になっていることを確認してください。`check` の指摘は次のとおりです。（手順 3 の `error:` の行）
 
 作り直した実行ファイルを受け取ったら、置き換えて、もう一度 `check` を実行します。例では、作り直した表示の ECU が `../ecu_main/dashboard/` にあるので、`simulation.fixed.yaml` は `Dashboard` の `command` を次の行に変えてあります。
 

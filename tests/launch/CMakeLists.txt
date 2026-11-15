@@ -23,6 +23,23 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# The sources of the launcher read the networks of a description in one place (seen_networks(),
+# which applies a participant's network_names), and where --describe's JSON is read and written
+# back; the check itself must reject a read anywhere else, and pass the networks of the file.
+add_test(NAME launch.described_networks_are_read_in_one_place
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}/libs -DDIR=launch
+                 -DFILES=launch/src/check_networks.cpp,launch/src/describe_read.cpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
+add_test(NAME launch.described_networks_check_rejects_a_direct_read
+         COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/network_fixtures/direct -DDIR=launch
+                 -DFILES=launch/src/check_networks.cpp,launch/src/describe_read.cpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
+set_tests_properties(launch.described_networks_are_read_in_one_place launch.described_networks_check_rejects_a_direct_read
+                     PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPERTIES
+                     PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
+                     FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
+
 # vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of
 # tests/process), --strict, files that cannot be read, the command line.
@@ -126,6 +143,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       manual_thawed
       manual_timeout
       network
+      network_names
       no_console
       no_console_stdin
       not_joined

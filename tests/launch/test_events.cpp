@@ -1146,13 +1146,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "scenario-points-file",
     "timeline",
     "timeline-lines",
-    "scenario-inputs"
+    "scenario-inputs",
+    "network-names"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"timeline-lines\",\n    \"scenario-inputs\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"scenario-inputs\",\n    \"network-names\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

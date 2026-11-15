@@ -551,7 +551,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file [not-checked]\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -5823,6 +5823,210 @@ void manual(const Options& o)
     }
 }
 
+/// The event "participant" of `name` in `state` among the lines of run --events, or "".
+std::string participant_event(const std::string& events, const std::string& name, const std::string& state)
+{
+    const std::string key = "\"event\":\"participant\"";
+    const std::string who = "\"name\":\"" + name + "\",\"state\":\"" + state + "\"";
+    std::istringstream in(events);
+    for (std::string line; std::getline(in, line);)
+    {
+        if (contains(line, key) && contains(line, who))
+        {
+            return line;
+        }
+    }
+    return {};
+}
+
+void network_names(const Options& o)
+{
+    // Engine's code names its buses J1939_CAN and CAN_B; the file calls them VehicleCAN and
+    // "Body CAN" (a space: the argument must be quoted for a shell). Dashboard's code says
+    // VehicleCAN itself. Door is not described (describe: false) and calls the second bus DoorCAN.
+    // The variant "apart" takes Engine's first line away: its J1939_CAN is then a bus of its own.
+    // The variant "moved" puts Engine's CAN_B on VehicleCAN instead of "Body CAN" (`moved`: how).
+    const auto config_with = [&o, port = free_port()](const std::string& moved) {
+    return std::string(
+        "vehicle_sil_simulation: 1\n"                                                    // 1
+        "stop_at_ms: 300\n"                                                              // 2
+        "registry_uri: silkit://127.0.0.1:") + std::to_string(port) + "\n"               // 3
+        "networks:\n"                                                                    // 4
+        "  - { name: VehicleCAN, kind: can }\n"                                          // 5
+        "  - { name: \"Body CAN\", kind: can }\n"                                        // 6
+        "  - { name: J1939_CAN, kind: can }\n"                                           // 7
+        "participants:\n"                                                                // 8
+        "  - name: Engine\n"                                                             // 9
+        "    command: [" + ecu(o) + "]\n"                                                // 10
+        "    network_names:\n"                                                           // 11
+        "      VehicleCAN: J1939_CAN\n"                                                  // 12
+        "      \"Body CAN\": CAN_B\n"                                                    // 13
+        "  - name: Dashboard\n"                                                          // 14
+        "    command: [" + ecu(o) + "]\n"                                                // 15
+        "  - name: Door\n"                                                               // 16
+        "    command: [" + ecu(o) + ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n" // 17
+        "    describe: false\n"                                                          // 18
+        "    network_names: { \"Body CAN\": DoorCAN, VehicleCAN: VehicleCAN }\n"         // 19
+        "variants:\n"
+        "  together: {}\n"
+        "  apart: { participants: { Engine: { network_names: { VehicleCAN: VehicleCAN } } } }\n"
+        "  moved: { participants: { Engine: { network_names: { " + moved + " } } } }\n";            // 23
+    };
+    // The line whose two names are the same takes the common line of "Body CAN" away.
+    const std::string config = config_with("VehicleCAN: CAN_B, \"Body CAN\": \"Body CAN\"");
+    const fs::path dir = hand_dir(o, "names", config,
+                                  {{"Engine", "talk J1939_CAN talk CAN_B"}, {"Dashboard", "hear VehicleCAN"}, {"Door", "hear DoorCAN"}});
+    const auto forget = [&dir] {
+        fs::remove(dir / "Dashboard.heard");
+        fs::remove(dir / "Door.heard");
+    };
+    forget();
+    {
+        // Each executable gets its lines after everything else, in the file's order and direction;
+        // a line whose two names are the same is not given. What is started is one bus each.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together", "--events"}, dir);
+        expect_code(run, 0, "run with network_names");
+        const std::string events = lf(run.standard_output);
+        const std::string engine = participant_event(events, "Engine", "started");
+        require(contains(engine, ",\"--start-timeout-ms\",") &&
+                    contains(engine, "\",\"--map-network\",\"VehicleCAN=J1939_CAN\",\"--map-network\",\"Body CAN=CAN_B\"],\"log\"") &&
+                    engine.find("--start-timeout-ms") < engine.find("--map-network"),
+                "Engine is started with its two lines, last:\n" + engine);
+        const std::string door = participant_event(events, "Door", "started");
+        require(contains(door, ",\"--name\",\"Door\",\"--map-network\",\"Body CAN=DoorCAN\"],\"log\""),
+                "Door (describe: false) gets its line after its command with the placeholders replaced:\n" + door);
+        const std::string dashboard = participant_event(events, "Dashboard", "started");
+        require(!dashboard.empty() && !contains(dashboard, "--map-network"), "Dashboard gets no --map-network:\n" + dashboard);
+        require(contains(events, "\"network_map\":[{\"name\":\"VehicleCAN\",\"line\":12,\"from\":\"J1939_CAN\"},"
+                                 "{\"name\":\"Body CAN\",\"line\":13,\"from\":\"CAN_B\"}]"),
+                "the check of the run shows the lines:\n" + events);
+        require(fs::exists(dir / "Dashboard.heard") && fs::exists(dir / "Door.heard"),
+                "Dashboard and Door hear Engine on the buses the file names:\n" + lf(run.standard_error));
+        // For people: the simulation's name first.
+        const Captured check = launch(o, {"check", "sim.yaml", "--variant", "together"}, dir);
+        expect_code(check, 0, "check with network_names");
+        require(contains(lf(check.standard_output), "  VehicleCAN <- J1939_CAN (raw), Body CAN <- CAN_B (raw)\n") &&
+                    contains(lf(check.standard_output), "VehicleCAN  can   Engine, Dashboard\n"),
+                "the tables show both names of a renamed network:\n" + lf(check.standard_output));
+    }
+    forget();
+    {
+        // The variant without the first line: Engine's J1939_CAN is not Dashboard's VehicleCAN.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "apart", "--events"}, dir);
+        expect_code(run, 0, "run with the variant that takes a line away");
+        const std::string engine = participant_event(lf(run.standard_output), "Engine", "started");
+        require(contains(engine, "\"--start-timeout-ms\",") && contains(engine, "\",\"--map-network\",\"Body CAN=CAN_B\"],\"log\"") &&
+                    !contains(engine, "VehicleCAN="),
+                "Engine is started with the one line the variant leaves:\n" + engine);
+        require(!fs::exists(dir / "Dashboard.heard") && fs::exists(dir / "Door.heard"),
+                "without the line, Dashboard hears nothing; Door still does");
+    }
+    forget();
+    {
+        // The variant that moves a network to another bus: CAN_B is on VehicleCAN, where Dashboard
+        // hears it, and no longer on "Body CAN", where Door is.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "moved", "--events"}, dir);
+        expect_code(run, 0, "run with the variant that moves a network");
+        const std::string engine = participant_event(lf(run.standard_output), "Engine", "started");
+        require(contains(engine, "\"--start-timeout-ms\",") && contains(engine, "\",\"--map-network\",\"VehicleCAN=CAN_B\"],\"log\"") &&
+                    !contains(engine, "Body CAN="),
+                "Engine is started with the line of the variant alone:\n" + engine);
+        require(fs::exists(dir / "Dashboard.heard") && !fs::exists(dir / "Door.heard"),
+                "Dashboard hears Engine's CAN_B on VehicleCAN, and Door hears nothing");
+        // Without that line, CAN_B has two names. The message has the line to add, and the file
+        // fails for every variant (each variant of a file is checked, whichever is chosen).
+        write_file(dir / "wrong.yaml", config_with("VehicleCAN: CAN_B"));
+        const Captured wrong = launch(o, {"check", "wrong.yaml", "--variant", "together"}, dir);
+        expect_code(wrong, 1, "check of a file with a variant that gives a network two names");
+        require(contains(lf(wrong.standard_output),
+                         "error: wrong.yaml:23: variant 'moved': participant 'Engine': network_names gives the executable's "
+                         "network 'CAN_B' two names, 'Body CAN' (line 13, the common part) and 'VehicleCAN' (line 23, this "
+                         "variant), but a network of an ECU is on one bus: to have it on 'VehicleCAN' in this variant, add "
+                         "the line Body CAN: Body CAN to the variant's network_names of 'Engine' (a line whose two names "
+                         "are the same takes the common line away), or remove the variant's line "
+                         "[network-map-collision]\n"),
+                "the message says how the variant takes the common line away:\n" + lf(wrong.standard_output));
+    }
+    forget();
+    HandCommand hand;
+    {
+        // Started by hand: the command carries the same arguments, the one with a space quoted for
+        // this system's shell, and the executable started with it is on the bus.
+        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Door"});
+        const std::string err = live.wait_for_error(
+            [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Door to join (manual): "); });
+        hand = hand_command(err, "Door");
+#ifdef _WIN32
+        const std::string quoted = " --name Door --map-network \"Body CAN=DoorCAN\"";
+#else
+        const std::string quoted = " --name Door --map-network 'Body CAN=DoorCAN'";
+#endif
+        require(hand.line.size() > quoted.size() &&
+                    hand.line.compare(hand.line.size() - quoted.size(), quoted.size(), quoted) == 0,
+                "the command to start Door by hand ends with its line, quoted:\n" + err);
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "the run with Door started by hand ends with 0:\n" + out_of(out));
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 0, "Door ends by itself with 0");
+        require(fs::exists(dir / "Door.heard"), "Door, started with the command shown, hears Engine");
+    }
+    forget();
+    {
+        // The event of a participant started by hand has the same arguments, and the same line
+        // (the registry is where the file says, so the command of the run before starts Door here).
+        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Door", "--events"});
+        const std::string manual = live.wait_for({"\"event\":\"participant\"", "\"name\":\"Door\",\"state\":\"manual\""});
+#ifdef _WIN32
+        const std::string quoted = " --name Door --map-network \\\"Body CAN=DoorCAN\\\"\"";
+#else
+        const std::string quoted = " --name Door --map-network 'Body CAN=DoorCAN'\"";
+#endif
+        require(contains(manual, ",\"--name\",\"Door\",\"--map-network\",\"Body CAN=DoorCAN\"],") && contains(manual, quoted),
+                "the event of the participant started by hand has the arguments and the line:\n" + manual);
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "the run with --events and Door started by hand ends with 0:\n" + out_of(out));
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 0, "Door ends by itself with 0");
+    }
+    {
+        // An executable of a vehicle-sil before --map-network: an error of the check, and nothing
+        // is started (it would end at once with a usage error, after the others were started).
+        const fs::path old = hand_dir(o, "names-old",
+                                      "vehicle_sil_simulation: 1\n"
+                                      "stop_at_ms: 100\n"
+                                      "networks:\n"
+                                      "  - { name: VehicleCAN, kind: can }\n"
+                                      "participants:\n"
+                                      "  - name: Engine\n"
+                                      "    command: [" + ecu(o) + "]\n"
+                                      "    network_names: { VehicleCAN: OLD_CAN }\n"   // 8
+                                      "  - name: Dashboard\n"
+                                      "    command: [" + ecu(o) + "]\n",
+                                      {{"Dashboard", "pid hear VehicleCAN"}});
+        write_file(old / "test-ecu-old", "Engine\n");
+        fs::remove(old / "Engine.started");
+        fs::remove(old / "Dashboard.pid");
+        const Captured run = launch(o, {"run", "sim.yaml"}, old);
+        expect_code(run, 1, "run with network_names for an executable that does not take --map-network");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "error: sim.yaml:8: participant 'Engine': network_names needs an executable that takes "
+                              "--map-network, and this one does not say that it does (no \"map-network\" in the features of "
+                              "its --describe; it was built with vehicle-sil 0.1.0): have its author build it again with "
+                              "vehicle-sil ") &&
+                    contains(out, " or later, or remove network_names and use the executable's own name in networks "
+                                  "('OLD_CAN' instead of 'VehicleCAN'), with network_names for the other participants on it "
+                                  "[network-map-unsupported]\n") &&
+                    contains(out, "\nnothing was started: the check found errors"),
+                "the check says that the executable does not take --map-network:\n" + out);
+        // The other findings are about the simulation the file means: Engine is on VehicleCAN.
+        require(contains(out, "Engine       10 ms  VehicleCAN <- OLD_CAN (raw)\n") && !contains(out, "[unknown-network]"),
+                "the rules read Engine's network under the simulation's name:\n" + out);
+        require(!fs::exists(old / "Engine.started") && !fs::exists(old / "Dashboard.pid"), "nothing was started");
+    }
+}
+
 int main(int argc, char** argv)
 {
 #ifndef _WIN32
@@ -5873,6 +6077,7 @@ int main(int argc, char** argv)
             {"manual_thawed", manual_thawed},
             {"manual_timeout", manual_timeout},
             {"network", network},
+            {"network_names", network_names},
             {"no_console", no_console},
             {"no_console_stdin", no_console_stdin},
             {"not_joined", not_joined},

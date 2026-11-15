@@ -30,7 +30,7 @@ const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms
 /// variant can change gets its key here, a member of VariantParticipant (or VariantConfig), a
 /// branch in read_variant() and a line in apply_variant().
 const std::vector<std::string> kVariantKeys = {"participants", "params"};
-const std::vector<std::string> kVariantParticipantKeys = {"command", "variables", "enabled"};
+const std::vector<std::string> kVariantParticipantKeys = {"command", "variables", "network_names", "enabled"};
 constexpr const char* kVariantsForm =
     "variants: { small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: "
     "650 } } }";
@@ -41,7 +41,17 @@ constexpr const char* kSpeedMeaning =
     "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
 const std::vector<std::string> kParticipantKeys = {"name",    "command", "step_ms", "describe", "required",
-                                                   "enabled", "manual",  "role",    "variables"};
+                                                   "enabled", "manual",  "role",    "variables",
+                                                   "network_names"};
+/// The form of network_names, in messages.
+constexpr const char* kNetworkNamesForm = "network_names: { <simulation's name>: <executable's name> }";
+/// true for the launcher of a Windows build: an executable it starts gets its arguments in the
+/// code page, and ecu_main refuses a --map-network that is not ASCII there (network-map-not-ascii).
+#ifdef _WIN32
+constexpr bool kArgumentsInCodePage = true;
+#else
+constexpr bool kArgumentsInCodePage = false;
+#endif
 /// What each role is for, in the message of a role that is none of them.
 constexpr const char* kRoleMeanings =
     "ecu: an ECU of the vehicle, the default; test: a participant for testing, such as a spy or a tool that talks to "
@@ -170,6 +180,25 @@ std::vector<std::string> braced_words(std::string_view text)
 bool is_placeholder(std::string_view word)
 {
     return std::find(std::begin(kPlaceholders), std::end(kPlaceholders), word) != std::end(kPlaceholders);
+}
+
+/// Lays a variant's network_names over the common ones: a line with the same key (the simulation's
+/// name) takes the place of the common line, a new one goes after them.
+void lay_network_names(std::vector<NetworkName>& names, const std::vector<NetworkName>& over)
+{
+    for (const NetworkName& entry : over)
+    {
+        const auto same = std::find_if(names.begin(), names.end(),
+                                       [&entry](const NetworkName& n) { return n.name == entry.name; });
+        if (same == names.end())
+        {
+            names.push_back(entry);
+        }
+        else
+        {
+            *same = entry;
+        }
+    }
 }
 
 /// The launcher argument that `argument` is (also "--name=x"), or "".
@@ -358,6 +387,7 @@ public:
         {
             read_variants(variantsNode, config);
         }
+        check_network_names(config);
         return config;
     }
 
@@ -704,6 +734,10 @@ private:
                 {
                     read_variables(child, prefix, who, participant);
                 }
+                else if (key == "network_names")
+                {
+                    usable = read_network_names(child, prefix, who, participant.network_names) && usable;
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kParticipantKeys);
@@ -778,6 +812,7 @@ private:
             participant.name = who;
             participant.valid = usable;
             config.participants.push_back(std::move(participant));
+            participant_prefixes_.push_back(prefix);
         }
     }
 
@@ -923,7 +958,7 @@ private:
                     with.command_line = doc_.line(part);
                     read_command(part, at, who, with);
                     change.command_line = with.command_line;
-                    change.valid = !with.command.empty() && check_arguments(at, who, with);
+                    change.valid = !with.command.empty() && check_arguments(at, who, with) && change.valid;
                     if (!with.command.empty())
                     {
                         change.command = std::move(with.command);
@@ -935,6 +970,10 @@ private:
                     read_variables(part, at, who, with);
                     change.variables = std::move(with.variables);
                     change.variable_lines = std::move(with.variable_lines);
+                }
+                else if (key == "network_names")
+                {
+                    change.valid = read_network_names(part, at, who, change.network_names) && change.valid;
                 }
                 else if (key == "enabled")
                 {
@@ -948,6 +987,260 @@ private:
             variant.participants.push_back(std::move(change));
         }
     }
+
+    // --- a participant's network names ---
+
+    /// Reads a "network_names" into `names`: the lines of the right form, as written. false if one
+    /// is not (an error says which).
+    bool read_network_names(ryml::id_type node, const std::string& prefix, const std::string& who,
+                            std::vector<NetworkName>& names)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "network_names must be a mapping of the simulation's network names (the names in networks) "
+                           "to the names the executable's code gives them (network_names: { VehicleCAN: J1939_CAN }), "
+                           "not " + shown_value(node),
+                  who);
+            return false;
+        }
+        bool ok = true;
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            NetworkName entry;
+            entry.name = detail::to_string(tree_.key(child));
+            entry.line = doc_.line(child);
+            if (!first_occurrence(seen, entry.name, child, prefix + "network_names: "))
+            {
+                ok = false;
+                continue;
+            }
+            if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+            {
+                error("value", entry.line,
+                      prefix + "network_names: '" + entry.name + "' must have the name the executable's code gives this "
+                               "network (a text, as in VehicleCAN: J1939_CAN), not " + shown_value(child),
+                      who, entry.name);
+                ok = false;
+                continue;
+            }
+            entry.from = detail::to_string(tree_.val(child));
+            // run gives "--map-network <key>=<value>", which the executable splits at the first '='.
+            if (entry.name.empty() || entry.name.front() == '-' || entry.name.find('=') != std::string::npos)
+            {
+                error("value", entry.line,
+                      prefix + "network_names: the key '" + entry.name + "' cannot be given to the executable (run "
+                               "passes --map-network <key>=<value>, which is split at the first '='): a network that "
+                               "is named here needs a name that is not empty, has no '=' and does not start with '-'; "
+                               "change the name in networks",
+                      who, entry.name);
+                ok = false;
+                continue;
+            }
+            names.push_back(std::move(entry));
+        }
+        return ok;
+    }
+
+    /// "network_names: { VehicleCAN: J1939_CAN }" for the --map-network at command[at] if its value
+    /// is there ("--map-network VehicleCAN=J1939_CAN", or with '='), else the form.
+    static std::string written_network_names(const std::vector<std::string>& command, std::size_t at)
+    {
+        const std::string_view option = ecu_executable::kMapNetworkArgument;
+        std::string value;
+        if (command[at].size() > option.size())
+        {
+            value = command[at].substr(option.size() + 1);
+        }
+        else if (at + 1 < command.size())
+        {
+            value = command[at + 1];
+        }
+        const std::size_t split = value.find('=');
+        if (split == std::string::npos || split == 0 || split + 1 == value.size())
+        {
+            return kNetworkNamesForm;
+        }
+        return "network_names: { " + value.substr(0, split) + ": " + value.substr(split + 1) + " }";
+    }
+
+    /// The rules of network_names that the file alone can tell, for the common part and for each
+    /// variant laid over it (also the variants that are not chosen). An error makes the participant
+    /// invalid (in that variant): it is neither described nor started with names the file does not
+    /// mean.
+    void check_network_names(SimulationConfig& config)
+    {
+        for (std::size_t i = 0; i < config.participants.size(); ++i)
+        {
+            ParticipantConfig& p = config.participants[i];
+            const std::string& prefix = participant_prefixes_[i];
+            const std::size_t before = findings_.size();
+            check_network_name_lines(config, prefix, p.name, p.network_names);
+            check_network_name_set(prefix, p, p.command, p.command_line, p.network_names, nullptr);
+            p.valid = p.valid && !any_error_since(before);
+        }
+        for (VariantConfig& variant : config.variants)
+        {
+            for (VariantParticipant& change : variant.participants)
+            {
+                const auto base = std::find_if(config.participants.begin(), config.participants.end(),
+                                               [&change](const ParticipantConfig& p) { return p.name == change.name; });
+                if (base == config.participants.end() || (change.network_names.empty() && !change.command))
+                {
+                    continue;
+                }
+                const std::string prefix = "variant '" + variant.name + "': participant '" + change.name + "': ";
+                const std::size_t before = findings_.size();
+                check_network_name_lines(config, prefix, change.name, change.network_names);
+                ParticipantConfig merged = *base;
+                lay_network_names(merged.network_names, change.network_names);
+                check_network_name_set(prefix, merged, change.command ? *change.command : base->command,
+                                       change.command ? change.command_line : base->command_line, merged.network_names,
+                                       &*base, &change);
+                change.valid = change.valid && !any_error_since(before);
+            }
+        }
+    }
+
+    bool any_error_since(std::size_t before) const
+    {
+        return std::any_of(findings_.begin() + static_cast<std::ptrdiff_t>(before), findings_.end(),
+                           [](const Finding& f) { return f.severity == Severity::Error; });
+    }
+
+    /// Each line by itself: its key is a network of the file; on Windows, both names are ASCII.
+    void check_network_name_lines(const SimulationConfig& config, const std::string& prefix, const std::string& who,
+                                  const std::vector<NetworkName>& names)
+    {
+        std::vector<std::string> declared;
+        for (const auto& network : config.networks)
+        {
+            declared.push_back(network.name);
+        }
+        const auto in_networks = [&declared](const std::string& name) {
+            return std::find(declared.begin(), declared.end(), name) != declared.end();
+        };
+        const auto ascii = [](const std::string& text) {
+            return std::all_of(text.begin(), text.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; });
+        };
+        for (const NetworkName& entry : names)
+        {
+            if (!entry.renames())
+            {
+                continue;
+            }
+            if (!in_networks(entry.name))
+            {
+                const std::string guess = detail::closest(entry.name, declared);
+                error("network-map-undeclared", entry.line,
+                      prefix + "network_names has the key '" + entry.name + "', which is not in networks: the key is the "
+                               "simulation's name (a name from networks), the value is the executable's name" +
+                          (in_networks(entry.from) ? ". '" + entry.from + "' is in networks, so the two are the wrong "
+                                                     "way round: write " + entry.from + ": " + entry.name
+                           : guess.empty()         ? "; correct the key, or add '" + entry.name + "' to networks"
+                                                   : " (did you mean '" + guess + "'?)"),
+                      who, entry.name);
+            }
+            if (kArgumentsInCodePage && !(ascii(entry.name) && ascii(entry.from)))
+            {
+                error("network-map-not-ascii", entry.line,
+                      prefix + "network_names: '" + entry.name + ": " + entry.from + "' has characters that are not "
+                               "ASCII, which an ECU executable on Windows does not take with --map-network (its "
+                               "arguments arrive in the code page, not in UTF-8): use ASCII names for a network that is "
+                               "renamed (change the name in networks, or have the ECU's author change the name in its "
+                               "code)",
+                      who, entry.name);
+            }
+        }
+    }
+
+    /// The lines of one participant together (`names`: the common ones, or those with a variant's
+    /// laid over them; `common` and `change` are set for a variant): one name of the executable
+    /// under two keys, and --map-network in the command beside them. What the common part says
+    /// already is not said again for a variant. (The note of a participant that is not described
+    /// is of the chosen variant only: note_unchecked_network_names().)
+    void check_network_name_set(const std::string& prefix, const ParticipantConfig& participant,
+                                const std::vector<std::string>& command, std::size_t command_line,
+                                const std::vector<NetworkName>& names, const ParticipantConfig* common,
+                                const VariantParticipant* change = nullptr)
+    {
+        const std::string& who = participant.name;
+        const auto of_variant = [change](const NetworkName& entry) {
+            return change != nullptr &&
+                   std::find(change->network_names.begin(), change->network_names.end(), entry) != change->network_names.end();
+        };
+        std::vector<const NetworkName*> renames;
+        for (const NetworkName& entry : names)
+        {
+            if (!entry.renames())
+            {
+                continue;
+            }
+            const auto same = std::find_if(renames.begin(), renames.end(),
+                                           [&entry](const NetworkName* other) { return other->from == entry.from; });
+            if (same != renames.end() && common != nullptr && of_variant(entry) != of_variant(**same))
+            {
+                // A line of the variant beside a common line of another key: the variant moves the
+                // network to another bus. Removing either line is not what is meant (the common one
+                // is the other variants'), so the message has the line that takes the common one away.
+                const NetworkName& shared = of_variant(entry) ? **same : entry;
+                const NetworkName& own = of_variant(entry) ? entry : **same;
+                error("network-map-collision", own.line,
+                      prefix + "network_names gives the executable's network '" + entry.from + "' two names, '" +
+                          shared.name + "' (line " + std::to_string(shared.line) + ", the common part) and '" + own.name +
+                          "' (line " + std::to_string(own.line) + ", this variant), but a network of an ECU is on one bus: "
+                          "to have it on '" + own.name + "' in this variant, add the line " + shared.name + ": " +
+                          shared.name + " to the variant's network_names of '" + who + "' (a line whose two names are the "
+                          "same takes the common line away), or remove the variant's line",
+                      who, own.name);
+            }
+            else if (same != renames.end() && (common == nullptr || of_variant(entry)))
+            {
+                const NetworkName& first = (*same)->line <= entry.line ? **same : entry;
+                const NetworkName& second = (*same)->line <= entry.line ? entry : **same;
+                error("network-map-collision", second.line,
+                      prefix + "network_names gives the executable's network '" + entry.from + "' two names, '" +
+                          first.name + "' (line " + std::to_string(first.line) + ") and '" + second.name + "' (line " +
+                          std::to_string(second.line) + "), but a network of an ECU is on one bus: keep one of the two lines",
+                      who, second.name);
+            }
+            renames.push_back(&entry);
+        }
+        if (renames.empty() || participant.describe)
+        {
+            return;
+        }
+        const auto has_option = [](const std::vector<std::string>& words) {
+            return std::any_of(words.begin() + (words.empty() ? 0 : 1), words.end(), [](const std::string& word) {
+                return launcher_argument(word) == ecu_executable::kMapNetworkArgument;
+            });
+        };
+        const bool commonRenames = common != nullptr && !renamed_networks(*common).empty();
+        if (has_option(command) && !(commonRenames && has_option(common->command)))
+        {
+            error("launcher-argument", command_line,
+                  prefix + "the command has --map-network, and the participant has network_names, for which "
+                           "vehicle_sil_launch gives the executable --map-network itself (" +
+                      join_words(map_network_arguments(participant)) + "): remove --map-network from the command and "
+                      "write every mapping in network_names (" + kNetworkNamesForm + ")",
+                  who);
+        }
+    }
+
+    /// The words with one space between them.
+    static std::string join_words(const std::vector<std::string>& words)
+    {
+        std::string out;
+        for (const std::string& word : words)
+        {
+            out += (out.empty() ? "" : " ") + word;
+        }
+        return out;
+    }
+
+    /// The prefix of each of config.participants in the messages ("participant 'Engine': ").
+    std::vector<std::string> participant_prefixes_{};
 
     // --- a participant's variable map ---
 
@@ -1199,7 +1492,17 @@ private:
             const std::string& argument = participant.command[i];
             if (participant.describe)
             {
-                if (const auto reserved = launcher_argument(argument); !reserved.empty())
+                if (const auto reserved = launcher_argument(argument); reserved == ecu_executable::kMapNetworkArgument)
+                {
+                    // The one launcher argument that the file asks for: say where it is written.
+                    error("launcher-argument", line,
+                          prefix + "the command has '" + argument + "', but vehicle_sil_launch gives an ecu_main "
+                                   "executable --map-network itself, from the participant's network_names: remove it "
+                                   "from the command and write " + written_network_names(participant.command, i) +
+                              " for this participant",
+                          who);
+                }
+                else if (!reserved.empty())
                 {
                     error("launcher-argument", line,
                           prefix + "the command has '" + argument + "', but vehicle_sil_launch gives an ecu_main executable " +
@@ -1413,6 +1716,7 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant)
                 *same = change.variables[i];
             }
         }
+        lay_network_names(p->network_names, change.network_names);
         if (change.enabled)
         {
             p->enabled = *change.enabled;
@@ -1519,6 +1823,64 @@ void check_required(const SimulationConfig& config, std::vector<Finding>& findin
     }
     findings.push_back(Finding{Severity::Error, "no-required-participant", std::move(message), config.participants_line,
                                "", ""});
+}
+
+} // namespace
+
+std::vector<NetworkName> renamed_networks(const ParticipantConfig& participant)
+{
+    std::vector<NetworkName> out;
+    for (const NetworkName& entry : participant.network_names)
+    {
+        if (entry.renames())
+        {
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> map_network_arguments(const ParticipantConfig& participant)
+{
+    std::vector<std::string> out;
+    for (const NetworkName& entry : renamed_networks(participant))
+    {
+        out.emplace_back(ecu_executable::kMapNetworkArgument);
+        out.push_back(entry.name + "=" + entry.from);
+    }
+    return out;
+}
+
+namespace {
+
+/// The note "network-map-not-checked" of each participant of `config` (the chosen variant and the
+/// command line's choices applied) that is not described, is in the simulation, and has lines that
+/// rename a network: it says the arguments that run gives the executable in this run, the words of
+/// map_network_arguments(), which is what run starts it with (detail::participant_arguments()).
+void note_unchecked_network_names(const SimulationConfig& config, std::vector<Finding>& findings)
+{
+    for (const ParticipantConfig& p : config.participants)
+    {
+        const std::vector<NetworkName> renames = renamed_networks(p);
+        if (p.describe || !p.enabled || p.name.empty() || renames.empty())
+        {
+            continue;
+        }
+        std::string given;
+        for (const std::string& word : map_network_arguments(p))
+        {
+            given += (given.empty() ? "" : " ") + word;
+        }
+        findings.push_back(Finding{
+            Severity::Note, "network-map-not-checked",
+            "participant '" + p.name + "': network_names of a participant that is not described (describe: false) "
+            "cannot be checked: run gives the executable " + given +
+                " after its command (the command to start it by hand shows them too), which only an executable made "
+                "with ecu_main that lists \"map-network\" in the features of its --describe takes. For any other "
+                "executable (a bridge, a tool), remove network_names and give the simulation's network name with the "
+                "executable's own argument or settings",
+            renames.front().line, p.name, ""});
+    }
 }
 
 } // namespace
@@ -1672,6 +2034,7 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
             {
                 out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
             }
+            note_unchecked_network_names(*out.config, out.findings);
             check_required(*out.config, out.findings);
         }
     }

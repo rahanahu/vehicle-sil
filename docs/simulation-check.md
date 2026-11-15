@@ -95,8 +95,8 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `describe-unknown-value` | Error | A key of the `--describe` output that takes fixed values (`kind`, `use`, `type`, `causality`) has a value that this `vehicle_sil_launch` does not know (an ECU from a newer vehicle-sil). | Use a `vehicle_sil_launch` from the same vehicle-sil as the ECU, or a newer one. |
 | `name-mismatch` | Error | `name` in the `--describe` output differs from the participant name (`main()` does not pass `--name` to `ecu_main`). | Change the ECU's `main()` so that it passes all arguments to `ecu_main`. |
 | `step-mismatch` | Error | `step_ms` differs from the step size in the `--describe` output (also for a real-time ECU, which has no step size). | Change `step_ms` to the value in the finding message, or delete it. |
-| `unknown-network` | Error | An ECU uses a network that is not in `networks`. | If it is meant to be the same bus, align the network names on the ECU side; if it is another bus, add it to `networks`. |
-| `kind-mismatch` | Error | An ECU uses a network as a different kind (CAN, LIN, Ethernet) from the one in `networks`. | Correct `kind` in `networks`, or the network on the ECU side. |
+| `unknown-network` | Error | An ECU uses a network that is not in `networks`. | If it is meant to be the same bus, write the `network_names` line that the finding message gives for that participant; if it is another bus, add it to `networks`. |
+| `kind-mismatch` | Error | An ECU uses a network as a different kind (CAN, LIN, Ethernet) from the one in `networks`. For a network renamed with `network_names`, the finding message gives both names: `'VehicleCAN' ('J1939_CAN' in the executable)`. | Correct `kind` in `networks`, or the network on the ECU side. |
 | `address-conflict` | Error | 2 or more J1939 nodes on the same network ask for the same address, and one of them cannot work. | Give each node its own address. |
 | `address-shared` | Warning | Of the nodes that ask for the same address, the node with the lowest NAME gets it, and all the others move to other addresses. | To decide which node is at which address, give each node its own address. |
 | `name-conflict` | Error | 2 or more J1939 nodes on the same network have the same NAME. | Give each node its own NAME (for a second copy of the same ECU, change the identity number). |
@@ -120,6 +120,12 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `variable-map-collision` | Error | The name of a mapping equals the visible name of another variable of the executable, or the same variable has 2 mappings. | Rename the mapping, or delete one of the 2 mappings. |
 | `variable-map-absent` | Error | The executable has a variable whose name is marked `absent: true`. | Delete that `absent: true`. |
 | `variable-map-not-checked` | Note | A `describe: false` participant has `variables` (they cannot be compared before the run). | No action needed. |
+| `network-map-undeclared` | Error | A key of `network_names` is not in `networks` (the key is the simulation's name, the value the executable's name). | Add the network to `networks`, or correct the key. If the value is in `networks`, the finding message gives the line the other way round (see [Matching network names](simulation-config.md#matching-network-names-network_names)). |
+| `network-map-collision` | Error | `network_names` gives one network of the executable 2 names (one value under 2 keys), or after the mapping 2 networks of the executable have the same name (the executable itself also has a network with the name mapped to). | Keep one name for each network of the executable. To move a network to another bus in a variant, add the line that the finding message gives (`VehicleCAN: VehicleCAN`) to that variant. |
+| `network-map-unknown` | Error | The executable does not use a network with the name of a value in `network_names`. | Correct the value (the finding message lists the executable's networks and gives a close name). |
+| `network-map-unsupported` | Error | The executable of a participant with `network_names` cannot take `--map-network` (`features` in its `--describe` output has no `map-network`: an executable built with an earlier vehicle-sil). | Rebuild the executable, or give the network in `networks` the executable's name and write the mappings for the other participants. |
+| `network-map-not-ascii` | Error | Windows launcher only: a key or value in `network_names` has a non-ASCII character (an ECU executable on Windows refuses such a `--map-network`). | Use ASCII names for the networks you map. |
+| `network-map-not-checked` | Note | A `describe: false` participant has `network_names` (it cannot be checked). | No action needed for an ecu_main executable. |
 | `variant-participant` | Error | `participants` of a variant (`variants`) has a name that is not in `participants` of the configuration file. | Correct the name, or, for a participant that exists only in that variant, write it in `participants` with `enabled: false`. |
 | `scenario-nothing-checked` | Warning | With this configuration (variant), all checking steps (`expect`, `wait_until`) of the `--scenario` scenario are skipped. | If only the variable names differ, map them with `variables`; if the scenario is not meant for this variant, write its target variants in `only` of the scenario. |
 | `usage` | Error | A usage error (only in the JSON with `--json`). | Correct the arguments as the usage on stderr says. |
@@ -143,12 +149,15 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `control-link-not-offered`, `control-link-version` | `run` cannot read or write the variables of that ECU (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). |
 | `variable-map-*` | For how to write a mapping, see "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables). |
 | `variable-map-not-checked` | A mapping that does not match becomes the run finding `variable-map-not-applied`. |
+| `network-map-unknown` | Findings that this line causes are not reported: `unknown-network` for the network of the executable with a name close to the value (without a close name, one of the same kind as the key), and `unused-network`, `single-participant` and `lin-no-master` for the network of the key. Findings for other networks are reported. |
+| `network-map-unsupported` | The other rules continue with the mapped names. |
+| `network-map-not-checked` | The finding message gives the arguments that `run` adds in that run. They follow from the configuration after the selected variant and `--disable` are applied, and a participant to which `run` adds no argument gets no note. `run` adds `--map-network`, so an executable that is not an ecu_main executable ends with a usage error when it starts. |
 | `scenario-nothing-checked` | The scenario passes without checking anything (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)). |
 | `usage` | Also covers a configuration file with variants and no `--variant`, a variant name that does not exist, and `--param` with a name that is not in the scenario. |
 
-**`unknown-network`**: If there are networks of the same kind that this participant does not use and other participants do, the finding message names them (whether or not they are in `networks`). It then says to align the names if it is meant to be one bus, or to add the network to `networks` if it is another bus. The configuration file cannot rename a network, so to align the names, the ECU author fixes the ECU and rebuilds it. If there is no network to name, the message says first to add the network to `networks`.
+**`unknown-network`**: If there are networks of the same kind that this participant does not use and other participants do, the finding message names them (whether or not they are in `networks`). If it is meant to be one bus, the message then gives the `network_names` line to write for that participant (`network_names: { J1939_CAN: VehicleCAN }`, in the direction "simulation name: executable name"; the executable stays as it is). If it is another bus, it says to add the network to `networks`. When none of the networks it names is in `networks`, it says first to choose one name and add it to `networks`. If there is no network to name, the message says first to add the network to `networks`. A network renamed with `network_names` is compared under its new name.
 
-**`single-participant`**: `role: test` participants are not counted. So the finding is reported for a network with one ECU and a test participant (such as a spy that only receives), and for a network with only test participants. If another network of the same kind also has a single ECU, a different one, the finding message names that network and says that the ECUs may be calling one bus by different names.
+**`single-participant`**: `role: test` participants are not counted. So the finding is reported for a network with one ECU and a test participant (such as a spy that only receives), and for a network with only test participants. If another network of the same kind also has a single ECU, a different one, the finding message names that network. If it is meant to be one bus, the message says to remove one of the names from `networks` and gives the `network_names` line to write for that ECU.
 
 **`ethernet-duplicate-mac`**: The finding message gives the participants and the address. In a setup that uses the same address on purpose (a standby and an active unit, for example), keep `eth::ChannelOptions::mac` on one participant and do not pass it on the others. Only the note `ethernet-mac-unknown` then remains. A channel without `mac` cannot use `Accept::Addressed`, however. In SIL Kit, the order of frames sent in the same step can change from run to run.
 
@@ -176,6 +185,10 @@ Overlapping addresses and NAMEs on a network that is not in `networks` are not c
 ### Participants on a network, and Ethernet addresses
 
 A participant uses a network when both the name and the kind match (the same holds for the table and for `networks[].participants` in JSON).
+
+The name is compared after the participant's `network_names` is applied (the simulation's name). Every rule about a network, such as overlapping addresses and the LIN master, works with this name.
+
+A participant whose `network_names` has an error that the configuration file alone shows (`network-map-undeclared`, `network-map-collision` for one value under 2 keys, the error `value` for its form, `network-map-not-ascii`) is not checked (`skipped`), so that nothing is compared under a name you did not mean. No rule looks at a line of `network_names` whose key and value are the same.
 
 How Ethernet MAC addresses are handled:
 
@@ -207,7 +220,7 @@ The output has these 4 parts, from top to bottom:
 | Findings | One per line: errors, then warnings, then notes, each group in line order. |
 | Result line | The numbers of errors, warnings and notes. |
 
-In the participant table, J1939 networks show the address that each node asked for (`any` is 254). The name of a participant whose `role` is not `ecu` is followed by `(role: test)` or similar. The columns of the table are aligned by character count, so full-width characters break the alignment.
+In the participant table, J1939 networks show the address that each node asked for (`any` is 254). A network renamed with `network_names` is written as `VehicleCAN <- J1939_CAN (j1939 0x00)`: the simulation's name, then the executable's name. The name of a participant whose `role` is not `ecu` is followed by `(role: test)` or similar. The columns of the table are aligned by character count, so full-width characters break the alignment.
 
 A finding line starts with `error:`, `warning:` or `note:` and has the form `<file>:<line>: <what, with which value, and how to fix it> [<code>]`.
 
@@ -271,7 +284,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
@@ -340,6 +353,7 @@ Keys of each element of `participants[]`:
 | `reported` | The `--describe` output (only when `status` is `described`; `null` otherwise) |
 | `variables` | Array of the ECU's variables as the simulation sees them (`ecu.connected`, then in declaration order) |
 | `variable_map` | Array of the mappings written in `variables` of the configuration file (in the order written). Present only for participants that have `variables` |
+| `network_map` | Array of the lines written in `network_names` of the configuration file (in the order written, after the lines of the variant are merged). Present only for participants that have `network_names` |
 | `control` | How the ECU exposes its variables, as reported in its `--describe` output |
 
 | `status` | Meaning |
@@ -350,7 +364,7 @@ Keys of each element of `participants[]`:
 | `"skipped"` | An error in the configuration file stopped the check of this participant |
 | `"disabled"` | Disabled (even if the entry has errors) |
 
-**`reported`**: The keys are `vehicle_sil`, `name`, `step_ns` and `networks` (in the same form as the `--describe` JSON). The variables are in `variables`, described next.
+**`reported`**: The keys are `vehicle_sil`, `name`, `step_ns` and `networks` (in the same form as the `--describe` JSON). The network names in it are the executable's names, before `network_names` is applied. The variables are in `variables`, described next.
 
 **`variables`**: The names, types, ranges and units after the variable map (`variables` in the configuration file) is applied. They are what scenarios and the Control API see. Without a variable map, they are as the ECU reported them. Each element has the same form as `variables[]` of the `--describe` JSON (`name`, `type`, `causality`, `unit`, `min`, `max`, `step`, `description`, `items`, `builtin`; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). Use it to see which ECU has which variables before you run.
 
@@ -375,6 +389,8 @@ Keys of each element of `participants[]`:
 
 If only one of `scale` and `offset` is written, the other has its default, 1 or 0.
 
+**`network_map`**: Each element has `name` (the simulation's name), `line` (the line in the configuration file) and `from` (the executable's name). Lines whose key and value are the same are included. Lines that could not be read (the error `value`) are not.
+
 **`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
 Keys of each element of `networks[]` and `findings[]`:
@@ -384,7 +400,7 @@ Keys of each element of `networks[]` and `findings[]`:
 | `networks[].name` | Name of the network |
 | `networks[].kind` | Kind (`null` if it could not be read) |
 | `networks[].line` | Line in the configuration file |
-| `networks[].participants` | Names of the participants that use the network (in the order of the configuration file) |
+| `networks[].participants` | Names of the participants that use the network (in the order of the configuration file; counted under the names after `network_names` is applied) |
 | `findings[].severity` | `"error"`, `"warning"`, `"note"` |
 | `findings[].code` | Finding code |
 | `findings[].file` | The configuration file (for a finding about the scenario of `--scenario`, the scenario file) |

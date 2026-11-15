@@ -95,8 +95,8 @@
 | `describe-unknown-value` | エラー | `--describe` の出力の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値があります（新しい vehicle-sil の ECU）。 | `vehicle_sil_launch` を、ECU と同じか、それより新しい vehicle-sil のものにします。 |
 | `name-mismatch` | エラー | `--describe` の出力の `name` が participant 名と違います（`--name` を `ecu_main` に渡していない）。 | ECU の `main()` を、引数を全部 `ecu_main` に渡すように直します。 |
 | `step-mismatch` | エラー | `step_ms` が、`--describe` の出力のステップ幅と違います（実時間で、ステップ幅のない ECU も）。 | `step_ms` を指摘の文の値に直すか、削除します。 |
-| `unknown-network` | エラー | ECU が、`networks` にないネットワークを使います。 | 1 つのバスのつもりなら ECU の側の名前をそろえ、別のバスなら `networks` に追加します。 |
-| `kind-mismatch` | エラー | ECU が、ネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使います。 | `networks` の `kind` か、ECU の側のネットワークを直します。 |
+| `unknown-network` | エラー | ECU が、`networks` にないネットワークを使います。 | 1 つのバスのつもりなら、指摘の文が言う `network_names` の行をその participant に書き、別のバスなら `networks` に追加します。 |
+| `kind-mismatch` | エラー | ECU が、ネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使います。`network_names` で名前を替えたネットワークは、指摘の文に両方の名前を書きます: `'VehicleCAN' ('J1939_CAN' in the executable)`。 | `networks` の `kind` か、ECU の側のネットワークを直します。 |
 | `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。 |
 | `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移ります。 | どのノードがどのアドレスにいるかを決めたいなら、ノードごとに別のアドレスにします。 |
 | `name-conflict` | エラー | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じです。 | ノードごとに別の NAME にします（同じ ECU の 2 つ目は、identity number を変えます）。 |
@@ -120,6 +120,12 @@
 | `variable-map-collision` | エラー | 対応の名前が、実行ファイルのほかの変数の見える名前と同じか、同じ変数に対応を 2 つ書いています。 | 対応の名前を変えるか、2 つの対応の片方を削除します。 |
 | `variable-map-absent` | エラー | `absent: true` と書いた名前の変数が、実行ファイルにあります。 | その `absent: true` を削除します。 |
 | `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` があります（実行の前には比べられない）。 | 対応は不要です。 |
+| `network-map-undeclared` | エラー | `network_names` のキーが `networks` にありません（キーはシミュレーションの名前、値は実行ファイルの名前）。 | `networks` にネットワークを追加するか、キーを直します。値のほうが `networks` にあれば、指摘の文は逆に書いた行を言います（[ネットワークの名前を合わせる](simulation-config.md#ネットワークの名前を合わせるnetwork_names)）。 |
+| `network-map-collision` | エラー | `network_names` が、実行ファイルの 1 つのネットワークに 2 つの名前を付けています（1 つの値を 2 つのキーに書いた）。または、対応の後で、実行ファイルの 2 つのネットワークが同じ名前になります（替えた先の名前のネットワークを、実行ファイルが自分でも持っている）。 | 実行ファイルのネットワーク 1 つに名前を 1 つにします。機種でネットワークを別のバスへ移すときは、指摘の文が言う行（`VehicleCAN: VehicleCAN`）を、その機種に追加します。 |
+| `network-map-unknown` | エラー | `network_names` の値の名前のネットワークを、実行ファイルが使っていません。 | 値を直します（指摘の文は、実行ファイルのネットワークの一覧と、近い名前を言います）。 |
+| `network-map-unsupported` | エラー | `network_names` を書いた participant の実行ファイルが、`--map-network` を受け取れません（`--describe` の出力の `features` に `map-network` がない。前のバージョンの vehicle-sil で作った実行ファイル）。 | 実行ファイルを作り直すか、`networks` の名前をその実行ファイルの名前にして、ほかの participant の側に対応を書きます。 |
+| `network-map-not-ascii` | エラー | Windows のランチャーだけ: `network_names` のキーか値に、ASCII でない文字があります（Windows の ECU の実行ファイルは、その `--map-network` を拒否する）。 | 対応を書くネットワークの名前を ASCII にします。 |
+| `network-map-not-checked` | 注記 | `describe: false` の participant に `network_names` があります（照合できない）。 | ecu_main の実行ファイルなら対応は不要です。 |
 | `variant-participant` | エラー | 機種（`variants`）の `participants` に、設定ファイルの `participants` にない名前があります。 | 名前を直すか、その機種にだけいる participant なら、`participants` に `enabled: false` で書きます。 |
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確認する手順（`expect`、`wait_until`）が、この設定（機種）では全部飛びます。 | 変数の名前が違うだけなら `variables` で対応させ、この機種向けでないシナリオなら、シナリオの `only` に対象の機種を書きます。 |
 | `usage` | エラー | 引数のエラーです（`--json` のときの JSON だけ）。 | 標準エラーの使い方に従って、引数を直します。 |
@@ -143,12 +149,15 @@
 | `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
 | `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |
 | `variable-map-not-checked` | 合わない対応は、実行の指摘 `variable-map-not-applied` になります。 |
+| `network-map-unknown` | この行が原因の指摘は出しません。値に近い名前の実行ファイルのネットワーク（近い名前がなければ、キーと同じ種類のもの）の `unknown-network` と、キーのネットワークの `unused-network`、`single-participant`、`lin-no-master` です。ほかのネットワークの指摘は出ます。 |
+| `network-map-unsupported` | ほかのルールは、対応を当てた名前で続けます。 |
+| `network-map-not-checked` | 指摘の文は、その実行で `run` が追加する引数を書きます。引数は、選んだ機種と `--disable` を当てた後の設定で決まり、追加する引数のない participant には出しません。`run` は `--map-network` を追加するので、ecu_main でない実行ファイルは、起動のときに引数のエラーで終わります。 |
 | `scenario-nothing-checked` | シナリオは、何も確認せずに通ります（[scenario.md](scenario.md) の「機種とパラメーター」）。 |
 | `usage` | 機種を書いた設定ファイルに `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます。 |
 
-**`unknown-network`**: 指摘の文は、同じ種類のネットワークで、その participant が使わず、ほかの participant が使うものがあれば、それを名指しします（`networks` にあるものも、ないものも）。そのうえで、1 つのバスのつもりなら名前をそろえること、別のバスなら `networks` に追加することを言います。名前は設定ファイルでは付け替えられないので、そろえるには、ECU を作った人が直してビルドし直します。名指しするネットワークがなければ、`networks` に追加することを先に言います。
+**`unknown-network`**: 指摘の文は、同じ種類のネットワークで、その participant が使わず、ほかの participant が使うものがあれば、それを名指しします（`networks` にあるものも、ないものも）。そのうえで、1 つのバスのつもりなら、その participant に書く `network_names` の行（`network_names: { J1939_CAN: VehicleCAN }`。向きは「シミュレーションの名前: 実行ファイルの名前」。実行ファイルは変えない）を、別のバスなら `networks` に追加することを言います。挙げたネットワークがどれも `networks` にないときは、先に名前を 1 つ決めて `networks` に追加することを言います。名指しするネットワークがなければ、`networks` に追加することを先に言います。`network_names` で名前を替えたネットワークは、替えた後の名前で比べます。
 
-**`single-participant`**: `role: test` の participant は数えません。そのため、ECU が 1 つとテスト用の participant（受信するだけの spy など）のネットワークでも、テスト用の participant だけのネットワークでも出ます。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、指摘の文はそのネットワークを挙げ、1 つのバスを ECU が別の名前で呼んでいるかもしれないと言います。
+**`single-participant`**: `role: test` の participant は数えません。そのため、ECU が 1 つとテスト用の participant（受信するだけの spy など）のネットワークでも、テスト用の participant だけのネットワークでも出ます。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、指摘の文はそのネットワークを挙げ、1 つのバスのつもりなら、片方の名前を `networks` から削除して、その ECU に書く `network_names` の行を言います。
 
 **`ethernet-duplicate-mac`**: 指摘の文は、participant とアドレスを言います。同じアドレスをわざと使う設定（待機系と現用系など）では、1 つを残して、ほかの participant の `eth::ChannelOptions::mac` を渡さずにおきます。そうすると、`ethernet-mac-unknown` の注記だけになります。ただし、`mac` のないチャネルは `Accept::Addressed` を使えません。同じステップで送信したフレームの順は、SIL Kit では実行ごとに変わりえます。
 
@@ -176,6 +185,10 @@
 ### ネットワークを使う participant とイーサネットのアドレス
 
 ネットワークを使う participant は、名前と種類の両方が合うものです（表と JSON の `networks[].participants` も同じです）。
+
+名前は、participant の `network_names` を当てた後の名前（シミュレーションの名前）で比べます。アドレスの重なり、LIN の master など、ネットワークのルールは全部この名前で動きます。
+
+`network_names` に設定ファイルだけで分かるエラー（`network-map-undeclared`、1 つの値を 2 つのキーに書いた `network-map-collision`、形のエラー `value`、`network-map-not-ascii`）がある participant は、照合しません（`skipped`。意図と違う名前で比べないためです）。`network_names` のうち、キーと値が同じ行は、どのルールも見ません。
 
 イーサネットの MAC アドレスの扱いは次のとおりです。
 
@@ -207,7 +220,7 @@
 | 指摘 | 1 つが 1 行で、エラー、警告、注記の順に、それぞれ行の順に並びます。 |
 | 結果の 1 行 | エラー、警告、注記の数です。 |
 
-participant の表では、J1939 のネットワークにノードの求めたアドレスを書きます（`any` は 254）。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書きます。表の幅は文字の数でそろえるので、全角の文字があるとずれます。
+participant の表では、J1939 のネットワークにノードの求めたアドレスを書きます（`any` は 254）。`network_names` で名前を替えたネットワークは、`VehicleCAN <- J1939_CAN (j1939 0x00)` と、シミュレーションの名前、実行ファイルの名前の順に書きます。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書きます。表の幅は文字の数でそろえるので、全角の文字があるとずれます。
 
 指摘の行は、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<コード>]` の形です。
 
@@ -271,7 +284,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
@@ -340,6 +353,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `reported` | `--describe` の出力（`status` が `described` のときだけ。ほかは `null`） |
 | `variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順） |
 | `variable_map` | 設定ファイルの `variables` に書いた対応の配列（書いた順）。`variables` を書いた participant だけにあります |
+| `network_map` | 設定ファイルの `network_names` に書いた行の配列（書いた順。機種の行を重ねた後）。`network_names` を書いた participant だけにあります |
 | `control` | ECU が `--describe` に出力した、変数の公開の方法 |
 
 | `status` | 意味 |
@@ -350,7 +364,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `"skipped"` | 設定ファイルのエラーで進めなかった |
 | `"disabled"` | 無効にした（項目にエラーがあっても） |
 
-**`reported`**: キーは `vehicle_sil`、`name`、`step_ns`、`networks` です（`--describe` の JSON と同じ形）。変数は、次の `variables` にあります。
+**`reported`**: キーは `vehicle_sil`、`name`、`step_ns`、`networks` です（`--describe` の JSON と同じ形）。ネットワークの名前は実行ファイルの名前のままで、`network_names` を当てる前です。変数は、次の `variables` にあります。
 
 **`variables`**: 設定ファイルの `variables`（対応表）を反映した後の名前、型、範囲、単位です。シナリオと Control API が見るものと同じです。対応表がなければ、ECU が出力したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。実行の前に、どの ECU にどの変数があるかを見るのに使います。
 
@@ -375,6 +389,8 @@ failed: 3 errors, 1 warning, 0 notes
 
 `scale` と `offset` の片方だけを書いたときは、もう片方が既定の 1 か 0 になります。
 
+**`network_map`**: 要素は `name`（シミュレーションの名前）、`line`（設定ファイルの行）、`from`（実行ファイルの名前）です。キーと値が同じ行も含みます。読めなかった行（エラー `value`）は含みません。
+
 **`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
 
 `networks[]` と `findings[]` の要素のキーは次のとおりです。
@@ -384,7 +400,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `networks[].name` | ネットワークの名前 |
 | `networks[].kind` | 種類（読めなかったときは `null`） |
 | `networks[].line` | 設定ファイルの行 |
-| `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順） |
+| `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順。`network_names` を当てた後の名前で数える） |
 | `findings[].severity` | `"error"`、`"warning"`、`"note"` |
 | `findings[].code` | 指摘のコード |
 | `findings[].file` | 設定ファイル（`--scenario` のシナリオについての指摘では、シナリオのファイル） |

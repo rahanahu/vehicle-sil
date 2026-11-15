@@ -55,7 +55,7 @@ If the sender and the receiver show different values, the cause is in the commun
 One name is one bus. ECUs that use the same name connect to the same bus. ECUs with different names do not see each other's frames.
 
 - If there are 2 buses (for example, 2 CAN buses with different bit rates), decide on 2 names. An ECU on both buses opens 2 networks in its code.
-- The name is a value in the ECU's code. The configuration file cannot change it. Decide on the names before work starts and share them with everyone (see "Step 1: Agree on names and share them" in [Integrate and run several ECUs](integrate-ecus.md#step-1-agree-on-names-and-share-them)).
+- The name is a value in the ECU's code. A configuration file can map another name onto it (`network_names`), but every configuration file then needs that mapping. Decide on the names before work starts and share them with everyone (see "Step 1: Agree on names and share them" in [Integrate and run several ECUs](integrate-ecus.md#step-1-agree-on-names-and-share-them)).
 - Do not scatter the name across an ECU's sources as string literals. Define it once, as a constant, in a header that the ECUs share. A change then touches one place, and the compiler catches typos.
 - The bit rate is separate from the name. A normal run does not use it: a frame arrives in the simulation step after the one in which it was sent (a simulation step is the interval by which the simulation advances virtual time). Only 2 things use the bit rate: runs that include a CAN network simulator, and bridges to real hardware (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
 

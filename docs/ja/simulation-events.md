@@ -477,7 +477,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "scenario-points-file",
     "timeline",
     "timeline-lines",
-    "scenario-inputs"
+    "scenario-inputs",
+    "network-names"
   ]
 }
 ```
@@ -517,6 +518,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `timeline` | `run --scenario --timeline <file>`: シナリオの実行を時間の軸で記録したファイル（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」） |
 | `timeline-lines` | `--timeline` のファイルの `lines[]`（入力ごとの線: 手順が置いた値と動き、動きの始まりの値とその出どころ）と、手順の `writes[]`（[simulation-run.md](simulation-run.md) の同じ節） |
 | `scenario-inputs` | シナリオの最上位の `inputs`（入力に重ねる `dither`）と手順 `dither`（[scenario.md](scenario.md) の「細かい揺れを重ねる（`dither`）」） |
+| `network-names` | 設定ファイルの `network_names`（[simulation-config.md](simulation-config.md) の「ネットワークの名前を合わせる（`network_names`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -533,6 +535,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-points-file` | 指摘 `scenario-points-file` |
 | `timeline` | 結果の `scenario.timeline`、指摘 `timeline-write` と `timeline-limit` |
 | `scenario-inputs` | 指摘 `scenario-dither-*` と `scenario-input-skipped`、結果とイベントの手順の `kind` の `"dither"`、照合と結果の JSON の `scenario.inputs` と `scenario.lines`、`--timeline` のファイルの `lines[]` の `kind` の `"dither"` と、`series` の 3 列目（`columns`） |
+| `network-names` | 実行ファイルに渡す `--map-network`、照合の JSON の `participants[].network_map`、指摘 `network-map-*` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

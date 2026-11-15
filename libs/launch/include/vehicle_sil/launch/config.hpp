@@ -32,7 +32,9 @@ inline constexpr std::int64_t kMaxMillis = ecu_executable::kMaxMillis;
 inline constexpr std::string_view kControllerName = "SimulationController";
 
 /// The arguments that vehicle_sil_launch gives an ecu_main executable itself; its command must
-/// not have them (also not as "--name=..."). docs/ecu-executable.md has their meaning. The list is
+/// not have them (also not as "--name=..."). docs/ecu-executable.md has their meaning.
+/// --map-network is the one the file asks for (network_names); with describe: false, where a
+/// command may have the others, it must not be in the command beside network_names. The list is
 /// ecu_executable::kLauncherArguments (vehicle_sil/ecu/executable.hpp), which ecu_main's tests
 /// hold against its arguments.
 inline constexpr const auto& kLauncherArguments = ecu_executable::kLauncherArguments;
@@ -98,6 +100,21 @@ inline constexpr ParticipantRole kParticipantRoles[] = {ParticipantRole::Ecu, Pa
 /// The role to_string() names `name` (exactly, lower case), or empty for another text.
 [[nodiscard]] std::optional<ParticipantRole> participant_role_named(std::string_view name) noexcept;
 
+/// One line of a participant's "network_names": the simulation's network `name` (a name of
+/// "networks") is the network that the executable's code names `from`. Everywhere in this
+/// direction: the file writes `name: from`, run gives the executable `--map-network name=from`.
+struct NetworkName
+{
+    std::string name;
+    std::string from;
+    std::size_t line = 0;
+    /// false for a line whose two names are the same: it stands for no line (a variant writes it
+    /// over a line of the common part to take that away). Not given to the executable, not checked.
+    [[nodiscard]] bool renames() const { return name != from; }
+
+    friend bool operator==(const NetworkName&, const NetworkName&) = default;
+};
+
 struct ParticipantConfig
 {
     /// The participant name (on SIL Kit); an ecu_main executable gets it with --name.
@@ -135,15 +152,27 @@ struct ParticipantConfig
     /// variables is the check's to say (seen_variables()).
     control::VariableMap variables{};
     std::vector<std::size_t> variable_lines{}; ///< the line of each mapping of `variables`
+    /// Its "network_names" as written (also the lines that rename nothing), in the file's order;
+    /// with a variant, the variant's lines laid over them. Only lines of the right form (the
+    /// others are reported when reading). What they do: renamed_networks().
+    std::vector<NetworkName> network_names{};
     std::size_t line = 0;         ///< the line of the participant's entry
     std::size_t command_line = 0; ///< the line of its command (its entry's line if it has none)
     std::size_t step_line = 0;    ///< the line of step_ms (its entry's line if it has none)
     /// false if the entry cannot be described or compared (no name, no command, a duplicate or
     /// reserved name, a launcher argument or an unknown placeholder in the command, a describe
-    /// that is not true or false; reported when reading). An unknown key or a bad step_ms or
-    /// required does not make it invalid.
+    /// that is not true or false, an error in network_names; reported when reading). An unknown
+    /// key or a bad step_ms or required does not make it invalid.
     bool valid = true;
 };
+
+/// The lines of the participant's network_names that rename a network (NetworkName::renames()), in
+/// their order: what run gives the executable, and what the check applies to its description.
+[[nodiscard]] std::vector<NetworkName> renamed_networks(const ParticipantConfig& participant);
+
+/// What run adds to the participant's arguments for its network_names: "--map-network",
+/// "<simulation's name>=<executable's name>" for each of renamed_networks(); empty without one.
+[[nodiscard]] std::vector<std::string> map_network_arguments(const ParticipantConfig& participant);
 
 /// Where a parameter's value comes from; a later one replaces an earlier one of the same name.
 enum class ParamSource
@@ -188,10 +217,13 @@ struct VariantParticipant
     /// simulation uses).
     control::VariableMap variables{};
     std::vector<std::size_t> variable_lines{};
+    /// "network_names": laid over the common ones, line by line (by the simulation's name). A
+    /// line whose two names are the same takes the common line away.
+    std::vector<NetworkName> network_names{};
     /// "enabled".
     std::optional<bool> enabled{};
-    /// false if its command has an error (reported when reading): the participant cannot be
-    /// described or started in this variant.
+    /// false if its command or its network_names (with the common ones) has an error (reported
+    /// when reading): the participant cannot be described or started in this variant.
     bool valid = true;
 };
 

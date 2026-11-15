@@ -506,6 +506,17 @@ namespace detail {
 /// The launcher's own limits (before and after the wait) still end a start that does not come.
 [[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start);
 
+/// The arguments that run starts the participant with, after its executable; the command to start
+/// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
+/// true): its command's arguments, then --name, --registry-uri `registry_uri` and
+/// --start-timeout-ms (ecu_start_timeout_ms() with `stands_still_before_start`), then
+/// map_network_arguments() of its entry. Any other: its command's
+/// arguments with the placeholders replaced, then map_network_arguments() (a --map-network after
+/// what the file wrote, never inside it).
+[[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
+                                                             const std::string& registry_uri,
+                                                             bool stands_still_before_start);
+
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double
 /// quotes if it has a space, a tab, a quote or one of &|<>^; %...% is not protected), elsewhere as

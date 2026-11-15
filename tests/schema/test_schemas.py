@@ -366,6 +366,18 @@ CONFIG_SAMPLES = [
      "check only"),
     ("two names for one value", CONFIG_HEAD + P + "    variables: { a.b: { from: x, map: { P: 0, Q: 0 } } }\n",
      "check only"),
+    ("network names, one that renames nothing and one that YAML reads as a number",
+     CONFIG_HEAD + "  - { name: Other, kind: can }\n" + P + "    network_names: { Body: CAN_1, Other: 5, Third: Third }\n", "valid"),
+    ("network names of a variant",
+     CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { network_names: { Body: CAN_1 } } } } }\n", "valid"),
+    ("a key of network_names with =", CONFIG_HEAD + P + "    network_names: { \"a=b\": CAN_1 }\n", "invalid"),
+    ("a key of network_names that starts with -", CONFIG_HEAD + P + "    network_names: { \"-v\": CAN_1 }\n", "invalid"),
+    ("an empty name in network_names", CONFIG_HEAD + P + "    network_names: { Body: \"\" }\n", "invalid"),
+    ("a list as the executable's name of a network", CONFIG_HEAD + P + "    network_names: { Body: [CAN_1] }\n", "invalid"),
+    ("network_names that is a list", CONFIG_HEAD + P + "    network_names: [Body]\n", "invalid"),
+    ("a key of network_names that is not in networks", CONFIG_HEAD + P + "    network_names: { Bodi: CAN_1 }\n", "check only"),
+    ("one name of the executable under two keys of network_names",
+     CONFIG_HEAD + "  - { name: Other, kind: can }\n" + P + "    network_names: { Body: CAN_1, Other: CAN_1 }\n", "check only"),
 ]
 
 # For the two ECUs of examples/ecu_main: Engine.engine.throttle (real input, 0 to 100), Engine.engine.speed (integer

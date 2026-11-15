@@ -19,6 +19,7 @@ vehicle_sil_launch run simulation.yaml
 | Running without one of the ECUs | [Disabling a participant](#disabling-a-participant-enabled---disable---enable) |
 | Running an ECU from a debugger | [Starting a participant yourself](#starting-a-participant-yourself-manual---manual) |
 | Aligning variable names that differ between executables | [Matching variable names and values](#matching-variable-names-and-values-variables) |
+| Aligning network names that differ between executables | [Matching network names](#matching-network-names-network_names) |
 | Changing executables or values per variant | [Variants](#variants-variants---variant), [Scenario parameters](#scenario-parameters-params---param) |
 | Arguments and exit codes | [Arguments and exit codes](#arguments-and-exit-codes) |
 
@@ -98,7 +99,7 @@ Keys of each element of `networks` (list every network that the ECUs use):
 
 | Key | Required | Value |
 |---|---|---|
-| `networks[].name` | Yes | Name of the network (the name passed to the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`) |
+| `networks[].name` | Yes | Name of the network (the name passed to the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`; if an executable calls it by another name, write that in the participant's `network_names`) |
 | `networks[].kind` | Yes | One of `can`, `lin` and `ethernet` |
 
 Keys of each element of `participants`:
@@ -114,6 +115,7 @@ Keys of each element of `participants`:
 | `participants[].manual` | | `true`: `run` does not start the participant, and you start it yourself (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)) | `false` |
 | `participants[].role` | | What the participant is for (`ecu`, `test` or `bridge`; see [Test participants and bridges](#test-participants-and-bridges-role)) | `ecu` |
 | `participants[].variables` | | Variable map (see [Matching variable names and values](#matching-variable-names-and-values-variables)) | Variables appear under the executable's names |
+| `participants[].network_names` | | Network name map, from the simulation's names (the names in `networks`) to the names this executable uses in its code (see [Matching network names](#matching-network-names-network_names)) | Networks keep the executable's names |
 
 Notes on individual keys:
 
@@ -233,6 +235,8 @@ In `command`, only `{word}` (letters, digits and `_` between `{` and `}`) is spe
 | The check | `--describe --name <participant name>` |
 | `run` | `--name <participant name> --registry-uri <URI> --start-timeout-ms <ms>` |
 
+With `network_names`, `run` then adds `--map-network <simulation name>=<executable name>` for each line, in the order written (the check's `--describe` gets none).
+
 `<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. It is the launcher that waits for the start and names the participants that did not join; the limit on the ECU side covers the case where the launcher has gone away. In the following 2 kinds of run, the ECU's wait for the start has no limit, so `<ms>` is 10^12 (`1000000000000`):
 
 - A run with a required participant that you start yourself.
@@ -244,7 +248,7 @@ What you can and cannot write in `command`:
 
 | What you write | Handling |
 |---|---|
-| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (an error). |
+| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)). |
 | `--no-control` | Allowed. The ECU does not expose its variables. |
 | `--silkit-config <file>` | Allowed. Passes a SIL Kit configuration file to the ECU. |
 | `required: false` | Not allowed (the error `not-required-ecu`). |
@@ -348,7 +352,7 @@ Rules for combining the options:
 
 #### The command `run` prints
 
-When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, and `--map-network` if it has `network_names`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
 
 The arguments are quoted for the shell you paste them into:
 
@@ -580,6 +584,63 @@ A `describe: false` participant can also have `variables`, but they cannot be co
 
 Writes are rejected so that a value meant for the common name is not applied to another variable, or without the conversion.
 
+### Matching network names (`network_names`)
+
+An ECU executable has its network names in its code (`j1939("J1939_CAN")` and the like). ECUs written by different people may call the same bus by different names. With a mapping in `network_names`, such a network connects to the bus of the simulation's name without a rebuild of the executable.
+
+```yaml
+networks:
+  - name: VehicleCAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]          # j1939("J1939_CAN") in the code
+    network_names:
+      VehicleCAN: J1939_CAN               # this executable's J1939_CAN is VehicleCAN in the simulation
+  - name: Dashboard
+    command: [dashboard/dashboard_ecu]    # VehicleCAN in the code too: no mapping needed
+```
+
+The direction is always "simulation name: executable name", as in `variables`.
+
+- A key is a name in `networks` (otherwise the error `network-map-undeclared`). A value is the name that the executable passes to `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`.
+- A mapping applies to a name: `j1939()` and `can()` with the same name are both renamed. The kind does not change. Networks that are not listed keep the executable's names.
+- A network of the executable can have only one name. One value under 2 keys is an error, and so is a mapping after which 2 networks of the executable have the same name (`network-map-collision`). Swapping 2 names (`A: B` and `B: A`) is allowed.
+- A line whose key and value are the same (`VehicleCAN: VehicleCAN`) counts as no line. A variant uses it to remove a common line (see "Moving a network to another bus in a variant" below).
+- A key must not be empty, must not contain `=` and must not start with `-` (the error `value`), because it is passed in the argument `--map-network <key>=<value>`.
+- `run` adds `--map-network VehicleCAN=J1939_CAN` at the end of the arguments of a participant with a mapping, one for each line in the order written. The executable then connects the code's `J1939_CAN` to `VehicleCAN` in SIL Kit (see "Renaming networks" in [ecu-executable.md](ecu-executable.md#renaming-networks---map-network)). The names that the ECU's code sees do not change. The command of a participant that you start yourself (`manual`) and the `command` of the `participant` event carry the same arguments.
+- The check (`check`, and the start of `run`) renames the reported networks with the mapping before it applies the rules. The table, `networks[].participants` in `check --json` and `network` of the findings use the simulation's names. In the table, the row of the participant shows both names: `VehicleCAN <- J1939_CAN (j1939 0x00)`. In `check --json`, `participants[].network_map` lists the lines you wrote, and `participants[].reported.networks[].name` keeps the executable's names.
+- The check also compares the mapping with what the executable reports. Two errors can come of it: the executable does not use a network with the name of the value (`network-map-unknown`), or the executable cannot take `--map-network` (`network-map-unsupported`: `features` in its `--describe` output has no `map-network`, because it was built with an earlier vehicle-sil; rebuild it, or give the network in `networks` that executable's name and write the mappings for the other participants). With either error, `run` starts nothing.
+- A `describe: false` participant can have `network_names` too (an ECU that you start yourself on another computer with another OS, for example). It cannot be checked, so the check reports the note `network-map-not-checked`, which shows the arguments that `run` adds in that run (with the selected variant). A disabled participant, and a participant whose lines a variant removed entirely, get no note. Only ecu_main executables accept `--map-network`: for bridges and other tools, do not write `network_names`, and give the simulation's name in the arguments or settings of that executable. You can write `--map-network` yourself in the `command` of a `describe: false` participant, but not together with `network_names` (the error `launcher-argument`).
+
+**Moving a network to another bus in a variant**: the lines of a variant are merged into the common lines key by key. A line with another key is added, so writing the same network of the executable under another key gives it 2 names (the error `network-map-collision`; the message shows the line to add). Remove the common line with a line whose key and value are the same:
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]
+    network_names:
+      VehicleCAN: J1939_CAN             # common: J1939_CAN is VehicleCAN
+variants:
+  standard: {}
+  body_bus:
+    participants:
+      Engine:
+        network_names:
+          VehicleCAN: VehicleCAN        # removes the common line
+          BodyCAN: J1939_CAN            # in this variant, J1939_CAN is BodyCAN
+```
+
+Errors in `network_names` are reported for the variants that are not selected too, as errors in a variant's `command` are (`check` reads every variant in the file).
+
+Limits:
+
+- On a Windows launcher, the names in a mapping (keys and values) must be ASCII (the error `network-map-not-ascii`). An ECU executable on Windows refuses a non-ASCII `--map-network`, because its arguments arrive in the code page. A Linux launcher does not report this error, so keep mapped names ASCII also when you start ECUs on a Windows computer from Linux.
+- Under `run`, the monitoring variables (`j1939.<network name>.bus_state` and the like) carry the simulation's name (`j1939.VehicleCAN.*`). If the `variables` of a `describe: false` participant name such a variable in `from`, use that name.
+- A `Network` in a controller of the SIL Kit configuration passed with `--silkit-config` cannot be used together with a mapping (the executable refuses it at start with exit code 3). An ECU built without rapidyaml refuses any mapping together with `--silkit-config`, also at start. The check finds neither.
+- The check does not find a mapping for the name of a J1939 network on a port passed in from outside (`j1939(name, port)`) either (exit code 3 at start).
+- `network_names` does not tell the check which networks a `describe: false` participant is on (the check still does not know the networks of that participant).
+
 ### Variants (`variants`, `--variant`)
 
 When the executables or variable maps differ by variant, write the common part in `participants` and the differences of each variant in `variants`. `check` and `run` apply the differences of the variant selected with `--variant <name>` on top of the common part, then check and run the result. `test` runs all variants in turn (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). Scenarios use only the common names, so the same scenario works for every variant.
@@ -610,6 +671,7 @@ variants:
 | `variants.<variant>.participants.<participant>` | How a participant of the common part differs in this variant |
 | `…<participant>.command` | Executable and arguments (replaces the whole common `command`) |
 | `…<participant>.variables` | Variable map (merged into the common `variables`, one mapping at a time) |
+| `…<participant>.network_names` | Network name map (merged into the common `network_names`, line by line) |
 | `…<participant>.enabled` | `true` or `false` (replaces the common `enabled`) |
 | `variants.<variant>.params` | Parameters (merged into the common `params`, name by name) |
 
@@ -618,8 +680,9 @@ variants:
 - The keys of `variants.<variant>.participants` are participant names. Only names in `participants` are allowed (the error `variant-participant`).
 - `…<participant>.command` follows the same syntax and rules as `participants[].command`.
 - In `…<participant>.variables`, a mapping with the same name (key) replaces the common one, and a new name is added.
+- In `…<participant>.network_names`, a line with the same key replaces the common one (a line whose key and value are the same removes the common line), and a new key is added.
 
-A variant can change only these 4 keys: `command`, `variables`, `enabled` and `params`. Any other key is an error (`unknown-key`). Networks, `step_ms`, `describe`, `required`, `role` and the rest are the same in every variant.
+A variant can change only these 5 keys: `command`, `variables`, `network_names`, `enabled` and `params`. Any other key is an error (`unknown-key`). Networks, `step_ms`, `describe`, `required`, `role` and the rest are the same in every variant.
 
 | Goal | How to write it |
 |---|---|

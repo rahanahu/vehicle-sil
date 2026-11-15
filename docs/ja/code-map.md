@@ -810,6 +810,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | 照合の全体の流れ | `src/check.cpp` |
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
+| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
@@ -992,6 +993,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `simulation.yaml` | エンジンとこの ECU（`check` が `unknown-network` を報告する） |
 | `simulation.two-buses.yaml` | `networks` に `VehicleCAN` を追加したもの |
 | `simulation.fixed.yaml` | 表示の ECU を、`examples/ecu_main` のものに差し替えたもの |
+| `simulation.network-names.yaml` | `simulation.yaml` の表示の ECU に `network_names` を足したもの |
 | `scenarios/engine_speed.yaml` | シナリオ |
 
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと、作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います。
@@ -1001,7 +1003,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 - ファイルとガイドのブロック
 - `--describe` と `check --json` の抜粋のキー
-- 3 つの設定ファイルの `check`、`--disable Dashboard`
+- 4 つの設定ファイルの `check`、`--disable Dashboard`
 - `run` の結果と、表示の ECU の出力
 - シナリオつきの `run`
 
@@ -1416,6 +1418,7 @@ flowchart TD
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `peer.controllers_are_made_on_the_simulation_name` | `libs/` で SIL Kit のバスのコントローラーを作るのは `libs/peer/src/peer.cpp` だけで、どの呼び出しも `simulation_name()` を通した名前のネットワークに作る（`cmake/VehicleSilCheckControllerNetworks.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の設定は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
+| `launch.described_networks_are_read_in_one_place` | `libs/launch` で自己申告のネットワーク（`description.networks`）を読むのは `src/check_networks.cpp`（対応を当てる `seen_networks()` と、JSON の `reported` を書く所）と `src/describe_read.cpp` だけ（`cmake/VehicleSilCheckDescribedNetworks.cmake`。設定の `config.networks` は数えない） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 | `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 
@@ -1430,6 +1433,7 @@ flowchart TD
 | ランチャー | 例のコードと、ガイドにあるコピー | [ガイドにある出力とコードのコピー](#ガイドにある出力とコードのコピー) |
 | ランチャー | 照合のルールと `code` | [照合のルールと `code`](#照合のルールと-code) |
 | ランチャー | 設定ファイルかシナリオのキー、スキーマ | [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) |
+| ランチャー | `network_names` | [設定ファイルの `network_names`](#設定ファイルの-network_names) |
 | ランチャー | `run --events`、`--stdin-commands`、`version --json` | [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) |
 | ランチャー | 速度、一時停止、ステップ実行、遅れ | [`run` の時間](#run-の時間) |
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
@@ -1567,6 +1571,34 @@ flowchart TD
 
 テスト:
 
+- `schema.files_and_launcher`
+
+### 設定ファイルの `network_names`
+
+`network_names` は、participant ごとの、ネットワークの名前の対応です。
+
+変える場所:
+
+- 読むコードと、設定ファイルだけで分かるエラー: `libs/launch/src/config.cpp` の `read_network_names()` と `check_network_names()`
+- 機種の行の重ね方: `lay_network_names()`、引数にするコード: `map_network_arguments()`
+- 照合のルールと出力が見るネットワークの名前
+
+守ること:
+
+- 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/launch/src/check_networks.cpp`。対応を当てるただ 1 つの関数）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` の `.networks` の行を読んで確認します。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
+- `run` の引数は `detail::participant_arguments()`（`libs/launch/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
+
+合わせて直すドキュメント:
+
+- [simulation-config.md](simulation-config.md) の「ネットワークの名前を合わせる（`network_names`）」と、キーの表、機種の表
+- [simulation-check.md](simulation-check.md) の `network-map-*`、`unknown-network`、`single-participant` と、JSON の `network_map`
+- [simulation-events.md](simulation-events.md) の `features` の `network-names`
+- スキーマ（`schema/simulation.schema.json` とテンプレートのコピー）
+
+テスト:
+
+- `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`）
+- `launch_run.network_names`: 名前の違う ECU が 1 つのバスで通信する、機種で対応が替わる、`manual` のコマンドとイベント、`--map-network` を受け取れない実行ファイル
 - `schema.files_and_launcher`
 
 ### イベント、標準入力のコマンド、`version --json`
@@ -1912,7 +1944,7 @@ flowchart TD
 
 合わせて直すコード（`libs/ecu/include/vehicle_sil/ecu/executable.hpp`。ランチャーと `ecu_main` が同じものを使います）:
 
-- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数）
+- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数。`--map-network` は `network_names` から追加する。メッセージは `config.cpp` の `check_arguments()`）
 - 終了コード、`kMaxMillis`
 
 合わせて直すドキュメント:

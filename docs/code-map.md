@@ -810,6 +810,7 @@ Implementation:
 |---|---|
 | The overall flow of the check | `src/check.cpp` |
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
+| The reported networks under the names after `network_names` of the configuration file (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check output | `src/check_format.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
@@ -992,6 +993,7 @@ The comments at the top of the files are not in the guide's blocks. The line num
 | `simulation.yaml` | The engine and this ECU (`check` reports `unknown-network`) |
 | `simulation.two-buses.yaml` | `VehicleCAN` added to `networks` |
 | `simulation.fixed.yaml` | The dashboard ECU replaced with the one of `examples/ecu_main` |
+| `simulation.network-names.yaml` | `simulation.yaml` with `network_names` on the dashboard ECU |
 | `scenarios/engine_speed.yaml` | Scenario |
 
 - Build: with `VEHICLE_SIL_BUILD_EXAMPLES`, the executable and the YAML files go to `build/<preset>/examples/integrate_ecus/`. The engine and the rebuilt dashboard ECU are used from the neighboring `examples/ecu_main/` through relative paths.
@@ -1001,7 +1003,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 
 - The files with the guide's blocks
 - The keys of the `--describe` and `check --json` excerpts
-- `check` of the 3 configuration files, `--disable Dashboard`
+- `check` of the 4 configuration files, `--disable Dashboard`
 - The result of `run` and the output of the dashboard ECU
 - `run` with a scenario
 
@@ -1416,6 +1418,7 @@ These tests read the sources' `#include` lines and similar, and check the bounda
 | `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
 | `peer.controllers_are_made_on_the_simulation_name` | In `libs/`, only `libs/peer/src/peer.cpp` creates SIL Kit bus controllers, and every call creates one on a network whose name went through `simulation_name()` (`cmake/VehicleSilCheckControllerNetworks.cmake`) |
 | `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |
+| `launch.described_networks_are_read_in_one_place` | In `libs/launch`, only `src/check_networks.cpp` (`seen_networks()`, which applies the map, and the code that writes `reported` in the JSON) and `src/describe_read.cpp` read the reported networks (`description.networks`) (`cmake/VehicleSilCheckDescribedNetworks.cmake`; `config.networks` of the configuration is not counted) |
 | `j1939_codec.independent_of_the_engine` | The only vehicle-sil header that `codec.hpp` includes is `j1939/types.hpp` (the value types); it does not include `Network` or `Node` |
 | `eth_link.boundary` | `libs/eth_link` includes no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
 
@@ -1430,6 +1433,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | The example code and its copies in the guides | [Output and code copied into the guides](#output-and-code-copied-into-the-guides) |
 | Launcher | Check rules and `code` | [Check rules and `code`](#check-rules-and-code) |
 | Launcher | Configuration file or scenario keys, the schemas | [Configuration file or scenario keys](#configuration-file-or-scenario-keys) |
+| Launcher | `network_names` | [`network_names` in the configuration file](#network_names-in-the-configuration-file) |
 | Launcher | `run --events`, `--stdin-commands`, `version --json` | [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) |
 | Launcher | Speed, pause, stepping, lateness | [Timing of `run`](#timing-of-run) |
 | Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
@@ -1567,6 +1571,34 @@ Rules:
 
 Tests:
 
+- `schema.files_and_launcher`
+
+### `network_names` in the configuration file
+
+`network_names` is a participant's network name map.
+
+Where to change:
+
+- Reading it, and the errors that the configuration file alone shows: `read_network_names()` and `check_network_names()` in `libs/launch/src/config.cpp`
+- Merging the lines of a variant: `lay_network_names()`; turning them into arguments: `map_network_arguments()`
+- The network names that the check rules and the output look at
+
+Rules:
+
+- The check rules, the tables and `networks` in the JSON read the reported networks only through `seen_networks()` (`libs/launch/src/check_networks.cpp`, the only function that applies the map). A rule that reads `description.networks` itself sees a renamed network under the executable's name. `launch.described_networks_are_read_in_one_place` (`cmake/VehicleSilCheckDescribedNetworks.cmake`) reads the lines with `.networks` in `libs/launch` to confirm this. When you add a rule or an output, add the case of a renamed network to `tests/launch/test_check.cpp`.
+- `detail::participant_arguments()` (`libs/launch/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` comes last; with `describe: false`, after the placeholders are replaced).
+
+Documentation to update:
+
+- "[Matching network names (`network_names`)](simulation-config.md#matching-network-names-network_names)", the key table and the variant table in [simulation-config.md](simulation-config.md)
+- `network-map-*`, `unknown-network`, `single-participant` and `network_map` in the JSON in [simulation-check.md](simulation-check.md)
+- `network-names` in `features` in [simulation-events.md](simulation-events.md)
+- The schema (`schema/simulation.schema.json` and its copy in the template)
+
+Tests:
+
+- `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`)
+- `launch_run.network_names`: ECUs with different names communicate on one bus, a variant changes the map, the command of `manual` and the event, an executable that cannot take `--map-network`
 - `schema.files_and_launcher`
 
 ### Events, stdin commands, `version --json`
@@ -1912,7 +1944,7 @@ Where to change:
 
 Code to update (`libs/ecu/include/vehicle_sil/ecu/executable.hpp`; the launcher and `ecu_main` share it):
 
-- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file)
+- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file; `--map-network` comes from `network_names`, and the message is in `check_arguments()` of `config.cpp`)
 - Exit codes, `kMaxMillis`
 
 Documentation to update:
