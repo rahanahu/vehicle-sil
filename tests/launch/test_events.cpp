@@ -1148,13 +1148,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "timeline-lines",
     "scenario-inputs",
     "network-names",
-    "run-traffic"
+    "run-traffic",
+    "j1939-nodes"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"network-names\",\n    \"run-traffic\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"run-traffic\",\n    \"j1939-nodes\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

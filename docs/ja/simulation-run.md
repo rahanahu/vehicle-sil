@@ -841,7 +841,7 @@ passed: 0 errors, 1 warning, 1 note
       "log": null,
       "control_link": {
         "state": "connected",
-        "variables": 18,
+        "variables": 22,
         "version": null,
         "late_messages": 0
       }
@@ -858,7 +858,7 @@ passed: 0 errors, 1 warning, 1 note
       "log": null,
       "control_link": {
         "state": "connected",
-        "variables": 18,
+        "variables": 22,
         "version": null,
         "late_messages": 0
       }

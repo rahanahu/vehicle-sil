@@ -228,7 +228,7 @@ Agent は反映の時刻を決めるだけで、ステップの並びとデー�
 | `peer.speed` | 前の読み出しからの仮想時間の秒 / 壁時計の秒（最初の読み出しでは 0、止まっていた後は小さくなる） |
 | `peer.app_time_max_us` | 前の読み出しから、アプリと LIN の処理にかかった最長の時間（J1939 の処理と書き込みの反映は含まない） |
 | `j1939.N.bus_state`（J1939 のネットワーク N ごと） | 列挙: unknown、error_active、error_passive、bus_off |
-| ネットワーク N ごとの統計 | `frames_received`、`frames_sent`、`send_failures`、`send_queue_full`、`receive_overflows`、`held_dropped`、`address_violations`、`transport_aborts_sent`、`transport_aborts_received` |
+| ネットワーク N ごとの統計 | `frames_received`、`frames_sent`、`send_failures`、`send_queue_full`、`receive_overflows`、`held_dropped`、`address_violations`、`transport_aborts_sent`、`transport_aborts_received`、`transport_timeouts`、`transport_rejected`、`transport_bam_dropped`、`transport_bam_replaced`（`j1939::NetworkStatistics` の同じ名前の項目） |
 | `j1939.N.node<i>.address`（N のノード i ごと） | ノードのアドレス |
 | `j1939.N.node<i>.address_state`（N のノード i ごと） | 列挙: fixed、not_started、claiming、claimed、cannot_claim |
 

@@ -20,6 +20,7 @@ vehicle_sil_launch run simulation.yaml
 | ECU をデバッガーから動かす | [participant を自分で起動する](#participant-を自分で起動するmanual--manual) |
 | 実行ファイルごとに違う変数の名前をそろえる | [変数の名前と値を合わせる](#変数の名前と値を合わせるvariables) |
 | 実行ファイルごとに違うネットワークの名前をそろえる | [ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names) |
+| 同じ ECU を 1 つのネットワークに 2 つ載せる（J1939 のアドレスと NAME を替える） | [J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes) |
 | 機種ごとに実行ファイルや値を変える | [機種](#機種variants--variant)、[シナリオのパラメーター](#シナリオのパラメーターparams--param) |
 | 引数と終了コード | [引数と終了コード](#引数と終了コード) |
 
@@ -116,6 +117,7 @@ participants:
 | `participants[].role` | | participant の用途（`ecu`、`test`、`bridge`。[テスト用の participant とブリッジ](#テスト用の-participant-とブリッジrole)） | `ecu` |
 | `participants[].variables` | | 変数の対応表（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)） | 変数は、実行ファイルの名前のまま見えます |
 | `participants[].network_names` | | ネットワークの名前の対応。シミュレーションの名前（`networks` の名前）から、この実行ファイルがコードで使っている名前への対応を書きます（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)） | ネットワークは、実行ファイルの名前のままです |
+| `participants[].j1939_nodes` | | この実行ファイルの J1939 のノードの、別のアドレスと NAME の欄。ノードごとに 1 行です（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)） | ノードは、実行ファイルのコードの値のままです |
 
 キーごとの補足です。
 
@@ -235,7 +237,7 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 | 照合 | `--describe --name <participant 名>` |
 | `run` | `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`network_names` があれば、`run` は、その後ろに `--map-network <シミュレーションの名前>=<実行ファイルの名前>` を、書いた順に追加します（照合の `--describe` には追加しません）。
+`network_names` があれば、`run` は、その後ろに `--map-network <シミュレーションの名前>=<実行ファイルの名前>` を書いた順に追加し、`j1939_nodes` があれば、何かを変える行ごとに `--j1939-node <ネットワーク>=<設定>` を追加します（照合の `--describe` には、どちらも追加しません）。
 
 `<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。次の 2 つの実行では、ECU が始まるまで待つ時間に上限がないので、10^12（`1000000000000`）です。この 2 つでも、始まらない participant は、ランチャーが `start_timeout_ms` で見つけます。manual の participant がいる実行では、下の「[待ち方](#待ち方)」の表の区間ごとに数えます。時刻 0 の前に止まる実行では、participant を待ち始めてから止まるまでを数え、止まっている間は数えず、進めた時点から改めて `start_timeout_ms` を数えます。
 
@@ -246,7 +248,7 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 
 | 書くもの | 扱い |
 |---|---|
-| `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー `launcher-argument`）。`--map-network` は `network_names` に書きます（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）。 |
+| `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--j1939-node`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー `launcher-argument`）。`--map-network` は `network_names` に（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）、`--j1939-node` は `j1939_nodes` に（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)）書きます。 |
 | `--no-control` | 書けます（その ECU は変数を公開しません）。 |
 | `--silkit-config <file>` | 書けます（その ECU に SIL Kit の設定ファイルを渡します）。 |
 | `required: false` | 書けません（エラー `not-required-ecu`）。 |
@@ -350,13 +352,13 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 
 #### `run` が表示するコマンド
 
-`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`--events` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
+`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network`、`j1939_nodes` があれば `--j1939-node` も）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`--events` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
 
 引数の引用は、貼り付けるシェルに合わせてあります。
 
 - Linux では、POSIX sh（bash、zsh）に貼る形です。
 - Windows では、コマンドプロンプト（cmd.exe）に貼る形で、実行ファイルのパスは `\` で区切ります。
-- cmd.exe の形では、C ランタイムがコマンドラインを読むルールで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。
+- cmd.exe の形では、C ランタイムがコマンドラインを読むルールで引用し、`&` `|` `<` `>` `^` `,` `;` を含む引数も `"` で囲みます（PowerShell は、引用のない `a,b` を 2 つの引数として渡し、`;` を文の区切りとして読みます）。
 - cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。
 - PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を追加し、`$` と `` ` `` を含む引数を直します。
 
@@ -645,6 +647,66 @@ variants:
 - 外から渡したポートの J1939（`j1939(name, port)`）の名前に対応を書いても、照合では分かりません（起動のときに終了コード 3）。
 - `network_names` は、`describe: false` の participant がどのネットワークにいるかの申告にはなりません（照合は、その participant のネットワークを今までどおり知りません）。
 
+### J1939 のアドレスと NAME を合わせる（`j1939_nodes`）
+
+J1939 のノードは、アドレスと NAME を ECU のコード（`add_node()`）に持っています。同じ ECU の実行ファイルを 1 つのネットワークに 2 つ載せると、2 つが同じ NAME で同じアドレスを求め、どちらもアドレスを得られません（`name-conflict`）。`j1939_nodes` に行を書くと、実行ファイルを作り直さずに、片方に別のアドレスと NAME の欄を与えます。
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]          # コードでノード 1 つ、0x00
+  - name: Engine2
+    command: [engine/engine_ecu]          # 同じ実行ファイル
+    j1939_nodes:
+      - { network: J1939_CAN, address: 0x01, identity_number: 2 }
+```
+
+行のキー:
+
+| キー | 必須 | 値 |
+|---|---|---|
+| `network` | はい | ノードの CAN のネットワークの、シミュレーションでの名前（`networks` の名前。`network_names` があれば、そのキー。実行ファイルの名前ではありません） |
+| `from` | | 実行ファイルのコードでのノードのアドレス。0..254（254: 空いているアドレスを求めるノード）。実行ファイルがそのネットワークにノードを 1 つだけ持つときは省けます |
+| `address` | | ノードが求めるアドレス。0..254（254: 空いているアドレス。NAME が arbitrary address capable のノードだけ） |
+| `identity_number` | | NAME の identity number の欄。0..2097151 |
+| `function_instance` | | NAME の function instance の欄。0..31 |
+| `ecu_instance` | | NAME の ECU instance の欄。0..7 |
+
+- 数は引用符なしで、YAML 1.2 の整数の書き方で書きます。10 進（`010` は 10）か、小文字の `0x` を付けた 16 進（`0x01`）です（YAML は `0X01` を文字列として読みます。`1_0` と `0b11` も同じです）。範囲の外はエラー `value` です。欄の幅に切り詰めることはしません。
+- `from` は、実行ファイルのコードのアドレスです。`j1939_nodes` のないときに `check` の表がそのノードに出すアドレスで、新しいアドレスではありません。実行ファイルがそのネットワークにノードを 2 つ以上持つときは、どの行にも `from` が要ります（ないとエラー `j1939-node-ambiguous`）。
+- `from` のない行は、そこにある実行ファイルのただ 1 つのノードに当たります。ECU を作る人がコードでそのノードのアドレスを変えても、新しいアドレスのノードに当たります。アドレスを決めて指したいときは `from` を書きます。
+- ノードごとに 1 行です（同じ `network` と `from` の行が 2 つ、`from` のない行と同じネットワークのほかの行は、エラー `j1939-node-duplicate`）。
+- `network` と `from` だけの行は、何も変えません。`run` は渡さず、照合もしません。機種で共通の行を消すのに使います。
+- NAME の欄は、NAME のあるノードにだけ書けます（ないとエラー `j1939-node-no-name`）。NAME のほかの欄（manufacturer code、function、arbitrary address capable など）は変えられません。
+- `run` は、何かを変える行ごとに、`--map-network` の後ろに `--j1939-node <ネットワーク>=<設定>` を追加します（`--j1939-node J1939_CAN=address:0x01,identity_number:2`）。自分で起動する participant（`manual`）のコマンドと、イベント `participant` の `command` にも、同じ引数が出ます。[ecu-executable.md](ecu-executable.md) の「J1939 のノードのアドレスと NAME を替える」も見てください。
+- 照合は、実行ファイルが申告したノードに、実行ファイルと同じ決まりで行を当ててから、アドレスと NAME の規則（`address-conflict`、`address-shared`、`name-conflict`）を見ます。表では、行でアドレスが変わったノードを、シミュレーションでの値を先に、両方のアドレスで書きます: `J1939_CAN (j1939 0x01<-0x00)`（254 は `any`）。注記 `j1939-node-changed` が、何が変わるかを並べます。`check --json` では、`participants[].j1939_nodes` が行と、各行が当たったノードを並べ、`participants[].reported` はコードの値のままです。
+- ノードに当たらない行はエラーです（`j1939-node-unknown`、`j1939-node-ambiguous`、`j1939-node-indistinct`、`j1939-node-no-name`、`j1939-node-any-address`。[simulation-check.md](simulation-check.md#指摘のコード)）。前の vehicle-sil で作った実行ファイルは `--j1939-node` を受け取れません（`j1939-node-unsupported`: `features` に `j1939-node` がない）。どのエラーでも、`run` は何も起動しません。
+- `describe: false` の participant にも書けます。照合できないので、注記 `j1939-node-not-checked` を出し、`run` が追加する引数を書きます。`--j1939-node` を受け取れるのは ecu_main の実行ファイルだけです。`describe: false` の `command` に `--j1939-node` を自分で書くこともできますが、何かを変える `j1939_nodes` と両方は書けません（エラー `launcher-argument`）。
+
+**機種では**、同じノードの行（同じ `network` と `from`、またはどちらも `from` なし）は、共通の行を丸ごと置き換えます（設定を混ぜません）。機種の行は、共通の行と同じ形で書きます。共通が `from` なしで機種が `from` ありだと、別の 2 行です（`j1939-node-duplicate`）。共通の行を消すには、`network` と `from` だけを書きます:
+
+```yaml
+participants:
+  - name: Engine2
+    command: [engine/engine_ecu]
+    j1939_nodes:
+      - { network: J1939_CAN, from: 0x00, address: 0x01, identity_number: 2 }
+variants:
+  standard: {}
+  alone:
+    participants:
+      Engine2:
+        j1939_nodes:
+          - { network: J1939_CAN, from: 0x00 }   # 共通の行を消す
+```
+
+制限:
+
+- ほかの ECU のコードに書かれたこの ECU のこと（宛先や送り手の見分けに使うアドレス、NAME の全体）は変わりません。NAME の全体を比べて `address_of()` で探す ECU は、NAME の欄を変えた 2 台目を見つけられません。ECU 自身のコードのほかの定数（フィルター、送るデータの中の値）も変わりません。注記 `j1939-node-changed` が participant ごとにこれを言います。
+- ECU が開始の後に追加するノードは `--describe` に出ず、コードの値のままです。
+- ノードを別のアドレスに動かすと、address claim の後に送信を待つ時間が変わることがあります（待ちはアドレスの範囲で決まります）。規格と合っているかは確かめていません。
+- Windows のランチャーでは、何かを変える行の `network` は ASCII にします（エラー `j1939-node-not-ascii`）。`network_names` と同じです。
+
 ### 機種（`variants`、`--variant`）
 
 実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた設定を、照合し、実行します。全部の機種を順に実行するのは `test` です（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを使えます。
@@ -676,6 +738,7 @@ variants:
 | `…<participant>.command` | 実行ファイルと引数（共通の `command` の全体を置き換えます） |
 | `…<participant>.variables` | 変数の対応表（共通の `variables` に、対応 1 つずつ重ねます） |
 | `…<participant>.network_names` | ネットワークの名前の対応（共通の `network_names` に、行ごとに重ねます） |
+| `…<participant>.j1939_nodes` | J1939 のノードの行（共通の `j1939_nodes` に、ノードごとに重ねます） |
 | `…<participant>.enabled` | `true` か `false`（共通の `enabled` を置き換えます） |
 | `variants.<機種>.params` | パラメーター（共通の `params` に、名前ごとに重ねます） |
 
@@ -685,8 +748,9 @@ variants:
 - `…<participant>.command` の書き方とルールは、`participants[].command` と同じです。
 - `…<participant>.variables` では、同じ名前（キー）の対応は置き換え、ない名前は追加します。
 - `…<participant>.network_names` では、同じキーの行は置き換え（キーと値が同じ行は、共通の行を消します）、ないキーは追加します。
+- `…<participant>.j1939_nodes` では、同じ `network` と `from` の行は丸ごと置き換え（`network` と `from` だけの行は、共通の行を消します）、ない行は追加します（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)）。
 
-機種で変えられるのは、この 5 つ（`command`、`variables`、`network_names`、`enabled`、`params`）だけです。ほかのキーはエラーです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required`、`role` などは、どの機種でも同じです。
+機種で変えられるのは、この 6 つ（`command`、`variables`、`network_names`、`j1939_nodes`、`enabled`、`params`）だけです。ほかのキーはエラーです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required`、`role` などは、どの機種でも同じです。
 
 | したいこと | 書き方 |
 |---|---|

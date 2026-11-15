@@ -228,7 +228,7 @@ With `PeerOptions::monitor` (enabled by default), the `Peer` adds the following 
 | `peer.speed` | Seconds of virtual time / seconds of wall-clock time since the previous read (0 at the first read; smaller after a pause) |
 | `peer.app_time_max_us` | The longest time spent in application and LIN processing since the previous read (excludes J1939 processing and applying writes) |
 | `j1939.N.bus_state` (for each J1939 network N) | Enum: unknown, error_active, error_passive, bus_off |
-| Statistics for each network N | `frames_received`, `frames_sent`, `send_failures`, `send_queue_full`, `receive_overflows`, `held_dropped`, `address_violations`, `transport_aborts_sent`, `transport_aborts_received` |
+| Statistics for each network N | `frames_received`, `frames_sent`, `send_failures`, `send_queue_full`, `receive_overflows`, `held_dropped`, `address_violations`, `transport_aborts_sent`, `transport_aborts_received`, `transport_timeouts`, `transport_rejected`, `transport_bam_dropped`, `transport_bam_replaced` (the fields of `j1939::NetworkStatistics` of the same names) |
 | `j1939.N.node<i>.address` (for each node i of N) | The node's address |
 | `j1939.N.node<i>.address_state` (for each node i of N) | Enum: fixed, not_started, claiming, claimed, cannot_claim |
 

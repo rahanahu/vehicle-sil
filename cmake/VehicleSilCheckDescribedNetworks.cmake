@@ -3,8 +3,10 @@
 # reads a member "networks" of anything (.networks, ->networks, also a pointer to the member,
 # ::networks) but the configuration (config.networks, config->networks) must be in one of FILES
 # (paths relative to ROOT). Everything else gets the networks from seen_networks(), which gives each under its name
-# in the simulation (a participant's network_names applied); a rule or an output that reads
-# description.networks itself would see a renamed network under the executable's name, silently.
+# in the simulation (a participant's network_names applied) and its J1939 nodes with their values in the
+# simulation (j1939_nodes applied; the nodes are only reached through a network, so this check covers them);
+# a rule or an output that reads description.networks itself would see a renamed network under the
+# executable's name, or a node with the values in its code, silently.
 # The check reads the text: a read in a comment counts, which errs on the safe side. A failure
 # names the file, the line and what to do.
 # Usage: cmake -DROOT=<directory> -DDIR=<directory under ROOT>[,<directory>...] -DFILES=<file>[,<file>...]
@@ -47,8 +49,8 @@ if(bad)
   list(JOIN FILES ", " allowed)
   message(FATAL_ERROR "Sources that read the networks of an ECU's description themselves:\n  ${text}\n"
                       "Read them through seen_networks() (vehicle_sil/launch/check.hpp), which gives each network "
-                      "under its name in the simulation (the participant's network_names applied) and keeps the "
-                      "executable's name beside it. Only ${allowed} may read the member itself. For a new rule or "
+                      "under its name in the simulation (the participant's network_names and j1939_nodes applied) "
+                      "and keeps the executable's name and the nodes' values in its code beside it. Only ${allowed} may read the member itself. For a new rule or "
                       "output, add a case with a renamed network to tests/launch/test_check.cpp.")
 endif()
 if(reads EQUAL 0)

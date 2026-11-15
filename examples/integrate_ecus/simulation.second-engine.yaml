@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../schema/simulation.schema.json
+# simulation.fixed.yaml with a second copy of the engine ECU, at another address and with another
+# NAME (the guide docs/howto/integrate-ecus.md, "Run two instances of the same ECU").
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+  - name: Engine2
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+    j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }]
+  - name: Dashboard
+    command: [../ecu_main/dashboard/vehicle_sil_dashboard_ecu]
+    step_ms: 5

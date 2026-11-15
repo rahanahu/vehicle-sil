@@ -121,6 +121,9 @@
           },
           "network_names": {
             "$ref": "#/definitions/network_names"
+          },
+          "j1939_nodes": {
+            "$ref": "#/definitions/j1939_nodes"
           }
         }
       }
@@ -180,6 +183,54 @@
       "propertyNames": { "pattern": "^[^-=][^=]*$" },
       "additionalProperties": { "$ref": "#/definitions/name" },
       "examples": [{ "VehicleCAN": "J1939_CAN" }]
+    },
+    "j1939_nodes": {
+      "type": "array",
+      "description": "Other values for J1939 nodes of this participant's executable than its code gives: one entry for each node, with the simulation's name of its CAN network, the node's address in the executable's code (from) and the values to change. For the same executable twice on one network. run gives the executable --j1939-node <network>=<settings>, which an executable made with ecu_main takes if its --describe lists \"j1939-node\" in features. A number is written in decimal or as 0x01 (hexadecimal). An entry with network and from only changes nothing (a variant writes it to take a common entry away). On Windows, the network's name must be ASCII.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["network"],
+        "properties": {
+          "network": {
+            "type": ["string", "number", "boolean"],
+            "minLength": 1,
+            "pattern": "^[^-=][^=]*$",
+            "description": "The simulation's name of the node's CAN network (a name from networks, not the name in the executable's code)."
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 254,
+            "description": "The node's address in the executable's code (the one check shows without j1939_nodes; 254: a node that takes any free address). Can be left out if the executable has one node on the network."
+          },
+          "address": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 254,
+            "description": "The node's address in the simulation (254: any free address, for a NAME that is arbitrary address capable)."
+          },
+          "identity_number": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2097151,
+            "description": "The identity number of the node's NAME."
+          },
+          "function_instance": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31,
+            "description": "The function instance of the node's NAME."
+          },
+          "ecu_instance": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7,
+            "description": "The ECU instance of the node's NAME."
+          }
+        }
+      },
+      "examples": [[{ "network": "VehicleCAN", "from": 0, "address": 1, "identity_number": 2 }]]
     },
     "variable": {
       "description": "One of: the executable's name of the variable (renames it); { from, scale, offset } (the value seen is the executable's value * scale + offset); { from, map } (names for its values); { absent: true } (this executable does not have it).",
@@ -272,6 +323,10 @@
               "network_names": {
                 "$ref": "#/definitions/network_names",
                 "description": "Network names laid over the common ones: a line with the same key replaces the common one (with the two names the same: takes it away), another key is added."
+              },
+              "j1939_nodes": {
+                "$ref": "#/definitions/j1939_nodes",
+                "description": "Entries laid over the common ones: an entry with the same network and from (or both without from) replaces the common one whole (with network and from only: takes it away), another is added."
               },
               "enabled": {
                 "type": "boolean",

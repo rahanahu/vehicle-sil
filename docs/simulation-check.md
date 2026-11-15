@@ -97,9 +97,9 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `step-mismatch` | Error | `step_ms` differs from the step size in the `--describe` output (also for a real-time ECU, which has no step size). | Change `step_ms` to the value in the finding message, or delete it. |
 | `unknown-network` | Error | An ECU uses a network that is not in `networks`. | If it is meant to be the same bus, write the `network_names` line that the finding message gives for that participant; if it is another bus, add it to `networks`. |
 | `kind-mismatch` | Error | An ECU uses a network as a different kind (CAN, LIN, Ethernet) from the one in `networks`. For a network renamed with `network_names`, the finding message gives both names: `'VehicleCAN' ('J1939_CAN' in the executable)`. | Correct `kind` in `networks`, or the network on the ECU side. |
-| `address-conflict` | Error | 2 or more J1939 nodes on the same network ask for the same address, and one of them cannot work. | Give each node its own address. |
-| `address-shared` | Warning | Of the nodes that ask for the same address, the node with the lowest NAME gets it, and all the others move to other addresses. | To decide which node is at which address, give each node its own address. |
-| `name-conflict` | Error | 2 or more J1939 nodes on the same network have the same NAME. | Give each node its own NAME (for a second copy of the same ECU, change the identity number). |
+| `address-conflict` | Error | 2 or more J1939 nodes on the same network ask for the same address, and one of them cannot work. | Give each node its own address. The finding message gives the `j1939_nodes` entry to write, or says that this file cannot change them (the executables do not take `--j1939-node`, or their code puts 2 nodes at one address). |
+| `address-shared` | Warning | Of the nodes that ask for the same address, the node with the lowest NAME gets it, and all the others move to other addresses. | To decide which node is at which address, give each node its own address (the finding message gives the `j1939_nodes` entry to write). |
+| `name-conflict` | Error | 2 or more J1939 nodes on the same network have the same NAME. | Give each node its own NAME: change the identity number of one of them with `j1939_nodes` (the finding message gives the entry to write). |
 | `lin-masters` | Error | A LIN network has 2 or more masters (also the same participant twice). | Keep one master (make the others slaves, or call `lin_master()` only once). |
 | `lin-no-master` | Error (a note when there is a `describe: false` participant) | There are LIN slaves and no master. | Add a participant that acts as the master. |
 | `ethernet-duplicate-mac` | Error | On an Ethernet network, 2 or more participants report the same MAC address in their `--describe` output. | Give each participant its own address (`eth::ChannelOptions::mac`, and the source address of the frames it sends). |
@@ -126,6 +126,17 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `network-map-unsupported` | Error | The executable of a participant with `network_names` cannot take `--map-network` (`features` in its `--describe` output has no `map-network`: an executable built with an earlier vehicle-sil). | Rebuild the executable, or give the network in `networks` the executable's name and write the mappings for the other participants. |
 | `network-map-not-ascii` | Error | Windows launcher only: a key or value in `network_names` has a non-ASCII character (an ECU executable on Windows refuses such a `--map-network`). | Use ASCII names for the networks you map. |
 | `network-map-not-checked` | Note | A `describe: false` participant has `network_names` (it cannot be checked). | No action needed for an ecu_main executable. |
+| `j1939-node-undeclared` | Error | `network` of a `j1939_nodes` entry is not in `networks`, is not a CAN network, or is the executable's name of a network that `network_names` renames. | Write the simulation's name of the node's CAN network (the finding message gives a close name, or the name that `network_names` gives it). |
+| `j1939-node-duplicate` | Error | 2 entries of `j1939_nodes` for the same node (the same `network` and `from`), or an entry without `from` beside another entry for the same network. Entries that change nothing count too. | Write the settings of one node in one entry; with more than one entry for a network, give each a `from`. |
+| `j1939-node-not-ascii` | Error | Windows launcher only: `network` of a `j1939_nodes` entry has a non-ASCII character (an ECU executable on Windows refuses such a `--j1939-node`). | Use ASCII names for networks with `j1939_nodes`. |
+| `j1939-node-not-checked` | Note | A `describe: false` participant has `j1939_nodes` that change something (they cannot be checked). | No action needed for an ecu_main executable. |
+| `j1939-node-unsupported` | Error | The executable of a participant with `j1939_nodes` cannot take `--j1939-node` (`features` in its `--describe` output has no `j1939-node`: an executable built with an earlier vehicle-sil). | Rebuild the executable with this vehicle-sil or a later one. |
+| `j1939-node-unknown` | Error | An entry of `j1939_nodes` takes no node: the executable has no node at the address of `from`, no node on that network, or no J1939 network of that name. | Correct `from` (the address in the executable's code, which the finding message lists) or `network`, or remove the entry. |
+| `j1939-node-ambiguous` | Error | An entry without `from`, and the executable has nodes at different addresses on that network. | Add `from` with the address in the executable's code (the finding message lists them). |
+| `j1939-node-indistinct` | Error | The executable's code puts 2 or more nodes at the address that the entry picks by (with `from`: that address; without: the only address of every node). The configuration file cannot tell them apart. | Remove the entry, and ask the ECU's author to give the nodes addresses of their own, or to take them as arguments. |
+| `j1939-node-no-name` | Error | An entry sets a NAME field (`identity_number`, `function_instance`, `ecu_instance`) of a node without a NAME. | Remove those settings: only `address` can be changed for that node. |
+| `j1939-node-any-address` | Error | An entry sets `address: 254` (any free address) for a node whose NAME is not arbitrary address capable, or for a node without a NAME. | Write an address of 0..253. |
+| `j1939-node-changed` | Note | The entries of a participant's `j1939_nodes` change the address or NAME of its nodes (one note for each participant). | Check that no ECU relies on the old values (see the notes below). |
 | `variant-participant` | Error | `participants` of a variant (`variants`) has a name that is not in `participants` of the configuration file. | Correct the name, or, for a participant that exists only in that variant, write it in `participants` with `enabled: false`. |
 | `scenario-nothing-checked` | Warning | With this configuration (variant), all checking steps (`expect`, `wait_until`) of the `--scenario` scenario are skipped. | If only the variable names differ, map them with `variables`; if the scenario is not meant for this variant, write its target variants in `only` of the scenario. |
 | `usage` | Error | A usage error (only in the JSON with `--json`). | Correct the arguments as the usage on stderr says. |
@@ -142,6 +153,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `describe-unknown-value` | The finding message gives the key and the value, the values it knows, and the vehicle-sil versions of both sides. |
 | `describe-unknown-value` | It is an error of that participant only. Checking of the other participants continues. |
 | `address-conflict` | For the conditions of the severity, see "Overlapping J1939 addresses" below. |
+| `address-conflict`, `address-shared`, `name-conflict` | The fixes of the findings on one network suggest different free addresses and identity numbers, so all of them can be written at once. When the node has an entry of `j1939_nodes` already (also one that changes nothing), the fix is to set the values in that entry and keep its other settings. |
 | `test-participant-talks-on-bridged-network` | The `role: bridge` participants are treated as bridges. If there is none, the `describe: false` participants without `role` are. |
 | `test-participant-talks-on-bridged-network` | The participant's transmissions and its address claim (Address Claimed) go out on the real bus. |
 | `test-participant-talks-on-bridged-network` | The finding message says whether a bridge is definitely or only possibly on the network, and how to fix it (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)). |
@@ -151,6 +163,10 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `variable-map-not-checked` | A mapping that does not match becomes the run finding `variable-map-not-applied`. |
 | `network-map-unknown` | Findings that this line causes are not reported: `unknown-network` for the network of the executable with a name close to the value (without a close name, one of the same kind as the key), and `unused-network`, `single-participant` and `lin-no-master` for the network of the key. Findings for other networks are reported. |
 | `network-map-unsupported` | The other rules continue with the mapped names. |
+| `j1939-node-ambiguous`, `j1939-node-indistinct` | The person who fixes them differs: `j1939-node-ambiguous` is fixed in the configuration file (add `from`), `j1939-node-indistinct` only in the ECU's code, because `from` cannot tell apart nodes at the same address. |
+| `j1939-node-*` (the ones about an entry that takes no node) | The nodes of that participant on that network are left out of `address-conflict`, `address-shared` and `name-conflict` (the values the file means are not known); conflicts of the other participants there are reported as before. `j1939-node-unknown` is not reported for a network that the participant's `network_names` keeps away (`network-map-unknown` says it), nor when the executable's only J1939 network keeps its own name and that name is not in `networks` (`unknown-network` says to add the line of `network_names`). |
+| `j1939-node-unsupported` | The other rules use the values that the entries would give (the check applies them itself), so the findings are those that remain after the executable is rebuilt. `j1939-node-changed` is not reported for the participant. |
+| `j1939-node-changed` | Lists each node that changes, with the value in its code and the new one. The check cannot see who relies on the old values: another ECU that has the old address in its code (as a destination, or to tell senders apart), or that looks the ECU up by its whole old NAME, and constants in the ECU's own code (a filter, a value in the data it sends). Not reported for a participant whose entries all give the values in the code, nor for a disabled participant. A node that takes any free address in its code gets no sentence about its address. |
 | `network-map-not-checked` | The finding message gives the arguments that `run` adds in that run. They follow from the configuration after the selected variant and `--disable` are applied, and a participant to which `run` adds no argument gets no note. `run` adds `--map-network`, so an executable that is not an ecu_main executable ends with a usage error when it starts. |
 | `scenario-nothing-checked` | The scenario passes without checking anything (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)). |
 | `usage` | Also covers a configuration file with variants and no `--variant`, a variant name that does not exist, and `--param` with a name that is not in the scenario. |
@@ -169,7 +185,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 
 ### Overlapping J1939 addresses
 
-The address is the one that a node requested when it was added (`nodes` in [ecu-executable.md](ecu-executable.md#keys)). 254 (take a free address from the arbitrary address range) does not count as an overlap. For nodes that ask for the same address, the check works out the outcome of address claiming in vehicle-sil's J1939 stack.
+The address is the one that a node requested when it was added (`nodes` in [ecu-executable.md](ecu-executable.md#keys)), and the address and NAME are those after the participant's `j1939_nodes` are applied (see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)). In the finding message, a node whose values come from an entry has `(set by j1939_nodes, line 14)` after its name. 254 (take a free address from the arbitrary address range) does not count as an overlap. For nodes that ask for the same address, the check works out the outcome of address claiming in vehicle-sil's J1939 stack.
 
 | Nodes that ask for the same address | What happens | Severity |
 |---|---|---|
@@ -220,7 +236,7 @@ The output has these 4 parts, from top to bottom:
 | Findings | One per line: errors, then warnings, then notes, each group in line order. |
 | Result line | The numbers of errors, warnings and notes. |
 
-In the participant table, J1939 networks show the address that each node asked for (`any` is 254). A network renamed with `network_names` is written as `VehicleCAN <- J1939_CAN (j1939 0x00)`: the simulation's name, then the executable's name. The name of a participant whose `role` is not `ecu` is followed by `(role: test)` or similar. The columns of the table are aligned by character count, so full-width characters break the alignment.
+In the participant table, J1939 networks show the address that each node asked for (`any` is 254). A network renamed with `network_names` is written as `VehicleCAN <- J1939_CAN (j1939 0x00)`: the simulation's name, then the executable's name. A node whose address `j1939_nodes` changes is written as `0x01<-0x00` (no space around the arrow), in the same direction: the address in the simulation, then the one in the code. A change of the NAME alone does not show in the table (the note `j1939-node-changed` says it). The name of a participant whose `role` is not `ecu` is followed by `(role: test)` or similar. The columns of the table are aligned by character count, so full-width characters break the alignment.
 
 A finding line starts with `error:`, `warning:` or `note:` and has the form `<file>:<line>: <what, with which value, and how to fix it> [<code>]`.
 
@@ -282,13 +298,15 @@ network    kind  participants
 J1939_CAN  can   Engine, Engine2, Dashboard
 Body_LIN   lin   -
 
-error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
+error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME; to do it in this file, write under participant 'Engine2': j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }] [name-conflict]
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes) [unknown-key]
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
 ```
+
+`name-conflict` goes away with the `j1939_nodes` entry that it gives, written under `Engine2`. For the steps, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
 
 ### JSON (`--json`)
 
@@ -354,6 +372,7 @@ Keys of each element of `participants[]`:
 | `variables` | Array of the ECU's variables as the simulation sees them (`ecu.connected`, then in declaration order) |
 | `variable_map` | Array of the mappings written in `variables` of the configuration file (in the order written). Present only for participants that have `variables` |
 | `network_map` | Array of the lines written in `network_names` of the configuration file (in the order written, after the lines of the variant are merged). Present only for participants that have `network_names` |
+| `j1939_nodes` | Array of the entries written in `j1939_nodes` of the configuration file, with the node each one takes (in the order written, after the entries of the variant are merged). Present only for participants that have `j1939_nodes` |
 | `control` | How the ECU exposes its variables, as reported in its `--describe` output |
 
 | `status` | Meaning |
@@ -364,7 +383,7 @@ Keys of each element of `participants[]`:
 | `"skipped"` | An error in the configuration file stopped the check of this participant |
 | `"disabled"` | Disabled (even if the entry has errors) |
 
-**`reported`**: The keys are `vehicle_sil`, `name`, `step_ns` and `networks` (in the same form as the `--describe` JSON). The network names in it are the executable's names, before `network_names` is applied. The variables are in `variables`, described next.
+**`reported`**: The keys are `vehicle_sil`, `name`, `step_ns` and `networks` (in the same form as the `--describe` JSON). The network names in it are the executable's names, before `network_names` is applied, and the addresses and NAMEs of the nodes are those in the executable's code, before `j1939_nodes` is applied. The variables are in `variables`, described next.
 
 **`variables`**: The names, types, ranges and units after the variable map (`variables` in the configuration file) is applied. They are what scenarios and the Control API see. Without a variable map, they are as the ECU reported them. Each element has the same form as `variables[]` of the `--describe` JSON (`name`, `type`, `causality`, `unit`, `min`, `max`, `step`, `description`, `items`, `builtin`; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). Use it to see which ECU has which variables before you run.
 
@@ -390,6 +409,15 @@ Keys of each element of `participants[]`:
 If only one of `scale` and `offset` is written, the other has its default, 1 or 0.
 
 **`network_map`**: Each element has `name` (the simulation's name), `line` (the line in the configuration file) and `from` (the executable's name). Lines whose key and value are the same are included. Lines that could not be read (the error `value`) are not.
+
+**`j1939_nodes`**: Entries that could not be read (the error `value` and so on) are not included. Keys of each element:
+
+| Key | Value |
+|---|---|
+| `network` | The simulation's name of the network |
+| `line` | Line in the configuration file |
+| `from`, `address`, `identity_number`, `function_instance`, `ecu_instance` | The values written, as numbers (`null` if not written) |
+| `node` | The node that the entry takes: `coded_address` (its address in the executable's code, as `address` in `reported`), then `address`, `j1939_name` and `arbitrary_address_capable` after the entry (in the same form as the nodes in `reported`). `null` for an entry that takes no node, an entry that changes nothing, and a participant that was not described |
 
 **`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
