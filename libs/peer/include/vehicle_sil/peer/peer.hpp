@@ -179,8 +179,10 @@ struct PeerOptions
     ///   for each node i of N: j1939.N.node<i>.address and j1939.N.node<i>.address_state
     ///   (0 fixed, 1 not started, 2 claiming, 3 claimed, 4 cannot claim);
     /// and events "j1939.N.node<i>: <state> at address <a>" (the state named as in the items)
-    /// when a node's address state or address changes (Warning for cannot_claim). A variable of
-    /// the ECU with one of these names is std::invalid_argument when the schema is completed. A
+    /// when a node's address state or address changes (Warning for cannot_claim). The ECU cannot
+    /// declare a variable that starts with "peer." or "j1939." (Ecu::input() and the like refuse
+    /// it, also with monitor = false); one registered directly on agent() with one of these names
+    /// is std::invalid_argument when the schema is completed. A
     /// failed step is not reported here (no later step runs to report it): read failed() and
     /// error() instead. Without an agent, nothing is monitored.
     bool monitor = true;

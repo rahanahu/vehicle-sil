@@ -243,8 +243,8 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 | `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the `Peer` and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
 | A node is added after the schema is fixed | The node is not monitored |
 | Raw CAN and LIN | Not monitored |
-| An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
-| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
+| An ECU variable is declared with a name that starts with `peer.` or `j1939.` (`input()`, `output()` and so on) | These prefixes are reserved, as are `can.`, `lin.` and `eth.` for the other buses (`monitor_names::kReservedPrefixes` in `ecu/monitor_names.hpp`). The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
+| A variable registered directly on `agent()` clashes with a monitoring output | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
