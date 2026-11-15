@@ -627,7 +627,7 @@ void enabled(const Options& o)
     const Captured json = launch(o, {"check", "--json", c});
     expect_code(json, 0, "check --json ghost.yaml");
     require(contains(json.standard_output, "      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"role\": \"ecu\",\n      \"step_ms\": null,\n"
-                                           "      \"status\": \"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"network_map\": null,\n"
+                                           "      \"status\": \"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"network_map\": null,\n      \"j1939_nodes\": null,\n"
                                            "      \"control\": null\n") &&
                 contains(json.standard_output, "      \"code\": \"participant-disabled\",\n"),
             "check --json ghost.yaml wrote:\n" + json.standard_output);

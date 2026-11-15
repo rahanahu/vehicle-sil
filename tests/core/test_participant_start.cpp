@@ -14,8 +14,11 @@
 
 #include "vehicle_sil/core/participant_runtime.hpp"
 
+#include <silkit/experimental/participant/ParticipantExtensions.hpp>
+#include <silkit/experimental/services/orchestration/ISystemController.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -429,4 +432,259 @@ TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_sta
 
     CHECK(!meeting.waitRanOut);
     CHECK(state == std::optional(orch::ParticipantState::Error));
+}
+
+TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_looks_for_a_start)
+{
+    // Only an Error before the participant began to run is a start that failed. Here start() has
+    // read "no step has run" when the first step runs and fails: the participant is in Error, and
+    // its status has been handled, when start() reads the state. That is a run that began and
+    // failed, not a start that failed: start() returns, and the failure is the run's.
+    InProcessRegistry registry;
+    Meeting meeting;
+    ParticipantRuntime* started = nullptr;
+    std::atomic<int> endSeen{0};
+    bool sawError = false;
+    const ProbeInPlace probe([&](StartProbePoint point) {
+        if (point != StartProbePoint::BetweenFlagsAndState)
+        {
+            return;
+        }
+        {
+            const std::lock_guard lock(meeting.mutex);
+            if (meeting.flagsRead)
+            {
+                return;
+            }
+            meeting.flagsRead = true;
+        }
+        meeting.changed.notify_all();
+        // The stop observer is called when the runtime has handled the status of its own end.
+        sawError = unit::eventually(
+            [&] { return endSeen.load() > 0 && started->state() == orch::ParticipantState::Error; }, unit::scaled_timeout(20s));
+    });
+    ParticipantRuntimeOptions options{"Starter", registry.uri};
+    options.virtual_time = VirtualTimeOptions{1ms, std::nullopt};
+    ParticipantRuntime runtime(options);
+    started = &runtime;
+    runtime.set_step_handler([](SimTime, SimDuration) { throw std::runtime_error("the first step fails"); });
+    runtime.set_stop_observer([&endSeen] { ++endSeen; });
+    hold_the_lifecycle_until_the_flags_are_read(runtime, meeting);
+
+    std::string thrown;
+    try
+    {
+        runtime.start(unit::scaled_timeout(60s));
+    }
+    catch (const std::exception& e)
+    {
+        thrown = e.what();
+    }
+    runtime.stop("test");
+
+    CHECK(sawError);
+    CHECK(!meeting.waitRanOut);
+    if (!thrown.empty())
+    {
+        throw vehicle_sil::unit::Failure("start() threw for a participant whose first step had run (and failed): " + thrown);
+    }
+}
+
+TEST_CASE(participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error)
+{
+    // A coordinated participant that the system controller does not require: SIL Kit puts it into
+    // Error when the required names arrive. Here they arrive when the stranger knows that the one
+    // required participant is in ServicesCreated, so the same message also begins the stranger's
+    // start (the wait for the other participants' replies) before the Error is set. The replies
+    // come after the Error. An unpatched SIL Kit then sets the next state over the Error and the
+    // stranger goes on with the simulation, to Running (patches/sil-kit/0006). The stranger must
+    // stay in Error: start() fails, no step runs, a stop takes it to Shutdown at once, and the
+    // simulation of the others is not touched when it leaves.
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions memberOptions{"Member", registry.uri};
+    memberOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    ParticipantRuntime member(memberOptions);
+    ParticipantRuntimeOptions strangerOptions{"Stranger", registry.uri};
+    strangerOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    strangerOptions.virtual_time = VirtualTimeOptions{};
+    ParticipantRuntime stranger(strangerOptions);
+    std::atomic<int> steps{0};
+    stranger.set_step_handler([&steps](SimTime, SimDuration) { ++steps; });
+    unit::StateLog seen(registry.uri, "Stranger");
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+
+    std::string memberError;
+    std::thread memberStart([&] {
+        try
+        {
+            member.start(unit::scaled_timeout(20s));
+        }
+        catch (const std::exception& e)
+        {
+            memberError = e.what();
+        }
+    });
+    std::string strangerError;
+    bool strangerStarted = false;
+    std::thread strangerStart([&] {
+        try
+        {
+            stranger.start(unit::scaled_timeout(20s));
+            strangerStarted = true;
+        }
+        catch (const std::exception& e)
+        {
+            strangerError = e.what();
+        }
+    });
+    const auto created = [](const PeerStatus& status) { return status.state == orch::ParticipantState::ServicesCreated; };
+    // The stranger itself has to know the member's state: what the controller knows came over
+    // another connection, and says nothing of the order in which the stranger learns it.
+    const bool bothWait = boss.wait_for_peer("Member", created, unit::scaled_timeout(20s))
+                          && boss.wait_for_peer("Stranger", created, unit::scaled_timeout(20s))
+                          && stranger.wait_for_peer("Member", created, unit::scaled_timeout(20s));
+    controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Member"}});
+    strangerStart.join();
+    memberStart.join();
+    const auto strangerState = stranger.state();
+    stranger.stop("test");
+    // In Error, a stop is the way to Shutdown; a stranger that had gone on would be stopped only
+    // in Running, or not at all.
+    const auto strangerEnd = stranger.state();
+    const bool endSeen =
+        unit::eventually([&] { return seen.reached(orch::ParticipantState::Shutdown); }, unit::scaled_timeout(10s));
+    // The stranger has left; the member still runs.
+    const auto memberState = member.state();
+    member.stop("test");
+
+    std::string states;
+    for (const auto state : seen.states())
+    {
+        states += " " + orch::to_string(state);
+    }
+    CHECK(bothWait);
+    CHECK(seen.reached(orch::ParticipantState::Error));
+    if (strangerStarted || strangerError.find("failed to start, state: Error") == std::string::npos)
+    {
+        throw vehicle_sil::unit::Failure(
+            std::string("start() of a participant that SIL Kit had put into Error ") +
+            (strangerStarted ? "returned" : "threw \"" + strangerError + "\"") + " in state " + orch::to_string(strangerState) +
+            ", expected it to throw \"... failed to start, state: Error ...\" (the states others saw:" + states + ")");
+    }
+    for (const auto state : {orch::ParticipantState::CommunicationInitializing, orch::ParticipantState::CommunicationInitialized,
+                             orch::ParticipantState::ReadyToRun, orch::ParticipantState::Running})
+    {
+        if (seen.reached(state))
+        {
+            throw vehicle_sil::unit::Failure(
+                "SIL Kit let a participant that it had put into Error go on (is patches/sil-kit/0006 applied?); the states "
+                "others saw:" + states);
+        }
+    }
+    CHECK(strangerError.find("state: Error (") == std::string::npos); // no other state when start() looked
+    CHECK(strangerEnd == orch::ParticipantState::Shutdown);
+    CHECK(endSeen);
+    CHECK_EQ(steps.load(), 0);
+    CHECK(memberError.empty());
+    CHECK(memberState == orch::ParticipantState::Running);
+}
+
+TEST_CASE(participant_stop_after_a_failed_start_returns_once_the_lifecycle_is_in_shutdown)
+{
+    // The same stranger as above, with one more participant that replies late: its SIL Kit thread
+    // is held from before the required names are sent until the stranger's stop() has returned.
+    // So the stranger's start still waits for the replies when its Error comes and when its stop
+    // goes out. SIL Kit takes one wait for replies at a time and drops the one of the shutdown:
+    // the lifecycle gets to Shutdown, but the final state is never set. stop() must end at
+    // Shutdown and not wait for shutdown_timeout.
+    InProcessRegistry registry;
+    std::mutex holdMutex;
+    std::condition_variable holdChanged;
+    bool held = false;
+    bool released = false;
+    auto laggard = SilKit::CreateParticipant(
+        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)),
+        "Laggard", registry.uri);
+    laggard->CreateSystemMonitor()->AddParticipantStatusHandler([&](const orch::ParticipantStatus& status) {
+        if (status.participantName != "Stranger" || status.state != orch::ParticipantState::ServicesCreated)
+        {
+            return;
+        }
+        std::unique_lock lock(holdMutex);
+        held = true;
+        holdChanged.notify_all();
+        holdChanged.wait_for(lock, unit::scaled_timeout(60s), [&] { return released; });
+    });
+    const auto release = [&] {
+        const std::lock_guard lock(holdMutex);
+        released = true;
+        holdChanged.notify_all();
+    };
+
+    ParticipantRuntimeOptions memberOptions{"Member", registry.uri};
+    memberOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    ParticipantRuntime member(memberOptions);
+    ParticipantRuntimeOptions strangerOptions{"Stranger", registry.uri};
+    strangerOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    strangerOptions.virtual_time = VirtualTimeOptions{};
+    const auto shutdownTimeout = unit::scaled_timeout(15s);
+    strangerOptions.shutdown_timeout = shutdownTimeout;
+    ParticipantRuntime stranger(strangerOptions);
+    stranger.set_step_handler([](SimTime, SimDuration) {});
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+
+    std::thread memberStart([&] {
+        try
+        {
+            member.start(unit::scaled_timeout(60s));
+        }
+        catch (const std::exception&)
+        {
+        }
+    });
+    std::string strangerError;
+    std::thread strangerStart([&] {
+        try
+        {
+            stranger.start(unit::scaled_timeout(20s));
+        }
+        catch (const std::exception& e)
+        {
+            strangerError = e.what();
+        }
+    });
+    const auto created = [](const PeerStatus& status) { return status.state == orch::ParticipantState::ServicesCreated; };
+    const bool ready = stranger.wait_for_peer("Member", created, unit::scaled_timeout(20s))
+                       && unit::eventually(
+                           [&] {
+                               const std::lock_guard lock(holdMutex);
+                               return held;
+                           },
+                           unit::scaled_timeout(20s));
+    controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Member"}});
+    strangerStart.join();
+    const auto before = std::chrono::steady_clock::now();
+    stranger.stop("test");
+    const auto took = std::chrono::steady_clock::now() - before;
+    const auto strangerEnd = stranger.state();
+    const auto finalState = stranger.wait_until_finished(0ms);
+    release();
+    memberStart.join();
+    member.stop("test");
+
+    CHECK(ready);
+    CHECK(strangerError.find("failed to start, state: Error") != std::string::npos);
+    CHECK(strangerEnd == orch::ParticipantState::Shutdown);
+    CHECK(finalState == orch::ParticipantState::Shutdown);
+    const auto bound = unit::scaled_timeout(3s);
+    if (took >= bound)
+    {
+        throw vehicle_sil::unit::Failure(
+            "stop() after a start that SIL Kit failed took "
+            + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms (shutdown_timeout "
+            + std::to_string(shutdownTimeout.count()) + " ms), expected under " + std::to_string(bound.count())
+            + " ms: it has to end once the lifecycle is in Shutdown, as SIL Kit may never set the final state then");
+    }
 }

@@ -504,3 +504,173 @@ void network_names(const Options& o)
         require(!fs::exists(old / "Engine.started") && !fs::exists(old / "Dashboard.pid"), "nothing was started");
     }
 }
+
+/// The numbers of sent and received of `participant` on `network` in the traffic table of `text`.
+std::pair<long, long> traffic_of(const std::string& text, const std::string& network, const std::string& participant)
+{
+    std::istringstream in(traffic_part(text));
+    for (std::string line; std::getline(in, line);)
+    {
+        std::istringstream words(line);
+        std::string n;
+        std::string p;
+        long sent = -1;
+        long received = -1;
+        if (words >> n >> p >> sent >> received && n == network && p == participant)
+        {
+            return {sent, received};
+        }
+    }
+    require(false, "no row of " + participant + " on " + network + " in the traffic:\n" + text);
+    return {-1, -1};
+}
+
+void j1939_nodes(const Options& o)
+{
+    // Two copies of one ECU (the same NAME at 0x00), and a third that is not described (describe:
+    // false). j1939_nodes gives the second copy and the third other addresses and identity numbers;
+    // the variant "moved" gives the second copy others.
+    const auto config_with = [&o, port = free_port()](const std::string& entries) {
+    return std::string(
+        "vehicle_sil_simulation: 1\n"                                                    // 1
+        "stop_at_ms: 300\n"                                                              // 2
+        "registry_uri: silkit://127.0.0.1:") + std::to_string(port) + "\n"               // 3
+        "networks:\n"                                                                    // 4
+        "  - { name: BUS, kind: can }\n"                                                 // 5
+        "participants:\n"                                                                // 6
+        "  - name: Engine\n"                                                             // 7
+        "    command: [" + ecu(o) + "]\n"                                                // 8
+        "  - name: Engine2\n"                                                            // 9
+        "    command: [" + ecu(o) + "]\n" +                                              // 10
+        entries +                                                                        // 11
+        "  - name: Door\n"
+        "    command: [" + ecu(o) + ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n"
+        "    describe: false\n"
+        "    j1939_nodes: [{ network: BUS, address: 0x02, identity_number: 3 }]\n"
+        "variants:\n"
+        "  together: {}\n"
+        "  moved: { participants: { Engine2: { j1939_nodes: [{ network: BUS, address: 0x05, identity_number: 5 }] } } }\n";
+    };
+    const std::vector<std::pair<std::string, std::string>> behaviours{
+        {"Engine", "j1939name BUS 0 1"}, {"Engine2", "j1939name BUS 0 1"}, {"Door", "j1939name BUS 0 1"}};
+    const fs::path dir =
+        hand_dir(o, "nodes", config_with("    j1939_nodes: [{ network: BUS, address: 0x01, identity_number: 2 }]\n"), behaviours);
+    {
+        // Each executable gets its entries last; the one without entries gets none.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together", "--events"}, dir);
+        expect_code(run, 0, "run with j1939_nodes");
+        const std::string events = lf(run.standard_output);
+        const std::string engine2 = participant_event(events, "Engine2", "started");
+        require(contains(engine2, ",\"--start-timeout-ms\",") &&
+                    contains(engine2, "\",\"--j1939-node\",\"BUS=address:0x01,identity_number:2\"],\"log\""),
+                "Engine2 is started with its entry, last:\n" + engine2);
+        const std::string door = participant_event(events, "Door", "started");
+        require(contains(door, ",\"--name\",\"Door\",\"--j1939-node\",\"BUS=address:0x02,identity_number:3\"],\"log\""),
+                "Door (describe: false) gets its entry after its command with the placeholders replaced:\n" + door);
+        const std::string engine = participant_event(events, "Engine", "started");
+        require(!engine.empty() && !contains(engine, "--j1939-node"), "Engine gets no --j1939-node:\n" + engine);
+        require(contains(events, "\"j1939_nodes\":[{\"network\":\"BUS\",\"line\":11,\"from\":null,\"address\":1,"
+                                 "\"identity_number\":2,\"function_instance\":null,\"ecu_instance\":null,\"node\":{"
+                                 "\"coded_address\":0,\"address\":1,\"j1939_name\":\"0x00000000FE000002\","
+                                 "\"arbitrary_address_capable\":false}}]"),
+                "the check of the run shows the entry and the node it takes:\n" + events);
+    }
+    {
+        // The two copies claim their addresses and hear each other.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together"}, dir);
+        expect_code(run, 0, "run with j1939_nodes, for people");
+        const std::string out = lf(run.standard_output);
+        for (const char* who : {"Engine", "Engine2"})
+        {
+            const auto [sent, received] = traffic_of(out, "BUS", who);
+            require(sent > 0 && received > 0, std::string(who) + " sends and receives on BUS:\n" + out);
+        }
+        const Captured check = launch(o, {"check", "sim.yaml", "--variant", "together"}, dir);
+        expect_code(check, 0, "check with j1939_nodes");
+        require(contains(lf(check.standard_output), "Engine2      10 ms  BUS (j1939 0x01<-0x00)\n"),
+                "the table shows both addresses of the changed node:\n" + lf(check.standard_output));
+    }
+    {
+        // Without the entry: the check says what to write, and nothing is started.
+        write_file(dir / "copies.yaml", config_with(""));
+        const Captured run = launch(o, {"run", "copies.yaml", "--variant", "together"}, dir);
+        expect_code(run, 1, "run of two copies without j1939_nodes");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "error: copies.yaml:5: network 'BUS': Engine and Engine2 have the same J1939 NAME "
+                              "0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps "
+                              "(an equal NAME loses the address claim): each node needs its own NAME; to do it in this "
+                              "file, write under participant 'Engine2': j1939_nodes: [{ network: BUS, address: 0x01, "
+                              "identity_number: 2 }] [name-conflict]\n") &&
+                    contains(out, "\nnothing was started: the check found errors"),
+                "the check says which entry to write:\n" + out);
+    }
+    {
+        // The variant's entry takes the common one's place.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "moved", "--events"}, dir);
+        expect_code(run, 0, "run with the variant that moves Engine2");
+        const std::string engine2 = participant_event(lf(run.standard_output), "Engine2", "started");
+        require(contains(engine2, "\",\"--j1939-node\",\"BUS=address:0x05,identity_number:5\"],\"log\"") &&
+                    !contains(engine2, "address:0x01"),
+                "Engine2 is started with the entry of the variant alone:\n" + engine2);
+    }
+    HandCommand hand;
+    {
+        // Started by hand: the command carries the same arguments (on Windows, the word with ','
+        // in quotes, as PowerShell would split it), and the executable started with it joins.
+        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Engine2"});
+        const std::string err = live.wait_for_error(
+            [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Engine2 to join (manual): "); });
+        hand = hand_command(err, "Engine2");
+#ifdef _WIN32
+        const std::string quoted = " --j1939-node \"BUS=address:0x01,identity_number:2\"";
+#else
+        const std::string quoted = " --j1939-node BUS=address:0x01,identity_number:2";
+#endif
+        require(hand.line.size() > quoted.size() &&
+                    hand.line.compare(hand.line.size() - quoted.size(), quoted.size(), quoted) == 0,
+                "the command to start Engine2 by hand ends with its entry:\n" + err);
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "the run with Engine2 started by hand ends with 0:\n" + out_of(out));
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 0, "Engine2 ends by itself with 0");
+    }
+    {
+        // The event of a participant started by hand has the same arguments.
+        Live live(o, dir, {"run", "sim.yaml", "--variant", "together", "--manual", "Engine2", "--events"});
+        const std::string manual = live.wait_for({"\"event\":\"participant\"", "\"name\":\"Engine2\",\"state\":\"manual\""});
+#ifdef _WIN32
+        const std::string quoted = " --j1939-node \\\"BUS=address:0x01,identity_number:2\\\"\"";
+#else
+        const std::string quoted = " --j1939-node BUS=address:0x01,identity_number:2\"";
+#endif
+        require(contains(manual, ",\"--j1939-node\",\"BUS=address:0x01,identity_number:2\"],") && contains(manual, quoted),
+                "the event of the participant started by hand has the arguments and the line:\n" + manual);
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "the run with --events and Engine2 started by hand ends with 0:\n" + out_of(out));
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 0, "Engine2 ends by itself with 0");
+    }
+    {
+        // An executable of a vehicle-sil before --j1939-node: an error of the check, and nothing is
+        // started (it would end at once with a usage error, after the others were started).
+        const fs::path old = hand_dir(o, "nodes-old", config_with("    j1939_nodes: [{ network: BUS, address: 0x01, identity_number: 2 }]\n"),
+                                      {{"Engine", "pid j1939name BUS 0 1"}, {"Door", "j1939name BUS 0 1"}});
+        write_file(old / "test-ecu-old", "Engine2\n");
+        fs::remove(old / "Engine2.started");
+        fs::remove(old / "Engine.pid");
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "together"}, old);
+        expect_code(run, 1, "run with j1939_nodes for an executable that does not take --j1939-node");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "error: sim.yaml:11: participant 'Engine2': j1939_nodes needs an executable that takes "
+                              "--j1939-node, and this one does not say that it does (no \"j1939-node\" in the features of "
+                              "its --describe; it was built with vehicle-sil 0.1.0): have its author build it again with "
+                              "vehicle-sil ") &&
+                    contains(out, " or later; until then its addresses and NAMEs change only in its code "
+                                  "[j1939-node-unsupported]\n") &&
+                    contains(out, "\nnothing was started: the check found errors"),
+                "the check says that the executable does not take --j1939-node:\n" + out);
+        require(!fs::exists(old / "Engine2.started") && !fs::exists(old / "Engine.pid"), "nothing was started");
+    }
+}

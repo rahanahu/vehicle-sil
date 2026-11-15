@@ -1150,6 +1150,22 @@
       "source": "ステップ送りは、一時停止している間だけできます。",
       "target": "Stepping is available only while paused."
     },
+    "8740020504692323756": {
+      "source": "時間の軸を閉じる",
+      "target": "Close the timeline"
+    },
+    "4527577069001402588": {
+      "source": "時間の軸をここに表示",
+      "target": "Show the timeline here"
+    },
+    "4368146401135756787": {
+      "source": "カーソル: {$INTERPOLATION} ms",
+      "target": "Cursor: {$INTERPOLATION} ms"
+    },
+    "6090643727064733042": {
+      "source": "選んだ手順: {$INTERPOLATION}",
+      "target": "Chosen step: {$INTERPOLATION}"
+    },
     "6850339870794295920": {
       "source": "レイアウトの試験",
       "target": "Layout test"

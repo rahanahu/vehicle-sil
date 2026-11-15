@@ -444,13 +444,14 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 | 項目 | 内容 |
 |---|---|
-| ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`viewer.js`、`messages.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<session の id>&lang=<ja か en>` です。 |
+| ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`page.js`、`vehicle-sil-timeline.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<session の id>&lang=<ja か en>` です。ページは要素 `<vehicle-sil-timeline>` 1 つで、この要素は自分の画面にも置けます（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。 |
 | ファイル | `GET api/timeline/<session の id>`（ほかの API と同じく、トークンが要ります）。サーバーは、ファイルを書いた最後の 4 つのシナリオの実行のファイルを、自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
 | `timeline` のないランチャー | サーバーは `--timeline` を渡さず、カードにリンクは出ません。 |
-| トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います。リンクから開き直してください。 |
+| トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います（HTTP 401）。リンクを左クリックで開くか、サーバーが表示したアドレスの `#token=<トークン>` を、ページのアドレスの末尾に付けてください。ページはそれを読んでアドレスから消し、ファイルを読み込みます。 |
 
 - ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<session の id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
 - サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<session の id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。
+- 「シナリオ」のカードには「時間の軸をここに表示」もあります。同じ時間の軸を、要素でカードの中に出します（「[自分の画面に時間の軸を置く](#自分の画面に時間の軸を置く)」）。
 
 ### 操作をシナリオとして保存する
 
@@ -1085,11 +1086,146 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - コンポーネントが多い画面では、`{ visible: false }` で作って `setVisible()` を呼ぶと、見えているコンポーネントだけが値を受信します。
 - 動く見本は、画面のテンプレートのスライダーとランプ（`gui_starter/main.js`）です。サンプルの画面のコンポーネント（Angular）も、この API を signal に変換して使っています（「[コンポーネントを追加する](#コンポーネントを追加する)」）。
 
+### 自分の画面に時間の軸を置く
+
+要素 `<vehicle-sil-timeline>` は、時間の軸のファイルを自分の画面に描きます。手順と値の図、失敗、表を、時間の軸のページと同じに出します。標準のカスタム要素なので、素の HTML でもフレームワークでも使えます（試験で確かめている手本は下の Angular。React は「[React で使う](#react-で使う)」）。スクリプトを 1 つ読み、タグを 1 つ置きます。
+
+```html
+<script src="/timeline/vehicle-sil-timeline.js"></script>
+<vehicle-sil-timeline src="/api/timeline/3"></vehicle-sil-timeline>
+```
+
+| 要素を手に入れる所 | ファイル |
+|---|---|
+| GUI サーバーが配る画面（`--web`、カスタムパネル） | サーバーの `timeline/vehicle-sil-timeline.js`（画面のファイルと同じく、トークンなしで配ります） |
+| ビルド済みのツール | `client/vehicle-sil-timeline.js`。型は `client/vehicle-sil-timeline.d.ts` |
+| クライアントのライブラリの npm パッケージ | `import '@vehicle-sil/gui-client/timeline'`（型つきの ES モジュール。要素を定義し、何も export しません） |
+| リポジトリ | `gui/timeline/vehicle-sil-timeline.js` と `.d.ts`。最小のページは `gui/timeline/example.html` |
+
+- GUI サーバーの実行: `src` は、`/` とセッションの要約の `scenario.timeline_url`（ライブラリでは `timelineUrl`）です。`examples/gui_starter/main.js` のとおりです。
+- トークン: 要素は、プロパティの `token`、なければ GUI の画面がタブに持つトークン（ライブラリの `takeToken` がそこに置きます）を、`Authorization: Bearer` で送ります。トークンがないとサーバーは 401 を返し、要素がそう言います。
+- `src` は、ページと同じサーバー（同じ出どころ）を指す必要があります。要素は転送をたどりません（トークンとヘッダーを別のアドレスへ送らないため）。転送されたときは、そう言います。ほかの所のファイルは、自分で取得して `data` に渡します。
+- 要素は、インラインのスタイルを許さない CSP（`style-src 'self'`。GUI サーバーのものはこれより緩い）の下でも動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
+- `src` を読んでいる間、要素は `aria-busy="true"` を持ち、前に出していたファイルを薄く出します。
+
+下の設定は、どれも要素を置いた後に変えられます。同時に変えたものは、まとめて 1 回で描き直します。単純な設定は、属性（ケバブケース）とプロパティ（キャメルケース）の両方です。オブジェクトはプロパティだけです。使えない値（数でない数、知らない `hide` の語や `theme`、`to` より前でない `from`）は使わず、ブラウザーのコンソールに警告を出します。`variables` の名前のうち、どの変数にも当たらないものは、図の上に出します。
+
+| 属性 | プロパティ | 型 | 既定 | 働き |
+|---|---|---|---|---|
+| `src` | `src` | 文字列 | なし | ページと同じサーバーの、時間の軸のファイルのアドレス。変えると読み込みます |
+| `file-name` | `fileName` | 文字列 | サーバーが付けた名前、なければ `src` の最後の部分 | ファイルの名前として出すもの |
+| | `data` | オブジェクトか文字列 | `null` | ファイルそのもの（読み取った JSON か、その文字列）。`null` でない間は、`src` の代わりにこれを出します |
+| | `token` | 文字列 | タブにある GUI のトークン | `src` と一緒に送るトークン。ページのマークアップに出ないように、プロパティだけです |
+| | `headers` | オブジェクト | `null` | `src` と一緒に送る、ほかのリクエストヘッダー（値は文字列）。自分のサーバーの後ろにあるファイル用 |
+| `lang` | `lang` | `en`、`ja`、または `messages` の言語 | ブラウザーの言語、なければ `en` | 文の言語 |
+| | `messages` | オブジェクト | `null` | 足す・変える文: `{ <言語>: { <キー>: <文か関数> } }`。キーは `VehicleSilTimeline.MESSAGES.en` のもの（スクリプトを読むと `globalThis` にあります。元は `gui/timeline/messages.js`）。ここの言語は `lang` に書けます。ない文は英語で出します |
+| `cursor` | `cursor` | 数（ms） | なし | カーソルの時刻 |
+| `step` | `step` | 数 | なし | 選んだ手順（その `index`）。図と表で印を付け、そこを出します |
+| `from`、`to` | `from`、`to` | 数（ms） | 失敗の前後、なければ実行の全体 | 出す範囲 |
+| `variables` | `variables` | コンマか空白で区切った名前。文字列の配列 | 全部 | 描くレーンとその順: 変数の名前か、`*` で終わる頭の部分。ないときは、シナリオの入力が先、その後にほかのもの |
+| | `labels` | オブジェクト | `null` | 変数の名前ごとのラベル。レーンの名前の上に出します |
+| `hide` | `hide` | 空白（かコンマ）で区切った語 | なし | 出さない部分: `header`、`summary`、`toolbar`、`help`、`steps`（手順のレーン）、`readout`、`legend`、`tables` |
+| `compact` | `compact` | 真偽（属性があれば真） | 偽 | 狭い所向け: レーンの見出しを狭く、数のレーンを低く、文字を小さく |
+| `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` はブラウザーの明るい・暗いの設定に従います |
+
+`cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドの `reload()` は、`src` を読み直します。
+
+| 事象 | いつ | `detail` |
+|---|---|---|
+| `load` | ファイルを出した | `{ file, scenario, status, start, end }`（`status` はファイルのとおり。`start` と `end` は実行の全体、ms） |
+| `error` | ファイルを出せない。理由は要素の中にも出します | `{ message, status }`（`status` は HTTP の状態、または `null`） |
+| `cursorchange` | 利用者がカーソルを動かした（ポインター、矢印のキー） | `{ cursor }` |
+| `stepselect` | 利用者が手順を選んだ（図の上、または表の番号） | `{ step }` |
+| `viewchange` | 利用者が拡大・縮小した、出す範囲を動かした | `{ from, to }` |
+
+- 事象は `CustomEvent` です。`load` と `error` は親へ伝わりません（bubbles が偽）。ほかは伝わります。
+- プロパティや属性で変えたことでは、事象は出ません。なので、2 つの時間の軸、または時間の軸と自分の図を、繰り返しにならずに揃えられます: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`。
+- 大きさ: 要素はブロックで、幅は入れ物いっぱい、高さは中身のとおりです。高さ（`max-height` など）を与えると、中でスクロールします。
+- スロットの `actions` に置いたボタンは、見出しの右に出ます（時間の軸のページは、そこに「ファイルを開く」を置きます）。
+
+見た目は要素の shadow root の中にあります。自分のページの CSS は中に届かず、要素の CSS は外に出ません。色を変えるときは、要素に次のカスタムプロパティを設定します。例: `vehicle-sil-timeline { --bad: #b00020; }`（暗い色も変えるときは、自分の `@media (prefers-color-scheme: dark)` の中で、または `theme` と合わせて）。
+
+| カスタムプロパティ | 使う所 |
+|---|---|
+| `--bg`、`--panel`、`--fg`、`--muted`、`--border`、`--grid` | 背景、枠の中、文字、線 |
+| `--sent`、`--seen`、`--base`、`--true` | シナリオが送った値、見た値、線の基準、真の bool |
+| `--ok`、`--ok-fill`、`--ok-bg`、`--bad`、`--bad-fill`、`--bad-bg`、`--warn`、`--warn-fill`、`--warn-bg`、`--neutral`、`--neutral-fill` | 通った、失敗した、注意、結果のない手順 |
+| `--unrecorded`、`--e0`、`--e1`、`--e2`、`--cursor`、`--selection` | 記録の後の時間、列挙の状態、カーソル、範囲の選択 |
+
+Angular では、`CUSTOM_ELEMENTS_SCHEMA` で要素を許し、スクリプトを 1 回 import し、プロパティは signal に、事象はメソッドにつなぎます。動く見本は `gui/web/src/app/run/timeline-view.ts` です（サンプルの画面の「時間の軸をここに表示」。初めて出すときにスクリプトを import します）。
+
+```ts
+import { CUSTOM_ELEMENTS_SCHEMA, Component, input, signal } from '@angular/core';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineEventMap } from '@vehicle-sil/gui-client/timeline';
+
+@Component({
+  selector: 'app-run-timeline',
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
+  template: `<vehicle-sil-timeline
+    [src]="src()" [cursor]="cursor()" [variables]="['Engine.*']" [compact]="true"
+    (cursorchange)="onCursor($event)" />`,
+})
+export class RunTimeline {
+  readonly src = input.required<string>();
+  readonly cursor = signal<number | null>(null);
+  onCursor(event: Event): void {
+    this.cursor.set((event as VehicleSilTimelineEventMap['cursorchange']).detail.cursor);
+  }
+}
+```
+
+- npm パッケージは、要素を ES モジュールで渡します。代わりに素のスクリプト（`client/vehicle-sil-timeline.js`）を import すると、Angular のビルドが「ES モジュールでない」と警告します。import するモジュールを `allowedCommonJsDependencies` に足します（`gui/web/angular.json` は `@vehicle-sil/gui-client/timeline` を足しています）。
+
+#### React で使う
+
+React のどの版でも言えること: 要素を `ref` で取り、effect の中で、オブジェクトのプロパティ（`data`、`labels`、`messages`、`headers`、`token`）と真偽の `compact` を設定し、事象のリスナーを付けます。文字列の属性（`src`、`lang`、`hide`、`variables`、`theme`、`cursor`、`from`、`to`、`step`）は JSX に書けます。リポジトリの試験は React を動かしていません。下は書き方の型で、試験で確かめた例ではありません。
+
+```tsx
+import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+export function RunTimeline(props: { src: string; onCursor: (ms: number | null) => void }) {
+  const ref = useRef<VehicleSilTimelineElement>(null);
+  const { onCursor } = props;
+  useEffect(() => {
+    const timeline = ref.current;
+    if (!timeline) return;
+    timeline.labels = { 'Engine.engine.speed': 'Speed' };
+    timeline.compact = true;
+    const listener = (e: Event) =>
+      onCursor((e as CustomEvent<{ cursor: number | null }>).detail.cursor);
+    timeline.addEventListener('cursorchange', listener);
+    return () => timeline.removeEventListener('cursorchange', listener);
+  }, [onCursor]);
+  return <vehicle-sil-timeline ref={ref} src={props.src} hide="help" />;
+}
+```
+
+TypeScript では、自分のプロジェクトの `.d.ts` に次のような宣言を置くと、JSX がタグを知ります（これもリポジトリの試験では動かしていません）。
+
+```ts
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'vehicle-sil-timeline': DetailedHTMLProps<
+        HTMLAttributes<VehicleSilTimelineElement>,
+        VehicleSilTimelineElement
+      > & { src?: string; hide?: string; variables?: string; theme?: string };
+    }
+  }
+}
+```
+
 ### 画面のテンプレート（`gui_starter`）
 
 [examples/gui_starter](../../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。ビルド済みのツールでは、`gui_starter/` にあります。
 
-- 接続する、設定ファイルを照合する、実行を開始して止める、変数を 1 つ選んで見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までがあります。
+- 接続する、設定ファイルを照合する、実行を開始して止める、変数を 1 つ選んで見て書き込む、`client.variables.bind` で作ったスライダーとランプ、`<vehicle-sil-timeline>` で出す最後のシナリオの実行の時間の軸、までがあります。
 - 使い方は、その README にあります。
 - `scripts/verify-gui.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します。
 
@@ -1207,7 +1343,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 | ライブラリのテスト | `verify-web.py` の `client` の手順 |
 | ライブラリを 1 つにまとめる | `verify-web.py` の `bundle` の手順 |
 | パッケージ | `verify-web.py` の `package` の手順 |
-| 時間の軸のページ `gui/timeline` の単体テスト | `verify-web.py` の `timeline` の手順（ブラウザのテストは `--e2e-grep 'timeline page'`。GUI のリンクからも開くものは `--e2e-grep 'timeline'`） |
+| 時間の軸のページと要素 `gui/timeline` の単体テスト、`vehicle-sil-timeline.js` が元のファイルから作ったものと同じか | `verify-web.py` の `timeline` の手順（ページのブラウザのテストは `--e2e-grep 'timeline page'`、要素は `--e2e-grep 'timeline element'`、GUI からも開くものは `--e2e-grep 'timeline'`）。`messages.js`、`timeline.css`、`viewer.js` を変えたら、`gui/web` で `npm run bundle:timeline` を実行します |
 | 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
 
 サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
