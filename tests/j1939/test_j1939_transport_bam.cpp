@@ -391,6 +391,22 @@ TEST_CASE(bam_second_announcement_from_the_same_source_replaces_the_first)
     CHECK_EQ(inbox.seen.size(), 1u);
     CHECK(inbox.seen[0].pgn == 0xFECB);
     CHECK(inbox.seen[0].data == second);
+    CHECK_EQ(bench.network.statistics().transport_bam_replaced, 1u);
+    CHECK_EQ(bench.network.statistics().transport_bam_dropped, 0u);
+    CHECK_EQ(bench.network.statistics().transport_timeouts, 0u);
+}
+
+TEST_CASE(bam_announcement_after_the_last_packet_replaces_nothing)
+{
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    Inbox inbox;
+    inbox.attach(us);
+    inject_broadcast(bench, payload(21), at(0ms), 50ms);
+    inject_broadcast(bench, payload(9, 5), at(200ms), 50ms, 0xFECB);
+    bench.steps(40);
+    CHECK_EQ(inbox.seen.size(), 2u);
+    CHECK_EQ(bench.network.statistics().transport_bam_replaced, 0u);
 }
 
 TEST_CASE(bam_invalid_announcement_does_not_end_the_running_one)
@@ -411,6 +427,7 @@ TEST_CASE(bam_invalid_announcement_does_not_end_the_running_one)
     CHECK_EQ(inbox.seen.size(), 1u);
     CHECK(inbox.seen[0].data == message);
     CHECK_EQ(bench.network.statistics().transport_rejected, 3u);
+    CHECK_EQ(bench.network.statistics().transport_bam_replaced, 0u);
 }
 
 TEST_CASE(bam_invalid_announcements_are_ignored)

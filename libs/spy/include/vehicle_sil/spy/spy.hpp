@@ -222,7 +222,7 @@ private:
 ///   timeouts of this participant's own nodes; connections between other ECUs are counted in
 ///   SnifferStatistics::timed_out.
 /// - a broadcast that the same sender's next announcement replaced before its last packet
-///   came. It is counted nowhere.
+///   came. It is counted in NetworkStatistics::transport_bam_replaced, which is not in the sum.
 ///
 /// Lifetime. Make the Spy a member of the ECU's class (the class ecu_main() or Simulation::add()
 /// makes), so that it lives as long as the ECU: the variables it and its watchers publish
