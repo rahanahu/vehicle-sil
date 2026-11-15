@@ -1035,7 +1035,7 @@ All of them are registered only in a build with the Control Server, and only whe
 | `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
-The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
+The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and the scenario's reader (`scenario_reader.hpp` and the files it names).
 
 | Where the copies are | Details |
 |---|---|
@@ -1555,13 +1555,13 @@ Documentation to update:
 
 Where to change:
 
-- Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/launch/src/config.cpp` and `scenario.cpp`)
+- Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/launch/src/config.cpp` and the scenario's reader, `scenario_reader.hpp` and the files it names)
 
 Code and files to update:
 
 - `schema/simulation.schema.json`, `schema/scenario.schema.json`: give every key a `description`. Editors show it as the description of the key.
 - The template's copies: `cp schema/*.schema.json template/schema/` (the dashboard schema comes from `gui/protocol/dashboard.schema.json`)
-- The lists that the unknown-key error messages use (`k...Keys` at the top of `config.cpp` and `scenario.cpp`)
+- The lists that the unknown-key error messages use (`k...Keys` at the top of `config.cpp` and `scenario_reader.hpp`)
 - The samples in `tests/schema/test_schemas.py` (`CONFIG_SAMPLES`, `SCENARIO_SAMPLES`)
 
 How the key branches relate to the lists:
@@ -1750,17 +1750,17 @@ Where to change:
 
 | What | Location |
 |---|---|
-| Reading and checking | `libs/launch/src/scenario.cpp` |
+| Reading and checking | `libs/launch/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
 | Advancing the steps | `libs/launch/src/scenario_run.cpp` |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
-| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario.cpp` check the path and convert the cells |
+| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
 | The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/launch/src/run_samples.cpp` |
-| Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
-| The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario.cpp` |
+| Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario_inputs.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
+| The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario_inputs.cpp` |
 | The writes of a dither in the engine | In `scenario_run.cpp`: `submit()` (one write per ECU step while no motion runs; it belongs to no step, and writes for the same time are combined into one request), `place()` (places the dither on the line), `fail_grid()` (when such a write is refused, fails the first step not yet decided). The contract is "Dithers" in the comment of `ScenarioEngine` |
 
 Documentation to update:
@@ -1790,7 +1790,7 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
 - The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/launch/src/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
 - One function, `motion_number()`, gives the values of a motion before rounding. The value to write is made in one place, `Line::written()` of the line, which adds the dither and then rounds to the type. The engine's `submit_one()` calls it. Code that you add to compute values calls the same function.
-- Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
+- Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario_waves.cpp`.
 - `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
 - Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
 - In controller step P, only the samples and results of steps that started before P are looked at. Those from P on are handled in the next step, even if they have already been received.
@@ -1802,7 +1802,7 @@ What to update together when you add a waveform:
 
 - The function in `signal/waveform.hpp`
 - The implementation in `scenario_shapes.cpp`
-- `read_wave_of()` in `scenario.cpp` (keys, types, ranges, comparison with the step size)
+- `read_wave_of()` in `scenario_waves.cpp` (keys, types, ranges, comparison with the step size)
 - `definitions.wave` in `schema/scenario.schema.json` (and the copy in `template/schema`)
 - `WAVE_SHAPES_WITH_KEYS` and the samples in `tests/schema/test_schemas.py`
 - The waveform table in [scenario.md](scenario.md)
@@ -1833,7 +1833,7 @@ Where to change:
 | What | Location |
 |---|---|
 | The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
-| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which `scenario.cpp` fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
@@ -2119,7 +2119,7 @@ Documentation to update:
 Rules:
 
 - Conversion happens only inside the Hub (do not add it to the read API or the communication layer).
-- Whether a value can be written is decided in one place, `MappedSchema::to_actual()`. The scenario check uses the same decision through `in_range()` (`libs/launch/src/scenario.cpp`).
+- Whether a value can be written is decided in one place, `MappedSchema::to_actual()`. The scenario check uses the same decision through `in_range()` (`libs/launch/src/scenario_values.cpp`).
 - A mapping name that did not match cannot be written (`not_writable()`).
 - Values are converted before the Hub stores them (so that the read and write paths cannot disagree).
 - Writes are converted in the same place as the checks of `write()`.

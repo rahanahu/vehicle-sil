@@ -1035,7 +1035,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
-設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と `scenario.cpp` です。
+設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）です。
 
 | コピーの場所 | 内容 |
 |---|---|
@@ -1555,13 +1555,13 @@ flowchart TD
 
 変える場所:
 
-- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp`、`scenario.cpp` の、ファイルを読むコード）
+- 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
 
 合わせて直すコードとファイル:
 
 - `schema/simulation.schema.json`、`schema/scenario.schema.json`: キーには `description` を付けます。エディターが、そのキーの説明として表示する文です。
 - テンプレートのコピー: `cp schema/*.schema.json template/schema/`（ダッシュボードは `gui/protocol/dashboard.schema.json` から）
-- 知らないキーのエラーの文が使う一覧（`config.cpp` と `scenario.cpp` の先頭の `k...Keys`）
+- 知らないキーのエラーの文が使う一覧（`config.cpp` と `scenario_reader.hpp` の先頭の `k...Keys`）
 - `tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）
 
 キーを受ける分岐と一覧の関係:
@@ -1750,17 +1750,17 @@ flowchart TD
 
 | 内容 | 場所 |
 |---|---|
-| 読み方と照合 | `libs/launch/src/scenario.cpp` |
+| 読み方と照合 | `libs/launch/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
 | 手順を進める処理 | `libs/launch/src/scenario_run.cpp` |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/launch/src/scenario_shapes.cpp` |
-| `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`、パスの検査とセルの意味は `scenario.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
+| `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
 | 全サンプルを受け取る tap | `control::Hub::set_values_tap()` |
 | 実行の tap（シナリオは、ここからサンプルを取り出す） | `libs/launch/src/run_samples.cpp` の `RunSamples` |
-| `dither` の読み手（最上位の `inputs`、手順） | `scenario.cpp` の `read_inputs()`、`read_dither()`、`read_overlay()`。波形の中身は、`wave` と同じ `read_shape()` で読む（`read_wave_of()` と共用） |
-| 指摘 `scenario-dither-*` と、出力の一覧（`Scenario::lines`） | `scenario.cpp` の `note_lines()` と `check_dithers()` |
+| `dither` の読み手（最上位の `inputs`、手順） | `scenario_inputs.cpp` の `read_inputs()`、`read_dither()`、`read_overlay()`。波形の中身は、`wave` と同じ `read_shape()` で読む（`read_wave_of()` と共用） |
+| 指摘 `scenario-dither-*` と、出力の一覧（`Scenario::lines`） | `scenario_inputs.cpp` の `note_lines()` と `check_dithers()` |
 | エンジンの揺れの書き込み | `scenario_run.cpp` の `submit()`（動きのない間の、ECU のステップごとの書き込み。手順のものでない書き込みで、同じ時刻の分を 1 つの要求にまとめる）、`place()`（揺れを線に置く）、`fail_grid()`（その書き込みが断られたとき、まだ決まっていない最初の手順を失敗にする）。約束は `ScenarioEngine` のコメントの「Dithers」 |
 
 合わせて直すドキュメント:
@@ -1790,7 +1790,7 @@ flowchart TD
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
 - 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/launch/src/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
 - 動きの値を出す関数は `motion_number()`（丸める前）の 1 つで、書く値は、線の `Line::written()` の 1 か所で、揺れ（`dither`）を足してから型に丸めます。エンジンの `submit_one()` はこれを呼びます。値を出す所を追加するときも、同じ関数を呼びます。
-- ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario.cpp` の `seen_between()` のルール 1 つに従います。
+- ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario_waves.cpp` の `seen_between()` のルール 1 つに従います。
 - `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
 - 点を足す口（文面と CSV ファイル）は `read_points()` の 1 つで、同じ照合を通ります。
 - controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見ます。P 以降のものは、受信していても次のステップで扱います。
@@ -1802,7 +1802,7 @@ flowchart TD
 
 - `signal/waveform.hpp` の関数
 - `scenario_shapes.cpp` の実装
-- `scenario.cpp` の `read_wave_of()`（キー、型、範囲、ステップ幅との比較）
+- `scenario_waves.cpp` の `read_wave_of()`（キー、型、範囲、ステップ幅との比較）
 - `schema/scenario.schema.json` の `definitions.wave`（と `template/schema` のコピー）
 - `tests/schema/test_schemas.py` の `WAVE_SHAPES_WITH_KEYS` と見本
 - [scenario.md](scenario.md) の波形の表
@@ -1833,7 +1833,7 @@ flowchart TD
 | 内容 | 場所 |
 |---|---|
 | 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
-| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身は `scenario.cpp` が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
+| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
@@ -2119,7 +2119,7 @@ flowchart TD
 守ること:
 
 - 変換は Hub の中だけで行います（読み取りの API や通信の層に追加しません）。
-- 書ける値かどうかの判定は、`MappedSchema::to_actual()` の 1 か所です。シナリオの照合は、`in_range()` で同じ判定を使います（`libs/launch/src/scenario.cpp`）。
+- 書ける値かどうかの判定は、`MappedSchema::to_actual()` の 1 か所です。シナリオの照合は、`in_range()` で同じ判定を使います（`libs/launch/src/scenario_values.cpp`）。
 - 一致しなかった対応の名前には、書かせません（`not_writable()`）。
 - 値は、Hub が保持する前に変換します（読み書きの経路による不整合を作りません）。
 - 書き込みは、`write()` の検査と同じ所で変換します。
