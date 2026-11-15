@@ -305,6 +305,9 @@ public:
     /// shutdown_timeout; if the Error has not come by then, the stop goes out anyway. A stop or
     /// abort that another participant (the controller) gives first is not held back: the
     /// participant then may stop (Stopping, Stopped) before it is in Error, or never be in Error.
+    /// After a start that failed by an Error before the participant began to run, the wait also
+    /// ends once the lifecycle is in Shutdown: SIL Kit may then never complete the shutdown (see
+    /// patch 0006 in docs/dependencies.md).
     void stop(std::string_view reason) noexcept;
 
     /// Asks the lifecycle to stop without waiting. Callable from any thread, including the step

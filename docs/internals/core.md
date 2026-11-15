@@ -107,6 +107,8 @@ Setting the failure flag and reporting Error to SIL Kit happen under one lock. A
 
 `stop()` waits at most `shutdown_timeout` for Error and Shutdown together. After that, it passes the stop even before Error.
 
+`stop()` normally waits for the future of the final state, which SIL Kit sets at Shutdown once the other participants have replied. After a start that failed by an Error before the participant began to run, it also ends the wait when the lifecycle is in Shutdown: SIL Kit runs one wait for replies at a time, and a stop that comes while the start still waits for replies loses its own wait, so the future is never set.
+
 In these cases the participant does not go through Error, or reaches Error after Stopping:
 
 - A `request_stop()` before the failure (before the failing step handler starts, or before `report_failure()`) is an ordinary stop.

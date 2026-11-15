@@ -599,9 +599,28 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
     {
-        if (!final_state() && done.wait_until(deadline) == std::future_status::ready)
+        // SIL Kit sets the future at Shutdown, once the others have replied. After a start that
+        // SIL Kit failed (failed_before_start_), it may never set it: a Stop() that comes while
+        // the start still waits for the others' replies has its own wait for them dropped (SIL
+        // Kit takes one such wait at a time), and the lifecycle stays in Shutdown. Shutdown then
+        // ends the wait too. Otherwise only the future does: a normal stop still waits for the
+        // replies, which make sure the others got this participant's last messages.
+        while (!final_state())
         {
-            set_final_state(done.get());
+            const auto now = std::chrono::steady_clock::now();
+            if (done.wait_until(std::min(deadline, now + std::chrono::milliseconds(5))) == std::future_status::ready)
+            {
+                set_final_state(done.get());
+            }
+            else if (failed_before_start_.load(std::memory_order_acquire)
+                     && lifecycle_->State() == orch::ParticipantState::Shutdown)
+            {
+                set_final_state(orch::ParticipantState::Shutdown); // the value the future has at Shutdown
+            }
+            else if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
         }
     }
     catch (const std::exception&)
