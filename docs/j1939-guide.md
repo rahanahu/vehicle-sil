@@ -22,7 +22,7 @@ This page shows, in C++, how to use the J1939 stack of vehicle-sil to create ECU
 | Run ECUs in a simulation | `Simulation` | [Run in a simulation](#run-in-a-simulation) |
 | Test an ECU | `Simulation::local()`, `vehicle_sil::testkit` | [Test an ECU](#test-an-ecu) |
 | Disconnect an ECU from the bus | The variable `ecu.connected` | [Disconnect an ECU from the bus (`ecu.connected`)](#disconnect-an-ecu-from-the-bus-ecuconnected) |
-| Receive bus traffic without sending anything | `Network::set_observer`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
+| Receive bus traffic without sending anything | `j1939::Listener`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
 | Read and write an ECU's values from a UI or a test | `Ecu::input`, `Ecu::output` | [Read and write signals from outside (UI, tests)](#read-and-write-signals-from-outside-ui-tests) |
 | Work with signals without writing bit positions | Typed messages | [Data layout (Codec)](#data-layout-codec) |
 
@@ -896,20 +896,48 @@ To check the communication between other ECUs in a scenario, add an ECU that sen
 
 What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
 
-The repository does not contain the code in this exact form. The part that counts receptions with an `Observer` is in [examples/low_level/main.cpp](../examples/low_level/main.cpp), and a `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+The repository does not contain this code. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_listener.cpp` tests the `Listener`, and `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
 
 ```cpp
-class BusWatch final : public j1939::Observer {
+// A watcher: takes the Listener instead of creating it, and adds handlers. It keeps the registration as a member (removed when destroyed)
+class StatusWatch {
 public:
-    explicit BusWatch(vehicle_sil::Ecu& ecu) {
-        ecu.j1939("J1939_CAN").set_observer(this);   // no node added: sends not a single frame
-        ecu.output("watch.status_seen", &statusSeen_);
+    StatusWatch(vehicle_sil::Ecu& ecu, j1939::Listener& listener)
+      : status_(listener, listener.on_message(kPgnStatus, [this](const j1939::Message& m) {   // any destination; long messages too
+            if (m.time < latest_) { return; }   // the order of delivery can vary: compare times to find the newest
+            latest_ = m.time;
+            ++seen_;
+            to_ = m.destination;
+        })) {
+        ecu.output("watch.status_seen", &seen_);
+        ecu.output("watch.status_to", &to_);
     }
-    void on_event(const j1939::Event& e) override {
-        if (e.kind == j1939::EventKind::MessageReceived && e.pgn == kPgnStatus) { ++statusSeen_; }
-    }
+
 private:
-    int statusSeen_ = 0;
+    vehicle_sil::SimTime latest_{};
+    int seen_ = 0;
+    int to_ = 0;
+    j1939::ListenerSubscription status_;   // last member: destroyed first, so the handler is removed
+};
+
+class BusWatch {
+public:
+    explicit BusWatch(vehicle_sil::Ecu& ecu)
+      : network_(ecu.j1939("J1939_CAN")),   // no node added: sends not a single frame
+        listener_(network_),
+        status_(ecu, listener_) {
+        // let scenarios see what was missed, and messages that may differ from the receiver's
+        ecu.output("watch.missed", [this] {
+            const auto& s = listener_.sniffer_statistics();
+            return static_cast<std::int64_t>(s.no_session + s.incomplete + s.replaced + s.lost + s.conflicting_packets +
+                                             network_.statistics().receive_overflows);
+        });
+    }
+
+private:
+    j1939::Network& network_;
+    j1939::Listener listener_;
+    StatusWatch status_;
 };
 
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, argv, {.name = "Watch", .step = 10ms}); }
@@ -917,14 +945,29 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, a
 
 | How it receives | Use | What it sees |
 |---|---|---|
-| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and `MessageReceived` of the `Observer` set with `Network::set_observer` | Received messages with their times (also those addressed to other ECUs). |
+| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `j1939::Listener` on it | The messages and frames that other participants sent, whatever their destination, with their times. |
 | On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
 
-- A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK (see "Observation (`Observer`)" in [internals/j1939.md](internals/j1939.md#observation-observer)).
-- A message sent with BAM is seen reassembled.
-- Raw CAN sends nothing unless you call `send()`.
-
-Currently, multi-frame messages between other ECUs sent to a specific destination (RTS/CTS transfers) cannot be received reassembled, because a `Network` with no nodes does not reassemble connections that are not addressed to it. If you need them, receive TP.CM and TP.DT on raw CAN and reassemble them yourself.
+- A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK.
+- Create one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network` and add handlers to it. The `Listener` only listens and sends nothing. Its handlers:
+  - `on_message(pgn, handler)` and `on_any_message(handler)`: messages sent by other participants, whatever their destination: single frames, messages sent with BAM, and messages sent over a connection (RTS/CTS) between 2 ECUs. The handler takes the same `j1939::Message` type as a node's handler, so nodes and listeners can share the functions that read it. You can add several handlers for the same PGN; they are called in the order they were added.
+  - `on_transfer(handler)`: how a connection between other ECUs ended (`SniffedTransfer`: completed, aborted, timed out or missed).
+  - `on_frame(handler)`: one frame at a time (including TP.CM, TP.DT and frames to other addresses). Use it to reassemble messages yourself.
+- What it does not hear:
+  - What nodes of the same `Network` sent. A `Listener` passes "what other participants said". Count the transmissions of your own nodes with the results on the sending side (`Node::on_transfer_end`, the results of `Requester`). With `ListenerOptions::hear_local`, frames and messages looped back between nodes of the same `Network` are passed too (with `ReceivedFrame::local` set), but loopback happens only with 2 or more nodes, so on a `Network` with one node it adds nothing.
+  - 11-bit frames, and frames that the `Network` did not accept (`receive_overflows` in `Network::statistics()`). To see 11-bit frames, listen on raw CAN.
+  - Connections that the `Listener` could not follow. Announcements beyond the number it can follow at the same time (`ListenerOptions::sniffer.sessions`, default 32) count in `no_session`, transfers with missed packets in `incomplete`, and transfers announced again before they ended in `replaced` (`Listener::sniffer_statistics()`). Write these to a variable as in the example, and a scenario can tell "did not come" from "missed".
+- Messages that may differ from the receiver's: a message of a connection between other ECUs has the same bytes as the receiving node's message when the transfer's `conflicting_packets` (packets seen with the sequence number of an earlier packet but different bytes) is 0. Otherwise the bus does not show which of the two the receiver took (the `Listener` passes the one it saw first). `Message` carries no mark for this. There are 2 ways to tell:
+  - Write the statistic `sniffer_statistics().conflicting_packets` to a variable, as in the example. While it stays 0, every message passed is the same as the receiver's.
+  - Use the values in the `on_message` handler, and discard the value just taken if the `on_transfer` handler, called right after for the same transfer (same PGN, source and destination), sees it `Completed` with `SniffedTransfer::conflicting_packets` not 0. Other messages (single frames, messages sent with BAM, messages addressed to a node of this `Network`) get no `on_transfer` call, and they cannot differ from the receiver's.
+- A participant with its own nodes can use a `Listener` too. The `Network` handles connections addressed to its nodes and connections they send, and a message addressed to a node is passed once (it does not appear in `on_transfer`).
+- Handlers only read. Sending or registering a handler from inside a handler is a `std::logic_error`, and the participant fails and stops (also if the exception is swallowed). Update variables in handlers and send from `ecu.on_step`. Register the handlers before the simulation starts (in the constructor).
+- Time and order: the `Message::time` of a message sent over a connection is the time at which the receiver received the message (the last packet), the same time that the receiving node sees. The handler, however, is called after the receiver has answered that it received the message. So a message with an earlier time can be passed after a message with a later time. To find the latest value or a period, compare `time`, not the order of the calls. What follows from frames (messages, Aborts) does not depend on the step size of the listening participant. What follows from elapsed time (such as `TimedOut`) has a `time` that does not depend on the step size, but the step in which the handler is called does, so compare `time` here too.
+- How to write watchers: a `Network` has one `Listener` (a second one is a `std::logic_error`). A watcher class or function takes a `Listener&` and adds handlers instead of creating its own `Listener`. Then you can put any number of watchers in one participant without rewriting them.
+- Handler lifetime: an added handler is called until it is removed or the `Listener` is destroyed. What the handler captured (`this` and so on) must live that long. A watcher that can be destroyed before the `Listener` keeps the return value of the registration (`Listener::HandlerId`) in a `j1939::ListenerSubscription` member (`StatusWatch` in the example; the same shape as `j1939::Subscription` for a node's handlers). A `ListenerSubscription` removes the handler when destroyed or on `reset()`. It works within a step and from inside that handler itself, and the handler is not called after that. Destroying it after the `Listener` is safe. A handler whose return value was discarded stays registered until the `Listener` is destroyed.
+- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
+- To see the events of a `Network` (including transmissions and address changes) for recording or tests, use a `j1939::Observer` (see "Observation (`Observer`)" in [internals/j1939.md](internals/j1939.md#observation-observer)). It can be set together with a `Listener`.
+- Raw CAN sends nothing unless you call `send()`. If you read the frames yourself but want connections between other ECUs followed and reassembled for you, pass the frames to a `j1939::TransferSniffer`.
 
 Not verified: whether a CAN controller that sends nothing changes the behavior of the bus (such as the number of nodes that return ACK) on the Vector Network Simulator.
 

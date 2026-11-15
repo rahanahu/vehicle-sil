@@ -98,7 +98,8 @@ enum class LatePolicy
 };
 
 /// One or more writes applied together in the same step. A check failure at submit() rejects
-/// all of them; if a setter throws while they are applied, the writes before it stay.
+/// all of them; if a setter throws while they are applied, the writes before it stay (and
+/// CommandResult::reason names the variable whose setter threw).
 struct Command
 {
     std::uint64_t seq = 0;  ///< assigned by the sender; orders commands that take effect in the same step
@@ -135,6 +136,9 @@ struct CommandResult
     /// Start time of the step that applied it (Applied only).
     std::optional<SimTime> applied_at;
     bool late = false; ///< its time had passed (Late, or applied late with LatePolicy::ApplyNext)
+    /// Why it was not applied. Of a setter that threw: "<name>: a setter threw: <what()>", with the
+    /// name of its variable: the writes of the command before that one were applied, that one
+    /// and the ones after it were not. Without a name (a Parameter after the first step): none.
     std::string reason;
 };
 

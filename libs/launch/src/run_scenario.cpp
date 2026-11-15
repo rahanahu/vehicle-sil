@@ -115,9 +115,13 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     }
     port_ = std::make_unique<HubPort>(control_.hub());
     port_->give_up = cancelled;
+    if (!ctx_.options.timeline.empty())
+    {
+        record_ = std::make_shared<TimelineRecord>(*ctx_.scenario);
+    }
     engine_ = std::make_unique<ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
-                                                        [this](const ScenarioStepRun& step) { note_step(step); });
+                                                        [this](const ScenarioStepRun& step) { note_step(step); }, record_.get());
     // From here on the scenario gets the samples of these agents, and none that came before.
     samples_.scenario_begins(std::move(incarnations));
     engine_->begin(found);
@@ -227,6 +231,7 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
     const std::string file = outcome.scenario->file;
     outcome.scenario = engine_->run();
     outcome.scenario->file = file;
+    outcome.timeline_record = record_;
 }
 
 void RunScenario::end()

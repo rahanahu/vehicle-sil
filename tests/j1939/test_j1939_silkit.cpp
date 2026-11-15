@@ -19,6 +19,7 @@
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/j1939/listener.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
 #include "vehicle_sil/testkit/recorders.hpp"
@@ -533,7 +534,22 @@ enum class Listening
 {
     RawCan,           ///< A raw CAN channel: every frame.
     J1939WithoutNode, ///< A J1939 network without a node: the messages it delivers (to an observer).
+    J1939Listener,    ///< A J1939 network without a node and a Listener on it: also the connections between the ECUs.
 };
+
+[[nodiscard]] const char* to_text(Listening kind)
+{
+    switch (kind)
+    {
+    case Listening::RawCan:
+        return "raw CAN";
+    case Listening::J1939WithoutNode:
+        return "J1939 without a node";
+    case Listening::J1939Listener:
+        return "J1939 Listener";
+    }
+    return "?";
+}
 
 struct ListenOnlyParticipant
 {
@@ -563,21 +579,42 @@ struct ListenOnlyStack
         }
         else
         {
+            if (p.kind == Listening::J1939Listener)
+            {
+                // Beside the recorder: handlers of every kind, which only count.
+                listener = std::make_unique<vehicle_sil::j1939::Listener>(network);
+                listener->on_any_message([this](const Message&) { ++listener_messages; });
+                listener->on_frame([this](const vehicle_sil::j1939::ReceivedFrame&) { ++listener_frames; });
+                listener->on_transfer([this](const vehicle_sil::j1939::SniffedTransfer&) { ++listener_transfers; });
+            }
             host.add(network, tap);
         }
     }
 
     [[nodiscard]] std::size_t heard() const
     {
-        return participant.kind == Listening::RawCan ? raw_frames : events.count(vehicle_sil::j1939::EventKind::MessageReceived);
+        switch (participant.kind)
+        {
+        case Listening::RawCan:
+            return raw_frames;
+        case Listening::J1939WithoutNode:
+            return events.count(vehicle_sil::j1939::EventKind::MessageReceived);
+        case Listening::J1939Listener:
+            // Every frame the network took, and at least the messages the network delivered
+            // (more: the connections between the ECUs, which the network itself does not assemble).
+            return listener_frames == network.statistics().frames_received &&
+                           listener_messages >= events.count(vehicle_sil::j1939::EventKind::MessageReceived)
+                       ? listener_messages
+                       : 0;
+        }
+        return 0;
     }
 
     /// Throws unless the participant sent nothing and heard something (a participant that hears
     /// nothing would pass the comparison without showing anything).
     void check() const
     {
-        const std::string who = std::string("listen-only participant (") +
-                                (participant.kind == Listening::RawCan ? "raw CAN" : "J1939 without a node") + ", step " +
+        const std::string who = std::string("listen-only participant (") + to_text(participant.kind) + ", step " +
                                 std::to_string(participant.step / 1ms) + " ms)";
         const std::size_t sent = log.count(vehicle_sil::testkit::FrameLog::Direction::Sent);
         if (sent != 0 || raw.statistics().frames_sent != 0 || network.statistics().frames_sent != 0 ||
@@ -601,6 +638,10 @@ struct ListenOnlyStack
     vehicle_sil::can::RawChannel raw;
     Network network;
     vehicle_sil::testkit::J1939Events events;
+    std::unique_ptr<vehicle_sil::j1939::Listener> listener;
+    std::size_t listener_messages = 0;
+    std::size_t listener_frames = 0;
+    std::size_t listener_transfers = 0;
     std::size_t raw_frames = 0;
     Host host; ///< Last: destroyed first, before what it steps.
 };
@@ -1574,7 +1615,8 @@ TEST_CASE(j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_s
 }
 
 // ---------------------------------------------------------------------------------------------
-// Participants that only listen (a raw CAN channel; a J1939 network without a node) change
+// Participants that only listen (a raw CAN channel; a J1939 network without a node, also with a
+// Listener that follows the connections between the ECUs) change
 // nothing for the others: what every ECU receives (with times), what it hands to its port and
 // its transmit acknowledgements are the same with and without them, on the virtual bus (without
 // and with timing), on SIL Kit's trivial simulation and on the simple CAN network simulator,
@@ -1603,6 +1645,7 @@ void check_listen_only_participants_change_nothing(const EcuSetup& ecus)
         {{{Listening::J1939WithoutNode, 10ms}}},
         {{{Listening::RawCan, 1ms}, {Listening::J1939WithoutNode, 7ms}}},
         {{{Listening::J1939WithoutNode, 50ms}, {Listening::RawCan, 3ms}}},
+        {{{Listening::J1939Listener, 10ms}, {Listening::J1939Listener, 3ms}, {Listening::J1939Listener, 50ms}}},
     };
     const ListenOnlySetup none;
     const Traces local = prepare(run_on_virtual_bus(ecus.steps, ecus.make, ecus.end, ecus.bus, none));

@@ -190,6 +190,7 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
         context.params = configured;
         context.params.insert(context.params.end(), given.begin(), given.end());
         context.params_for_many = true;
+        context.read_file = files_beside(scenario.path);
         // Without the participants: the errors about the variables are not looked at.
         const ScenarioRead read = read_scenario(text, {}, context);
         for (const Finding& finding : read.findings)

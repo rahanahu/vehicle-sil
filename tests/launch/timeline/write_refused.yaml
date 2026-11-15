@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# A scenario of the timeline references (see README.md here): the engine runs it against the model
+# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+vehicle_sil_scenario: 1
+name: an ECU refuses a write
+steps:
+  - set: { Body.level: 7 }
+  # The setter of level throws for 13. The mode, before it in the same set, is applied.
+  - at_ms: 40
+    set: { Body.mode: 2, Body.level: 13 }
+  - expect: { Body.level: 13, Body.mode: auto }
+    within_ms: 100

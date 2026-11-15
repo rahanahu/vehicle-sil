@@ -1,0 +1,247 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "an ECU refuses a write",
+    "status": "failed",
+    "over_at_ms": 50,
+    "recorded_to_ms": 40
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Body.mode",
+      "participant": "Body",
+      "type": "enum",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [
+        {
+          "name": "off",
+          "value": 0
+        },
+        {
+          "name": "on",
+          "value": 1
+        },
+        {
+          "name": "auto",
+          "value": 2
+        }
+      ],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 7",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "lines": [0],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 9,
+      "kind": "set",
+      "text": "set Body.mode = auto (2); Body.level = 13",
+      "status": "failed",
+      "start_ms": 40,
+      "at_ms": 40,
+      "end_ms": 40,
+      "code": "scenario-write",
+      "message": "the write for 40 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write before it in that command (Body.mode = auto (2)), and it stays applied",
+      "lines": [1, 2],
+      "watch": null,
+      "failed": {
+        "at_ms": 40,
+        "code": "scenario-write",
+        "conditions": [],
+        "writes": [
+          {
+            "variable": "Body.mode",
+            "at_ms": 40,
+            "value": 2,
+            "point": 0,
+            "applied": true
+          },
+          {
+            "variable": "Body.level",
+            "at_ms": 40,
+            "value": 13,
+            "point": 1,
+            "applied": false
+          }
+        ],
+        "write": 1
+      }
+    },
+    {
+      "index": 3,
+      "line": 11,
+      "kind": "expect",
+      "text": "expect Body.level eq 13; Body.mode eq auto (2) (within 100 ms)",
+      "status": "not_run",
+      "start_ms": null,
+      "at_ms": null,
+      "end_ms": null,
+      "code": null,
+      "message": null,
+      "lines": [],
+      "watch": {
+        "mode": "once",
+        "from_ms": null,
+        "until_ms": null,
+        "conditions": [
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 13
+              }
+            ]
+          },
+          {
+            "variable": "Body.mode",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "not_applied_from": 1,
+      "points": [
+        [0, 7],
+        [40, 13]
+      ]
+    },
+    {
+      "variable": "Body.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 5,
+      "first_ms": 0,
+      "last_ms": 40,
+      "points": [
+        [0, 7]
+      ]
+    },
+    {
+      "variable": "Body.mode",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [40, 2]
+      ]
+    },
+    {
+      "variable": "Body.mode",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 5,
+      "first_ms": 0,
+      "last_ms": 40,
+      "points": [
+        [0, 0],
+        [40, 2]
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 7,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 7"
+    },
+    {
+      "variable": "Body.mode",
+      "kind": "set",
+      "line": 9,
+      "step": 2,
+      "from_ms": 40,
+      "to_ms": 40,
+      "base": 2,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.mode = auto (2)"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 9,
+      "step": 2,
+      "from_ms": 40,
+      "to_ms": 40,
+      "base": 13,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 13"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "error",
+      "code": "scenario-write",
+      "file": "scenario.yaml",
+      "line": 9,
+      "participant": null,
+      "network": null,
+      "message": "set Body.mode = auto (2); Body.level = 13: the write for 40 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write before it in that command (Body.mode = auto (2)), and it stays applied",
+      "detail": null
+    }
+  ],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

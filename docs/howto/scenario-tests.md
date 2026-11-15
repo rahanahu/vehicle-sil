@@ -429,6 +429,14 @@ line  step                                                                      
 
 `ramp` and `wave` do not move on to the next step until the movement ends. To check the result after the movement, put an `expect` in the next step. The last 2 steps of `throttle_step.yaml` in Step 1 do this, and so does `scenarios/throttle_wave.yaml` of the repository (the template does not have it).
 
+To play recorded values into an input, save them as a CSV file and read it from `points`. The first row holds the column names and the first column holds the time in ms. Put the file in the scenario's directory or below it, and name the file and the value column (`value`):
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+The repository's [examples/ecu_main/scenarios/throttle_trace.yaml](../../examples/ecu_main/scenarios/throttle_trace.yaml) does this (the template does not have it). For the rules, see "Reading points from a CSV file" in [scenario.md](../scenario.md#reading-points-from-a-csv-file).
+
 ### Troubleshoot ramps and waves
 
 | Symptom | Cause | Fix |
@@ -742,6 +750,7 @@ If you use a different version of `vehicle_sil_launch`, the `features` in the ou
 | `scenario` | `--scenario` |
 | `scenario-wave` | The `wave` step |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` |
+| `scenario-points-file` | `points` from a CSV file |
 
 ## What to read next
 

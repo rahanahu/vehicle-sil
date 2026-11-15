@@ -277,7 +277,7 @@ export interface ScenarioStep {
   index: number;
   /** Line in the scenario file. */
   line: number | null;
-  kind: Open<'set' | 'ramp' | 'wave' | 'expect' | 'wait_until'>;
+  kind: Open<'set' | 'ramp' | 'wave' | 'dither' | 'expect' | 'wait_until'>;
   /** Text of the step (shown in English, unchanged). */
   text: string;
   status: ScenarioStepStatus;

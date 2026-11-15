@@ -233,6 +233,8 @@ When the bridge ends, it prints the statistics on one line that starts with `sta
 
 If you put the bridge on the same network as ECUs that run in virtual time, each ECU receives a forwarded frame with the time of the ECU step in which the frame arrives. A frame received before the simulation starts gets time 0. The wall clock decides which ECU step receives a frame, so the result is not deterministic (see "SIL Kit port (`SilKitCanPort`)" in [internals/can.md](internals/can.md#sil-kit-port-silkitcanport)).
 
+Across a bridge, the order of frames breaks as well as their times. All frames that arrive during one ECU step get the same time, and a J1939 `Network` takes frames with the same time one sender at a time, smallest CAN ID first, so it can handle them in another order than they had on the physical bus. When you listen to a transfer between physical ECUs with a `j1939::Listener` or a `TransferSniffer`, the EndOfMsgACK can come before the last packet, or the next announcement before the previous EndOfMsgACK. The first case is caught, because the sniffer waits until time advances before it decides; in the second case, both transfers are missed. Give the listening participant a short step size, and write the statistics of missed transfers (`incomplete`, `replaced`) to variables to check them (see "Hearing what other participants say (`Listener`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)).
+
 ## Forwarding behavior
 
 | Case | What the bridge does |
