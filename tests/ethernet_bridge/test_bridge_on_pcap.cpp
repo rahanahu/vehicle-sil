@@ -190,6 +190,24 @@ TEST_CASE(two_bridges_on_one_npcap_adapter_stop_a_loop_started_in_sil_kit)
                                      "come from SIL Kit"));
 }
 
+TEST_CASE(bridge_on_an_npcap_adapter_that_cannot_send_says_once_that_it_failed)
+{
+    // The last error is the link's reason with Npcap's own text and number in it, and "failed" once.
+    const NpcapFake fake;
+    CHECK_EQ(fake.control<int(const char*, const char*, long)>("fake_pcap_set")("fake-sendfail", "npcap_text", 1), 0);
+    const auto link = detail::make_pcap_link(fake.library, {"fake-sendfail", false, kFake});
+    FakeEthernetController silkit;
+    EthernetBridge bridge(silkit, *link, EthernetBridgeOptions{});
+    bridge.start();
+    bridge.start_controller();
+    silkit.deliver(make_frame(kBroadcast, kEcu, kExperimental));
+    bridge.stop();
+    CHECK_EQ(fake.control<int(const char*, const char*, long)>("fake_pcap_set")("fake-sendfail", "npcap_text", 0), 0);
+    CHECK_EQ(bridge.statistics().ext_tx_failures, std::uint64_t{1});
+    CHECK_TEXT(bridge.last_error(), "sending on 'fake-sendfail': send error: PacketSendPacket failed: The network media is "
+                                    "disconnected (fake).  (2150891551)");
+}
+
 TEST_CASE(bridge_on_an_npcap_adapter_without_the_mac_guard_does_not_get_its_own_frames_back)
 {
     // The MAC rule is the only thing that drops a bridge's own frames coming back. On an adapter

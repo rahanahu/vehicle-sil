@@ -200,11 +200,26 @@ TEST_CASE(pcap_device_is_chosen_by_pcap_name_connection_name_or_identifier)
     CHECK_EQ(choose_pcap_device(devices, "{4d36e972-e325-11ce-bfc1-08002be10318}", PcapFlavor::Npcap), std::size_t{0});
     CHECK_EQ(choose_pcap_device(devices, "0A1B2C3D-0000-1111-2222-333344445555", PcapFlavor::Npcap), std::size_t{1});
     CHECK_EQ(choose_pcap_device(devices, "\\Device\\NPF_Loopback", PcapFlavor::Npcap), std::size_t{2});
-    // A connection name is not matched in part, and not in another case.
-    CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "ethernet", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
-               "no interface 'ethernet' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
+    // A connection name is matched in another case of its ASCII letters, as Windows does, but not in part.
+    CHECK_EQ(choose_pcap_device(devices, "ethernet 2", PcapFlavor::Npcap), std::size_t{0});
+    CHECK_EQ(choose_pcap_device(devices, "ETHERNET", PcapFlavor::Npcap), std::size_t{1});
+    CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "ethernet 3", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
+               "no interface 'ethernet 3' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
                "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
                "disabled: enable it in Windows.");
+    // A pcap name is matched exactly: on Linux it is the interface's name, and Linux tells the case.
+    CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "\\device\\npf_loopback", PcapFlavor::Npcap); },
+                        LinkErrorKind::NoSuchInterface),
+               "no interface '\\device\\npf_loopback' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", "
+               "Ethernet, \\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter "
+               "that is disabled: enable it in Windows.");
+    // Letters outside ASCII are compared as they are (U+00C4 and U+00E4).
+    auto accented = devices;
+    accented[1].connection = "\xC3\x84thernet";
+    CHECK_EQ(choose_pcap_device(accented, "\xC3\x84THERNET", PcapFlavor::Npcap), std::size_t{1});
+    const std::string other_letter =
+        error_of([&] { (void)choose_pcap_device(accented, "\xC3\xA4thernet", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface);
+    CHECK(other_letter.starts_with("no interface '\xC3\xA4thernet' for --backend npcap."));
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
                "no interface '' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
                "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
@@ -219,6 +234,14 @@ TEST_CASE(pcap_device_name_that_fits_two_devices_is_refused_and_a_pcap_name_wins
                "'Ethernet 2' is the name of 2 interfaces for --backend npcap: "
                "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}, \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}. Give "
                "one of these names as --interface instead.");
+    // Two connection names that differ only in case: each of them, exactly, chooses its own; in a
+    // third case the error names both.
+    devices[1].connection = "ETHERNET 2";
+    CHECK_EQ(choose_pcap_device(devices, "Ethernet 2", PcapFlavor::Npcap), std::size_t{0});
+    CHECK_EQ(choose_pcap_device(devices, "ETHERNET 2", PcapFlavor::Npcap), std::size_t{1});
+    CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "ethernet 2", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
+               "'ethernet 2' is the name of 2 interfaces for --backend npcap: \"Ethernet 2\", \"ETHERNET 2\". Give one of these "
+               "names as --interface instead.");
     // On Linux pcap names are the interface names; a connection name equal to another device's pcap name loses.
     const std::vector<PcapDevice> linux_like = {{"va", "", "vb", kPcapIfUp}, {"vb", "", "", kPcapIfUp}};
     CHECK_EQ(choose_pcap_device(linux_like, "vb", PcapFlavor::Libpcap), std::size_t{1});
@@ -247,6 +270,17 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
     CHECK_TEXT(format_pcap_devices({}, PcapFlavor::Npcap, ""),
                "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n  none. If Npcap was installed for "
                "administrators only, run this from a console started as administrator.\n");
+    // A name in Japanese ("Ethernet test" in katakana and kanji: 8 wide characters and a space, 25
+    // bytes) takes 17 columns of a console, and the next column stays in line.
+    auto japanese = windows_devices();
+    japanese[0].connection = "\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D\xE3\x83\x83\xE3\x83\x88 \xE8\xA9\xA6\xE9\xA8\x93";
+    CHECK_TEXT(format_pcap_devices(japanese, PcapFlavor::Npcap, ""),
+               "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n"
+               "  --interface \"" + japanese[0].connection + "\"   up, connected  (Microsoft KM-TEST Loopback Adapter; "
+               "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318})\n"
+               "  --interface Ethernet              up, disconnected  (Intel(R) Ethernet; "
+               "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555})\n"
+               "  --interface \\Device\\NPF_Loopback  up, loopback  (Adapter for loopback traffic capture)\n");
     // The loopback device alone: what Npcap installed for administrators only gives another user.
     const std::vector<PcapDevice> loopbackOnly = {
         {"\\Device\\NPF_Loopback", "Adapter for loopback traffic capture", "", kPcapIfUp | kPcapIfLoopback}};

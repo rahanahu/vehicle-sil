@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/eth_link/os_links.hpp"
 
+#include "text_width.hpp"
+
 #include <algorithm>
 
 namespace vehicle_sil::eth_link {
@@ -10,12 +12,12 @@ std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces)
     std::size_t width = 0;
     for (const auto& entry : interfaces)
     {
-        width = std::max(width, entry.name.size());
+        width = std::max(width, detail::display_width(entry.name));
     }
     std::string text;
     for (const auto& entry : interfaces)
     {
-        text += "  --interface " + entry.name + std::string(width - entry.name.size() + 2, ' ');
+        text += "  --interface " + entry.name + std::string(width - detail::display_width(entry.name) + 2, ' ');
         text += entry.ethernet ? "Ethernet" : "not Ethernet (link type " + std::to_string(entry.link_type) + ")";
         text += entry.up ? ", up\n" : ", down\n";
     }

@@ -455,6 +455,12 @@ TEST_CASE(pcap_link_tells_a_full_queue_from_a_failed_transmission)
     failing->start(recorder.handler());
     CHECK(failing->transmit(frame) == TransmitResult::Failed);
     CHECK_TEXT(failing->last_error(), "sending on 'fake-sendfail' failed: send: Network is down (fake)");
+    // Npcap's text says itself that the send failed: the link does not say it again.
+    fake.set("fake-sendfail", "npcap_text", 1);
+    CHECK(failing->transmit(frame) == TransmitResult::Failed);
+    fake.set("fake-sendfail", "npcap_text", 0);
+    CHECK_TEXT(failing->last_error(), "sending on 'fake-sendfail': send error: PacketSendPacket failed: The network media is "
+                                      "disconnected (fake).  (2150891551)");
     failing->stop();
     const auto full = fake.link("fake-sendfull");
     full->start(recorder.handler());

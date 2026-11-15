@@ -279,6 +279,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 | Next | The state that the library returns (`up` / `down`, `connected` / `disconnected`, `wireless`, `loopback`). |
 | In parentheses | The description and the pcap name. |
 
+- The names are padded to one width, counted in console columns: a wide character (Japanese, Chinese, Korean, full-width forms) counts as 2. The next column stays in line as long as the console's font draws those characters 2 columns wide.
 - Interfaces that are not Ethernet (`any` on Linux, for example) are listed too. The bridge refuses to open them.
 - If the Npcap list contains no network adapter (only `\Device\NPF_Loopback`), the bridge adds a last line about Npcap installed for administrators only and about disabled adapters (`Npcap offers no network adapter here: ...`).
 
@@ -392,7 +393,8 @@ The tests load a fake library, but the means to do so exists only in a separate 
 
 - The adapter identifier can be given with or without braces, in upper or lower case.
 - If a connection name matches 2 adapters, the bridge reports an error and shows their pcap names.
-- Connection names are compared as UTF-8 strings (the arguments are read as UTF-8).
+- Connection names are compared as UTF-8 strings (the arguments are read as UTF-8). As in Windows, the case of ASCII letters does not matter (`ethernet 2` chooses `Ethernet 2`); other letters must be the same. If 2 connection names differ only in case, a name in a third case gives an error with both names, and each of them written exactly chooses its own adapter.
+- pcap names are compared exactly, including case.
 - Both the list and the error messages are written in a form that is readable in a console whatever the code page, and as UTF-8 to files and pipes (see "Output encoding" in [bridges.md](bridges.md#output-encoding)). You do not need `chcp`.
 - Text that Npcap returns (device descriptions, error texts) is read in the Windows ANSI code page and converted to UTF-8.
 - Whether Japanese names are shown and matched on Japanese Windows is not verified.

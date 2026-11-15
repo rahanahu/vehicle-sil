@@ -19,7 +19,7 @@
 //   fake-denied      cannot be opened: no permission
 //   fake-nopromisc   opens with the warning that promiscuous mode is not supported
 //   fake-raw         not Ethernet (link type 12)
-//   fake-sendfail    sending fails
+//   fake-sendfail    sending fails (with libpcap's text on Linux, or Npcap's after fake_pcap_set "npcap_text")
 //   fake-sendfull    sending fails with the error number of a full queue
 //   fake-fault       reading fails as soon as it is opened
 //   fake-drops       counts 3 dropped frames for every frame sent
@@ -140,6 +140,7 @@ struct Device
     bool answers = false;
     bool echoes = false;
     bool send_fails = false;
+    bool npcap_text = false; ///< a failed send has the text Npcap gives
     bool send_full = false;
     bool read_fails = false;
     bool quiet = false;
@@ -477,7 +478,10 @@ FAKE_PCAP_EXPORT int pcap_sendpacket(PcapHandle* handle, const unsigned char* by
     }
     if (device.send_fails)
     {
-        copy_text(handle->error, sizeof(handle->error), "send: Network is down (fake)");
+        // Npcap's text has its function's name, Windows' text and the error number.
+        copy_text(handle->error, sizeof(handle->error),
+                  device.npcap_text ? "send error: PacketSendPacket failed: The network media is disconnected (fake).  (2150891551)"
+                                    : "send: Network is down (fake)");
         errno = 0;
         return -1;
     }
@@ -621,7 +625,8 @@ FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
     return -2;
 }
 
-/// "read_fails" (1: reading fails from now on), "drops" (adds to the count of dropped frames).
+/// "read_fails" (1: reading fails from now on), "drops" (adds to the count of dropped frames),
+/// "npcap_text" (1: a failed send has the text that Npcap gives, 0: libpcap's).
 /// Returns 0, or -2 for anything else.
 FAKE_PCAP_EXPORT int fake_pcap_set(const char* device, const char* what, long value)
 {
@@ -644,6 +649,11 @@ FAKE_PCAP_EXPORT int fake_pcap_set(const char* device, const char* what, long va
     if (key == "drops")
     {
         found->dropped += static_cast<unsigned>(value);
+        return 0;
+    }
+    if (key == "npcap_text")
+    {
+        found->npcap_text = value != 0;
         return 0;
     }
     return -2;

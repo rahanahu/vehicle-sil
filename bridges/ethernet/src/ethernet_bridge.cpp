@@ -379,9 +379,21 @@ void EthernetBridge::on_silkit_frame(const ethernet::EthernetFrameEvent& event)
         set_last_error("the external link's transmit queue is full, frame dropped");
         break;
     case TransmitResult::Failed:
+    {
         ext_tx_failures_.fetch_add(1);
-        set_last_error("sending on the external link failed: ", external_.last_error());
+        // A link's own reason for a failed send says where it sent and that it failed ("sending on
+        // 'Ethernet 2' failed: ..."): kept as it is. Any other reason (a fault before) gets the context.
+        const std::string why = external_.last_error();
+        if (why.starts_with("sending on '"))
+        {
+            set_last_error(why);
+        }
+        else
+        {
+            set_last_error("sending on the external link failed: ", why);
+        }
         break;
+    }
     }
 }
 
