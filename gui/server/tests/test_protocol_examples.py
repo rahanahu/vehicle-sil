@@ -19,7 +19,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, CONTROL_FEATURES, REPLAY, Client, gui_server, is_ended, is_synced, run_async
+from conftest import (CONFIGS, CONTROL_FEATURES, REPLAY, REPOSITORY, Client, gui_server, is_ended, is_synced, manual_pages,
+                      run_async)
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
@@ -96,10 +97,11 @@ SHOWN = {
 }
 
 
-# The table of errors in gui/protocol/README.md: code -> HTTP status
-ERROR_TABLE = {code: int(status) for status, code in re.findall(r"^\| (\d{3}) \| `([a-z-]+)` \|",
-                                                                 (DIRECTORY.parent / "README.md").read_text(
-                                                                     encoding="utf-8"), re.MULTILINE)}
+# The table of errors in gui/protocol/README.md and in its Japanese page: page -> {code: HTTP status}
+ERROR_TABLES = {page.relative_to(REPOSITORY).as_posix():
+                {code: int(status) for status, code in re.findall(r"^\| (\d{3}) \| `([a-z-]+)` \|",
+                                                                  page.read_text(encoding="utf-8"), re.MULTILINE)}
+                for page in manual_pages("gui/protocol/README.md")}
 
 
 def shown(name: str, example: dict) -> None:
@@ -111,7 +113,8 @@ def shown(name: str, example: dict) -> None:
         code = name.removeprefix("error-")
         assert (example["status"], error["code"]) == (check, code), example
         assert isinstance(error["message"], str) and error["message"], example
-        assert ERROR_TABLE.get(code) == check, f"gui/protocol/README.md says {code} is {ERROR_TABLE.get(code)}"
+        for page, table in ERROR_TABLES.items():
+            assert table.get(code) == check, f"{page} says {code} is {table.get(code)}"
         return
     assert check(example) is not False, f"{name}: {json.dumps(example)[:2000]}"
 

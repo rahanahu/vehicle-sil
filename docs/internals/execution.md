@@ -1,12 +1,22 @@
-# 実行と試験の基盤
+# Execution and test foundation
 
-vehicle-sil 自体を直す人と、`Ecu`、`Simulation`、`Peer`、`LocalBench` の契約を確かめたい人向けです。ECU の書き方は [j1939-guide.md](../j1939-guide.md) と [ecu-executable.md](../ecu-executable.md) にあります。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
+[日本語](../ja/internals/execution.md)
 
-この文書で扱うのは、ECU のアプリケーションの入口（`Ecu`）、J1939 と LIN のノードを動かす participant（`Peer`）、プロセス内の仮想バスでの実行（`LocalBench`）と試験の道具、それらを選んで動かす `Simulation` です。`Peer` と `LocalBench` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います（CTest の `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary` が、内部ヘッダーや試験用の入口を使っていないことを確かめます）。区分（[architecture.md](../architecture.md) の「構成」の表）は、`Ecu` と `Simulation` が利用者向け、`Peer` と `LocalBench` が土台、試験キットが試験用です。
+This page specifies the following classes and the guarantees their implementations keep: `Ecu`, which builds an ECU application; `Peer`, the participant that runs J1939 and LIN nodes; `LocalBench` and the test tools, which run on in-process virtual buses; and `Simulation`, which chooses between them and runs them.
 
-## ECU の入口（`vehicle_sil::Ecu`）
+| Section | Contents |
+|---|---|
+| [The `Ecu` class](#the-ecu-class-vehicle_silecu) | Setup functions, order within one step, ownership and destruction, variables, disconnecting from the bus, `describe()` output |
+| [`Simulation`](#simulation-vehicle_silsimulation) | Choosing where to run, `run_for()` and `run()`, failure reporting |
+| [Peer](#peer-vehicle_silpeer) | Participant setup, time modes, lifecycle, stopping and destruction, threads |
+| [Local execution and the test kit](#local-execution-vehicle_sillocalbench-and-the-test-kit-vehicle_siltestkit) | `LocalBench` buses and ECUs, recording and fault injection |
+| [Test coverage](#test-coverage) | What the tests verify |
 
-ECU のアプリケーションを組み立てる入口です（`vehicle_sil::ecu`、SIL Kit なし）。`Peer`（SIL Kit の participant）と `LocalBench::add_ecu()`（仮想バスのホスト）が実装するので、`Ecu&` を受け取る関数やクラスは、どちらの上でも同じコードで動きます。
+`Peer` and `LocalBench` both use only the public API of the engine (`vehicle_sil::j1939`). The CTest tests `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary` and `simulation.boundary` verify that they use no internal headers and no test-only APIs. In the classification (the table in "Directories and targets" in [architecture.md](../architecture.md#directories-and-targets)), `Ecu` and `Simulation` are for users, `Peer` and `LocalBench` are foundation, and the test kit is for tests.
+
+## The `Ecu` class (`vehicle_sil::Ecu`)
+
+`Ecu` is the class that builds an ECU application (`vehicle_sil::ecu`, without SIL Kit). `Peer` (a SIL Kit participant) and `LocalBench::add_ecu()` (a host on the virtual bus) implement it, so a function or class that takes an `Ecu&` runs on either with the same code.
 
 ```cpp
 class Engine {
@@ -19,60 +29,356 @@ public:
 };
 ```
 
-- 組み立て: `j1939(network, NetworkOptions)`（J1939 の `Network`）、`can(network, RawChannelOptions)`（生の CAN）、`lin_master(network, schedule, LinMasterOptions)`、`lin_slave(network, LinSlaveOptions)`（LIN のノード）、`ethernet(network, eth::ChannelOptions)`（生のイーサネットのフレームのチャネル）、`on_step(fn)`、`every(period, fn)`、`at(time, fn)`、`emplace<T>(args...)`。どれも実行の開始前にだけ呼べます。開始後に呼ぶと `std::logic_error` です。`j1939()` と `can()` は、ECU ごとにネットワーク名を 1 回だけ使えます（2 回目は `std::invalid_argument`）。`j1939()` と `can()` は同じ CAN のネットワーク名を使えますが、LIN のネットワーク名は CAN と共有できません。ECU は 1 つの LIN のネットワークに LIN のノードを 1 つだけ持ちます（どちらに反しても `std::invalid_argument`）。イーサネットのネットワーク名も CAN、LIN と共有できず、ECU は 1 つのイーサネットのネットワークにチャネルを 1 つだけ持ちます。`emplace` は開始後に呼ぶと、`T` を作らずに `std::logic_error` を投げます。`j1939("")` と `can("")`（空のネットワーク名）は、どちらの実装でも `std::invalid_argument` です。`T` のコンストラクターが例外を投げたときは、その例外が伝わり、`T` は ECU に残りません。ただし、コンストラクターが ECU に足したもの（ネットワーク、ノード、ハンドラ、関数）は残ります。
-- 1 ステップの順序: `j1939()`、`can()`、`ethernet()` で作ったもの（足した順）が受信して処理 → 変数への書き込みのうち時刻が来たものを反映（`Agent::on_step_begin()`）→ `on_step`、`every`、`at` の関数（足した順）→ LIN のノードの `step(now)`（足した順）→ 変数の読み出し（`Agent::on_step_end()`。`sample_period` ごと）→ `j1939()`、`can()`、`ethernet()` で作ったものが同じ順で送信。片方のハンドラから他方へ送ると、同じステップで出ます（ゲートウェイは、ネットワークを 2 つ持つ ECU です）。アプリがステップで出した LIN の要求（`set_frame_data()`、`set_response()`、`request_sleep()` など）はそのステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。`Peer`、`LocalBench`、`Ecu` の説明は同じ順序です。
-- 所有と破棄: ECU が LIN のノード、ネットワーク（部品が先）、生チャネル、イーサネットのチャネル、Control Agent、`emplace` したオブジェクトを持ち、返す参照は ECU の寿命まで有効です。破棄の順は、LIN のノード、ネットワーク、生チャネル、イーサネットのチャネル、Agent、`emplace` したオブジェクト（最後に足したものから先）です。ハンドラ、部品、変数のポインターと関数は、`emplace` したオブジェクトを破棄の間も参照できます。
-- 変数: `input(name, &value, options)`、`input(name, get, set, options)`、`input_enum(name, &value, items, options)`、`output(name, &value, options)`、`output(name, get, options)`、`output_enum(name, get, items, options)` で、外から読み書きする変数を宣言します。引数、型、検査は `control::Agent` の同名の関数と同じです。宣言は ECU の Agent（`agent()`）が持ちます。Agent は最初の宣言か `agent()` で作り、ECU に 1 つです。どちらもなければ実行の開始時（`Peer::start()`、`LocalBench` の最初の実行。`ecu_main` は組み立ての直後）に作るので、どの ECU にもあります。Agent は作るときに、どの ECU にもある入力 `ecu.connected`（下の「バスからの切り離し」）を最初の変数として持ちます。`set_agent_options(AgentOptions)` は Agent を作る前だけです（後は `std::logic_error`）。不正なオプション（`Agent::check_options()` が断るもの）は、`set_agent_options()` が ECU の名前つきの `std::invalid_argument` で断り、オプションは変わりません。宣言と `set_agent_options()` は実行の開始前だけで、開始後とスキーマの確定の後は `std::logic_error`、同じ ECU での同じ名前は `std::invalid_argument` です（文言に ECU の名前）。`peer.` で始まる名前は Peer の監視の出力のために、`ecu.` で始まる名前はどの ECU にもある変数のために予約していて、どちらの実装でも宣言のときに `std::invalid_argument` です。Peer のネットワークごとの監視の出力（`j1939.N.` で始まる名前）との衝突は、宣言のときではなく、スキーマを確定するときに `std::invalid_argument` になります。`agent()` は開始後も、ある Agent を返します。実装は Agent を `detail::EcuAgent`（遅延の生成、オプション、ステップの前後の呼び出し、終わりの `finish()`、通信の側の残りの検査）で持ちます。
-- 通信の側の寿命: ECU の外から Agent を使う通信の側（`control_silkit::AgentTransport`）は、生きている間 Agent に `control::TransportLease` を持ちます（`Agent::transports()` で数える。ほかの通信の側も同じ型を使えます）。通信の側は ECU（`Peer`、`Simulation`、`LocalBench`）より後に宣言して先に破棄し、ECU に `emplace()` しません（`emplace()` したオブジェクトは Agent より後に壊れるため）。ECU が Agent を破棄するときに `TransportLease` が残っていれば、ECU の名前と直し方を標準エラーに出して `std::terminate()` を呼びます（破棄した Agent を使わせないため。デストラクターなので例外にはしません）。
-- 変数の時点: 書き込みは、`at` 以後の最初のステップで、アプリの処理の前に反映されます。そのステップのネットワークの受信処理と部品のタイマーは反映より前に走るので、新しい値を使うのは次のステップからです。読み出しは、アプリと LIN の処理の後です。`Peer` と `LocalBench` で同じ時点です。`Peer` は止まるとき（`stop()` と破棄）、ステップがもう走らなくなった後に、待っている書き込みを `Cancelled` にします（`Agent::finish()`。2 回目以降は何もしない）。その後で止めた通信の側は、その結果も送ります。`LocalBench` の ECU では、待っている書き込みの結果は届きません（通信の側は ECU より先に破棄するため）。利用者は `finish()` を呼びません。
-- `every(period, fn)` は、0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい）。規則は `vehicle_sil::periodic()`（`core/periodic.hpp`）の 1 か所にあり、`Peer` と `LocalBench` の ECU が共用します。`TickScheduler` と違って、周期とステップ幅の関係を検査しません。
-- `at(time, fn)` は、開始時刻が `time` 以後の最初のステップで 1 回だけ呼びます（ステップ幅が `time` を割り切らなくても呼びます。`time` が最初のステップより前なら最初のステップ）。`on_step` と `every` と同じ列に、足した順に並びます。空の関数は `std::invalid_argument` です。規則は `vehicle_sil::once_at()`（同じヘッダー）にあり、`Peer` と `LocalBench` が共用します。シナリオの「ある時刻に 1 回」（購読を始める、止める、`Node::send()` で送る）に使います。`Node::send()` や送る部品の関数はステップの中でだけ使えるので、`main` から直接ではなく `at()` で呼びます。
-- 生の CAN（`can::RawChannel`）は、J1939 でないプロトコルの土台です。`on_frame(handler)` で受け、`send(frame)` で送ります。`send()` はステップの中でだけ呼べます（それ以外は `std::logic_error`）。結果は `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）です。送ったフレームは、そのステップの最後に、送った順に、ステップの時刻で出ます。上限は 1 ステップあたり送信 64、受信 1024 です（`RawChannelOptions`）。超えた分は数えて捨てます。再試行はしません。自分が送ったフレームは受けません。同じ ECU が同じネットワーク名で `j1939()` と `can()` を持つと、別のコントローラーとして互いのフレームを受けます。受けるのは次のステップですが、時刻は送ったステップのものです。J1939 のネットワークは 11 ビットのフレームを無視します。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは、別のバスになります。生チャネルは常に SIL Kit の上にあるためです。違う送り手から同じ時刻に届いたフレームの順は、SIL Kit では他の participant のスレッド次第で、仮想バスでは `StepDriver` の順です。`RawChannel` は並べ替えません。
-- 型の形: `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` は非仮想の関数で、空の名前を検査し、実装は private の仮想関数（`add_j1939`、`add_can`、`add_lin_master`、`add_lin_slave`、`add_ethernet`）で行います。`Peer` には、引数が `J1939ChannelOptions` の `j1939(name, ...)` が別にあります。この宣言が基底クラスの同じ名前の関数を隠すので、`Peer&` から呼べる `j1939` は `Peer` のものだけです。`NetworkOptions` を渡す `j1939(network, NetworkOptions)` は `Ecu&` を通して使います。
-- LIN: `lin_master(network, schedule)` は、ECU のステップ幅で回る `lin::LinMaster` を、`lin_slave(network)` は `lin::LinSlave` を作って返します。ハンドラ（`on_result()`、`on_state()`、`on_frame()`）は実行の前に設定します。ノードは最初のステップの前に初期化されます（`init()`）。`Peer` では LIN のネットワーク名を名前にした SIL Kit の LIN コントローラと `SilKitLinPort`（仮想時間だけ。実時間では `std::logic_error`）、`LocalBench` ではその名前の `VirtualLinBus` のエンドポイント（1 つのバスに Master は 1 つ。2 つ目は両方の ECU の名前を言う `std::logic_error`）の上に作ります。スケジュールとオプションの誤りは、エンジンの検査による `std::invalid_argument` です。`vehicle_sil::lin` は SIL Kit を含まないので、`vehicle_sil::ecu` と `vehicle_sil::local` は SIL Kit なしのままです。
-- イーサネット: `ethernet(network, options)` は、生のフレームを送受信する `eth::Channel` を作って返します（フレームの単位。vehicle-sil は TCP/IP のスタックを持たず、送り元のアドレスより後ろのバイトを解釈しません）。受信は `on_frame(handler)`（ステップの最初に、届いた順に呼ぶ。実行の前に設定）か、`receive()`（そのステップの分を `on_step()` などから 1 つずつ取る）です。`send()` はステップの中でだけ呼べ、フレームはそのステップの最後に出ます。時刻 t のステップで送ったフレームは、同じネットワークのほかの全部のチャネルに（宛先のアドレスによらず。ハブと同じ）、その ECU の「t より後に始まる最初のステップ」で届きます。同じ時刻のフレームは送り元のアドレスの順に並ぶので、`Peer` と `LocalBench` で同じ順です。`options.mac` は自己申告に出るアドレスで（`describe()` の `mac`）、`Accept::Addressed` の絞り込みにも使います。フレームには書き込みません。`Peer` ではネットワーク名を名前にした SIL Kit の Ethernet コントローラーと `eth::SilKitEthPort`（仮想時間だけ。実時間では、することを言う `std::logic_error`。コントローラーは CommunicationReady で有効にします。送信の確認の列は `send_capacity` 以上にします）、`LocalBench` ではその名前の `eth::VirtualEthernetBus` のエンドポイントの上に作ります。どちらも、ポートの受け箱を `receive_capacity` の 2 倍にするので、ネットワークから 1 ステップに届くフレームが `receive_capacity` 以下なら、ECU を回す順やスレッドのタイミングによらず落としません。選択肢の誤り（`eth::Channel::validate()`）は、コントローラーやネットワークを作る前に `std::invalid_argument` で断るので、同じ名前で呼び直せます。チャネル、上限、未確認の値は [ethernet.md](ethernet.md) にあります。
-- バスからの切り離し（`ecu.connected`）: どの ECU にもある bool の入力で、既定は true です。false の間、その ECU のすべてのバス（J1939、生の CAN、LIN、イーサネット）について、送ったものはバスに出ず、バスのものは ECU に届きません。ECU のステップ、タイマー、変数は動き続けます（プロセスは止めません）。実装は ECU のポートを `detail::GatedCanPort`、`detail::GatedLinPort`、`detail::GatedEthPort`（`ecu/detail/bus_connection.hpp`）の後ろに置きます。`TapPort` はその上にあるので、スタックが見たものを記録します。
-  - 効く時点: 書き込みは、ほかの変数と同じくステップ P の先頭（アプリの前）で入り、そのステップの送信から効きます。受信は、時刻 t の事象（フレーム、LIN のヘッダーなど）を、t より前のステップで最後に決まった状態で判定します（P の変更は、P より後の時刻の事象から効く）。時刻 P の事象が ECU 自身のステップ P の前に届くか後に届くか（SIL Kit、`LocalBench` の ECU の順）によらず、同じ結果になります。LIN の Master が受ける自分のヘッダーへの応答は、ヘッダーを送ったときの状態で判定します（ゲートが、そのスロットのヘッダーを送ったかを覚えます。スロットの途中のステップで切っても、送ったヘッダーへの応答は、いつ届いても通ります）。同じステップで false の後に true を書いたときは、外れていなかったものとして扱います（何も遮らず、戻ったときの送信もしません）。
-  - CAN: 切れている間の送信は、ポートの `SendResult::Failed` です。J1939 の `Network` は `send_failures` に数えて捨て（溜めないので、戻したときにまとめて出ません）、生チャネルは `frames_dropped` に数えます。J1939 のトランスポートプロトコルは、相手の応答が来ないので時間切れで終わります。BAM の送り手は、パケットが出なくても送り終えたことになります。バスの状態（`bus_state`）は変えません。仮想バスに時間の模型（`CanBusModel`）があると、切る前に受け付けられて送信待ちの列に残ったフレームは、切った後にバスに出ます（実機でコントローラを外した場合とは違います）。
-  - イーサネット: CAN と同じ時点の決まりです。切れている間の送信は、ポートの `SendResult::Failed` で、チャネルは `frames_dropped` に数えて捨てます（`send()` の戻り値は `Ok` のままです。捨てるのはステップの最後のため）。切れている間の時刻のフレームは、チャネルに渡しません。戻ったときに送るものはありません。
-  - J1939 で戻ったとき: ネットワークごとに `NetworkOptions::on_reconnect`（`j1939::OnReconnect`）で選びます。どちらも規格の想定と合うかは確かめていないので、模擬する ECU に合わせて選びます（電源の入れ直しではなく、つなぎ直しとして扱います）。
-    - `Announce`（既定）: 戻ったステップで、NAME を持ち Address Claim を始めた各ノードが、全体宛ての Request for Address Claimed を送り、自分の Address Claimed（アドレスがなければ Cannot Claim）も送ります（`detail::announce_again()`）。ほかのノードの答えで、切れている間に同じアドレスを取ったノードとの競合は、ふつうの Claim と同じに解けます。ノードのアドレスと状態はそのままで、Claim の後の 250 ms の待ちはしません。
-    - `Nothing`: 何も送りません。切れている間に同じアドレスを取ったノードとの競合は、どちらかが送るまで見つかりません。
-    - Address Claim を最初からやり直す（待ちを含む）選択肢はありません。ノードの Claim を始め直す公開の関数がないためです。
-  - LIN: 切れた Master はスケジュールを回し続けますが、ヘッダーも自分のフレームもバスに出ず、すべての枠の結果が `NoResponse` です。Slave はヘッダーを受けないので何も答えず、Master のフレームも受けません。切れた Slave の枠は、Master から見て `NoResponse` です。Sleep と Wakeup の要求も出ません。切れている間に Master が休止に入ると、SIL Kit のコントローラは動作中のままで、LinMaster の状態と揃わないことがあります（その後の起床は確かめていません）。
-- 自己申告: `describe()` は、ECU の名前、ステップ幅、つながるネットワーク（呼んだ順。J1939 のノードは足したときの値、イーサネットは申告したアドレス）、変数（`ecu.connected` が先頭。Agent を作る前でも）を `EcuDescription` で返します。宣言を閉じず、いつでも呼べ、`Peer` と `LocalBench` で同じ内容です。`to_json()` が決まった形の JSON にします。内容と形式は [ecu-executable.md](../ecu-executable.md) にあります。
-- スレッド: 組み立ては 1 つのスレッドから行います。ステップは実装のスレッドで走り、関数、ハンドラ、部品もそこで呼ばれます。
+### Setup functions
 
-## `Simulation`（`vehicle_sil::Simulation`）
+An ECU application builds itself with these functions of `Ecu`, usually in its constructor:
 
-`Ecu` を、プロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告します（`vehicle_sil::simulation`。ヘッダーは SIL Kit のヘッダーを含みません）。動かす場所はコンストラクターで選び、ECU のコードは変わりません。`Simulation(std::optional<SilKitOptions>)` は、値があれば SIL Kit、空なら `Simulation()` と同じです。動かす場所を実行時に選ぶときに使います。`Simulation(SilKitOptions)` はいつも SIL Kit です。型名を書かない `Simulation sim({.registry_uri = uri})` も SIL Kit です。`Simulation sim{{}}` は、どちらのコンストラクターとも取れるのでコンパイルエラーになります（黙ってプロセス内にはなりません）。`Simulation` はコピーもムーブもできません。
+| Function | Creates |
+|---|---|
+| `j1939(network, NetworkOptions)` | A J1939 `Network` |
+| `can(network, RawChannelOptions)` | A raw CAN channel |
+| `lin_master(network, schedule, LinMasterOptions)`, `lin_slave(network, LinSlaveOptions)` | A LIN node |
+| `ethernet(network, eth::ChannelOptions)` | A channel for raw Ethernet frames |
+| `on_step(fn)`, `every(period, fn)`, `at(time, fn)` | Functions called inside a step |
+| `emplace<T>(args...)` | An object that the ECU owns |
+
+Call each of these functions only before the run starts. The rules for network names, and what happens when a rule is broken:
+
+| Condition | Result |
+|---|---|
+| A setup function is called after the run has started | `std::logic_error` |
+| `emplace` is called after the run has started | `std::logic_error`, without constructing `T` |
+| The same network name is passed to `j1939()` twice on the same ECU (likewise for `can()`) | The second call throws `std::invalid_argument` |
+| A LIN network shares its name with a CAN network | `std::invalid_argument` |
+| An ECU has 2 LIN nodes on one LIN network | `std::invalid_argument` |
+| `j1939("")` or `can("")` (an empty network name) is called | `std::invalid_argument` in both implementations |
+| The constructor of `T` throws | The exception propagates, and `T` does not remain in the ECU |
+
+`j1939()` and `can()` can use the same CAN network name. An Ethernet network name cannot be shared with CAN or LIN either, and an ECU has only one channel on an Ethernet network. Even when the constructor of `T` throws, what the constructor added to the ECU (networks, nodes, handlers, functions) remains.
+
+### Order within one step
+
+| Order | What happens |
+|---|---|
+| 1 | What `j1939()`, `can()` and `ethernet()` created receives and processes, in the order it was added |
+| 2 | Variable writes whose time has come are applied (`Agent::on_step_begin()`) |
+| 3 | The `on_step`, `every` and `at` functions are called, in the order they were added |
+| 4 | `step(now)` of each LIN node is called, in the order the nodes were added |
+| 5 | Variables are read (`Agent::on_step_end()`; every `sample_period`) |
+| 6 | What `j1939()`, `can()` and `ethernet()` created transmits, in the same order as in 1 |
+
+- A frame sent from a handler of one network to the other network goes out in the same step (a gateway is an ECU with 2 networks).
+- LIN requests that the application makes in a step (`set_frame_data()`, `set_response()`, `request_sleep()` and so on) take effect from that step.
+- What a LIN node receives is reported during that step's LIN processing, so the application reads it in the next step.
+- The descriptions of `Peer`, `LocalBench` and `Ecu` follow the same order.
+
+### Ownership and destruction
+
+The ECU owns the LIN nodes, the networks (protocol parts first), the raw channels, the Ethernet channels, the Control Agent and the objects created with `emplace`. The references it returns are valid for the ECU's lifetime.
+
+The destruction order is: the LIN nodes, the networks, the raw channels, the Ethernet channels, the Agent, then the objects created with `emplace` (the last added first). Handlers, protocol parts, and the pointers and functions of variables can refer to the `emplace` objects during destruction.
+
+### Declaring variables
+
+Declare the variables to read and write from outside the simulation with these functions. Their arguments, types and checks are those of the functions of the same name in `control::Agent`.
+
+- `input(name, &value, options)`, `input(name, get, set, options)`, `input_enum(name, &value, items, options)`
+- `output(name, &value, options)`, `output(name, get, options)`, `output_enum(name, get, items, options)`
+
+The ECU's Agent (`agent()`) holds the declarations. An ECU has one Agent, created at this point:
+
+| Case | When the Agent is created |
+|---|---|
+| A variable is declared or `agent()` is called | At the first declaration or `agent()` call |
+| Neither | At the start of the run (`Peer::start()`, the first run of `LocalBench`; for `ecu_main`, right after setup) |
+
+Every ECU has an Agent. When the Agent is created, it gets the input `ecu.connected`, which every ECU has, as its first variable (see "[Disconnecting from the bus](#disconnecting-from-the-bus-ecuconnected)" below). After the start, `agent()` returns the existing Agent.
+
+| Condition | Result |
+|---|---|
+| `set_agent_options(AgentOptions)` is called after the Agent was created | `std::logic_error` |
+| Invalid options (options that `Agent::check_options()` rejects) are passed to `set_agent_options()` | `std::invalid_argument` with the ECU's name (the options do not change) |
+| A declaration or `set_agent_options()` is called after the run has started or after the schema is fixed | `std::logic_error` |
+| The same name is declared twice on the same ECU | `std::invalid_argument` (the message names the ECU) |
+| A name that starts with `peer.` or `ecu.` is declared | `std::invalid_argument` at declaration, in both implementations |
+| A name is declared that clashes with a per-network monitoring output of the `Peer` (a name that starts with `j1939.N.`) | `std::invalid_argument`, not at declaration but when the schema is fixed |
+
+Names that start with `peer.` are reserved for the monitoring outputs of the `Peer`, and names that start with `ecu.` for the variables that every ECU has.
+
+The implementation holds the Agent in `detail::EcuAgent`. `detail::EcuAgent` is responsible for lazy creation, the options, the calls before and after the step, the final `finish()` and the check for transports that remain.
+
+### Transport lifetime
+
+A transport that uses the Agent from outside the ECU (`control_silkit::AgentTransport`) holds a `control::TransportLease` on the Agent for as long as it lives. The Agent counts them in `Agent::transports()`. Other transports can use the same type.
+
+- Declare the transport after the ECU (`Peer`, `Simulation`, `LocalBench`), and destroy it first.
+- Objects created with `emplace()` are destroyed after the Agent, so do not `emplace()` a transport into the ECU.
+- If a `TransportLease` remains when the ECU destroys the Agent, the ECU prints its name and the fix to stderr and calls `std::terminate()`.
+
+The ECU calls `std::terminate()` so that nothing can use the destroyed Agent. Because this happens in a destructor, it does not throw an exception.
+
+### When variable writes are applied
+
+A write is applied in the first step at or after `at`, before the application's processing. The network receive processing and the timers of protocol parts in that step run before the write is applied, so they use the new value from the next step on. Variables are read after the application and LIN processing. These points are the same in `Peer` and `LocalBench`.
+
+When a `Peer` stops (`stop()` and destruction), it sets the pending writes to `Cancelled` once steps no longer run (`Agent::finish()`; a second call does nothing). A transport stopped after that also sends those results. For an ECU in `LocalBench`, no results are returned for pending writes, because the transport is destroyed before the ECU. Users do not call `finish()`.
+
+### `every()` and `at()`
+
+| Function | Step in which it is called | Where the rule is |
+|---|---|---|
+| `every(period, fn)` | The first step at or after each of the times 0, period, 2 period, … (at most once per step) | `vehicle_sil::periodic()` (`core/periodic.hpp`) |
+| `at(time, fn)` | The first step whose start time is at or after `time`, once only | `vehicle_sil::once_at()` (same header) |
+
+Each rule lives in one place, shared by the ECUs of `Peer` and `LocalBench`.
+
+- The period of `every` need not be a multiple of the step size. Unlike `TickScheduler`, `every` does not check how the period relates to the step size.
+- `at` calls the function even if the step size does not divide `time`. If `time` is before the first step, it calls the function in the first step.
+- The functions of `at` are in the same list as those of `on_step` and `every`, in the order they were added.
+- Passing an empty function to `at` throws `std::invalid_argument`.
+- Use `at` for the ECU's scripted one-time actions (start or stop a subscription, send with `Node::send()`).
+- `Node::send()` and the sending functions of protocol parts can be used only inside a step. Call them through `at()`, not directly from `main`.
+
+### Raw CAN (`can::RawChannel`)
+
+`RawChannel` is the foundation for protocols other than J1939. Receive with `on_frame(handler)` and send with `send(frame)`.
+
+| Item | Specification |
+|---|---|
+| Where `send()` can be called | Only inside a step (elsewhere, `std::logic_error`) |
+| Result of `send()` | `RawSendStatus` (`Ok`, `QueueFull`, `InvalidFrame`) |
+| When frames are sent | At the end of that step, in the order of the `send()` calls, with the time of the step |
+| Limits (`RawChannelOptions`) | Per step: 64 sent, 1024 received |
+| Frames beyond the limits | Counted and dropped; not retried |
+| Frames the channel sent itself | Not received |
+
+If one ECU has both `j1939()` and `can()` on the same network name, they act as separate controllers and receive each other's frames. They receive them in the next step, but with the time of the step that sent them. A J1939 network ignores 11-bit frames. However, when a `Peer`'s J1939 network runs on a user port (`j1939(name, port)`, such as Vector XL), the two are on separate buses, because the raw channel is always on SIL Kit.
+
+The order of frames received at the same time from different senders depends on the threads of the other participants on SIL Kit, and on the order of the `StepDriver` on the virtual bus. `RawChannel` does not reorder them.
+
+### Public functions and virtual functions
+
+`j1939()`, `can()`, `lin_master()`, `lin_slave()` and `ethernet()` are non-virtual functions that check for empty names. The work is done in private virtual functions (`add_j1939`, `add_can`, `add_lin_master`, `add_lin_slave`, `add_ethernet`).
+
+`Peer` has a separate `j1939(name, ...)` that takes `J1939ChannelOptions`. This declaration hides the base class's functions of the same name, so the only `j1939` you can call through a `Peer&` is the `Peer`'s own. Call `j1939(network, NetworkOptions)`, which takes `NetworkOptions`, through an `Ecu&`.
+
+### LIN nodes
+
+`lin_master(network, schedule)` creates and returns a `lin::LinMaster` that runs at the ECU's step size. `lin_slave(network)` creates and returns a `lin::LinSlave`. Set the handlers (`on_result()`, `on_state()`, `on_frame()`) before the run. Nodes are initialized before the first step (`init()`).
+
+| Implementation | Where the node is created | Limits |
+|---|---|---|
+| `Peer` | A SIL Kit LIN controller named after the LIN network, and a `SilKitLinPort` | Virtual time only (`std::logic_error` in real time) |
+| `LocalBench` | An endpoint of the `VirtualLinBus` of that name | One master per bus. A second master throws `std::logic_error` with the names of both ECUs in the message. |
+
+Errors in the schedule and options are `std::invalid_argument` from the engine's checks. `vehicle_sil::lin` does not include SIL Kit, so `vehicle_sil::ecu` and `vehicle_sil::local` stay free of SIL Kit.
+
+### Ethernet channels
+
+`ethernet(network, options)` creates and returns an `eth::Channel` that sends and receives raw frames. It works in units of frames. vehicle-sil has no TCP/IP stack and does not interpret the bytes after the source address. For channels, limits and unverified values, see [ethernet.md](ethernet.md).
+
+| Item | Specification |
+|---|---|
+| Receiving (`on_frame(handler)`) | Called at the start of the step, in order of reception (set it before the run) |
+| Receiving (`receive()`) | Takes that step's frames one at a time, from `on_step()` and so on |
+| Sending (`send()`) | Can be called only inside a step. The frame is sent at the end of that step. |
+| Channels that receive a frame | Every other channel on the same network (regardless of the destination address, as with a hub) |
+| Step of reception | A frame sent in the step at time t is received in the receiving ECU's "first step that starts after t" |
+| Order of frames with the same time | By source address; the order is the same in `Peer` and `LocalBench` |
+| `options.mac` | The address (`mac`) in the `describe()` output. Also used for filtering with `Accept::Addressed`. Not written into frames. |
+
+| Implementation | Where the channel is created |
+|---|---|
+| `Peer` | A SIL Kit Ethernet controller named after the network, and an `eth::SilKitEthPort` |
+| `LocalBench` | An endpoint of the `eth::VirtualEthernetBus` of that name |
+
+A `Peer`'s channel works in virtual time only. In real time, it throws `std::logic_error` with what to do in the message. The controller is activated at CommunicationReady. The transmit acknowledgement queue is made at least `send_capacity` long.
+
+Both implementations make the port's receive queue twice `receive_capacity`. If at most `receive_capacity` frames arrive from the network in one step, no frame is dropped, whatever the order in which the ECUs run and the timing of the threads.
+
+Option errors (`eth::Channel::validate()`) are rejected with `std::invalid_argument` before any controller or network is created, so you can call again with the same name.
+
+### Disconnecting from the bus (`ecu.connected`)
+
+`ecu.connected` is a bool input that every ECU has. The default is true. While it is false, on every bus of that ECU (J1939, raw CAN, LIN, Ethernet), what the ECU sends does not reach the bus, and the ECU receives nothing from the bus. The ECU's steps, timers and variables keep running (the process does not stop).
+
+The implementation puts the ECU's ports behind `detail::GatedCanPort`, `detail::GatedLinPort` and `detail::GatedEthPort` (`ecu/detail/bus_connection.hpp`). `TapPort` sits above them, so it records what the stack saw.
+
+#### When it takes effect
+
+Like any other variable, a write is applied at the start of step P (before the application). It takes effect from that step's transmissions.
+
+For reception, an event at time t (a frame, a LIN header and so on) is judged by the state last decided in a step before t. A change in P takes effect from events with a time after P. The result is the same whether an event at time P comes before or after the ECU's own step P (which depends on SIL Kit, or on the order of ECUs in `LocalBench`).
+
+A LIN master judges the responses to its own headers by the state at the time it sent the header. The gate remembers whether it sent the header of that slot. If the ECU disconnects in a step in the middle of a slot, the response to a header it sent is passed to the ECU whenever it is received.
+
+Writing false and then true in the same step counts as never having been disconnected. Nothing is blocked, and nothing is sent as on reconnection.
+
+#### CAN
+
+| While disconnected | What happens |
+|---|---|
+| Sending | The port returns `SendResult::Failed` |
+| J1939 `Network` | Counts the frame in `send_failures` and drops it (frames are not held, so they are not sent all at once on reconnection) |
+| Raw channel | Counts the frame in `frames_dropped` |
+| J1939 transport protocol | The peer's responses do not arrive, so the transfer ends by timeout |
+| Sender of a BAM | Counts as having finished sending, even though the packets are not sent |
+| Bus state (`bus_state`) | Unchanged |
+
+If the virtual bus has a timing model (`CanBusModel`), frames accepted before the disconnection and still waiting in the transmit queue reach the bus after the disconnection. This differs from disconnecting a controller on real hardware.
+
+#### Ethernet
+
+The timing rules are the same as for CAN.
+
+- Sending while disconnected gives the port's `SendResult::Failed`, and the channel counts the frame in `frames_dropped` and drops it.
+- Frames are dropped at the end of the step, so `send()` still returns `Ok`.
+- Frames with a time while the ECU is disconnected are not passed to the channel.
+- Nothing is sent on reconnection.
+
+#### Reconnecting on J1939
+
+Choose the behavior for each network with `NetworkOptions::on_reconnect` (`j1939::OnReconnect`). Whether either value matches what the standard expects has not been verified, so choose the one that matches the ECU you simulate. Reconnection is treated as reconnecting to the bus, not as a power cycle.
+
+| Value | In the step of reconnection | Conflict with a node that took the same address while disconnected |
+|---|---|---|
+| `Announce` (default) | Each node that has a NAME and has started address claiming sends a Request for Address Claimed to the global destination, and its own Address Claimed (Cannot Claim if it has no address) (`detail::announce_again()`) | Resolved by the other nodes' responses, as for an ordinary claim |
+| `Nothing` | Sends nothing | Not found until one of the nodes sends |
+
+With `Announce`, the node's address and state stay as they are, and there is no 250 ms wait after the claim.
+
+There is no option to restart address claiming from the beginning (including the wait), because there is no public function that restarts a node's claim.
+
+#### LIN
+
+| Disconnected ECU | What happens |
+|---|---|
+| Master | Keeps running the schedule, but neither the headers nor its own frames reach the bus, and the result of every slot is `NoResponse` |
+| Slave | Receives neither the headers nor the master's frames and answers nothing, so for the master that slot is `NoResponse` |
+
+- Sleep and wakeup requests of a disconnected ECU do not reach the bus either.
+- If the master goes to sleep while disconnected, the SIL Kit controller stays operational and may not match the state of the `LinMaster` (wakeup after that has not been verified).
+
+### `describe()` output
+
+`describe()` returns the following in an `EcuDescription`:
+
+- The ECU's name
+- The step size
+- The networks it connects to (in call order; for J1939 nodes, the values at the time they were added; for Ethernet, the address written in `options.mac`)
+- The variables (`ecu.connected` first, even before the Agent is created)
+
+It does not close declarations and can be called at any time. The content is the same in `Peer` and `LocalBench`. `to_json()` turns it into JSON of a fixed form. For the content and format, see [ecu-executable.md](../ecu-executable.md).
+
+### Threads
+
+Do the setup from one thread. Steps run on the implementation's thread, and functions, handlers and protocol parts are called there.
+
+## `Simulation` (`vehicle_sil::Simulation`)
+
+`Simulation` runs `Ecu`s in virtual time, either on in-process virtual buses or as SIL Kit participants, and reports failures as exceptions (`vehicle_sil::simulation`; its header does not include SIL Kit headers). You choose where to run in the constructor; the ECU code does not change. `Simulation` can be neither copied nor moved.
+
+### Constructor
+
+| Form | Where it runs |
+|---|---|
+| `Simulation()` | In-process virtual buses |
+| `Simulation(SilKitOptions)` | Always SIL Kit |
+| `Simulation(std::optional<SilKitOptions>)` | SIL Kit if it has a value; if empty, the same as `Simulation()` (use it to choose where to run at runtime) |
+| `Simulation sim({.registry_uri = uri})` (without the type name) | SIL Kit |
+| `Simulation sim{{}}` | Matches either constructor, so it does not compile (it does not silently become in-process) |
+
+### Differences by where it runs
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|
-| ECU の実体 | `LocalBench::add_ecu()` のホスト。`run_for()` を呼んだスレッドで進む | `Peer`（Coordinated、仮想時間、ECU の名前の participant）。SIL Kit のスレッドで進む |
-| `run_for(d)` | 何度でも呼べて、続きから進む | 1 回だけ。2 回目と、`controller = false` では `std::logic_error` |
-| `run()` | `std::logic_error` | 誰が終わらせてもよい simulation の終わりまで待つ（1 回だけ） |
-| 取り出す | `local()`: `LocalBench`。`ecu(name)`: `Ecu` | `peer(name)`: `Peer`、`registry_uri()`。`ecu(name)`: `Ecu` |
+| What an ECU is | A host from `LocalBench::add_ecu()`. It advances on the thread that called `run_for()`. | A `Peer` (coordinated, virtual time, a participant with the ECU's name). It advances on SIL Kit threads. |
+| `run_for(d)` | Can be called any number of times; each call continues from where the last one stopped | Once only (a second call, or a call with `controller = false`, throws `std::logic_error`) |
+| `run()` | `std::logic_error` | Waits until the end of the simulation, which any participant may end (once only) |
+| Accessors | `local()` for the `LocalBench`, `ecu(name)` for an `Ecu` | `peer(name)` for a `Peer`, `registry_uri()`, `ecu(name)` for an `Ecu` |
 
-- `run_for(d)`（d > 0）は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、controller の停止が届くまで他の participant が stop_at 以降のステップを走らせうるので、各 ECU に同じ上限を置き、仮想バスと同じ記録になるようにしています。
-- SIL Kit の `Simulation` が 1 回しか走らないのは、すべての participant を時刻の境界で止めても、その境界のステップが走っていることがあるためです。メインスレッドからモデルを読むと競合し、仮想バスとは境界のステップが 1 つずれます。止めながら確かめる試験は、仮想バスで行います。
-- 失敗: ECU のステップの例外は `SimulationError` で（`local()` から足した ECU の失敗も同じです）、`what()` は失敗した ECU ごとの `<ECU 名>: <理由>` を `; ` で区切ったものです。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit は、participant が失敗しても simulation を終えず、仮想時間が止まるだけです。そのため `run_for()` と `run()` は、短い間隔で失敗を見張り、見つけたら simulation を終えて `SimulationError` を投げます。全体の時間切れはありません。始めるときの例外（必要な participant がそろわない、`start_timeout`）は、全部を止めてからそのまま伝えます。SIL Kit では、`run_for()` は全 participant が止まった後に戻ります。ステップが書いたものはそれから読めます。
-- `run()` で `controller = true` のとき、Error で離脱した participant はすぐ失敗にします。Error 以外で離脱した participant が、数秒のうちに simulation を終えなければ、それも失敗です（`request_stop()` で終わる simulation を、誤って失敗にしないためです）。`controller = false` では、外の controller の仕事は見ず、このプロセスの ECU の失敗だけを見ます。失敗した ECU があると、このプロセスの ECU は、失敗した ECU も含めて、外の controller がシミュレーションを中断するまで（最大 5 秒）どれも止めずに待ちます。ECU が 1 つだけのプロセス（`ecu_main`）でも同じです。その間、失敗した ECU は Error のままです（失敗した ECU を先に止めると Error を離れ、失敗していない ECU を先に止めるとふつうの停止になり、どちらも controller に失敗が見えないためです）。待っている間に求められた停止（`request_stop()`、`ecu_main` への停止の要求）は、そのまま渡します。5 秒たっても中断も停止もされなければ、足した順によらず、失敗した ECU を先に止め、次に残りを止めます。失敗した ECU が Shutdown になった後の停止はふつうの停止なので、ほかの participant も含めてシミュレーション全体が止まります（Error の participant を残したまま、ほかのプロセスを置き去りにしません）。
-- `SilKitOptions`: `registry_uri`（空ならコンストラクターがプロセス内に registry を立てる）、`controller`（既定 `true`。participant 名 `SimulationController`）、`other_participants`（始める前にそろうべき他の Coordinated な participant。`controller` が `true` のときだけ。空、重複、`SimulationController` は `std::invalid_argument`）、`start_timeout`（既定 30 秒）。`add_ecu()` は、空の名前、使用済みの名前、controller と `other_participants` の名前を `std::invalid_argument` にします。`SimulationController` という名前は、`controller = false` でも、仮想バスでも拒否します。ECU が 1 つもないまま `run_for()` と `run()` を呼ぶと、どちらの実装でも `std::logic_error` です。
-- `add<App>(name, step, args...)` は、`add_ecu()` と、`App{ecu, args...}` を ECU に持たせる `emplace` です。`App` のコンストラクターが例外を投げると、その例外が伝わり、その `Simulation` は使えなくなります。コンストラクターが ECU に足したものが、破棄された `App` を参照しうるためです。以後の `add_ecu()`、`add()`、`run_for()`、`run()` は、ECU の名前を添えた `std::logic_error` です。
-- ネットワークの名前: 1 つの名前は、`Simulation` のすべての ECU にとって、CAN（`j1939()`、`can()`）か LIN（`lin_master()`、`lin_slave()`）のどちらか一方のネットワークです。ほかの ECU が別の種類で使った名前は、どちらの実装でも `std::invalid_argument` です（文言に両方の種類を言います。SIL Kit では、使っている ECU の名前も言います）。SIL Kit では、確かめるのはこのプロセスの ECU の間だけです。ほかのプロセスの participant の名前は見えません。
-- 所有と破棄: `Simulation` が ECU とその持ち物を持ち、返す参照は `Simulation` の寿命まで有効です。破棄は、後から足した ECU から先に ECU を壊し、次に controller、最後にプロセス内の registry です。デストラクターは全部を止め、例外を投げません。
-- スレッド: `Simulation` の関数は 1 つのスレッドから呼びます。SIL Kit では、ステップは SIL Kit のスレッドで走ります（`Peer` と同じ）。
+### Steps that `run_for()` runs
 
-## Peer（`vehicle_sil::Peer`）
+`run_for(d)` (d > 0) runs only the steps that start before the end time. On the virtual buses, the end time is the current time plus `d`. On SIL Kit, other participants may run steps at or after stop_at until they receive the controller's stop. So the same limit is set on each ECU, which keeps the record the same as on the virtual buses.
 
-1 つの SIL Kit participant と、その中で動くもの（CAN の上の J1939 の `Network` と生の CAN、LIN の Master と Slave、生のイーサネットのフレームのチャネル、ステップごとのアプリの処理）をまとめて作り、動かし、正しい順序で片付けます。`Ecu` を実装するので、`Ecu&` を受け取る ECU のコードを、そのまま載せられます。
+A SIL Kit `Simulation` can run only once because, even when every participant is stopped at a time boundary, the step at the boundary may still be running. Reading the model from the main thread would race, and the boundary step would be off by one from the virtual buses. Run tests that stop and check along the way on the virtual buses.
+
+### Failure reporting
+
+An exception in an ECU's step is reported as `SimulationError`. The same applies to failures of ECUs added through `local()`. `what()` is `<ECU name>: <reason>` for each failed ECU, separated by `; `.
+
+| Where it runs | On failure |
+|---|---|
+| Virtual buses | `run_for()` after the failure also throws `SimulationError` |
+| SIL Kit | `run_for()` and `run()` watch for failures at short intervals. When they find one, they end the simulation and throw `SimulationError`. |
+
+On SIL Kit, the watch is needed because SIL Kit does not end the simulation when a participant fails; virtual time just stops. There is no overall timeout.
+
+Exceptions at the start (the required participants are not all present, `start_timeout`) propagate unchanged, after everything has been stopped. On SIL Kit, `run_for()` returns after every participant has stopped. What the steps wrote can be read from then on.
+
+### What `run()` treats as failure
+
+With `controller = true`:
+
+| Participant state | Handling |
+|---|---|
+| Left in Error | Failure at once |
+| Left in a state other than Error, and the simulation does not end within a few seconds | Failure |
+
+The few seconds of waiting keep a simulation that ends with `request_stop()` from being treated as a failure by mistake.
+
+With `controller = false`, `run()` does not check the work of the external controller; it checks only for failures of the ECUs of this process. When an ECU has failed, `run()` behaves as follows. The same applies to a process with only one ECU (`ecu_main`).
+
+1. All ECUs of this process, including the failed one, wait without being stopped until the external controller aborts the simulation (up to 5 s). Meanwhile, the failed ECU stays in Error.
+2. A stop requested during the wait (`request_stop()`, a stop request to `ecu_main`) is passed on as is.
+3. If the simulation is neither aborted nor stopped within 5 s, the failed ECU is stopped first, regardless of the order in which the ECUs were added, and then the rest.
+
+Waiting without stopping anything lets the controller see the failure. Stopping the failed ECU first would take it out of Error, and stopping a healthy ECU first would be an ordinary stop; either way, the controller would not see the failure.
+
+A stop after the failed ECU has reached Shutdown is an ordinary stop. The whole simulation therefore stops, including the other participants (it never ends by leaving the participant in Error and the other processes still running).
+
+### `SilKitOptions`
+
+| Member | Meaning |
+|---|---|
+| `registry_uri` | If empty, the constructor starts a registry in the process |
+| `controller` | Default `true` (the participant name is `SimulationController`) |
+| `other_participants` | Other coordinated participants that must all be present before the start (usable only when `controller` is `true`) |
+| `start_timeout` | Default 30 s |
+
+### Argument and call checks
+
+| Condition | Result |
+|---|---|
+| A name in `other_participants` is empty, duplicated or `SimulationController` | `std::invalid_argument` |
+| The name in `add_ecu()` is empty, already used, the controller's name or a name in `other_participants` | `std::invalid_argument` |
+| The name in `add_ecu()` is `SimulationController` (also with `controller = false`, and on the virtual buses) | Refused |
+| `run_for()` or `run()` is called with no ECU | `std::logic_error` in both implementations |
+| An ECU uses a network name that another ECU used for the other kind (CAN or LIN) | `std::invalid_argument` in both implementations |
+
+For all ECUs of a `Simulation`, one network name is either a CAN network (`j1939()`, `can()`) or a LIN network (`lin_master()`, `lin_slave()`), never both. On a violation, the exception message contains both kinds. On SIL Kit, it also names the ECUs that use the name. On SIL Kit, this is checked only among the ECUs of this process; the participant names of other processes are not visible.
+
+### `add<App>()`
+
+`add<App>(name, step, args...)` is `add_ecu()` followed by an `emplace` that makes the ECU own `App{ecu, args...}`.
+
+If the constructor of `App` throws, the exception propagates and that `Simulation` becomes unusable, because what the constructor added to the ECU may refer to the destroyed `App`. After that, `add_ecu()`, `add()`, `run_for()` and `run()` throw `std::logic_error` with the ECU's name.
+
+### Ownership, destruction and threads
+
+`Simulation` owns the ECUs and what they own. The references it returns are valid for the lifetime of the `Simulation`. On destruction, it destroys the ECUs, the last added first, then the controller, and last the in-process registry. The destructor stops everything and does not throw.
+
+Call the functions of `Simulation` from one thread. On SIL Kit, steps run on SIL Kit threads (as in `Peer`).
+
+## Peer (`vehicle_sil::Peer`)
+
+`Peer` creates one SIL Kit participant and what runs in it, runs them, and destroys them in the right order. What runs in it: J1939 `Network`s and raw CAN on CAN, LIN masters and slaves, channels for raw Ethernet frames, and the application's processing in each step. `Peer` implements `Ecu`, so ECU code that takes an `Ecu&` works with it as is.
 
 ```cpp
 vehicle_sil::Peer peer({.participant = "Engine", .registry_uri = uri,
                         .lifecycle = vehicle_sil::LifecycleMode::Coordinated,
                         .virtual_time = vehicle_sil::VirtualTimeOptions{.step = 10ms}});
-auto& model = peer.emplace<EngineModel>();             // Peer が持つ。ハンドラが参照してよい（Peer より先に宣言してもよい）
+auto& model = peer.emplace<EngineModel>();             // owned by the Peer; handlers may refer to it (it may be declared before the Peer)
 auto& ecu = peer.j1939("J1939_CAN1").add_node({.address = 0x00, .name = name});
 ecu.on_message(kPgnTsc1, [&](const j1939::Message& m) { model.set_request(m.data); });
 peer.every(100ms, [&](SimTime) { static_cast<void>(ecu.send(kPgnEec1, model.encode())); });
@@ -80,23 +386,155 @@ peer.start();
 peer.wait();
 ```
 
-- `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます。`network_names()` は追加した順の名前の一覧）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`Ecu::lin_master(network, schedule, options)` と `Ecu::lin_slave(network, options)` は、LIN のネットワーク名を名前にした SIL Kit の LIN コントローラ、`SilKitLinPort`、LIN のノードを作り、communication ready の通知で `init()` を呼びます。SIL Kit のコントローラは作ると外せないので、名前、スケジュール、オプションを先に検査します（エンジンの検査は `LinMaster::validate()` と `LinSlave::validate()`。コンストラクターと同じ検査です）。例外を投げた `lin_master()` と `lin_slave()` は何も残さず、同じ名前で呼び直せます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。`vehicle_sil::periodic()` の規則）。`at(time, fn)` は `time` 以後の最初のステップで 1 回だけ呼びます（`vehicle_sil::once_at()` の規則）。`can(network)` の生の CAN は、SIL Kit の CAN コントローラ（名前は `<network>.raw`）を 1 つ作ります。`network()`、`network_names()`、`tap()`、`silkit_port()` は J1939 だけです。生の CAN のチャネルは `raw_channel(network)` で引きます。生の CAN のコントローラ名 `<network>.raw` が、同じ Peer の他のコントローラ名と重なると `std::invalid_argument` です。J1939 のコントローラ名どうしの重なりと、CAN のコントローラ名と LIN のコントローラ名（LIN のネットワーク名）の重なりも拒否します。`Ecu::ethernet(network)` は、ネットワーク名を名前にした SIL Kit の Ethernet コントローラー、`eth::SilKitEthPort`、`eth::Channel` を作り、communication ready の通知でコントローラーを有効にします（`SilKitEthPort::start()`。失敗は、ネットワークの名前を言って participant を Error にします）。Ethernet のコントローラー名（ネットワーク名）と CAN のコントローラー名の重なりも、どちらの順でも拒否します。
-- 1 ステップの順序: J1939 の各 `Network`、生の CAN、イーサネットのチャネルの受信と処理（追加した順）→ Control Agent の書き込みの反映 → アプリの処理（`on_step`、`every`、`at`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ 監視の記録と Agent の読み出し → J1939、生の CAN、イーサネットの送信。Agent の前後の処理は、`on_step` や変数をいつ足したかによりません。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから有効になり、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます（`Ecu` の順序と同じです）。
-- 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939、LIN、イーサネット）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN とイーサネットは `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
-- lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。lifecycle が Running になる前（`start()` の前や、ほかの participant を待っている間）の `request_stop()` は保っておき、仮想時間では最初のステップで、実時間では Running になったときに渡します（SIL Kit は Running の前の停止を無視するため）。仮想時間で最初のステップまで待つのは、最初のステップには時刻で同期するすべての participant が時刻を始めている必要があるからです。まだ Running でない participant を残して止めると、その participant が止まれなくなることがあります（controller が仮想時間を使わない構成では、controller はこの同期に入らないので保証しません）。仮想時間では Running になった後でも最初のステップの前の要求は最初のステップまで待ち（ふつうはすぐ来る）、Error のときはすぐ渡します。`stop()` は最初のステップを待たずに渡します。Coordinated では、ほかの participant の `start()` が、自分の最初のステップの前にシミュレーションの終わりを見て、開始の失敗として例外を投げることがあります。実時間で `start()` が時間切れで投げた後に Running になったときは、保った要求は渡らないので `stop()` で止めます。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。`Autonomous` で仮想時間の participant が先に仮想時間を進めていると、後から `Coordinated` の participant が始まった時点で、SIL Kit がシミュレーション全体を abort します（先にいた participant も終わります。SIL Kit の文書の 1 か所は「その participant が Error になる」と書いていますが、v5.0.8 の実装と変更履歴は abort です。途中から参加できるのは `Autonomous` の participant だけです）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。ステップが失敗すると、仮想時間でも実時間（ドライバーが止まる）でも participant は Error になり、`wait()` が戻ります。失敗の後の `request_stop()` は、Error になってから停止を渡します（実時間では、`failed()` が見えてからドライバーが失敗を報告するまでの間の要求も含みます）。
-- 複数の ECU の組み立ては、`Ecu&` を受け取る関数やクラスに書くと、同じコードを `Peer` と `LocalBench` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。`Simulation` は、これを 1 行で選べるようにしたものです。
-- 組み立て（`j1939`、`can`、`lin_*`、`ethernet`、`on_step`、`every`、`emplace`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
-- 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノード、Control Agent を持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、Agent が実時間のドライバーを起こすのをやめさせ、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じ、Agent の待っている書き込みを `Cancelled` にします。`stop()` の後も `Network` と Agent は残るので、統計、記録、最後の値を読めます。破棄では続いて LIN のノード（それぞれ、その `SilKitLinPort` より先）、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、生の CAN とそのポート、ホスト、participant、Agent を破棄し、最後に `emplace` したオブジェクト（最後に足したものから先）を破棄します。`emplace` したオブジェクトは participant より後に壊れるので、そのデストラクターは SIL Kit のサービスを使ってはいけません。
-- スレッド: 組み立て、`start()`、`wait()` は 1 つのスレッドから呼びます。ステップは SIL Kit のスレッド（仮想時間）かドライバーのスレッド（実時間）で動き、ハンドラ、アプリの処理、Observer、`TapPort` のリスナーもそこで呼ばれます（記録は `wait()` か `stop()` の後に読みます）。`stop()` は、ステップと SIL Kit のハンドラ以外のどのスレッドからでも呼べます（別のスレッドからは `start()` が戻った後）。同時の呼び出しは順に処理します（Peer の破棄は、他のスレッドの `stop()` が戻った後）。`request_stop()`、`failed()`、`error()` はステップの中を含めてどこからでも呼べます。
+If you write the setup of several ECUs in functions or classes that take an `Ecu&`, the same code works on both `Peer` and `LocalBench` (example: `examples/j1939/ecu_pair`; a test verifies that both give the same result). `Simulation` lets you choose between them in one line.
 
-## ローカルの実行（`vehicle_sil::LocalBench`）と試験キット（`vehicle_sil::testkit`）
+### Peer setup functions
 
-SIL Kit を使わずに、仮想バスと `StepDriver` の上で ECU を動かし、J1939 の試験を組み立てます。何も時計を読まず、呼んだスレッドで進みます。`LocalBench`（`vehicle_sil::local`、ヘッダーは `vehicle_sil/local/local_bench.hpp`）が仮想バスと ECU を持ち、`vehicle_sil::testkit` は試験の道具（記録と故障注入）を足します。`testkit::LocalCan` は `LocalBench` の別名です。
+What the setup functions create when `Peer` implements them:
+
+| Function | Creates |
+|---|---|
+| `j1939(network)` | A SIL Kit CAN controller, a `SilKitCanPort`, a `TapPort` and a `Network` |
+| `j1939(name, port)` | A `Network` on a port that the user created (such as Vector XL's `ExternalPortAdapter`; the `Peer` owns it) |
+| `can(network)` | A raw CAN channel and one SIL Kit CAN controller (named `<network>.raw`) |
+| `Ecu::lin_master(network, schedule, options)`, `Ecu::lin_slave(network, options)` | A SIL Kit LIN controller named after the LIN network, a `SilKitLinPort` and the LIN node |
+| `Ecu::ethernet(network)` | A SIL Kit Ethernet controller named after the network, an `eth::SilKitEthPort` and an `eth::Channel` |
+| `on_step(fn)` | A function called in every step |
+| `every(period, fn)` | A function called in the first step at or after each of the times 0, period, 2 period, … (at most once per step; the rule of `vehicle_sil::periodic()`) |
+| `at(time, fn)` | A function called once, in the first step at or after `time` (the rule of `vehicle_sil::once_at()`) |
+
+Setup (`j1939`, `can`, `lin_*`, `ethernet`, `on_step`, `every`, `emplace`) is allowed only before `start()` (after it, `std::logic_error`). Attach nodes, handlers, protocol parts, Observers and `TapPort` listeners before `start()` too. Nodes can also be added from inside a step, under the rules of `Network::add_node()`.
+
+Get what was created with these functions:
+
+| Function | Applies to |
+|---|---|
+| `network()`, `network_names()`, `tap()`, `silkit_port()` | J1939 only (`tap(name)` lets you observe raw frames; `network_names()` returns the list of names in the order added) |
+| `raw_channel(network)` | The raw CAN channel |
+
+LIN and Ethernet controllers start at the communication ready notification.
+
+- LIN nodes call `init()` at the communication ready notification.
+- A SIL Kit controller cannot be removed once created, so the LIN name, schedule and options are checked first (the engine's checks are `LinMaster::validate()` and `LinSlave::validate()`, the same checks the constructors make).
+- A `lin_master()` or `lin_slave()` that threw leaves nothing behind and can be called again with the same name.
+- The Ethernet controller is activated at the communication ready notification (`SilKitEthPort::start()`). If that fails, the participant goes to Error, with the network name in the message.
+
+Overlapping controller names are refused as follows:
+
+| Overlap | Result |
+|---|---|
+| The raw CAN controller name `<network>.raw` and another controller name of the same `Peer` | `std::invalid_argument` |
+| J1939 controller names with each other | Refused |
+| A CAN controller name and a LIN controller name (the LIN network name) | Refused |
+| An Ethernet controller name (the network name) and a CAN controller name | Refused, in either order |
+
+### Order within one Peer step
+
+| Order | What happens |
+|---|---|
+| 1 | Each J1939 `Network`, raw CAN channel and Ethernet channel receives and processes, in the order it was added |
+| 2 | Control Agent writes are applied |
+| 3 | The application's processing (`on_step`, `every`, `at`) is called, in the order it was added |
+| 4 | `step(now)` of each LIN node is called, in the order the nodes were added |
+| 5 | Monitoring is recorded, and the Agent reads values |
+| 6 | J1939, raw CAN and Ethernet transmit |
+
+The Agent's processing before and after the application does not depend on when `on_step` or the variables were added. LIN requests from the application (`set_frame_data()`, `set_response()`) take effect from the same step. What a LIN node receives is reported during that step's LIN processing, so the application reads it in the next step (the same order as in `Ecu`).
+
+### Time modes
+
+| `virtual_time` | How it runs | Buses available |
+|---|---|---|
+| Set | Runs with SIL Kit time synchronization | J1939, LIN, Ethernet |
+| Not set | Runs in real time. The `Peer` holds a `RealTimeDriver` and a clock (`SteadyRealTimeClock`, or `PeerOptions::real_time_clock`) and runs the SIL Kit CAN port in real time. | J1939 only (LIN and Ethernet throw `std::logic_error`) |
+
+If the time domain of an external port differs from the `Peer`'s, the result is `std::logic_error`. There is no configuration without SIL Kit (XL only).
+
+### Lifecycle
+
+| Mode | Start and stop |
+|---|---|
+| `Coordinated` | `SimulationController` decides the start and the stop |
+| `Autonomous` | Stops with `stop()`, or with `request_stop()` from inside a step |
+
+- To start several `Peer`s and a controller in one process, use `start_together(controller, {&a, &b})`.
+- `Autonomous` participants do not necessarily start at the same time. To run several participants deterministically from the same time, use `Coordinated`.
+- In virtual time with `virtual_time.end` set (it must be after 0), the `Peer` stops itself after the last step before end.
+- `wait()` waits for the end of the lifecycle.
+- In `Coordinated` mode, the `start()` of another participant may see the end of the simulation before its own first step, and throw as a start failure.
+
+#### `request_stop()` before Running
+
+A `request_stop()` before the lifecycle reaches Running (before `start()`, or while waiting for other participants) is held, because SIL Kit ignores a stop before Running. A held request is delivered as follows:
+
+| Case | When the stop is delivered |
+|---|---|
+| Virtual time | At the first step |
+| Virtual time, the request comes after Running but before the first step | Waits for the first step (which normally comes at once) |
+| Virtual time, in Error | At once |
+| Real time | On reaching Running |
+| Real time, Running is reached after `start()` threw on timeout | The held request is not delivered; stop with `stop()` |
+
+`stop()` delivers the stop without waiting for the first step.
+
+In virtual time, the request waits for the first step because the first step requires every participant that synchronizes on time to have started time. Stopping while a participant is not yet Running can leave that participant unable to stop. In a configuration where the controller does not use virtual time, the controller does not take part in this synchronization, so this is not guaranteed.
+
+#### Mixing `Autonomous` and `Coordinated`
+
+If an `Autonomous` virtual-time participant has already advanced virtual time, SIL Kit aborts the whole simulation when a `Coordinated` participant starts later. The participant that was there first also ends. One place in the SIL Kit documentation says that the participant goes to Error, but the implementation and changelog of v5.0.8 say abort. Only `Autonomous` participants can join partway.
+
+#### Failures
+
+`failed()` and `error()` return failures of the step (host, application, LIN, ports), of the step handler and of the real-time driver. When a step fails, the participant goes to Error in both virtual time and real time (in real time, the driver stops), and `wait()` returns.
+
+A `request_stop()` after a failure delivers the stop once the participant is in Error. In real time, this includes requests made between the moment `failed()` becomes visible and the moment the driver reports the failure.
+
+### Peer ownership and destruction
+
+The `Peer` owns the participant, the controllers, the ports, the `Network`s, the LIN nodes and the Control Agent. The references it returns are valid for the `Peer`'s lifetime.
+
+`stop()` (and destruction) stops things in this order:
+
+1. Stop the Agent from waking the real-time driver.
+2. Stop the steps (in real time, the driver and then the lifecycle; in virtual time, the lifecycle). No step comes after this.
+3. Close the SIL Kit ports.
+4. Set the Agent's pending writes to `Cancelled`.
+
+After `stop()`, the `Network`s and the Agent remain, so you can read statistics, records and the last values.
+
+Destruction then destroys, in this order:
+
+1. The LIN nodes (each before its `SilKitLinPort`)
+2. The `Network`s (protocol parts first)
+3. The `TapPort`s
+4. The ports (an external port closes in its destructor)
+5. Raw CAN and its ports
+6. The host
+7. The participant
+8. The Agent
+9. The objects created with `emplace` (the last added first)
+
+Objects created with `emplace` are destroyed after the participant, so their destructors must not use SIL Kit services.
+
+### Peer threads
+
+| Action | Thread |
+|---|---|
+| Setup, `start()`, `wait()` | Call from one thread |
+| Steps | Run on a SIL Kit thread (virtual time) or the driver's thread (real time). Handlers, application processing, Observers and `TapPort` listeners are called there too. |
+| `stop()` | Can be called from any thread except the step and SIL Kit handlers (from another thread, only after `start()` has returned) |
+| `request_stop()`, `failed()`, `error()` | Can be called from anywhere, including inside a step |
+
+Read records after `wait()` or `stop()`. Concurrent `stop()` calls are processed one after another. Destroy the `Peer` after `stop()` calls on other threads have returned.
+
+## Local execution (`vehicle_sil::LocalBench`) and the test kit (`vehicle_sil::testkit`)
+
+`LocalBench` runs ECUs on virtual buses and a `StepDriver`, without SIL Kit, and lets you set up J1939 tests. It reads no clock and advances on the calling thread. `LocalBench` (`vehicle_sil::local`, header `vehicle_sil/local/local_bench.hpp`) owns the virtual buses and the ECUs. `vehicle_sil::testkit` adds test tools (recording and fault injection). `testkit::LocalCan` is an alias of `LocalBench`.
 
 ```cpp
-LocalBench bus;                                                  // 仮想バス + StepDriver
-install_engine(bus.add_ecu("engine", 10ms), model);              // Ecu&（自分のホストを持つ ECU。ネットワーク J1939_CAN）
-bus.add_ecu("rival", 5ms).j1939("J1939_CAN");                    // 同じ名前のネットワークは同じバス
+LocalBench bus;                                                  // virtual bus + StepDriver
+install_engine(bus.add_ecu("engine", 10ms), model);              // Ecu& (an ECU with its own host; network J1939_CAN)
+bus.add_ecu("rival", 5ms).j1939("J1939_CAN");                    // a network of the same name is the same bus
 testkit::J1939Events events(bus.network("engine"));              // Observer
 testkit::FrameLog raw(bus.tap("engine"));                        // TapListener
 bus.endpoint("rival").set_fault_injector(
@@ -105,18 +543,133 @@ bus.run_until(SimTime{} + 1s);
 CHECK(events.has(j1939::EventKind::AddressChanged));
 ```
 
-- `LocalBench`: `VirtualCanBus`（`VirtualCanBusOptions` でタイミングも選べる）と `lin::VirtualLinBus` をネットワーク名ごとに持ち、その上の ECU を持ちます。`add_ecu(name, step)` は `Ecu&` を返します。ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。`Ecu::j1939(network)` は、名前 `network` のバス（なければコンストラクターのオプションで作る）に端点を足し、`TapPort` で包んで `Network` を作ります。同じ名前を使う ECU は同じバスを共有し、ECU は複数のバスに `Network` を持てます（ゲートウェイ）。`Ecu::can(network)` の生チャネルも、そのバスに自分の端点を持ちます。`add_j1939(name, step, options)` は、J1939 のネットワークを 1 つ持つ ECU を作る略記です。
-- バスの名前を省く形: `add_j1939()`、`inject(time, frame)`、`injector()`、`bus()` は、ただ 1 つのバスを使います。バスがまだなければ、名前の決まっていないバスを作ります（名前の検索では `""`）。バスに名前を付けるのは ECU だけです。このバスは、次に来た `Ecu::j1939(network)` か `Ecu::can(network)` の名前になり、新しいバスは作りません。名前つきのバスが 1 つあるときに名前を省く形が来ても、そのバスを使います。どちらの順で書いても同じバスになります。2 つ目の名前が来ると 2 つ目のバスを作りますが、それまでに `add_j1939()` で ECU を足していたら `std::logic_error` です（その ECU がどのバスのつもりか決まらないためです。文言にその ECU の名前と、今あるバスの名前が入ります。その ECU を `add_ecu(name, step).j1939(network)` で足し直します）。バスが 2 つ以上あるときに名前を省く形を使うと、`std::logic_error` です（文言にバスの名前の一覧が入ります）。例外を投げた `add_j1939()`、`j1939()`、`can()` は、バスを作らず、名前も付けません。生チャネルには名前が要ります（`Ecu::can("")` は `std::invalid_argument`）。
-- イーサネット: `Ecu::ethernet(network)` は、名前 `network` の仮想のイーサネットのネットワーク（`eth::VirtualEthernetBus`。ECU が最初にその名前を言ったときに、既定の選択肢で作る）にエンドポイントを付けて、`eth::Channel` を作ります。CAN や LIN のバスと同じ名前にはできません（どちらの順でも、両方の種類を言う `std::invalid_argument`）。`ethernet(ecu, network)` で ECU のチャネルを、`ethernet_bus(network)` でネットワークを引きます（試験は、最初の実行の前に `attach()` で自分のエンドポイントを付けて、ECU へフレームを送り、ECU のフレームを見られます）。ない名前は `std::out_of_range` です。
-- LIN: `Ecu::lin_master(network)` と `Ecu::lin_slave(network)` は、名前 `network` の LIN バス（ECU が最初にその名前を言ったときに作る）に、ECU の名前のエンドポイントを付けてノードを作り、すぐ初期化します。同じ名前の CAN バスと LIN バスは作れません（どちらの順でも、両方の種類を言う `std::invalid_argument`）。名前のないバスの仕組み（上の項）は CAN だけのもので、LIN は関わりません。1 つの LIN バスに Master は 1 つです（2 つ目は両方の ECU の名前を言う `std::logic_error`）。例外を投げた `lin_master()` と `lin_slave()` は、エンドポイントを付けず、バスも作りません。`lin_bus(network)`（`VirtualLinBus&`。Observer はここで足す。知らない名前は LIN バスの一覧を言う `std::out_of_range`）、`lin_master(ecu, network)`、`lin_slave(ecu, network)` で引きます。LIN のノードのステップは、ECU のアプリの処理の後です。
-- 参照: ECU の名前とネットワークの名前で、`network(ecu, network)`、`endpoint()`（故障注入と通信断）、`tap()`、`host(ecu)`、`ecu(name)` を引きます。ネットワークが 1 つの ECU には、ECU の名前だけの形も使えます（0 個や 2 個以上は `std::logic_error`）。生チャネルはこれらの対象に入らず、`raw_channel(ecu, network)` で引きます。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前でバスを引くだけで、バスを作らず、名前も付けません。その名前のバスがなければ `std::out_of_range` です（文言に、今あるバスの名前か、直し方が入ります。名前の決まっていないバスなら、名前を省く形を使うか、ECU の `j1939(network)` か `can(network)` で先に名前を付けます）。名前のないバスを `bus("")` で引くこともできます。ECU の名前の一覧は `ecu_names()` で取れます。`inject()` は、どのネットワークも使わない専用の端点から生フレーム（11 ビットか 29 ビット）を送ります。時刻は `now()`（最後の `run_until()` の end）より前にできません。`on_step(name, fn)` は ECU のアプリの処理を足します。
-- ステップ: `Ecu::on_step`、`every`、`at` は同じ列に、足した順に並びます。`every` は `vehicle_sil::periodic()` を、`at` は `vehicle_sil::once_at()` を通します。組み立て（`add_ecu`、`add_j1939`、ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()`、`input()`、`output()`、`set_agent_options()`、`on_step()`、`every()`、`at()`、`emplace()`）は最初の実行の前だけです（後は `std::logic_error`）。ホストは最初の実行で、足した順にドライバーへ登録されます。
-- 変数: ECU の Control Agent は、`Peer` と同じ時点（アプリの処理の前に書き込み、LIN の処理の後に読み出し）で、呼んだスレッドのステップの中で動きます。実時間のドライバーを起こす処理はありません（仮想時間で、呼んだスレッドが進めるため）。監視の出力（`PeerOptions::monitor`）はありません。待っている書き込みの結果は届きません（通信の側は ECU より先に破棄するため）。ローカルの Agent は、`submit()` と `latest()` で直接読み書きします（Control Server にはつながりません。運び手は SIL Kit の上だけです）。時刻の制御（一時停止、ステップ実行）と、Control Server を起動する口はありません。
-- 破棄の順は、後に足した ECU から順に、ホスト、LIN のノード（後に足したものから）、`Network`（後に足したものから。各 `Network` の後にその `TapPort`）、生チャネル、イーサネットのチャネル、Control Agent、`emplace` したオブジェクト（最後に足したものから先）です。その後にドライバー、最後にイーサネットのネットワーク、LIN バス、CAN バスと端点を破棄します。
-- `J1939Events`（Observer）と `FrameLog`（TapListener）は、出来事と生フレームをコピーして持ちます。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
-- `faults`: 仮想バスの `FaultInjector` を作る小さな関数です。`when(pred, action)`、`between(from, until, action)`、`nth(n, action)`、`sequence({...})`、`first_of({...})` と、述語 `j1939_pgn(pgn)`、`j1939_source(sa)`、`can_id(id, format)` です。どれも、状態は選んだフレームの数だけなので決定的です。`nth` と `sequence` のコピーは数を共有するので、端点ごとに作ります。故障注入の仕組みそのものは仮想バスにあり（[can.md](can.md) の「仮想バス」）、試験キットは新しい注入の仕組みを持ちません。
-- LIN の試験は、仮想 LIN バスの上（`LocalBench`）でも、`Peer` と in-process の registry の上でも行えます。結果は同じです（[lin.md](lin.md) の決定性）。試験キットに LIN の故障注入と記録の道具はありません。記録は仮想 LIN バスの観測（`LocalBench::lin_bus(network).add_observer()`）で、通信断は `ecu.connected` で行います。
+### Buses and ECUs
 
-## 検証の範囲
+`LocalBench` owns a `VirtualCanBus` (whose timing you can choose with `VirtualCanBusOptions`) and a `lin::VirtualLinBus` for each network name, and the ECUs on them.
 
-- `Peer` と試験キット（`peer.*`、`testkit.*`）: 3 つの participant での J1939 と LIN、ローカルの仮想バスと同じ結果になること、実時間と外部のポート、組み立ての誤り、失敗、破棄の順序
+| Function | What it does |
+|---|---|
+| `add_ecu(name, step)` | Creates an ECU and returns an `Ecu&` |
+| `Ecu::j1939(network)` | Adds an endpoint to the bus named `network`, wraps it in a `TapPort` and creates a `Network` |
+| `Ecu::can(network)` | Creates a raw channel. The raw channel also has its own endpoint on that bus. |
+| `add_j1939(name, step, options)` | Shorthand that creates an ECU with one J1939 network |
+
+- Each ECU has its own host and step size (the same structure as giving each ECU its own participant on SIL Kit).
+- If there is no bus named `network`, `Ecu::j1939(network)` creates it with the constructor's options.
+- ECUs that use the same name share the same bus.
+- An ECU can have `Network`s on several buses (a gateway).
+
+### Omitting the bus name
+
+`add_j1939()`, `inject(time, frame)`, `injector()` and `bus()` use the one and only bus. Only ECUs give buses names.
+
+| Situation | What happens |
+|---|---|
+| A form without a name is used while there is no bus yet | Creates a bus that has no name yet (`""` in name lookups) |
+| `Ecu::j1939(network)` or `Ecu::can(network)` is called while a bus with no name exists | That bus gets that name; no new bus is created |
+| A form without a name is used while there is one named bus | Uses that bus |
+| A second name is used | Creates a second bus |
+| An ECU was added with `add_j1939()` before the second name was used | `std::logic_error` |
+| A form without a name is used while there are 2 or more buses | `std::logic_error` (the message lists the bus names) |
+
+- Forms with and without a name refer to the same bus, in whichever order you write them.
+- The second name throws `std::logic_error` because it is not clear which bus the ECU added with `add_j1939()` was meant for.
+- That message contains the name of the ECU and the names of the existing buses.
+- Add that ECU again with `add_ecu(name, step).j1939(network)`.
+- An `add_j1939()`, `j1939()` or `can()` that threw creates no bus and names none.
+- A raw channel needs a name (`Ecu::can("")` throws `std::invalid_argument`).
+
+### Virtual Ethernet
+
+`Ecu::ethernet(network)` attaches an endpoint to the virtual Ethernet network named `network` and creates an `eth::Channel`. The network is an `eth::VirtualEthernetBus`, created with default options when an ECU first uses the name.
+
+- Using the name of a CAN or LIN bus throws `std::invalid_argument` with both kinds in the message, in either order.
+- Get an ECU's channel with `ethernet(ecu, network)` and the network with `ethernet_bus(network)`.
+- Passing an unknown name to `ethernet(ecu, network)` or `ethernet_bus(network)` throws `std::out_of_range`.
+- A test can attach its own endpoint with `attach()` before the first run, then send frames to the ECUs and see the ECUs' frames.
+
+### Virtual LIN bus
+
+`Ecu::lin_master(network)` and `Ecu::lin_slave(network)` attach an endpoint named after the ECU to the LIN bus named `network`, create the node and initialize it at once. The LIN bus is created when an ECU first uses the name. The step of a LIN node comes after the ECU's application processing.
+
+| Condition | Result |
+|---|---|
+| A CAN bus and a LIN bus are created with the same name | `std::invalid_argument` with both kinds in the message, in either order |
+| 2 masters are put on one LIN bus | The second throws `std::logic_error` with the names of both ECUs in the message |
+| An unknown name is passed to `lin_bus(network)` | `std::out_of_range` with the list of LIN buses in the message |
+
+- The mechanism for a bus with no name (see "Omitting the bus name" above) is for CAN only; LIN is not involved.
+- A `lin_master()` or `lin_slave()` that threw attaches no endpoint and creates no bus.
+- Get them with `lin_bus(network)` (a `VirtualLinBus&`; add Observers here), `lin_master(ecu, network)` and `lin_slave(ecu, network)`.
+
+### Functions that return what was created
+
+| Function | Returns |
+|---|---|
+| `network(ecu, network)`, `endpoint()`, `tap()`, `host(ecu)`, `ecu(name)` | Objects looked up by ECU name and network name (`endpoint()` is used for fault injection and disconnection) |
+| `raw_channel(ecu, network)` | The raw channel (not covered by the functions above) |
+| `bus(network)`, `injector(network)`, `inject(network, time, frame)` | The bus of that name, and injection into that bus |
+| `ecu_names()` | The list of ECU names |
+
+- For an ECU with one network, a form that takes only the ECU's name also works (with 0 or with 2 or more networks, `std::logic_error`).
+- `bus(network)`, `injector(network)` and `inject(network, time, frame)` only look up a bus by name. They create no bus and name none.
+- If no bus has that name, they throw `std::out_of_range`, with the names of the existing buses or the fix in the message.
+- For a bus that has no name yet, use a form without a name, or name the bus first with an ECU's `j1939(network)` or `can(network)`.
+- You can also get the bus with no name with `bus("")`.
+- `inject()` sends a raw frame (11-bit or 29-bit) from a dedicated endpoint that no network uses.
+- The time given to `inject()` cannot be before `now()` (the end of the last `run_until()`).
+- `on_step(name, fn)` adds application processing to an ECU.
+
+### Steps and the setup deadline
+
+`Ecu::on_step`, `every` and `at` share one list, in the order added. `every` uses the rule of `vehicle_sil::periodic()`, and `at` the rule of `vehicle_sil::once_at()`.
+
+Setup is allowed only before the first run (after it, `std::logic_error`). This covers `add_ecu`, `add_j1939`, and the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()`, `ethernet()`, `input()`, `output()`, `set_agent_options()`, `on_step()`, `every()`, `at()` and `emplace()`. Hosts are registered with the driver at the first run, in the order they were added.
+
+### `LocalBench` variables
+
+An ECU's Control Agent runs at the same points as in `Peer` (writes before the application's processing, reading after LIN processing), inside the step on the calling thread. The differences from `Peer`:
+
+- The calling thread advances virtual time, so there is no waking of a real-time driver.
+- There are no monitoring outputs (`PeerOptions::monitor`).
+- The transport is destroyed before the ECU, so no results are returned for pending writes.
+- A local Agent is read and written directly with `submit()` and `latest()`, and does not connect to a Control Server (the only transport is the one over SIL Kit).
+- There is no time control (pause, step) and no API that starts a Control Server.
+
+### Destruction order
+
+ECUs are destroyed starting from the last added. For each ECU, the order is:
+
+1. The host
+2. The LIN nodes (the last added first)
+3. The `Network`s (the last added first; each `Network` followed by its `TapPort`)
+4. The raw channels
+5. The Ethernet channels
+6. The Control Agent
+7. The objects created with `emplace` (the last added first)
+
+After that, the driver is destroyed, and last the Ethernet networks, the LIN buses, and the CAN buses and their endpoints.
+
+### The test kit
+
+`J1939Events` (an Observer) and `FrameLog` (a TapListener) keep copies of events and raw frames. Beyond their capacity (default 100000 entries), they keep nothing more and count what they did not keep (`dropped()`). Queries count or extract entries by kind (direction) and predicate (`count`, `of`, `first`, `last`).
+
+`faults` is a set of small functions that build a `FaultInjector` for the virtual bus.
+
+- Functions: `when(pred, action)`, `between(from, until, action)`, `nth(n, action)`, `sequence({...})`, `first_of({...})`
+- Predicates: `j1939_pgn(pgn)`, `j1939_source(sa)`, `can_id(id, format)`
+
+All of them are deterministic, because their only state is the number of frames selected. Copies of `nth` and `sequence` share that count, so create one for each endpoint. The fault injection mechanism itself is in the virtual bus (see "Virtual bus (`VirtualCanBus`)" in [can.md](can.md#virtual-bus-virtualcanbus)); the test kit adds no injection mechanism of its own.
+
+LIN tests can run on the virtual LIN bus (`LocalBench`) or on `Peer` with an in-process registry. The results are the same (see "Determinism of the virtual LIN bus" in [lin.md](lin.md#determinism-of-the-virtual-lin-bus)). The test kit has no LIN tools for fault injection or recording. To record, observe the virtual LIN bus (`LocalBench::lin_bus(network).add_observer()`). To simulate a disconnection, use `ecu.connected`.
+
+## Test coverage
+
+- `Peer` and the test kit (`peer.*`, `testkit.*`): J1939 and LIN with 3 participants, the same result as on the local virtual bus, real time and external ports, setup errors, failures, destruction order
+
+## See also
+
+- Writing an ECU: [j1939-guide.md](../j1939-guide.md), [ecu-executable.md](../ecu-executable.md)
+- Overview: [architecture.md](../architecture.md)
+- Where things are: [code-map.md](../code-map.md)
+- Other internals pages: "[Internals](../architecture.md#internals)" in architecture.md

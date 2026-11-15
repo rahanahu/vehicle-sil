@@ -46,25 +46,3 @@ API client (aiohttp and its dependencies, PyYAML, grpcio, protobuf).
 `python/requirements.txt` pins them with hashes, and uv or pip installs them
 from PyPI. The gRPC stubs in `python/vehicle_sil_control/_generated` are
 generated from vehicle-sil's own `proto/` files.
-
-## Distributing executables built with `VEHICLE_SIL_STATIC`
-
-An executable linked with `VEHICLE_SIL_STATIC=ON` (README, "1 つの実行ファイルにする")
-contains SIL Kit and the code SIL Kit compiles in, and the C++ runtime. Whoever
-distributes it ships these notices with it:
-
-- vehicle-sil: `LICENSE` (MIT). The vehicle-sil libraries are static, so this
-  holds for every ECU executable, static or not.
-- SIL Kit: `external/sil-kit/LICENSE`, and the notices of what it compiles in:
-  `external/sil-kit/ThirdParty/LICENSES.rst`, the license files of fmt, spdlog
-  and asio under `external/sil-kit/ThirdParty/`, and the notices in
-  `external/sil-kit/ThirdParty/rapidyaml/rapidyaml.hpp`. The tools archive's
-  `licenses/sil-kit/` holds this set, with those notices extracted into
-  `rapidyaml-notices.txt`, ready to copy.
-- Linux: libstdc++ and libgcc come under the GCC Runtime Library Exception,
-  which asks no notice for programs compiled with GCC.
-- Windows (MinGW): libstdc++ and libgcc as above; winpthreads and the
-  mingw-w64 C runtime are linked in as well (the runtime and start-up code are
-  in every MinGW executable, static or not): ship the files MSYS2 installs in
-  `/ucrt64/share/licenses/winpthreads/` and `/ucrt64/share/licenses/crt/` (the
-  tools archive has them in `licenses/msys2/`).

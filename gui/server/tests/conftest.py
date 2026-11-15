@@ -23,6 +23,20 @@ import pytest
 TESTS = Path(__file__).resolve().parent
 REPLAY = TESTS / "replay_launcher.py"
 CONFIGS = TESTS / "configs"
+REPOSITORY = TESTS.parents[2]
+
+
+def manual_pages(english: str) -> list[Path]:
+    """The page of the manual (a path relative to the repository, as the English page: docs/gui.md,
+    gui/protocol/README.md) and its Japanese page (docs/ja/gui.md, gui/protocol/README.ja.md), those that exist:
+    the tests hold every language to what the server does."""
+    if english.startswith("docs/"):
+        japanese = "docs/ja/" + english[len("docs/"):]
+    else:
+        japanese = english.removesuffix("README.md") + "README.ja.md"
+    pages = [REPOSITORY / name for name in (english, japanese) if (REPOSITORY / name).is_file()]
+    assert pages, f"{english} and its Japanese page are missing"
+    return pages
 # Where replay_launcher.py finds its recordings, also a copy of it that a test makes elsewhere
 os.environ["REPLAY_RECORDINGS"] = str(TESTS / "recordings")
 
