@@ -34,9 +34,11 @@ struct AgentTransportStats
     std::uint64_t step_messages = 0; ///< published from the steps (and the last word)
     std::uint64_t step_bytes = 0;
     std::uint64_t commands = 0;      ///< received for this agent and given to Agent::submit()
-    std::uint64_t ignored = 0;       ///< commands for another agent (every agent receives every command)
-    /// Received on the command topic and not a command or probe of this version (a kind a later
-    /// version added counts here and is otherwise ignored).
+    /// Commands for another agent (every agent receives every command), of any version this build
+    /// reads: the hub writes to each agent in that agent's version.
+    std::uint64_t ignored = 0;
+    /// Received on the command topic and not a command or probe of this agent's version
+    /// (control::wire::kVersion; a kind a later version added counts here and is otherwise ignored).
     std::uint64_t undecodable = 0;
 };
 

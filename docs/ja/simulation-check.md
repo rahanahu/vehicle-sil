@@ -110,10 +110,10 @@
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
-| `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | 一緒に動かなければ、同じバージョンでビルドし直します。 |
+| `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | ECU のほうが古ければ、何もしません。`vehicle_sil_launch` は、自分と同じか古いバージョン（0.1.0 以降）の vehicle-sil でビルドした ECU の変数を読み書きできます。一緒に動かなければ、同じバージョンでビルドし直します。 |
 | `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |
-| `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョン（かトランスポート）が、`vehicle_sil_launch` と違います。 | ECU と `vehicle_sil_launch` を、同じバージョンの vehicle-sil でビルドします。 |
+| `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョン（かトランスポート）を、`vehicle_sil_launch` が話せません。ランチャーは自分のバージョンとそれより古いものを話すので、ECU をビルドした vehicle-sil がランチャーより新しいということです。 | ECU をビルドした vehicle-sil 以上のバージョンの `vehicle_sil_launch` を使います。 |
 | `variable-map-unknown` | エラー | `variables` の対応の `from` の変数が、実行ファイルにありません。 | `from` の名前を直します（指摘の文に、近い名前か、実行ファイルの変数の一覧があります）。 |
 | `variable-map-type` | エラー | 対応の形が、変数の型に合いません。 | `scale`、`offset` は整数か実数の変数に、`map` は整数か列挙の変数に書きます。 |
 | `variable-map-value` | エラー | `map` の値を、実行ファイルの変数が取れません（列挙の項目にない、範囲の外）。 | `map` の値を、変数が取れる値にします。 |
@@ -391,7 +391,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 **`network_map`**: 要素は `name`（シミュレーションの名前）、`line`（設定ファイルの行）、`from`（実行ファイルの名前）です。キーと値が同じ行も含みます。読めなかった行（エラー `value`）は含みません。
 
-**`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
+**`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン。ランチャーは、自分の 2 と、古い 1 を話します）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
 
 `networks[]` と `findings[]` の要素のキーは次のとおりです。
 
@@ -510,7 +510,7 @@ participants:
       ],
       "control": {
         "transport": "silkit",
-        "wire_version": 1
+        "wire_version": 2
       }
     }
   ],

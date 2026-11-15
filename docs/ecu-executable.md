@@ -317,7 +317,7 @@ When you run several ECUs with `vehicle_sil_launch`, each ECU executable must me
 |---|---|
 | Build `main()` with `ecu_main()`. | `check` cannot check the ECU. |
 | Use the names agreed with the integrator (the person who writes the configuration file), such as network names, and check them with `--describe` before handing the ECU over. | `check` reports findings ([simulation-check.md](simulation-check.md)). |
-| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The check reports the note `version-mismatch`. If the format version of the messages that read and write variables also differs, it reports the warning `control-link-version`, and the variables of that ECU cannot be read or written. |
+| Build with a version of vehicle-sil that is not newer than `vehicle_sil_launch`. | The check reports the note `version-mismatch` whenever the versions differ. `vehicle_sil_launch` reads and writes the variables of ECU executables built with its own version of vehicle-sil or an older one, back to 0.1.0. An ECU built with a newer vehicle-sil than the launcher is not promised to work: if its variables cannot be used, the check reports the warning `control-link-version`; use a launcher at least as new as the ECU. |
 | End the processes that the ECU started itself when the ECU ends. | The run reports the warning `left-processes` (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). |
 | Write stdout and stderr in UTF-8. | `vehicle_sil_launch run` shows bytes that are not UTF-8 as `?`. |
 | Do not use the prefixes in the next table in variable names. | The ECU exits with exit code 3. |
@@ -455,7 +455,7 @@ How to read JSON in which a key is missing:
 | `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
 | `features` | The JSON of an ECU from an earlier version. Read it as an empty array. |
 
-Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
+Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. `vehicle_sil_launch` reads and writes the variables if it speaks `control.wire_version`: its own version of the messages and the older ones (version 1 is what an ECU built with vehicle-sil 0.1.0 reports). If the ECU reports a later version than the launcher speaks, the variables cannot be read or written.
 
 Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_main.describe` compares the output of the executable with this block, byte for byte.
 
@@ -521,7 +521,7 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   ],
   "control": {
     "transport": "silkit",
-    "wire_version": 1
+    "wire_version": 2
   },
   "features": [
     "map-network"

@@ -622,14 +622,14 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                          "them",
                 p.name, "");
         }
-        else if (offer->transport != "silkit" || offer->wire_version != static_cast<int>(control::wire::kVersion))
+        else if (offer->transport != "silkit" || !control::wire::speaks(offer->wire_version))
         {
             rules.add(Severity::Warning, "control-link-version", p.line,
                 prefix + "it offers its variables as " + offer->transport + " messages of version " +
-                    std::to_string(offer->wire_version) + ", and this vehicle_sil_launch speaks silkit messages of version " +
-                    std::to_string(control::wire::kVersion) +
-                    ", so vehicle_sil_launch run cannot read or write them: build the ECU and vehicle_sil_launch from the "
-                    "same version of vehicle-sil",
+                    std::to_string(offer->wire_version) + ", and this vehicle_sil_launch speaks silkit messages of versions " +
+                    std::to_string(control::wire::kOldestVersion) + " to " + std::to_string(control::wire::kNewestVersion) +
+                    ", so vehicle_sil_launch run cannot read or write them: use a vehicle_sil_launch that is at least as "
+                    "new as the vehicle-sil the ECU was built with",
                 p.name, "");
         }
     }

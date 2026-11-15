@@ -722,17 +722,18 @@ TEST_CASE(wire_hello_is_bounded_in_what_it_makes_a_reader_keep)
         raw.resize(std::max(raw.size(), size), 0); // the rest: zeros
         return raw;
     };
-    // The largest hello, filled with variables that are all zeros (an empty name, no items):
+    // The largest hello, filled with variables that are all zeros (an empty name, no items; the
+    // layout written here is the one of version 1, where a variable has no size in front):
     // refused at the first, and nothing was kept for the number announced.
-    const wire::Error zeros = wire::decode_hello(raw_hello(wire::kVersion, "Flood", 200000, wire::kMaxHelloBytes), decoded);
+    const wire::Error zeros = wire::decode_hello(raw_hello(1, "Flood", 200000, wire::kMaxHelloBytes), decoded);
     CHECK(zeros.code == wire::ErrorCode::TooLarge);
     CHECK(decoded.schema.empty());
-    const wire::Error empty_name = wire::decode_hello(raw_hello(wire::kVersion, "Flood", 1000, wire::kMaxHelloBytes), decoded);
+    const wire::Error empty_name = wire::decode_hello(raw_hello(1, "Flood", 1000, wire::kMaxHelloBytes), decoded);
     CHECK(empty_name.code == wire::ErrorCode::Malformed);
     CHECK(empty_name.text.find("a variable name of 0 bytes") != std::string::npos);
     CHECK(decoded.schema.size() <= 1);
-    CHECK(wire::decode_hello(raw_hello(wire::kVersion, "", 0, 0), decoded).code == wire::ErrorCode::Malformed);
-    CHECK(wire::decode_hello(raw_hello(wire::kVersion, std::string(wire::kMaxNameBytes + 1, 'n'), 0, 0), decoded).code
+    CHECK(wire::decode_hello(raw_hello(1, "", 0, 0), decoded).code == wire::ErrorCode::Malformed);
+    CHECK(wire::decode_hello(raw_hello(1, std::string(wire::kMaxNameBytes + 1, 'n'), 0, 0), decoded).code
           == wire::ErrorCode::Malformed);
 
     // A hello of another version: not read beyond the size limit either, and a name that is

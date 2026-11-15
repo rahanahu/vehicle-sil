@@ -22,6 +22,11 @@ namespace vehicle_sil::control::wire {
 /// enough to name its participant (decode_hello()), so that a mismatch is reported instead of
 /// looking like silence. The encoders write the version they are told to, kVersion by default.
 ///
+/// Who writes which version: an agent writes kVersion and reads only kVersion (it does not go
+/// back to an older one). A hub reads the version of each agent in the header of its hello and
+/// writes to that agent in that version, so an agent of an older version keeps working under a
+/// newer hub. Nothing is negotiated.
+///
 /// What never moves, in any version: the eight bytes of the header ('V' 'S' 'C' 'W', the version
 /// u16, the kind u8, and one more byte), the participant of a hello right behind the header, and
 /// the session of every other message right behind the header.
@@ -45,12 +50,13 @@ namespace vehicle_sil::control::wire {
 /// - A new kind that the other side may ignore changes neither the version nor the revision.
 inline constexpr std::uint16_t kOldestVersion = 1;
 inline constexpr std::uint16_t kNewestVersion = 2;
-/// The version the encoders write when they are not given one.
-inline constexpr std::uint16_t kVersion = 1;
+/// The version the encoders write when they are not given one, and the one an agent speaks.
+inline constexpr std::uint16_t kVersion = 2;
 /// The revision this build writes into a message of version 2, and up to which it knows the fields.
 inline constexpr std::uint8_t kRevision = 0;
-/// `version` is one the decoders read and the encoders write.
-[[nodiscard]] constexpr bool speaks(std::uint16_t version) noexcept
+/// `version` is one the decoders read and the encoders write. It takes any integer as it is (a
+/// version read from a description is not narrowed first).
+[[nodiscard]] constexpr bool speaks(std::int64_t version) noexcept
 {
     return version >= kOldestVersion && version <= kNewestVersion;
 }

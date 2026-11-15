@@ -536,8 +536,8 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
         "transport of its own gives --no-control), or the launcher did not take its hello (the finding "
         "control-link-dropped says so, if it is there); the lines [Engine] above show what it wrote\n"
         "W 7 control-link-version: participant 'Brake': its control agent speaks version 7 of the control messages and "
-        "this launcher version 1, so its variables cannot be read or written in this run: build the ECU and "
-        "vehicle_sil_launch from the same version of vehicle-sil\n";
+        "this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a "
+        "vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with\n";
     check_text(lines(assess_run(o)), expected);
     // They are settled when the simulation starts: the participants' end does not change them.
     check_text(lines(launch::detail::settled_findings(o)), expected);

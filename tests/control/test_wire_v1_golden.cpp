@@ -55,7 +55,7 @@ void check_bytes(std::span<const std::uint8_t> actual, std::span<const std::uint
                         ": wrote " + hex(actual, from, 16) + "| version 1 " + hex(expected, from, 16) +
                         "). A change of these bytes is a change of the format: ECUs that speak version 1 would no "
                         "longer understand this encoder, nor it them. Leave version 1 as it is and put the change "
-                        "into a new version (kVersion)");
+                        "into version 2, at the end of its element, with a new revision (wire.hpp)");
 }
 
 #define CHECK_BYTES(actual, expected) check_bytes((actual), (expected), #expected, __LINE__)
@@ -116,7 +116,7 @@ std::vector<wire::Bytes> step_messages(SimTime time, bool final, const std::vect
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
     wire::encode_step(golden::kSession, time, final, results, events, sample, max_bytes, scratch,
-                      [&](const wire::Bytes& message) { out.push_back(message); });
+                      [&](const wire::Bytes& message) { out.push_back(message); }, 1);
     return out;
 }
 
@@ -124,10 +124,10 @@ std::vector<wire::Bytes> step_messages(SimTime time, bool final, const std::vect
 
 TEST_CASE(wire_v1_hello_has_the_bytes_of_version_1)
 {
-    CHECK_EQ(wire::kVersion, std::uint16_t{1});
+    CHECK_EQ(wire::kOldestVersion, std::uint16_t{1});
     wire::Bytes bytes;
     std::string why;
-    CHECK(wire::encode_hello(golden::hello(), bytes, why));
+    CHECK(wire::encode_hello(golden::hello(), bytes, why, 1));
     CHECK_BYTES(bytes, golden::kHello);
 
     wire::Hello decoded;
@@ -140,9 +140,9 @@ TEST_CASE(wire_v1_hello_has_the_bytes_of_version_1)
 TEST_CASE(wire_v1_command_has_the_bytes_of_version_1)
 {
     wire::Bytes bytes;
-    CHECK(wire::encode_command(golden::command_at(), bytes));
+    CHECK(wire::encode_command(golden::command_at(), bytes, 1));
     CHECK_BYTES(bytes, golden::kCommandAt);
-    CHECK(wire::encode_command(golden::command_next_step(), bytes));
+    CHECK(wire::encode_command(golden::command_next_step(), bytes, 1));
     CHECK_BYTES(bytes, golden::kCommandNextStep);
 
     for (const auto& [message, expected] :
@@ -165,7 +165,7 @@ TEST_CASE(wire_v1_command_has_the_bytes_of_version_1)
 TEST_CASE(wire_v1_submitted_has_the_bytes_of_version_1)
 {
     wire::Bytes bytes;
-    wire::encode_submitted(golden::submitted(), bytes);
+    wire::encode_submitted(golden::submitted(), bytes, 1);
     CHECK_BYTES(bytes, golden::kSubmitted);
 
     wire::SubmittedMessage decoded;
@@ -268,7 +268,7 @@ TEST_CASE(wire_v1_probe_ready_and_last_word_received_have_the_bytes_of_version_1
     for (const auto& [kind, expected] : cases)
     {
         wire::Bytes bytes;
-        wire::encode_session(kind, golden::kSession, bytes);
+        wire::encode_session(kind, golden::kSession, bytes, 1);
         CHECK_BYTES(bytes, expected);
         const auto to = wire::addressed(expected);
         CHECK(to.has_value());

@@ -2247,6 +2247,7 @@ Where to change:
 Rules:
 
 - Do not change version 1. ECUs built with vehicle-sil 0.1.0 speak it.
+- An Agent writes `kVersion` and reads only `kVersion`. The Hub's transport keeps the version of each Agent's hello in its link and writes to that Agent in it (`libs/control_silkit/src/hub_transport.cpp`). `vehicle_sil_launch` decides with `wire::speaks()` whether it can use what `--describe` announces (`libs/launch/src/check_rules.cpp`, `run_control.cpp`). Do not compare with `kVersion` there.
 - To add a field to version 2, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
 - A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kNewestVersion` and keep reading the older versions.
 - `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
@@ -2264,6 +2265,8 @@ Tests:
 - `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit in both versions.
 - `^control\.wire_building_`: building the step messages of a step allocates nothing once the buffer has grown (a binary of its own, `tests/control/test_wire_allocation.cpp`).
 - `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
+- `^control\.wire_v2_revision_0_`: the bytes of version 2, revision 0, written out by hand in `tests/control/wire_v2_golden.hpp`. When you add a field, add the bytes of the new revision beside them and leave these as they are.
+- `^control_silkit\..*version_1`, `launch_run.control_version_1`: an Agent that speaks only version 1 under this Hub and under `vehicle_sil_launch run`. The rule of such an Agent (drop what is not version 1) is written out by hand in `tests/control_silkit/version1_agent.hpp`, and `tests/launch/version1_ecu.cpp` is an ECU executable built on it.
 
 ### The SIL Kit transport and the start window
 

@@ -166,9 +166,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
         {
             add(Severity::Warning, "control-link-version",
                 pre + "its control agent speaks version " + std::to_string(p.control_version) +
-                    " of the control messages and this launcher version " + std::to_string(control::wire::kVersion) +
-                    ", so its variables cannot be read or written in this run: build the ECU and vehicle_sil_launch from "
-                    "the same version of vehicle-sil",
+                    " of the control messages and this launcher versions " + std::to_string(control::wire::kOldestVersion) +
+                    " to " + std::to_string(control::wire::kNewestVersion) +
+                    ", so its variables cannot be read or written in this run: use a vehicle_sil_launch that is at least as "
+                    "new as the vehicle-sil the ECU was built with",
                 &p);
         }
         if (!p.variable_map_problems.empty())

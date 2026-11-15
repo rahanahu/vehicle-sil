@@ -21,7 +21,7 @@ namespace vehicle_sil::control_silkit {
 enum class LinkState
 {
     Connected,       ///< its hello arrived: it is a peer of the hub
-    VersionMismatch, ///< its hello is of another version of the format (LinkInfo::version): not a peer
+    VersionMismatch, ///< its hello is of a version this side does not speak (LinkInfo::version; control::wire::speaks()): not a peer
     Ended,           ///< it was connected and has said its last word, or left the simulation
 };
 
@@ -29,7 +29,7 @@ struct LinkInfo
 {
     std::string participant;
     LinkState state = LinkState::Connected;
-    /// The version of the format its hello has.
+    /// The version of the format its hello has. Connected: the version this side writes to it in.
     std::uint16_t version = 0;
     /// What its hello said (Connected and Ended).
     bool virtual_time = false;
@@ -50,7 +50,7 @@ struct HubTransportStats
     std::uint64_t hellos = 0;        ///< accepted
     std::uint64_t messages = 0;      ///< step and submitted messages given to the hub
     std::uint64_t bytes = 0;         ///< of all received messages
-    std::uint64_t undecodable = 0;   ///< not a message of this version (a hello of another version is counted here too)
+    std::uint64_t undecodable = 0;   ///< not a message of a version this side speaks (a hello of such a version is counted here too), or not of the version its agent's hello has
     std::uint64_t unknown = 0;       ///< of a session without a hello (not: after its end), or a sample that does not fit its schema (count, order, types)
     /// Hellos that were not taken: of more participants than HubTransportOptions::max_links, or
     /// with the session number of another participant's connection.
@@ -94,8 +94,12 @@ struct HelloReport
 /// to a hub, through subscribers and one publisher on `runtime`'s participant.
 ///
 /// - An agent becomes a peer of the hub when its hello arrives (control::Hub::agent_connected();
-///   PeerHello::incarnation is the session number of its transport). A hello of another version
-///   of the format makes no peer; links() says so, with the participant's name. A participant
+///   PeerHello::incarnation is the session number of its transport). A hello of a version this
+///   side does not speak (control::wire::speaks()) makes no peer; links() says so, with the
+///   participant's name. Each agent is spoken to in the version of its hello (LinkInfo::version):
+///   its commands, probes and the answer to its last word are written in it, and a message from it
+///   in another version is counted as undecodable and dropped. Agents of different versions can
+///   be peers of one hub. A participant
 ///   started anew under its name (also after it failed) says hello with a new session, which
 ///   replaces the old connection.
 /// - Commands go to an agent once it has answered a probe (LinkInfo::ready): the hello does not

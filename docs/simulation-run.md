@@ -146,7 +146,7 @@ Each participant has one of 5 connection states. The state appears in `participa
 |---|---|---|---|
 | `connected` | `run` received hello, and a reply saying that the ECU can take commands | Possible | None |
 | `no_hello` | The `--describe` output says that the ECU exposes variables, but no hello (or reply) arrived in time | Not possible in this run | Warning `control-link-no-hello` (run finding) |
-| `version_mismatch` | The version of the message format differs from that of `vehicle_sil_launch` | Not possible in this run | Warning `control-link-version` |
+| `version_mismatch` | The ECU's version of the message format is one that `vehicle_sil_launch` does not speak (a newer one than its own) | Not possible in this run | Warning `control-link-version` |
 | `not_offered` | The ECU has variables, but its `--describe` output says that it does not expose them (`--no-control`, or an older vehicle-sil executable without `control`) | Not possible | Note `control-link-not-offered` (check finding) |
 | `none` | Nothing to connect to (an older vehicle-sil executable without variables, `describe: false`) | Not possible | None |
 
@@ -154,12 +154,13 @@ Each participant has one of 5 connection states. The state appears in `participa
 - `run` does not wait for a `not_offered` ECU.
 - A participant whose `--describe` output does not offer variables but that sends hello is `connected`.
 - The simulation runs in every state (with `--strict`, warnings are failures).
+- `vehicle_sil_launch` reads and writes the variables of ECU executables built with its own version of vehicle-sil or an older one, back to 0.1.0. An ECU built with a newer vehicle-sil than the launcher is not promised to work: if its variables cannot be used, the check reports `control-link-version`; use a launcher at least as new as the ECU.
 
 ### Waiting before the start
 
 Once all required participants have joined, they all wait before the first step. During that wait, `run` waits for hello and the reply "can take commands" from every ECU that meets all of these conditions:
 
-- Its `--describe` output says that it has a connection to its variables, with the same version as `vehicle_sil_launch`. This includes an ECU without variables: `run` reads the counts of its networks over the same connection.
+- Its `--describe` output says that it has a connection to its variables, with a version that `vehicle_sil_launch` speaks (its own or an older one). This includes an ECU without variables: `run` reads the counts of its networks over the same connection.
 - It is required and not disabled.
 
 `run` does not wait for a `describe: false` participant, because it cannot know whether that participant has such a connection. If its hello arrives after the start, `control_link` stays `none`, and the entries of its `variables` map that do not match are still reported (`variable-map-not-applied`).
@@ -620,7 +621,7 @@ When the simulation started, the result shows after the participant table whethe
 | `ended-before-stop-at` | Note | A participant stopped the simulation before `stop_at_ms` |
 | `control-link-no-hello` | Warning | The hello of an ECU that should expose variables, or its reply that it can take commands, did not arrive before the start |
 | `control-link-dropped` | Warning | `vehicle_sil_launch` dropped messages of the connection to ECU variables |
-| `control-link-version` | Warning | The version of the message format in a received hello differs from that of `vehicle_sil_launch` |
+| `control-link-version` | Warning | The version of the message format in a received hello is one that `vehicle_sil_launch` does not speak |
 | `control-link-late-values` | Warning | Values or results of an ECU arrived later than the virtual-time guarantee allows |
 | `variable-map-not-applied` | Error | Some entries of the `variables` map in the configuration file do not match the variables that the ECU reported when it connected |
 | `before-start` | Error | An action to perform while waiting for the start failed |
@@ -656,7 +657,7 @@ Notes on individual codes:
 - Another program writes to the same topics (`vehicle_sil.control.*`).
 - The hello of a participant that joined during the run had not arrived yet.
 
-If `control-link-version` appears, build with the same vehicle-sil version.
+If `control-link-version` appears, use a `vehicle_sil_launch` at least as new as the vehicle-sil the ECU was built with.
 
 With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`): at the start for an ECU that is connected by then, and at the end of the run for one that connected later. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
 
@@ -986,7 +987,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       },
       {
@@ -1062,7 +1063,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       }
     ],
@@ -1199,7 +1200,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   |---|---|
   | `true` | The ECU applied it. The value is in the ECU although the step failed. |
   | `false` | The ECU did not apply it: the ECU or its Agent refused it, it comes after the refused write in the same `set`, or it was never sent. |
-  | `null` | Not known: no result came, or the ECU's result does not say which writes took effect. |
+  | `null` | Not known: no result came, or the ECU's result does not say which writes took effect. An ECU built with vehicle-sil 0.1.0 does not report where a `set` of several writes stopped. |
 
   An ECU applies the writes of one `set` one after the other and stops at the write that its setter rejects. So the writes before the rejected one are already applied (`true`), and the rejected one and the ones after it are not (`false`). When the ECU's Agent refuses a write as it receives it (wrong name, type or range), none of that participant's writes in the `set` is applied.
 - `point` is the index (from 0) in the `points` of that variable's `written` series; that point is this write. It is `null` if nothing was sent. A point whose `applied` is `false` or `null` is at or after the `not_applied_from` of its series.

@@ -217,7 +217,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -314,7 +314,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1041,7 +1041,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1138,7 +1138,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1331,7 +1331,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1428,7 +1428,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1781,7 +1781,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1878,7 +1878,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {

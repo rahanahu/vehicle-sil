@@ -170,6 +170,7 @@ struct Options
 {
     fs::path launch;
     fs::path test_ecu;
+    fs::path version1_ecu; ///< tests/launch/version1_ecu.cpp
     fs::path helper;
     fs::path example_dir; ///< the example's directory in the build tree (simulation.yaml, engine/, dashboard/)
     fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
@@ -183,6 +184,7 @@ Options parse(int argc, char** argv)
     Options o;
     o.launch = args.required("launch");
     o.test_ecu = args.required("test-ecu");
+    o.version1_ecu = args.required("version1-ecu");
     o.helper = args.required("helper");
     o.example_dir = args.required("example-dir");
     o.docs = args.required("docs");
@@ -1345,7 +1347,7 @@ void control(const Options& o)
         // The check notes the variables that are not offered, and says what each executable offers.
         require(contains(out, "\"code\":\"control-link-not-offered\"") &&
                     contains(out, "participant 'Quiet': it describes variables, but does not offer them to the simulation") &&
-                    contains(out, "\"control\":{\"transport\":\"silkit\",\"wire_version\":1}") && contains(out, "\"control\":null") &&
+                    contains(out, "\"control\":{\"transport\":\"silkit\",\"wire_version\":2}") && contains(out, "\"control\":null") &&
                     !contains(out, "control-link-no-hello") && !contains(out, "control-link-version"),
                 "the check notes what is not offered, and nothing else is found:\n" + out);
         log("CHECK control agents in the events and the result -> ok");
@@ -3420,6 +3422,76 @@ fs::path scenario_ecus(const Options& o, const std::string& keys, const std::str
                                       {{"Body", "scenario-variables " + body}, {"Door", "scenario-variables"}});
     write_file(dir / "s.yaml", scenario);
     return dir;
+}
+
+// An ECU executable built with vehicle-sil 0.1.0 speaks version 1 of the control messages and
+// drops everything else (tests/launch/version1_ecu.cpp does the same). The launcher speaks to it
+// in its version: its variables are read and written, beside an ECU of this version.
+void control_version_1(const Options& o)
+{
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\n"
+                                      "networks: []\n"
+                                      "participants:\n"
+                                      "  - name: Old\n"
+                                      "    command: [" + yaml_quote(shown_path(o.version1_ecu)) + "]\n"
+                                      "  - name: New\n"
+                                      "    command: [" + ecu(o) + "]\n",
+                                      {{"New", "scenario-variables"}});
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\n"
+                               "name: an ECU of version 1\n"
+                               "steps:\n"
+                               "  - set: { Old.level: 5, New.level: 7 }\n"
+                               "  - expect: { Old.level: 5, Old.doubled: 10, New.level: 7 }\n"
+                               "  - at_ms: 50\n"
+                               "    set: { Old.level: 21 }\n"
+                               "  - expect: { Old.doubled: 42 }\n"
+                               "  - wait_until: { Old.doubled: 42, New.pulse: true }\n"
+                               "    timeout_ms: 500\n");
+    // The check: both offer their variables in a version this launcher speaks, each in its own.
+    const Captured check = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(check, 0, "check with an ECU of version 1");
+    const std::string checked = lf(check.standard_output);
+    require(contains(checked, "\"wire_version\": 1\n") && contains(checked, "\"wire_version\": 2\n") &&
+                !contains(checked, "control-link"),
+            "the check finds nothing about the control links:\n" + checked);
+
+    const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(run, 0, "run --scenario with an ECU of version 1");
+    const std::string out = lf(run.standard_output);
+    const auto old_at = out.find("      \"name\": \"Old\",\n");
+    const auto new_at = out.find("      \"name\": \"New\",\n");
+    require(old_at != std::string::npos && new_at != std::string::npos && old_at < new_at, "the participants of the result:\n" + out);
+    const std::string old = out.substr(old_at, new_at - old_at);
+    require(contains(old, "      \"control_link\": {\n        \"state\": \"connected\",\n") && contains(old, "\"late_messages\": 0"),
+            "the control link of the ECU of version 1 is connected:\n" + old);
+    require(contains(out.substr(new_at), "      \"control_link\": {\n        \"state\": \"connected\",\n"),
+            "the control link of the ECU of this version is connected:\n" + out);
+    require(!contains(out, "control-link") && contains(out, "\"result\": \"passed\""), "nothing is found about a control link:\n" + out);
+    const std::string scenario = scenario_json(out);
+    require(contains(scenario, "\"status\": \"passed\"") && !contains(scenario, "\"status\": \"failed\""),
+            "the scenario's writes and expectations pass:\n" + scenario);
+    require(run.standard_error.find("error:") == std::string::npos, "the ECU of version 1 ends without an error:\n" + run.standard_error);
+
+    // Its hello is waited for before the start, as the hello of every ECU whose --describe offers
+    // the variables in a version the launcher speaks: one that does not come is no_hello (not
+    // version_mismatch, and not passed over in silence).
+    write_file(dir / "Old.silent", "\n");
+    write_file(dir / "quiet.yaml", "vehicle_sil_simulation: 1\n"
+                                   "stop_at_ms: 100\n"
+                                   "networks: []\n"
+                                   "participants:\n"
+                                   "  - name: Old\n"
+                                   "    command: [" + yaml_quote(shown_path(o.version1_ecu)) + "]\n");
+    const Captured silent = launch(o, {"run", "quiet.yaml", "--json"}, dir);
+    fs::remove(dir / "Old.silent");
+    expect_code(silent, 0, "run with an ECU of version 1 that does not say hello");
+    const std::string quiet = lf(silent.standard_output);
+    require(contains(quiet, "        \"state\": \"no_hello\",\n") && contains(quiet, "\"code\": \"control-link-no-hello\"") &&
+                contains(quiet, "participant 'Old': it offers its variables (--describe), but its control agent did not say hello "
+                                "within ") &&
+                !contains(quiet, "control-link-version") && !contains(quiet, "version_mismatch"),
+            "the ECU of version 1 without a hello was waited for:\n" + quiet);
 }
 
 void scenario(const Options& o)
@@ -6446,6 +6518,7 @@ int main(int argc, char** argv)
             {"busy_port", busy_port},
             {"check", check},
             {"control", control},
+            {"control_version_1", control_version_1},
             {"crash", crash},
             {"disabled", disabled},
             {"docs", docs},

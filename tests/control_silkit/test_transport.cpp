@@ -7,6 +7,7 @@
 #include "test_harness.hpp"
 
 #include "topics.hpp"
+#include "version1_agent.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control/wire.hpp"
@@ -1303,11 +1304,19 @@ TEST_CASE(transports_are_made_before_the_start_and_one_per_agent)
 namespace {
 
 /// A participant that speaks the agent's side by hand: whatever bytes the test gives it. It
-/// answers the hub's probes only if told to.
+/// answers the hub's probes only if told to. It speaks one version (`version`): what arrives on
+/// the command topic in another is dropped before anything else is looked at, by a rule written
+/// out here (vehicle_sil::test::addressed_by_hand()), as an ECU built with vehicle-sil 0.1.0 does
+/// with everything that is not version 1. What it counts and keeps is therefore what the hub wrote
+/// in its version.
 struct RawAgent
 {
     std::string name;
     std::uint64_t session;
+    std::uint16_t version;
+    std::atomic<int> of_another_version{0}; ///< for its session, in a version it does not speak
+    std::mutex mutex;
+    std::vector<wire::Bytes> commands; ///< guarded by mutex: the commands for its session, as they arrived
     std::atomic<bool> answers{false};
     std::atomic<int> probes{0};
     std::atomic<int> last_word_answers{0}; ///< received for its session; it takes no other notice of them
@@ -1319,8 +1328,9 @@ struct RawAgent
     pubsub::IDataPublisher* step_out = nullptr;
     pubsub::IDataPublisher* submitted_out = nullptr;
 
-    RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session) :
-      name(std::move(agent_name)), session(agent_session)
+    RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session,
+             std::uint16_t agent_version = wire::kVersion) :
+      name(std::move(agent_name)), session(agent_session), version(agent_version)
     {
         // A process started anew under the name of one that has just gone: the registry may refuse
         // the name until it has seen the end of the old connection (on a slow machine that takes a
@@ -1333,8 +1343,18 @@ struct RawAgent
         submitted_out = participant->CreateDataPublisher(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic), 0);
         participant->CreateDataSubscriber(topics::kCommandTopic, topics::spec(topics::kCommandTopic),
                                           [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
-                                              const auto to = wire::addressed({event.data.data(), event.data.size()});
-                                              if (to && to->kind == wire::Kind::Probe && to->session == session)
+                                              const auto to =
+                                                  vehicle_sil::test::addressed_by_hand({event.data.data(), event.data.size()});
+                                              if (!to || to->session != session)
+                                              {
+                                                  return;
+                                              }
+                                              if (to->version != version)
+                                              {
+                                                  ++of_another_version;
+                                                  return;
+                                              }
+                                              if (to->kind == static_cast<std::uint8_t>(wire::Kind::Probe))
                                               {
                                                   ++probes;
                                                   if (answers.load())
@@ -1342,7 +1362,12 @@ struct RawAgent
                                                       ready();
                                                   }
                                               }
-                                              if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
+                                              if (to->kind == static_cast<std::uint8_t>(wire::Kind::Command))
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  commands.emplace_back(event.data.begin(), event.data.end());
+                                              }
+                                              if (to->kind == static_cast<std::uint8_t>(wire::Kind::LastWordReceived))
                                               {
                                                   if (on_last_word_answer)
                                                   {
@@ -1370,19 +1395,31 @@ struct RawAgent
         }
         wire::Bytes bytes;
         std::string why;
-        if (!wire::encode_hello(h, bytes, why))
+        if (!wire::encode_hello(h, bytes, why, version))
         {
             throw vehicle_sil::unit::Failure(why);
         }
         hello_out->Publish(topics::span_of(bytes));
     }
-    void ready()
+    void ready() { ready_in(version); }
+    void ready_in(std::uint16_t in_version)
     {
         wire::Bytes bytes;
-        wire::encode_session(wire::Kind::Ready, session, bytes);
+        wire::encode_session(wire::Kind::Ready, session, bytes, in_version);
         submitted_out->Publish(topics::span_of(bytes));
     }
     void step(const wire::Bytes& bytes) { step_out->Publish(topics::span_of(bytes)); }
+    void submitted(const wire::SubmittedMessage& message, std::uint16_t in_version)
+    {
+        wire::Bytes bytes;
+        wire::encode_submitted(message, bytes, in_version);
+        submitted_out->Publish(topics::span_of(bytes));
+    }
+    [[nodiscard]] std::vector<wire::Bytes> commands_so_far()
+    {
+        const std::lock_guard lock(mutex);
+        return commands;
+    }
 };
 
 /// A participant that speaks the hub's side by hand, as a hub from before the answer to the last
@@ -1491,12 +1528,23 @@ Snapshot sample_of(std::size_t variables, std::uint64_t sequence)
 }
 
 /// The step messages of `sample` for `session`, of at most 2048 bytes each.
-std::vector<wire::Bytes> parts_of(std::uint64_t session, const Snapshot& sample)
+std::vector<wire::Bytes> parts_of(std::uint64_t session, const Snapshot& sample, std::uint16_t version = wire::kVersion)
 {
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
     wire::encode_step(session, sample.time, false, {}, {}, &sample, wire::kMinMessageBytes, scratch,
-                      [&](const wire::Bytes& m) { out.push_back(m); });
+                      [&](const wire::Bytes& m) { out.push_back(m); }, version);
+    return out;
+}
+
+/// What a step of `session` at `time` has to say, as one step message of `version`.
+wire::Bytes step_of(std::uint64_t session, SimTime time, bool final, const std::vector<CommandResult>& results,
+                    const Snapshot* sample, std::uint16_t version)
+{
+    wire::Bytes out;
+    wire::Bytes scratch;
+    wire::encode_step(session, time, final, results, {}, sample, wire::kMaxMessageBytes, scratch,
+                      [&](const wire::Bytes& m) { out = m; }, version);
     return out;
 }
 
@@ -1884,4 +1932,199 @@ TEST_CASE(a_write_to_an_agent_that_has_not_said_it_receives_commands_is_refused_
     wire::encode_session(wire::Kind::Ready, 4242, bytes);
     quiet.submitted_out->Publish(topics::span_of(bytes));
     CHECK(eventually([&] { return side.transport->stats().unknown == unknown + 1; }, 30s));
+}
+
+// An ECU built with vehicle-sil 0.1.0 speaks version 1 and drops everything else. The hub speaks
+// to it in version 1, from the probe to the answer to its last word.
+TEST_CASE(an_agent_of_version_1_is_spoken_to_in_version_1_from_the_probe_to_the_last_word)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Unused"});
+    auto& hub = side.hub;
+    static constexpr std::uint64_t kSession = 0x0101;
+    RawAgent old("Old", registry.uri, kSession, 1);
+    old.answers.store(true);
+    old.hello(3);
+    // The probe arrived in version 1 (the agent counts no other), and its answer was taken.
+    side.wait_ready({"Old"});
+    CHECK(old.probes.load() >= 1);
+    const auto link = side.transport->links().at(0);
+    CHECK(link.state == LinkState::Connected);
+    CHECK_EQ(link.version, std::uint16_t{1});
+
+    // A write: the command arrives in version 1, byte for byte what 0.1.0 reads.
+    const std::uint64_t seq = hub.write(OperationRequest{{{"Old", "v1", Value{std::int64_t{42}}}, {"Old", "v2", Value{2.5}}}});
+    CHECK(eventually([&] { return old.commands_so_far().size() == 1; }, 30s));
+    const wire::Bytes arrived = old.commands_so_far().at(0);
+    CHECK_EQ(arrived[4], std::uint8_t{1});
+    CHECK_EQ(arrived[5], std::uint8_t{0});
+    CHECK_EQ(arrived[7], std::uint8_t{0});
+    wire::CommandMessage command;
+    const wire::Error read = wire::decode_command(arrived, command);
+    CHECK(!read);
+    CHECK_EQ(read.version, std::uint16_t{1});
+    CHECK_EQ(command.session, kSession);
+    CHECK_EQ(command.command.writes.size(), std::size_t{2});
+    CHECK(command.command.writes[0].value == Value{std::int64_t{42}});
+    CHECK(command.command.writes[1].value == Value{2.5});
+    wire::Bytes again;
+    CHECK(wire::encode_command(command, again, 1));
+    CHECK(again == arrived);
+
+    // What the agent says of it, in version 1: accepted, then applied in a step, with the values.
+    old.submitted(wire::SubmittedMessage{kSession, command.command.seq, SubmitResult{SubmitStatus::Queued, {}}}, 1);
+    CommandResult applied;
+    applied.seq = command.command.seq;
+    applied.status = CommandStatus::Applied;
+    applied.applied_at = at(10ms);
+    Snapshot sample{at(10ms), 1, {Value{true}, Value{std::int64_t{42}}, Value{2.5}}};
+    old.step(step_of(kSession, at(10ms), false, {applied}, &sample, 1));
+    const auto done = hub.wait_done(seq, scaled_timeout(30s));
+    check_status(settled(done, seq, "the write to the agent of version 1"), "Old", TargetStatus::Applied);
+    CHECK(eventually([&] { return hub.latest("Old") != nullptr; }, 30s));
+    CHECK(hub.latest("Old")->values == sample.values);
+    CHECK_EQ(side.transport->stats().undecodable, std::uint64_t{0});
+
+    // The same agent in version 2 is not its link's version: counted, dropped. A step message, a
+    // submitted message and a ready answer each.
+    Snapshot newer{at(20ms), 2, {Value{false}, Value{std::int64_t{7}}, Value{0.5}}};
+    old.step(step_of(kSession, at(20ms), false, {}, &newer, 2));
+    CHECK(eventually([&] { return side.transport->stats().undecodable == 1; }, 30s));
+    old.submitted(wire::SubmittedMessage{kSession, 99, SubmitResult{SubmitStatus::Queued, {}}}, 2);
+    CHECK(eventually([&] { return side.transport->stats().undecodable == 2; }, 30s));
+    old.ready_in(2);
+    CHECK(eventually([&] { return side.transport->stats().undecodable == 3; }, 30s));
+    CHECK(hub.latest("Old")->values == sample.values);
+    // ... also its last word: the connection stays.
+    old.step(step_of(kSession, at(20ms), true, {}, nullptr, 2));
+    CHECK(eventually([&] { return side.transport->stats().undecodable == 4; }, 30s));
+    CHECK(side.transport->links().at(0).state == LinkState::Connected);
+    CHECK_EQ(old.last_word_answers.load(), 0);
+
+    // The last word in version 1 is answered in version 1.
+    old.step(step_of(kSession, at(20ms), true, {}, nullptr, 1));
+    CHECK(eventually([&] { return old.last_word_answers.load() == 1; }, 30s));
+    CHECK(side.transport->links().at(0).state == LinkState::Ended);
+    // Nothing was written to it in another version, at any point.
+    CHECK_EQ(old.of_another_version.load(), 0);
+    // The last word of a session that never said hello is answered in the version it is said in.
+    RawAgent stranger("Stranger", registry.uri, 0x0202, 1);
+    // (Said until it is heard: the two sides find each other a moment after the participant is made.)
+    CHECK(eventually(
+        [&] {
+            stranger.step(step_of(0x0202, at(0ms), true, {}, nullptr, 1));
+            return stranger.last_word_answers.load() >= 1;
+        },
+        30s));
+    RawAgent later("Later", registry.uri, 0x0303, 2);
+    CHECK(eventually(
+        [&] {
+            later.step(step_of(0x0303, at(0ms), true, {}, nullptr, 2));
+            return later.last_word_answers.load() >= 1;
+        },
+        30s));
+    CHECK_EQ(stranger.of_another_version.load(), 0);
+    CHECK_EQ(later.of_another_version.load(), 0);
+}
+
+// One simulation with an ECU of version 1 and one of version 2: both are peers, a write to each
+// takes effect, the values of both arrive, and each hears the other's commands without taking them.
+TEST_CASE(agents_of_version_1_and_version_2_are_peers_of_one_hub)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Old", "New"});
+    auto& hub = side.hub;
+    TestEcu old("Old", registry.uri, {.transport = false});
+    auto old_transport =
+        std::make_unique<vehicle_sil::test::Version1Transport>(old.peer->agent(), old.peer->runtime(), old.options.step, 0x0101);
+    const auto old_answered = old_transport->last_word_answered();
+    TestEcu fresh("New", registry.uri, {.last_word_wait = 60s});
+    start_together(*side.controller, {old.peer.get(), fresh.peer.get()});
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
+    side.wait_ready({"Old", "New"});
+    for (const auto& link : side.transport->links())
+    {
+        CHECK(link.state == LinkState::Connected);
+        CHECK_EQ(link.version, link.participant == "Old" ? std::uint16_t{1} : std::uint16_t{2});
+    }
+
+    const std::uint64_t seq =
+        hub.write(OperationRequest{{{"Old", "cmd", Value{std::int64_t{11}}}, {"New", "cmd", Value{std::int64_t{22}}}}});
+    side.controller->run_until(at(30ms));
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
+    const OperationResult done = settled(hub.wait_done(seq, scaled_timeout(30s)), seq, "the write to both");
+    check_status(done, "Old", TargetStatus::Applied);
+    check_status(done, "New", TargetStatus::Applied);
+    CHECK(hub_value(hub, "Old", "cmd") == Value{std::int64_t{11}});
+    CHECK(hub_value(hub, "New", "cmd") == Value{std::int64_t{22}});
+    // A second write to each alone, so that each has heard a command for the other.
+    const std::uint64_t to_old = hub.write(OperationRequest{{{"Old", "cmd", Value{std::int64_t{12}}}}});
+    const std::uint64_t to_new = hub.write(OperationRequest{{{"New", "cmd", Value{std::int64_t{23}}}}});
+    side.controller->run_until(at(60ms));
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
+    check_status(settled(hub.wait_done(to_old, scaled_timeout(30s)), to_old, "the write to Old"), "Old", TargetStatus::Applied);
+    check_status(settled(hub.wait_done(to_new, scaled_timeout(30s)), to_new, "the write to New"), "New", TargetStatus::Applied);
+
+    // The agent of version 1 took its commands (in version 1) and dropped what was for the other
+    // one (in version 2); nothing for it came in version 2.
+    CHECK(old_transport->probes() >= 1);
+    CHECK_EQ(old_transport->commands(), 2);
+    CHECK(old_transport->of_another_version() >= 2);
+    CHECK_EQ(old_transport->of_another_version_for_this(), 0);
+    // The agent of version 2 took its own; what was for the other one, in version 1, was for
+    // another agent and nothing it could not read.
+    const auto stats = fresh.transport->stats();
+    CHECK_EQ(stats.commands, std::uint64_t{2});
+    CHECK(stats.ignored >= 2);
+    CHECK_EQ(stats.undecodable, std::uint64_t{0});
+    CHECK_EQ(side.transport->stats().undecodable, std::uint64_t{0});
+    CHECK_EQ(side.transport->stats().late_messages, std::uint64_t{0});
+
+    side.controller->stop("done");
+    // The last word of each is answered in its version.
+    old.peer->stop("the test ECU ends");
+    old_transport.reset();
+    CHECK(old_answered->load());
+    old.end();
+    fresh.end();
+    CHECK_EQ(side.transport->stats().last_words, std::uint64_t{2});
+}
+
+// An agent reads only its own version: a probe or a command for it in version 1 is not answered.
+TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_an_older_version)
+{
+    const InProcessRegistry registry;
+    RawHub hub(registry.uri);
+    TestEcu a("A", registry.uri, {.virtual_time = false, .last_word_wait = 0ms});
+    a.peer->start();
+    const std::uint64_t session = a.transport->session();
+    const auto publish = [&](wire::Kind kind, std::uint64_t to, std::uint16_t version) {
+        wire::Bytes bytes;
+        wire::encode_session(kind, to, bytes, version);
+        hub.command_out->Publish(topics::span_of(bytes));
+    };
+    // Until the probes arrive at all (the subscriptions of the two directions are made one by one).
+    CHECK(eventually(
+        [&] {
+            publish(wire::Kind::Probe, session + 1, 1);
+            return a.transport->stats().ignored >= 1;
+        },
+        30s));
+    // For another agent in version 1: for another agent, as in its own version.
+    CHECK_EQ(a.transport->stats().undecodable, std::uint64_t{0});
+    // For this agent in version 1: not answered.
+    publish(wire::Kind::Probe, session, 1);
+    CHECK(eventually([&] { return a.transport->stats().undecodable == 1; }, 30s));
+    wire::Bytes command;
+    CHECK(wire::encode_command(wire::CommandMessage{session, Command{1, {{"cmd", Value{std::int64_t{5}}}}, {}, {}}}, command, 1));
+    hub.command_out->Publish(topics::span_of(command));
+    CHECK(eventually([&] { return a.transport->stats().undecodable == 2; }, 30s));
+    CHECK_EQ(a.transport->stats().commands, std::uint64_t{0});
+    {
+        const std::lock_guard lock(hub.mutex);
+        CHECK(hub.ready.empty());
+    }
+    // In its own version: answered.
+    CHECK(eventually([&] { return hub.probe("A").has_value(); }, 30s));
+    a.end();
 }

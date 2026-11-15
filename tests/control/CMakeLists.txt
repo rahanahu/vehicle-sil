@@ -12,6 +12,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_tests
     test_wire.cpp
     test_wire_v1_golden.cpp
     test_wire_v2.cpp
+    test_wire_v2_golden.cpp
   LINK vehicle_sil::simulation)
 
 # Replaces the global operator new to count the allocations of encode_step(): its own binary.

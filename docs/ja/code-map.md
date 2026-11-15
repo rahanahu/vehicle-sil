@@ -2247,6 +2247,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 守ること:
 
 - バージョン 1 は変えません。vehicle-sil 0.1.0 でビルドした ECU が話します。
+- Agent は `kVersion` で書き、`kVersion` だけを読みます。Hub のトランスポートは、それぞれの Agent の hello のバージョンを接続（link）に持ち、その Agent にはそのバージョンで書きます（`libs/control_silkit/src/hub_transport.cpp`）。`vehicle_sil_launch` は、`--describe` が出力したバージョンを使えるかどうかを `wire::speaks()` で決めます（`libs/launch/src/check_rules.cpp`、`run_control.cpp`）。そこで `kVersion` と比べないでください。
 - バージョン 2 に項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
 - 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kNewestVersion` を上げ、古いバージョンも読み続けます。
 - `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
@@ -2264,6 +2265,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージがどちらのバージョンでも上限ちょうどまで詰まること。
 - `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
 - `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
+- `^control\.wire_v2_revision_0_`: バージョン 2、改訂 0 のバイト列（`tests/control/wire_v2_golden.hpp` に手で書いたもの）。項目を追加するときは、新しい改訂のバイト列を横に追加し、これは変えません。
+- `^control_silkit\..*version_1`、`launch_run.control_version_1`: バージョン 1 だけを話す Agent を、この Hub と `vehicle_sil_launch run` の下で動かします。そういう Agent の決まり（バージョン 1 でないものを捨てる）は `tests/control_silkit/version1_agent.hpp` に手で書いてあり、`tests/launch/version1_ecu.cpp` はその上に作った ECU の実行ファイルです。
 
 ### SIL Kit の上のトランスポートと開始前の窓
 

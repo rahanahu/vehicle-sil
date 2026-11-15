@@ -122,7 +122,7 @@ struct AgentTransport::State
         {
             // The transport is closing or has gone: only the hub's answer to the last word is
             // still of interest (the destructor may be waiting for it).
-            if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
+            if (to && to->kind == wire::Kind::LastWordReceived && to->session == session && to->version == wire::kVersion)
             {
                 last_word_received = true;
                 last_word_answer.notify_all();
@@ -139,9 +139,11 @@ struct AgentTransport::State
             n_ignored.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        if (to->kind == wire::Kind::LastWordReceived)
+        if (to->version != wire::kVersion || to->kind == wire::Kind::LastWordReceived)
         {
-            // An answer to a last word this agent has not said.
+            // For this agent, but not in the version it speaks (a hub writes to an agent in the
+            // version of its hello, so this is not an answer to it), or an answer to a last word
+            // this agent has not said.
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
             return;
         }

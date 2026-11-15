@@ -416,9 +416,11 @@ Messages flow in this order: the hello; the start window before the first step (
 
 The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
+Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` (2) when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
 
 - Version 1 is fixed. Its bytes are what ECUs built with vehicle-sil 0.1.0 send and expect.
+- Nothing is negotiated. An Agent writes `kVersion` and reads only `kVersion`. A Hub takes the version of each Agent from the header of its hello and writes to that Agent in that version (its commands, its probes and the answer to its last word), so an ECU built with an older vehicle-sil keeps working under a newer Hub. A message from an Agent in another version than its hello is counted as unreadable and dropped. Agents of version 1 and version 2 can be peers of one Hub: every Agent receives every command, and one in a version it does not read is not for it.
+- An Agent built with vehicle-sil 0.1.0 drops every message that is not version 1, so a Hub that wrote version 2 to it would never get an answer to its probe.
 - Version 2 can get new fields without a new version:
   - Each variable, write, result and event starts with its size in bytes.
   - The last byte of the header is the revision of the writer (`kRevision`).
@@ -588,12 +590,12 @@ If a participant ended in order (reached Shutdown) but its last word did not arr
 | An Agent that does not know the answer | Drops the answer and ends as before |
 | An Agent whose Hub does not answer | Waits the full wait time, then ends |
 
-In both cases the format version (`kVersion`) is the same, so they can connect.
+Neither case depends on the format version: the answer is a kind of its own, added to version 1 without a new version.
 
 ### Peers that send no hello
 
 - An ECU without a transport (`--no-control`, an executable of an old vehicle-sil without an Agent, a participant that has no Agent) sends no hello, so it does not become a peer of the Hub.
-- A participant that sent a hello of another version does not become a peer. It remains in `HubTransport::links()` with its participant name and version.
+- A participant that sent a hello of a version the Hub does not speak (`wire::speaks()`: not 1 or 2) does not become a peer. It remains in `HubTransport::links()` with its participant name and version.
 - To a caller that waits, both cases appear as distinct results, not as "did not come" (`connected`, `mismatched`, `ended`, `missing` in `HelloReport`).
 
 ### Real-time peers and restarted participants

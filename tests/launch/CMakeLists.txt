@@ -94,6 +94,15 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_target_defaults(vehicle_sil_launch_test_ecu)
   vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_test_ecu)
 
+  # An ECU executable that speaks version 1 of the control messages, as one built with vehicle-sil
+  # 0.1.0 (version1_ecu.cpp; the names of the topics are internal to control_silkit).
+  add_executable(vehicle_sil_launch_version1_ecu version1_ecu.cpp)
+  target_include_directories(vehicle_sil_launch_version1_ecu PRIVATE
+    ${PROJECT_SOURCE_DIR}/tests/control_silkit ${PROJECT_SOURCE_DIR}/libs/control_silkit/src)
+  target_link_libraries(vehicle_sil_launch_version1_ecu PRIVATE vehicle_sil::control_silkit vehicle_sil::peer)
+  vehicle_sil_target_defaults(vehicle_sil_launch_version1_ecu)
+  vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_version1_ecu)
+
   add_executable(vehicle_sil_launch_run_launcher launch_run_launcher.cpp)
   target_include_directories(vehicle_sil_launch_run_launcher PRIVATE ${PROJECT_SOURCE_DIR}/tests/process)
   target_link_libraries(vehicle_sil_launch_run_launcher PRIVATE vehicle_sil_test_process)
@@ -103,7 +112,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     target_link_libraries(vehicle_sil_launch_run_launcher PRIVATE shell32 ws2_32)
   endif()
   vehicle_sil_target_defaults(vehicle_sil_launch_run_launcher)
-  add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch vehicle_sil_launch_test_ecu vehicle_sil_process_helper
+  add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch vehicle_sil_launch_test_ecu
+                   vehicle_sil_launch_version1_ecu vehicle_sil_process_helper
                    vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
   if(TARGET vehicle_sil_eth_sensor_ecu)
     # The scenario ethernet: examples/ethernet, next to examples/ecu_main in the build tree.
@@ -116,6 +126,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       busy_port
       check
       control
+      control_version_1
       crash
       disabled
       docs
@@ -187,6 +198,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       variants
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+         --version1-ecu $<TARGET_FILE:vehicle_sil_launch_version1_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${VEHICLE_SIL_TESTED_DOCS})
@@ -211,6 +223,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     SCENARIOS manual
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+         --version1-ecu $<TARGET_FILE:vehicle_sil_launch_version1_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${VEHICLE_SIL_TESTED_DOCS}
@@ -223,6 +236,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     SCENARIOS on_time
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+         --version1-ecu $<TARGET_FILE:vehicle_sil_launch_version1_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${VEHICLE_SIL_TESTED_DOCS}
