@@ -111,7 +111,7 @@
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを持つ participant と、ブリッジが、同じネットワークにいるかもしれません。 | その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その実行ではブリッジを無効にします。 |
 | `connect-network` | 誤り | `--connect` が、`networks` にないネットワークを指しています。 | 名前を直します（指摘の文が近い名前を出します）。名前に `=` を含むネットワークはつなげないので、名前を変えます。 |
 | `connect-kind` | 誤り | `--connect` が LIN のネットワークを指しています（LIN をつなぐブリッジはありません）。 | その `--connect` を外します。 |
-| `connect-target` | 誤り | `--connect` の先が、空、256 バイトより長い、UTF-8 でない、制御文字を含む、`-` で始まる、のどれかです。CAN のネットワークでは、`virtual:<n>` か `physical:<n>`（`<n>` は 1 から）でもありません。 | ブリッジの一覧（`--list-interfaces`、`--list-channels`）にある先か、`none` を書きます。 |
+| `connect-target` | 誤り | `--connect` の先が、空、256 バイトより長い、UTF-8 でない、制御文字を含む、`-` で始まる、のどれかです。CAN のネットワークでは、`virtual:<n>` か `physical:<n>`（`<n>` は 1 から）でもありません。 | `vehicle_sil_launch connections <file>` が出す先か、`none` を書きます。 |
 | `connect-name-taken` | 誤り | ファイルの participant が、つなぐネットワークのブリッジの名前（`bridge.<network>`）を持っています。 | その participant の名前を変えます。 |
 | `connect-filter` | 誤り | つなぐイーサネットのネットワークに `external.ethertypes` も `external.all_frames` もなく、そこにいる ECU の MAC アドレスをランチャーが並べられません（出力しない ECU がいる、`role: test` でない `describe: false` の participant がいる、出力した ECU が 1 つもない。`role: test` の participant は数えません）。 | そのネットワークに `external.ethertypes` か `external.all_frames: true` を書く（`role: test` の participant のフレームも通すときも）か、そこにいる各 ECU に MAC アドレスを持たせます。 |
 | `connect-tool-missing` | 誤り | つなぐネットワークのブリッジが、`vehicle_sil_launch` の隣にも、`PATH` の絶対パスのディレクトリにもありません。 | ブリッジをビルドし、`vehicle_sil_launch` の隣に置くか、そのディレクトリを `PATH` に入れます。 |

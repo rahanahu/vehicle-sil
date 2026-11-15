@@ -566,9 +566,11 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 
 | Kind | Bridge | `<target>` |
 |---|---|---|
-| `ethernet` | `vehicle_sil_ethernet_bridge` ([ethernet-bridge.md](ethernet-bridge.md)) | The adapter as the bridge's `--interface` takes it: on Windows the connection name (`vEthernet (A)`), the pcap name (`\Device\NPF_{...}`) or `{GUID}`; on Linux the interface name (`enp3s0`). `vehicle_sil_ethernet_bridge --list-interfaces` lists them. |
-| `can` | `vehicle_sil_vector_xl_bridge` ([bridges.md](bridges.md)) | `virtual:<n>` or `physical:<n>`: the channel number from 1 that `vehicle_sil_vector_xl_bridge --list-channels` shows. |
+| `ethernet` | `vehicle_sil_ethernet_bridge` ([ethernet-bridge.md](ethernet-bridge.md)) | The adapter as the bridge's `--interface` takes it: on Windows the connection name (`vEthernet (A)`), the pcap name (`\Device\NPF_{...}`) or `{GUID}`; on Linux the interface name (`enp3s0`). |
+| `can` | `vehicle_sil_vector_xl_bridge` ([bridges.md](bridges.md)) | `virtual:<n>` or `physical:<n>`: the channel number from 1. |
 | `lin` | None | Cannot be connected (`connect-kind`). |
+
+`vehicle_sil_launch connections <file>` lists the targets of each network on this computer, as `--connect` lines to copy (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
 
 - `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an adapter named `none` by its pcap name.
 - Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
@@ -897,8 +899,11 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
+vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 vehicle_sil_launch version [--json]
 ```
+
+`connections` lists where each network of the file can be connected on this computer (see "Where a network can be connected (`vehicle_sil_launch connections`)" in [simulation-run.md](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)).
 
 `test` runs each scenario once for each variant and shows all results in one table (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)).
 
@@ -929,6 +934,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
 | `--connect <network>=<target>` | `check` and `run` | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
+| `--network <name>` | `connections` only | Lists the network `<name>` only. |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
 | `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
@@ -986,6 +992,7 @@ When each exit code occurs:
 | 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
 | 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
 | 1 | If the scenario file of `--scenario` does not exist, the exit code is 1 for both `check` and `run` (unlike a missing configuration file, which gives 3). |
+| 1 | For `connections`, a list could not be made, or a network's kind in the file has an error. |
 | 3 | The configuration file does not exist, a syntax error, an unknown format version and so on. |
 | 3 | Also when `run` cannot set up the registry or the controller. |
 | 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |

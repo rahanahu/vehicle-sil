@@ -11,6 +11,7 @@
 | ECU の変数を読み書きできるか（`control_link`） | [ECU の変数との接続](#ecu-の変数との接続control_link) |
 | `speed` と、実時間からの遅れの数え方 | [速度を指定して動かす](#速度を指定して動かすspeed) |
 | ネットワークを実機のバスにつなぐ、そのブリッジが終わったとき | [バスを外につなぐ](#バスを外につなぐ--connect) |
+| この PC で各ネットワークをどこにつなげるか | [`connections`](#つなげる先の一覧vehicle_sil_launch-connections) |
 | participant を終了させる順序、Ctrl+C | [止め方](#止め方)、[中断（Ctrl+C）](#中断ctrlc) |
 | どのアドレスで待ち受けるか、Windows のファイアウォール | [待ち受けるアドレス](#待ち受けるアドレス) |
 | 標準エラー、ログのファイル、結果の表、指摘の `code` | [出力](#出力) |
@@ -287,7 +288,14 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 ## バスを外につなぐ（`--connect`）
 
-`run --connect <network>=<target>` は、このリポジトリのブリッジで、ネットワークを実機のバス（Ethernet のアダプター、Vector XL Driver Library の CAN チャンネル）につなぎます。照合は、`check --connect` と同じように、ブリッジを探して `--describe` を走らせます（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。照合が通ると、`run` は次のように進めます。
+`run --connect <network>=<target>` は、このリポジトリのブリッジで、ネットワークを実機のバス（Ethernet のアダプター、Vector XL Driver Library の CAN チャンネル）につなぎます。まず、この PC で各ネットワークをどこにつなげるかを見て、出力の `--connect` の行を写します（[つなげる先の一覧](#つなげる先の一覧vehicle_sil_launch-connections)）。
+
+```sh
+vehicle_sil_launch connections simulation.yaml
+vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.yaml
+```
+
+照合は、`check --connect` と同じように、ブリッジを探して `--describe` を走らせます（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。照合が通ると、`run` は次のように進めます。
 
 | 順 | `run` がすること |
 |---|---|
@@ -317,6 +325,145 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
 ```
+
+### つなげる先の一覧（`vehicle_sil_launch connections`）
+
+```text
+vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+```
+
+`connections` は、ファイルの `can` と `ethernet` のネットワークごとに、この PC でどこにつなげるかを出します。ネットワークのブリッジに一覧を聞き（`vehicle_sil_ethernet_bridge --list-interfaces --json`、`vehicle_sil_vector_xl_bridge --list-channels --json`）、ブリッジは `--connect` と同じように探します（`vehicle_sil_launch` の隣、次に `PATH` の絶対パスのディレクトリ）。どこにもつなぎません。SIL Kit も participant も起動せず、ブリッジはアダプターもチャンネルも開きません。同じ種類のネットワークが 2 つあっても、各ブリッジに聞くのは 1 回です。
+
+- `--network <name>` は、そのネットワークだけを出します。ファイルにない名前は使い方の誤りです。
+- ファイルは機種なしで読みます。どの機種もファイルのネットワークを持つからです。`--variant` は使い方の誤りです。
+- ファイルのほかの誤りでは、一覧は止まりません。誤りは `check` が出します。
+
+Windows で、Vector XL のブリッジが入っていないときの例です。
+
+```text
+simulation.yaml: where each network can be connected on this computer
+ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, npcap: Npcap version 1.80, based on libpcap version 1.10.5):
+  --connect "ETH_EXT=vEthernet (A)"  up, connected; Hyper-V Virtual Ethernet Adapter; \Device\NPF_{0A1B2C3D-0000-1111-2222-333344445555}
+  --connect "ETH_EXT=Ethernet 2"     up, disconnected; Intel(R) Ethernet; \Device\NPF_{4E5F6A7B-0000-1111-2222-333344445555}
+  cannot be used: \Device\NPF_Loopback  (loopback: not an Ethernet adapter)
+J1939_CAN1 (can; vehicle_sil_vector_xl_bridge):
+  cannot list: vehicle_sil_vector_xl_bridge is neither next to vehicle_sil_launch (C:/vsil/bin) nor on PATH: build it with the Vector XL Driver Library (docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH [tool-missing]
+BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
+```
+
+| 行 | 意味 |
+|---|---|
+| `<network> (<kind>; <bridge>, <backend>: <library>):` | ネットワークと、そのブリッジ、ブリッジが言う backend とライブラリーの版です。 |
+| `--connect ...` | ブリッジが使える先です。引数を `check` か `run` に写します。後ろは、名前が違えば先の名前と、ブリッジがその先について言うことです。 |
+| `cannot be used: <target>  (<reason>)` | ブリッジが一覧に出すが使えない先（ループバック）か、`--connect` が受けない先（SIL Kit だけを意味する `none`、`-` で始まる名前）です。 |
+| `note: ...` | ブリッジが足すこと（ネットワークのアダプターを出さない Npcap）か、sh 向けにだけ引用した先（下）です。 |
+| `cannot list: <message> [<code>]` | 一覧を作れませんでした（下の code）。 |
+| `nothing listed: ...` | ブリッジがこの PC で何も出しません。 |
+| `<network> (lin): SIL Kit only` | LIN のブリッジはありません。 |
+| `<network>: its kind in the file has an error` | 何が誤りかは `check` が言います。 |
+
+`--connect` の行の引数は、sh（bash、zsh）、PowerShell、cmd のどれでも同じに読める書き方です。ASCII の英字、数字、`_ - . : / = +` だけならそのまま、それ以外は二重引用符で囲みます。`"`、`$`、`` ` ``、`%`、`!`、制御文字を含む先と、`\` が最後にあるか `"`、`$`、`` ` ``、`\` の前にある先は、全部に通じる書き方がありません。その行は sh 向け（`'...'`）に書き、`note:` の行でそう言います。
+
+#### `connections --json`
+
+```json
+{
+  "vehicle_sil_connections": 1,
+  "vehicle_sil": "<version>",
+  "file": "simulation.yaml",
+  "result": "failed",
+  "networks": [
+    {
+      "name": "ETH_EXT",
+      "kind": "ethernet",
+      "tool": "vehicle_sil_ethernet_bridge",
+      "tool_path": "C:/vsil/bin/vehicle_sil_ethernet_bridge.exe",
+      "list": {
+        "vehicle_sil_targets": 1,
+        "tool": "vehicle_sil_ethernet_bridge",
+        "backend": "npcap",
+        "source": "Npcap version 1.80, based on libpcap version 1.10.5",
+        "targets": [
+          {
+            "value": "vEthernet (A)",
+            "label": "vEthernet (A)",
+            "detail": "up, connected; Hyper-V Virtual Ethernet Adapter; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+            "usable": true,
+            "reason": null,
+            "ethernet": {
+              "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+              "connection": "vEthernet (A)",
+              "description": "Hyper-V Virtual Ethernet Adapter",
+              "up": true,
+              "connected": true,
+              "loopback": false,
+              "wireless": false
+            }
+          }
+        ],
+        "notes": [],
+        "error": null
+      }
+    },
+    {
+      "name": "J1939_CAN1",
+      "kind": "can",
+      "tool": "vehicle_sil_vector_xl_bridge",
+      "tool_path": null,
+      "list": {
+        "vehicle_sil_targets": 1,
+        "tool": "vehicle_sil_vector_xl_bridge",
+        "backend": null,
+        "source": null,
+        "targets": [],
+        "notes": [],
+        "error": {
+          "code": "tool-missing",
+          "message": "vehicle_sil_vector_xl_bridge is neither next to vehicle_sil_launch (C:/vsil/bin) nor on PATH: build it with the Vector XL Driver Library (docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH"
+        }
+      }
+    },
+    {
+      "name": "BODY_LIN",
+      "kind": "lin",
+      "tool": null,
+      "tool_path": null,
+      "list": null
+    }
+  ],
+  "findings": []
+}
+```
+
+| キー | 内容 |
+|---|---|
+| `vehicle_sil_connections` | この形の版です（1）。 |
+| `vehicle_sil` | vehicle-sil の版です。 |
+| `file` | 渡されたとおりのファイルです。 |
+| `result` | `listed`: すべての一覧を作れました。`failed`: 作れない一覧があったか、ファイルのネットワークの種類に誤りがあります。`unreadable`: ファイルを読めません。`usage`: コマンドラインの誤りです。 |
+| `networks[]` | ファイルの順のネットワークです。`--network` があれば、その 1 つです。 |
+| `networks[].name` | ネットワークの名前です。 |
+| `networks[].kind` | `can`、`ethernet`、`lin`。ファイルの種類に誤りがあれば `null` です。 |
+| `networks[].tool` | ブリッジの実行ファイルです。`lin` と種類の分からないものは `null` です。 |
+| `networks[].tool_path` | ランチャーが見つけた場所です。見つからないとき、ブリッジがないときは `null` です。 |
+| `networks[].list` | ブリッジが書いたとおりの一覧で、キーはすべてそのまま渡します。形は「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」と「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」です。一覧を出さないブリッジには、ランチャーが同じ形の一覧を作ります（下）。`lin` と種類の分からないものは `null` です。 |
+| `findings` | ファイルを読めない理由か、使い方の誤りです（`check --json` と同じ形）。ほかは空です。 |
+
+`usable: true` の先の `value` は、`--connect <network>=<value>` がそのまま受ける値です（プログラムは、シェルを通さずに 1 つの引数として渡します）。ブリッジから一覧を受け取れないときは、ランチャーが、先なしで誤りを入れた一覧を作ります。ブリッジ自身の code（`library-missing`、`permission-denied`、`backend-unavailable`、`driver-missing`、`failed`）は、ブリッジの一覧に入って来ます。
+
+| `error.code` | いつ |
+|---|---|
+| `tool-missing` | ブリッジが `vehicle_sil_launch` の隣にも `PATH` にもありません。 |
+| `tool-cannot-start` | ブリッジを起動できません。Windows では、起動の前に終了状態 `0xC0000135` か `0xC0000139` で終わったときも（DLL がないか、版が違います。Vector XL のブリッジには Vector XL Driver Library の `vxlapi64.dll` が要ります）。 |
+| `tool-timeout` | ブリッジが 30 秒の間に終わりませんでした。 |
+| `tool-bad-output` | ブリッジが、ランチャーの読める一覧を書きませんでした（ほかの vehicle-sil のブリッジ）。文は、ブリッジの標準エラーの、理由を書いた行を引きます。 |
+
+| 終了コード | 場合 |
+|---|---|
+| 0 | すべての一覧を作れました（LIN のネットワークには一覧は要りません）。 |
+| 1 | 作れない一覧があったか、ファイルのネットワークの種類に誤りがあります。 |
+| 3 | ファイルを読めません。 |
+| 4 | 使い方の誤りです。 |
 
 ## 止め方
 
@@ -675,7 +822,7 @@ passed: 0 errors, 1 warning, 1 note
 | `code` | 補足 |
 |---|---|
 | `connection-not-closed` | 待った時間を書きます。結果はそろっています。 |
-| `connect-failed`、`connect-lost` | ネットワーク、先、ブリッジがどう終わったかと、ブリッジが理由を書いた行を書きます（[バスを外につなぐ](#バスを外につなぐ--connect)）。ブリッジについては、`start`、`ended-before-start`、`not-joined`、`participant-failed`、`exit-code` の代わりに出ます。`connect-failed` は、ブリッジが開けるものの一覧を出すコマンド（`vehicle_sil_ethernet_bridge --list-interfaces`、`vehicle_sil_vector_xl_bridge --list-channels`）を挙げます。 |
+| `connect-failed`、`connect-lost` | ネットワーク、先、ブリッジがどう終わったかと、ブリッジが理由を書いた行を書きます（[バスを外につなぐ](#バスを外につなぐ--connect)）。ブリッジについては、`start`、`ended-before-start`、`not-joined`、`participant-failed`、`exit-code` の代わりに出ます。`connect-failed` は、各ネットワークのつなげる先を出す `vehicle_sil_launch connections` を挙げます。 |
 | `timeout` | manual の必須の participant がいる実行では、始まらなかったときにも出ます（待っていたものを書きます）。 |
 | `control-link-no-hello` | hello が来なかったのか、返事が来なかったのかは、メッセージに書きます（[接続の状態](#接続の状態state)）。 |
 | `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |

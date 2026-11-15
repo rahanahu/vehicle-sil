@@ -63,11 +63,11 @@ std::string command_text(const std::vector<std::string>& words)
     return out;
 }
 
-/// One run of `executable` with `arguments` (--describe and --name among them) in `directory`,
-/// shown in messages as `shown` with the arguments.
-DescribeRun run_describe(const std::filesystem::path& executable, const std::string& shown,
-                         const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
-                         const std::filesystem::path& directory)
+} // namespace
+
+DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
+                     const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
+                     const std::filesystem::path& directory)
 {
     std::vector<std::string> words{shown};
     words.insert(words.end(), arguments.begin(), arguments.end());
@@ -97,6 +97,8 @@ DescribeRun run_describe(const std::filesystem::path& executable, const std::str
     }
     return run;
 }
+
+namespace {
 
 /// The names of the networks in `outside`.
 std::vector<std::string> outside_names(const std::vector<NetworkOutside>& outside)
@@ -239,6 +241,35 @@ namespace {
 
 } // namespace
 
+std::string read_config_file(const std::filesystem::path& path, std::string& text)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+    {
+        return "the file does not exist: check the path";
+    }
+    if (std::filesystem::is_directory(path, ec))
+    {
+        return "this is a directory: name the configuration file in it";
+    }
+    if (!std::filesystem::is_regular_file(path, ec))
+    {
+        return "this is not a regular file (a device or a pipe?): name the configuration file";
+    }
+    if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
+    {
+        return "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) +
+               " MiB, too large for a configuration: name the configuration file";
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+    {
+        return "cannot open the file: check its permissions";
+    }
+    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return {};
+}
+
 CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options)
 {
     CheckReport report;
@@ -251,35 +282,8 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         report.findings = std::move(conflicts);
         return report;
     }
-    std::error_code ec;
-    std::string problem;
     std::string text;
-    if (!std::filesystem::exists(path, ec))
-    {
-        problem = "the file does not exist: check the path";
-    }
-    else if (std::filesystem::is_directory(path, ec))
-    {
-        problem = "this is a directory: name the configuration file in it";
-    }
-    else if (!std::filesystem::is_regular_file(path, ec))
-    {
-        problem = "this is not a regular file (a device or a pipe?): name the configuration file";
-    }
-    else if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
-    {
-        problem = "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) +
-                  " MiB, too large for a configuration: name the configuration file";
-    }
-    else if (std::ifstream in(path, std::ios::binary); !in)
-    {
-        problem = "cannot open the file: check its permissions";
-    }
-    else
-    {
-        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-    if (!problem.empty())
+    if (const std::string problem = read_config_file(path, text); !problem.empty())
     {
         report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
         return report;
@@ -368,7 +372,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
         // As vehicle_sil_launch run starts it: in the directory of the configuration file.
         const DescribeRun run =
-            run_describe(executable, p.command.front(), arguments, options.describe_timeout, std::filesystem::absolute(base));
+            run_tool(executable, p.command.front(), arguments, options.describe_timeout, std::filesystem::absolute(base));
         DescribeOutcome outcome = interpret_describe(p, run);
         if (outcome.error)
         {
@@ -388,7 +392,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         tools.launcher_dir = options.tool_directory;
         tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
         tools.describe = [&](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-            return run_describe(tool, process::utf8_from_path(tool.stem()), arguments, options.describe_timeout,
+            return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.describe_timeout,
                                 std::filesystem::absolute(base));
         };
         ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);

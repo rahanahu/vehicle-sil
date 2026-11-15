@@ -6,6 +6,7 @@
 #include "vehicle_sil/launch/connect.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -188,6 +189,19 @@ std::optional<std::filesystem::path> find_tool(std::string_view name, const std:
         }
     }
     return detail::find_on_path(name);
+}
+
+std::string tool_not_found(const std::filesystem::path& launcher_dir)
+{
+    return launcher_dir.empty() ? std::string("not on PATH")
+                                : "neither next to vehicle_sil_launch (" + process::shown_path(launcher_dir) + ") nor on PATH";
+}
+
+std::string tool_missing_fix(NetworkKind kind)
+{
+    return std::string(kind == NetworkKind::Can ? "build it with the Vector XL Driver Library (docs/bridges.md)"
+                                                : "build it (docs/ethernet-bridge.md)") +
+           " and put it next to vehicle_sil_launch, or its directory on PATH";
 }
 
 } // namespace vehicle_sil::launch

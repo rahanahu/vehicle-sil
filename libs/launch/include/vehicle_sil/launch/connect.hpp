@@ -64,4 +64,12 @@ inline constexpr std::size_t kMaxTargetBytes = 256;
 [[nodiscard]] std::optional<std::filesystem::path> find_tool(std::string_view name,
                                                              const std::filesystem::path& launcher_dir);
 
+/// Where find_tool() looked and found nothing, for a message: "neither next to
+/// vehicle_sil_launch (<launcher_dir>) nor on PATH", or "not on PATH" if `launcher_dir` is empty.
+[[nodiscard]] std::string tool_not_found(const std::filesystem::path& launcher_dir);
+
+/// What to do about a bridge of a network of `kind` that find_tool() does not find: build it
+/// (where the docs say how) and put it where the launcher looks.
+[[nodiscard]] std::string tool_missing_fix(NetworkKind kind);
+
 } // namespace vehicle_sil::launch

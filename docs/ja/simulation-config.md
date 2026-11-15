@@ -564,9 +564,11 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 
 | 種類 | ブリッジ | `<target>` |
 |---|---|---|
-| `ethernet` | `vehicle_sil_ethernet_bridge`（[ethernet-bridge.md](ethernet-bridge.md)） | ブリッジの `--interface` が受けるアダプターの名前です。Windows は接続名（`vEthernet (A)`）、pcap の名前（`\Device\NPF_{...}`）、`{GUID}`、Linux はインターフェース名（`enp3s0`）。`vehicle_sil_ethernet_bridge --list-interfaces` が一覧を出します。 |
-| `can` | `vehicle_sil_vector_xl_bridge`（[bridges.md](bridges.md)） | `virtual:<n>` か `physical:<n>`。`vehicle_sil_vector_xl_bridge --list-channels` が出す、1 から始まるチャンネル番号です。 |
+| `ethernet` | `vehicle_sil_ethernet_bridge`（[ethernet-bridge.md](ethernet-bridge.md)） | ブリッジの `--interface` が受けるアダプターの名前です。Windows は接続名（`vEthernet (A)`）、pcap の名前（`\Device\NPF_{...}`）、`{GUID}`、Linux はインターフェース名（`enp3s0`）。 |
+| `can` | `vehicle_sil_vector_xl_bridge`（[bridges.md](bridges.md)） | `virtual:<n>` か `physical:<n>`。1 から始まるチャンネル番号です。 |
 | `lin` | なし | つなげません（`connect-kind`）。 |
+
+`vehicle_sil_launch connections <file>` は、この PC での各ネットワークの先を、写して使える `--connect` の行で出します（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
 
 - 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のアダプターは、pcap の名前で書きます。
 - 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
@@ -895,8 +897,11 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
+vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 vehicle_sil_launch version [--json]
 ```
+
+`connections` は、この PC でファイルの各ネットワークをどこにつなげるかを出します（[simulation-run.md](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)「つなげる先の一覧（`vehicle_sil_launch connections`）」）。
 
 `test` は、機種ごとにシナリオを 1 つずつ実行して、全部の結果を表にします（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。
 
@@ -927,6 +932,7 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
 | `--connect <network>=<target>` | `check` と `run` | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
+| `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -984,6 +990,7 @@ Windows では、引数をワイド文字のコマンドラインから UTF-8 �
 | 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
 | 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
 | 1 | `--scenario` のシナリオのファイルがないときは、`check` でも `run` でも 1 です（設定ファイルがないときの 3 とは違います）。 |
+| 1 | `connections` では、作れない一覧があったか、ファイルのネットワークの種類に誤りがあります。 |
 | 3 | 設定ファイルがない、文法のエラー、知らない形式のバージョンなどです。 |
 | 3 | `run` で registry や controller を用意できないときも 3 です。 |
 | 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |

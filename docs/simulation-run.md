@@ -11,6 +11,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | Whether ECU variables can be read and written (`control_link`) | [Connection to ECU variables](#connection-to-ecu-variables-control_link) |
 | `speed`, and how lateness behind real time is measured | [Running at a set speed](#running-at-a-set-speed-speed) |
 | Connecting a network to a real bus, and what happens when its bridge ends | [Connecting a bus outside](#connecting-a-bus-outside---connect) |
+| Where each network can be connected on this computer | [`connections`](#where-a-network-can-be-connected-vehicle_sil_launch-connections) |
 | The order in which participants are ended, Ctrl+C | [Stopping a run](#stopping-a-run), [Interrupting (Ctrl+C)](#interrupting-ctrlc) |
 | Which addresses participants listen on, Windows Firewall | [Listen addresses](#listen-addresses) |
 | Stderr, log files, the result table, the `code` of findings | [Output](#output) |
@@ -287,7 +288,14 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 
 ## Connecting a bus outside (`--connect`)
 
-`run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. The check looks for the bridge and asks it `--describe`, as `check --connect` does (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). If the check passes, `run` goes on:
+`run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. First see where each network can be connected on this computer, and copy a `--connect` line of the output (see [Where a network can be connected](#where-a-network-can-be-connected-vehicle_sil_launch-connections)):
+
+```sh
+vehicle_sil_launch connections simulation.yaml
+vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.yaml
+```
+
+The check looks for the bridge and asks it `--describe`, as `check --connect` does (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). If the check passes, `run` goes on:
 
 | Order | What `run` does |
 |---|---|
@@ -317,6 +325,145 @@ For an automatic test with a device on the bus, run one scenario at speed 1 with
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
 ```
+
+### Where a network can be connected (`vehicle_sil_launch connections`)
+
+```text
+vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
+```
+
+`connections` lists, for each `can` and `ethernet` network of the file, where it can be connected on this computer. It asks the network's bridge for its list (`vehicle_sil_ethernet_bridge --list-interfaces --json`, `vehicle_sil_vector_xl_bridge --list-channels --json`) and looks for the bridge as `--connect` does: next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It connects to nothing: it starts neither SIL Kit nor a participant, and the bridges open no adapter and no channel. Each bridge is asked once, also for two networks of its kind.
+
+- `--network <name>` lists that network only. A name that the file does not have is a usage error.
+- The file is read without a variant, because every variant has the networks of the file. `--variant` is a usage error.
+- Other errors in the file do not stop the list: `check` reports them.
+
+An example on Windows, where the Vector XL bridge is not installed:
+
+```text
+simulation.yaml: where each network can be connected on this computer
+ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, npcap: Npcap version 1.80, based on libpcap version 1.10.5):
+  --connect "ETH_EXT=vEthernet (A)"  up, connected; Hyper-V Virtual Ethernet Adapter; \Device\NPF_{0A1B2C3D-0000-1111-2222-333344445555}
+  --connect "ETH_EXT=Ethernet 2"     up, disconnected; Intel(R) Ethernet; \Device\NPF_{4E5F6A7B-0000-1111-2222-333344445555}
+  cannot be used: \Device\NPF_Loopback  (loopback: not an Ethernet adapter)
+J1939_CAN1 (can; vehicle_sil_vector_xl_bridge):
+  cannot list: vehicle_sil_vector_xl_bridge is neither next to vehicle_sil_launch (C:/vsil/bin) nor on PATH: build it with the Vector XL Driver Library (docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH [tool-missing]
+BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
+```
+
+| Line | Meaning |
+|---|---|
+| `<network> (<kind>; <bridge>, <backend>: <library>):` | The network, its bridge, and the backend and library version that the bridge reports. |
+| `--connect ...` | A target that the bridge can use. Copy the argument to `check` or `run`. After it: the target's name if it differs, and what the bridge says about it. |
+| `cannot be used: <target>  (<reason>)` | A target that the bridge lists but cannot use (the loopback), or one that `--connect` does not take (`none`, which means SIL Kit only, or a name that starts with `-`). |
+| `note: ...` | What the bridge adds (Npcap that offers no network adapter), or a target quoted for sh only (below). |
+| `cannot list: <message> [<code>]` | The list could not be made (see the codes below). |
+| `nothing listed: ...` | The bridge lists nothing on this computer. |
+| `<network> (lin): SIL Kit only` | There is no bridge for LIN. |
+| `<network>: its kind in the file has an error` | `check` says what is wrong. |
+
+The argument of a `--connect` line is written so that sh (bash, zsh), PowerShell and cmd all read it the same: as it is if it has only ASCII letters, digits and `_ - . : / = +`, otherwise in double quotes. A target with `"`, `$`, `` ` ``, `%`, `!` or a control character, or with `\` at its end or before `"`, `$`, `` ` `` or `\`, cannot be written so for all of them: its line is quoted for sh (`'...'`), and a `note:` line says so.
+
+#### `connections --json`
+
+```json
+{
+  "vehicle_sil_connections": 1,
+  "vehicle_sil": "<version>",
+  "file": "simulation.yaml",
+  "result": "failed",
+  "networks": [
+    {
+      "name": "ETH_EXT",
+      "kind": "ethernet",
+      "tool": "vehicle_sil_ethernet_bridge",
+      "tool_path": "C:/vsil/bin/vehicle_sil_ethernet_bridge.exe",
+      "list": {
+        "vehicle_sil_targets": 1,
+        "tool": "vehicle_sil_ethernet_bridge",
+        "backend": "npcap",
+        "source": "Npcap version 1.80, based on libpcap version 1.10.5",
+        "targets": [
+          {
+            "value": "vEthernet (A)",
+            "label": "vEthernet (A)",
+            "detail": "up, connected; Hyper-V Virtual Ethernet Adapter; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+            "usable": true,
+            "reason": null,
+            "ethernet": {
+              "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+              "connection": "vEthernet (A)",
+              "description": "Hyper-V Virtual Ethernet Adapter",
+              "up": true,
+              "connected": true,
+              "loopback": false,
+              "wireless": false
+            }
+          }
+        ],
+        "notes": [],
+        "error": null
+      }
+    },
+    {
+      "name": "J1939_CAN1",
+      "kind": "can",
+      "tool": "vehicle_sil_vector_xl_bridge",
+      "tool_path": null,
+      "list": {
+        "vehicle_sil_targets": 1,
+        "tool": "vehicle_sil_vector_xl_bridge",
+        "backend": null,
+        "source": null,
+        "targets": [],
+        "notes": [],
+        "error": {
+          "code": "tool-missing",
+          "message": "vehicle_sil_vector_xl_bridge is neither next to vehicle_sil_launch (C:/vsil/bin) nor on PATH: build it with the Vector XL Driver Library (docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH"
+        }
+      }
+    },
+    {
+      "name": "BODY_LIN",
+      "kind": "lin",
+      "tool": null,
+      "tool_path": null,
+      "list": null
+    }
+  ],
+  "findings": []
+}
+```
+
+| Key | Content |
+|---|---|
+| `vehicle_sil_connections` | The version of this form (1). |
+| `vehicle_sil` | The vehicle-sil version. |
+| `file` | The file as given. |
+| `result` | `listed`: every list was made. `failed`: a list could not be made, or a network's kind in the file has an error. `unreadable`: the file cannot be read. `usage`: the command line is wrong. |
+| `networks[]` | The networks in the order of the file; with `--network`, that one. |
+| `networks[].name` | The network's name. |
+| `networks[].kind` | `can`, `ethernet` or `lin`; `null` if its kind in the file has an error. |
+| `networks[].tool` | The bridge's executable; `null` for `lin` and an unknown kind. |
+| `networks[].tool_path` | Where the launcher found it; `null` if it did not, or there is no bridge. |
+| `networks[].list` | The bridge's list as the bridge wrote it, every key passed on: the form of "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)" and "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)". For a bridge that gives no list, a list of the same form that the launcher makes (below). `null` for `lin` and an unknown kind. |
+| `findings` | Why the file cannot be read, or the usage error, as in `check --json`; otherwise empty. |
+
+`value` of a target with `usable: true` is what `--connect <network>=<value>` takes (a program passes it as one argument, without a shell). When the launcher cannot get a list from the bridge, it makes one with no targets and the error. The bridge's own codes (`library-missing`, `permission-denied`, `backend-unavailable`, `driver-missing`, `failed`) come in the bridge's list.
+
+| `error.code` | When |
+|---|---|
+| `tool-missing` | The bridge is neither next to `vehicle_sil_launch` nor on `PATH`. |
+| `tool-cannot-start` | The bridge could not be started. On Windows also when it ends with exit status `0xC0000135` or `0xC0000139` before it starts (a DLL is missing or of another version; the Vector XL bridge needs `vxlapi64.dll` of the Vector XL Driver Library). |
+| `tool-timeout` | The bridge did not end within 30 seconds. |
+| `tool-bad-output` | The bridge wrote no list that the launcher reads (a bridge of another vehicle-sil). The message quotes the line of its stderr that says why. |
+
+| Exit code | Case |
+|---|---|
+| 0 | Every list was made (a LIN network needs none). |
+| 1 | A list could not be made, or a network's kind in the file has an error. |
+| 3 | The file cannot be read. |
+| 4 | Usage error. |
 
 ## Stopping a run
 
@@ -675,7 +822,7 @@ Notes on individual codes:
 | `code` | Notes |
 |---|---|
 | `connection-not-closed` | Gives the time waited. The result is complete. |
-| `connect-failed`, `connect-lost` | Give the network, the target, how the bridge ended and the line in which it said why (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). They take the place of `start`, `ended-before-start`, `not-joined`, `participant-failed` and `exit-code` for the bridge. `connect-failed` names the command that lists what the bridge can open (`vehicle_sil_ethernet_bridge --list-interfaces`, `vehicle_sil_vector_xl_bridge --list-channels`). |
+| `connect-failed`, `connect-lost` | Give the network, the target, how the bridge ended and the line in which it said why (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). They take the place of `start`, `ended-before-start`, `not-joined`, `participant-failed` and `exit-code` for the bridge. `connect-failed` names `vehicle_sil_launch connections`, which lists where each network can be connected. |
 | `timeout` | In a run with a required manual participant, also reported when the simulation did not start (it names what the run was waiting for). |
 | `control-link-no-hello` | The message says whether the hello or the reply did not arrive (see [Connection state](#connection-state-state)). |
 | `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
