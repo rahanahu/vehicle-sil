@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
 import stat
 import threading
 import time
 
 import pytest
+from conftest import free_port
 from fake_control import variables
 from vehicle_sil_gui import control
 from vehicle_sil_gui.source import SnapshotInfo, SourceError, TimeInfo
@@ -269,9 +269,7 @@ def test_a_server_that_takes_the_call_and_says_nothing_is_given_up_and_tried_aga
 
 def test_a_server_that_is_not_there_yet_is_tried_again_and_one_that_goes_is_noticed(fake, control_env) -> None:
     import fake_control
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    port = free_port()  # nothing there yet; the server starts there later
 
     async def main() -> None:
         source = control.GrpcSource(library(), f"127.0.0.1:{port}", None)

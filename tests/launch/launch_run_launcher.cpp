@@ -136,6 +136,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -5239,27 +5240,41 @@ private:
     std::unique_ptr<vehicle_sil::process::Process> process_;
 };
 
-/// A TCP port on 127.0.0.1 that is free now (for a registry_uri of a test).
-int free_port()
+/// The first port that the system hands out for port 0 and for outgoing connections: on Linux
+/// what /proc/sys/net/ipv4/ip_local_port_range says (32768 by default), elsewhere 49152 (the
+/// default of Windows).
+int first_ephemeral_port()
+{
+#ifndef _WIN32
+    std::ifstream range("/proc/sys/net/ipv4/ip_local_port_range");
+    int low = 0;
+    if (range >> low && low > 0)
+    {
+        return low;
+    }
+#endif
+    return 49152;
+}
+
+/// Whether a TCP socket can be bound to `port` on 127.0.0.1 now (0: any port; the port bound is
+/// stored back into it).
+bool bindable(int& port)
 {
 #ifdef _WIN32
     WSADATA data;
     require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "WSAStartup failed");
     const SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     require(s != INVALID_SOCKET, "cannot make a socket");
+    int size = sizeof(sockaddr_in);
 #else
     const int s = ::socket(AF_INET, SOCK_STREAM, 0);
     require(s >= 0, "cannot make a socket");
+    socklen_t size = sizeof(sockaddr_in);
 #endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = 0;
-#ifdef _WIN32
-    int size = sizeof(address);
-#else
-    socklen_t size = sizeof(address);
-#endif
+    address.sin_port = htons(static_cast<std::uint16_t>(port));
     const bool bound = ::bind(s, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
                        ::getsockname(s, reinterpret_cast<sockaddr*>(&address), &size) == 0;
 #ifdef _WIN32
@@ -5268,8 +5283,43 @@ int free_port()
 #else
     ::close(s);
 #endif
-    require(bound, "cannot find a free port");
-    return ntohs(address.sin_port);
+    if (bound)
+    {
+        port = ntohs(address.sin_port);
+    }
+    return bound;
+}
+
+/// A TCP port on 127.0.0.1 that is free now, for a registry_uri of a test. The launcher binds it
+/// only later, so it is taken below the ports that the system hands out by itself: a port from
+/// there (what binding port 0 gives) may go, in the meantime, to anything that binds port 0 or
+/// connects (a participant of a test that runs at the same time listens at port 0, so does a
+/// registry without registry_uri), and the run then cannot set up its registry. Below that range
+/// only a program that names its port takes one; it is picked at random so that two copies of a
+/// test (two build trees on one computer) rarely meet.
+int free_port()
+{
+    const int below = std::min(first_ephemeral_port(), 65536);
+    constexpr int kLowest = 20000;
+    if (below - kLowest >= 1000)
+    {
+        // The clock as well: random_device of an old MinGW gives the same numbers in every process.
+        std::random_device seed;
+        std::mt19937 pick(seed() ^ static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::uniform_int_distribution<int> port_in(kLowest, below - 1);
+        for (int attempt = 0; attempt < 100; ++attempt)
+        {
+            int port = port_in(pick);
+            if (bindable(port))
+            {
+                return port;
+            }
+        }
+    }
+    // The system hands out (nearly) every port by itself: the first free one it gives.
+    int port = 0;
+    require(bindable(port), "cannot find a free port");
+    return port;
 }
 
 void network(const Options& o)

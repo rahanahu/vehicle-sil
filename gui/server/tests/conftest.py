@@ -244,6 +244,29 @@ def raw_http(port: int, data: bytes, timeout: float = 3) -> bytes:
     return answer
 
 
+def free_port() -> int:
+    """A TCP port on 127.0.0.1 that nothing listens on now, for a test that listens there only later. It is taken
+    below the ports that the system hands out by itself (to port 0 and to outgoing connections: on Linux from what
+    /proc/sys/net/ipv4/ip_local_port_range says, elsewhere from 49152): a port from there may go, in the meantime,
+    to another test's server at port 0. At random, so that two copies of a test rarely meet."""
+    import random
+    import socket
+    below = 49152
+    try:
+        below = int(Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    candidates = [random.randrange(20000, below) for _ in range(100)] if below - 20000 >= 1000 else []
+    for port in [*candidates, 0]:
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    raise OSError("no free port on 127.0.0.1")
+
+
 def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:
     """Whether `condition` becomes true within `timeout` seconds (scaled)."""
     end = time.monotonic() + scaled(timeout)
