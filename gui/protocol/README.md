@@ -89,11 +89,12 @@ Every `api/` request has these conditions:
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | The scenarios in `scenarios` next to the configuration file: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | The applied writes of the current (last) run as scenario YAML: `{recording}` (`null` if there is no run) | `recording.json` |
+| `GET api/timeline/<session id>` | The timeline file of a scenario run, as the launcher wrote it (not wrapped in an object) | — |
 
 - The `api/app` response holds the server version, `instance` (changes on every start), the root, `initial_file`, the launcher (`usable`, `problems`, the contents of `version --json`), whether variables can be read and written (`variables`: `available`, and `reason` if not), and the limits (`limits`). `limits` includes `speed_min`, `speed_max`, `step_ms_max`, and for variables `watches`, `watch_variables`, `watch_period_ms_min`, `watch_period_ms_max`, `writes_per_request`, `write_at_ms_max`, `write_timeout_s` and others.
 - Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
 - `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
-- For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
+- For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/timeline`, "Timeline of a scenario run (`api/timeline`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
 - Once the server has begun to shut down, `api/run`, `api/check` and `api/write` return 503 `shutting-down`.
 
 ### `disable` and `manual`
@@ -184,6 +185,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 403 | `cors-not-allowed` | `OPTIONS` (CORS is not allowed) |
 | 404 | `file-not-found` | `file` is not under the root |
 | 404 | `not-found` | No such API or screen file |
+| 404 | `no-timeline` | `api/timeline/<session id>`: the server has no timeline file of that run (see "Timeline of a scenario run (`api/timeline`)") |
 | 405 | `method-not-allowed` | A method other than `GET` on a screen file |
 | 409 | `already-running` | A run is starting or running |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
@@ -585,7 +587,7 @@ What you can do while a scenario runs:
 - Step findings (`scenario-failed` and others) are `finding`s that have the scenario's `file` and `line`.
 - The `simulation` of the result of a run stopped by a scenario is `ended` (the presence of `scenario` in the result tells it from an `ended` caused by a participant).
 
-`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms}`. A screen opened midway can build the step table from it.
+`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url}`. A screen opened midway can build the step table from it.
 
 | Field | Contents |
 |---|---|
@@ -594,9 +596,19 @@ What you can do while a scenario runs:
 | `steps` | The steps that have arrived (in `index` order; the last state of each step) |
 | `steps_omitted` | Number of steps beyond 1000 |
 | `status`, `over_at_ms` | From `scenario` of the result (`null` until the result arrives) |
+| `timeline_url` | Where the server serves the run's timeline file (`api/timeline/<session id>`). `null` until the run has ended, and for a run without one (see below) |
 
 - The fields of `steps[]` are the same as in the event. `text` and `message` are cut at 1000 characters.
 - Once the result arrives, `steps` becomes the steps of the result (including `not_run`).
+
+### Timeline of a scenario run (`api/timeline`)
+
+When the launcher has `timeline` in its `features`, the server adds `--timeline <file>` to every run with a scenario. The file is in a temporary directory of the server. The run's `result.scenario.timeline` and the launcher's `log` line `timeline: <file>` name it (see "Recording a scenario run on a timeline" in [docs/simulation-run.md](../../docs/simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). A launcher without `timeline` gets no `--timeline`, and its runs have no timeline.
+
+- When the run has ended, the server keeps the file if the launcher wrote a whole one: the file is not empty and the result has no `timeline-write` finding. Then the summary's `scenario.timeline_url` is `api/timeline/<session id>`.
+- `GET api/timeline/<session id>` returns the file as `application/json`, with `Content-Disposition: inline; filename="<scenario name>.timeline.json"`. It needs the token, as every `api/` request does. A run that has no kept file (no scenario, a launcher without `timeline`, a run that is still running or wrote no whole file, an id the server never gave, a file removed) gets 404 `no-timeline`.
+- The server keeps the files of the last 4 runs that wrote one. When a fifth is kept, the oldest is removed. All of them are removed when the server stops.
+- The page that draws the file is served at `timeline/` without a token (`timeline/`, `timeline/timeline.html`, `timeline/viewer.js`, `timeline/messages.js`), with the same `Host` check and headers as the screen's files. It reads the token as the screens do (`#token=` in its URL, else the tab's sessionStorage under the key of `takeToken`) and sends it with `Authorization: Bearer`. Open it as `timeline/?src=/api/timeline/<session id>`.
 
 ## Recording actions (`api/recording`)
 

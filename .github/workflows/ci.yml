@@ -1,4 +1,5 @@
-# Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one with the thread
+# Checks of every push to main and, in part, of every pull request (the job `changes` below says which part):
+# the C++ build and tests (Linux presets, one with the thread
 # sanitizer, one with the control server, and one of them also
 # with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "Verification and scripts"); on failure, its logs (build/logs) are kept as an artifact.
@@ -16,9 +17,12 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push replaces the run of a pull request. On main every merge keeps its own run (its group is
-  # the commit): a merge that follows another within minutes must not cancel the run of the one before.
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # A newer push replaces the run of a pull request. On main a run is never stopped, but only one runs at a
+  # time and only the newest waits: when several merges follow each other within minutes, the merges between
+  # the running one and the newest get no run of their own (theirs is cancelled while it waits), and the
+  # newest one's run checks them together. If it fails, run the ones between by hand to find which merge it was.
+  # (release.yml wants this workflow's run on the tagged commit: re-run a cancelled one before tagging it.)
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The runners are small (4 CPUs): the tests' upper bounds of waiting for something that will happen are 3
@@ -29,15 +33,27 @@ env:
   VEHICLE_SIL_TEST_TIMEOUT_SCALE: "3"
 
 jobs:
-  # A pull request that changes only Markdown files needs only the checks that read the documents: the links
-  # (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug), and the format
-  # of the GUI's READMEs (gui). A push to main runs everything.
+  # A pull request runs fewer jobs than a push to main, so that several open pull requests do not wait for
+  # runners. A push to main runs everything.
+  # - Only Markdown files changed: the checks that read the documents: the links (python), the examples that
+  #   the launcher's tests compare with the documents (linux-gcc-debug), and the format of the GUI's READMEs (gui).
+  # - Otherwise: linux-gcc-debug, linux-clang-tsan, linux-gcc-control, Windows and python. The presets
+  #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
+  #   things are built (the `build` list below). Every check that only one preset makes is in linux-gcc-debug
+  #   (two computers, the Ethernet bridge on real interfaces, the GUI's recordings), so the left-out jobs add
+  #   the other build types only, and main still runs them after the merge.
+  # - The gui job is left out when every changed file is in the `not_gui` list below and none is in `gui_reads`.
+  #   The job builds no C++; the GUI server against the launcher runs in linux-gcc-control. Rule for the lists:
+  #   a path outside gui/ that a test of the gui job reads belongs in `gui_reads`, never only in `not_gui`.
+  # The job's name is a required check of main's branch protection: keep it.
   changes:
     name: changes (documents only?)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.look.outputs.docs_only }}
+      full: ${{ steps.look.outputs.full }}
+      gui: ${{ steps.look.outputs.gui }}
       presets: ${{ steps.look.outputs.presets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,17 +66,33 @@ jobs:
         # The checkout of a pull request is its merge into the base: the first parent is the base.
         run: |
           docs_only=false
+          full=true
+          gui=true
           if [ "$EVENT" = pull_request ]; then
-            files=$(git diff --name-only HEAD^1 HEAD)
+            files=$(git diff --name-only --no-renames HEAD^1 HEAD)
             echo "$files"
-            if [ -n "$files" ] && ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+            if [ -n "$files" ]; then
+              if ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+              build='(^|/)CMakeLists\.txt$|\.cmake$|^cmake/|(^|/)CMakePresets\.json$|^patches/|^external/|^\.gitmodules$|^\.github/'
+              if ! grep -qE "$build" <<<"$files"; then full=false; fi
+              # gui/timeline's and gui/web's tests draw the launcher's reference timeline files.
+              gui_reads='^tests/launch/timeline/'
+              not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$'
+              if [ "$docs_only" = false ] && ! grep -qE "$gui_reads" <<<"$files" && ! grep -qvE "$not_gui" <<<"$files"; then
+                gui=false
+              fi
+            fi
           fi
           if [ "$docs_only" = true ]; then
             presets='["linux-gcc-debug"]'
-          else
+          elif [ "$full" = true ]; then
             presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
+          else
+            presets='["linux-gcc-debug", "linux-clang-tsan", "linux-gcc-control"]'
           fi
           echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
+          echo "full=$full" | tee -a "$GITHUB_OUTPUT"
+          echo "gui=$gui" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
 
   linux:
@@ -112,7 +144,7 @@ jobs:
       # multi_host.two_hosts makes two computers as network namespaces in a user namespace, which Ubuntu's AppArmor
       # does not let a user make by default; with VEHICLE_SIL_REQUIRE_MULTI_HOST=1 the test fails rather than skips.
       - name: User namespaces for the test of two computers
-        if: matrix.preset == 'linux-gcc-release'
+        if: matrix.preset == 'linux-gcc-debug'
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns > /dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -126,18 +158,18 @@ jobs:
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Configure, build and test
         env:
-          VEHICLE_SIL_REQUIRE_MULTI_HOST: ${{ matrix.preset == 'linux-gcc-release' && '1' || '' }}
+          VEHICLE_SIL_REQUIRE_MULTI_HOST: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
           # The Ethernet bridge on real interfaces (ethernet_bridge.netns.*): where the TAP device, the veth pair or
           # a packet socket cannot be made in the namespace, or setpriv or ethtool is missing, the test fails rather
           # than skips or leaves a part out, and its first line says what could not be made.
-          VEHICLE_SIL_REQUIRE_ETHERNET_NETNS: ${{ matrix.preset == 'linux-gcc-release' && '1' || '' }}
+          VEHICLE_SIL_REQUIRE_ETHERNET_NETNS: ${{ matrix.preset == 'linux-gcc-debug' && '1' || '' }}
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
       # are skipped and said so: the preset is built without it; linux-gcc-control compares them.)
       - name: The GUI's recordings against this launcher
-        if: matrix.preset == 'linux-gcc-release'
-        run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-release/tools/launch/vehicle_sil_launch --compare
+        if: matrix.preset == 'linux-gcc-debug'
+        run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-debug/tools/launch/vehicle_sil_launch --compare
       # The Python client's tests and the examples of examples/launch_control are added only where CMake finds a
       # Python with grpcio and grpcio-tools (here the uv environment); without one they would be left out silently.
       - name: The control server's Python tests were run
@@ -189,7 +221,7 @@ jobs:
   # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
   linux-oldest-cmake:
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full == 'true'
     name: linux (linux-gcc-release, CMake 3.21.7)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -319,6 +351,7 @@ jobs:
 
   gui:
     needs: changes
+    if: needs.changes.outputs.gui == 'true'
     name: gui (server, screen, examples)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
