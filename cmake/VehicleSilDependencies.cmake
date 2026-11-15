@@ -178,29 +178,33 @@ function(_vehicle_sil_report_patched dependency source patches patched state)
   set(commit "commit unknown: not a git checkout")
   find_package(Git QUIET)
   if(Git_FOUND)
-    # Only when <source> is a repository of its own: inside another one git
-    # would answer for that one.
+    # Only when <source> is the top of a working tree of its own (a
+    # repository, a submodule or a worktree): inside another one git would
+    # answer for that one. Git says so itself (inside a working tree, with
+    # an empty prefix), so no paths are compared: MSYS2's git prints them as
+    # /c/..., which a native CMake on Windows cannot resolve. GIT_DIR and
+    # friends, inherited for example from a git hook, would point it at
+    # another repository.
+    set(git "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_INDEX_FILE
+            --unset=GIT_COMMON_DIR "${GIT_EXECUTABLE}" -C "${source}")
     execute_process(
-      COMMAND "${GIT_EXECUTABLE}" -C "${source}" rev-parse --show-toplevel
+      COMMAND ${git} rev-parse --is-inside-work-tree --show-prefix
       RESULT_VARIABLE result
-      OUTPUT_VARIABLE toplevel
-      ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if(result EQUAL 0)
-      file(REAL_PATH "${toplevel}" toplevel)
-      file(REAL_PATH "${source}" real_source)
-      if(toplevel STREQUAL real_source)
-        execute_process(
-          COMMAND "${GIT_EXECUTABLE}" -C "${source}" rev-parse --short=12 HEAD
-          OUTPUT_VARIABLE commit
-          ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-        execute_process(
-          COMMAND "${GIT_EXECUTABLE}" -C "${source}" describe --tags --exact-match HEAD
-          RESULT_VARIABLE result
-          OUTPUT_VARIABLE tag
-          ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-        if(result EQUAL 0 AND NOT tag STREQUAL "")
-          set(commit "${tag}, ${commit}")
-        endif()
+      OUTPUT_VARIABLE where
+      ERROR_QUIET)
+    string(REPLACE "\r" "" where "${where}")
+    if(result EQUAL 0 AND where STREQUAL "true\n\n")
+      execute_process(
+        COMMAND ${git} rev-parse --short=12 HEAD
+        OUTPUT_VARIABLE commit
+        ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+      execute_process(
+        COMMAND ${git} describe --tags --exact-match HEAD
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE tag
+        ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+      if(result EQUAL 0 AND NOT tag STREQUAL "")
+        set(commit "${tag}, ${commit}")
       endif()
     endif()
   endif()
