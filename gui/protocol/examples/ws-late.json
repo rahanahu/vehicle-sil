@@ -216,6 +216,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -314,6 +315,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -714,6 +716,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -812,6 +815,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -935,7 +939,7 @@
         "event": "time",
         "seq": 23,
         "t_ms": 230,
-        "sim_ms": 400,
+        "sim_ms": 405,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1093,7 +1097,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 1205,
+        "sim_ms": 1210,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1123,7 +1127,7 @@
         "event": "time",
         "seq": 35,
         "t_ms": 350,
-        "sim_ms": 1225,
+        "sim_ms": 1230,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1157,7 +1161,7 @@
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -1270,10 +1274,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1225,
+            "sim_ms": 1230,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 245,
+            "paced_steps": 246,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1317,7 +1321,7 @@
             }
           ],
           "traffic": {
-            "before_ms": 1225,
+            "before_ms": 1230,
             "unplaced": [],
             "networks": [
               {
@@ -1359,7 +1363,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1479,6 +1483,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1577,6 +1582,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1626,7 +1632,7 @@
           "event": "time",
           "seq": 35,
           "t_ms": 350,
-          "sim_ms": 1225,
+          "sim_ms": 1230,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1742,6 +1748,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1840,6 +1847,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1915,7 +1923,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -1954,10 +1962,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1225,
+            "sim_ms": 1230,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 245,
+            "paced_steps": 246,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -2001,7 +2009,7 @@
             }
           ],
           "traffic": {
-            "before_ms": 1225,
+            "before_ms": 1230,
             "unplaced": [],
             "networks": [
               {
@@ -2043,7 +2051,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -2163,6 +2171,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -2261,6 +2270,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1

@@ -25,12 +25,12 @@
       },
       "stop": "none",
       "phase": "running",
-      "last_seq": 25,
-      "last_t_ms": 250,
+      "last_seq": 21,
+      "last_t_ms": 210,
       "time": {
         "event": "time",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 21,
+        "t_ms": 210,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -147,6 +147,7 @@
               }
             ],
             "network_map": null,
+            "j1939_nodes": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -245,6 +246,7 @@
               }
             ],
             "network_map": null,
+            "j1939_nodes": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -267,6 +269,7 @@
             "reported": null,
             "variables": null,
             "network_map": null,
+            "j1939_nodes": null,
             "control": null
           }
         ],
@@ -361,7 +364,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 5,
+          "kept": 1,
           "dropped": 0
         }
       },

@@ -28,6 +28,7 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: participants[].variables[].items',
   'check result: participants[].variables[].step',
   'check result: participants[].network_map',
+  'check result: participants[].j1939_nodes',
   'check result: scenario.inputs',
   'check result: scenario.lines',
   'check result: networks[].line',

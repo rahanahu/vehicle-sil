@@ -216,6 +216,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -314,6 +315,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -336,6 +338,7 @@
               "reported": null,
               "variables": null,
               "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -537,12 +540,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 16,
         "t_ms": 160,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -552,7 +554,7 @@
         "event": "control_link",
         "seq": 17,
         "t_ms": 170,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -564,6 +566,18 @@
         "event": "control_link",
         "seq": 18,
         "t_ms": 180,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 19,
+        "t_ms": 190,
         "name": "Logger",
         "state": "none"
       }
@@ -573,8 +587,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 20,
+        "t_ms": 200,
         "phase": "running"
       }
     },
@@ -583,8 +597,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -594,8 +608,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -625,8 +639,8 @@
       "session": 1,
       "event": {
         "event": "mystery",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 23,
+        "t_ms": 230,
         "detail": "an event this reader does not know"
       }
     },
@@ -634,22 +648,10 @@
       "type": "error",
       "session": 1,
       "code": "seq-gap",
-      "message": "events are missing: seq 23 never came from the launcher",
+      "message": "events are missing: seq 24 never came from the launcher",
       "detail": {
-        "expected": 23,
-        "got": 24
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 24,
-        "t_ms": 240,
-        "source": "Engine",
-        "line": "after a gap",
-        "colour": "blue"
+        "expected": 24,
+        "got": 25
       }
     },
     {
@@ -659,8 +661,9 @@
         "event": "log",
         "seq": 25,
         "t_ms": 250,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "source": "Engine",
+        "line": "after a gap",
+        "colour": "blue"
       }
     },
     {
@@ -1046,6 +1049,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1144,6 +1148,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1166,6 +1171,7 @@
                 "reported": null,
                 "variables": null,
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],
@@ -1339,6 +1345,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1437,6 +1444,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1459,6 +1467,7 @@
               "reported": null,
               "variables": null,
               "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -1787,6 +1796,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1885,6 +1895,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1907,6 +1918,7 @@
                 "reported": null,
                 "variables": null,
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],
@@ -1962,10 +1974,10 @@
           },
           {
             "code": "seq-gap",
-            "message": "events are missing: seq 23 never came from the launcher",
+            "message": "events are missing: seq 24 never came from the launcher",
             "detail": {
-              "expected": 23,
-              "got": 24
+              "expected": 24,
+              "got": 25
             }
           }
         ],

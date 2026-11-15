@@ -155,6 +155,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -253,6 +254,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -275,6 +277,7 @@
               "reported": null,
               "variables": null,
               "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -603,6 +606,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -701,6 +705,7 @@
                   }
                 ],
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -723,6 +728,7 @@
                 "reported": null,
                 "variables": null,
                 "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],

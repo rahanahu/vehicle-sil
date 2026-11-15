@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 225,
-      "last_t_ms": 2250,
+      "last_seq": 239,
+      "last_t_ms": 2390,
       "time": {
         "event": "time",
-        "seq": 211,
-        "t_ms": 2110,
-        "sim_ms": 92000,
+        "seq": 225,
+        "t_ms": 2250,
+        "sim_ms": 99210,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -147,6 +147,7 @@
               }
             ],
             "network_map": null,
+            "j1939_nodes": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -245,6 +246,7 @@
               }
             ],
             "network_map": null,
+            "j1939_nodes": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -267,6 +269,7 @@
             "reported": null,
             "variables": null,
             "network_map": null,
+            "j1939_nodes": null,
             "control": null
           }
         ],
@@ -370,7 +373,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 221,
+        "seq": 235,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -394,7 +397,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 92000,
+          "sim_ms": 99210,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -458,7 +461,7 @@
           }
         ],
         "traffic": {
-          "before_ms": 92000,
+          "before_ms": 99210,
           "unplaced": [
             {
               "participant": "Logger",
@@ -485,8 +488,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 91990,
-                  "frames_sent": 921,
+                  "at_ms": 99200,
+                  "frames_sent": 993,
                   "frames_received": 0
                 },
                 {
@@ -494,9 +497,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 91990,
+                  "at_ms": 99200,
                   "frames_sent": 0,
-                  "frames_received": 921
+                  "frames_received": 993
                 }
               ]
             }
@@ -621,6 +624,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -719,6 +723,7 @@
                 }
               ],
               "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -741,6 +746,7 @@
               "reported": null,
               "variables": null,
               "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -775,7 +781,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 185,
+          "kept": 199,
           "dropped": 0
         }
       },
