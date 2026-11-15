@@ -5,7 +5,7 @@
 #include "yaml_tree.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -22,7 +22,7 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using Writer = vehicle_sil::detail::JsonWriter;
+using Writer = vehicle_sil::json::JsonWriter;
 
 /// The members that `fill` writes, as a compact JSON object.
 template <class Fill>

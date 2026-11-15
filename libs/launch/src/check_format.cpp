@@ -6,7 +6,8 @@
 
 #include "check_format.hpp"
 #include "check_words.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/ecu/describe_json.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 
 #include <system_error>
 #include <cctype>
@@ -239,7 +240,7 @@ std::string detail::check_text_body(const CheckReport& report)
     return out;
 }
 
-void detail::write_scenario_lines_json(vehicle_sil::detail::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
+void detail::write_scenario_lines_json(vehicle_sil::json::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
                                        const std::vector<ScenarioLineText>& lines)
 {
     const auto number = [&w](std::string_view key, const std::optional<std::int64_t>& n) {
@@ -394,7 +395,7 @@ std::string format_text(const CheckReport& report)
     return out;
 }
 
-void detail::write_finding_members(vehicle_sil::detail::JsonWriter& w, const std::string& file, const Finding& finding)
+void detail::write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -423,7 +424,7 @@ void detail::write_finding_members(vehicle_sil::detail::JsonWriter& w, const std
     optional_text("detail", finding.detail);
 }
 
-void detail::write_params_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params)
+void detail::write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params)
 {
     w.begin_array(key);
     for (const ParamValue& param : params)
@@ -463,7 +464,7 @@ void detail::write_params_json(vehicle_sil::detail::JsonWriter& w, std::string_v
     w.end_array();
 }
 
-void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
+void detail::write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
 {
     w.begin_array("findings");
     for (const auto& finding : findings)
@@ -477,14 +478,14 @@ void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::
 
 std::string format_json(const CheckReport& report)
 {
-    vehicle_sil::detail::JsonWriter w;
+    vehicle_sil::json::JsonWriter w;
     detail::write_check_json(w, {}, report);
     std::string out = w.take();
     out += '\n';
     return out;
 }
 
-void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_view member, const CheckReport& report)
+void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view member, const CheckReport& report)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -580,7 +581,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             if (result.ecu && result.ecu->variables_reported)
             {
                 // As the simulation sees them (the run's hub applies the same map).
-                vehicle_sil::detail::write_variables(w, "variables", seen_variables(p, *result.ecu).schema());
+                vehicle_sil::write_variables(w, "variables", seen_variables(p, *result.ecu).schema());
             }
             else
             {

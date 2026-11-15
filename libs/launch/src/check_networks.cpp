@@ -9,7 +9,7 @@
 #include "vehicle_sil/launch/check.hpp"
 
 #include "check_format.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 
 #include <string>
 #include <utility>
@@ -39,7 +39,7 @@ std::vector<SeenNetwork> seen_networks(const ParticipantConfig& participant, con
     return out;
 }
 
-void detail::write_reported_networks(vehicle_sil::detail::JsonWriter& w, const EcuDescription& ecu)
+void detail::write_reported_networks(vehicle_sil::json::JsonWriter& w, const EcuDescription& ecu)
 {
     w.begin_array("networks");
     for (const auto& network : ecu.networks)
@@ -55,7 +55,7 @@ void detail::write_reported_networks(vehicle_sil::detail::JsonWriter& w, const E
             w.integer("address", node.address);
             if (node.name)
             {
-                w.string("j1939_name", vehicle_sil::detail::hex64(node.name->value()));
+                w.string("j1939_name", vehicle_sil::json::hex64(node.name->value()));
             }
             else
             {

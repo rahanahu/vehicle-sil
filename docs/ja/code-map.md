@@ -690,6 +690,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `Ecu` | `ecu/ecu.hpp` |
 | `EcuDescription`、`to_json()` | `ecu/describe.hpp` |
+| `to_json()` の名前と `variables` の配列。読む道具や同じ形で書く道具が使う（`value_type_name()`、`causality_name()`、`write_variables()`） | `ecu/describe_json.hpp` |
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
 | ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
 | 引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
@@ -697,6 +698,17 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
 - `ctest -R`: `^ecu\.`、`^simulation\.disconnect`
+
+### `libs/json`
+
+`--describe` の出力と `vehicle_sil_launch` の JSON が共有する JSON の書き手です（ターゲット `vehicle_sil::json`、ヘッダーだけ）。
+
+| 名前 | 場所 |
+|---|---|
+| `JsonWriter`、`hex64()` | `vehicle_sil/json/json_writer.hpp` |
+
+- テスト: `--describe` の JSON（`tests/ecu`）とランチャーの JSON（`tests/launch`）を通して
+- `ctest -R`: `^ecu\.`、`^launch`
 
 ### `libs/spy`
 
@@ -1228,7 +1240,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`spy`、`process`、`eth_link`、`signal` です。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`spy`、`process`、`eth_link`、`signal`、`json` です。`signal` と `json` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
 
 ### 基盤と SIL Kit の実装
 
@@ -1286,6 +1298,7 @@ flowchart TD
     ecu --> lin
     ecu --> eth
     ecu --> control
+    ecu --> json
     control --> sim_base
     local --> can
     local --> j1939
@@ -1337,6 +1350,7 @@ flowchart TD
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
+    launch -.-> json
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1361,7 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` と `ecu`: `launch` のソースは `ecu` の内部のヘッダー `vehicle_sil/ecu/detail/json_writer.hpp` も読みます。ランチャーは、`--describe` の出力と同じ書き手で JSON を書きます。
+- `launch`、`ecu`、`json`: ランチャーは、`--describe` の出力と同じ書き手 `vehicle_sil/json/json_writer.hpp`（`json`）で JSON を書き、`--describe` の変数を `vehicle_sil/ecu/describe_json.hpp` で同じ形に書きます。`launch` は `ecu` の内部のヘッダーを読みません。
 
 ### Vector XL CAN Bridge
 
@@ -1836,7 +1850,7 @@ flowchart TD
 | 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
 | 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
-| 1 行に 1 点 | `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
+| 1 行に 1 点 | `libs/json/include/vehicle_sil/json/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |

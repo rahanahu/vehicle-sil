@@ -5,7 +5,7 @@
 #include "vehicle_sil/launch/check.hpp"
 
 #include "check_words.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/ecu/describe_json.hpp"
 #include "yaml_tree.hpp"
 
 #include <array>
@@ -223,10 +223,10 @@ private:
         out.type = name_of(member(node, "type", at), at + ".type",
                            std::array{control::ValueType::Bool, control::ValueType::Integer, control::ValueType::Real,
                                       control::ValueType::Enum},
-                           &vehicle_sil::detail::value_type_name);
+                           &vehicle_sil::value_type_name);
         out.causality = name_of(member(node, "causality", at), at + ".causality",
                                 std::array{control::Causality::Input, control::Causality::Output, control::Causality::Parameter},
-                                &vehicle_sil::detail::causality_name);
+                                &vehicle_sil::causality_name);
         out.unit = text(member(node, "unit", at), at + ".unit");
         out.min = real(member(node, "min", at), at + ".min");
         out.max = real(member(node, "max", at), at + ".max");

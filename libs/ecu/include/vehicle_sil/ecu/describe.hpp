@@ -279,10 +279,6 @@ inline constexpr int kEcuDescriptionFormat = 1;
 [[nodiscard]] std::optional<NetworkUse> network_use_named(std::string_view name) noexcept;
 
 namespace detail {
-/// The length of the valid UTF-8 sequence at the start of `text` (1 to 4), or 0 if it starts
-/// with none (an empty text, a stray or missing continuation byte, an overlong form, a surrogate,
-/// a value above U+10FFFF).
-[[nodiscard]] std::size_t utf8_sequence_length(std::string_view text) noexcept;
 /// true if all of `text` is valid UTF-8 (ASCII included).
 [[nodiscard]] bool is_utf8(std::string_view text) noexcept;
 } // namespace detail
