@@ -84,6 +84,9 @@ struct TimelineFailure
 /// the thread that runs it, and closes it when the scenario is over; then it only is read. Not
 /// thread safe.
 ///
+/// Besides the series: the lines of the inputs (Line), the watch of each step and what a failed
+/// step failed of.
+///
 /// Two kinds of series. Written: every value the engine sent for a variable, in the order sent
 /// (sent: also the writes that were not applied, which failed() marks).
 /// Sampled: the values of a variable that a condition reads, of every sample the engine looked at;
@@ -140,14 +143,40 @@ public:
         std::optional<SimTime> until{};
     };
 
+    /// What a step put on the line of a variable when its time came: a set its value, a ramp or
+    /// a wave its motion (ScenarioEngine, "Lines"). In the order put: by time, then step, then the
+    /// order within the step.
+    struct Line
+    {
+        std::size_t step = 0;     ///< index in Scenario::steps
+        std::size_t part = 0;     ///< index in that step's writes (a set) or motions (a ramp, a wave)
+        std::size_t variable = 0; ///< index in Scenario::variables
+        SimTime from{};
+        /// Of a set its value. Of a motion what it starts from or swings around: the number the
+        /// step names, or the value the line or the sample had; empty if its shape uses none, or
+        /// none was known (the step then failed).
+        std::optional<control::Value> base{};
+        /// Where a motion's base is from: "written" (the step names it; also a set's value),
+        /// "line", "sample"; null without a base.
+        const char* base_source = nullptr;
+        /// A write of it went out (written() with its step, for its time). The engine puts what
+        /// the steps of one time do on the lines before it sends the first write of that time,
+        /// and a failure there ends the scenario: a line that sent nothing did not happen, and
+        /// close() drops it.
+        bool sent = false;
+    };
+
     explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {});
 
     // --- the engine's side ---
-    /// A write that is sent: a point of the variable's series. Returns what names that point
-    /// from then on (TimelineFailedWrite::sent); empty if the record keeps none.
-    std::optional<std::uint64_t> written(std::size_t variable, SimTime at, const control::Value& value, bool motion);
+    /// A write that is sent, of `step` (index in Scenario::steps): a point of the variable's
+    /// series, and the line that step put at `at` on the variable has happened (Line::sent).
+    /// Returns what names that point from then on (TimelineFailedWrite::sent); empty if the
+    /// record keeps none.
+    std::optional<std::uint64_t> written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
     /// A sample of `variable` (kept if a condition reads the variable).
     void sampled(std::size_t variable, SimTime at, const control::Value& value);
+    void line(Line line);
     void watch(std::size_t step, Watch watch);
     /// The step failed. Marks the points of `failure.writes` that are not known to be applied.
     void failed(std::size_t step, TimelineFailure failure);
@@ -164,6 +193,8 @@ public:
     /// Per step of the scenario; empty for a step without conditions, or one that was not reached.
     [[nodiscard]] const std::vector<std::optional<Watch>>& watches() const noexcept { return watches_; }
     [[nodiscard]] const std::vector<std::optional<TimelineFailure>>& failures() const noexcept { return failures_; }
+    /// Once closed: those put at or before the time it was closed at of which a write was sent.
+    [[nodiscard]] const std::vector<Line>& lines() const noexcept { return lines_; }
     /// The time close() was given; empty while the scenario runs.
     [[nodiscard]] const std::optional<SimTime>& recorded_to() const noexcept { return recorded_to_; }
     /// How many points went at a limit, of all series.
@@ -182,6 +213,7 @@ private:
     std::vector<std::optional<std::size_t>> sampled_; ///< per variable: its sampled series
     std::vector<std::optional<Watch>> watches_;
     std::vector<std::optional<TimelineFailure>> failures_;
+    std::vector<Line> lines_;
     std::optional<SimTime> recorded_to_{};
     std::size_t total_ = 0; ///< the points that can go, of all series
     std::uint64_t next_serial_ = 0;

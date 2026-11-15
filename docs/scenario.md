@@ -271,7 +271,7 @@ A `set` is a write stamped with time T. Each ECU applies it at the start of its 
 | One `set` with several variables of the same participant | They are applied together in the same ECU step. |
 | When `ramp` writes | For each variable, at T, T + step, T + 2 steps, … (in steps of that ECU), it writes the value on the line from `from` to `to`. At T + `over_ms`, it writes `to`. |
 | Start value of `ramp` (without `from`) | The last value the scenario wrote to that variable. |
-| Start value of a variable the scenario has not written yet | The value of the latest sample. |
+| Start value of a variable the scenario has not written yet | The value of the latest sample. Which sample it is, and whether there is one yet, depends on the controller's time step, because a write at T is sent in a time step before T (see "End of the record (`recorded_to_ms`)" in [simulation-run.md](simulation-run.md#end-of-the-record-recorded_to_ms)). For a result that does not depend on the time step, write `from`. |
 | Neither a written value nor a sample | The step fails (write `from`). |
 | Another writer (such as the ECU itself) changed the value after the scenario wrote it | The start value does not change. |
 | When the result of a write is checked | At the controller step after the ECU step that applies it. |

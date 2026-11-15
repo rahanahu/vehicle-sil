@@ -1012,12 +1012,15 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `tick_ms` | The controller's time step |
 | `scenario` | `file`, `name`, `status` and `over_at_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
 | `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
-| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `watch` and `failed` |
+| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
+| `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
 | `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `code` only (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
 | `limits` | The limits on the number of points, and the dropped points (see "Limits" below) |
 
-A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` and `status` of a step), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version.
+A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` and `status` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version.
+
+The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write. Launchers with `timeline-lines` in `features` of `vehicle_sil_launch version --json` write the top-level `lines[]` and the `lines` of each step.
 
 The `watch` of a step is the condition that the step checks (`null` for a step without a condition).
 
@@ -1123,9 +1126,53 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   - Points whose time is after `scenario.over_at_ms` (no ECU advanced to that time).
 - In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied.
 
+### Input lines (`lines[]`)
+
+Each variable that the scenario writes has one line. When a step's time comes, the step places what it does on the line: a `set` places a value, and a `ramp` or `wave` places a motion. `lines[]` lists the placed items for which at least one write was sent, in the order placed (time order; at the same time, step order; within one step, the order written).
+
+```json
+{
+  "variable": "Engine.engine.throttle",
+  "kind": "ramp",
+  "line": 9,
+  "step": 2,
+  "from_ms": 500,
+  "to_ms": 1500,
+  "base": 50,
+  "base_source": "line",
+  "shape": {
+    "type": "ramp",
+    "to": 80,
+    "over_ms": 1000
+  },
+  "text": "Engine.engine.throttle to 80 over 1000 ms"
+}
+```
+
+| Key | Value |
+|---|---|
+| `variable` | The variable |
+| `kind`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`), the line in the scenario file, and the step's `index` |
+| `from_ms`, `to_ms` | The step's time and the end of the motion as written (`from_ms` + the duration). The same value for `set`. If the run ended first, points exist only up to `recorded_to_ms` |
+| `base` | For `set`, the value written. For `ramp` and `wave`, the start value or the center of the swing (`from` and `around` in [scenario.md](scenario.md)). Written the same way as the series points (a number that the step wrote stays as written). `null` for shapes that carry their own values (`square` with `low` and `high`, `points` that start at 0 ms, and so on) |
+| `base_source` | Where `base` came from (see the table below). `null` if `base` is `null` |
+| `shape` | The shape of `ramp` and `wave`: `type` (`ramp` or the waveform name) and the keys and values written in the step (after parameters are applied). `null` for `set` |
+| `text` | One line for people (this variable's part of the step's `text`) |
+
+| `base_source` | Where `base` came from |
+|---|---|
+| `written` | A value written in the step (the value of `set`, `from`, `around`, or the other value of a bool) |
+| `line` | The line's value: the value that the scenario had placed for the variable at that time (the value of an earlier `set` or the end value of an earlier motion, rounded for integers) |
+| `sample` | The latest sample at that moment, for a variable that the scenario has not written yet. **Which sample it is depends on the controller's time step** (see "End of the record" below). The same holds for `line` bases after a motion that ends by returning to this value |
+
+- `shape` holds only the keys written in the step (for the defaults of omitted keys, see the waveform tables in [scenario.md](scenario.md#waveform-keys)). `from` and `around` are not in `shape`; they become `base`. For `wave`, `shape` also holds `for_ms` (for waveforms that take `for_ms`).
+- The `shape` of `points` holds the number of points (`points`) and `interpolate`. For points read from a CSV file, it also holds `file`, `value`, `time` and `time_unit` as written (the column names only; the point values are in the series).
+- The file holds only lines whose `from_ms` is at or before `recorded_to_ms` and **for which at least one write was sent** (the file records what happened). If the scenario failed before the first write of a line, the line is left out, and it is not in the step's `lines` either. Examples: a `ramp` after a refused `set` of an earlier step at the same time; when one step moves several variables and the start value of one is not found, that variable and the variables written after it. A refused write was sent, so its line is included (as with the series points).
+- In a run where the scenario did not start, `lines` is empty.
+
 ### End of the record (`recorded_to_ms`)
 
-`scenario.recorded_to_ms` is the virtual time at the right edge of the record. The series hold only points up to this time.
+`scenario.recorded_to_ms` is the virtual time at the right edge of the record. The series hold only points up to this time, and `lines[]` holds only lines placed up to this time for which a write was sent.
 
 | Scenario | `recorded_to_ms` |
 |---|---|
@@ -1140,6 +1187,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.
   - In a run where a step failed, the `status` of the other steps (the steps after the failed one and the steps in progress), which can be `passed`, `unfinished` or `not_run`, and their `start_ms`, `at_ms` and `end_ms`. The time step decides how far ahead the controller had sent and how many results it had seen before the failure was known. **So a `passed` step can have an `at_ms` after `recorded_to_ms`, and the points of that step's writes are not in the series** (the series and `recorded_to_ms` do not depend on the time step).
   - Everything in a run that ended with a write not applied.
+  - The start value of a `ramp` or `wave` without `from` or `around` on a variable that the scenario has not written yet (the `base` of a line whose `base_source` is `sample`), and the values of that motion. When that motion ends by returning to its start value (`pulse`, and waveforms that return to the center, such as `sine` without `around`), the `base` of the following motions without `from` or `around` (`base_source` `line`) comes from the same sample and changes the same way. The controller sends a write for time T in its own time step before T, and the start value is the latest sample seen by then. A coarse time step therefore gives an older sample, and before any sample has been seen (T is at most the length of the controller's first time step: with a 30 ms time step, times up to 30 ms), the step fails with `scenario-write` (no start value). For a result that does not depend on the time step, write `from` or `around`, or `set` the variable first.
 - An `incomplete` run and a run that ended at `stop_at_ms` do not always give the same file, because real time can decide how far the run saw.
 
 ### Limits

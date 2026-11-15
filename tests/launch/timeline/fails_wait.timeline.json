@@ -66,6 +66,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
+      "lines": [0, 1],
       "watch": null,
       "failed": null
     },
@@ -80,6 +81,7 @@
       "end_ms": null,
       "code": "scenario-timeout",
       "message": "timed out at 100 ms (100 ms after 0 ms): Body.body.speed ge 1000, but it was 50 (its sample of 100 ms)",
+      "lines": [],
       "watch": {
         "mode": "once",
         "from_ms": 0,
@@ -130,6 +132,7 @@
       "end_ms": null,
       "code": null,
       "message": null,
+      "lines": [],
       "watch": null,
       "failed": null
     }
@@ -172,6 +175,32 @@
       "points": [
         [0, 50]
       ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 5,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 5"
+    },
+    {
+      "variable": "Door.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 1,
+      "base_source": "written",
+      "shape": null,
+      "text": "Door.level = 1"
     }
   ],
   "findings": [

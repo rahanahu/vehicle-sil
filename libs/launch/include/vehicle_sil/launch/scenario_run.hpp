@@ -145,7 +145,7 @@ struct EnginePeer
 ///
 /// Times. A step's time T is at_ms, or after_ms after the end of the step before it. The end of
 /// a set and of an expect at one time is T; of a ramp T + over_ms; of a wave T + its longest
-/// length (ScenarioSignal::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
+/// length (ScenarioMotion::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
 /// happens. A wait_until, or an expect with within_ms, that becomes true at the sample of time t
 /// is known to the engine at the first step P of the controller after t, and ends at P + tick:
 /// the first time at which a write of the next step can still take effect.
@@ -159,12 +159,28 @@ struct EnginePeer
 /// Writes. A set at T is one command per participant with the time T: it takes effect in that
 /// ECU's first step at or after T. A ramp from T writes, per variable, at T, T + step, T + 2 step,
 /// ... (the ECU's step) the value on the line from `from` to `to`, and `to` at T + over_ms; a
-/// `from` that is not given is the value the scenario wrote to the variable last, or the one of
-/// the latest sample the engine has looked at if that is newer. A wave is the same with another
+/// `from` that is not given is where the scenario left the variable: the value of its line (below)
+/// at T, or, while the scenario has put nothing on that line, the one of the latest sample the
+/// engine has looked at when it sends the writes for T. A wave is the same with another
 /// function of the time since T (Waveform; the ramp's line is one): at each of those times the
 /// function's value then, worked out when the write goes out, and at the end of its length
 /// Waveform::end(); the base it swings around or starts from is found as a ramp's `from`. The
-/// values depend on those times alone, not on the controller's tick or on what arrives when. The result of a write is judged
+/// values depend on those times alone, not on the controller's tick or on what arrives when
+/// (but for a base that is a sample: which sample is the latest then depends on the tick, and
+/// with a tick so long that the writes for T go out before any sample is there, there is none).
+///
+/// Lines. Per variable the scenario writes there is a line: where the scenario left it, and the
+/// motion (ramp or wave) that moves it now. When the engine hands out the writes of a time T, it
+/// first puts on the lines what the steps that begin at T do, in the order of the steps (a set
+/// its value, a ramp or a wave its motion, which reads its base there if it names none), and then
+/// sends the writes for T. So the base of a motion is the value the line has at T: of a set at
+/// or before T, or the end value of the motion before it, as the variable's type has it (an
+/// integer rounded), also if that motion's length is not a multiple of its ECU's step. A motion
+/// that finds no base fails its step at its first write. The values a motion writes come from
+/// one function of the motion and the time (motion_value(), which is motion_number() as the
+/// variable's type has it: scenario_line.hpp).
+///
+/// The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
 /// has arrived). Anything but "applied" fails the step ("scenario-write").
 ///
@@ -194,11 +210,12 @@ struct EnginePeer
 ///
 /// The record (a TimelineRecord, for run --timeline; none: nothing of what follows happens, and
 /// the engine does exactly what it does without one). The engine notes in it every write it
-/// sends (submit_one()), the value of every sample it looks at (observe()), each step's watch
-/// and what a failed step failed of. When the scenario is over it closes the record at one time,
+/// sends (submit_one()), what each step puts on a line (place()), the value of every sample it
+/// looks at (observe()), each step's watch and what a failed step failed of. When the scenario is over it closes the record at one time,
 /// "recorded to": the `at` of the failed step; of a scenario that passed, the latest `at` of its
 /// steps; of one that is Incomplete, the time of the last sample looked at (0 without one).
-/// Nothing after that time stays in the record, and the samples up to it that the engine had not
+/// Nothing after that time stays in the record (no point, and no line put after it; nor a line
+/// of which no write was sent: put, and then a write before its own failed), and the samples up to it that the engine had not
 /// looked at yet (they do not decide anything any more) are noted first, if they are of steps
 /// before the controller's step being handled (those have all arrived). So what the record has
 /// of a scenario that passed, or failed at a sample, does not depend on the controller's tick
@@ -221,6 +238,7 @@ public:
     /// `scenario`, `port` and `record` (may be null) must outlive the engine. `tick` > 0.
     ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {},
                    TimelineRecord* record = nullptr);
+    ~ScenarioEngine();
 
     /// `peers` in the order of Scenario::participants.
     void begin(const std::vector<EnginePeer>& peers);
@@ -243,7 +261,6 @@ private:
         std::string problem;              ///< why it cannot be used in this run, or ""
         std::optional<control::Value> value; ///< of the latest sample looked at
         std::optional<SimTime> value_time;
-        std::optional<control::Value> written; ///< what the scenario wrote last
     };
     struct Watch
     {
@@ -261,19 +278,19 @@ private:
         std::vector<ScenarioWrite> writes;
         /// Per write, once sent: what the record named its point (TimelineRecord::written()).
         std::vector<std::optional<std::uint64_t>> sent{};
-        std::optional<std::size_t> signal{}; ///< of signals_: its value is worked out when it is sent
-        bool signal_last = false;            ///< the signal's end value
+        std::optional<std::size_t> motion{}; ///< of motions_: its value is worked out when it is sent
+        bool motion_last = false;            ///< the motion's end value
         std::uint64_t ticket = 0;
         SimTime judge{};
     };
     /// A ramp or a wave of one variable that is being written.
-    struct Signal
+    struct Motion
     {
         std::size_t step = 0;
-        ScenarioSignal signal;
+        ScenarioMotion motion;
+        std::size_t part = 0; ///< its index in the step's motions
         SimTime from_time{};
         SimDuration period{};
-        std::optional<double> base{}; ///< found at its first write, if the step does not name it
         std::int64_t next = 0; ///< the next write is at from_time + next * period (or the end)
         bool done = false;
     };
@@ -281,6 +298,9 @@ private:
     void issue();
     void issue_step(std::size_t index, SimTime time);
     void submit(SimTime from_exclusive, SimTime to_inclusive, bool at_start);
+    /// Puts on the lines what `write` begins, if it is the first write of its step for a
+    /// variable: before any write of its time is sent.
+    void place(const Write& write);
     bool submit_one(Write write);
     void judge(SimTime p);
     void observe(SimTime p);
@@ -334,8 +354,11 @@ private:
     std::deque<Watch> watches_;      ///< in step order
     std::deque<Write> to_send_;      ///< sets, by step
     std::deque<Write> sent_;         ///< in the order sent
-    std::deque<Signal> signals_;
-    /// Per step: what has yet to happen before it passes: writes not judged yet (signals not done
+    std::deque<Motion> motions_;
+    /// The lines of the variables (scenario_line.hpp), and each of motions_ as it was put on its.
+    struct Lines;
+    std::unique_ptr<Lines> lines_;
+    /// Per step: what has yet to happen before it passes: writes not judged yet (motions not done
     /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
     std::vector<std::size_t> open_writes_;
     std::size_t done_ = 0; ///< steps that passed or were skipped

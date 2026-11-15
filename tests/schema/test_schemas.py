@@ -849,12 +849,20 @@ class TimelineSchema(unittest.TestCase):
             "a step without its watch": lambda d: d["steps"][0].pop("watch"),
             "a variable that is an index": lambda d: d["series"][0].update(variable=0),
             "no recorded_to_ms": lambda d: d["scenario"].pop("recorded_to_ms"),
+            "a line without its variable": lambda d: d["lines"][0].pop("variable"),
+            "a line whose step is a text": lambda d: d["lines"][0].update(step="1"),
+            "a shape without its type": lambda d: d["lines"][-1].update(shape={"to": 1}),
+            "step lines that are no positions": lambda d: d["steps"][0].update(lines=["0"]),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
         # What a later version may add is no mistake: keys, and values of the open lists.
         additions = {
-            "a key it does not know": lambda d: d.update(lines=[]),
+            "a key it does not know": lambda d: d.update(notes=[]),
+            "a kind of line and a base_source it does not know": lambda d: d["lines"][0].update(kind="hold", base_source="given"),
+            "a key of a shape it does not know": lambda d: d["lines"][-1]["shape"].update(steepness=2),
+            # A launcher without the feature timeline-lines writes the same format without them.
+            "no lines, in the file and in the steps": lambda d: (d.pop("lines"), [step.pop("lines") for step in d["steps"]]),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
             "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
         }

@@ -20,6 +20,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace vehicle_sil::launch {
@@ -81,6 +83,8 @@ struct ScenarioWrite
 {
     std::size_t variable = 0;
     control::Value value{};
+    /// Of a set, as in the step's text: "Body.level = 20".
+    std::string text{};
 };
 
 /// A value over the time of a step, as a function of the virtual time since the step began and of
@@ -91,7 +95,7 @@ class Waveform
 public:
     virtual ~Waveform() = default;
     /// The value at `t` after the step began (0 <= t < the length). `base` is the value the
-    /// variable has when the step begins, or the one the step names instead (ScenarioSignal::base);
+    /// variable has when the step begins, or the one the step names instead (ScenarioMotion::base);
     /// 0 if uses_base() is false.
     [[nodiscard]] virtual double value(SimDuration t, double base) const = 0;
     /// The value written at the end of the length, which the variable keeps.
@@ -100,9 +104,25 @@ public:
     [[nodiscard]] virtual bool uses_base() const { return true; }
 };
 
+/// The shape of a ramp or a wave as the step's text gives it, for what shows a motion without
+/// running it (the lines of a timeline file): its name and the values the text has, with the
+/// parameters put in. What the text leaves out is not here (the defaults: docs/scenario.md), nor
+/// is the base (a ramp's or a lag's from, a wave's around: ScenarioMotion::base).
+struct ScenarioShapeText
+{
+    /// A whole number as it is (a seed keeps every digit), another number, true or false, a word.
+    using Value = std::variant<double, std::int64_t, bool, std::string>;
+    /// "ramp", or the wave's shape ("sine", "square", ..., "points").
+    std::string type;
+    /// The keys of the shape with their values, in the order the format lists them; then for_ms.
+    /// Of points: "points" (how many), "interpolate" ("linear" or "hold"), and of points from a
+    /// file "file", "value" and "time" (the names of the columns) and "time_unit", as given.
+    std::vector<std::pair<std::string, Value>> values{};
+};
+
 /// One variable of a ramp or a wave: the engine writes shape->value() at every step of the
 /// variable's ECU for length_ms, then shape->end().
-struct ScenarioSignal
+struct ScenarioMotion
 {
     std::size_t variable = 0;
     std::shared_ptr<const Waveform> shape;
@@ -114,6 +134,7 @@ struct ScenarioSignal
     std::string hint;
     /// As in the step's text: "Body.level from 10 to 20 over 100 ms".
     std::string text;
+    ScenarioShapeText described{};
 };
 
 enum class StepKind
@@ -135,7 +156,7 @@ struct ScenarioStep
     std::optional<std::int64_t> at_ms{};
     std::int64_t after_ms = 0;
     std::vector<ScenarioWrite> writes{};       ///< Set
-    std::vector<ScenarioSignal> signals{};     ///< Ramp, Wave
+    std::vector<ScenarioMotion> motions{};     ///< Ramp, Wave
     /// Expect, WaitUntil: all of them. Ramp, Wave: the expect beside it (empty without one), which
     /// must be true from the step's time to its end, both included.
     std::vector<ScenarioCondition> conditions{};
@@ -148,7 +169,7 @@ struct ScenarioStep
     /// Why the run skips it, or "" if it runs: it uses a variable that its participant does not
     /// have in this configuration (absent: true in its variable map), or a variable of a
     /// participant that the chosen variant leaves out. A skipped step writes and compares nothing
-    /// (`writes`, `signals` and `conditions` are empty) and ends `skipped_ms` after its own time.
+    /// (`writes`, `motions` and `conditions` are empty) and ends `skipped_ms` after its own time.
     std::string skipped{};
     /// Of a skipped step: the time it takes as the text says it (the longest over_ms of a ramp,
     /// the longest length of a wave, the hold_for_ms of an expect), so that the steps after it have the same times in every

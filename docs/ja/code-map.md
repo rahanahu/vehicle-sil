@@ -1711,6 +1711,8 @@ flowchart TD
 - 判定に使うのは仮想時刻だけです。実時間の待ちと時間切れで、結果を決めません。
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
+- 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/launch/src/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
+- 動きの値を出す関数は `motion_value()` の 1 つで、エンジンの `submit_one()` はこれを呼びます。動きの値を出す所を追加するときも、同じ関数を呼びます。
 - ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario.cpp` の `seen_between()` のルール 1 つに従います。
 - `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
 - 点を足す口（文面と CSV ファイル）は `read_points()` の 1 つで、同じ照合を通ります。
@@ -1732,6 +1734,7 @@ flowchart TD
 
 - `^launch\.scenario_`: 偽の ECU のモデルで、受信の順を変えても結果が同じ
 - `launch.scenario_wave_*`: 波形の値、終わった後の値、指摘
+- `launch.scenario_line_*`（`tests/launch/test_scenario_line.cpp`）: 線だけのテスト
 - `launch.scenario_expect_beside_*`: `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけスキップすること
 - `^signal\.`
 - `launch_run.scenario`
@@ -1751,7 +1754,7 @@ flowchart TD
 | 内容 | 場所 |
 |---|---|
 | 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
-| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
+| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身は `scenario.cpp` が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |

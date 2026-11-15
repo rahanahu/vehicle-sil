@@ -1711,6 +1711,8 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - Only virtual time decides results. Real-time waits and timeouts do not decide a result.
 - The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
+- The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/launch/src/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
+- One function, `motion_value()`, gives the values of a motion, and the engine's `submit_one()` calls it. Code that you add to compute motion values calls the same function.
 - Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
 - `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
 - Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
@@ -1732,6 +1734,7 @@ Tests:
 
 - `^launch\.scenario_`: with a fake ECU model, the result is the same when the receive order changes
 - `launch.scenario_wave_*`: waveform values, values after the waveform ends, findings
+- `launch.scenario_line_*` (`tests/launch/test_scenario_line.cpp`): the input lines alone
 - `launch.scenario_expect_beside_*`: the interval of an `expect` beside `ramp` and `wave`, the order in which steps are decided, skipping only the `expect` by variant
 - `^signal\.`
 - `launch_run.scenario`
@@ -1751,7 +1754,7 @@ Where to change:
 | What | Location |
 |---|---|
 | The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
-| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which `scenario.cpp` fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |

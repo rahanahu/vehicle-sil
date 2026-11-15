@@ -475,7 +475,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "scenario-wave",
     "scenario-motion-expect",
     "scenario-points-file",
-    "timeline"
+    "timeline",
+    "timeline-lines"
   ]
 }
 ```
@@ -513,6 +514,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-motion-expect` | シナリオの `ramp` と `wave` の横に書く `expect`（[scenario.md](scenario.md) の「動かしている間ずっと確認する」） |
 | `scenario-points-file` | シナリオの `wave` の `points` を CSV ファイルから読む（`points: { file, value, time, time_unit }`。[scenario.md](scenario.md) の「点を CSV ファイルから読む」） |
 | `timeline` | `run --scenario --timeline <file>`: シナリオの実行を時間の軸で記録したファイル（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」） |
+| `timeline-lines` | `--timeline` のファイルの `lines[]`（入力ごとの線: 手順が置いた値と動き、動きの始まりの値とその出どころ）と、手順の `writes[]`（[simulation-run.md](simulation-run.md) の同じ節） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 

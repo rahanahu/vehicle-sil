@@ -118,6 +118,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
+      "lines": [0, 1],
       "watch": null,
       "failed": null
     },
@@ -132,6 +133,7 @@
       "end_ms": 20,
       "code": null,
       "message": null,
+      "lines": [],
       "watch": {
         "mode": "at",
         "from_ms": 20,
@@ -161,6 +163,7 @@
       "end_ms": 120,
       "code": null,
       "message": null,
+      "lines": [2, 3],
       "watch": {
         "mode": "during",
         "from_ms": 20,
@@ -199,6 +202,7 @@
       "end_ms": 220,
       "code": null,
       "message": null,
+      "lines": [4, 5],
       "watch": null,
       "failed": null
     },
@@ -213,6 +217,7 @@
       "end_ms": 280,
       "code": null,
       "message": null,
+      "lines": [6],
       "watch": null,
       "failed": null
     },
@@ -227,6 +232,7 @@
       "end_ms": 340,
       "code": null,
       "message": null,
+      "lines": [],
       "watch": {
         "mode": "always",
         "from_ms": 290,
@@ -405,6 +411,115 @@
         [250, 2],
         [280, 1]
       ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 20,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 20"
+    },
+    {
+      "variable": "Door.lamp",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": true,
+      "base_source": "written",
+      "shape": null,
+      "text": "Door.lamp = true"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "ramp",
+      "line": 10,
+      "step": 3,
+      "from_ms": 20,
+      "to_ms": 120,
+      "base": 20,
+      "base_source": "line",
+      "shape": {
+        "type": "ramp",
+        "to": 40,
+        "over_ms": 100
+      },
+      "text": "Body.level to 40 over 100 ms"
+    },
+    {
+      "variable": "Door.ratio",
+      "kind": "ramp",
+      "line": 10,
+      "step": 3,
+      "from_ms": 20,
+      "to_ms": 70,
+      "base": 0,
+      "base_source": "written",
+      "shape": {
+        "type": "ramp",
+        "to": 1,
+        "over_ms": 50
+      },
+      "text": "Door.ratio from 0 to 1 over 50 ms"
+    },
+    {
+      "variable": "Door.level",
+      "kind": "wave",
+      "line": 12,
+      "step": 4,
+      "from_ms": 120,
+      "to_ms": 220,
+      "base": 50,
+      "base_source": "written",
+      "shape": {
+        "type": "triangle",
+        "amplitude": 5,
+        "period_ms": 80,
+        "for_ms": 100
+      },
+      "text": "Door.level triangle amplitude 5 period 80 ms around 50 for 100 ms"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "wave",
+      "line": 12,
+      "step": 4,
+      "from_ms": 120,
+      "to_ms": 220,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "square",
+        "low": 38,
+        "high": 40,
+        "period_ms": 40,
+        "for_ms": 100
+      },
+      "text": "Body.level square low 38 high 40 period 40 ms for 100 ms"
+    },
+    {
+      "variable": "Door.mode",
+      "kind": "wave",
+      "line": 14,
+      "step": 5,
+      "from_ms": 220,
+      "to_ms": 280,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "points",
+        "points": 3,
+        "interpolate": "hold"
+      },
+      "text": "Door.mode points (3, hold) over 60 ms"
     }
   ],
   "findings": [],

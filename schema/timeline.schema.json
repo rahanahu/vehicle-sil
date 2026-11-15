@@ -210,7 +210,7 @@
     },
     "steps": {
       "type": "array",
-      "description": "The steps, in the order of the file: the keys of `run --json`'s scenario.steps[], and watch and failed.",
+      "description": "The steps, in the order of the file: the keys of `run --json`'s scenario.steps[], and lines, watch and failed.",
       "items": {
         "type": "object",
         "required": [
@@ -285,6 +285,14 @@
           "expect_skipped": {
             "type": "string",
             "description": "A ramp or a wave whose expect is not checked in this configuration: why."
+          },
+          "lines": {
+            "type": "array",
+            "description": "Where the lines this step put are in the top-level lines[] (positions from 0); empty for a step that writes nothing, for one whose time is after scenario.recorded_to_ms, and for one that sent none of its writes. Not in a file of a launcher without the feature timeline-lines.",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
           },
           "watch": {
             "type": [
@@ -550,6 +558,87 @@
                 }
               ]
             }
+          }
+        }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
+      "items": {
+        "type": "object",
+        "required": [
+          "variable",
+          "kind",
+          "line",
+          "step",
+          "from_ms",
+          "to_ms",
+          "base",
+          "base_source",
+          "shape",
+          "text"
+        ],
+        "properties": {
+          "variable": {
+            "type": "string",
+            "description": "The variable (a name of variables[])."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The kind of the step: \"set\", \"ramp\" or \"wave\". A reader skips a line of a kind it does not know."
+          },
+          "line": {
+            "type": "integer",
+            "description": "The step's line in the scenario file."
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The step's index (steps[].index)."
+          },
+          "from_ms": {
+            "type": "number",
+            "description": "The step's time: from here the line has this value or motion."
+          },
+          "to_ms": {
+            "type": "number",
+            "description": "The end of the motion as the text says it (from_ms and its length); of a set from_ms. A run that ended earlier wrote the points up to scenario.recorded_to_ms only."
+          },
+          "base": {
+            "type": [
+              "boolean",
+              "number",
+              "null"
+            ],
+            "description": "Of a set its value. Of a ramp or a wave what it starts from or swings around, written as a point of a series is (a number the step names is written as it is); null if the shape has its values itself."
+          },
+          "base_source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where base is from: \"written\" (the step names it: a set's value, from, around, the other value of a bool), \"line\" (where the scenario left the variable: the value of its line at from_ms), \"sample\" (the scenario had not written the variable: its latest sample then, which may depend on tick_ms); null without a base."
+          },
+          "shape": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Of a ramp or a wave: the shape with the values the step's text gives, the parameters put in (what the text leaves out is not here, nor from and around: see base); null for a set.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "\"ramp\", or the wave's shape (\"sine\", \"triangle\", \"sawtooth\", \"square\", \"pulse\", \"noise\", \"chirp\", \"lag\", \"chatter\", \"points\"). The other keys are those of the shape in the scenario (a ramp: to, over_ms; a wave: its keys and for_ms). Of points: points (how many), interpolate, and of points from a file its file, value, time and time_unit as given (the values are in the series)."
+              }
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "The line as the step's text has it, for people."
           }
         }
       }

@@ -335,6 +335,85 @@ void write_series(JsonWriter& w, const TimelineInput& input)
     w.end_array();
 }
 
+void write_shape_value(JsonWriter& w, std::string_view key, const ScenarioShapeText::Value& value)
+{
+    if (const auto* d = std::get_if<double>(&value))
+    {
+        w.real(key, *d);
+    }
+    else if (const auto* i = std::get_if<std::int64_t>(&value))
+    {
+        w.integer(key, *i);
+    }
+    else if (const auto* b = std::get_if<bool>(&value))
+    {
+        w.boolean(key, *b);
+    }
+    else
+    {
+        w.string(key, std::get<std::string>(value));
+    }
+}
+
+/// The lines of the inputs: what each step put on the line of a variable it writes.
+void write_lines(JsonWriter& w, const TimelineInput& input)
+{
+    const Scenario& scenario = *input.scenario;
+    w.begin_array("lines");
+    if (input.record != nullptr)
+    {
+        for (const TimelineRecord::Line& line : input.record->lines())
+        {
+            const ScenarioStep& step = scenario.steps[line.step];
+            const ScenarioMotion* motion = step.kind == StepKind::Set ? nullptr : &step.motions[line.part];
+            w.begin_object();
+            w.string("variable", scenario.variables[line.variable].text);
+            w.string("kind", step_kind_name(step.kind));
+            w.integer("line", static_cast<std::int64_t>(step.line));
+            w.integer("step", static_cast<std::int64_t>(line.step + 1));
+            write_ms(w, "from_ms", line.from);
+            write_ms(w, "to_ms", motion != nullptr ? line.from + std::chrono::milliseconds(motion->length_ms) : line.from);
+            write_value(w, "base", line.base);
+            write_text_or_null(w, "base_source", line.base_source != nullptr ? line.base_source : "");
+            if (motion != nullptr)
+            {
+                w.begin_object("shape");
+                w.string("type", motion->described.type);
+                for (const auto& [key, value] : motion->described.values)
+                {
+                    write_shape_value(w, key, value);
+                }
+                w.end_object();
+            }
+            else
+            {
+                w.null("shape");
+            }
+            w.string("text", motion != nullptr ? motion->text : step.writes[line.part].text);
+            w.end_object();
+        }
+    }
+    w.end_array();
+}
+
+/// Of a step: where its lines are in "lines".
+void write_step_lines(JsonWriter& w, const TimelineInput& input, std::size_t step)
+{
+    w.begin_array_on_one_line("lines");
+    if (input.record != nullptr)
+    {
+        const auto& all = input.record->lines();
+        for (std::size_t i = 0; i < all.size(); ++i)
+        {
+            if (all[i].step == step)
+            {
+                w.integer({}, static_cast<std::int64_t>(i));
+            }
+        }
+    }
+    w.end_array();
+}
+
 void write_limits(JsonWriter& w, const TimelineInput& input)
 {
     const TimelineLimits limits = input.record != nullptr ? input.record->limits() : TimelineLimits{};
@@ -387,7 +466,7 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
         {
             writes[w.variable] = true;
         }
-        for (const ScenarioSignal& s : step.signals)
+        for (const ScenarioMotion& s : step.motions)
         {
             writes[s.variable] = true;
         }
@@ -415,8 +494,19 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
     failures_.resize(scenario.steps.size());
 }
 
-std::optional<std::uint64_t> TimelineRecord::written(std::size_t variable, SimTime at, const control::Value& value, bool motion)
+std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion)
 {
+    if (!recorded_to_)
+    {
+        // The first write of a line is the one for the time it was put at.
+        for (auto line = lines_.rbegin(); line != lines_.rend() && line->from == at; ++line)
+        {
+            if (line->step == step && line->variable == variable)
+            {
+                line->sent = true;
+            }
+        }
+    }
     if (recorded_to_ || variable >= written_.size() || !written_[variable])
     {
         return std::nullopt;
@@ -489,6 +579,14 @@ void TimelineRecord::sampled(std::size_t variable, SimTime at, const control::Va
     }
 }
 
+void TimelineRecord::line(Line line)
+{
+    if (!recorded_to_)
+    {
+        lines_.push_back(std::move(line));
+    }
+}
+
 void TimelineRecord::watch(std::size_t step, Watch watch)
 {
     if (!recorded_to_ && step < watches_.size())
@@ -534,6 +632,10 @@ void TimelineRecord::close(SimTime to)
         return;
     }
     recorded_to_ = to;
+    // A line put after `to` is of a write for a time the controller's step let the engine reach
+    // early; with a shorter step it is not there. (They are in the order of their times.) A line
+    // of which no write went out was put, and then the scenario failed at a write before its own.
+    std::erase_if(lines_, [to](const Line& line) { return line.from > to || !line.sent; });
     for (Series& series : series_)
     {
         std::erase_if(series.written, [&](const Written& point) {
@@ -705,6 +807,7 @@ std::string format_timeline_json(const TimelineInput& input)
     {
         w.begin_object();
         detail::write_scenario_step_members(w, run.steps[i]);
+        write_step_lines(w, input, i);
         write_watch(w, scenario, scenario.steps[i], run.steps[i],
                     input.record != nullptr ? input.record->watches()[i] : std::nullopt);
         write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt, input.record);
@@ -712,6 +815,7 @@ std::string format_timeline_json(const TimelineInput& input)
     }
     w.end_array();
     write_series(w, input);
+    write_lines(w, input);
     w.begin_array("findings");
     for (const Finding& finding : input.findings)
     {

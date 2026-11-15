@@ -475,7 +475,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "scenario-wave",
     "scenario-motion-expect",
     "scenario-points-file",
-    "timeline"
+    "timeline",
+    "timeline-lines"
   ]
 }
 ```
@@ -513,6 +514,7 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `scenario-motion-expect` | An `expect` beside a scenario's `ramp` or `wave` (see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
 | `scenario-points-file` | The `points` of a scenario's `wave` read from a CSV file (`points: { file, value, time, time_unit }`, see "Reading points from a CSV file" in [scenario.md](scenario.md#reading-points-from-a-csv-file)) |
 | `timeline` | `run --scenario --timeline <file>`, a file that records the scenario run on a timeline (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)) |
+| `timeline-lines` | `lines[]` in the `--timeline` file (the line of each input: the values and motions that steps placed, and the start value of each motion with where it came from), and `writes[]` of the steps (see the same section of [simulation-run.md](simulation-run.md#input-lines-lines)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
