@@ -88,6 +88,7 @@ ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシ�
 | `simulation.yaml` | ecu_main のエンジンの ECU と、同じバスを別のネットワーク名（`VehicleCAN`）で呼ぶ表示の ECU（`vehicle_sil_dashboard_v1_ecu`）を並べた設定ファイルで、`check` が不整合を報告します。 |
 | `simulation.two-buses.yaml` | `networks` に名前を追加しただけの設定ファイルで、`check` も `run` も成功しますが、表示の ECU は回転数を受信しません。 |
 | `simulation.fixed.yaml` | 作り直した表示の ECU に差し替えた設定ファイルです。 |
+| `simulation.network-names.yaml` | 表示の ECU をそのまま使い、`network_names` でその名前を `J1939_CAN` に対応させた設定ファイルです（ビルドし直せないとき）。 |
 | `scenarios/engine_speed.yaml` | 受信を確認するシナリオです。 |
 
 ### first_ecu

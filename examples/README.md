@@ -88,6 +88,7 @@ Read this to run the example of the guide [Integrate and run several ECUs](../do
 | `simulation.yaml` | A configuration file that lists the engine ECU of ecu_main and a dashboard ECU (`vehicle_sil_dashboard_v1_ecu`) that calls the same bus by another network name (`VehicleCAN`). `check` reports the mismatch. |
 | `simulation.two-buses.yaml` | A configuration file that only adds the name to `networks`. `check` and `run` both pass, but the dashboard ECU does not receive the engine speed. |
 | `simulation.fixed.yaml` | A configuration file with the dashboard ECU replaced by the rebuilt one. |
+| `simulation.network-names.yaml` | A configuration file that keeps the dashboard ECU as it is and maps its name onto `J1939_CAN` with `network_names`, for when it cannot be rebuilt. |
 | `scenarios/engine_speed.yaml` | A scenario that checks the reception. |
 
 ### first_ecu

@@ -961,6 +961,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `simulation.yaml` | エンジンとこの ECU（`check` が `unknown-network` を報告する） |
 | `simulation.two-buses.yaml` | `networks` に `VehicleCAN` を追加したもの |
 | `simulation.fixed.yaml` | 表示の ECU を、`examples/ecu_main` のものに差し替えたもの |
+| `simulation.network-names.yaml` | `simulation.yaml` の表示の ECU に `network_names` を足したもの |
 | `scenarios/engine_speed.yaml` | シナリオ |
 
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと、作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います。
@@ -970,7 +971,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 - ファイルとガイドのブロック
 - `--describe` と `check --json` の抜粋のキー
-- 3 つの設定ファイルの `check`、`--disable Dashboard`
+- 4 つの設定ファイルの `check`、`--disable Dashboard`
 - `run` の結果と、表示の ECU の出力
 - シナリオつきの `run`
 
