@@ -184,20 +184,29 @@ While a scenario runs, you cannot write variables. For the detailed rules, see "
 
 - Decide the layout of the Variables screen → "[Dashboard files](#dashboard-files)"
 - Save what you did in the GUI as a scenario file → "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"
-- Build your own screen → [Build your own screen for the browser GUI](howto/gui-screen.md)
+- Add a part to the sample screens, build your own screen, or drive the GUI from a tool → "[Build your own screen](#build-your-own-screen)" compares the 3 ways
 
 ## Build your own screen
 
-Build your own screen with the client library in any framework you like, and have the GUI server serve the built static files with `--web`. The screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it unchanged.
+There are 3 ways to add your own code to the GUI. They differ in what stays of the sample screens and in what your code gets.
 
-The guide [Build your own screen for the browser GUI](howto/gui-screen.md) has the steps. Where to start, depending on how you build:
+| Way | When to use it | What you write | What your code gets | The sample screens | Where to start |
+|---|---|---|---|---|---|
+| Custom panel | You add a part for your ECU to the sample screens, for example when several teams each bring parts for their own ECUs. | An ES module that defines a custom element, in `panels/` next to the configuration file and listed in the dashboard file. | The properties `client` (a connected `GuiClient`), `options` and `variables` of its dashboard item. | They stay, and the panel appears on the Variables screen. | "[Custom panels](#custom-panels)" |
+| Your own screen (`--web`) | You replace the whole screen with one of your own. | Static files built on the client library, in any framework. | The whole page, opened from the GUI server's origin with the token in its URL. | They are replaced: the Run screen, time control and the Variables screen are gone unless your screen has them. | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| A tool without a screen | You drive tests or record from a program. | A program that uses the client library or the server API. | The URL that the server printed, with the token (pass it in an environment variable). | They stay, and the tool uses the same GUI server alongside them. | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
+
+- `--web` takes one directory, and the GUI server then serves it instead of the sample screens. A second GUI server starts a launcher of its own, so it cannot show the run of the first one.
+- Panels are a feature of the sample screens: your own screen served with `--web` does not get them automatically.
+- Your own screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it unchanged.
+
+For your own screen, where to start depends on how you build:
 
 | How you build | What you use | Where to start |
 |---|---|---|
 | Plain JavaScript, no build step | The library bundled into one file (`vehicle-sil-gui-client.mjs`) | Copy the screen template (`gui_starter`); see the guide above. |
 | TypeScript and any framework (React, Vue, Svelte and others) | The library package (`.tgz`) | "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#build-with-typescript-and-a-framework) |
 | Angular | The package above, and the widgets and wrappers of the sample screens | "[Copy the sample widgets](#copy-the-sample-widgets)" |
-| A tool without a screen (driving tests, recording) | The library, or the server API | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
 
 For the files that are served, CSP, the token, development servers and the rules that the library does not enforce for you, see "[Reference for your own screen](#reference-for-your-own-screen)".
 

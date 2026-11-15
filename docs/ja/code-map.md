@@ -1170,12 +1170,13 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 ## 依存の向き
 
-どの図でも、矢印は「リンクする」（`target_link_libraries`）です。逆向きの依存は作りません。
+どの図でも、矢印は「リンクする」（`target_link_libraries`）です（太い矢印だけは違います。表を見てください）。逆向きの依存は作りません。
 
 | 図の書き方 | 意味 |
 |---|---|
 | 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
 | 点線の矢印 | 非公開（`PRIVATE`）のリンク |
+| 太い矢印 | 自分のリンクはない。公開のヘッダーが相手のヘッダーを読み、リンクはほかのターゲットの公開のリンクから来る |
 | ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
 
 ### 全体の層
@@ -1188,7 +1189,7 @@ flowchart TD
         protocols["sim_base, step, can, eth, lin, j1939"]
         control["control"]
         j1939_parts["J1939 parts, j1939_codec"]
-        app["ecu, local, testkit"]
+        app["ecu, local, testkit, spy"]
         process["process"]
         eth_link_box["eth_link"]
     end
@@ -1225,7 +1226,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`process`、`eth_link`、`signal` です。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`spy`、`process`、`eth_link`、`signal` です。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
 
 ### 基盤と SIL Kit の実装
 
@@ -1333,6 +1334,7 @@ flowchart TD
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
+    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1342,6 +1344,9 @@ flowchart TD
     control_grpc -.-> control_proto
     control_proto --> grpcpp
 ```
+
+- `launch` と `control`: `launch` の公開のヘッダーは `control` のヘッダー（`hub.hpp`、`agent.hpp`、`variable_map.hpp`）を読みます。`launch` は `control` を `ecu` の公開のリンクから得ています。
+- `launch` と `ecu`: `launch` のソースは `ecu` の内部のヘッダー `vehicle_sil/ecu/detail/json_writer.hpp` も読みます。ランチャーは、`--describe` の出力と同じ書き手で JSON を書きます。
 
 ### Vector XL CAN Bridge
 

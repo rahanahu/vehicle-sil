@@ -56,7 +56,7 @@ vehicle-sil/
 ├── libs/eth_link/    vehicle_sil::eth_link  External side of the Ethernet Bridge: external interface abstraction, filter, MAC table against loops, Linux TAP devices and packet sockets, pcap libraries loaded at run time (Npcap, libpcap) (independent of SIL Kit)
 ├── libs/j1939/       vehicle_sil::j1939  J1939 stack (on top of vehicle_sil::can; independent of SIL Kit), its protocol parts (parts/) and typed messages (codec/)
 ├── libs/ecu/         vehicle_sil::ecu    Ecu, the class that ECU applications are built with (includes variable declarations and describe(), which describes the ECU's configuration, with its JSON; independent of SIL Kit)
-├── libs/local/       vehicle_sil::local  LocalBench, which runs ECUs in virtual time on in-process virtual CAN and LIN buses (independent of SIL Kit)
+├── libs/local/       vehicle_sil::local  LocalBench, which runs ECUs in virtual time on in-process virtual CAN and LIN buses and a virtual Ethernet network (independent of SIL Kit)
 ├── libs/testkit/     vehicle_sil::testkit  J1939 test recording and fault injection on top of LocalBench (independent of SIL Kit)
 ├── libs/peer/        vehicle_sil::peer   Setup and execution of one participant with its J1939, raw CAN and LIN nodes and its Control Agent (including the monitoring outputs); implements Ecu
 ├── libs/simulation/  vehicle_sil::simulation  Simulation, which runs ECUs on a virtual bus or on SIL Kit, and main() for ECU executables (ecu_main)

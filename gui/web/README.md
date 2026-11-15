@@ -440,9 +440,10 @@ cd public && magick -background none -density 384 favicon.svg -define icon:auto-
 
 ## See also
 
-| To find                                                       | Document                                                                              |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Building your own screen from scratch                         | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md)           |
-| Copying the widgets of these screens into another Angular app | "Copy the sample widgets" in [docs/gui.md](../../docs/gui.md#copy-the-sample-widgets) |
-| The public API of the client library                          | [gui/client](../client/README.md)                                                     |
-| The shapes of the server API                                  | [gui/protocol](../protocol/README.md)                                                 |
+| To find                                                                                   | Document                                                                              |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Adding a part to these screens (custom panels), and when to build your own screen instead | "Build your own screen" in [docs/gui.md](../../docs/gui.md#build-your-own-screen)     |
+| Building your own screen from scratch                                                     | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md)           |
+| Copying the widgets of these screens into another Angular app                             | "Copy the sample widgets" in [docs/gui.md](../../docs/gui.md#copy-the-sample-widgets) |
+| The public API of the client library                                                      | [gui/client](../client/README.md)                                                     |
+| The shapes of the server API                                                              | [gui/protocol](../protocol/README.md)                                                 |
