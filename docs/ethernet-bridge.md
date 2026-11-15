@@ -404,7 +404,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 #### The list as JSON (`--json`)
 
-`--list-interfaces --json` writes the same list as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The Vector XL CAN Bridge writes its channels in the same form (see "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)").
+`--list-interfaces --json` writes the same list as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The Vector XL CAN Bridge writes its channels in the same form (see "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)"). `vehicle_sil_launch connections` reads both lists for the networks of a configuration file (see "[Where a network can be connected](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)" in simulation-run.md).
 
 ```json
 {

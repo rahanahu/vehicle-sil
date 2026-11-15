@@ -10,6 +10,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_check.cpp
     test_config.cpp
     test_connect.cpp
+    test_connections.cpp
     test_events.cpp
     test_j1939_nodes_match.cpp
     test_run.cpp
@@ -82,12 +83,13 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     COMMAND_EXPAND_LISTS
     VERBATIM)
   add_dependencies(vehicle_sil_launch_connect_tools ${_connect_copies})
-  add_dependencies(vehicle_sil_launch_cli_launcher vehicle_sil_launch_connect_tools)
+  add_dependencies(vehicle_sil_launch_cli_launcher vehicle_sil_launch_connect_tools vehicle_sil_fake_pcap)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_cli_launcher
     PREFIX launch_cli LABELS integration launch TIMEOUT 120
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/cli
     SCENARIOS
       connect
+      connections
       describe
       docs
       enabled
@@ -96,6 +98,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       usage
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --connect-tools ${_connect_tools}
+         --fake-pcap-dir ${VEHICLE_SIL_FAKE_PCAP_DIR}
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..

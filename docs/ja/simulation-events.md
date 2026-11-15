@@ -463,7 +463,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "events": 1,
     "describe": 1,
     "test": 1,
-    "timeline": 1
+    "timeline": 1,
+    "connections": 1
   },
   "features": [
     "events",
@@ -484,7 +485,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "network-names",
     "run-traffic",
     "j1939-nodes",
-    "connect"
+    "connect",
+    "connections"
   ]
 }
 ```
@@ -506,10 +508,11 @@ participant の `log` の終わりの側には、保証がありません。part
 | `describe` | 読む `--describe` の JSON の `vehicle_sil_ecu` |
 | `test` | `test --json` の `vehicle_sil_test` |
 | `timeline` | `run --timeline` が書くファイルの `vehicle_sil_timeline` |
+| `connections` | `connections --json` の `vehicle_sil_connections` |
 
 ### JSON の形のキーと値
 
-上のどの JSON の形（`check --json`、`run --json`、`test --json`、イベント、`version --json`、`--timeline` のファイル）にも、次の決まりがあります。
+上のどの JSON の形（`check --json`、`run --json`、`test --json`、`connections --json`、イベント、`version --json`、`--timeline` のファイル）にも、次の決まりがあります。
 
 - キーは snake_case です（`time_step_ms`、`not_applied_from`）。
 - vehicle-sil 0.1.0 の後に足したキーは、いつもあります。当てはまらないときの値は `null` です。0.1.0 にあったキーには、当てはまるときだけ書くものがあり、いつ書くかはそれぞれの説明にあります。たとえば、シナリオの `params`、`skipped_steps`、`unchecked_expects`、手順の `expect_skipped`、participant の `variable_map` です。
@@ -539,6 +542,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `run-traffic` | 実行の結果の `traffic`（ネットワークごとの J1939 の送受信の数と `delivered`。[simulation-run.md](simulation-run.md) の「ネットワークの送受信（`traffic:`）」） |
 | `j1939-nodes` | 設定ファイルの `j1939_nodes`（[simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」） |
 | `connect` | `check` と `run` の `--connect`。ネットワークをブリッジで実機のバスにつなぐこと（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」） |
+| `connections` | `vehicle_sil_launch connections`: この PC で各ネットワークをどこにつなげるか（[simulation-run.md](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections) の「つなげる先の一覧（`vehicle_sil_launch connections`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -559,6 +563,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `run-traffic` | 人向けの結果の `traffic:` の行と表、`run --json` とイベント `result` の `traffic` |
 | `j1939-nodes` | 実行ファイルに渡す `--j1939-node`、照合の JSON の `participants[].j1939_nodes`、指摘 `j1939-node-*`、`address-conflict`、`address-shared`、`name-conflict` の終わりの設定ファイルでの直し方、照合の participant の表の `0x01<-0x00` |
 | `connect` | 設定ファイルのネットワークの `external`、`check --connect` と `run --connect`、照合の JSON の `networks[].outside`、結果の `outside` と `participants[].for_network`、結果とイベントの participant `bridge.<network>`、人向けの結果の `outside:` の行、指摘 `connect-*` |
+| `connections` | `vehicle_sil_launch connections` とその `--json` と `--network`、`formats` の `connections`、指摘 `connect-target` と `connect-failed` が挙げる `vehicle_sil_launch connections` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

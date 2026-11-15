@@ -1917,7 +1917,7 @@ RunOutcome connected_run(ParticipantRun bridge)
     bridge.required = false;
     bridge.for_network = "ETH";
     o.participants.push_back(std::move(bridge));
-    o.outside.push_back(RunOutside{"ETH", "eth0", "bridge.ETH", "vehicle_sil_ethernet_bridge", std::nullopt, std::nullopt});
+    o.outside.push_back(RunOutside{"ETH", "eth0", "bridge.ETH", std::nullopt, std::nullopt});
     return o;
 }
 
@@ -1985,8 +1985,8 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
                "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH ended before "
                "the simulation started (its process exited with code 3; it wrote: [eth-bridge] FAIL: no such "
                "interface: eth0), so nothing else was started. Check that eth0 is there and free on this computer "
-               "(vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can open), or give --connect ETH=none "
-               "to run the network on SIL Kit only\n");
+               "(vehicle_sil_launch connections <file> lists where each network can be connected), or give --connect "
+               "ETH=none to run the network on SIL Kit only\n");
     CHECK(r.result() == RunResult::Failed);
     CHECK(r.findings[0].participant == "bridge.ETH" && r.findings[0].network == "ETH");
     // Its line is known only once its output has been read: not settled before.
@@ -1997,19 +1997,18 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     CHECK(lines(report_of(o).findings).rfind("E 3 connect-failed: network 'ETH' could not be connected to the real bus "
                                              "(eth0): bridge.ETH ended before the simulation started (its process exited "
                                              "with code 3; ", 0) == 0);
-    // It could not be started at all; a CAN bridge's hint names the channels.
+    // It could not be started at all.
     ParticipantRun unstarted;
     unstarted.start_error = "no such file";
     o = connected_run(unstarted);
     o.simulation = SimulationEnd::NotStarted;
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
-    o.outside[0].tool = "vehicle_sil_vector_xl_bridge";
     check_text(lines(report_of(o).findings),
                "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH could not be "
                "started (no such file), so nothing else was started. Check that eth0 is there and free on this computer "
-               "(vehicle_sil_vector_xl_bridge --list-channels lists what the bridge can open), or give --connect ETH=none "
-               "to run the network on SIL Kit only\n");
+               "(vehicle_sil_launch connections <file> lists where each network can be connected), or give --connect "
+               "ETH=none to run the network on SIL Kit only\n");
     // It did not get to Running in time.
     ParticipantRun slow = stopped_bridge(0);
     slow.missing_at_start = true;
@@ -2021,8 +2020,8 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
                "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH did not run in "
                "SIL Kit within 30000 ms (start_timeout_ms; it wrote no line that says why), so nothing else was started. Check "
                "that eth0 "
-               "is there and free on this computer (vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can "
-               "open), or give --connect ETH=none to run the network on SIL Kit only\n");
+               "is there and free on this computer (vehicle_sil_launch connections <file> lists where each network can be "
+               "connected), or give --connect ETH=none to run the network on SIL Kit only\n");
     // It left the simulation before the start while its process ran (the launcher stopped it).
     o = connected_run(stopped_bridge(0));
     o.simulation = SimulationEnd::NotStarted;
@@ -2169,7 +2168,7 @@ TEST_CASE(a_time_command_in_a_connected_run_is_one_warning_about_the_first)
     CHECK(contains(said({"speed", "stdin", 400, std::nullopt, std::nullopt, std::nullopt}),
                    "the time command 'speed max' from stdin at 400 ms: the simulation ran as fast as possible while"));
     // Two networks: both named.
-    o.outside.push_back(RunOutside{"CAN", "virtual:1", "bridge.CAN", "vehicle_sil_vector_xl_bridge", std::nullopt, std::nullopt});
+    o.outside.push_back(RunOutside{"CAN", "virtual:1", "bridge.CAN", std::nullopt, std::nullopt});
     CHECK(contains(said({"pause", "stdin", 0, std::nullopt, std::nullopt, std::nullopt}), "--connect connects ETH and CAN to a real bus"));
     // Without --connect, or without such a command: nothing.
     RunOutcome plain = passed_run();

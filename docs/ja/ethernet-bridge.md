@@ -404,7 +404,7 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 
 #### 一覧の JSON（`--json`）
 
-`--list-interfaces --json` は、同じ一覧を 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。Vector XL CAN ブリッジも、チャネルを同じ形で書きます（「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」）。
+`--list-interfaces --json` は、同じ一覧を 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。Vector XL CAN ブリッジも、チャネルを同じ形で書きます（「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」）。`vehicle_sil_launch connections` は、設定ファイルのネットワークのために、この 2 つの一覧を読みます（simulation-run.md の「[つなげる先の一覧](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections)」）。
 
 ```json
 {

@@ -439,6 +439,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 - [docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合
 - `--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数のエラー
 - `launch_cli.connect`: 2 つのブリッジ（`main()` を偽の pcap ライブラリと偽の XL ドライバーで作ったもの）を、本当の名前でビルドディレクトリの `connect_tools/` に写して `check --connect`。`PATH` と、写した `vehicle_sil_launch` の隣で見つかり、作業ディレクトリでは見つからないこと、`networks[].outside`、引数を受けないブリッジ、`run --disable bridge.<network>` と `test --connect` を断ること
+- `launch_cli.connections`: 同じブリッジで `connections`。`--connect` の行と、それを `check` が受けること、`--json`（ブリッジの一覧をそのまま渡す。LIN は一覧なし）、`--network`、一覧を作れないブリッジ（`library-missing`、`driver-missing`）とブリッジがないとき（`tool-missing`。終了コード 1）、コマンドライン（終了コード 4）と読めないファイル（終了コード 3）。ほかは `launch.connections_*`（`test_connections.cpp`）がプロセスなしで確かめます: 引用、一覧の読み、ランチャーが作る一覧、各ブリッジに 1 回だけ聞くこと、文と JSON の全体
 
 `launch_run.*` が確認すること:
 
@@ -834,7 +835,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()` と、ランチャーがブリッジを探す `find_tool()` | `launch/connect.hpp` |
+| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()`、ランチャーがブリッジを探す `find_tool()`、`no_bridge_here()`（LIN、Windows 以外の CAN）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
+| `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（各ブリッジに 1 回だけ聞く）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
@@ -854,6 +856,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形、ブリッジの引数、`find_tool()`（ランチャーの隣、次に `PATH`）。`find_tool()` と `find_executable()` が共有する `PATH` の探索は `src/config.cpp` の `detail::find_on_path()` | `src/connect.cpp` |
+| `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/check.cpp` の `run_tool()` で起こします | `src/connections.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |

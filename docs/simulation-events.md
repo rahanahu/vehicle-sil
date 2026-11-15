@@ -463,7 +463,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "events": 1,
     "describe": 1,
     "test": 1,
-    "timeline": 1
+    "timeline": 1,
+    "connections": 1
   },
   "features": [
     "events",
@@ -484,7 +485,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "network-names",
     "run-traffic",
     "j1939-nodes",
-    "connect"
+    "connect",
+    "connections"
   ]
 }
 ```
@@ -506,10 +508,11 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `describe` | `vehicle_sil_ecu` of the `--describe` JSON that the launcher reads |
 | `test` | `vehicle_sil_test` of `test --json` |
 | `timeline` | `vehicle_sil_timeline` of the file that `run --timeline` writes |
+| `connections` | `vehicle_sil_connections` of `connections --json` |
 
 ### Keys and values of the JSON forms
 
-These rules hold for every JSON form above (`check --json`, `run --json`, `test --json`, the events, `version --json` and the `--timeline` file):
+These rules hold for every JSON form above (`check --json`, `run --json`, `test --json`, `connections --json`, the events, `version --json` and the `--timeline` file):
 
 - Keys are in snake_case: `time_step_ms`, `not_applied_from`.
 - A key added after vehicle-sil 0.1.0 is always there. When it does not apply, its value is `null`. Some keys that 0.1.0 already had are written only when they apply, and their descriptions say when: for example `params`, `skipped_steps` and `unchecked_expects` of a scenario, `expect_skipped` of a step, and `variable_map` of a participant.
@@ -539,6 +542,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `run-traffic` | `traffic` in the run result: the J1939 traffic on each network and `delivered` (see "Network traffic (`traffic:`)" in [simulation-run.md](simulation-run.md#network-traffic-traffic)) |
 | `j1939-nodes` | `j1939_nodes` in the configuration file (see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)) |
 | `connect` | `--connect` of `check` and `run`: connecting a network to a real bus through its bridge (see "Connecting a bus outside (`--connect`)" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect)) |
+| `connections` | `vehicle_sil_launch connections`: where each network can be connected on this computer (see "Where a network can be connected (`vehicle_sil_launch connections`)" in [simulation-run.md](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
@@ -559,6 +563,7 @@ Each name indicates that the following are present:
 | `run-traffic` | The `traffic:` line and table of the human-readable result, and `traffic` in `run --json` and in the event `result` |
 | `j1939-nodes` | `--j1939-node` passed to executables, `participants[].j1939_nodes` in the check JSON, the findings `j1939-node-*`, the end of `address-conflict`, `address-shared` and `name-conflict` that says how to fix them in the configuration file, and `0x01<-0x00` in the participant table of the check |
 | `connect` | `external` of a network in the configuration file, `check --connect` and `run --connect`, `networks[].outside` in the check JSON, `outside` and `participants[].for_network` in the result, the participant `bridge.<network>` in the result and the events, the `outside:` lines of the human-readable result, and the findings `connect-*` |
+| `connections` | `vehicle_sil_launch connections` with `--json` and `--network`, `connections` in `formats`, and `vehicle_sil_launch connections` named by the findings `connect-target` and `connect-failed` |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).
