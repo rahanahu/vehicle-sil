@@ -15,7 +15,7 @@ Commands:
               python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
                          and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
               stage      bin/ (the launcher, the libraries it needs, vehicle-sil-gui), python/ (vehicle_sil_gui with the
-                         built screen, vehicle_sil_control with the stubs), client/ (the bundled client library and
+                         built screen and the timeline page of gui/timeline, vehicle_sil_control with the stubs), client/ (the bundled client library and
                          its npm package), gui_starter/ (examples/gui_starter with the bundled library: a screen of
                          your own, served with vehicle-sil-gui --web),
                          schema/, LICENSE, THIRD_PARTY_NOTICES.md, licenses/ (the license texts of what is inside),
@@ -34,8 +34,8 @@ Commands:
             the archive's launcher, runs examples/launch_control/write_before_start.py with the archive's Python client
             against `run --control` (gRPC: write before the start, step, read back), and starts the archive's
             vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
-            sh entry) and asks it: the launcher usable, the variables available, the built screen, a check of
-            simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
+            sh entry) and asks it: the launcher usable, the variables available, the built screen, the timeline
+            page (timeline/, without the token), a check of simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
             and its client library, and api/app with the token. Keeps the directory when a step fails (--keep:
             always).
   template  build/dist/vehicle-sil-template-<version>.zip: template/ with the SHA-256 of both tools archives there
@@ -421,7 +421,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 |---|---|
 | `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`) |
 | `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
-| `python/` | the GUI server (`vehicle_sil_gui`, with the built screen) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
+| `python/` | the GUI server (`vehicle_sil_gui`, with the built screen and the timeline page) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
 | `gui_starter/` | a screen of your own to start from (plain HTML and JavaScript, the library next to it): `vehicle-sil-gui --web gui_starter simulation.yaml` |
@@ -441,6 +441,11 @@ The Control API client from Python: put `python` on PYTHONPATH and use a Python 
 Documentation: https://github.com/rahanahu/vehicle-sil/tree/v{version} (README.md, docs/howto/first-ecu.md,
 docs/gui.md, docs/control-api.md).
 """
+
+
+# The timeline page (gui/timeline) that the GUI server serves under timeline/: its files, as the packaged server
+# looks for them (vehicle_sil_gui/timeline, see PAGE_FILES in gui/server/src/vehicle_sil_gui/timelines.py).
+TIMELINE_PAGE = ("timeline.html", "viewer.js", "messages.js")
 
 
 def built_with(build: Path) -> str | None:
@@ -557,6 +562,9 @@ def tools_command(args: argparse.Namespace) -> int:
         py = stage / "python"
         copy_tree(ROOT / "gui" / "server" / "src" / "vehicle_sil_gui", py / "vehicle_sil_gui")
         shutil.copytree(web, py / "vehicle_sil_gui" / "web")
+        (py / "vehicle_sil_gui" / "timeline").mkdir()
+        for name in TIMELINE_PAGE:
+            shutil.copy2(ROOT / "gui" / "timeline" / name, py / "vehicle_sil_gui" / "timeline" / name)
         copy_tree(ROOT / "python" / "vehicle_sil_control", py / "vehicle_sil_control")
         shutil.copytree(python_dir / "_generated", py / "vehicle_sil_control" / "_generated")
         shutil.copy2(python_dir / "requirements.txt", py / "requirements.txt")
@@ -842,6 +850,7 @@ def verify_command(args: argparse.Namespace) -> int:
               cwd=project)
         for path in ["VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", f"bin/vehicle_sil_launch{EXE}",
                      "bin/vehicle-sil-gui", "python/requirements.txt", "python/vehicle_sil_gui/web/index.html",
+                     *(f"python/vehicle_sil_gui/timeline/{name}" for name in TIMELINE_PAGE),
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
                      "client/vehicle-sil-gui-client.mjs", f"client/{client_package_path(version).name}",
                      "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
@@ -968,10 +977,19 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
         page = get("").decode("utf-8", "replace")
         if "<app-root" not in page:
             raise StepFailed("the GUI server does not serve the built screen (no <app-root> in its page)")
+        # The timeline page, without the token as the screen's files (its link: the Scenario card of a run)
+        timeline = get("timeline/", token=False).decode("utf-8", "replace")
+        if 'src="viewer.js"' not in timeline or 'src="messages.js"' not in timeline:
+            raise StepFailed(f"the GUI server does not serve the timeline page at timeline/: {timeline[:300]!r}")
+        for name in ("viewer.js", "messages.js"):
+            if get(f"timeline/{name}", token=False) != (tools / "python" / "vehicle_sil_gui" / "timeline" /
+                                                        name).read_bytes():
+                raise StepFailed(f"the GUI server does not serve the archive's timeline/{name}")
         checked = json.loads(get("api/check", {"file": "simulation.yaml"}))
         if checked.get("exit_code") != 0:
             raise StepFailed(f"api/check of simulation.yaml ended with {checked.get('exit_code')}")
-        s.notes.append(f"{Path(entry[-1]).name}: launcher usable, variables available, screen served, check passed")
+        s.notes.append(f"{Path(entry[-1]).name}: launcher usable, variables available, screen and timeline page "
+                       "served, check passed")
     finally:
         stop(p)
 

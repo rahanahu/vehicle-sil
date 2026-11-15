@@ -2,14 +2,15 @@
 <!--
   The timeline page of vehicle-sil: open it in a browser and drop a timeline file on it (the JSON that
   "vehicle_sil_launch run <configuration> --scenario <scenario> --timeline <file>" writes). viewer.js does the work;
-  see the comment at its top for the ways the data can come in.
+  see the comment at its top for the ways the data can come in. Its texts are in messages.js (English and Japanese):
+  the elements below with data-text or data-label get theirs from it when the page starts.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Scenario timeline</title>
+    <title>vehicle-sil</title>
     <style>
       :root {
         --bg: #f7f7f5;
@@ -164,6 +165,7 @@
         border-radius: 10px;
         font-weight: 600;
         border: 1px solid currentColor;
+        white-space: nowrap;
       }
       .st-passed {
         color: var(--ok);
@@ -373,9 +375,7 @@
         color: var(--fg);
         font-variant-numeric: tabular-nums;
         min-height: 1.45em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        overflow-wrap: anywhere;
       }
       .note {
         color: var(--warn);
@@ -692,53 +692,37 @@
     <main>
       <header class="top">
         <div>
-          <h1 id="title">Scenario timeline</h1>
+          <h1 id="title" data-text="page.title"></h1>
           <div id="facts" class="small"></div>
         </div>
-        <button id="open" type="button">Open a file</button>
+        <button id="open" type="button" data-text="page.open"></button>
         <input id="file" type="file" accept=".json,application/json" hidden />
       </header>
       <div id="error" role="alert" hidden></div>
       <section id="load">
-        <p><strong>Drop a timeline file here</strong>, or choose one with <em>Open a file</em>.</p>
-        <p class="muted small">
-          A timeline file is the JSON that
-          <code
-            >vehicle_sil_launch run &lt;configuration&gt; --scenario &lt;scenario&gt; --timeline
-            &lt;file&gt;</code
-          >
-          writes. Nothing leaves this computer: the page reads the file in the browser.
-        </p>
-        <noscript><p>This page needs JavaScript (viewer.js next to it).</p></noscript>
+        <p data-text="page.drop"></p>
+        <p class="muted small" data-text="page.what"></p>
+        <noscript>
+          <p lang="en">This page needs JavaScript (viewer.js and messages.js next to it).</p>
+          <p lang="ja">このページには JavaScript が要ります（隣に viewer.js と messages.js）。</p>
+        </noscript>
       </section>
       <section id="view" hidden>
         <div id="summary"></div>
         <div class="toolbar small">
           <span id="range" class="muted"></span>
-          <button id="show-failure" type="button">Show the failure</button>
-          <button id="show-all" type="button">Whole run</button>
-          <button id="zoom-out" type="button">Zoom out</button>
+          <button id="show-failure" type="button" data-text="page.showFailure"></button>
+          <button id="show-all" type="button" data-text="page.whole"></button>
+          <button id="zoom-out" type="button" data-text="page.zoomOut"></button>
           <span id="participants" class="toolbar"></span>
         </div>
-        <p class="muted small">
-          Steps: a bar from start to end, a tick where the result was decided, a thin line on to a
-          wait's limit. Shaded: the values a condition allows (green: it held; red: it did not;
-          grey: not decided by it). Red dashed line: the failure. Grey on the right: after the end
-          of the record. Sent values: red dashed where the ECU did not apply them, orange dotted
-          where that is not known, and a thick grey line for the value the ECU kept where the file
-          says that value was applied. Drag across the chart to zoom in, double-click for the whole
-          run; hover (or focus the chart and use the arrow keys, + and - to zoom) for the values at
-          a time.
-        </p>
-        <div
-          id="chart"
-          tabindex="0"
-          aria-label="The scenario's steps and variables over virtual time. The tables below hold the same contents."
-        ></div>
+        <p class="muted small" data-text="page.help"></p>
+        <div id="chart" tabindex="0" data-label="page.chartLabel"></div>
         <div id="tables"></div>
       </section>
     </main>
     <script type="application/json" id="timeline-data"></script>
+    <script src="messages.js"></script>
     <script src="viewer.js"></script>
   </body>
 </html>

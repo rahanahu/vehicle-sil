@@ -177,6 +177,7 @@ A scenario ([scenario.md](scenario.md)) is a file that sets variables in a fixed
 | The **Check** card (before the start) | "The scenario scenarios/throttle_step.yaml was checked too (steps: 6)." |
 | The **Result** card | **✓ Passed** and **How it ended: The scenario ended** |
 | The **Scenario** card | **✓ The scenario passed**, and a table of the scenario steps with their line, state and virtual time (for example, `set Engine.engine.throttle = 50` with **✓ Passed** and **0 ms**) |
+| The **Timeline** link in the **Scenario** card | Opens a new tab with a chart of the steps and the values the scenario wrote and saw, in the GUI's language (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)") |
 
 While a scenario runs, you cannot write variables. For the detailed rules, see "[Scenarios](#scenarios)".
 
@@ -344,6 +345,7 @@ The GUI server can start processes (the launcher starts the commands in the conf
   - Writes from the screen pass the same checks as the rest of the API (token, `Host`, `Origin`), and only values whose type and range fit reach writable variables in the variable list.
 - **Scenarios**: the server passes to the launcher only scenarios in its list (`.yaml` / `.yml` in `scenarios` next to the configuration file). `..`, absolute paths, NUL, names that are too long, names that start with `.`, and symbolic links (files, and `scenarios` and the directories above it) are not listed and are rejected if requested. For a scenario to save, the server only returns the YAML as a string; it writes no file.
 - **Dashboard files and custom panels**: the server reads and serves dashboard files (`.dashboard.yaml` next to the configuration file) and custom panels (`.js` / `.mjs` in `panels/`) only from inside the root, as for configuration files. Dashboard files are read with YAML's safe loader, with limits on size, nesting and number of values, and aliases (`*name`) are not allowed. Panels are served from the same origin, so the CSP (`script-src 'self'`) is not relaxed. Panel module URLs carry a random value created at each start instead of the token (see "[Custom panels](#custom-panels)").
+- **Timeline files**: the files of scenario runs are in a temporary directory of the server (on POSIX, readable by you only), served only with the token (`api/timeline/<session id>`), and removed when the server stops. The timeline page at `timeline/` is served without the token, as the screen's files are; it reads the token where the screens keep it (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). The token is never part of its address.
 - **Screen files**: the server serves only the files in the directory the person who started it named (`--web`; otherwise the sample screens) (see "[Files served with `--web`](#files-served-with---web)"). That screen runs on the same origin with the token and can do everything the GUI can. Give `--web` only screens you trust (as with the root, read what you received from others first).
 - **Concurrent runs**: one server runs one run at a time. If several starts are requested at the same time, only one starts. Two servers can run two runs.
 
@@ -419,6 +421,7 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 | Run | When you start with a scenario selected, the launcher runs the scenario from time 0 to its end, then stops the simulation. |
 | Result | The **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
 | Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). |
+| Timeline | After the run, the **Timeline** link of the **Scenario** card opens the run's timeline as a chart (see "[Timeline of a scenario run](#timeline-of-a-scenario-run)"). |
 
 - Scenario files elsewhere cannot be selected (see "[Security](#security)").
 - The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
@@ -426,6 +429,20 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 - Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin, so they are separate from the time calls that the Control Server refuses while a scenario runs.
 - If the launcher's `features` have `scenario-control`, the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without it, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
 - The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
+
+### Timeline of a scenario run
+
+When the launcher's `features` have `timeline`, the GUI server records the timeline of every scenario run (it gives the launcher `--timeline`; see "[Recording a scenario run on a timeline](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)"). When the run has ended, passed or failed, the **Scenario** card shows the link **Timeline**. It opens the timeline page in a new tab: the steps and the values the scenario wrote and saw, over virtual time, and for a failed scenario the failed step, the condition that did not hold and the value it saw (see "[Viewing a timeline file](simulation-run.md#viewing-a-timeline-file)"). The page is in the GUI's language.
+
+| Item | Details |
+|---|---|
+| Page | `timeline/` of the GUI server (`timeline.html`, `viewer.js` and `messages.js` of `gui/timeline`; the tools archive has them inside the GUI). The link is `timeline/?src=/api/timeline/<session id>&lang=<ja or en>`. |
+| File | `GET api/timeline/<session id>` (with the token, as every API request). The server keeps the files of the last 4 scenario runs that wrote one, in a temporary directory of its own (`vehicle-sil-gui-timelines-*`), and removes them when it stops. A run whose file is gone has no link (the page says 404 `no-timeline`). |
+| Launcher without `timeline` | The server does not give `--timeline`, and the card has no link. |
+| Token | The link carries no token. The new tab starts with a copy of the GUI tab's `sessionStorage`, where the GUI keeps its token, and the page sends it with `Authorization: Bearer`. A page opened another way (a copied address, a bookmark, a link opened without an opener, such as with the middle button in some browsers) has no token and says so: open it again with the link. |
+
+- The files are not kept beyond the last 4 runs or after the server stops. To keep one, fetch `api/timeline/<session id>` with the token before then, or run the scenario with `vehicle_sil_launch run --scenario <scenario> --timeline <file>` yourself.
+- The server API is `scenario.timeline_url` of the summary and `GET api/timeline/<session id>` (see "Timeline of a scenario run (`api/timeline`)" in [gui/protocol/README.md](../gui/protocol/README.md#timeline-of-a-scenario-run-apitimeline)); in the library, `timelineUrl` of the session copy's `scenario`.
 
 ### Save your actions as a scenario
 
@@ -1182,7 +1199,7 @@ Directories and tests for developing the GUI itself.
 | Library tests | The `client` stage of `verify-web.py` |
 | Bundling the library into one file | The `bundle` stage of `verify-web.py` |
 | Package | The `package` stage of `verify-web.py` |
-| Unit tests of the timeline page `gui/timeline` | The `timeline` stage of `verify-web.py` (its browser tests: `--e2e-grep 'timeline page'`) |
+| Unit tests of the timeline page `gui/timeline` | The `timeline` stage of `verify-web.py` (its browser tests: `--e2e-grep 'timeline page'`; with the link of the GUI: `--e2e-grep 'timeline'`) |
 | Serving the screen template `examples/gui_starter` with `--web` and running it in a browser | The end-to-end test `starter.spec.ts` |
 
 The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map.md](code-map.md#timeouts-and-the-scale-factor)).
