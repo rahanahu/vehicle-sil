@@ -749,6 +749,11 @@ Main classes and functions:
 |---|---|
 | `Simulation`, `SilKitOptions`, `SimulationError` | `simulation/simulation.hpp` |
 | `ecu_main()`, `EcuMainOptions` | `simulation/ecu_main.hpp` |
+| `ecu_main()`'s steps: set-up, `--describe`, run, exit codes | `src/ecu_main.cpp` |
+| `ecu_main()`'s command line: reading the arguments, the usage text | `src/ecu_main_command_line.*` |
+| `--describe`'s JSON and the usage text on stdout | `src/ecu_main_describe_stdout.*` |
+| Stopping on a signal or a console event (`--registry-uri`) | `src/ecu_main_stop_on_signal.*` |
+| Text that the parts of `ecu_main()` share in their messages | `src/ecu_main_text.*` |
 
 - Tests: `tests/simulation`
 - `ctest -R`: `^simulation\.`, `^ecu_main\.` (the processes of `examples/ecu_main`)
@@ -2047,7 +2052,8 @@ Tests:
 
 Where to change:
 
-- `libs/simulation/src/ecu_main.cpp`
+- `libs/simulation/src/ecu_main_command_line.cpp` (the arguments, the usage text)
+- `libs/simulation/src/ecu_main.cpp` (what each argument does)
 
 Code to update (`libs/ecu/include/vehicle_sil/ecu/executable.hpp`; the launcher and `ecu_main` share it):
 
