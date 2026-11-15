@@ -9,7 +9,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const T = require('../viewer.js');
+const { bundle, OUT } = require('../bundle.js');
+
+/**
+ * Runs plain scripts of gui/timeline (no DOM) as a page would load them, with a global of their own (in this realm,
+ * so that the tests compare their arrays and objects): that global.
+ */
+function run(code) {
+  const global = {};
+  new Function('globalThis', code)(global);
+  return global;
+}
+const SOURCES = run(
+  ['messages.js', 'viewer.js']
+    .map((name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
+    .join('\n'),
+);
+const T = SOURCES.VehicleSilTimeline;
 
 const REFERENCES = path.join(__dirname, '..', '..', '..', 'tests', 'launch', 'timeline');
 const FIXTURES = path.join(__dirname, 'fixtures');
@@ -656,8 +672,25 @@ test('values are written the way the launcher writes them', () => {
   assert.equal(T.fmtMs(12.5), '12.5 ms');
 });
 
-test('viewer.js and messages.js can be put inline in a page: no closing script tag, no comment opener', () => {
-  for (const name of ['viewer.js', 'messages.js']) {
+test('the one file is what the sources make, and gives the same functions and the CSS', () => {
+  assert.equal(fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n'), bundle());
+  const one = run(bundle());
+  assert.deepEqual(Object.keys(one.VehicleSilTimeline).sort(), Object.keys(T).sort());
+  assert.equal(
+    one.VehicleSilTimelineStyles,
+    '\n' +
+      fs
+        .readFileSync(path.join(__dirname, '..', 'timeline.css'), 'utf8')
+        .replace(/\r\n/g, '\n')
+        .trimEnd() +
+      '\n',
+  );
+  // No module system: a bundler takes it as a script that it imports for its effect.
+  assert.doesNotMatch(bundle(), /\brequire\(|module\.exports|\bexport\s|^import\s/m);
+});
+
+test('the scripts can be put inline in a page: no closing script tag, no comment opener', () => {
+  for (const name of ['viewer.js', 'messages.js', 'page.js', 'vehicle-sil-timeline.js']) {
     const source = fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
     assert.doesNotMatch(source, /<\/script/i, name);
     assert.doesNotMatch(source, /<!--/, name);
@@ -666,11 +699,16 @@ test('viewer.js and messages.js can be put inline in a page: no closing script t
 
 // --- the words of the page (messages.js)
 
-const M = require('../messages.js');
+const M = SOURCES.VehicleSilTimelineMessages;
 const PAGE = fs.readFileSync(path.join(__dirname, '..', 'timeline.html'), 'utf8');
-const VIEWER = fs.readFileSync(path.join(__dirname, '..', 'viewer.js'), 'utf8');
-/** Keys that viewer.js makes from a prefix and a value of the file (t(`status.${...}`) and the like). */
-const MADE = ['status.', 'type.', 'word.', 'col.'];
+const VIEWER = ['viewer.js', 'page.js']
+  .map((name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8'))
+  .join('\n');
+/**
+ * Keys that viewer.js makes from a prefix and a value of the file (t(`status.${...}`) and the like), and that
+ * page.js makes from the keys of the element it says in its own words (pageLoad.).
+ */
+const MADE = ['status.', 'type.', 'word.', 'col.', 'pageLoad.'];
 
 /** Arguments that answer every name with a marker, so that a text that forgets one shows "undefined". */
 const ANY_ARGS = new Proxy({}, { get: (_, name) => (name === 'count' ? 2 : `<${String(name)}>`) });
@@ -709,9 +747,16 @@ test('every key the page names is in the dictionary, and every key of the dictio
   for (const match of PAGE.matchAll(/data-(?:text|label)="([^"]+)"/g)) named.add(match[1]);
   const keys = new Set(Object.keys(M.en));
   const missing = [...named].filter((k) => !keys.has(k) && k.split('.')[0] !== 'node');
-  assert.deepEqual(missing, [], 'keys that viewer.js or timeline.html name and messages.js lacks');
+  assert.deepEqual(
+    missing,
+    [],
+    'keys that viewer.js, page.js or timeline.html name and messages.js lacks',
+  );
   for (const prefix of MADE) {
-    assert.ok(VIEWER.includes(`\`${prefix}\${`), `viewer.js makes the keys ${prefix}...`);
+    assert.ok(
+      VIEWER.includes(`\`${prefix}\${`),
+      `viewer.js or page.js makes the keys ${prefix}...`,
+    );
   }
   const unused = [...keys].filter((k) => !named.has(k) && !MADE.some((p) => k.startsWith(p)));
   assert.deepEqual(unused, [], 'keys of messages.js that nothing uses');
@@ -738,6 +783,24 @@ test('the language is ?lang= when the page has it, else the browser one, else En
   assert.equal(T.pickLanguage('', ['fr-FR', 'EN-gb']), 'en');
   assert.equal(T.pickLanguage('', ['fr']), 'en');
   assert.equal(T.pickLanguage(undefined, undefined), 'en');
+});
+
+test("a page's own texts come first, and a language it adds is one the element can be in", () => {
+  const more = {
+    en: { 'page.open': 'Load', 'page.titleOf': ({ name }) => `${name}!` },
+    de: { 'page.open': 'Öffnen' },
+  };
+  assert.equal(T.text('en', 'page.open', {}, more), 'Load');
+  assert.equal(T.text('en', 'page.titleOf', { name: 'a' }, more), 'a!');
+  assert.equal(T.text('de', 'page.open', {}, more), 'Öffnen');
+  // A key the added language lacks: the page's English, then the dictionary's English
+  assert.equal(T.text('de', 'page.titleOf', { name: 'a' }, more), 'a!');
+  assert.equal(T.text('de', 'page.whole', {}, more), 'Whole run');
+  assert.equal(T.text('ja', 'page.open', {}, more), 'ファイルを開く');
+  assert.equal(T.text('ja', 'no.such', {}, null), 'no.such');
+  assert.equal(T.chooseLanguage(['de-AT', 'ja'], ['en', 'ja', 'de']), 'de');
+  assert.equal(T.chooseLanguage(['pt-BR'], ['en', 'pt-BR']), 'pt-BR');
+  assert.equal(T.chooseLanguage([null, '', 'fr'], ['en', 'ja']), 'en');
 });
 
 test('in Japanese, the words of a refused file, a failed write and the read-out are Japanese', () => {
@@ -770,4 +833,31 @@ test('in Japanese, the words of a refused file, a failed write and the read-out 
     T.setLanguage('en');
   }
   assert.equal(T.writeWords({ at: 5, writes: [] }).heading, 'Writes for 5 ms');
+});
+
+test('the types (vehicle-sil-timeline.d.ts) name every option of the element, and nothing else', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'viewer.js'), 'utf8');
+  const block = (name) => {
+    const start = source.indexOf(`const ${name} = {`);
+    return source.slice(start, source.indexOf('\n  };', start));
+  };
+  const options = [...block('OPTIONS').matchAll(/^\s+'?[\w-]+'?: \['(\w+)'/gm)].map((m) => m[1]);
+  const properties = [...block('PROPERTIES').matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]);
+  assert.ok(options.length >= 10 && properties.length >= 5, 'OPTIONS and PROPERTIES are read');
+  const types = fs.readFileSync(path.join(__dirname, '..', 'vehicle-sil-timeline.d.ts'), 'utf8');
+  const element = types.slice(
+    types.indexOf('export interface VehicleSilTimelineElement'),
+    types.indexOf('  addEventListener<'),
+  );
+  const typed = [...element.matchAll(/^ {2}(\w+)(?:\(\))?: /gm)].map((m) => m[1]);
+  assert.deepEqual(typed.sort(), [...options, ...properties, 'reload'].sort());
+  // The parts of hide: the type, the element's check and the CSS name the same words
+  const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
+  const parts = [...union.matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'timeline.css'), 'utf8');
+  assert.deepEqual(
+    [...css.matchAll(/\[hide~='(\w+)'\]/g)].map((m) => m[1]).sort(),
+    [...parts].sort(),
+  );
+  assert.match(source, new RegExp(`const PARTS = \\[${parts.map((p) => `'${p}'`).join(', ')}\\]`));
 });

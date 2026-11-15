@@ -310,5 +310,6 @@ rm token.header
 
 - 値を書き込むスライダーやスイッチを作る → テンプレートの `index.html` の「Slider and lamp」と、それを動かす `main.js` の `showSlider()`、[gui/client/README.md](../../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」
 - TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」
+- シナリオの実行の時間の軸を自分の画面に出す（スクリプト 1 つとタグ 1 つ。フレームワークを選びません） → [gui.md](../gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」
 - サンプルの画面を残して部品を足す → [gui.md](../gui.md#カスタムパネル) の「カスタムパネル」

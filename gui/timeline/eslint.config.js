@@ -16,9 +16,14 @@ const BROWSER = [
   'URL',
   'URLSearchParams',
   'ResizeObserver',
-  'Buffer',
+  'HTMLElement',
+  'customElements',
+  'CustomEvent',
+  'CSSStyleSheet',
+  'AbortController',
+  'queueMicrotask',
 ];
-const NODE = ['module', 'require', '__dirname'];
+const NODE = ['module', 'require', '__dirname', 'process'];
 const SHARED = ['globalThis', 'console'];
 const globals = (names) => Object.fromEntries(names.map((name) => [name, 'readonly']));
 
@@ -59,8 +64,9 @@ const NO_HTML = {
 
 /**
  * Text that the page shows comes from messages.js, in English and Japanese. A string of words (two words of letters,
- * or a capitalized word as an element's text or title) in viewer.js is such a text: it goes in the dictionary.
- * Class names (`class:`) and the 'use strict' directive are not.
+ * or a capitalized word as an element's text or title) in viewer.js or page.js is such a text: it goes in the
+ * dictionary. Class names (`class:`) and the 'use strict' directive are not. A string that is not shown (a CSS font,
+ * a selector) may say so on its line: // eslint-disable-next-line no-restricted-syntax -- not shown
  */
 const IN_DICTIONARY =
   'Text that the page shows goes in messages.js (English and Japanese): use t(<key>).';
@@ -85,17 +91,24 @@ const NO_TEXT = [
 ];
 
 module.exports = defineConfig([
+  // Made by bundle.js from the files below: bundle.js --check says when it is out of date.
+  { ignores: ['vehicle-sil-timeline.js'] },
   {
-    files: ['viewer.js'],
+    files: ['viewer.js', 'page.js'],
     extends: [eslint.configs.recommended],
-    languageOptions: { sourceType: 'script', globals: globals([...BROWSER, ...NODE, ...SHARED]) },
+    languageOptions: { sourceType: 'script', globals: globals([...BROWSER, ...SHARED]) },
     rules: {
       ...NO_HTML,
       'no-restricted-syntax': [...NO_HTML['no-restricted-syntax'], ...NO_TEXT],
     },
   },
   {
-    files: ['tests/**/*.js', 'eslint.config.js'],
+    files: ['messages.js'],
+    extends: [eslint.configs.recommended],
+    languageOptions: { sourceType: 'script', globals: globals(SHARED) },
+  },
+  {
+    files: ['tests/**/*.js', 'eslint.config.js', 'bundle.js'],
     extends: [eslint.configs.recommended],
     languageOptions: { sourceType: 'commonjs', globals: globals([...NODE, ...SHARED, 'Buffer']) },
   },

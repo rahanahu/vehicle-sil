@@ -524,6 +524,16 @@ void manual_stranger(const Options& o)
     require(all.find(line) == all.rfind(line), "said once:\n" + all);
     require(!contains(all, "'Sender'"), "nothing of the autonomous participant:\n" + all);
     require(byHand.wait(30s).has_value(), "Hand ends by itself");
+    // The stranger did not run with the others: its start failed when the simulation started (SIL
+    // Kit refuses a coordinated participant that is not required), and it left. An exit code 0
+    // would be a stranger that ran the simulation's steps as one of its participants. It left at
+    // the start, so it is gone by the time the run and Hand have ended: one that still waits for
+    // its own stop (SIL Kit not taking the stop of a participant that left Error again) is late.
+    const auto strangerEnd = stranger.wait(3s);
+    require(strangerEnd && strangerEnd->code == 3,
+            "the participant with the mistyped name ends with 3 (its start failed, it did not take part) at the "
+            "simulation's start, not later:\n" +
+                stranger.report("hand (the mistyped name)"));
 }
 
 void manual(const Options& o)

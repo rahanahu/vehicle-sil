@@ -60,6 +60,7 @@ int main(int argc, char** argv)
             {"interrupt", interrupt},
             {"interrupt_ending", interrupt_ending},
             {"interrupt_twice", interrupt_twice},
+            {"j1939_nodes", j1939_nodes},
             {"killed", killed},
             {"late", late},
             {"live", live},

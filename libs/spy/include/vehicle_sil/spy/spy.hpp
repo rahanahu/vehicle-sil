@@ -19,6 +19,8 @@
 //     class BusSpy {
 //     public:
 //         explicit BusSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {
+//             spy_.watch<cal::Write>("write", {.from = 0xF9});         // a typed message (watch.hpp):
+//                                                                     // write.<signal>, write.count ...
 //             spy_.add<BlockWatch>("block", j1939::Address{0x21});   // block.count, block.bytes
 //         }                                                          // and spy.missed ...
 //     private: vehicle_sil::spy::Spy spy_;
@@ -41,6 +43,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -49,7 +52,16 @@
 
 namespace vehicle_sil::spy {
 
+template <class M>
+class Watch; // vehicle_sil/spy/watch.hpp
+
 namespace detail {
+
+/// true if T is a complete type here (Spy::watch() checks that watch.hpp was included).
+template <class T, class = void>
+inline constexpr bool is_complete = false;
+template <class T>
+inline constexpr bool is_complete<T, std::void_t<decltype(sizeof(T))>> = true;
 
 /// A function of a watcher for every step (Scope::on_step()), with the ScopeState it belongs to.
 struct StepFunction
@@ -99,6 +111,19 @@ struct SpyOptions
     /// borrowed Listener whose first Spy publishes them. Not empty: it may not start or end
     /// with '.'.
     std::string statistics_as = "spy";
+};
+
+/// Which messages Spy::watch<M>() takes, and whether it publishes "<as>.stale".
+struct WatchOptions
+{
+    /// Only the messages from this source address. Empty: from any.
+    std::optional<j1939::Address> from{};
+    /// Only the messages to this destination address (j1939::kGlobalAddress for a broadcast and
+    /// for a group without a destination). Empty: to any.
+    std::optional<j1939::Address> to{};
+    /// Publishes "<as>.stale": true while no message came for more than this. Above 0. Empty:
+    /// no such variable.
+    std::optional<SimDuration> stale_after{};
 };
 
 /// What one watcher of a Spy gets: its variables, named "<name()>.<item>", and its handlers on
@@ -181,6 +206,10 @@ public:
     [[nodiscard]] SimTime now() const noexcept;
     /// The watcher's name (the `as` of Spy::add()): the prefix of its variables.
     [[nodiscard]] const std::string& name() const noexcept { return state_.name; }
+    /// true if the ECU has the variable "<name()>.<item>" already (declared by other code). A
+    /// watcher that publishes several variables checks them all first, so that it fails before
+    /// the first rather than after some (variables cannot be taken back).
+    [[nodiscard]] bool has_variable(std::string_view item) const;
 
 private:
     [[nodiscard]] Ecu& ecu() const noexcept { return state_.ecu; }
@@ -199,30 +228,33 @@ private:
 ///
 /// What the Listener missed ("<SpyOptions::statistics_as>.*", by default "spy.*"; integers that
 /// only grow):
-/// - "spy.missed": the sum of the eight below. While it is 0, the Network dropped no frame it
-///   received, no broadcast or connection that the Network or the Listener followed was lost
-///   for a packet that was repeated, out of order or missing before a later one came, or for
-///   lack of a place, and every message handed to the watchers has the receiver's bytes. It
-///   does not say that every transfer came to its end (see "Not seen by it").
+/// - "spy.missed": the sum of the five Listener counters below and of four counters of the
+///   Network's j1939::NetworkStatistics: receive_overflows, transport_rejected,
+///   transport_bam_dropped and transport_bam_replaced (an ECU that a Peer runs publishes them as
+///   "j1939.<network>.<counter>"). While it is 0, the Network dropped no frame it received, no
+///   broadcast or connection that the Network or the Listener followed was lost for a packet
+///   that was repeated, out of order or missing before a later one came, for the same sender's
+///   next announcement, or for lack of a place, and every message handed to the watchers has
+///   the receiver's bytes. It does not say on which side a frame was lost: a broadcast packet
+///   that the sender never put on the bus counts too (transport_bam_dropped or
+///   transport_bam_replaced). Nor does it say that every transfer came to its end (see "Not seen
+///   by it"). transport_rejected counts the broadcasts the Network did not start to assemble (a
+///   malformed announcement, no free session) and the connections a node of this participant
+///   refused (busy with another group, too large, malformed, no free session).
 /// - "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
 ///   "spy.conflicting_packets": the Listener's j1939::SnifferStatistics of the same names.
-/// - "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped": the
-///   Network's j1939::NetworkStatistics of the same names. transport_rejected counts the
-///   broadcasts the Network did not start to assemble (a malformed announcement, no free
-///   session) and the connections a node of this participant refused (busy with another
-///   group, too large, malformed, no free session).
+/// - "spy.timed_out": SnifferStatistics::timed_out, connections between other ECUs whose last
+///   packets did not come. Not in the sum (see below).
 /// Not seen by it: frames that came while the ECU was off its buses ("ecu.connected" false:
 /// they are dropped before the Network and counted nowhere), NetworkStatistics::frames_ignored
 /// (11-bit frames among them, so it grows on any bus that also carries 11-bit frames),
 /// connections whose announcement came before the Listener heard the bus
-/// (SnifferStatistics::orphan_data), and transfers of which the end never came:
-/// - a broadcast or a connection whose last packets did not come. It times out, and whether
-///   the sender stopped or the packets were missed cannot be told. Broadcasts are counted in
-///   NetworkStatistics::transport_timeouts, which is not in the sum because it also counts the
-///   timeouts of this participant's own nodes; connections between other ECUs are counted in
-///   SnifferStatistics::timed_out.
-/// - a broadcast that the same sender's next announcement replaced before its last packet
-///   came. It is counted nowhere.
+/// (SnifferStatistics::orphan_data), and transfers of which the end never came: a broadcast or
+/// a connection whose last packets did not come times out, and whether the sender stopped or
+/// the packets were missed cannot be told. Connections between other ECUs are counted in
+/// "spy.timed_out", broadcasts in NetworkStatistics::transport_timeouts
+/// ("j1939.<network>.transport_timeouts", which also counts the timeouts of this participant's
+/// own nodes).
 ///
 /// Lifetime. Make the Spy a member of the ECU's class (the class ecu_main() or Simulation::add()
 /// makes), so that it lives as long as the ECU: the variables it and its watchers publish
@@ -275,19 +307,22 @@ public:
         static_assert(std::is_constructible_v<W, Scope&, Args&&...>,
                       "vehicle_sil::spy::Spy::add<W>(as, args...) makes W(scope, args...): give W a constructor that "
                       "takes vehicle_sil::spy::Scope& first, then the arguments given to add() after the name");
-        Slot& slot = begin_add(as, "add()");
-        try
-        {
-            auto watcher = std::make_unique<W>(slot.scope, std::forward<Args>(args)...);
-            W& ref = *watcher;
-            finish_add(slot, Owned(watcher.release(), [](void* p) noexcept { delete static_cast<W*>(p); }));
-            return ref;
-        }
-        catch (...)
-        {
-            abandon_add(slot);
-            throw;
-        }
+        return make<W>("add()", as, std::forward<Args>(args)...);
+    }
+
+    /// Watches the typed message M (vehicle_sil::j1939::codec: generated by
+    /// vehicle_sil_add_j1939_codec() or written by hand in that form) and publishes it as
+    /// "<as>.<item>": each signal's latest valid value, and when and how often M came (see Watch
+    /// in vehicle_sil/spy/watch.hpp, which this needs: include it). The same conditions as
+    /// add<Watch<M>>(as, options) (the messages name watch()); std::invalid_argument also for a
+    /// stale_after that is not above 0.
+    template <class M>
+    Watch<M>& watch(std::string_view as, WatchOptions options = {})
+    {
+        static_assert(detail::is_complete<Watch<M>>,
+                      "vehicle_sil::spy::Spy::watch<M>() needs vehicle_sil/spy/watch.hpp: include it (it uses the "
+                      "typed messages of vehicle_sil::j1939_codec, which the target of the messages links)");
+        return make<Watch<M>>("watch()", as, std::move(options));
     }
 
     /// The Listener the Spy hears through (made or borrowed).
@@ -308,6 +343,24 @@ private:
     };
 
     Spy(Ecu& ecu, j1939::Network& network, j1939::Listener* borrowed, SpyOptions options);
+    /// add() and watch(): `kind` names the function in the messages.
+    template <class W, class... Args>
+    W& make(const char* kind, std::string_view as, Args&&... args)
+    {
+        Slot& slot = begin_add(as, kind);
+        try
+        {
+            auto watcher = std::make_unique<W>(slot.scope, std::forward<Args>(args)...);
+            W& ref = *watcher;
+            finish_add(slot, Owned(watcher.release(), [](void* p) noexcept { delete static_cast<W*>(p); }));
+            return ref;
+        }
+        catch (...)
+        {
+            abandon_add(slot);
+            throw;
+        }
+    }
     /// Checks `options` and registers the Spy's function with Ecu::on_step().
     static std::shared_ptr<detail::SpyShared> start(Ecu& ecu, const SpyOptions& options);
     static std::unique_ptr<j1939::Listener> make_listener(j1939::Network& network, const j1939::ListenerOptions& options);

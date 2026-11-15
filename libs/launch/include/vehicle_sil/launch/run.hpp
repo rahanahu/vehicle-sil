@@ -423,16 +423,17 @@ namespace detail {
 /// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
 /// true): its command's arguments, then --name, --registry-uri `registry_uri` and
 /// --start-timeout-ms (ecu_start_timeout_ms() with `stands_still_before_start`), then
-/// map_network_arguments() of its entry. Any other: its command's
-/// arguments with the placeholders replaced, then map_network_arguments() (a --map-network after
-/// what the file wrote, never inside it).
+/// map_network_arguments() and j1939_node_arguments() of its entry. Any other: its command's
+/// arguments with the placeholders replaced, then the same two (a --map-network or --j1939-node
+/// after what the file wrote, never inside it).
 [[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
                                                              const std::string& registry_uri,
                                                              bool stands_still_before_start);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double
-/// quotes if it has a space, a tab, a quote or one of &|<>^; %...% is not protected), elsewhere as
+/// quotes if it has a space, a tab, a quote or one of &|<>^,;, for cmd.exe and PowerShell; %...% is
+/// not protected), elsewhere as
 /// POSIX sh reads it (an argument in single quotes unless it has only letters, digits and
 /// "%+,-./:=@_").
 [[nodiscard]] std::string shell_command_line(const std::string& executable, const std::vector<std::string>& arguments);

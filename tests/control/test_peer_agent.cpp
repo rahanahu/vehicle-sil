@@ -294,6 +294,11 @@ TEST_CASE(control_peer_agent_monitors_the_networks)
     // Body: no NAME (a fixed address); it received the engine's frames.
     CHECK_EQ(std::get<std::int64_t>(get(run.body_schema, run.body_snapshot, "j1939.J1939_CAN.node0.address_state")), std::int64_t{0});
     CHECK(std::get<std::int64_t>(get(run.body_schema, run.body_snapshot, "j1939.J1939_CAN.frames_received")) > 10);
+    for (const char* name : {"j1939.J1939_CAN.transport_timeouts", "j1939.J1939_CAN.transport_rejected",
+                             "j1939.J1939_CAN.transport_bam_dropped", "j1939.J1939_CAN.transport_bam_replaced"})
+    {
+        CHECK_EQ(std::get<std::int64_t>(get(run.body_schema, run.body_snapshot, name)), std::int64_t{0});
+    }
     // The schema describes the states.
     for (const auto& info : run.engine_schema)
     {

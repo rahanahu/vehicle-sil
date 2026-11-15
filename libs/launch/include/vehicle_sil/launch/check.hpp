@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -147,27 +148,57 @@ struct ParticipantResult
     std::filesystem::path executable{};
 };
 
+/// What one entry of a participant's j1939_nodes that changes something does on its network
+/// (j1939::apply_node_overrides(), on the nodes as the executable described them).
+struct J1939NodeMatch
+{
+    std::size_t entry = 0; ///< the index of the entry in ParticipantConfig::j1939_nodes
+    std::size_t line = 0;  ///< its line
+    j1939::NodeOverrideResult result{};
+};
+
 /// A network of a participant as the simulation sees it: what its executable described, under
-/// the name its entry gives it.
+/// the name its entry gives it, with the values its entry's j1939_nodes give its J1939 nodes.
 struct SeenNetwork
 {
     /// As described, but `name` is the simulation's name (a key of the entry's network_names if
-    /// one renames it, else the executable's name).
+    /// one renames it, else the executable's name), and `nodes` have the values after j1939_nodes.
     NetworkDescription network;
     /// The name in the executable's code (--describe's).
     std::string executable_name;
     /// The line of the network_names entry that renames it; 0: none does.
     std::size_t line = 0;
+    /// The J1939 nodes as the executable described them (the values in its code), in the order of
+    /// `network.nodes`.
+    std::vector<J1939NodeDescription> coded_nodes{};
+    /// For each of `network.nodes`: the line of the j1939_nodes entry that gave it its values; 0: none did.
+    std::vector<std::size_t> node_lines{};
+    /// One for each entry of j1939_nodes for this network that changes something, in the entries'
+    /// order (an entry that takes no node keeps the values as they are; the rules say why).
+    std::vector<J1939NodeMatch> j1939_matches{};
     [[nodiscard]] bool renamed() const { return executable_name != network.name; }
 };
 
 /// The participant's networks as the simulation sees them: those its executable described, in
 /// that order, each under its name in the simulation (renamed_networks() of its entry applied; a
-/// line that names no network of the executable changes nothing). The one place that applies
-/// network_names to a description: the check's rules, its table and the "networks" of its JSON
-/// read the networks of a description only through it. (run gives the same lines to the
-/// executable: map_network_arguments().)
+/// line that names no network of the executable changes nothing), and on a J1939 network, the
+/// entries of its j1939_nodes that change something applied to the nodes
+/// (j1939::apply_node_overrides(): each matched against the addresses in the executable's code).
+/// The one place that applies network_names and j1939_nodes to a description: the check's rules,
+/// its table and the "networks" of its JSON read the networks of a description only through it.
+/// (run gives the same lines to the executable: map_network_arguments(), j1939_node_arguments().)
 [[nodiscard]] std::vector<SeenNetwork> seen_networks(const ParticipantConfig& participant, const ReportedEcu& ecu);
+
+/// The indexes (in ParticipantConfig::j1939_nodes) of the entries that change something and name a
+/// network on which the executable has no J1939 network (`seen`: seen_networks()), in their order.
+[[nodiscard]] std::vector<std::size_t> unmatched_j1939_entries(const ParticipantConfig& participant,
+                                                               const std::vector<SeenNetwork>& seen);
+
+/// The error "j1939-node-unsupported" of the participant, if its j1939_nodes need a word of the
+/// features that its executable's --describe does not have (`table`: required_j1939_node_features()).
+[[nodiscard]] std::optional<Finding>
+j1939_nodes_unsupported(const ParticipantConfig& participant, const ReportedEcu& ecu, std::string_view launcher_version,
+                        std::span<const J1939NodeSettingFeature> table = kJ1939NodeSettingFeatures);
 
 /// Compares the configuration with what the participants reported (`results` in the order of
 /// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs (on a
@@ -177,7 +208,9 @@ struct SeenNetwork
 /// than `launcher_version`. A network is under its name in the simulation (seen_networks()) in
 /// every rule, and the entry's network_names are compared with the description (an executable
 /// that does not take --map-network, a name the executable does not have, two of its networks
-/// under one name). The rules of a network are those of its kind only: a description
+/// under one name). The J1939 nodes have the values of the entry's j1939_nodes in every rule
+/// (seen_networks()); an entry that takes no node is an error, and keeps that participant's nodes
+/// on that network out of the rules of the addresses and NAMEs. The rules of a network are those of its kind only: a description
 /// with J1939 nodes on a use other than j1939 is not checked for them (read_description()
 /// refuses it). A disabled
 /// participant (ParticipantConfig::enabled, whatever its result) is not on any network and holds

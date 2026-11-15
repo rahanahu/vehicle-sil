@@ -67,7 +67,9 @@ std::string count_text(std::size_t n, const char* one, const char* many)
 }
 
 /// A network of an ECU as a table cell: "J1939_CAN (j1939 0x00 0x80)", "Body (lin_master)"; one
-/// that the entry renames with both names, the simulation's first: "VehicleCAN <- J1939_CAN (j1939 0x00)".
+/// that the entry renames with both names, the simulation's first: "VehicleCAN <- J1939_CAN (j1939 0x00)";
+/// a node whose address j1939_nodes changes with both addresses, the simulation's first and no
+/// space around the arrow: "J1939_CAN (j1939 0x01<-0x00)" (254: "any").
 std::string network_cell(const SeenNetwork& seen)
 {
     const NetworkDescription& network = seen.network;
@@ -79,9 +81,12 @@ std::string network_cell(const SeenNetwork& seen)
         {
             out += ", no node";
         }
-        for (const auto& node : network.nodes)
+        const auto address = [](j1939::Address a) { return a == j1939::kNullAddress ? std::string("any") : hex2(a); };
+        for (std::size_t k = 0; k < network.nodes.size(); ++k)
         {
-            out += " " + (node.address == j1939::kNullAddress ? std::string("any") : hex2(node.address));
+            const j1939::Address now = network.nodes[k].address;
+            const j1939::Address coded = k < seen.coded_nodes.size() ? seen.coded_nodes[k].address : now;
+            out += " " + address(now) + (now != coded ? "<-" + address(coded) : std::string{});
         }
     }
     if (network.mac)
@@ -640,6 +645,73 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                     w.string("name", entry.name);
                     w.integer("line", static_cast<std::int64_t>(entry.line));
                     w.string("from", entry.from);
+                    w.end_object();
+                }
+                w.end_array();
+            }
+            // Only for an entry with "j1939_nodes": the entries as written (also one that changes
+            // nothing), and the node each takes with its values in the code and after the entry.
+            if (!p.j1939_nodes.empty())
+            {
+                const std::vector<SeenNetwork> seen = p.enabled && result.status == ParticipantStatus::Described && result.ecu
+                                                          ? seen_networks(p, *result.ecu)
+                                                          : std::vector<SeenNetwork>{};
+                const auto number = [&w](const char* key, const auto& value) {
+                    if (value)
+                    {
+                        w.integer(key, static_cast<std::int64_t>(*value));
+                    }
+                    else
+                    {
+                        w.null(key);
+                    }
+                };
+                w.begin_array("j1939_nodes");
+                for (std::size_t e = 0; e < p.j1939_nodes.size(); ++e)
+                {
+                    const J1939NodeEntry& entry = p.j1939_nodes[e];
+                    w.begin_object();
+                    w.string("network", entry.network);
+                    w.integer("line", static_cast<std::int64_t>(entry.line));
+                    number("from", entry.node.from);
+                    number("address", entry.node.address);
+                    number("identity_number", entry.node.identity_number);
+                    number("function_instance", entry.node.function_instance);
+                    number("ecu_instance", entry.node.ecu_instance);
+                    const SeenNetwork* on = nullptr;
+                    const J1939NodeMatch* taken = nullptr;
+                    for (const SeenNetwork& n : seen)
+                    {
+                        for (const J1939NodeMatch& match : n.j1939_matches)
+                        {
+                            if (match.entry == e && match.result.match == j1939::NodeOverrideMatch::Applied)
+                            {
+                                on = &n;
+                                taken = &match;
+                            }
+                        }
+                    }
+                    if (taken != nullptr)
+                    {
+                        const J1939NodeDescription& node = on->network.nodes[taken->result.node];
+                        w.begin_object("node");
+                        w.integer("coded_address", on->coded_nodes[taken->result.node].address);
+                        w.integer("address", node.address);
+                        if (node.name)
+                        {
+                            w.string("j1939_name", vehicle_sil::json::hex64(node.name->value()));
+                        }
+                        else
+                        {
+                            w.null("j1939_name");
+                        }
+                        w.boolean("arbitrary_address_capable", node.arbitrary_address_capable());
+                        w.end_object();
+                    }
+                    else
+                    {
+                        w.null("node");
+                    }
                     w.end_object();
                 }
                 w.end_array();
