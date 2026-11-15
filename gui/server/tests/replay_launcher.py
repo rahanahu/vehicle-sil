@@ -486,7 +486,9 @@ class Player:
         self.hello = False
         self.sealed = False
         self.muted_until = 0.0
-        self.inputs: queue.Queue = queue.Queue()
+        # SimpleQueue: the handler of SIGTERM puts into it, and a Queue's put there waits forever when the signal
+        # came while the main thread held the Queue's lock (in get or empty).
+        self.inputs: queue.SimpleQueue = queue.SimpleQueue()
         self.tick = int(os.environ.get("REPLAY_TICK_MS", "100")) / 100
         self.sleepers: dict[str, subprocess.Popen] = {}
         self.control = None
