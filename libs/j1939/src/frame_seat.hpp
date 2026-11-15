@@ -2,7 +2,7 @@
 //
 // The listener's seat: the one internal place in a Network's receive path from which a
 // Listener hears what the network receives. Not installed and not an extension point for
-// users; see docs/internals/j1939.md ("聞き役の席（内部の口）").
+// users; see docs/internals/j1939.md ("Listener seat (internal interface)").
 #pragma once
 
 #include "vehicle_sil/can/frame.hpp"
