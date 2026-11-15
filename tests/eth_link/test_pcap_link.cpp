@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -87,7 +88,7 @@ struct Fake
         frame.resize(size < 0 ? 0 : static_cast<std::size_t>(size));
         return frame;
     }
-    std::unique_ptr<ExternalLink> link(const std::string& name, bool promiscuous = false) const
+    std::unique_ptr<ExternalLink> link(const std::string& name, Promiscuous promiscuous = Promiscuous::Off) const
     {
         return make_pcap_link(library, {name, promiscuous, kFake});
     }
@@ -155,7 +156,7 @@ std::string error_of(Function&& function, LinkErrorKind kind)
 }
 
 /// The message of start() on the device `name`, which must fail with `kind`.
-std::string start_error(const Fake& fake, const std::string& name, LinkErrorKind kind, bool promiscuous = false)
+std::string start_error(const Fake& fake, const std::string& name, LinkErrorKind kind, Promiscuous promiscuous = Promiscuous::Off)
 {
     const auto link = fake.link(name, promiscuous);
     Recorder recorder;
@@ -171,7 +172,7 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
                std::string("vehicle_sil_fake_pcap") + kSuffix);
     CHECK_TEXT(fake.library->version(), "fake pcap version 1.0 (TEST ONLY)");
     const auto devices = pcap_devices(*fake.library);
-    CHECK_EQ(devices.size(), std::size_t{13});
+    CHECK_EQ(devices.size(), std::size_t{14});
     CHECK_TEXT(devices.at(0).name, "fake0");
     CHECK_TEXT(devices.at(0).description, "Fake Ethernet adapter with a device that answers");
     CHECK_EQ(devices.at(0).flags, kPcapIfUp | kPcapIfRunning | kPcapIfConnected);
@@ -204,7 +205,7 @@ TEST_CASE(pcap_library_that_is_not_there_is_library_missing)
     CHECK_TEXT(message.substr(0, start.size()), start);
     CHECK(message.find("no_such_pcap") != std::string::npos);
     CHECK_TEXT(message.substr(message.size() - end.size()), end);
-    CHECK_TEXT(error_of([&] { (void)make_pcap_link(PcapLinkOptions{"fake0", false, nowhere}); }, LinkErrorKind::LibraryMissing), message);
+    CHECK_TEXT(error_of([&] { (void)make_pcap_link(PcapLinkOptions{"fake0", Promiscuous::Off, nowhere}); }, LinkErrorKind::LibraryMissing), message);
     CHECK_TEXT(error_of([&] { (void)pcap_interface_list(nowhere); }, LinkErrorKind::LibraryMissing), message);
 }
 
@@ -248,7 +249,7 @@ TEST_CASE(pcap_library_without_pcap_open_is_refused_as_npcap_and_taken_as_libpca
     }
     // libpcap is not asked for it: its captures are opened by pcap_create().
     const auto library = load_pcap_library_as(kFakeNoOpen, PcapFlavor::Libpcap);
-    const auto link = make_pcap_link(library, {"fake1", false, kFakeNoOpen});
+    const auto link = make_pcap_link(library, {"fake1", Promiscuous::Off, kFakeNoOpen});
     Recorder recorder;
     link->start(recorder.handler());
     link->stop();
@@ -260,7 +261,7 @@ TEST_CASE(pcap_link_opens_the_capture_for_frames_at_once_without_blocking)
     {
         const Fake fake(flavor);
         const bool npcap = flavor == PcapFlavor::Npcap;
-        const auto link = fake.link("fake1", true);
+        const auto link = fake.link("fake1", Promiscuous::On);
         CHECK_TEXT(link->describe(), std::string(backend_name(flavor)) + " 'fake1'");
         Recorder recorder;
         link->start(recorder.handler());
@@ -535,8 +536,11 @@ TEST_CASE(pcap_link_refuses_devices_it_cannot_open_and_says_why)
             CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other),
                        "cannot open 'fake-down' with Npcap (pcap_open: fake-down: That device is not up). Run --list-interfaces "
                        "--backend npcap to see whether Npcap still offers the adapter.");
-            CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other, true),
+            CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other, Promiscuous::On),
                        pcap_open_refused("fake-down", "fake-down: That device is not up", true).what());
+            // Auto: not opened without promiscuous mode either, so promiscuous mode was not the reason.
+            CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other, Promiscuous::Auto),
+                       pcap_open_refused("fake-down", "fake-down: That device is not up", false).what());
             CHECK_TEXT(start_error(fake, "fake-denied", LinkErrorKind::Other),
                        pcap_open_refused("fake-denied", "fake-denied: You don't have permission to capture on that device", false).what());
         }
@@ -563,47 +567,95 @@ TEST_CASE(pcap_link_refuses_devices_it_cannot_open_and_says_why)
     }
 }
 
-TEST_CASE(pcap_link_warns_about_a_wireless_adapter_and_about_no_promiscuous_mode)
+TEST_CASE(pcap_link_warns_about_a_wireless_adapter)
 {
     const Fake fake;
+    const auto link = fake.link("fake-wifi");
+    Recorder recorder;
+    link->start(recorder.handler());
+    CHECK(eventually([&] { return recorder.warning_count() == 1; }, 10000ms));
+    link->stop();
+    CHECK_TEXT(recorder.warnings.at(0), pcap_wireless_warning("fake-wifi"));
+}
+
+/// Starts `link` on `device` and waits for one frame injected there; the warnings it gave.
+std::vector<std::string> start_and_receive(const Fake& fake, ExternalLink& link, const char* device)
+{
+    Recorder recorder;
+    link.start(recorder.handler());
+    CHECK_EQ(fake.inject(device, make_frame(kEcu, kOutside, 0x88B5)), 1);
+    CHECK(eventually([&] { return recorder.frame_count() == 1; }, 10000ms));
+    link.stop();
+    const std::lock_guard lock(recorder.mutex);
+    return recorder.warnings;
+}
+
+TEST_CASE(pcap_link_in_auto_mode_goes_on_without_promiscuous_mode_that_libpcap_does_not_support)
+{
+    const Fake libpcap(PcapFlavor::Libpcap);
+    const auto link = libpcap.link("fake-nopromisc", Promiscuous::Auto);
+    CHECK(!link->promiscuous().has_value()); // not opened yet
+    const auto warnings = start_and_receive(libpcap, *link, "fake-nopromisc");
+    CHECK_EQ(warnings.size(), std::size_t{1});
+    CHECK_TEXT(warnings.at(0), promiscuous_refused_warning("fake-nopromisc", "result 2, fake-nopromisc: promiscuous mode is not supported"));
+    CHECK_TEXT(warnings.at(0),
+               "interface 'fake-nopromisc' does not accept promiscuous mode (result 2, fake-nopromisc: promiscuous mode is not "
+               "supported), so the bridge runs without it there: only frames to the interface's own address and to group "
+               "addresses arrive, and frames to the devices of the SIL Kit side (they have addresses of their own) do not. If "
+               "devices outside must reach them, use an adapter that accepts promiscuous mode (a wired one usually does).");
+    CHECK(link->promiscuous() == std::optional<bool>(false));
+    // On fails instead, and says how to go on.
+    CHECK_TEXT(start_error(libpcap, "fake-nopromisc", LinkErrorKind::Other, Promiscuous::On),
+               "interface 'fake-nopromisc' does not accept promiscuous mode (result 2, fake-nopromisc: promiscuous mode is not "
+               "supported), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then "
+               "says so), or use an adapter that accepts promiscuous mode (a wired one usually does).");
+    CHECK_EQ(libpcap.get("fake-nopromisc", "open"), 0L);
+    // Off: nothing asked, nothing to say.
+    const auto off = libpcap.link("fake-nopromisc", Promiscuous::Off);
+    CHECK(start_and_receive(libpcap, *off, "fake-nopromisc").empty());
+    CHECK(off->promiscuous() == std::optional<bool>(false));
+}
+
+TEST_CASE(pcap_link_in_auto_mode_opens_again_without_promiscuous_mode_when_opening_with_it_fails)
+{
+    for (const PcapFlavor flavor : {PcapFlavor::Libpcap, PcapFlavor::Npcap})
     {
-        const auto link = fake.link("fake-wifi");
-        Recorder recorder;
-        link->start(recorder.handler());
-        CHECK(eventually([&] { return recorder.warning_count() == 1; }, 10000ms));
-        link->stop();
-        CHECK_TEXT(recorder.warnings.at(0), pcap_wireless_warning("fake-wifi"));
+        const Fake fake(flavor);
+        const bool npcap = flavor == PcapFlavor::Npcap;
+        fake.set("fake1", "refuse_promisc", 1);
+        const std::string refusal = "fake1: You don't have permission to capture in promiscuous mode on that device";
+        const auto link = fake.link("fake1", Promiscuous::Auto);
+        const auto warnings = start_and_receive(fake, *link, "fake1");
+        CHECK_EQ(warnings.size(), std::size_t{1});
+        CHECK_TEXT(warnings.at(0), promiscuous_refused_warning("fake1", npcap ? "pcap_open: " + refusal : "result -11, " + refusal));
+        CHECK(link->promiscuous() == std::optional<bool>(false));
+        CHECK_EQ(fake.get("fake1", "promisc"), 0L);
+        // On fails.
+        const std::string executable = fake.library->executable_path();
+        CHECK_TEXT(start_error(fake, "fake1", npcap ? LinkErrorKind::Other : LinkErrorKind::PermissionDenied, Promiscuous::On),
+                   npcap ? std::string(pcap_open_refused("fake1", refusal, true).what())
+                         : std::string(pcap_promiscuous_refused("fake1", -11, refusal, executable).what()));
+        fake.set("fake1", "refuse_promisc", 0);
+        // Accepted: promiscuous, and nothing to say.
+        const auto accepted = fake.link("fake1", Promiscuous::Auto);
+        CHECK(start_and_receive(fake, *accepted, "fake1").empty());
+        CHECK(accepted->promiscuous() == std::optional<bool>(true));
+        CHECK_EQ(fake.get("fake1", "promisc"), 1L);
     }
-    {
-        const Fake libpcap(PcapFlavor::Libpcap);
-        const auto link = libpcap.link("fake-nopromisc", true);
-        Recorder recorder;
-        link->start(recorder.handler());
-        CHECK(eventually([&] { return recorder.warning_count() == 1; }, 10000ms));
-        link->stop();
-        CHECK_TEXT(recorder.warnings.at(0),
-                   pcap_activate_warning("fake-nopromisc", 2, "fake-nopromisc: promiscuous mode is not supported"));
-    }
-    {
-        // Npcap's pcap_open() does not tell a warning of the activation: the capture opens, without one.
-        const Fake npcap(PcapFlavor::Npcap);
-        const auto link = npcap.link("fake-nopromisc", true);
-        Recorder recorder;
-        link->start(recorder.handler());
-        CHECK_EQ(npcap.inject("fake-nopromisc", make_frame(kEcu, kOutside, 0x88B5)), 1);
-        CHECK(eventually([&] { return recorder.frame_count() == 1; }, 10000ms));
-        link->stop();
-        CHECK_EQ(recorder.warning_count(), std::size_t{0});
-    }
-    {
-        const auto link = fake.link("fake-nopromisc"); // not asked for: nothing to warn about
-        Recorder recorder;
-        link->start(recorder.handler());
-        CHECK_EQ(fake.inject("fake-nopromisc", make_frame(kEcu, kOutside, 0x88B5)), 1);
-        CHECK(eventually([&] { return recorder.frame_count() == 1; }, 10000ms));
-        link->stop();
-        CHECK_EQ(recorder.warning_count(), std::size_t{0});
-    }
+    CHECK_TEXT(pcap_promiscuous_refused("va", -11, "no", "/opt/bridge").what(),
+               "this user may not open 'va' in promiscuous mode with libpcap (result -11, no), and --promiscuous asks for it: "
+               "run 'sudo setcap cap_net_raw+ep /opt/bridge' once or run as root, or leave out --promiscuous to let the bridge "
+               "run without it (it then says so).");
+}
+
+TEST_CASE(pcap_link_cannot_tell_when_npcap_opens_without_promiscuous_mode_and_says_nothing)
+{
+    // Npcap's pcap_open() does not tell a warning of the activation: the capture opens without one,
+    // and the link takes it for promiscuous as asked.
+    const Fake npcap(PcapFlavor::Npcap);
+    const auto link = npcap.link("fake-nopromisc", Promiscuous::Auto);
+    CHECK(start_and_receive(npcap, *link, "fake-nopromisc").empty());
+    CHECK(link->promiscuous() == std::optional<bool>(true));
 }
 
 TEST_CASE(pcap_link_receives_from_a_library_that_never_tells_that_frames_are_there)

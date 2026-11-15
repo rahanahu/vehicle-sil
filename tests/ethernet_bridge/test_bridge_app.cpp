@@ -11,7 +11,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -20,6 +22,7 @@ using namespace std::chrono_literals;
 using namespace vehicle_sil::ethernet_bridge;
 using vehicle_sil::eth_link::LinkEvent;
 using vehicle_sil::eth_link::LinkEventKind;
+using vehicle_sil::eth_link::Promiscuous;
 using vehicle_sil::eth_link::TransmitResult;
 using vehicle_sil::fake_eth::FakeLink;
 using vehicle_sil::fake_eth::FakeSegment;
@@ -42,17 +45,20 @@ BridgeOptions options_for(Backend backend, std::vector<std::string_view> extra =
     return parse_bridge_options(args);
 }
 
-/// A PromiscuousHint on a fake link, with a clock that only the test moves.
+/// A PromiscuousHint on a fake link, with a clock that only the test moves. `requested`: the mode
+/// asked for (--no-promiscuous by default); `in_effect`: what the link says it set up.
 struct Hinted
 {
     FakeSegment segment;
     FakeLink link{segment, "enp3s0"};
     std::atomic<std::int64_t> now_ms{1000};
-    PromiscuousHint hint{link, 5s, [this] { return std::chrono::steady_clock::time_point(std::chrono::milliseconds(now_ms.load())); }};
+    PromiscuousHint hint;
     std::atomic<int> frames{0};
 
-    Hinted()
+    explicit Hinted(Promiscuous requested = Promiscuous::Off, std::optional<bool> in_effect = std::nullopt) :
+      hint(link, requested, 5s, [this] { return std::chrono::steady_clock::time_point(std::chrono::milliseconds(now_ms.load())); })
     {
+        link.set_promiscuous(in_effect);
         hint.start([this](const LinkEvent& event) { frames += event.kind == LinkEventKind::Frame ? 1 : 0; });
     }
     ~Hinted() { hint.stop(); }
@@ -71,9 +77,15 @@ struct Hinted
 
 const std::string kHint =
     "no frame to a MAC address of the SIL Kit side has come from fake 'enp3s0' (virtual) in the 5 s since the bridge first "
-    "sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to "
-    "group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are "
-    "meant to answer, add --promiscuous.";
+    "sent a frame there, and promiscuous mode is off (--no-promiscuous): without promiscuous mode an interface passes on "
+    "only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) "
+    "do not arrive. If devices outside are meant to answer, leave out --no-promiscuous.";
+const std::string kRefusedHint =
+    "no frame to a MAC address of the SIL Kit side has come from fake 'enp3s0' (virtual) in the 5 s since the bridge first "
+    "sent a frame there, and the interface runs without promiscuous mode (it does not accept it, see the warning at the "
+    "start): without promiscuous mode an interface passes on only frames to its own address and to group addresses, so "
+    "frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, use "
+    "an adapter that accepts promiscuous mode (a wired one usually does).";
 
 } // namespace
 
@@ -126,7 +138,8 @@ TEST_CASE(app_host_os_matches_the_build)
 
 TEST_CASE(app_start_line_tells_what_is_bridged_and_what_passes)
 {
-    CHECK_TEXT(format_start_line(options_for(Backend::Packet, {"--ethertype", "0x88b5,0x0800"}), "packet 'enp3s0' (network interface)"),
+    CHECK_TEXT(format_start_line(options_for(Backend::Packet, {"--ethertype", "0x88b5,0x0800", "--no-promiscuous"}),
+                                 "packet 'enp3s0' (network interface)", false),
                "bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' "
                "(network interface): EtherType 0x88b5,0x0800 only, both ways; promiscuous off (only frames to the interface's "
                "own address and to group addresses arrive); MAC guard on; Ctrl+C to stop");
@@ -134,6 +147,27 @@ TEST_CASE(app_start_line_tells_what_is_bridged_and_what_passes)
                                  "packet 'enp3s0' (network interface)"),
                "bridging SIL Kit network 'ETH1' (participant 'B', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network "
                "interface): every frame, both ways; promiscuous on; MAC guard off; Ctrl+C to stop");
+}
+
+TEST_CASE(app_start_line_says_the_promiscuous_mode_in_effect)
+{
+    const auto line = [](std::vector<std::string_view> extra, std::optional<bool> in_effect) {
+        extra.push_back("--all-frames");
+        const std::string text = format_start_line(options_for(Backend::Npcap, extra), "npcap 'Ethernet 2'", in_effect);
+        const auto from = text.find("; promiscuous");
+        return text.substr(from, text.find("; MAC guard") - from);
+    };
+    // Neither option: promiscuous mode where the interface accepts it.
+    CHECK(options_for(Backend::Npcap, {"--all-frames"}).promiscuous == Promiscuous::Auto);
+    CHECK_TEXT(line({}, true), "; promiscuous on");
+    CHECK_TEXT(line({}, false), "; promiscuous off (the interface does not accept it: only frames to its own address and to "
+                                "group addresses arrive)");
+    CHECK_TEXT(line({}, std::nullopt), "; promiscuous on"); // a link that does not tell: as asked
+    CHECK_TEXT(line({"--promiscuous"}, true), "; promiscuous on");
+    CHECK_TEXT(line({"--no-promiscuous"}, false),
+               "; promiscuous off (only frames to the interface's own address and to group addresses arrive)");
+    CHECK_TEXT(line({"--no-promiscuous"}, std::nullopt),
+               "; promiscuous off (only frames to the interface's own address and to group addresses arrive)");
 }
 
 TEST_CASE(app_start_line_of_a_tap_says_nothing_about_promiscuous_mode)
@@ -159,6 +193,37 @@ TEST_CASE(app_promiscuous_hint_warns_once_when_nothing_answers_the_silkit_side)
     CHECK_TEXT(h.hint.take_warning().value_or(""), kHint);
     h.now_ms = 60000 + 500000;
     CHECK(!h.hint.take_warning()); // once
+}
+
+TEST_CASE(app_promiscuous_hint_after_a_refused_promiscuous_mode_says_so)
+{
+    // Asked for (by default, or with --promiscuous where a refusal does not fail), and the interface refused it.
+    for (const auto requested : {Promiscuous::Auto, Promiscuous::On})
+    {
+        Hinted h(requested, false);
+        h.send(kDevice, kEcu);
+        h.now_ms += 5000;
+        CHECK_TEXT(h.hint.take_warning().value_or(""), kRefusedHint);
+    }
+}
+
+TEST_CASE(app_promiscuous_hint_is_quiet_while_the_link_is_in_promiscuous_mode)
+{
+    // In promiscuous mode, by default or asked for, or where the link does not tell and the mode was asked for.
+    for (const auto& [requested, in_effect] : std::vector<std::pair<Promiscuous, std::optional<bool>>>{
+             {Promiscuous::Auto, true}, {Promiscuous::On, true}, {Promiscuous::Auto, std::nullopt}, {Promiscuous::On, std::nullopt}})
+    {
+        Hinted h(requested, in_effect);
+        h.send(kDevice, kEcu);
+        h.now_ms += 3600000;
+        CHECK(!h.hint.take_warning());
+    }
+    // The link's word counts over the option.
+    Hinted h(Promiscuous::Off, true);
+    h.send(kDevice, kEcu);
+    h.now_ms += 3600000;
+    CHECK(!h.hint.take_warning());
+    CHECK(h.hint.promiscuous() == std::optional<bool>(true));
 }
 
 TEST_CASE(app_promiscuous_hint_is_quiet_once_a_frame_to_the_silkit_side_arrived)

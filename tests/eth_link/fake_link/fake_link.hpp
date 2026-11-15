@@ -70,6 +70,8 @@ public:
     /// Transmitted frames come back to this link's own handler too (no link of vehicle-sil does
     /// this today), and echoes_own_transmissions() says so. Set it before start().
     void set_echo_own(bool echo);
+    /// What promiscuous() says (nullopt, the default: the link has no such mode).
+    void set_promiscuous(std::optional<bool> promiscuous) { promiscuous_.store(promiscuous ? (*promiscuous ? 1 : 0) : -1); }
     /// transmit() throws std::runtime_error (a link that breaks its contract).
     void set_transmit_throws(bool throws);
     /// A frame that reaches this link only (a device in front of this interface alone).
@@ -101,6 +103,11 @@ public:
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return echo_own_.load(); }
     [[nodiscard]] std::string describe() const override;
     [[nodiscard]] std::string last_error() const override;
+    [[nodiscard]] std::optional<bool> promiscuous() const noexcept override
+    {
+        const int now = promiscuous_.load();
+        return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
+    }
 
 private:
     friend class FakeSegment;
@@ -136,6 +143,7 @@ private:
     std::optional<eth_link::LinkError> start_error_;
     eth_link::TransmitResult transmit_result_ = eth_link::TransmitResult::Ok;
     std::atomic<bool> echo_own_{false};
+    std::atomic<int> promiscuous_{-1};
     bool transmit_throws_ = false;
     std::uint64_t overruns_at_stop_ = 0;
     int start_calls_ = 0;

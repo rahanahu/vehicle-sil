@@ -46,23 +46,28 @@ std::optional<std::string> backend_unavailable(std::optional<Backend> backend, H
                      "registry.";
 }
 
-std::string format_start_line(const BridgeOptions& options, std::string_view link)
+std::string format_start_line(const BridgeOptions& options, std::string_view link, std::optional<bool> promiscuous)
 {
+    const bool asked = options.promiscuous != eth_link::Promiscuous::Off;
     std::string line = "bridging SIL Kit network '" + options.network + "' (participant '" + options.participant + "', " +
                        options.registry_uri + ") <-> " + std::string(link) + ": " +
                        eth_link::FrameFilter(options.bridge.filter).describe();
     if (options.backend && reaches_real_adapters(*options.backend))
     {
-        line += options.promiscuous ? "; promiscuous on"
-                                    : "; promiscuous off (only frames to the interface's own address and to group addresses "
-                                      "arrive)";
+        const bool on = promiscuous.value_or(asked);
+        line += on      ? "; promiscuous on"
+                : asked ? "; promiscuous off (the interface does not accept it: only frames to its own address and to group "
+                          "addresses arrive)"
+                        : "; promiscuous off (only frames to the interface's own address and to group addresses arrive)";
     }
     line += options.bridge.mac_guard ? "; MAC guard on" : "; MAC guard off";
     return line + "; Ctrl+C to stop";
 }
 
-PromiscuousHint::PromiscuousHint(eth_link::ExternalLink& link, std::chrono::milliseconds after, Clock clock) :
+PromiscuousHint::PromiscuousHint(eth_link::ExternalLink& link, eth_link::Promiscuous requested,
+                                 std::chrono::milliseconds after, Clock clock) :
   link_(link),
+  requested_(requested),
   after_(after),
   clock_(std::move(clock))
 {
@@ -165,6 +170,12 @@ std::optional<std::string> PromiscuousHint::take_warning()
     {
         return std::nullopt;
     }
+    const bool asked = requested_ != eth_link::Promiscuous::Off;
+    if (link_.promiscuous().value_or(asked))
+    {
+        answered_.store(true); // every frame arrives: nothing to keep track of
+        return std::nullopt;
+    }
     const auto sent = first_sent_.load();
     if (sent == kNotSent)
     {
@@ -182,11 +193,15 @@ std::optional<std::string> PromiscuousHint::take_warning()
     }
     warned_ = true;
     answered_.store(true); // said once: nothing more to keep track of
-    return "no frame to a MAC address of the SIL Kit side has come from " + link_.describe() + " in the " +
-           std::to_string(std::chrono::duration_cast<std::chrono::seconds>(after_).count()) +
-           " s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only "
-           "frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do "
-           "not arrive. If devices outside are meant to answer, add --promiscuous.";
+    const std::string what = "no frame to a MAC address of the SIL Kit side has come from " + link_.describe() + " in the " +
+                             std::to_string(std::chrono::duration_cast<std::chrono::seconds>(after_).count()) +
+                             " s since the bridge first sent a frame there, and ";
+    const std::string why = ": without promiscuous mode an interface passes on only frames to its own address and to group "
+                            "addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices "
+                            "outside are meant to answer, ";
+    return asked ? what + "the interface runs without promiscuous mode (it does not accept it, see the warning at the start)" +
+                       why + "use an adapter that accepts promiscuous mode (a wired one usually does)."
+                 : what + "promiscuous mode is off (--no-promiscuous)" + why + "leave out --no-promiscuous.";
 }
 
 } // namespace vehicle_sil::ethernet_bridge

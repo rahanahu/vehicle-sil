@@ -915,7 +915,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 | 名前 | 場所 |
 |---|---|
-| `ExternalLink`、`LinkEvent`、`LinkError` | `eth_link/external_link.hpp` |
+| `ExternalLink`、`LinkEvent`、`LinkError`、`Promiscuous` | `eth_link/external_link.hpp` |
 | `FrameFilter` | `eth_link/frame_filter.hpp` |
 | `MacSideTable` | `eth_link/mac_side_table.hpp` |
 | `MacAddress` | `eth_link/mac_address.hpp` |

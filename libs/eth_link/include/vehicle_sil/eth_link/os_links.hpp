@@ -61,8 +61,11 @@ struct PacketLinkOptions
     /// The interface's name.
     std::string name;
     /// Receive frames to every address while the link is started (the socket's own membership:
-    /// the interface's flag is as before once the link stops).
-    bool promiscuous = false;
+    /// the interface's flag is as before once the link stops). The kernel refuses it with an
+    /// error for some interfaces (On: start() fails; Auto: the link goes on without it and warns);
+    /// a driver that takes the request and ignores it cannot be told from one that follows it.
+    /// Off by default, as before there was a choice; vehicle_sil_ethernet_bridge gives Auto.
+    Promiscuous promiscuous = Promiscuous::Off;
 };
 
 /// A TAP device. start() attaches to it (or creates it), needs no privilege for a device that

@@ -86,8 +86,10 @@ protected:
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
     /// Opens the interface. Returns the descriptor (non-blocking) that frames are read from and
-    /// written to. Throws LinkError.
+    /// written to. Throws LinkError. It may leave warnings for the start (add_start_warning()).
     virtual Fd open() = 0;
+    /// From open(): a Warning that the receive thread reports first once the link has started.
+    void add_start_warning(std::string text) { start_warnings_.push_back(std::move(text)); }
 
     enum class ReadStatus
     {
@@ -139,6 +141,7 @@ private:
     std::thread thread_;
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
     bool checksum_warned_ = false;                  // receive thread only
+    std::vector<std::string> start_warnings_;       // open() fills it, then the receive thread reads it
     std::vector<std::uint8_t> buffer_;              // receive thread only
 
     mutable std::mutex error_mutex_;

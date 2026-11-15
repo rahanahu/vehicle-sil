@@ -124,6 +124,7 @@ void LinuxLink::start(EventHandler handler)
     {
         throw bad_interface_name(name_);
     }
+    start_warnings_.clear();
     Fd fd = open();
     Fd wake(::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
     if (!wake.valid())
@@ -272,6 +273,13 @@ void LinuxLink::run()
     const int fd = fd_.get();
     const int wake = wake_.get();
 
+    for (const std::string& text : start_warnings_)
+    {
+        LinkEvent event;
+        event.kind = LinkEventKind::Warning;
+        event.detail = text;
+        handler_(event);
+    }
     if (const auto state = interface_state(name_); state && (state->flags & IFF_UP) == 0)
     {
         const std::string text = interface_down_warning(name_);

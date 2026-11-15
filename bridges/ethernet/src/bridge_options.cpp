@@ -170,7 +170,12 @@ std::string bridge_usage()
            "                           --ethertype, --src-mac and --all-frames is required\n"
            "  --vlan-tpid <hex>,...    the values that mark a VLAN tag (0x8100,0x88a8)\n"
            "  --max-frame-bytes <n>    drop longer frames, without FCS, 60..65535 (1522)\n"
-           "  --promiscuous            receive frames to every address (packet, npcap, pcap)\n"
+           "  --promiscuous            receive frames to every address, or fail if the interface refuses\n"
+           "                           (packet, npcap, pcap). Without it and --no-promiscuous: receive\n"
+           "                           frames to every address where the interface accepts it, else\n"
+           "                           go on without and say so\n"
+           "  --no-promiscuous         receive only frames to the interface's own address and to group\n"
+           "                           addresses (packet, npcap, pcap)\n"
            "  --tap-create             create the TAP device while the bridge runs (tap)\n"
            "  --no-mac-guard           do not drop frames by the source MAC rule against loops\n"
            "  --mac-table-size <n>     MAC addresses the rule remembers, 16..65536 (1024)\n"
@@ -182,6 +187,7 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     BridgeOptions options;
     auto& filter = options.bridge.filter;
     std::string_view named; // "name" or "participant", whichever was given
+    std::string_view promiscuousGiven; // "--promiscuous" or "--no-promiscuous", whichever was given
 
     for (std::size_t i = 0; i < args.size(); ++i)
     {
@@ -206,9 +212,16 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
             options.all_frames = true;
             continue;
         }
-        if (arg == "--promiscuous")
+        if (arg == "--promiscuous" || arg == "--no-promiscuous")
         {
-            options.promiscuous = true;
+            const auto mode = arg == "--promiscuous" ? eth_link::Promiscuous::On : eth_link::Promiscuous::Off;
+            if (!promiscuousGiven.empty() && promiscuousGiven != arg)
+            {
+                throw BridgeUsageError("--promiscuous and --no-promiscuous contradict each other: give one of them, or "
+                                       "neither (the bridge then uses promiscuous mode where the interface accepts it)");
+            }
+            promiscuousGiven = arg;
+            options.promiscuous = mode;
             continue;
         }
         if (arg == "--tap-create")
@@ -342,10 +355,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     {
         throw BridgeUsageError("--tap-create needs --backend tap");
     }
-    if (options.promiscuous && !reaches_real_adapters(backend))
+    if (!promiscuousGiven.empty() && !reaches_real_adapters(backend))
     {
-        throw BridgeUsageError("--promiscuous needs --backend packet, npcap or pcap: a TAP device gets every frame the "
-                               "OS sends to it anyway");
+        throw BridgeUsageError(std::string(promiscuousGiven) +
+                               " needs --backend packet, npcap or pcap: a TAP device gets every frame the OS sends to it "
+                               "anyway");
     }
     return options;
 }
