@@ -226,6 +226,7 @@ SIL Kit のバージョン情報の Git ハッシュ（`SilKit::Version::GitHash
 | 0003 | registry | 同じ名前で拒否された participant が切断した後、先にいた同じ名前の participant へ、直接接続できない participant が中継で接続できなくなる |
 | 0004 | ネットワークシミュレーターを作る participant（`vehicle_sil_can_bus_simulator`） | まれに、ネットワークが告知されず、コントローラーが全部 trivial simulation のままになる。ビットレートとモードがシミュレーターに届かず、エラーも警告も出ない |
 | 0005 | registry | participant が終わった直後に別の participant が参加すると、まれに、5 秒（`Middleware.ConnectTimeoutSeconds`）待ってから「Timeout during connection handshake with the SIL Kit Registry」で失敗する。作り直せば接続できる |
+| 0006 | coordinated の participant（実行の ECU） | 実行が required にしていない participant（`--name` の打ち間違いなど）が、開始の途中で Error から先へ進むことがある。`ParticipantRuntime::start()` は失敗にするが、SIL Kit がその participant の停止を受け付けないことがあり、最大で `shutdown_timeout` の間残って、その間は全 participant の仮想時間が 0 のままになる。まれに、`start()` が戻り、その participant は 1 ステップも実行せず、何も報告しない |
 
 `vehicle_sil_launch run` が立てる registry と、vehicle-sil のビルドで作った実行ファイルには、全部のパッチが適用されています。
 
@@ -465,7 +466,14 @@ required でない coordinated の participant が、この順になります。
 
 **影響**: その後の動きは、どのメッセージが先に届くかで変わります。1 つは、SIL Kit が不正と報告した participant が Running まで進み、シミュレーションに加わる場合です。もう 1 つは、待っている system state がすでに過ぎていて、Running より前の状態にとどまり続ける場合です。時刻同期があると、ほかの participant がこの participant を待つので、この participant が抜けるまで仮想時間は 0 のままです。
 
-**対応**: `ParticipantRuntime` は、自分の participant が走り始める前に SIL Kit が出した Error を覚えます。そのとき `start()` は、状態がその後どう変わっていても、Error で終わった開始と同じように例外を投げます。ステップのハンドラーも呼びません。ecu_main の実行ファイルは、開始に失敗したときの終了コードで終わり、シミュレーションから抜けます（[internals/core.md](internals/core.md#start-が戻るときの状態) の「`start()` が戻るときの状態」）。試験 `core.participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_after_its_error` が、この順を作って確かめます。上流のコードは変えていないので、パッチは不要です。
+**対応**: パッチ [0006](#0006-開始の待ちが終わったときに-lifecycle-が-error-を離れない) で直しています。2 つのコールバックは、participant が待ちを始めた状態のままのときだけ次へ進めます。Error になった participant は、止められるまで Error のままです。`ParticipantRuntime::start()` は例外を投げ、ecu_main の実行ファイルは、開始に失敗したときの終了コードで終わって、シミュレーションから抜けます。試験 `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` が、この順を作って確かめます。パッチがなければ落ちます。
+
+`ParticipantRuntime` には、パッチのない SIL Kit（利用側の `SilKit::SilKit`）への備えもあります。自分の participant が走り始める前に SIL Kit が出した Error を覚え、そのとき `start()` は、状態がその後どう変わっていても、Error で終わった開始と同じように例外を投げます。ステップのハンドラーも呼びません（[internals/core.md](internals/core.md#start-が戻るときの状態) の「`start()` が戻るときの状態」）。この備えは SIL Kit を Error に戻さないので、パッチがないと次の 2 つが残ります。
+
+- 開始に失敗した participant の停止を、SIL Kit が受け付けないことがあります。その participant は `shutdown_timeout` が過ぎるまで残り、時刻同期があると、その間は全 participant の仮想時間が進みません。
+- まれに、SIL Kit が Error を離れた後、Error のステータスが届く前に、`start()` が状態を読みます。`start()` は戻り、その participant は実行の最後まで 1 ステップも実行せず、何も報告しません。
+
+サブモジュールを、この直しを含む上流のコミットに更新したら、パッチを外します。
 
 **上流への報告**: 未報告です。
 
@@ -487,7 +495,7 @@ required でない coordinated の participant が、この順になります。
 
 ## SIL Kit へのパッチ
 
-`patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを含みます。
+`patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを、0006 は上流の単体テストを含みます。
 
 | パッチ | 直すもの |
 |---|---|
@@ -496,8 +504,9 @@ required でない coordinated の participant が、この順になります。
 | [0003](#0003-registry-がほかの-peer-の名前の登録を消さない) | registry が、ほかの peer の名前の登録を消さない |
 | [0004](#0004-非同期の購読が済んだときのハンドラーを失わない) | 非同期の購読が済んだときのハンドラーを失わない |
 | [0005](#0005-registry-が接続の閉じた-participant-を通知しない) | registry が、接続の閉じた participant を通知しない |
+| [0006](#0006-開始の待ちが終わったときに-lifecycle-が-error-を離れない) | 開始の待ちが終わったときに、lifecycle が Error を離れない |
 
-**上流への報告**: いずれも未報告です。0001、0002、0004、0005 は上流の `main` でも同じコードです（0003 は上流の `main` を確認していません）。
+**上流への報告**: いずれも未報告です。0001、0002、0004、0005 は上流の `main` でも同じコードです（0003 と 0006 は上流の `main` を確認していません）。
 
 ### 0001: LIN の Master が dynamic response のノードを数えない
 
@@ -548,6 +557,16 @@ required でない coordinated の participant が、この順になります。
 **上流の再現テスト**: なし（重なる時機を外から決められない。vehicle-sil にも、必ず落ちるテストはない）
 
 **検証**: registry が終わりの処理を実行するのを仮に遅らせると、パッチなしでは participant を続けて作るテストが必ずこの時間切れで落ち、パッチありでは通ることで確認しています（仮の遅れは入れたままにしていません）。
+
+### 0006: 開始の待ちが終わったときに lifecycle が Error を離れない
+
+**内容**: 開始の待ちを終える 2 つのコールバック（`ServicesCreatedState::ServicesCreated()` の、全 participant からの返事の待ち。`CommunicationInitializingState::CommunicationInitializing()` の、保留中の購読の待ち）が、participant が待ちを始めた状態のままのときだけ、次の状態を設定する。これまでは、状態が何であっても設定していた。待っている間に Error になった participant や abort された participant が、開始の続きに戻され、そこから先へ進んでいた（「[SIL Kit: 開始の途中で Error になっても lifecycle が先へ進む](#sil-kit-開始の途中で-error-になっても-lifecycle-が先へ進む)」）。
+
+**vehicle-sil が必要とする理由**: 実行にない名前で手で起動した participant は、required でない coordinated の participant として参加する。SIL Kit は、シミュレーションの開始のときに、この participant を Error にする。パッチがないと、Error から先へ進むことがあった。実行に加わるか、Running の前にとどまって全 participant の仮想時間を 0 のままにし、実行が「virtual time has not advanced」で終わる。`ParticipantRuntime` だけで手当てすると、その不具合の節に挙げた 2 つが残る。
+
+**上流の再現テスト**: `Test_LifecycleService.error_while_waiting_for_replies_is_kept`、`Test_LifecycleService.error_while_waiting_for_subscriptions_is_kept`（パッチに含む）
+
+**検証**: 上流の lifecycle service の単体テストと、vehicle-sil の `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` で確認しています。どちらも、パッチがなければ落ちます。待ちの間の abort は同じ確認で直りますが、専用のテストはありません。
 
 ## 上流を更新する手順
 

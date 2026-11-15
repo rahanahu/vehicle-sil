@@ -490,15 +490,16 @@ TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_
     }
 }
 
-TEST_CASE(participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_after_its_error)
+TEST_CASE(participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error)
 {
     // A coordinated participant that the system controller does not require: SIL Kit puts it into
-    // Error when the required names arrive. Here they arrive when the one required participant is
-    // in ServicesCreated already, so the same message also begins the stranger's start (the wait
-    // for the other participants' replies) before the Error is set; when the replies are there,
-    // SIL Kit sets the next state over the Error and the stranger goes on with the simulation, to
-    // Running. start() must go by the Error it saw, not by the state: the stranger fails, runs no
-    // step, and the simulation of the others is not touched when it leaves.
+    // Error when the required names arrive. Here they arrive when the stranger knows that the one
+    // required participant is in ServicesCreated, so the same message also begins the stranger's
+    // start (the wait for the other participants' replies) before the Error is set. The replies
+    // come after the Error. An unpatched SIL Kit then sets the next state over the Error and the
+    // stranger goes on with the simulation, to Running (patches/sil-kit/0006). The stranger must
+    // stay in Error: start() fails, no step runs, a stop takes it to Shutdown at once, and the
+    // simulation of the others is not touched when it leaves.
     InProcessRegistry registry;
     ParticipantRuntimeOptions memberOptions{"Member", registry.uri};
     memberOptions.lifecycle_mode = LifecycleMode::Coordinated;
@@ -538,13 +539,21 @@ TEST_CASE(participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_afte
         }
     });
     const auto created = [](const PeerStatus& status) { return status.state == orch::ParticipantState::ServicesCreated; };
+    // The stranger itself has to know the member's state: what the controller knows came over
+    // another connection, and says nothing of the order in which the stranger learns it.
     const bool bothWait = boss.wait_for_peer("Member", created, unit::scaled_timeout(20s))
-                          && boss.wait_for_peer("Stranger", created, unit::scaled_timeout(20s));
+                          && boss.wait_for_peer("Stranger", created, unit::scaled_timeout(20s))
+                          && stranger.wait_for_peer("Member", created, unit::scaled_timeout(20s));
     controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Member"}});
     strangerStart.join();
     memberStart.join();
     const auto strangerState = stranger.state();
     stranger.stop("test");
+    // In Error, a stop is the way to Shutdown; a stranger that had gone on would be stopped only
+    // in Running, or not at all.
+    const auto strangerEnd = stranger.state();
+    const bool endSeen =
+        unit::eventually([&] { return seen.reached(orch::ParticipantState::Shutdown); }, unit::scaled_timeout(10s));
     // The stranger has left; the member still runs.
     const auto memberState = member.state();
     member.stop("test");
@@ -563,6 +572,19 @@ TEST_CASE(participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_afte
             (strangerStarted ? "returned" : "threw \"" + strangerError + "\"") + " in state " + orch::to_string(strangerState) +
             ", expected it to throw \"... failed to start, state: Error ...\" (the states others saw:" + states + ")");
     }
+    for (const auto state : {orch::ParticipantState::CommunicationInitializing, orch::ParticipantState::CommunicationInitialized,
+                             orch::ParticipantState::ReadyToRun, orch::ParticipantState::Running})
+    {
+        if (seen.reached(state))
+        {
+            throw vehicle_sil::unit::Failure(
+                "SIL Kit let a participant that it had put into Error go on (is patches/sil-kit/0006 applied?); the states "
+                "others saw:" + states);
+        }
+    }
+    CHECK(strangerError.find("state: Error (") == std::string::npos); // no other state when start() looked
+    CHECK(strangerEnd == orch::ParticipantState::Shutdown);
+    CHECK(endSeen);
     CHECK_EQ(steps.load(), 0);
     CHECK(memberError.empty());
     CHECK(memberState == orch::ParticipantState::Running);

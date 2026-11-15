@@ -448,8 +448,9 @@ private:
     std::atomic<bool> handler_running_{false};
     std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
     /// SIL Kit published Error for this participant before it began to run (neither flag above
-    /// was set). start() goes by this and not by the state alone: SIL Kit can leave Error again
-    /// (see "Known upstream bugs" in docs/dependencies.md), and the state then looks like a start.
+    /// was set). start() goes by this and not by the state alone: a SIL Kit without
+    /// patches/sil-kit/0006 can leave Error again (see "Known upstream bugs" in
+    /// docs/dependencies.md), and the state then looks like a start.
     std::atomic<bool> failed_before_start_{false};
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 

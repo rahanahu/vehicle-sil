@@ -424,18 +424,20 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         const auto current = lifecycle_->State();
         if (failed_before_start_.load(std::memory_order_acquire))
         {
-            // SIL Kit put this participant into Error before it ran (on_status()). The state may
+            // SIL Kit put this participant into Error before it ran (on_status()). With a SIL Kit
+            // that lacks patches/sil-kit/0006 (the consumer's own SilKit::SilKit), the state may
             // say something else by now: a step of the start that was under way when the error
             // came (the wait for the other participants' replies, for the subscriptions) sets the
             // next state when it completes, whatever the state is then, and the lifecycle goes on
             // from there, to Running if the simulation starts, or it stays where the simulation
             // has passed already. Either way this participant failed: it must not take part, and
-            // must not keep the others waiting for it.
+            // must not keep the others waiting for it. The patched SIL Kit stays in Error, and
+            // this is the same as the check of the state below.
             throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name + "' failed to start, state: " +
                                      orch::to_string(orch::ParticipantState::Error) +
                                      (current == orch::ParticipantState::Error
                                           ? std::string()
-                                          : " (SIL Kit went on to " + orch::to_string(current) + " after the error)"));
+                                          : " (the state is " + orch::to_string(current) + " now)"));
         }
         if (current == orch::ParticipantState::Running || stepEntered
             || (startingEntered && current != orch::ParticipantState::ReadyToRun))
