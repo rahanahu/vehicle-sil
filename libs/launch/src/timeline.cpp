@@ -210,25 +210,6 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
     w.end_object();
 }
 
-/// The index of the point of the write a step failed of, in the written series of `variable`.
-std::optional<std::size_t> refused_point(const TimelineRecord* record, std::size_t variable)
-{
-    if (record == nullptr)
-    {
-        return std::nullopt;
-    }
-    for (const TimelineRecord::Series& series : record->series())
-    {
-        if (!series.sampled && series.variable == variable)
-        {
-            const auto it = std::find_if(series.written.begin(), series.written.end(),
-                                         [](const TimelineRecord::Written& p) { return p.refused; });
-            return it == series.written.end() ? std::nullopt : std::optional<std::size_t>(it - series.written.begin());
-        }
-    }
-    return std::nullopt;
-}
-
 void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun& run, const std::optional<TimelineFailure>& failure,
                   const TimelineRecord* record)
 {
@@ -253,23 +234,43 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
         }
     }
     w.end_array();
+    // Every write of the request that failed, in the order sent, and which of them is the
+    // reason (an index, as "condition" and "point" are; null if that is not known).
+    w.begin_array("writes");
+    if (failure)
+    {
+        for (const TimelineFailedWrite& write : failure->writes)
+        {
+            w.begin_object();
+            w.string("variable", scenario.variables[write.variable].text);
+            write_ms(w, "at_ms", write.at);
+            write_value(w, "value", write.value);
+            // Which point of the variable's written series it is; null if it has none (nothing
+            // was sent).
+            const auto point = record != nullptr && write.sent ? record->point_of(write.variable, *write.sent) : std::nullopt;
+            if (point)
+            {
+                w.integer("point", static_cast<std::int64_t>(*point));
+            }
+            else
+            {
+                w.null("point");
+            }
+            if (write.applied)
+            {
+                w.boolean("applied", *write.applied);
+            }
+            else
+            {
+                w.null("applied");
+            }
+            w.end_object();
+        }
+    }
+    w.end_array();
     if (failure && failure->write)
     {
-        w.begin_object("write");
-        w.string("variable", scenario.variables[failure->write->variable].text);
-        write_ms(w, "at_ms", failure->write->at);
-        write_value(w, "value", failure->write->value);
-        // Which point of the variable's written series it is; null if it has none (the value
-        // was never worked out, so nothing was sent).
-        if (const auto point = refused_point(record, failure->write->variable))
-        {
-            w.integer("point", static_cast<std::int64_t>(*point));
-        }
-        else
-        {
-            w.null("point");
-        }
-        w.end_object();
+        w.integer("write", static_cast<std::int64_t>(*failure->write));
     }
     else
     {
@@ -297,9 +298,10 @@ void write_series(JsonWriter& w, const TimelineInput& input)
             }
             else
             {
-                // Sent and not applied: the write that was refused and what was sent after it,
-                // and what was written for a time after the step at which the scenario was over
-                // (no ECU got to that time).
+                // Sent and not known to be applied: the first write of the failed request that
+                // was not applied (or has no result) and what was sent after it, and what was
+                // written for a time after the step at which the scenario was over (no ECU got
+                // to that time).
                 const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const TimelineRecord::Written& p) {
                     return p.refused || (input.run->over_at && p.at > *input.run->over_at);
                 });
@@ -413,14 +415,15 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
     failures_.resize(scenario.steps.size());
 }
 
-void TimelineRecord::written(std::size_t variable, SimTime at, const control::Value& value, bool motion)
+std::optional<std::uint64_t> TimelineRecord::written(std::size_t variable, SimTime at, const control::Value& value, bool motion)
 {
     if (recorded_to_ || variable >= written_.size() || !written_[variable])
     {
-        return;
+        return std::nullopt;
     }
     Series& series = series_[*written_[variable]];
-    series.written.push_back(Written{at, value, motion});
+    const std::uint64_t serial = next_serial_++;
+    series.written.push_back(Written{at, value, motion, false, serial});
     if (motion)
     {
         ++total_;
@@ -430,6 +433,19 @@ void TimelineRecord::written(std::size_t variable, SimTime at, const control::Va
             enforce(false);
         }
     }
+    return serial;
+}
+
+std::optional<std::size_t> TimelineRecord::point_of(std::size_t variable, std::uint64_t serial) const
+{
+    if (variable >= written_.size() || !written_[variable])
+    {
+        return std::nullopt;
+    }
+    // From the newest: a write that fails is among the last sent.
+    const std::vector<Written>& points = series_[*written_[variable]].written;
+    const auto it = std::find_if(points.rbegin(), points.rend(), [serial](const Written& p) { return p.serial == serial; });
+    return it == points.rend() ? std::nullopt : std::optional<std::size_t>(points.rend() - it - 1);
 }
 
 void TimelineRecord::sampled(std::size_t variable, SimTime at, const control::Value& value)
@@ -495,14 +511,16 @@ void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
     if (!recorded_to_ && step < failures_.size())
     {
-        if (failure.write && failure.write->value && failure.write->variable < written_.size() && written_[failure.write->variable])
+        // The points that are not known to be applied, each by what written() named it (not by
+        // its time: a variable can have several points of one time).
+        for (const TimelineFailedWrite& write : failure.writes)
         {
-            // The point of that write: the last one sent for its time.
-            std::vector<Written>& points = series_[*written_[failure.write->variable]].written;
-            const auto it = std::find_if(points.rbegin(), points.rend(), [&](const Written& p) { return p.at == failure.write->at; });
-            if (it != points.rend())
+            if (write.applied != std::optional<bool>(true) && write.sent)
             {
-                it->refused = true;
+                if (const auto point = point_of(write.variable, *write.sent))
+                {
+                    series_[*written_[write.variable]].written[*point].refused = true;
+                }
             }
         }
         failures_[step] = std::move(failure);

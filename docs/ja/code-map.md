@@ -1765,7 +1765,7 @@ flowchart TD
 
 テスト:
 
-- `launch.timeline_*`: タイムステップによらないこと、タイムステップで変わる手順、基準のファイル、上限、サンプルの数え方、断られた書き込みの点、途中で終わった実行
+- `launch.timeline_*`: タイムステップによらないこと、タイムステップで変わる手順、基準のファイル、上限、サンプルの数え方、失敗した `set` のどの書き込みが入ったかと、それぞれの点、途中で終わった実行
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`

@@ -276,6 +276,7 @@ A `set` is a write stamped with time T. Each ECU applies it at the start of its 
 | Another writer (such as the ECU itself) changed the value after the scenario wrote it | The start value does not change. |
 | When the result of a write is checked | At the controller step after the ECU step that applies it. |
 | A write that was not applied (the ECU's setter rejected it, the target is not connected, and so on) | The step fails. |
+| One `set` with several variables, and the ECU's setter rejects one of them | The step fails. **The variables before the rejected one in that `set` are already written and stay written.** The rejected one and the ones after it are not written. The message names them, and the timeline file marks each write (see "File format" in [simulation-run.md](simulation-run.md#file-format)). |
 
 A write is never too late for the ECU step at its time. The launcher holds each controller step with the time gate, and lets time advance only after it has handed the ECUs every write up to the next time step. It hands over the writes for time 0 while all participants wait before the first simulation step.
 

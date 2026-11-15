@@ -1044,12 +1044,54 @@ The `failed` of a failed step holds what failed, as numbers (`null` for other st
       "sample_ms": 1340
     }
   ],
+  "writes": [],
   "write": null
 }
 ```
 
 - `conditions[]` lists every condition that did not hold. `condition` is the index (from 0) in `watch.conditions[]`. `value` and `sample_ms` are the value at that moment and the time of the sample it came from. Both are `null` for a condition that had no value yet, and for a condition that got no sample in its `during` interval.
-- `write` is the write that was not applied (`variable`, `at_ms`, `value`, `point`). It is `null` unless a write failed. `point` is the index (from 0) in the `points` of that variable's `written` series; that point is the refused write. If the step failed before the value was computed (nothing was sent), `value` and `point` are `null`. When one `set` writes several variables, `write` is the first variable for the participant that refused.
+- `writes[]` and `write` describe a failed write (below). In a step that did not fail on a write, `writes[]` is empty and `write` is `null`.
+
+For a step that failed on a write, `writes[]` holds every write that the scenario sent together for that time. In this example, one `set` wrote 2 variables of the participant `Body`, and the ECU's setter rejected the second one:
+
+```json
+"failed": {
+  "at_ms": 20,
+  "code": "scenario-write",
+  "conditions": [],
+  "writes": [
+    {
+      "variable": "Body.mode",
+      "at_ms": 20,
+      "value": 2,
+      "point": 0,
+      "applied": true
+    },
+    {
+      "variable": "Body.level",
+      "at_ms": 20,
+      "value": 13,
+      "point": 1,
+      "applied": false
+    }
+  ],
+  "write": 1
+}
+```
+
+- `writes[]` lists the writes of the failed request in the order sent: every variable of the `set` (for all its participants), or the one write of a `ramp` or `wave`. It is empty unless a write failed.
+- `applied` says whether the ECU applied that write:
+
+  | `applied` | Meaning |
+  |---|---|
+  | `true` | The ECU applied it. The value is in the ECU although the step failed. |
+  | `false` | The ECU did not apply it: the ECU or its Agent refused it, it comes after the refused write in the same `set`, or it was never sent. |
+  | `null` | Not known: no result came, or the ECU's result does not say which writes took effect. |
+
+  An ECU applies the writes of one `set` one after the other and stops at the write that its setter rejects. So the writes before the rejected one are already applied (`true`), and the rejected one and the ones after it are not (`false`). When the ECU's Agent refuses a write as it receives it (wrong name, type or range), none of that participant's writes in the `set` is applied.
+- `point` is the index (from 0) in the `points` of that variable's `written` series; that point is this write. It is `null` if nothing was sent. A point whose `applied` is `false` or `null` is at or after the `not_applied_from` of its series.
+- `write` is the index (from 0) in `writes[]` of the write that caused the failure: the write that the ECU or its Agent named when it refused, or the only write for the participant that refused. It is `null` if no single write is known to be the cause (a participant refused several writes together without naming one, or no result came), and in a step that did not fail on a write.
+- If the step failed before it sent anything (the variable cannot be written, or a `ramp` or `wave` had no start value), `writes[]` holds that one write with `point: null` and `applied: false`. Its `value` is `null` if the value was never computed.
 
 ### Value series (`series[]`)
 
@@ -1076,8 +1118,8 @@ The `failed` of a failed step holds what failed, as numbers (`null` for other st
 - Values: a bool is `true` or `false`, an enum is the item's value (the names are in `variables[].items`), and a real that is not a number is `null`.
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).
 - "Changed" in `changes` means that the written text differs (`0` and `-0` differ; consecutive `null`s are the same).
-- If a `written` series has `not_applied_from`, the points from that index (from 0) on were sent but did not reach the ECU. Do not draw them as if the value changed. These points did not reach the ECU:
-  - The point of the refused write (the same point as `failed.write.point` of the failed step) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step.
+- If a `written` series has `not_applied_from`, the points from that index (from 0) on were sent but are not known to have reached the ECU. Do not draw them as if the value changed. These are:
+  - The point of a write of the failed step whose `applied` is `false` or `null` (the `point` of that entry in `failed.writes[]`) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step. A write of the same `set` that the ECU did apply (`applied: true`) is not marked.
   - Points whose time is after `scenario.over_at_ms` (no ECU advanced to that time).
 - In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied.
 

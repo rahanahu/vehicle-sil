@@ -209,7 +209,9 @@ struct EnginePeer
 /// failure), so a step that passed may have an `at` after "recorded to", and its points are not
 /// in the record; and everything of a run that a write ended (see "fails with what the engine
 /// learns first" above). A write that was refused is a point of its series all the same (the
-/// record marks it, TimelineRecord::failed()): a written point is what was sent.
+/// record marks it, TimelineRecord::failed()): a written point is what was sent. An ECU applies
+/// the writes of one command one after the other and stops at the one it rejects, so a failed
+/// set of several variables may have applied the first of them (failed_write()).
 class ScenarioEngine
 {
 public:
@@ -257,6 +259,8 @@ private:
         std::size_t step = 0;
         SimTime at{};
         std::vector<ScenarioWrite> writes;
+        /// Per write, once sent: what the record named its point (TimelineRecord::written()).
+        std::vector<std::optional<std::uint64_t>> sent{};
         std::optional<std::size_t> signal{}; ///< of signals_: its value is worked out when it is sent
         bool signal_last = false;            ///< the signal's end value
         std::uint64_t ticket = 0;
@@ -294,7 +298,20 @@ private:
     [[nodiscard]] TimelineFailure unmet_values(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
     [[nodiscard]] bool is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const;
     /// The write of `writes` to `peer` that was not made, for the record.
-    [[nodiscard]] TimelineFailure failed_write(const std::vector<ScenarioWrite>& writes, SimTime at, const std::string& peer) const;
+    /// Of the writes at `command` (indices in `writes`: one participant's, in the order sent)
+    /// the one whose name `reason` begins with, as an agent names the write it refused or
+    /// whose setter threw.
+    [[nodiscard]] std::optional<std::size_t> named_write(const std::vector<ScenarioWrite>& writes, const std::vector<std::size_t>& command,
+                                                         const std::string& reason) const;
+    /// What a step failed of when `failed` (a target of `result`) did not apply its part of
+    /// `write`: every write of the request with whether it was applied, as the results of
+    /// their participants say, and which one is the reason, if that is known. Without a
+    /// result (null) nothing is known.
+    [[nodiscard]] TimelineFailure failed_write(const Write& write, const control::OperationResult* result,
+                                               const control::TargetResult& failed) const;
+    /// For the message of that failure: which writes of the participant's command took effect
+    /// ("; ..."); empty for a command of one write.
+    [[nodiscard]] std::string applied_text(const TimelineFailure& failure, const std::string& peer) const;
     /// Once the scenario is over: closes the record (see the class comment).
     void close_record();
     /// The time of the watch beside a ramp or a wave, for the messages: "from 40 ms to 120 ms, ...".

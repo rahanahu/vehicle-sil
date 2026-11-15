@@ -4040,10 +4040,50 @@ void timeline(const Options& o)
             "the failed scenario's timeline ends at the failure:\n" + failed);
     require(contains(failed, "      \"failed\": {\n        \"at_ms\": 50,\n        \"code\": \"scenario-failed\",\n"
                              "        \"conditions\": [\n          {\n            \"condition\": 0,\n            \"value\": 20,\n"
-                             "            \"sample_ms\": 50\n          }\n        ],\n        \"write\": null\n      }"),
+                             "            \"sample_ms\": 50\n          }\n        ],\n        \"writes\": [],\n        \"write\": null\n      }"),
             "what failed, as numbers:\n" + failed);
     require(contains(failed, "      \"code\": \"scenario-failed\",\n      \"file\": \"s.yaml\",\n      \"line\": 4,\n"),
             "the scenario's finding is in the file:\n" + failed);
+
+    {
+        // A set of several variables whose second setter throws (the test ECU's level 13): the
+        // real agent has applied the write before it, and the file says so. Its mark is on the
+        // write that was rejected, not on the one that was applied, and the samples of the same
+        // file agree (mode_now has the mode that was written).
+        const fs::path partly = scenario_ecus(o, "",
+                                              "vehicle_sil_scenario: 1\nsteps:\n"
+                                              "  - set: { Body.level: 5 }\n"
+                                              "  - at_ms: 20\n"
+                                              "    set: { Body.mode: auto, Body.level: 13, Door.level: 4 }\n"
+                                              "  - at_ms: 60\n"
+                                              "    expect: { Body.mode_now: auto }\n");
+        const Captured rejected = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--timeline", "partly.json"}, partly);
+        expect_code(rejected, 1, "a set whose second setter throws, with --timeline");
+        const std::string text = read_text(partly / "partly.json");
+        const auto write = [](const char* variable, const char* value, int point, const char* applied) {
+            return std::string("          {\n            \"variable\": \"") + variable + "\",\n            \"at_ms\": 20,\n            \"value\": " +
+                   value + ",\n            \"point\": " + std::to_string(point) + ",\n            \"applied\": " + applied + "\n          }";
+        };
+        require(contains(text, "the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write "
+                               "before it in that command (Body.mode = auto (2)), and it stays applied\","),
+                "the message says which write was applied:\n" + text);
+        require(contains(text, "        \"writes\": [\n" + write("Body.mode", "2", 0, "true") + ",\n" + write("Body.level", "13", 1, "false") +
+                                   ",\n" + write("Door.level", "4", 0, "true") + "\n        ],\n        \"write\": 1\n      }"),
+                "the writes of the failed set, each with whether it was applied:\n" + text);
+        const auto series = [&text](const std::string& variable, const std::string& source) {
+            const auto from = text.find("      \"variable\": \"" + variable + "\",\n      \"source\": \"" + source + "\",\n");
+            const auto to = text.find("\n    }", from);
+            require(from != std::string::npos && to != std::string::npos, "no " + source + " series of " + variable + ":\n" + text);
+            return text.substr(from, to - from);
+        };
+        require(!contains(series("Body.mode", "written"), "not_applied_from") && contains(series("Body.mode", "written"), "        [20, 2]\n"),
+                "the write that was applied has no mark:\n" + text);
+        require(contains(series("Body.level", "written"), "      \"not_applied_from\": 1,\n") &&
+                    contains(series("Body.level", "written"), "        [0, 5],\n        [20, 13]\n"),
+                "the write that was rejected is marked:\n" + text);
+        require(contains(series("Body.mode_now", "sampled"), "        [0, 0],\n        [20, 2]\n"),
+                "the samples have the mode that was applied:\n" + text);
+    }
 
     // The head of a timeline: its "scenario" object.
     const auto head_of = [&dir](const std::string& name) {

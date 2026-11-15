@@ -312,6 +312,15 @@ A write from outside is applied in the first ECU step at or after the given virt
 
 Writes are not compared with the current value. Each write is applied, even with the same value, and calls the setter each time: 2 writes in the same step call it twice, in the order of (time, `seq`). So you can implement an input such as "once per press" with a getter that always reads false and a setter that counts its calls.
 
+A command with several writes for one ECU (one `set` of a scenario with several variables of a participant, or one `Write` call) is not all or nothing:
+
+| When the write fails | What is applied |
+|---|---|
+| A check fails when the Agent receives the command (name, type, range, writability): `invalid` | None of the command's writes. |
+| A setter throws in the ECU step: `rejected` | The writes before it in the command are already applied and stay applied. That write and the ones after it are not applied. |
+
+The reason of a `rejected` result starts with the name of the variable whose setter threw (`level: a setter threw: ...`), so you can tell which writes were applied. A setter cannot be undone, so the Agent does not roll the earlier writes back. If a group of values must be applied together or not at all, check them in one setter, or validate them in the ECU before using them.
+
 | How you write | Writes the ECU receives |
 |---|---|
 | A scenario's `set`, the Control API's `Write`, `agent().submit()` | As many as you write. |

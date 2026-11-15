@@ -115,6 +115,7 @@
             "sample_ms": 100
           }
         ],
+        "writes": [],
         "write": null
       }
     },
