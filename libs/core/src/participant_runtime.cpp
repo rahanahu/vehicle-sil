@@ -1220,7 +1220,14 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         }
         if (give_up)
         {
-            if (std::string why = give_up(); !why.empty())
+            // give_up() looks at the simulation after the looks above, and the simulation goes on
+            // meanwhile: a short one can have begun and ended, and a participant that is stopping
+            // then looks to the caller like one that left before the start. The flags say whether
+            // this one began: if so, the next round decides (it returns, or waits for Running
+            // while the starting handler is still there), and "give up" is not taken.
+            if (std::string why = give_up();
+                !why.empty() && !step_entered_.load(std::memory_order_acquire)
+                && !starting_entered_.load(std::memory_order_acquire))
             {
                 throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name +
                                          "': the start was given up, state: " + orch::to_string(current) + ": " + why);
