@@ -76,7 +76,7 @@ If something goes wrong, find the symptom in this table.
 ## Arguments
 
 ```
-vehicle_sil_vector_xl_bridge --list-channels
+vehicle_sil_vector_xl_bridge --list-channels [--json]
 vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
 vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
@@ -84,6 +84,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | Argument | Meaning |
 |---|---|
 | `--list-channels` | Prints the CAN channels that the XL driver offers, numbered per target, and exits. |
+| `--json` | With `--list-channels` only: writes the list as JSON to stdout, for programs (see "[The channel list as JSON](#the-channel-list-as-json---json)"). |
 | `--registry-uri <uri>` | Address of the SIL Kit registry (required). |
 | `--xl-target <virtual\|physical>` | `virtual` selects Vector Virtual CAN (`XL_HWTYPE_VIRTUAL`); `physical` selects the CAN channels of all other hardware, such as CANcase and VN16xx (required). |
 | `--xl-channel <n>` | 1-based channel number among the CAN channels of that target (required). |
@@ -108,6 +109,54 @@ Notes on the arguments:
 - On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--name` and `--network` can therefore contain non-ASCII characters.
 
 You choose the channel and the device on this command line when the bridge starts. The Control API and the configuration file (`vehicle_sil_launch`) have no setting to choose them. If you add a way to choose them to the Control API, the configuration file or the GUI, use the same model as the command line (`vehicle_sil::vector_xl::XlTarget` and the channel number).
+
+### The channel list as JSON (`--json`)
+
+`--list-channels --json` writes the channels as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The form is that of the Ethernet bridge's `--list-interfaces --json` (see "[The list as JSON](ethernet-bridge.md#the-list-as-json---json)"); this section gives what differs.
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_vector_xl_bridge",
+  "backend": null,
+  "source": null,
+  "targets": [
+    {
+      "value": "virtual:1",
+      "label": "Virtual Channel 1",
+      "detail": "virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN",
+      "usable": true,
+      "reason": null,
+      "can": {
+        "target": "virtual",
+        "number": 1,
+        "name": "Virtual Channel 1",
+        "hw_type": 1,
+        "hw_index": 0,
+        "hw_channel": 0,
+        "serial": 0,
+        "transceiver": "Virtual CAN"
+      }
+    }
+  ],
+  "notes": [],
+  "error": null
+}
+```
+
+| Key | Content |
+|---|---|
+| `tool` | `vehicle_sil_vector_xl_bridge`. |
+| `backend`, `source` | `null`. |
+| `targets` | The CAN channels, virtual first, then physical, numbered as for `--xl-channel`. Channels without CAN are left out. |
+| `targets[].value` | `<target>:<number>`: give the part before `:` to `--xl-target` and the number to `--xl-channel`. |
+| `targets[].label` | The channel name from the driver. |
+| `targets[].detail` | The target and number, then what the line of the text shows. |
+| `targets[].usable` | Always `true`. |
+| `targets[].can` | `target`, `number`, `name`, `hw_type`, `hw_index`, `hw_channel`, `serial` and `transceiver` (`null` where the driver gives none). |
+| `notes` | Empty. |
+
+When the list cannot be made, the bridge writes the JSON with no targets and the error, and exits with code 3. The `FAIL setup: ...` line, which is on stdout without `--json`, goes to stderr, so that stdout holds the JSON alone. `error.code` is `driver-missing` when the XL driver cannot be opened, and `failed` otherwise. `error.message` is the message of the `FAIL setup:` line.
 
 ## Starting from a configuration file
 

@@ -24,7 +24,7 @@ std::uint64_t parse_unsigned(std::string_view key, std::string_view text, std::u
 std::string bridge_usage()
 {
     return "usage:\n"
-           "  vehicle_sil_vector_xl_bridge --list-channels\n"
+           "  vehicle_sil_vector_xl_bridge --list-channels [--json]\n"
            "  vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical>\n"
            "                               --xl-channel <n> [options]\n"
            "  vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]\n"
@@ -33,6 +33,7 @@ std::string bridge_usage()
            "Vector XL CAN channel until Ctrl+C.\n"
            "\n"
            "  --list-channels          print the CAN channels the XL driver offers and exit\n"
+           "  --json                   with --list-channels: write the list as JSON to stdout (for programs)\n"
            "  --describe               write what the bridge is (its name and network) as JSON to stdout,\n"
            "                           as an ecu_main executable does for vehicle_sil_launch, and exit\n"
            "                           without opening the XL driver or joining SIL Kit\n"
@@ -81,6 +82,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         if (arg == "--describe")
         {
             options.describe = true;
+            continue;
+        }
+        if (arg == "--json")
+        {
+            options.json = true;
             continue;
         }
         if (arg == "--no-bus-monitor")
@@ -189,6 +195,10 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         }
     }
 
+    if (options.json && !options.list_channels)
+    {
+        throw BridgeUsageError("--json is for --list-channels: it writes the list as JSON");
+    }
     if (options.list_channels)
     {
         if (options.describe)

@@ -920,13 +920,14 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `MacSideTable` | `eth_link/mac_side_table.hpp` |
 | `MacAddress` | `eth_link/mac_address.hpp` |
 | `make_tap_link()`、`make_packet_link()`、`list_interfaces()` | `eth_link/os_links.hpp`（中身は `libs/eth_link/src/linux`） |
-| `make_pcap_link()`、`pcap_interface_list()` | `eth_link/pcap_link.hpp`（中身は `libs/eth_link/src/pcap`） |
+| `make_pcap_link()`、`pcap_interfaces()`、`format_pcap_interface_list()`、`pcap_interface_argument()` | `eth_link/pcap_link.hpp`（中身は `libs/eth_link/src/pcap`） |
 | `EthernetBridge` | `ethernet_bridge/ethernet_bridge.hpp` |
 | `parse_bridge_options()` | `ethernet_bridge/bridge_options.hpp` |
 | `format_start_line()`、`backend_unavailable()`、`PromiscuousHint` | `ethernet_bridge/bridge_app.hpp` |
+| `--list-interfaces` の文と JSON（`pcap_interfaces_json()` など） | `ethernet_bridge/interface_list.hpp` |
 | 実行ファイル | `bridges/ethernet/app/main.cpp` |
 | 外部リンクを作る所 | `app/link_factory.hpp`、`app/os_link_factory.cpp` |
-| pcap のライブラリの場所 | `app/pcap_library.hpp` |
+| pcap のライブラリの場所、`--backend` の既定 | `app/pcap_library.hpp` |
 
 `libs/eth_link/src/pcap` の中身:
 

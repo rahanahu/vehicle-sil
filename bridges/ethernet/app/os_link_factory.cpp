@@ -7,6 +7,7 @@
 #include "vehicle_sil/eth_link/os_links.hpp"
 #include "vehicle_sil/eth_link/pcap_link.hpp"
 #include "vehicle_sil/ethernet_bridge/bridge_app.hpp"
+#include "vehicle_sil/ethernet_bridge/interface_list.hpp"
 
 #include <stdexcept>
 
@@ -16,7 +17,7 @@ std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& 
 {
     if (const auto why = backend_unavailable(options.backend, host_os()))
     {
-        throw std::runtime_error(*why);
+        throw BackendUnavailableError(*why);
     }
     switch (*options.backend)
     {
@@ -34,19 +35,20 @@ std::string interface_list(const BridgeOptions& options)
 {
     if (const auto why = backend_unavailable(options.backend, host_os()))
     {
-        throw std::runtime_error(*why);
+        throw BackendUnavailableError(*why);
     }
-    // Without --backend: the interfaces of the OS where the bridge has links of the OS itself
-    // (Linux), else what the pcap library offers (Windows).
-    const bool pcap = options.backend ? *options.backend == Backend::Npcap || *options.backend == Backend::Pcap
-                                      : !eth_link::has_os_links();
-    if (pcap)
+    if (!options.backend)
     {
-        return eth_link::pcap_interface_list(pcap_library());
+        throw std::logic_error("no backend: the executable gives parse_bridge_options() the default of this OS");
     }
-    return "interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP "
-           "device):\n" +
-           eth_link::format_interface_list(eth_link::list_interfaces());
+    const Backend backend = *options.backend;
+    if (backend == Backend::Npcap || backend == Backend::Pcap)
+    {
+        const auto list = eth_link::pcap_interfaces(pcap_library());
+        return options.json ? pcap_interfaces_json(backend, list) : eth_link::format_pcap_interface_list(list);
+    }
+    const auto interfaces = eth_link::list_interfaces();
+    return options.json ? os_interfaces_json(backend, interfaces) : format_os_interface_list(interfaces);
 }
 
 } // namespace vehicle_sil::ethernet_bridge

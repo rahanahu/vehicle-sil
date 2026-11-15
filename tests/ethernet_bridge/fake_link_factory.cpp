@@ -9,8 +9,13 @@
 //               addresses and the EtherType inverted
 //   fake-fault  a link that reports a Fault as soon as it is started
 //   other       no such interface (LinkError)
+//
+// Without --backend it uses packet.
 #include "fake_link.hpp"
 #include "link_factory.hpp"
+#include "pcap_library.hpp"
+
+#include "vehicle_sil/ethernet_bridge/interface_list.hpp"
 
 #include "vehicle_sil/eth_link/mac_address.hpp"
 
@@ -136,9 +141,19 @@ std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& 
     return std::make_unique<MissingLink>(options.interface_name);
 }
 
-std::string interface_list(const BridgeOptions&)
+std::string interface_list(const BridgeOptions& options)
 {
+    if (options.json)
+    {
+        return os_interfaces_json(options.backend.value_or(Backend::Packet),
+                                  {{"fake0", true, 1, true}, {"fake-fault", true, 1, true}});
+    }
     return "fake interfaces:\n  --interface fake0\n  --interface fake-fault\n";
+}
+
+std::optional<Backend> default_backend() noexcept
+{
+    return Backend::Packet;
 }
 
 } // namespace vehicle_sil::ethernet_bridge

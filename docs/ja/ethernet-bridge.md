@@ -91,9 +91,9 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ## 引数
 
 ```
-vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]
-vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> --backend <tap|packet|npcap|pcap> --interface <name> [options]
-vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name> [options]
+vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>] [--json]
+vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> [--backend <tap|packet|npcap|pcap>] --interface <name> [options]
+vehicle_sil_ethernet_bridge --describe --network <name> [--backend <backend>] --interface <name> [options]
 ```
 
 | 引数 | 意味 |
@@ -104,7 +104,7 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--participant <name>` | `--name` と同じです（どちらか 1 つを書きます）。 |
 | `--start-timeout-ms <ms>` | SIL Kit で participant が Running になるのを待つ上限です（1〜10^12、既定 15000）。なれなければ終了コード 3 で終わります。 |
 | `--describe` | ブリッジが何かを JSON で標準出力に書いて終わります（「[設定ファイルから起こす](#設定ファイルから起こす)」を参照）。 |
-| `--backend <tap\|packet\|npcap\|pcap>` | 外部のインターフェースの開き方です（必須。「[バックエンド](#バックエンド)」）。 |
+| `--backend <tap\|packet\|npcap\|pcap>` | 外部のインターフェースの開き方です（既定は Linux で `packet`、Windows で `npcap`。「[バックエンド](#バックエンド)」）。 |
 | `--interface <name>` | 接続するインターフェースです（必須。「最初に見つかったもの」は選びません）。 |
 | `--ethertype <hex>,...` | 通す EtherType です（`0x` で始まる 16 進。繰り返すと追加されます）。 |
 | `--src-mac <mac>,...` | SIL Kit 側の MAC アドレスです（`:` か `-` で区切った 6 バイト。繰り返すと追加されます）。 |
@@ -116,7 +116,8 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--tap-create` | TAP デバイスを、ブリッジが動く間だけ作ります（`tap` だけ）。 |
 | `--no-mac-guard` | MAC のルール（「[ループの防止](#ループの防止macsidetable)」）を使いません。 |
 | `--mac-table-size <n>` | MAC テーブルの大きさです（16〜65536、既定 1024）。 |
-| `--list-interfaces` | この PC のインターフェースの一覧を表示して終わります（ほかの引数は不要です）。 |
+| `--list-interfaces` | バックエンドのインターフェースの一覧を表示して終わります（ほかの引数は不要です。「[インターフェースの一覧](#インターフェースの一覧--list-interfaces)」）。 |
+| `--json` | `--list-interfaces` と一緒のときだけ使えます。一覧を JSON で標準出力に書きます。プログラムが読むためのものです（「[一覧の JSON](#一覧の-json--json)」）。 |
 | `--help` | 使い方を表示します。 |
 
 引数ごとの補足です。
@@ -125,10 +126,11 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 - `--promiscuous` も `--no-promiscuous` もなければ、インターフェースが受け付けるならプロミスキャスで、受け付けなければ警告を 1 つ出してプロミスキャスなしで動きます（「[プロミスキャス](#プロミスキャス)」）。
 - `--backend` の `tap` は PC の中の仮想のインターフェース、ほかは物理のアダプターにフレームが出うるものとして扱います。`tap`、`packet`、`pcap` は Linux、`npcap` は Windows で使えます。
 - `--max-frame-bytes` の下限が 60 なのは、SIL Kit が 60 バイトより短いフレームを渡さないためです。
+- `--backend` がなければ、OS のバックエンドを使います。Linux では `packet`、Windows では `npcap` です。`--list-interfaces` の一覧とブリッジ本体は、同じバックエンドを使います。
 - `--list-interfaces` に `--backend npcap` か `--backend pcap` を付けると、pcap のライブラリが返す一覧を表示します。
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--name`、`--network`、`--interface` に ASCII 以外の文字を使えます。
 
-物理のアダプターにフレームが出うる `--backend`（`packet`、`npcap`、`pcap`）では、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）の指定が必須です。指定がないと次のエラーになります。
+物理のアダプターにフレームが出うるバックエンド（`packet`、`npcap`、`pcap`）では、`--backend` で指定しても既定でも、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）の指定が必須です。指定がないと、バックエンドの名前を入れた次のエラーになります。
 
 ```
 --backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.
@@ -316,7 +318,7 @@ interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sud
 
 ### インターフェースの一覧（`--list-interfaces`）
 
-`--list-interfaces` は、この PC のインターフェースを、イーサネットかどうかと up かどうかを付けて表示します。
+`--list-interfaces` は、バックエンドのインターフェースを表示します。`packet`（Linux の既定）と `tap` では、この PC のインターフェースを、イーサネットかどうかと up かどうかを付けて表示します。
 
 ```
 interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP device):
@@ -325,7 +327,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`--list-interfaces --backend pcap` は、pcap のライブラリが返すインターフェースを表示します。Windows では、`--list-interfaces` だけでも、`--backend npcap` を付けても同じです。
+`npcap`（Windows の既定）と `pcap` では、pcap のライブラリが返すインターフェースを表示します。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -343,6 +345,109 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 - 名前の幅は、コンソールの桁で数えてそろえます。全角の文字（日本語、中国語、韓国語、全角の英数字など）は 2 桁と数えます。コンソールのフォントがその文字を 2 桁の幅で描けば、次の列がそろいます。
 - イーサネットでないもの（Linux の `any` など）も表示します。開くときに拒否します。
 - Npcap の一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ）ときは、最後に 1 行、Npcap の「管理者だけ」のインストールと無効のアダプターのことを追加します（`Npcap offers no network adapter here: ...`）。
+
+#### 一覧の JSON（`--json`）
+
+`--list-interfaces --json` は、同じ一覧を 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。Vector XL CAN ブリッジも、チャネルを同じ形で書きます（「[チャネルの一覧の JSON](bridges.md#チャネルの一覧の-json--json)」）。
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_ethernet_bridge",
+  "backend": "npcap",
+  "source": "Npcap version 1.80, based on libpcap version 1.10.5",
+  "targets": [
+    {
+      "value": "Ethernet 2",
+      "label": "Ethernet 2",
+      "detail": "up, connected; Intel(R) Ethernet; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+      "usable": true,
+      "reason": null,
+      "ethernet": {
+        "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+        "connection": "Ethernet 2",
+        "description": "Intel(R) Ethernet",
+        "up": true,
+        "connected": true,
+        "loopback": false,
+        "wireless": false
+      }
+    },
+    {
+      "value": "\\Device\\NPF_Loopback",
+      "label": "\\Device\\NPF_Loopback",
+      "detail": "up, loopback; Adapter for loopback traffic capture",
+      "usable": false,
+      "reason": "loopback: not an Ethernet adapter",
+      "ethernet": {
+        "pcap_name": "\\Device\\NPF_Loopback",
+        "connection": null,
+        "description": "Adapter for loopback traffic capture",
+        "up": true,
+        "connected": null,
+        "loopback": true,
+        "wireless": false
+      }
+    }
+  ],
+  "notes": [],
+  "error": null
+}
+```
+
+| キー | 内容 |
+|---|---|
+| `vehicle_sil_targets` | この形の版です（1）。 |
+| `tool` | `vehicle_sil_ethernet_bridge` です。 |
+| `backend` | 一覧のバックエンドです。`--backend`、なければ既定です。 |
+| `source` | `npcap`、`pcap` では、ライブラリが返す版です。`packet`、`tap` では `null` です。 |
+| `targets` | インターフェースごとに 1 つのオブジェクトです。並びは文の一覧と同じです。 |
+| `targets[].value` | `--interface` にそのまま渡す名前です。 |
+| `targets[].label` | 見せる名前です。今は `value` と同じです。 |
+| `targets[].detail` | 文の一覧の行で、名前の後ろにある内容を `; ` でつないだものです。 |
+| `targets[].usable` | ブリッジが使えないインターフェースでは `false` です。そのとき `reason` が理由を言います。 |
+| `targets[].reason` | 使えない理由、または `null` です。 |
+| `targets[].ethernet` | バックエンドが返す内容です。`npcap`、`pcap` では `pcap_name`、`connection` と `description`（ないときは `null`）、`up`、`connected`（ライブラリが言わないときは `null`）、`loopback`、`wireless` です。`packet`、`tap` では `name`、`ethernet`、`link_type`、`up` です。 |
+| `notes` | 文の一覧の最後の行の説明です。1 文ずつ入ります（ネットワークのアダプターを返さない Npcap）。ほかのときは空です。 |
+| `error` | `null`、または一覧を作れなかったときのエラーです（下）。 |
+
+`value` は、装置に接続名があり、一覧のほかの装置に同じ接続名がなければ、その接続名です。同じかどうかは、`--interface` と同じく、ASCII の英字の大文字と小文字を区別せずに比べます（「[`--interface` に書ける名前](#--interface-に書ける名前)」）。そうでなければ pcap の名前です。`packet` と `tap` では、インターフェースの名前です。
+
+| インターフェース | `usable` | `reason` |
+|---|---|---|
+| ループバック（ライブラリのフラグ） | `false` | `loopback: not an Ethernet adapter` |
+| イーサネットでないもの（`packet`、`tap`） | `false` | `not Ethernet (link type <n>)` |
+| libpcap の `any` | `false` | `not Ethernet` |
+| down、disconnected | `true` | `null`。`detail` に出ます。ブリッジは起動のときに警告します |
+| ほか | `true` | `null` |
+
+pcap のライブラリは、開く前には、装置がイーサネットかどうかを言いません。そのため、ループバックと `any` のほかは、イーサネットでない装置も使えるものとして出ます。その装置は、ブリッジが起動のときに拒否します。`tap` の一覧は、この PC のインターフェースです。ブリッジが開けるのは、その中の TAP デバイスだけです。
+
+一覧を作れないときも、ブリッジは JSON を書きます。`targets` は空で、エラーが入ります。終了コードは 3 です。`--json` がなければ標準出力に出る `FAIL setup: ...` の行は、標準エラーに出ます。標準出力には JSON だけが出ます。
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_ethernet_bridge",
+  "backend": "npcap",
+  "source": null,
+  "targets": [],
+  "notes": [],
+  "error": {
+    "code": "library-missing",
+    "message": "Npcap is not installed: cannot load C:\\Windows\\System32\\Npcap\\wpcap.dll (Windows error 126). ..."
+  }
+}
+```
+
+| `error.code` | いつ |
+|---|---|
+| `library-missing` | pcap のライブラリが入っていない、またはブリッジに要る関数がない。 |
+| `permission-denied` | OS がこの利用者に断った。 |
+| `backend-unavailable` | そのバックエンドがこの OS で使えない（Linux で `--backend npcap` など）。 |
+| `failed` | ほか。 |
+
+`error.message` は、`FAIL setup:` の行の文です。
 
 ### `tap`
 

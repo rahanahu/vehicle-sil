@@ -1,5 +1,6 @@
 # The Ethernet bridge (bridges/ethernet) on every platform: EthernetBridge against a fake SIL Kit
-# controller and fake links, the statistics and monitor lines, the command line, the bridge
+# controller and fake links, the statistics and monitor lines, the command line, the list of
+# interfaces as JSON, the bridge
 # with real SIL Kit (in-process registry on a free port) and a fake link, and two bridges on pcap
 # links on one device of the fake pcap library (tests/eth_link/fake_pcap).
 vehicle_sil_add_harness_tests(vehicle_sil_ethernet_bridge_tests
@@ -8,11 +9,12 @@ vehicle_sil_add_harness_tests(vehicle_sil_ethernet_bridge_tests
     test_bridge_app.cpp
     test_bridge_format.cpp
     test_bridge_on_pcap.cpp
+    test_interface_list.cpp
     test_bridge_options.cpp
     test_bridge_silkit.cpp
     test_ethernet_bridge.cpp
   LINK vehicle_sil::ethernet_bridge_core vehicle_sil_eth_link_fake vehicle_sil::core)
-# The pcap link's table, to load the fake library as Npcap on every platform.
+# The pcap link's table, to load the fake library as Npcap on every platform, and its lists.
 target_include_directories(vehicle_sil_ethernet_bridge_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/eth_link/src/pcap)
 target_compile_definitions(vehicle_sil_ethernet_bridge_tests PRIVATE VEHICLE_SIL_FAKE_PCAP_DIR="${VEHICLE_SIL_FAKE_PCAP_DIR}")
 add_dependencies(vehicle_sil_ethernet_bridge_tests vehicle_sil_fake_pcap)
@@ -74,6 +76,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
     echo-roundtrip
     link-fault
     list-interfaces
+    list-interfaces-json
     no-filter
     no-interface
     no-registry
@@ -82,8 +85,10 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
     pcap-fault
     pcap-launcher
     pcap-list
+    pcap-list-json
     pcap-no-interface
     pcap-no-library
+    pcap-no-library-json
     pcap-old-library
     pcap-promiscuous
     pcap-roundtrip

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
-// Process level tests of the Ethernet bridge executable. The first seven use the executable built
+// Process level tests of the Ethernet bridge executable. The first ones use the executable built
 // with fake links (fake_link_factory.cpp: --interface fake0 is a wire with a device that answers):
 //   echo-roundtrip     registry + bridge + SIL Kit peer (eth_bridge_it_peer --mode ask). The peer
 //                      checks every answer; the launcher checks the bridge's start line and its
 //                      statistics (forwarded counts, the one frame of another EtherType filtered,
 //                      no problem counted, no warning).
 //   list-interfaces    --list-interfaces prints the factory's list: exit 0.
+//   list-interfaces-json  --list-interfaces --json of the real executable on Linux (packet without
+//                      --backend; lo is not usable), of a backend of another OS (exit 3 with the
+//                      error in the JSON) and of the executable on fake links. Skipped elsewhere.
 //   bad-usage          an unknown --backend: exit 4, with the error and where the options are,
 //                      not the whole usage text.
 //   no-registry        no registry at the address: exit 3, with the address and what to do.
@@ -31,6 +34,10 @@
 // --backend npcap on Windows and --backend pcap on Linux:
 //   pcap-roundtrip     as echo-roundtrip, through the fake library's device that answers.
 //   pcap-list          --list-interfaces prints the library's devices: exit 0.
+//   pcap-list-json     --list-interfaces --json without --backend: the default is the pcap
+//                      backend, stdout is one JSON object with the library's devices: exit 0.
+//   pcap-no-library-json  --list-interfaces --json without the library: exit 3, the JSON has
+//                      the error (library-missing) and stderr the FAIL line.
 //   pcap-no-library    the library is not there: exit 3 with the way to install it, before
 //                      SIL Kit is touched.
 //   pcap-old-library   the library lacks a function the bridge needs: exit 3, the same.
@@ -274,6 +281,36 @@ int run_single(const Options& options, const fs::path& executable, const std::ve
         ok = expect(text.find(needle) == std::string::npos, "output does not contain '" + needle + "'") && ok;
     }
     dump_log(bridgeLog);
+    return ok ? 0 : 1;
+}
+
+/// Runs `executable` once with `args` for JSON on stdout: checks its exit code, that stdout is one
+/// JSON object ending with a line break and holds every part of `inStdout`, and that stderr holds
+/// every part of `inStderr` (nothing if that is empty).
+int run_json(const Options& options, const fs::path& executable, const std::vector<std::string>& args, int expectedCode,
+             const std::vector<std::string>& inStdout, const std::vector<std::string>& inStderr = {})
+{
+    vehicle_sil::process::CaptureOptions capture;
+    capture.timeout = options.timeout;
+    const auto run = vehicle_sil::process::run_captured(executable, args, capture);
+    std::string out = run.standard_output;
+    std::string err = run.standard_error;
+    std::erase(out, '\r');
+    std::erase(err, '\r');
+    log("stdout:\n" + out + "stderr:\n" + err);
+    bool ok = expect(run.exit_code == expectedCode,
+                     "bridge exit code " + exit_code_text(run.exit_code) + ", expected " + std::to_string(expectedCode));
+    ok = expect(out.starts_with("{\n") && out.ends_with("\n}\n") && out.find("\n}\n") == out.size() - 3,
+                "stdout is one JSON object and a line break") && ok;
+    for (const auto& needle : inStdout)
+    {
+        ok = expect(out.find(needle) != std::string::npos, "stdout contains '" + needle + "'") && ok;
+    }
+    ok = expect(inStderr.empty() == err.empty(), inStderr.empty() ? "nothing on stderr" : "stderr says why") && ok;
+    for (const auto& needle : inStderr)
+    {
+        ok = expect(err.find(needle) != std::string::npos, "stderr contains '" + needle + "'") && ok;
+    }
     return ok ? 0 : 1;
 }
 
@@ -703,6 +740,51 @@ int main(int argc, char** argv)
                                      kPcapBackend + " takes the Ethernet ones:",
                                  "  --interface fake0           up, connected  (Fake Ethernet adapter with a device that answers)",
                                  "  --interface fake-raw        up, connected\n"});
+        }
+        else if (options.scenario == "pcap-list-json")
+        {
+            // No --backend: the executable's default is the pcap backend of this OS.
+            use_fake_pcap(options, "vehicle_sil_fake_pcap");
+            result = run_json(options, options.pcapBridge, {"--list-interfaces", "--json"}, cli::kExitOk,
+                              {"  \"vehicle_sil_targets\": 1,\n  \"tool\": \"vehicle_sil_ethernet_bridge\",\n",
+                               std::string("  \"backend\": \"") + kPcapBackend + "\",\n",
+                               "  \"source\": \"fake pcap version 1.0 (TEST ONLY)\",\n",
+                               "      \"value\": \"fake0\",\n      \"label\": \"fake0\",\n"
+                               "      \"detail\": \"up, connected; Fake Ethernet adapter with a device that answers\",\n"
+                               "      \"usable\": true,\n      \"reason\": null,\n",
+                               "      \"value\": \"fake-raw\",\n", "  \"notes\": [],\n  \"error\": null\n}\n"});
+        }
+        else if (options.scenario == "pcap-no-library-json")
+        {
+            use_fake_pcap(options, "no_such_pcap");
+            result = run_json(options, options.pcapBridge, {"--list-interfaces", "--json"}, cli::kExitSetupFailed,
+                              {std::string("  \"backend\": \"") + kPcapBackend + "\",\n  \"source\": null,\n  \"targets\": [],\n",
+                               "    \"code\": \"library-missing\",\n",
+                               std::string("    \"message\": \"") + kPcapLibrary + " is not installed: cannot load ",
+                               std::string(kPcapLibrary) + " is not part of vehicle-sil: install "},
+                              {std::string("[eth-bridge] FAIL setup: ") + kPcapLibrary + " is not installed: cannot load "});
+        }
+        else if (options.scenario == "list-interfaces-json")
+        {
+#if defined(__linux__)
+            // The real executable: packet without --backend, the interfaces of this computer.
+            result = run_json(options, options.realBridge, {"--list-interfaces", "--json"}, cli::kExitOk,
+                              {"  \"backend\": \"packet\",\n  \"source\": null,\n",
+                               "      \"value\": \"lo\",\n      \"label\": \"lo\",\n", "      \"usable\": false,\n",
+                               "      \"reason\": \"not Ethernet (link type 772)\",\n"});
+            // A backend of another OS: the error in the JSON, the FAIL line for people.
+            result |= run_json(options, options.realBridge, {"--list-interfaces", "--backend", "npcap", "--json"},
+                               cli::kExitSetupFailed,
+                               {"  \"backend\": \"npcap\",\n", "    \"code\": \"backend-unavailable\",\n",
+                                "    \"message\": \"--backend npcap is for Windows. On Linux use --backend packet"},
+                               {"[eth-bridge] FAIL setup: --backend npcap is for Windows."});
+            // The executable on fake links: --json on its own list.
+            result |= run_json(options, options.bridge, {"--list-interfaces", "--json"}, cli::kExitOk,
+                               {"  \"backend\": \"packet\",\n", "      \"value\": \"fake0\",\n",
+                                "      \"value\": \"fake-fault\",\n"});
+#else
+            throw Skip("the real executable lists the interfaces of the OS on Linux only");
+#endif
         }
         else if (options.scenario == "pcap-no-library")
         {

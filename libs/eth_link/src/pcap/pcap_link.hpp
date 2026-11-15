@@ -17,15 +17,6 @@
 
 namespace vehicle_sil::eth_link::detail {
 
-/// One device of the library's list.
-struct PcapDevice
-{
-    std::string name;        ///< the pcap name (Windows: "\Device\NPF_{...}"; Linux: the interface's name)
-    std::string description; ///< the library's text, or empty
-    std::string connection;  ///< the OS's name of the network connection (Windows), or empty
-    std::uint32_t flags = 0; ///< kPcapIf*
-};
-
 /// The devices the library offers, with the OS's connection names. Throws LinkError.
 [[nodiscard]] std::vector<PcapDevice> pcap_devices(const PcapLibrary& library);
 
@@ -38,7 +29,10 @@ struct PcapDevice
 /// without braces, in any case of the letters). Throws LinkError if there is none, or more than one.
 [[nodiscard]] std::size_t choose_pcap_device(std::span<const PcapDevice> devices, std::string_view wanted, PcapFlavor flavor);
 
-/// The text of --list-interfaces. `version`: what the library says it is.
+/// The list of `flavor` with its notes. `version`: what the library says it is.
+[[nodiscard]] PcapInterfaceList pcap_interface_list_of(std::vector<PcapDevice> devices, PcapFlavor flavor, std::string version);
+
+/// The text of --list-interfaces: format_pcap_interface_list(pcap_interface_list_of(...)).
 [[nodiscard]] std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor flavor, std::string_view version);
 
 /// The link on a loaded library.

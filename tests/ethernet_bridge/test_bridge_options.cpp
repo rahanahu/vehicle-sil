@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,17 +18,18 @@ namespace {
 using namespace vehicle_sil::ethernet_bridge;
 using Args = std::vector<std::string_view>;
 
-BridgeOptions parse(Args args)
+/// `default_backend`: what the executable gives (none: an OS where no backend works).
+BridgeOptions parse(Args args, std::optional<Backend> default_backend = std::nullopt)
 {
-    return parse_bridge_options(args);
+    return parse_bridge_options(args, default_backend);
 }
 
 /// The message of the BridgeUsageError `args` cause ("" if none).
-std::string usage_error(Args args)
+std::string usage_error(Args args, std::optional<Backend> default_backend = std::nullopt)
 {
     try
     {
-        (void)parse(std::move(args));
+        (void)parse(std::move(args), default_backend);
     }
     catch (const BridgeUsageError& e)
     {
@@ -238,4 +240,44 @@ TEST_CASE(options_promiscuous_mode_is_auto_unless_one_option_says_otherwise)
     }
     // A TAP device: neither option, and the default does nothing.
     CHECK(parse(with({})).backend == Backend::Tap);
+}
+
+TEST_CASE(options_json_is_for_list_interfaces_only)
+{
+    const auto list = parse({"--list-interfaces", "--json"}, Backend::Packet);
+    CHECK(list.list_interfaces);
+    CHECK(list.json);
+    CHECK(!parse({"--list-interfaces"}).json);
+    const std::string message = "--json is for --list-interfaces: it writes the list as JSON";
+    CHECK_TEXT(usage_error({"--json"}, Backend::Packet), message);
+    CHECK_TEXT(usage_error(with({"--json"})), message);
+    CHECK_TEXT(usage_error({"--describe", "--network", "ETH1", "--backend", "tap", "--interface", "vsil0", "--json"}), message);
+    CHECK(bridge_usage().find("--list-interfaces [--backend <backend>] [--json]") != std::string::npos);
+}
+
+TEST_CASE(options_without_backend_take_the_default_of_the_executable)
+{
+    // The executable gives its default (bridges/ethernet/app/pcap_library.cpp); any backend can be
+    // given here, so the default of Windows is tested on Linux too.
+    CHECK(parse({"--list-interfaces"}, Backend::Npcap).backend == Backend::Npcap);
+    CHECK(parse({"--list-interfaces"}, Backend::Packet).backend == Backend::Packet);
+    CHECK(parse({"--list-interfaces", "--backend", "pcap"}, Backend::Npcap).backend == Backend::Pcap);
+    const Args run = {"--registry-uri", "silkit://127.0.0.1:8500", "--network", "ETH1", "--interface", "Ethernet 2",
+                      "--ethertype", "0x88b5"};
+    CHECK(parse(run, Backend::Npcap).backend == Backend::Npcap);
+    CHECK(parse(run, Backend::Packet).backend == Backend::Packet);
+    const Args describe = {"--describe", "--network", "ETH1", "--interface", "enp3s0", "--all-frames"};
+    CHECK(parse(describe, Backend::Packet).backend == Backend::Packet);
+    // The rules of the backend hold for the default as for --backend, and say its name.
+    CHECK_TEXT(usage_error({"--registry-uri", "silkit://127.0.0.1:8500", "--network", "ETH1", "--interface", "Ethernet 2"},
+                           Backend::Npcap),
+               "--backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.");
+    CHECK_TEXT(usage_error({"--describe", "--network", "ETH1", "--interface", "enp3s0"}, Backend::Packet),
+               "--backend packet sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.");
+    CHECK_TEXT(usage_error({"--registry-uri", "silkit://127.0.0.1:8500", "--network", "ETH1", "--interface", "vsil0",
+                            "--all-frames", "--tap-create"},
+                           Backend::Packet),
+               "--tap-create needs --backend tap");
+    // Where the executable has no default, --backend is still needed.
+    CHECK_TEXT(usage_error(run), "missing --backend: choose tap, packet, npcap or pcap");
 }

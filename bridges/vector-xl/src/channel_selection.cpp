@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/vector_xl/channel_selection.hpp"
 
+#include "vehicle_sil/json/json_writer.hpp"
+
 #include <cstdio>
 
 namespace vehicle_sil::vector_xl {
@@ -82,6 +84,91 @@ std::string format_channel_list(const std::vector<XlChannelInfo>& channels)
         }
     }
     return text;
+}
+
+namespace {
+
+/// The members before "targets" (the JSON form of interface_list.hpp of the Ethernet bridge).
+void begin_targets(json::JsonWriter& w)
+{
+    w.begin_object();
+    w.integer("vehicle_sil_targets", 1);
+    w.string("tool", "vehicle_sil_vector_xl_bridge");
+    w.null("backend");
+    w.null("source");
+    w.begin_array("targets");
+}
+
+std::string end_targets(json::JsonWriter& w)
+{
+    std::string out = w.take();
+    out += '\n';
+    return out;
+}
+
+} // namespace
+
+std::string channels_json(const std::vector<XlChannelInfo>& channels)
+{
+    json::JsonWriter w;
+    begin_targets(w);
+    for (const XlTarget target : {XlTarget::Virtual, XlTarget::Physical})
+    {
+        const std::string name(to_string(target));
+        for (const auto& candidate : selectable_channels(channels, target))
+        {
+            const auto& info = candidate.info;
+            const std::string number = std::to_string(candidate.number);
+            w.begin_object();
+            w.string("value", name + ":" + number);
+            w.string("label", info.name);
+            w.string("detail", name + " " + number + "; hwType=" + std::to_string(info.hw_type) +
+                                   " hwIndex=" + std::to_string(info.hw_index) + " hwChannel=" + std::to_string(info.hw_channel) +
+                                   " serial=" + std::to_string(info.serial_number) +
+                                   (info.transceiver_name.empty() ? "" : " " + info.transceiver_name));
+            w.boolean("usable", true);
+            w.null("reason");
+            w.begin_object("can");
+            w.string("target", name);
+            w.integer("number", candidate.number);
+            w.string("name", info.name);
+            w.integer("hw_type", info.hw_type);
+            w.integer("hw_index", info.hw_index);
+            w.integer("hw_channel", info.hw_channel);
+            w.integer("serial", info.serial_number);
+            if (info.transceiver_name.empty())
+            {
+                w.null("transceiver");
+            }
+            else
+            {
+                w.string("transceiver", info.transceiver_name);
+            }
+            w.end_object();
+            w.end_object();
+        }
+    }
+    w.end_array();
+    w.begin_array("notes");
+    w.end_array();
+    w.null("error");
+    w.end_object();
+    return end_targets(w);
+}
+
+std::string channels_error_json(std::string_view code, std::string_view message)
+{
+    json::JsonWriter w;
+    begin_targets(w);
+    w.end_array();
+    w.begin_array("notes");
+    w.end_array();
+    w.begin_object("error");
+    w.string("code", code);
+    w.string("message", message);
+    w.end_object();
+    w.end_object();
+    return end_targets(w);
 }
 
 } // namespace vehicle_sil::vector_xl

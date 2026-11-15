@@ -25,6 +25,8 @@ struct BridgeOptions
 {
     bool help = false;
     bool list_channels = false;
+    /// --json (with --list-channels only): write the list as JSON (channels_json()).
+    bool json = false;
     /// --describe: write the bridge's description and exit, without the XL driver or SIL Kit;
     /// --registry-uri is not needed.
     bool describe = false;

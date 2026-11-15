@@ -11,8 +11,12 @@
 
 #include "vehicle_sil/eth_link/external_link.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace vehicle_sil::eth_link {
 
@@ -52,8 +56,53 @@ struct PcapLinkOptions
 /// still arrive. A wpcap.dll without pcap_open() is refused when it is loaded.
 [[nodiscard]] std::unique_ptr<ExternalLink> make_pcap_link(PcapLinkOptions options);
 
-/// What --list-interfaces prints for the pcap library: the interfaces it offers, one per line as
-/// --interface takes them. `library`: as PcapLinkOptions::library. Throws LinkError.
+/// One interface the pcap library offers.
+struct PcapDevice
+{
+    std::string name;        ///< the pcap name (Windows: "\Device\NPF_{...}"; Linux: the interface's name)
+    std::string description; ///< the library's text, or empty
+    std::string connection;  ///< the OS's name of the network connection (Windows), or empty
+    std::uint32_t flags = 0; ///< the library's PCAP_IF_* flags
+
+    [[nodiscard]] bool up() const noexcept;
+    [[nodiscard]] bool loopback() const noexcept;
+    [[nodiscard]] bool wireless() const noexcept;
+    /// true: connected, false: disconnected, nullopt: the library does not tell.
+    [[nodiscard]] std::optional<bool> connected() const noexcept;
+};
+
+/// What the pcap library offers: the data of --list-interfaces, which it prints as text
+/// (format_pcap_interface_list()) or as JSON (vehicle_sil_ethernet_bridge --json).
+struct PcapInterfaceList
+{
+    std::string library; ///< "Npcap" or "libpcap"
+    std::string backend; ///< the --backend that uses it: "npcap" or "pcap"
+    std::string version; ///< what the library says it is, or empty
+    /// In the library's order, with the OS's names of the network connections.
+    std::vector<PcapDevice> devices;
+    /// What the list alone does not explain, one sentence each (Npcap that offers no network
+    /// adapter, which happens where it was installed for administrators only).
+    std::vector<std::string> notes;
+};
+
+/// Loads the library and asks it for its interfaces. `library`: as PcapLinkOptions::library.
+/// Throws LinkError.
+[[nodiscard]] PcapInterfaceList pcap_interfaces(const std::string& library = {});
+
+/// The text of --list-interfaces: a heading with the library's version, then one line per
+/// interface as --interface takes it ("  --interface <name>  <pcap_device_detail()>"), then the notes.
+[[nodiscard]] std::string format_pcap_interface_list(const PcapInterfaceList& list);
+
+/// format_pcap_interface_list(pcap_interfaces(library)).
 [[nodiscard]] std::string pcap_interface_list(const std::string& library = {});
+
+/// What a line of the list says after the name, its parts "; " apart: the state
+/// ("up, connected"), the description, and the pcap name where the line shows the connection name.
+[[nodiscard]] std::string pcap_device_detail(const PcapDevice& device);
+
+/// The name for --interface that chooses `devices[index]` alone: its connection name where it has
+/// one and no other device has the same one (whatever the case of its ASCII letters) or that pcap
+/// name, else its pcap name.
+[[nodiscard]] std::string pcap_interface_argument(std::span<const PcapDevice> devices, std::size_t index);
 
 } // namespace vehicle_sil::eth_link

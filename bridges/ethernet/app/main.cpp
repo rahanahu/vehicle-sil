@@ -10,6 +10,7 @@
 //             3 setup failed (the backend cannot be used here, the interface, SIL Kit),
 //             4 bad command line.
 #include "link_factory.hpp"
+#include "pcap_library.hpp"
 
 #include "vehicle_sil/bridge_runtime/describe.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
@@ -21,6 +22,7 @@
 #include "vehicle_sil/ethernet_bridge/bridge_app.hpp"
 #include "vehicle_sil/ethernet_bridge/bridge_options.hpp"
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
+#include "vehicle_sil/ethernet_bridge/interface_list.hpp"
 
 #include <silkit/services/ethernet/IEthernetController.hpp>
 
@@ -124,7 +126,26 @@ int run(const BridgeOptions& options)
 {
     if (options.list_interfaces)
     {
-        cli::write_text(stdout, interface_list(options));
+        std::string list;
+        try
+        {
+            list = interface_list(options);
+        }
+        catch (const std::exception& e)
+        {
+            if (!options.json)
+            {
+                throw; // main() says FAIL
+            }
+            // stdout holds the JSON alone, for programs; the FAIL line goes to stderr, for people.
+            cli::write_text(stdout, interface_list_error_json(options.backend, e));
+            cli::print(stderr, "[%s] FAIL setup: %s\n", kTag, e.what());
+            return kExitSetupFailed;
+        }
+        if (!cli::write_text(stdout, list))
+        {
+            throw std::runtime_error("could not write the list to stdout (is it closed?)");
+        }
         return kExitOk;
     }
     if (options.describe)
@@ -197,7 +218,7 @@ int main(int argc, char** argv)
         // UTF-8 on Windows too: SIL Kit takes the names and the address as UTF-8, and the links
         // compare the interface's name as UTF-8.
         const std::vector<std::string> arguments = cli::utf8_arguments(argc, argv);
-        options = parse_bridge_options(std::vector<std::string_view>(arguments.begin(), arguments.end()));
+        options = parse_bridge_options(std::vector<std::string_view>(arguments.begin(), arguments.end()), default_backend());
     }
     catch (const BridgeUsageError& e)
     {
