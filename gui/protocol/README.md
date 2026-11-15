@@ -29,6 +29,7 @@ The API version is `vehicle_sil_gui` (currently 1). The server writes it in the 
 - **What is received again**: if a WebSocket message is not valid JSON, or the core fields of the `hello` or `session` summary (`id`, `state`, `launcher`, `stop`) cannot be read, the reader cannot tell what was lost. It reconnects and receives everything again from `hello`. The summary is the source of truth. Each time this happens again in a row, the wait before reconnecting grows.
 - **Shapes that change only on request**: where the old shape is too heavy, the shape changes only when the client asks for it in the authentication message (`session_without_check`). Clients that do not ask get the old shape.
 - Launcher events (the contents of `event`) have exactly the shape of the launcher's `run --events`. The launcher sets their version (`vehicle_sil_events` in the `hello` event; see [docs/simulation-events.md](../../docs/simulation-events.md)).
+- The launcher's objects (the check and the run result in the summary and in `api/check`, findings, launcher events) are relayed with every key. The client library types the keys that screens need and keeps the launcher's whole object in `raw` (see "The launcher's keys (`raw`)" in [gui/client/README.md](../client/README.md#the-launchers-keys-raw)).
 - Error `code` names do not change (new ones may be added). `message` is a human-readable sentence, not localized, and its wording may change. Programs branch on `code`.
 
 ## Authentication and Origin
