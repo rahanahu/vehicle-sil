@@ -76,7 +76,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 ## 引数
 
 ```
-vehicle_sil_vector_xl_bridge --list-channels
+vehicle_sil_vector_xl_bridge --list-channels [--json]
 vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
 vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
@@ -84,6 +84,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | 引数 | 意味 |
 |---|---|
 | `--list-channels` | XL ドライバが提供する CAN チャネルを、接続先ごとに番号付きで表示して終わります。 |
+| `--json` | `--list-channels` と一緒のときだけ使えます。一覧を JSON で標準出力に書きます。プログラムが読むためのものです（「[チャネルの一覧の JSON](#チャネルの一覧の-json--json)」）。 |
 | `--registry-uri <uri>` | SIL Kit の registry のアドレスです（必須）。 |
 | `--xl-target <virtual\|physical>` | `virtual` は Vector Virtual CAN（`XL_HWTYPE_VIRTUAL`）、`physical` はそれ以外のハードウェアの CAN チャネル（CANcase、VN16xx など）を選びます（必須）。 |
 | `--xl-channel <n>` | そのターゲットの CAN 対応チャネルの中での、1 始まりの番号です（必須）。 |
@@ -108,6 +109,54 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--name` と `--network` に ASCII 以外の文字を使えます。
 
 チャネルとデバイスは、起動のときにこの CLI で決めます。Control API と設定ファイル（`vehicle_sil_launch`）には、チャネルとデバイスを選ぶ項目はありません。Control API、設定ファイル、GUI に選ぶ手段を追加するときは、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
+
+### チャネルの一覧の JSON（`--json`）
+
+`--list-channels --json` は、チャネルを 1 つの JSON のオブジェクトにして、UTF-8 で標準出力に書きます。最後に改行が付きます。文の一覧は人が読むためのもので、形が変わることがあります。プログラムは `--json` を読みます。形は Ethernet ブリッジの `--list-interfaces --json` と同じです（「[一覧の JSON](ethernet-bridge.md#一覧の-json--json)」）。ここには違う所だけを書きます。
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_vector_xl_bridge",
+  "backend": null,
+  "source": null,
+  "targets": [
+    {
+      "value": "virtual:1",
+      "label": "Virtual Channel 1",
+      "detail": "virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN",
+      "usable": true,
+      "reason": null,
+      "can": {
+        "target": "virtual",
+        "number": 1,
+        "name": "Virtual Channel 1",
+        "hw_type": 1,
+        "hw_index": 0,
+        "hw_channel": 0,
+        "serial": 0,
+        "transceiver": "Virtual CAN"
+      }
+    }
+  ],
+  "notes": [],
+  "error": null
+}
+```
+
+| キー | 内容 |
+|---|---|
+| `tool` | `vehicle_sil_vector_xl_bridge` です。 |
+| `backend`、`source` | `null` です。 |
+| `targets` | CAN のチャネルです。virtual が先、physical が後で、番号は `--xl-channel` と同じです。CAN のないチャネルは入りません。 |
+| `targets[].value` | `<target>:<number>` です。`:` の前を `--xl-target` に、番号を `--xl-channel` に渡します。 |
+| `targets[].label` | ドライバが返すチャネルの名前です。 |
+| `targets[].detail` | ターゲットと番号、続けて文の一覧の行の内容です。 |
+| `targets[].usable` | いつも `true` です。 |
+| `targets[].can` | `target`、`number`、`name`、`hw_type`、`hw_index`、`hw_channel`、`serial`、`transceiver`（ドライバが返さないときは `null`）です。 |
+| `notes` | 空です。 |
+
+一覧を作れないときも、ブリッジは JSON を書きます。`targets` は空で、エラーが入ります。終了コードは 3 です。`--json` がなければ標準出力に出る `FAIL setup: ...` の行は、標準エラーに出ます。標準出力には JSON だけが出ます。`error.code` は、XL ドライバを開けないときは `driver-missing`、ほかは `failed` です。`error.message` は、`FAIL setup:` の行の文です。
 
 ## 設定ファイルから起こす
 

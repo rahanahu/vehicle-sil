@@ -53,6 +53,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
     echo-roundtrip-physical
     echo-roundtrip-receipts
     list-channels
+    list-channels-json
     no-driver
     no-registry
     stop-request

@@ -18,10 +18,15 @@ std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces)
     for (const auto& entry : interfaces)
     {
         text += "  --interface " + entry.name + std::string(width - detail::display_width(entry.name) + 2, ' ');
-        text += entry.ethernet ? "Ethernet" : "not Ethernet (link type " + std::to_string(entry.link_type) + ")";
-        text += entry.up ? ", up\n" : ", down\n";
+        text += interface_detail(entry) + "\n";
     }
     return text;
+}
+
+std::string interface_detail(const InterfaceInfo& entry)
+{
+    return (entry.ethernet ? std::string("Ethernet") : "not Ethernet (link type " + std::to_string(entry.link_type) + ")") +
+           (entry.up ? ", up" : ", down");
 }
 
 } // namespace vehicle_sil::eth_link

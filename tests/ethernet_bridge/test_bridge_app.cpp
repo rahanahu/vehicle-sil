@@ -42,7 +42,7 @@ BridgeOptions options_for(Backend backend, std::vector<std::string_view> extra =
     std::vector<std::string_view> args = {"--registry-uri", "silkit://127.0.0.1:8500", "--network", "ETH1", "--backend",
                                           to_string(backend), "--interface", "enp3s0"};
     args.insert(args.end(), extra.begin(), extra.end());
-    return parse_bridge_options(args);
+    return parse_bridge_options(args, std::nullopt);
 }
 
 /// A PromiscuousHint on a fake link, with a clock that only the test moves. `requested`: the mode

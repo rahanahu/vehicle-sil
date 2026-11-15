@@ -123,18 +123,43 @@ int run(const BridgeOptions& options)
     }
     catch (const std::exception& e)
     {
-        log(kTag, "FAIL setup: cannot open the Vector XL driver: %s", e.what());
+        const std::string message = std::string("cannot open the Vector XL driver: ") + e.what();
+        if (options.json)
+        {
+            // stdout holds the JSON alone, for programs; the FAIL line goes to stderr, for people.
+            cli::write_text(stdout, channels_error_json("driver-missing", message));
+            cli::print(stderr, "[%s] FAIL setup: %s\n", kTag, message.c_str());
+        }
+        else
+        {
+            log(kTag, "FAIL setup: %s", message.c_str());
+        }
         return kExitSetupFailed;
     }
 
     // Errors from here on are setup failures that main() reports.
-    const std::vector<XlChannelInfo> channels = driver->channels();
-
     if (options.list_channels)
     {
-        cli::write_text(stdout, format_channel_list(channels));
+        std::string list;
+        try
+        {
+            const std::vector<XlChannelInfo> channels = driver->channels();
+            list = options.json ? channels_json(channels) : format_channel_list(channels);
+        }
+        catch (const std::exception& e)
+        {
+            if (!options.json)
+            {
+                throw; // main() says FAIL
+            }
+            cli::write_text(stdout, channels_error_json("failed", e.what()));
+            cli::print(stderr, "[%s] FAIL setup: %s\n", kTag, e.what());
+            return kExitSetupFailed;
+        }
+        cli::write_text(stdout, list);
         return kExitOk;
     }
+    const std::vector<XlChannelInfo> channels = driver->channels();
 
     const XlChannelInfo channel = select_channel(channels, options.target, options.channel);
     log(kTag, "XL channel: %s %u = \"%s\" (hwType=%u, serial=%u)", std::string(to_string(options.target)).c_str(),

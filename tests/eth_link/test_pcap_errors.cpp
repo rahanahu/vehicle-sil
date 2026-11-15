@@ -326,6 +326,56 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
                "interfaces libpcap offers; --backend pcap takes the Ethernet ones:\n  --interface lo  up, loopback\n");
 }
 
+TEST_CASE(pcap_interface_argument_is_a_name_that_chooses_the_device_alone)
+{
+    // A connection name of its own: that name. None: the pcap name.
+    const auto devices = windows_devices();
+    CHECK_TEXT(pcap_interface_argument(devices, 0), "Ethernet 2");
+    CHECK_TEXT(pcap_interface_argument(devices, 1), "Ethernet");
+    CHECK_TEXT(pcap_interface_argument(devices, 2), "\\Device\\NPF_Loopback");
+    // Connection names that differ only in case: each exact one still chooses its device, but a
+    // program that compares names without the case would mix them up, so the pcap names.
+    auto twins = windows_devices();
+    twins[1].connection = "ETHERNET 2";
+    CHECK_TEXT(pcap_interface_argument(twins, 0), kNpf);
+    CHECK_TEXT(pcap_interface_argument(twins, 1), kNpfOther);
+    // A connection name that is another device's pcap name chooses that device: the pcap name.
+    const std::vector<PcapDevice> linux_like = {{"va", "", "vb", kPcapIfUp}, {"vb", "", "", kPcapIfUp}};
+    CHECK_TEXT(pcap_interface_argument(linux_like, 0), "va");
+    CHECK_TEXT(pcap_interface_argument(linux_like, 1), "vb");
+    // Whatever it gives, --interface chooses that device.
+    for (const auto& list : {devices, twins, linux_like})
+    {
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            CHECK_EQ(choose_pcap_device(list, pcap_interface_argument(list, i), PcapFlavor::Npcap), i);
+        }
+    }
+}
+
+TEST_CASE(pcap_interface_list_data_has_the_library_the_details_and_the_notes)
+{
+    const auto list = pcap_interface_list_of(windows_devices(), PcapFlavor::Npcap, "Npcap version 1.80");
+    CHECK_TEXT(list.library, "Npcap");
+    CHECK_TEXT(list.backend, "npcap");
+    CHECK_TEXT(list.version, "Npcap version 1.80");
+    CHECK_EQ(list.devices.size(), std::size_t{3});
+    CHECK(list.notes.empty());
+    CHECK_TEXT(pcap_device_detail(list.devices[0]),
+               "up, connected; Microsoft KM-TEST Loopback Adapter; \\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}");
+    CHECK_TEXT(pcap_device_detail(list.devices[2]), "up, loopback; Adapter for loopback traffic capture");
+    CHECK(list.devices[0].up() && list.devices[0].connected() == true && !list.devices[0].loopback());
+    CHECK(list.devices[1].connected() == false);
+    CHECK(!list.devices[2].connected().has_value() && list.devices[2].loopback() && !list.devices[2].wireless());
+    // The text and the notes come from the same list.
+    CHECK_TEXT(format_pcap_interface_list(list), format_pcap_devices(windows_devices(), PcapFlavor::Npcap, "Npcap version 1.80"));
+    const PcapDevice loopback{"\\Device\\NPF_Loopback", "", "", kPcapIfUp | kPcapIfLoopback};
+    CHECK_EQ(pcap_interface_list_of({loopback}, PcapFlavor::Npcap, "").notes.size(), std::size_t{1});
+    CHECK_EQ(pcap_interface_list_of({}, PcapFlavor::Npcap, "").notes.size(), std::size_t{1});
+    CHECK(pcap_interface_list_of({loopback}, PcapFlavor::Libpcap, "").notes.empty());
+    CHECK(pcap_interface_list_of({}, PcapFlavor::Libpcap, "").notes.empty());
+}
+
 TEST_CASE(pcap_api_names_every_function_it_does_not_find)
 {
     static int something = 0;

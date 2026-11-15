@@ -920,13 +920,14 @@ In this entry, "external link" means a connection to an interface outside SIL Ki
 | `MacSideTable` | `eth_link/mac_side_table.hpp` |
 | `MacAddress` | `eth_link/mac_address.hpp` |
 | `make_tap_link()`, `make_packet_link()`, `list_interfaces()` | `eth_link/os_links.hpp` (implemented in `libs/eth_link/src/linux`) |
-| `make_pcap_link()`, `pcap_interface_list()` | `eth_link/pcap_link.hpp` (implemented in `libs/eth_link/src/pcap`) |
+| `make_pcap_link()`, `pcap_interfaces()`, `format_pcap_interface_list()`, `pcap_interface_argument()` | `eth_link/pcap_link.hpp` (implemented in `libs/eth_link/src/pcap`) |
 | `EthernetBridge` | `ethernet_bridge/ethernet_bridge.hpp` |
 | `parse_bridge_options()` | `ethernet_bridge/bridge_options.hpp` |
 | `format_start_line()`, `backend_unavailable()`, `PromiscuousHint` | `ethernet_bridge/bridge_app.hpp` |
+| The text and the JSON of `--list-interfaces` (`pcap_interfaces_json()` and others) | `ethernet_bridge/interface_list.hpp` |
 | Executable | `bridges/ethernet/app/main.cpp` |
 | Where external links are created | `app/link_factory.hpp`, `app/os_link_factory.cpp` |
-| Location of the pcap library | `app/pcap_library.hpp` |
+| Location of the pcap library, the default of `--backend` | `app/pcap_library.hpp` |
 
 Contents of `libs/eth_link/src/pcap`:
 

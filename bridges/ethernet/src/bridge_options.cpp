@@ -140,17 +140,18 @@ bool reaches_real_adapters(Backend backend) noexcept
 std::string bridge_usage()
 {
     return "usage:\n"
-           "  vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]\n"
+           "  vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>] [--json]\n"
            "  vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name>\n"
-           "                              --backend <tap|packet|npcap|pcap> --interface <name> [options]\n"
-           "  vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name>\n"
-           "                              [options]\n"
+           "                              [--backend <backend>] --interface <name> [options]\n"
+           "  vehicle_sil_ethernet_bridge --describe --network <name> [--backend <backend>]\n"
+           "                              --interface <name> [options]\n"
            "\n"
            "Forwards Ethernet frames in both directions between a SIL Kit Ethernet network and an\n"
            "Ethernet interface outside SIL Kit until Ctrl+C.\n"
            "\n"
-           "  --list-interfaces        print the interfaces of this computer and exit; with --backend\n"
-           "                           npcap or pcap, the interfaces the pcap library offers\n"
+           "  --list-interfaces        print the interfaces for the backend and exit: those of this computer\n"
+           "                           for packet and tap, those the pcap library offers for npcap and pcap\n"
+           "  --json                   with --list-interfaces: write the list as JSON to stdout (for programs)\n"
            "  --describe               write what the bridge is (its name and network) as JSON to stdout,\n"
            "                           as an ecu_main executable does for vehicle_sil_launch, and exit\n"
            "                           without opening the interface or joining SIL Kit\n"
@@ -161,7 +162,8 @@ std::string bridge_usage()
            "  --network <name>         SIL Kit Ethernet network (no default)\n"
            "  --backend <backend>      tap: a TAP device (Linux); packet: a network interface (Linux);\n"
            "                           npcap: a network adapter through Npcap (Windows);\n"
-           "                           pcap: a network interface through libpcap (Linux)\n"
+           "                           pcap: a network interface through libpcap (Linux).\n"
+           "                           Default: packet on Linux, npcap on Windows\n"
            "  --interface <name>       the interface to bridge, see --list-interfaces\n"
            "  --ethertype <hex>,...    pass only these EtherTypes (behind up to two VLAN tags), e.g. 0x88b5\n"
            "  --src-mac <mac>,...      pass only frames from these SIL Kit MAC addresses out, and only\n"
@@ -182,7 +184,7 @@ std::string bridge_usage()
            "  --help                   this text\n";
 }
 
-BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
+BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args, std::optional<Backend> default_backend)
 {
     BridgeOptions options;
     auto& filter = options.bridge.filter;
@@ -205,6 +207,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         if (arg == "--describe")
         {
             options.describe = true;
+            continue;
+        }
+        if (arg == "--json")
+        {
+            options.json = true;
             continue;
         }
         if (arg == "--all-frames")
@@ -310,6 +317,14 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         }
     }
 
+    if (!options.backend)
+    {
+        options.backend = default_backend;
+    }
+    if (options.json && !options.list_interfaces)
+    {
+        throw BridgeUsageError("--json is for --list-interfaces: it writes the list as JSON");
+    }
     if (options.list_interfaces)
     {
         if (options.describe)

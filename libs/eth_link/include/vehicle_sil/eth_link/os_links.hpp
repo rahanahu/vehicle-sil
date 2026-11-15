@@ -47,6 +47,10 @@ struct InterfaceInfo
 ///   "  --interface lo      not Ethernet (link type 772), up"
 [[nodiscard]] std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces);
 
+/// What a line of format_interface_list() says after the name: "Ethernet, up",
+/// "not Ethernet (link type 772), up".
+[[nodiscard]] std::string interface_detail(const InterfaceInfo& entry);
+
 struct TapLinkOptions
 {
     /// The TAP device's name.

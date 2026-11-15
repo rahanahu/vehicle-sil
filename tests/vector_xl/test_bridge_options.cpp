@@ -193,3 +193,127 @@ TEST_CASE(options_name_describe_and_start_timeout)
     CHECK(usage_error({"--describe", "--xl-target", "virtual"}));
     CHECK(usage_error({"--describe", "--list-channels"}));
 }
+
+TEST_CASE(options_json_is_for_list_channels_only)
+{
+    const auto list = parse({"--list-channels", "--json"});
+    CHECK(list.list_channels);
+    CHECK(list.json);
+    CHECK(!parse({"--list-channels"}).json);
+    const auto json_alone = [](std::vector<std::string_view> args) {
+        return vehicle_sil::unit::throws_with<BridgeUsageError>([&] { (void)parse(std::move(args)); },
+                                                                "--json is for --list-channels: it writes the list as JSON");
+    };
+    CHECK(json_alone({"--json"}));
+    CHECK(json_alone({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
+    CHECK(json_alone({"--describe", "--xl-target", "virtual", "--xl-channel", "1", "--json"}));
+}
+
+TEST_CASE(selection_channel_list_json_numbers_the_can_channels_of_each_target)
+{
+    auto channels = sample_channels();
+    channels[1].transceiver_name = "Virtual CAN";
+    channels[1].hw_type = 1;
+    channels[4].serial_number = 4711;
+    const std::string json = channels_json(channels);
+    CHECK(json ==
+          "{\n"
+          "  \"vehicle_sil_targets\": 1,\n"
+          "  \"tool\": \"vehicle_sil_vector_xl_bridge\",\n"
+          "  \"backend\": null,\n"
+          "  \"source\": null,\n"
+          "  \"targets\": [\n"
+          "    {\n"
+          "      \"value\": \"virtual:1\",\n"
+          "      \"label\": \"Virtual Channel 1\",\n"
+          "      \"detail\": \"virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN\",\n"
+          "      \"usable\": true,\n"
+          "      \"reason\": null,\n"
+          "      \"can\": {\n"
+          "        \"target\": \"virtual\",\n"
+          "        \"number\": 1,\n"
+          "        \"name\": \"Virtual Channel 1\",\n"
+          "        \"hw_type\": 1,\n"
+          "        \"hw_index\": 0,\n"
+          "        \"hw_channel\": 0,\n"
+          "        \"serial\": 0,\n"
+          "        \"transceiver\": \"Virtual CAN\"\n"
+          "      }\n"
+          "    },\n"
+          "    {\n"
+          "      \"value\": \"virtual:2\",\n"
+          "      \"label\": \"Virtual Channel 2\",\n"
+          "      \"detail\": \"virtual 2; hwType=100 hwIndex=0 hwChannel=0 serial=0\",\n"
+          "      \"usable\": true,\n"
+          "      \"reason\": null,\n"
+          "      \"can\": {\n"
+          "        \"target\": \"virtual\",\n"
+          "        \"number\": 2,\n"
+          "        \"name\": \"Virtual Channel 2\",\n"
+          "        \"hw_type\": 100,\n"
+          "        \"hw_index\": 0,\n"
+          "        \"hw_channel\": 0,\n"
+          "        \"serial\": 0,\n"
+          "        \"transceiver\": null\n"
+          "      }\n"
+          "    },\n"
+          "    {\n"
+          "      \"value\": \"physical:1\",\n"
+          "      \"label\": \"Test CAN Device Channel 1\",\n"
+          "      \"detail\": \"physical 1; hwType=200 hwIndex=0 hwChannel=0 serial=0\",\n"
+          "      \"usable\": true,\n"
+          "      \"reason\": null,\n"
+          "      \"can\": {\n"
+          "        \"target\": \"physical\",\n"
+          "        \"number\": 1,\n"
+          "        \"name\": \"Test CAN Device Channel 1\",\n"
+          "        \"hw_type\": 200,\n"
+          "        \"hw_index\": 0,\n"
+          "        \"hw_channel\": 0,\n"
+          "        \"serial\": 0,\n"
+          "        \"transceiver\": null\n"
+          "      }\n"
+          "    },\n"
+          "    {\n"
+          "      \"value\": \"physical:2\",\n"
+          "      \"label\": \"CANcaseXL Channel 1\",\n"
+          "      \"detail\": \"physical 2; hwType=200 hwIndex=0 hwChannel=0 serial=4711\",\n"
+          "      \"usable\": true,\n"
+          "      \"reason\": null,\n"
+          "      \"can\": {\n"
+          "        \"target\": \"physical\",\n"
+          "        \"number\": 2,\n"
+          "        \"name\": \"CANcaseXL Channel 1\",\n"
+          "        \"hw_type\": 200,\n"
+          "        \"hw_index\": 0,\n"
+          "        \"hw_channel\": 0,\n"
+          "        \"serial\": 4711,\n"
+          "        \"transceiver\": null\n"
+          "      }\n"
+          "    }\n"
+          "  ],\n"
+          "  \"notes\": [],\n"
+          "  \"error\": null\n"
+          "}\n");
+    // The LIN channel (no CAN) is not counted, and not listed.
+    CHECK(json.find("Test CAN Device Channel 3") == std::string::npos);
+}
+
+TEST_CASE(selection_channel_list_json_of_no_channel_and_of_an_error)
+{
+    const std::string empty = channels_json({});
+    CHECK(empty.find("  \"targets\": [],\n  \"notes\": [],\n  \"error\": null\n}\n") != std::string::npos);
+    CHECK(channels_error_json("driver-missing", "cannot open the Vector XL driver: \"xlOpenDriver\" failed") ==
+          "{\n"
+          "  \"vehicle_sil_targets\": 1,\n"
+          "  \"tool\": \"vehicle_sil_vector_xl_bridge\",\n"
+          "  \"backend\": null,\n"
+          "  \"source\": null,\n"
+          "  \"targets\": [],\n"
+          "  \"notes\": [],\n"
+          "  \"error\": {\n"
+          "    \"code\": \"driver-missing\",\n"
+          "    \"message\": \"cannot open the Vector XL driver: \\\"xlOpenDriver\\\" failed\"\n"
+          "  }\n"
+          "}\n");
+}

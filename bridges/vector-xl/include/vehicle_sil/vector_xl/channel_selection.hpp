@@ -65,4 +65,16 @@ public:
 /// Human readable channel table, as printed by --list-channels.
 [[nodiscard]] std::string format_channel_list(const std::vector<XlChannelInfo>& channels);
 
+/// --list-channels --json, for programs (vehicle_sil_launch, the GUI): the channels of
+/// selectable_channels(), virtual then physical, each with "value" "<target>:<number>"
+/// ("virtual:1", the --xl-target and --xl-channel to give) and "label" its name. The form is the
+/// one of the Ethernet bridge's --list-interfaces --json ("vehicle_sil_targets": 1). Ends with a
+/// newline.
+[[nodiscard]] std::string channels_json(const std::vector<XlChannelInfo>& channels);
+
+/// --list-channels --json when the list could not be made: no targets, and "error" with `code`
+/// ("driver-missing": the XL driver cannot be opened; "failed": anything else) and `message`.
+/// Ends with a newline.
+[[nodiscard]] std::string channels_error_json(std::string_view code, std::string_view message);
+
 } // namespace vehicle_sil::vector_xl

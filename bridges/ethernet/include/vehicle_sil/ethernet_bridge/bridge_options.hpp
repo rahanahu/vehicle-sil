@@ -45,6 +45,8 @@ struct BridgeOptions
 {
     bool help = false;
     bool list_interfaces = false;
+    /// --json (with --list-interfaces only): write the list as JSON (interface_list_json()).
+    bool json = false;
     /// --describe: write the bridge's description (describe_json()) and exit; nothing is opened,
     /// and --registry-uri is not needed.
     bool describe = false;
@@ -57,6 +59,8 @@ struct BridgeOptions
     /// The SIL Kit Ethernet network. No default: the bridge never joins a network by mistake.
     std::string network;
 
+    /// --backend, else the default the executable gives parse_bridge_options(); nullopt only
+    /// where neither is (no backend works on this operating system).
     std::optional<Backend> backend;
     std::string interface_name;
     /// --all-frames: no EtherType or MAC restriction, also on a real adapter.
@@ -80,7 +84,10 @@ public:
 };
 
 /// Parses the arguments (without the program name). Throws BridgeUsageError.
-[[nodiscard]] BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args);
+/// `default_backend`: the backend without --backend. The executable decides it (packet on Linux,
+/// npcap on Windows, none elsewhere), so the parsing knows neither the OS nor the build.
+[[nodiscard]] BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args,
+                                                 std::optional<Backend> default_backend);
 
 [[nodiscard]] std::string bridge_usage();
 

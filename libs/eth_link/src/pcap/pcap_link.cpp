@@ -105,6 +105,18 @@ std::string state_text(std::uint32_t flags)
     return text;
 }
 
+/// What a line of the list shows after the state: the description, and the pcap name where the
+/// line shows the connection name.
+std::string more_text(const PcapDevice& device)
+{
+    std::string more = device.description;
+    if (device.name != display_name(device))
+    {
+        more += (more.empty() ? "" : "; ") + device.name;
+    }
+    return more;
+}
+
 /// Closes a capture that start() could not finish opening.
 class OpenGuard
 {
@@ -835,49 +847,32 @@ std::size_t choose_pcap_device(std::span<const PcapDevice> devices, std::string_
     throw pcap_ambiguous_interface(flavor, wanted, names);
 }
 
-std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor flavor, std::string_view version)
+PcapInterfaceList pcap_interface_list_of(std::vector<PcapDevice> devices, PcapFlavor flavor, std::string version)
 {
-    std::string text = "interfaces " + std::string(library_name(flavor)) + " offers";
-    if (!version.empty())
+    PcapInterfaceList list{std::string(library_name(flavor)), std::string(backend_name(flavor)), std::move(version),
+                           std::move(devices), {}};
+    if (flavor != PcapFlavor::Npcap)
     {
-        text += " (" + std::string(version) + ")";
+        return list; // libpcap has no setting that hides the adapters
     }
-    text += "; --backend " + std::string(backend_name(flavor)) + " takes the Ethernet ones:\n";
-    std::size_t width = 0;
-    for (const auto& device : devices)
+    if (list.devices.empty())
     {
-        width = std::max(width, display_width(as_typed(display_name(device))));
+        list.notes.emplace_back("If Npcap was installed for administrators only, run this from a console started as administrator.");
     }
-    for (const auto& device : devices)
-    {
-        const std::string name = as_typed(display_name(device));
-        text += "  --interface " + name + std::string(width - display_width(name) + 2, ' ') + state_text(device.flags);
-        std::string more = device.description;
-        if (device.name != display_name(device))
-        {
-            more += (more.empty() ? "" : "; ") + device.name;
-        }
-        if (!more.empty())
-        {
-            text += "  (" + more + ")";
-        }
-        text += "\n";
-    }
-    if (devices.empty())
-    {
-        text += flavor == PcapFlavor::Npcap
-                    ? "  none. If Npcap was installed for administrators only, run this from a console started as administrator.\n"
-                    : "  none\n";
-    }
-    else if (flavor == PcapFlavor::Npcap &&
-             std::ranges::all_of(devices, [](const PcapDevice& device) { return (device.flags & kPcapIfLoopback) != 0; }))
+    else if (std::ranges::all_of(list.devices, [](const PcapDevice& device) { return device.loopback(); }))
     {
         // Seen with the real Npcap installed for administrators only: another user gets the loopback device alone.
-        text += "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
-                "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
-                "either: enable it in Windows.\n";
+        list.notes.emplace_back("Npcap offers no network adapter here: if it was installed for administrators only, run this from a "
+                                "console started as administrator, or install Npcap again without that limit. A disabled adapter "
+                                "is not offered either: enable it in Windows.");
     }
-    return text;
+    return list;
+}
+
+std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor flavor, std::string_view version)
+{
+    return format_pcap_interface_list(
+        pcap_interface_list_of(std::vector<PcapDevice>(devices.begin(), devices.end()), flavor, std::string(version)));
 }
 
 std::unique_ptr<ExternalLink> make_pcap_link(std::shared_ptr<PcapLibrary> library, PcapLinkOptions options)
@@ -895,10 +890,114 @@ std::unique_ptr<ExternalLink> make_pcap_link(PcapLinkOptions options)
     return detail::make_pcap_link(std::move(library), std::move(options));
 }
 
-std::string pcap_interface_list(const std::string& library)
+bool PcapDevice::up() const noexcept
+{
+    return (flags & detail::kPcapIfUp) != 0;
+}
+
+bool PcapDevice::loopback() const noexcept
+{
+    return (flags & detail::kPcapIfLoopback) != 0;
+}
+
+bool PcapDevice::wireless() const noexcept
+{
+    return (flags & detail::kPcapIfWireless) != 0;
+}
+
+std::optional<bool> PcapDevice::connected() const noexcept
+{
+    switch (flags & detail::kPcapIfConnectionMask)
+    {
+    case detail::kPcapIfConnected: return true;
+    case detail::kPcapIfDisconnected: return false;
+    default: return std::nullopt;
+    }
+}
+
+PcapInterfaceList pcap_interfaces(const std::string& library)
 {
     const auto loaded = detail::load_pcap_library(library);
-    return detail::format_pcap_devices(detail::pcap_devices(*loaded), loaded->flavor(), loaded->version());
+    return detail::pcap_interface_list_of(detail::pcap_devices(*loaded), loaded->flavor(), loaded->version());
+}
+
+std::string format_pcap_interface_list(const PcapInterfaceList& list)
+{
+    std::string text = "interfaces " + list.library + " offers";
+    if (!list.version.empty())
+    {
+        text += " (" + list.version + ")";
+    }
+    text += "; --backend " + list.backend + " takes the Ethernet ones:\n";
+    std::size_t width = 0;
+    for (const auto& device : list.devices)
+    {
+        width = std::max(width, detail::display_width(detail::as_typed(detail::display_name(device))));
+    }
+    for (const auto& device : list.devices)
+    {
+        const std::string name = detail::as_typed(detail::display_name(device));
+        text += "  --interface " + name + std::string(width - detail::display_width(name) + 2, ' ') + detail::state_text(device.flags);
+        const std::string more = detail::more_text(device);
+        if (!more.empty())
+        {
+            text += "  (" + more + ")";
+        }
+        text += "\n";
+    }
+    if (list.devices.empty())
+    {
+        text += "  none";
+        for (const auto& note : list.notes)
+        {
+            text += ". " + note;
+        }
+        return text + "\n";
+    }
+    for (const auto& note : list.notes)
+    {
+        text += "  " + note + "\n";
+    }
+    return text;
+}
+
+std::string pcap_interface_list(const std::string& library)
+{
+    return format_pcap_interface_list(pcap_interfaces(library));
+}
+
+std::string pcap_device_detail(const PcapDevice& device)
+{
+    const std::string more = detail::more_text(device);
+    return detail::state_text(device.flags) + (more.empty() ? "" : "; " + more);
+}
+
+std::string pcap_interface_argument(std::span<const PcapDevice> devices, std::size_t index)
+{
+    const PcapDevice& device = devices[index];
+    if (device.connection.empty())
+    {
+        return device.name;
+    }
+    for (std::size_t i = 0; i < devices.size(); ++i)
+    {
+        if (i != index && detail::same_ignoring_case(devices[i].connection, device.connection))
+        {
+            return device.name; // only the exact case would tell them apart
+        }
+    }
+    try
+    {
+        // What --interface does with the name: another device's pcap name or identifier wins.
+        if (detail::choose_pcap_device(devices, device.connection, detail::PcapFlavor::Libpcap) == index)
+        {
+            return device.connection;
+        }
+    }
+    catch (const LinkError&)
+    {
+    }
+    return device.name;
 }
 
 } // namespace vehicle_sil::eth_link

@@ -16,6 +16,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -32,9 +33,16 @@ enum class HostOs
 [[nodiscard]] HostOs host_os() noexcept;
 
 /// Why `backend` cannot be used on `os`, and what to do instead; nullopt if it can. Without a
-/// backend (--list-interfaces alone): why no backend at all can be used on `os`, or nullopt.
-/// tap, packet and pcap are for Linux, npcap is for Windows; nothing elsewhere.
+/// backend (no --backend where the executable has no default): why no backend at all can be used
+/// on `os`, or nullopt. tap, packet and pcap are for Linux, npcap is for Windows; nothing elsewhere.
 [[nodiscard]] std::optional<std::string> backend_unavailable(std::optional<Backend> backend, HostOs os);
+
+/// What the executable throws with the message of backend_unavailable().
+class BackendUnavailableError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
 
 /// The line the bridge prints once it forwards (without the "[eth-bridge] " prefix):
 ///   "bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <->

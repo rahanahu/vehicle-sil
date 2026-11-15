@@ -91,9 +91,9 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ## Arguments
 
 ```
-vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]
-vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> --backend <tap|packet|npcap|pcap> --interface <name> [options]
-vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name> [options]
+vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>] [--json]
+vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> [--backend <tap|packet|npcap|pcap>] --interface <name> [options]
+vehicle_sil_ethernet_bridge --describe --network <name> [--backend <backend>] --interface <name> [options]
 ```
 
 | Argument | Meaning |
@@ -104,7 +104,7 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--participant <name>` | The same as `--name` (give one of them). |
 | `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |
 | `--describe` | Writes what the bridge is as JSON to stdout and exits (see "[Starting from a configuration file](#starting-from-a-configuration-file)"). |
-| `--backend <tap\|packet\|npcap\|pcap>` | How the external interface is opened (required; see "[Backends](#backends)"). |
+| `--backend <tap\|packet\|npcap\|pcap>` | How the external interface is opened (default: `packet` on Linux, `npcap` on Windows; see "[Backends](#backends)"). |
 | `--interface <name>` | The interface to connect to (required; the bridge never picks "the first one found"). |
 | `--ethertype <hex>,...` | EtherTypes that may pass (hexadecimal starting with `0x`; repeating the option adds more). |
 | `--src-mac <mac>,...` | MAC addresses of the SIL Kit side (6 bytes separated by `:` or `-`; repeating the option adds more). |
@@ -116,7 +116,8 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--tap-create` | Creates the TAP device for as long as the bridge runs (`tap` only). |
 | `--no-mac-guard` | Does not use the MAC rules (see "[Loop prevention](#loop-prevention-macsidetable)"). |
 | `--mac-table-size <n>` | Size of the MAC table (16–65536, default 1024). |
-| `--list-interfaces` | Prints the interfaces of this computer and exits (needs no other arguments). |
+| `--list-interfaces` | Prints the interfaces for the backend and exits (needs no other arguments; see "[Listing interfaces](#listing-interfaces---list-interfaces)"). |
+| `--json` | With `--list-interfaces` only: writes the list as JSON to stdout, for programs (see "[The list as JSON](#the-list-as-json---json)"). |
 | `--help` | Prints the usage. |
 
 Notes on the arguments:
@@ -125,10 +126,11 @@ Notes on the arguments:
 - Without `--promiscuous` and `--no-promiscuous`, the bridge uses promiscuous mode where the interface accepts it, and runs without it, with one warning, where it refuses (see "[Promiscuous mode](#promiscuous-mode)").
 - The `tap` backend is treated as a virtual interface inside the computer; the others are treated as able to put frames on a physical adapter. `tap`, `packet` and `pcap` are available on Linux, `npcap` on Windows.
 - The minimum of `--max-frame-bytes` is 60 because SIL Kit does not pass on frames shorter than 60 bytes.
+- Without `--backend`, the bridge uses the backend of its OS: `packet` on Linux, `npcap` on Windows. The list of `--list-interfaces` and the bridge itself use the same backend.
 - `--list-interfaces` with `--backend npcap` or `--backend pcap` prints the list that the pcap library returns.
 - On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--name`, `--network` and `--interface` can therefore contain non-ASCII characters.
 
-With a `--backend` that can put frames on a physical adapter (`packet`, `npcap`, `pcap`), you must say what may pass: one of `--ethertype`, `--src-mac` or `--all-frames`. Without it, the bridge reports this error:
+With a backend that can put frames on a physical adapter (`packet`, `npcap`, `pcap`), given with `--backend` or by default, you must say what may pass: one of `--ethertype`, `--src-mac` or `--all-frames`. Without it, the bridge reports this error, with the name of the backend:
 
 ```
 --backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.
@@ -316,7 +318,7 @@ interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sud
 
 ### Listing interfaces (`--list-interfaces`)
 
-`--list-interfaces` prints the interfaces of this computer, with whether each is Ethernet and whether it is up.
+`--list-interfaces` prints the interfaces for the backend. For `packet` (the default on Linux) and `tap`, these are the interfaces of this computer, with whether each is Ethernet and whether it is up.
 
 ```
 interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP device):
@@ -325,7 +327,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`--list-interfaces --backend pcap` prints the interfaces that the pcap library returns. On Windows, `--list-interfaces` alone gives the same output as with `--backend npcap`.
+For `npcap` (the default on Windows) and `pcap`, it prints the interfaces that the pcap library returns.
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -343,6 +345,109 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
 - The names are padded to one width, counted in console columns: a wide character (Japanese, Chinese, Korean, full-width forms) counts as 2. The next column stays in line as long as the console's font draws those characters 2 columns wide.
 - Interfaces that are not Ethernet (`any` on Linux, for example) are listed too. The bridge refuses to open them.
 - If the Npcap list contains no network adapter (only `\Device\NPF_Loopback`), the bridge adds a last line about Npcap installed for administrators only and about disabled adapters (`Npcap offers no network adapter here: ...`).
+
+#### The list as JSON (`--json`)
+
+`--list-interfaces --json` writes the same list as one JSON object to stdout, in UTF-8, followed by a line break. The text is for people and its layout may change; programs read `--json`. The Vector XL CAN Bridge writes its channels in the same form (see "[The channel list as JSON](bridges.md#the-channel-list-as-json---json)").
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_ethernet_bridge",
+  "backend": "npcap",
+  "source": "Npcap version 1.80, based on libpcap version 1.10.5",
+  "targets": [
+    {
+      "value": "Ethernet 2",
+      "label": "Ethernet 2",
+      "detail": "up, connected; Intel(R) Ethernet; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+      "usable": true,
+      "reason": null,
+      "ethernet": {
+        "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
+        "connection": "Ethernet 2",
+        "description": "Intel(R) Ethernet",
+        "up": true,
+        "connected": true,
+        "loopback": false,
+        "wireless": false
+      }
+    },
+    {
+      "value": "\\Device\\NPF_Loopback",
+      "label": "\\Device\\NPF_Loopback",
+      "detail": "up, loopback; Adapter for loopback traffic capture",
+      "usable": false,
+      "reason": "loopback: not an Ethernet adapter",
+      "ethernet": {
+        "pcap_name": "\\Device\\NPF_Loopback",
+        "connection": null,
+        "description": "Adapter for loopback traffic capture",
+        "up": true,
+        "connected": null,
+        "loopback": true,
+        "wireless": false
+      }
+    }
+  ],
+  "notes": [],
+  "error": null
+}
+```
+
+| Key | Content |
+|---|---|
+| `vehicle_sil_targets` | The version of this form (1). |
+| `tool` | `vehicle_sil_ethernet_bridge`. |
+| `backend` | The backend the list is for: `--backend`, or the default. |
+| `source` | `npcap`, `pcap`: the version the library reports. `packet`, `tap`: `null`. |
+| `targets` | One object per interface, in the order of the text. |
+| `targets[].value` | The name to give to `--interface`, exactly. |
+| `targets[].label` | The name to show; today the same as `value`. |
+| `targets[].detail` | What the line of the text says after the name, its parts separated by `; `. |
+| `targets[].usable` | `false` where the bridge cannot use the interface; `reason` then says why. |
+| `targets[].reason` | Why the interface cannot be used, or `null`. |
+| `targets[].ethernet` | What the backend reports. `npcap`, `pcap`: `pcap_name`, `connection` and `description` (`null` where there is none), `up`, `connected` (`null` where the library does not say), `loopback`, `wireless`. `packet`, `tap`: `name`, `ethernet`, `link_type`, `up`. |
+| `notes` | The explanations of the text's last line, one sentence each (Npcap that offers no network adapter); otherwise empty. |
+| `error` | `null`, or the error when the list could not be made (below). |
+
+`value` is the connection name where the device has one and no other device in the list has the same connection name, compared without the case of ASCII letters as `--interface` does (see "[Names accepted by `--interface`](#names-accepted-by---interface)"). Otherwise it is the pcap name. With `packet` and `tap` it is the interface name.
+
+| Interface | `usable` | `reason` |
+|---|---|---|
+| Loopback (the library's flag) | `false` | `loopback: not an Ethernet adapter` |
+| Not Ethernet (`packet`, `tap`) | `false` | `not Ethernet (link type <n>)` |
+| `any` of libpcap | `false` | `not Ethernet` |
+| Down or disconnected | `true` | `null`; `detail` says it, and the bridge warns at startup |
+| Others | `true` | `null` |
+
+The pcap library does not say whether a device carries Ethernet before it is opened: apart from the loopback and `any`, a device that is not Ethernet is listed as usable, and the bridge refuses it at startup. With `tap`, the list shows the interfaces of this computer; the bridge can open only a TAP device among them.
+
+When the list cannot be made, the bridge still writes the JSON, with no targets and the error, and exits with code 3. The `FAIL setup: ...` line, which is on stdout without `--json`, goes to stderr, so that stdout holds the JSON alone.
+
+```json
+{
+  "vehicle_sil_targets": 1,
+  "tool": "vehicle_sil_ethernet_bridge",
+  "backend": "npcap",
+  "source": null,
+  "targets": [],
+  "notes": [],
+  "error": {
+    "code": "library-missing",
+    "message": "Npcap is not installed: cannot load C:\\Windows\\System32\\Npcap\\wpcap.dll (Windows error 126). ..."
+  }
+}
+```
+
+| `error.code` | When |
+|---|---|
+| `library-missing` | The pcap library is not installed, or lacks a function the bridge needs. |
+| `permission-denied` | The OS refused the list to this user. |
+| `backend-unavailable` | The backend is not available on this OS (`--backend npcap` on Linux, for example). |
+| `failed` | Anything else. |
+
+`error.message` is the message of the `FAIL setup:` line.
 
 ### `tap`
 

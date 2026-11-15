@@ -11,6 +11,9 @@
 //                             with --xl-target physical, including --bitrate: with init access the
 //                             receipts are switched off (own_tx_dropped == 0).
 //   list-channels             --list-channels prints the CAN channels by target, not the LIN one.
+//   list-channels-json        --list-channels --json: one JSON object on stdout with the channels
+//                             ("virtual:1" ...); with a driver that cannot be opened exit 3, the
+//                             error (driver-missing) in the JSON and the FAIL line on stderr.
 //   bad-channel               a channel number that does not exist: exit 3 with the available list.
 //   bad-usage                 an invalid --xl-target: exit 4, with the error and where the options
 //                             are, not the whole usage text.
@@ -219,6 +222,36 @@ int run_single(const Options& options, const std::vector<std::string>& args, int
     return ok ? 0 : 1;
 }
 
+/// Runs the bridge once with `args` for JSON on stdout: checks its exit code, that stdout is one
+/// JSON object ending with a line break and holds every part of `inStdout`, and that stderr holds
+/// every part of `inStderr` (nothing if that is empty).
+int run_json(const Options& options, const std::vector<std::string>& args, int expectedCode,
+             const std::vector<std::string>& inStdout, const std::vector<std::string>& inStderr = {})
+{
+    vehicle_sil::process::CaptureOptions capture;
+    capture.timeout = options.timeout;
+    const auto run = vehicle_sil::process::run_captured(options.bridge, args, capture);
+    std::string out = run.standard_output;
+    std::string err = run.standard_error;
+    std::erase(out, '\r');
+    std::erase(err, '\r');
+    log("stdout:\n" + out + "stderr:\n" + err);
+    bool ok = expect(run.exit_code == expectedCode,
+                     "bridge exit code " + exit_code_text(run.exit_code) + ", expected " + std::to_string(expectedCode));
+    ok = expect(out.starts_with("{\n") && out.ends_with("\n}\n") && out.find("\n}\n") == out.size() - 3,
+                "stdout is one JSON object and a line break") && ok;
+    for (const auto& needle : inStdout)
+    {
+        ok = expect(out.find(needle) != std::string::npos, "stdout contains '" + needle + "'") && ok;
+    }
+    ok = expect(inStderr.empty() == err.empty(), inStderr.empty() ? "nothing on stderr" : "stderr says why") && ok;
+    for (const auto& needle : inStderr)
+    {
+        ok = expect(err.find(needle) != std::string::npos, "stderr contains '" + needle + "'") && ok;
+    }
+    return ok ? 0 : 1;
+}
+
 int run_device_lost(const Options& options)
 {
     const ScopedEnv lose("VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS", "1500");
@@ -397,6 +430,20 @@ int main(int argc, char** argv)
                                  "). Start the registry first ('sil-kit-registry --listen-uri " + nowhere +
                                      "'), or give the address it listens at with --registry-uri."},
                                 {});
+        }
+        else if (options.scenario == "list-channels-json")
+        {
+            result = run_json(options, {"--list-channels", "--json"}, cli::kExitOk,
+                              {"  \"tool\": \"vehicle_sil_vector_xl_bridge\",\n",
+                               "      \"value\": \"virtual:1\",\n      \"label\": \"Virtual Channel 1\",\n",
+                               "      \"value\": \"virtual:2\",\n", "      \"value\": \"physical:1\",\n",
+                               "      \"value\": \"physical:2\",\n", "        \"transceiver\": \"Virtual CAN\"\n",
+                               "  \"error\": null\n}\n"});
+            const ScopedEnv fail("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "1");
+            result |= run_json(options, {"--list-channels", "--json"}, cli::kExitSetupFailed,
+                               {"  \"targets\": [],\n", "    \"code\": \"driver-missing\",\n",
+                                "    \"message\": \"cannot open the Vector XL driver: "},
+                               {"[bridge] FAIL setup: cannot open the Vector XL driver: "});
         }
         else if (options.scenario == "no-driver")
         {
