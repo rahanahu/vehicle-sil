@@ -251,7 +251,7 @@ To stop the run early, do as you would on one computer: stop the launcher with C
 | Symptom | Cause | Fix |
 |---|---|---|
 | The joined ECU keeps running after the launcher has ended | The launcher was killed (crash, power loss, SIGKILL), so the ECU keeps waiting. | Stop the ECU with Ctrl+C. |
-| The launcher prints `virtual time has not advanced for 10 s ...` | The network is down, a debugger has stopped a process, or an ECU hangs inside a step. | When the network comes back, the run continues from where it stopped (`virtual time advances again`). |
+| The launcher prints `virtual time has not advanced for 10 s ...` | The network is down, a debugger has stopped a process, or an ECU hangs inside a step. | Restore the network, let the process in the debugger continue, or find the ECU that hangs in its step. The run then continues from where it stopped (`virtual time advances again`). |
 | Each join takes about 5 s | The other computer cannot connect directly to the ECUs on the launcher computer (the firewall allows only the launcher, or there is NAT). | Leave it as it is, or also allow the ECU executables on the launcher computer through the firewall. |
 
 SIL Kit takes a long time to notice a broken connection; on Linux, more than 10 minutes. If you do not want to wait with virtual time stopped, stop the launcher with Ctrl+C. For unattended runs, add `--timeout-ms` to `run`.
@@ -366,7 +366,7 @@ If the script prints the participant names from the configuration file, the conn
 
 ## Open the GUI in a browser on another computer
 
-The GUI server listens only on 127.0.0.1. For now, open it through SSH port forwarding. The computer that runs the GUI server needs an SSH server.
+The GUI server listens only on 127.0.0.1. Open it from another computer through SSH port forwarding. The computer that runs the GUI server needs an SSH server.
 
 1. On the GUI server computer, start the server on a port you choose. In the repository root, run:
 

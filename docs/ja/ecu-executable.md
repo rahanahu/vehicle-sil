@@ -77,7 +77,7 @@ int main(int argc, char** argv)
 | `--help` | ほかの引数にエラーがあっても使い方を書きます。 |
 | `--help` | 値を取る引数の後ろの `-h` は値です（`--name -h` は名前が `-h`）。 |
 
-同じ ECU を 2 つ載せるときは、`--name` で変わらないもの（NAME、アドレス、変数の名前）が重ならないようにします。方法は [複数の ECU をつないで動かす](howto/integrate-ecus.md) の「同じ ECU を 2 つ載せる」にあります。
+同じ ECU を 2 つ載せるときは、`--name` で変わらない NAME とアドレスが重ならないようにします。変数の名前は participant ごとなので、同じままでかまいません。方法は [複数の ECU をつないで動かす](howto/integrate-ecus.md) の「同じ ECU を 2 つ載せる」にあります。
 
 終了コードは、ほかのツールと同じです。
 
@@ -226,7 +226,7 @@ Windows では、`Middleware.EnableDomainSockets` に `true` と書いても `fa
 |---|---|---|
 | シミュレーションが始まった後 | participant を止め（`request_stop()`）、`run()` が戻って `App` のデストラクターなどが動いてから、終了コード 130 で終わります。 | `error: <ECU 名>: interrupted (SIGTERM): it stopped the simulation and left it` |
 | 始まる前（registry への接続中、開始の待ち） | デストラクターを動かさずに、すぐに終了コード 130 で終わります。 | `error: <ECU 名>: interrupted (SIGTERM) before the simulation started: it ends at once` |
-| 止めている間の 2 回目 | すぐに終わります。 | |
+| 止めている間の 2 回目 | デストラクターを動かさずに、すぐに終了コード 130 で終わります。 | `error: <ECU 名>: interrupted (SIGTERM) again while it stopped: it ends at once` |
 
 coordinated の participant が止まると、シミュレーション全体が順に止まります。始まる前に受信したときにデストラクターが動かないのは、シグナルの既定の動作と同じです。このときも、終わる前に C の標準入出力（`printf` など）のバッファーは書き出します。
 

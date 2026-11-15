@@ -99,7 +99,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | `run` | `ended` の列が、2 つの ECU とも `exit code 0` です。 |
 | `run --scenario` | `result` の列がすべて `ok` で、終了コードが 0 です。 |
 
-`check` と `run` の出力の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」の手順 1 にあります。
+`check` と `run` の出力の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/howto/first-ecu.md)」の手順 1 にあります。
 
 ### うまくいかないとき
 
@@ -151,7 +151,7 @@ vehicle-sil-gui simulation.live.yaml
 
 Manufacturer Code の 0x7F0 は仮の値です。
 
-ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」にあります。
+ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/howto/first-ecu.md)」にあります。
 
 ## 1 つの実行ファイルで配布する
 
@@ -164,7 +164,7 @@ cmake --build --preset linux                      # Windows: cmake --build --pre
 
 SIL Kit と C++ のランタイムを、実行ファイルに静的にリンクします（Linux の glibc は共有ライブラリのままです）。Linux では、静的な libstdc++ が必要です（Fedora は `libstdc++-static`）。元に戻すときは、`-DVEHICLE_SIL_STATIC=OFF` で configure し直します。
 
-人に渡すときは、実行ファイルの中に入ったもののライセンスの表示を添えます。添えるものの一覧は、vehicle-sil の [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/build.md) の「配布するときに添えるライセンスの表示」にあります。ツールの `licenses/sil-kit/`（Windows は `licenses/msys2/` も）に、そのまま添えられるファイルがあります。
+人に渡すときは、実行ファイルの中に入ったもののライセンスの表示を添えます。添えるものの一覧は、vehicle-sil の [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/build.md) の「配布するときに添えるライセンスの表示」にあります。ツールの `licenses/sil-kit/`（Windows は `licenses/msys2/` も）に、そのまま添えられるファイルがあります。
 
 ## vehicle-sil のバージョンを上げる
 
@@ -180,9 +180,9 @@ ECU とツールは、同じバージョンの vehicle-sil にそろえます。
 
 ## 次に読むもの
 
-- ECU を 1 つ追加して、Python から変数を読み書きする → [最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)（J1939 での通信と、デバッガーからの起動も）
-- J1939 のノードを書く → [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-codec.md)
-- 設定ファイルとコマンドを調べる → [設定ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/gui.md)
+- ECU を 1 つ追加して、Python から変数を読み書きする → [最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/howto/first-ecu.md)（J1939 での通信と、デバッガーからの起動も）
+- J1939 のノードを書く → [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/j1939-codec.md)
+- 設定ファイルとコマンドを調べる → [設定ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/ja/gui.md)
 
 ## ライセンス
 

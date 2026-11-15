@@ -1075,7 +1075,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 ドキュメントの中の例（設定ファイル、コード、コマンドの出力）のうち、`<!-- ... -->` の印の行の直後にあるコードブロックは、テストが実物と照合します。印とブロックを変えたときに失敗するテストは、次のとおりです。
 
-- テストが照合するのは、`tests/CMakeLists.txt` の `VEHICLE_SIL_TESTED_DOCS` のディレクトリのページです（英語のページ `docs/` がそろうまでは、日本語のページ `docs/ja/`）。もう一方の言語のページは、`scripts/check-docs.py` がコードブロックを照合して守ります（英語と日本語でブロックの数、順、言語のタグが同じ。日本語を含まないブロックはバイト単位で同じ）。
+- テストが照合するのは英語のページです（`tests/CMakeLists.txt` の `VEHICLE_SIL_TESTED_DOCS` が `docs/`）。日本語のページ `docs/ja/` は、`scripts/check-docs.py` がコードブロックを照合して守ります（英語と日本語でブロックの数、順、言語のタグが同じ。日本語を含まないブロックはバイト単位で同じ）。
 - ページそのものを見るテスト（`tests/schema/test_schemas.py`、GUI サーバーのテスト、`gui/client/pack.mjs`、`scripts/package.py version`）は、両方の言語のページを読みます。
 
 ### リファレンスの例

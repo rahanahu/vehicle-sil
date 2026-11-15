@@ -387,7 +387,7 @@ The `run` output does not show variable values. The `[Dashboard]` lines on stder
 |---|---|---|
 | Python client | Reading and writing values from a script | Step 7 |
 | Scenario | Turning value settings and checks into automated tests | [Write tests with scenarios](scenario-tests.md) |
-| Browser GUI | Watching values in graphs while you change them by hand | [gui.md](../gui.md) |
+| Browser GUI | Watching values in charts while you change them by hand | [gui.md](../gui.md) |
 
 To interrupt the run, press Ctrl+C. For the output format and the exit codes, see "Output" in [simulation-run.md](../simulation-run.md#output).
 

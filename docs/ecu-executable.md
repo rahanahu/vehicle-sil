@@ -77,7 +77,7 @@ Exactly one of `--describe`, `--registry-uri` and `--local` is required. Notes o
 | `--help` | Writes the usage even if other arguments have errors. |
 | `--help` | A `-h` right after an argument that takes a value is read as that value (`--name -h` sets the name to `-h`). |
 
-To run two instances of the same ECU, make sure that what `--name` leaves unchanged (the NAME, the addresses and the variable names) does not overlap. For how, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
+To run two instances of the same ECU, make sure that the NAME and the addresses, which `--name` leaves unchanged, do not overlap. The variable names can stay the same: each participant has its own. For how, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
 
 The exit codes are the same as those of the other tools.
 
@@ -226,7 +226,7 @@ Under `--registry-uri`, `ecu_main` stops when it receives SIGINT (Ctrl+C) or SIG
 |---|---|---|
 | After the simulation started | Stops the participant (`request_stop()`). When `run()` has returned and the destructor of `App` and the rest have run, exits with exit code 130. | `error: <ECU name>: interrupted (SIGTERM): it stopped the simulation and left it` |
 | Before the start (while connecting to the registry, or while waiting for the start) | Exits at once with exit code 130, without running destructors. | `error: <ECU name>: interrupted (SIGTERM) before the simulation started: it ends at once` |
-| A second time, while stopping | Exits at once. | |
+| A second time, while stopping | Exits at once with exit code 130, without running destructors. | `error: <ECU name>: interrupted (SIGTERM) again while it stopped: it ends at once` |
 
 When a coordinated participant stops, the whole simulation stops in an orderly way. Skipping the destructors when the signal arrives before the start matches the signal's default action. Even then, the C standard I/O buffers (`printf` and so on) are flushed before the process ends.
 

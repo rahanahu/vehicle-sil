@@ -28,8 +28,9 @@ export class ProtocolError extends Error {
 export type Open<T extends string> = T | (string & {});
 
 /**
- * このライブラリが読む GUI サーバーの口の版（`api/app` と `hello` の `vehicle_sil_gui`）。違う版の hello と api/app は
- * 読まない（欄の意味が変わっているかもしれないため）。版を上げる決まりは gui/protocol/README.md の「バージョンと互換性」。
+ * The version of the GUI server's API that this library reads (`vehicle_sil_gui` of `api/app` and `hello`). It does not
+ * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
+ * "Versioning and compatibility" in gui/protocol/README.md.
  */
 export const PROTOCOL_VERSION = 1;
 
@@ -233,7 +234,7 @@ const readVariable: Reader<Variable> = (value, path) => {
   };
 };
 
-// --- ランチャー: シナリオ（docs/scenario.md） ---------------------------------------------------
+// --- Launcher: scenarios (docs/scenario.md) -----------------------------------------------------
 
 /** ランチャーの features: シナリオを回せる（`--scenario`）。 */
 export const FEATURE_SCENARIO = 'scenario';
@@ -243,7 +244,7 @@ export const FEATURE_SCENARIO = 'scenario';
  */
 export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
 
-// --- ランチャー: 利用者が起動する participant（docs/simulation-config.md の「participant を自分で起動する」） -----
+// --- Launcher: participants that the user starts ("Starting a participant yourself" in docs/simulation-config.md) ---
 
 /**
  * ランチャーの features: 利用者が起動する participant（構成ファイルの `manual: true`、`--manual`）。ランチャーは
@@ -563,8 +564,9 @@ export type RunResultName = Open<
 >;
 
 /**
- * 結果の timing: 時間の進み方（数の定義はランチャーの docs の「速度を指定して動かす」）。何も起動しなかったとき、古い
- * ランチャーでは結果に null。欄ごとに、ないか読めなければ null。
+ * The result's timing: how time advanced (the numbers are defined in "Running at a set speed (`speed`)" in
+ * docs/simulation-run.md). null in the result when nothing was started, or from an older launcher. Each field is null
+ * when it is missing or cannot be read.
  */
 export interface RunTiming {
   /** 終わったときの速さ。 */

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// GUI サーバー（vehicle-sil-gui）の口を、画面を使わずに叩く最小のクライアント。素の JavaScript で、依存はない
-// （Node 22 以上の標準の fetch と WebSocket だけ）。構成ファイルを照合して実行を始め、事象を読みながら終わりを待ち、
-// 結果を表示する。口の形は gui/protocol/README.md。
+// The smallest client that calls the API of the GUI server (vehicle-sil-gui) without the screens. Plain JavaScript with
+// no dependencies (only the standard fetch and WebSocket of Node 22 or later). It checks a configuration file, starts a
+// run, reads the events until the end and prints the result. The API: gui/protocol/README.md.
 //
-//   VEHICLE_SIL_GUI_URL='<サーバーが表示した URL（#token= つき）>' node examples/gui_client/run.mjs <構成ファイル（root からの相対）>
+//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/run.mjs <configuration file (relative to the root)>
 //
-// URL は環境変数で渡す（コマンドの引数に書くと、トークンが同じ PC のほかの利用者のプロセスの一覧と、シェルの
-// 履歴に残るため）。引数の先頭に URL を書いてもよい。クライアントのライブラリを使う同じ例は run-with-library.mjs。
+// Pass the URL in the environment variable (on the command line, the token would show in the process list to other
+// users of the computer and stay in the shell history). The URL may also be the first argument. The same example with
+// the client library: run-with-library.mjs.
 //
-// 終了コード: 0 は結果が passed、1 は失敗（照合の誤り、実行の失敗、サーバーの誤り、時間切れ）、2 は使い方の誤り。
+// Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
 const PROTOCOL = 1; // このクライアントが読む口の版（api/app と hello の vehicle_sil_gui）
 

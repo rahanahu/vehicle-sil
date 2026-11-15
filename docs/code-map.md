@@ -1075,7 +1075,7 @@ Patches applied to SIL Kit. At configure time, they are applied to the copy in t
 
 Among the examples in the documentation (configuration files, code, command output), a code block that directly follows a `<!-- ... -->` marker line is compared with the real thing by a test. The tests below fail when you change a marker or its block.
 
-- The tests compare the pages in the directory named by `VEHICLE_SIL_TESTED_DOCS` in `tests/CMakeLists.txt` (the Japanese pages in `docs/ja/` until the English pages in `docs/` are complete). `scripts/check-docs.py` protects the pages of the other language by comparing code blocks (the English and Japanese pages have the same number, order and language tags of blocks, and a block without Japanese is the same byte for byte).
+- The tests compare the English pages: the directory named by `VEHICLE_SIL_TESTED_DOCS` in `tests/CMakeLists.txt` is `docs/`. `scripts/check-docs.py` protects the Japanese pages in `docs/ja/` by comparing code blocks (the English and Japanese pages have the same number, order and language tags of blocks, and a block without Japanese is the same byte for byte).
 - Tests that look at the pages themselves (`tests/schema/test_schemas.py`, the GUI server tests, `gui/client/pack.mjs`, `scripts/package.py version`) read the pages of both languages.
 
 ### Reference examples

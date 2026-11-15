@@ -13,9 +13,10 @@ Pairs: the English page docs/<path> has its Japanese page docs/ja/<path>, and <d
 <dir>/README.ja.md (the files of ENGLISH_ONLY have none). Of each pair: both pages exist; the headings have the same
 levels in the same order; the fenced code blocks have the same language tags in the same order, a block with only
 ASCII in the Japanese page is the same, byte for byte, in the English page, and a block with Japanese in it has the
-same number of lines; a page links the pages of its own language, and both pages link the same files. A Japanese
-page whose English page is not written yet is counted, not a problem, unless --require-english; a link to such an
-English page is then not followed either.
+same number of lines; a page links the pages of its own language, and the files of its own language where a file
+(a picture) is in docs/ and docs/ja/ both; both pages link the same files. A Japanese page whose English page is not
+written yet is counted, not a problem, unless --require-english; a link to such an English page is then not followed
+either.
 
 Each problem is one line, "<file>:<line>: <text>". Exit codes: 0 no problem, 1 a problem, 2 usage error. Requires
 Python 3.11+ (standard library only); runs on Linux and in MSYS2 on Windows.
@@ -228,6 +229,15 @@ def check(files: list[Path], require_english: bool = False) -> tuple[list[str], 
                         problems.append(f"{where}: links the English page {d}: link its Japanese page {japanese_of(d)}")
                     elif dest.suffix == ".md" and not japanese_page and english_of(d):
                         problems.append(f"{where}: links the Japanese page {d}: link its English page {english_of(d)}")
+                    # Another file (a picture) that each edition has in its own language, as docs/images/x.png and
+                    # docs/ja/images/x.png: each page links the one of its own language.
+                    elif dest.suffix != ".md" and japanese_page and english_of(d) is None and d.startswith("docs/") \
+                            and (ROOT / "docs/ja" / d[len("docs/"):]).is_file():
+                        problems.append(f"{where}: links the English file {d}: link the Japanese one, "
+                                        f"docs/ja/{d[len('docs/'):]}")
+                    elif dest.suffix != ".md" and not japanese_page and d.startswith("docs/ja/") \
+                            and (ROOT / english_of(d)).is_file():
+                        problems.append(f"{where}: links the Japanese file {d}: link the English one, {english_of(d)}")
                 if not dest.exists():
                     if not require_english and pending_english(dest):
                         pending_links += 1

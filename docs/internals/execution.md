@@ -31,6 +31,8 @@ public:
 
 ### Setup functions
 
+An ECU application builds itself with these functions of `Ecu`, usually in its constructor:
+
 | Function | Creates |
 |---|---|
 | `j1939(network, NetworkOptions)` | A J1939 `Network` |
@@ -387,6 +389,8 @@ peer.wait();
 If you write the setup of several ECUs in functions or classes that take an `Ecu&`, the same code works on both `Peer` and `LocalBench` (example: `examples/j1939/ecu_pair`; a test verifies that both give the same result). `Simulation` lets you choose between them in one line.
 
 ### Peer setup functions
+
+What the setup functions create when `Peer` implements them:
 
 | Function | Creates |
 |---|---|

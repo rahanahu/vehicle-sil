@@ -766,7 +766,7 @@ SIL Kit の registry とデータプレーンには認証がありません。�
 | 1 回の `Write` の書き込み | `max_writes_per_request`（既定 4096） | `INVALID_ARGUMENT` |
 | 1 回の `GetSnapshot` の名前 | `max_peers_per_request`（既定 1024） | `INVALID_ARGUMENT` |
 | 待つ呼び出しと `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
-| 1 つのメッセージ | gRPC の既定の 4 MB | なし |
+| 1 つのメッセージ | gRPC の既定の 4 MiB | gRPC がメッセージを断り、`RESOURCE_EXHAUSTED` になります。`GetSnapshot` の応答は、先に Server が自分で確かめます（`max_snapshot_bytes`。[時刻と値をまとめて読む](#時刻と値をまとめて読むgetsnapshot)） |
 
 Agent の hello の上限は、「SIL Kit の上のトランスポート」の「大きさの上限」にあります。
 
@@ -815,7 +815,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 ### 状態の読み取り（`TimeCommands::inspect()`）
 
 - 読むのは、時間の状態、必須の participant と SIL Kit の状態、去った participant です。
-- `TimeCommands::inspect()` が、controller が付いている間だけ、ミューテックスの中で関数を呼びます。
+- `TimeCommands::inspect()` が、controller が付いている間だけ、ミューテックスの中で、呼び出し側が渡した関数（Server が controller を読む関数）を呼びます。
 - 外れた後（`detach()`。controller を破棄する前に、どの終わり方でも呼ぶ）は、最後に読んだ値を返します（`ended` は真）。
 - そのため、gRPC のスレッドが、破棄された controller にアクセスすることはありません。
 - `WaitPaused` は `TimeCommands::wait_paused()` で、ミューテックスを持たずに待ち、外れたらすぐに戻ります。

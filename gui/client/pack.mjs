@@ -1,11 +1,12 @@
-// クライアントのライブラリを、npm で入れられる .tgz にする（npm には公開しない。配布物に付ける）。
-// gui/web で `npm run pack:client`（gui/web の node_modules の esbuild と TypeScript を借りる。依存を足さない）。
+// Makes the client library a .tgz that npm can install (not published to npm; it ships with the release).
+// Run `npm run pack:client` in gui/web (it borrows esbuild and TypeScript from gui/web/node_modules; no new dependency).
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
 //
-// 中身: dist/index.js（1 つにまとめた ESM）、types/（.d.ts）、package.json（exports）、README.md、LICENSE。
-// 作った後に確かめる: 入れた形で Node から import でき、examples/gui_starter/README.md（と README.ja.md）の TypeScript の例が、
-// 型の解決 nodenext と bundler の両方で型の検査を通る。終了コード: 0 できた、1 失敗、2 使い方の誤り。
+// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), package.json (exports), README.md, LICENSE.
+// Checked after it is made: Node imports the installed package, and the TypeScript example of
+// examples/gui_starter/README.md (and of README.ja.md) type-checks with the module resolutions nodenext and bundler.
+// Exit codes: 0 made, 1 failed, 2 usage error.
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -196,9 +197,7 @@ function main() {
     engines: { node: '>=22' },
   };
   writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  // The package's README.md: the English page, or the Japanese one where there is no English page.
-  const readme = existsSync(join(CLIENT, 'README.md')) ? 'README.md' : 'README.ja.md';
-  cpSync(join(CLIENT, readme), join(packageDir, 'README.md'));
+  cpSync(join(CLIENT, 'README.md'), join(packageDir, 'README.md'));
   cpSync(join(REPOSITORY, 'LICENSE'), join(packageDir, 'LICENSE'));
 
   const checkDir = join(args.out, 'check');

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests of scripts/check-docs.py on made-up pages: the pairs of an English page and its Japanese page (both exist,
-the same heading levels, the same code blocks, links to the pages of their own language and to the same files), and a
-Japanese page whose English page is not written yet (counted, a problem with --require-english).
+the same heading levels, the same code blocks, links to the pages and pictures of their own language and to the same
+files), and a Japanese page whose English page is not written yet (counted, a problem with --require-english).
 
     python tests/scripts/test_check_docs.py      (exit code 0 when every test passes)
 """
@@ -126,6 +126,16 @@ def main() -> int:
          english=ENGLISH.replace("(../README.md)", "(../README.ja.md)"))
     case("a file that only one page links", 1, "links docs/images/shot.png, which docs/guide.md does not",
          english=ENGLISH.replace(", [the picture](images/shot.png)", ""))
+    case("an English page that links the Japanese picture", 1,
+         "links the Japanese file docs/ja/images/shot.png: link the English one, docs/images/shot.png",
+         english=ENGLISH.replace("(images/shot.png)", "(ja/images/shot.png)"))
+    case("a Japanese page that links the English picture", 1,
+         "links the English file docs/images/shot.png: link the Japanese one, docs/ja/images/shot.png",
+         japanese=JAPANESE.replace("(images/shot.png)", "(../images/shot.png)"))
+    case("a picture that only the Japanese edition has", 0, "check-docs: ok",
+         english=ENGLISH.replace("(images/shot.png)", "(ja/images/only.png)"),
+         japanese=JAPANESE.replace("(images/shot.png)", "(images/only.png)"),
+         **{"docs/ja/images/only.png": ""})
     case("a README of a directory", 1, "tool/README.md: no Japanese page tool/README.ja.md",
          **{"tool/README.md": "# Tool\n"})
     # An English-only page (the change log) that links an English page not written yet: counted, not a problem.

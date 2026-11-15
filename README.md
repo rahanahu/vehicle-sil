@@ -17,7 +17,7 @@ A set of tools for simulating vehicle ECUs (electronic control units) in softwar
 | Run several ECUs as one simulation | `vehicle_sil_launch` checks a YAML configuration file against each ECU for mismatches (`check`), and starts and runs everything (`run`). | [Integrate and run several ECUs](docs/howto/integrate-ecus.md) |
 | Write tests and run them automatically | A YAML scenario lists steps that set values, wait and check the results. | [Write tests with scenarios](docs/howto/scenario-tests.md) |
 | Read and write values of a running simulation from Python | The Control API (gRPC) and its Python client. | [Read and write signals from outside](docs/howto/operate-signals.md) |
-| Watch and change values in a browser | `vehicle-sil-gui` shows variables as sliders and graphs. | [gui.md](docs/gui.md) |
+| Watch and change values in a browser | `vehicle-sil-gui` shows variables as sliders and charts. | [gui.md](docs/gui.md) |
 | Connect to real CAN hardware or real networks | Bridges relay frames between a simulated bus and a real one. There is one for Vector XL CAN and one for Ethernet. | [bridges.md](docs/bridges.md), [ethernet-bridge.md](docs/ethernet-bridge.md) |
 | Let ECUs on other computers join | In the configuration file, give the address of the SIL Kit registry (the server that introduces participants to each other) and list the ECUs that the people on the other computers start themselves. | [Run on several computers](docs/howto/multi-pc.md) |
 
@@ -114,7 +114,7 @@ failed: 2 errors, 1 warning, 0 notes
 
 In the browser GUI, moving the throttle slider changes the engine speed.
 
-![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed graph rises from 1200 rpm to 2000 rpm](docs/ja/images/gui-variables.png)
+![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed chart rises from 1200 rpm to 2000 rpm](docs/images/gui-variables.png)
 
 ## Quick start
 

@@ -244,7 +244,7 @@ Every `sample_period` of its Agent (10 ms of virtual time by default), an ECU se
 
 - Changes finer than `sample_period` are invisible. A value that changes and changes back between 2 samples never reaches the conditions.
 - No condition holds for a variable that has no sample yet (the finding says `it had no value yet (no sample of its ECU had arrived)`).
-- An `expect` at time 0 is an exception: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`).
+- An `expect` at time 0 does not fail for lack of a sample: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`), which already shows the writes at time 0.
 - A missing sample fails a step at time 0 when a `ramp` without `from` or a `wave` without `around` moves a variable that the scenario has not written yet (`scenario-write`). Writes at time 0 are handed over before the first simulation step, so there is no sample yet to take the start value from (see [Writes](#writes)).
 
 ### `expect` at the same time as `set`

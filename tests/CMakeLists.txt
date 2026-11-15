@@ -1,10 +1,10 @@
 include(VehicleSilTestHelpers)
 
-# The pages of the manual that the tests hold against what the product does (the examples, the outputs, the steps
-# of the guides): docs/ja, the Japanese pages, while the English pages of docs/ are being written. When they are, make
-# it ${PROJECT_SOURCE_DIR}/docs; nothing else reads this choice. The tests that check a page for a property of its own
-# (tests/schema, the GUI server's tests, gui/client/pack.mjs, scripts/package.py) read every language there is.
-set(VEHICLE_SIL_TESTED_DOCS "${PROJECT_SOURCE_DIR}/docs/ja")
+# The pages of the manual that the tests compare with what the product does (the examples, the outputs, the steps
+# of the guides): the English pages of docs/. The Japanese pages of docs/ja are held to them by scripts/check-docs.py
+# (the same code blocks). The tests that check a page for a property of its own (tests/schema, the GUI server's tests,
+# gui/client/pack.mjs, scripts/package.py) read both languages.
+set(VEHICLE_SIL_TESTED_DOCS "${PROJECT_SOURCE_DIR}/docs")
 
 # The tests of each area are listed in tests/<area>/CMakeLists.txt. This file holds only what
 # the areas share. A new area needs no line here: every directory below that has a CMakeLists.txt

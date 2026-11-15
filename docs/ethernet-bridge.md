@@ -627,7 +627,7 @@ The implementation of an external link declares whether it echoes its own transm
 
 So with these external links, all of "When a loop is stopped" applies: if a frame from the outside has a SIL Kit side address as its source, the bridge treats that address as on both sides, stops it and warns. A program on the same computer that sends on the same interface with the MAC address of a SIL Kit device as source causes this warning.
 
-**If an external link declares that it does not echo, but does** (for example, an Npcap or adapter on which the option against echoes does not work; whether one exists is not verified), it looks the same to the bridge.
+**If an external link declares that it does not echo, but does** (for example, an Npcap or adapter on which the option against echoes does not work; whether one exists is not verified), the bridge sees each echo as a frame from the outside with a SIL Kit side address as its source, the case above.
 
 - With the MAC rules on, as soon as a SIL Kit device sends its first frame, the bridge receives the echo from the outside, and the address of that device is stopped as on both sides (it errs on the side of stopping). The warning for a SIL Kit side address seen outside therefore ends by saying that, if there is no second bridge and no device with the same address, the external link echoes its own transmissions, and what to do next (the second text in "[Warning messages](#warning-messages)"). What to do next, for `npcap`: install a current Npcap, try another adapter, and if that does not help, report it to vehicle-sil.
 - With `--no-mac-guard`, the bridge warns once, as described in "[With `--no-mac-guard`](#with---no-mac-guard)".
@@ -677,9 +677,9 @@ A frame passes in both directions through SIL Kit's `IEthernetController`, `Ethe
 
 | Target | Contents | Dependencies |
 |---|---|---|
-| `vehicle_sil_ethernet_bridge` (executable) | The command line of the bridge. | Built on every platform. |
+| `vehicle_sil_ethernet_bridge` (executable) | The command line of the bridge. | `ethernet_bridge_core`, `bridge_runtime` and `core`. Built on every platform, with the external links of that OS; the pcap library is loaded at run time. |
 | `vehicle_sil::eth_link` | `ExternalLink`, which represents an external interface, its implementations, the filter and the MAC table. | Does not use SIL Kit. |
-| `vehicle_sil::ethernet_bridge_core` | `EthernetBridge`, which forwards frames, plus the output and argument parsing of the executable. | Platform-independent. |
+| `vehicle_sil::ethernet_bridge_core` | `EthernetBridge`, which forwards frames, plus the output and argument parsing of the executable. | SIL Kit and `eth_link`. Platform-independent. |
 
 `vehicle_sil::eth_link` contains:
 

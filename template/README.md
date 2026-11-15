@@ -31,7 +31,7 @@ Run every command in the directory where you extracted the template (the one tha
 | 1 | Extract the template | Your project directory |
 | 2 | Download the prebuilt tools | `vehicle_sil_launch` and `vehicle-sil-gui` under `tools/` |
 | 3 | Build and run | 2 ECUs in `bin/`, and the results of the check, the run and the scenario |
-| 4 | Operate the ECUs in the browser GUI | A screen where you watch and write variables |
+| 4 | Use the ECUs in the browser GUI | A screen where you watch and write variables |
 
 ## Step 1: Extract the template
 
@@ -111,7 +111,7 @@ Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle
 
 The `vehicle_sil_launch` of the tools is a single executable that needs no DLLs (the `bin` of the tools contains none).
 
-## Step 4: Operate the ECUs in the browser GUI
+## Step 4: Use the ECUs in the browser GUI
 
 ```sh
 vehicle-sil-gui simulation.live.yaml

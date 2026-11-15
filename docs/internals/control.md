@@ -766,7 +766,7 @@ The SIL Kit registry and data plane have no authentication. Use them on a closed
 | Writes in one `Write` | `max_writes_per_request` (default 4096) | `INVALID_ARGUMENT` |
 | Names in one `GetSnapshot` | `max_peers_per_request` (default 1024) | `INVALID_ARGUMENT` |
 | Waiting calls and `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
-| One message | gRPC's default of 4 MB | None |
+| One message | gRPC's default of 4 MiB | gRPC refuses the message with `RESOURCE_EXHAUSTED`. The Server checks a `GetSnapshot` reply itself first (`max_snapshot_bytes`; see [Reading time and values together](#reading-time-and-values-together-getsnapshot)). |
 
 For the limits on an Agent's hello, see "Size limits" under "Transport over SIL Kit".
 
@@ -815,7 +815,7 @@ Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it
 ### Reading state (`TimeCommands::inspect()`)
 
 - It reads the time state, the required participants and their SIL Kit states, and the participants that left.
-- `TimeCommands::inspect()` calls the function inside the mutex, only while the controller is attached.
+- `TimeCommands::inspect()` calls the function that the caller passes (the Server's read of the controller) inside the mutex, only while the controller is attached.
 - After detachment (`detach()`, called before the controller is destroyed, however the run ends), it returns the values read last (`ended` is true).
 - A gRPC thread therefore never accesses a destroyed controller.
 - `WaitPaused` is `TimeCommands::wait_paused()`. It waits without holding the mutex, and returns at once on detachment.

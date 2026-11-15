@@ -1,5 +1,6 @@
-// 自分の画面の最小の形: クライアントのライブラリ（@vehicle-sil/gui-client）だけを使う、ビルドなしの素の JavaScript。
-// つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ見て書く、スライダーとランプ。README.md に使い方がある。
+// The smallest screen of your own: plain JavaScript with no build, using only the client library (@vehicle-sil/gui-client).
+// Connect, check a configuration file, start and stop a run, watch and write one variable, a slider and a lamp.
+// README.md explains how to use it.
 import {
   WriteError,
   createClient,

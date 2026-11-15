@@ -9,9 +9,9 @@ import { SwitchWidget } from './switch-widget';
 import { ValueWidget } from './value-widget';
 
 /**
- * 部品の種類と、そのコンポーネント。ダッシュボード（DashboardView）は、ここから部品を作り、input の `ref`
- * （VariableRef）と `label` を渡す。コンポーネントを追加するときは、同じ input を持つコンポーネントを作り、WidgetKind と
- * ここに足す（docs/gui.md の「コンポーネントを追加する」）。
+ * The kinds of widget and their components. The dashboard (DashboardView) makes its widgets from here and passes the
+ * inputs `ref` (VariableRef) and `label`. To add a widget, write a component with the same inputs and add it to
+ * WidgetKind and here ("Add a widget" in docs/gui.md).
  */
 export const WIDGETS: Readonly<Record<WidgetKind, Type<unknown>>> = {
   value: ValueWidget,

@@ -128,7 +128,7 @@ Open **Variables** in the navigation. The template has a dashboard file (`simula
 
 Below the slider, the screen shows the virtual time at which the write was applied, such as **✓ Applied in the step at 6.600 s**, and **Engine speed** rises from 1200 rpm to 1600 rpm. **Value at 8.870 s** below a value is the virtual time of the step in which that value was read.
 
-![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed chart rises from 1200 rpm to 2000 rpm](ja/images/gui-variables.png)
+![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed chart rises from 1200 rpm to 2000 rpm](images/gui-variables.png)
 
 #### Troubleshoot the variables
 

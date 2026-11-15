@@ -1,12 +1,12 @@
 // @ts-check
-// 書き方の決まり（README.md の「コーディングのルール」）を lint で強制する。
+// Enforces the rules of how to write the code ("Coding rules" in README.md) with lint.
 const eslint = require('@eslint/js');
 const { defineConfig } = require('eslint/config');
 const tseslint = require('typescript-eslint');
 const angular = require('angular-eslint');
 
-// RxJS をどこで使うかは lint で縛らない（README の「コーディングのルール」で判断する）。
-// lint には、どこに書いても誤りと言える規則だけを置く。
+// Lint does not decide where to use RxJS ("Coding rules" in README.md decides).
+// Lint holds only the rules that are wrong wherever they are broken.
 
 /** gui/client のソースを相対パスで import しない（入口 @vehicle-sil/gui-client から使う）。 */
 const CLIENT_SOURCES = {
@@ -90,8 +90,8 @@ module.exports = defineConfig([
     },
   },
   {
-    // 部品（widgets/）と包み（core/）は、別の Angular のアプリへ写して使える: 画面（run/、variables/）とアプリの殻に
-    // 頼らない（docs/gui.md の「サンプルのコンポーネントをコピーして使う」）
+    // The widgets (widgets/) and the wrappers (core/) can be copied into another Angular app: they do not depend on the
+    // screens (run/, variables/) or the app shell ("Copy the sample widgets" in docs/gui.md)
     files: ['src/app/widgets/**/*.ts', 'src/app/core/**/*.ts'],
     ignores: ['src/**/*.spec.ts'],
     rules: {
