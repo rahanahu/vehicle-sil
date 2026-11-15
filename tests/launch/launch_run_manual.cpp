@@ -4,7 +4,8 @@
 // listen on, and a registry port that is taken:
 //
 //   busy_port    the registry's port taken by another program, and by a run that waits: the setup
-//                error at once, the first run goes on
+//                error at once, the first run goes on; a registry_uri of another computer: the
+//                error names the host
 //   manual       participants started by hand (--manual, manual: true), started by this test from
 //                the command the launcher writes, as a person would copy it: the example and its
 //                lines in docs/simulation-config.md. The other parts, each a scenario of its own
@@ -464,6 +465,22 @@ void busy_port(const Options& o)
         const Listener other;
         const fs::path dir = scenario_dir(o, config(other.port()));
         refused(launch(o, {"run", "sim.yaml"}, dir), other.port(), "another program at the registry's port");
+    }
+    {
+        // A host that is not this computer's (192.0.2.1 is for documentation, never assigned), at
+        // port 0: nothing has the port, and the error says what is wrong with the host.
+        std::string text = config(1);
+        text.replace(text.find("silkit://127.0.0.1:1\n"), std::string("silkit://127.0.0.1:1").size(), "silkit://192.0.2.1:0");
+        const Captured run = launch(o, {"run", "sim.yaml"}, scenario_dir(o, text));
+        expect_code(run, 3, "a registry_uri of another computer");
+        require(contains(run.standard_output, "error: sim.yaml: cannot set up the simulation: the registry cannot listen at "
+                                              "silkit://192.0.2.1:0: ") &&
+                    contains(run.standard_output, " (192.0.2.1 is not an address of this computer, and the registry listens on "
+                                                  "this computer: write in registry_uri ") &&
+                    !contains(run.standard_output, "another registry"),
+                "a registry_uri of another computer: the setup error names the host:\n" + run.standard_output);
+        require(!contains(run.standard_error, "[vehicle_sil_launch] starting Auto"),
+                "a registry_uri of another computer: nothing started:\n" + run.standard_error);
     }
     // A second run at the port of a run that waits for a participant started by hand: refused, and
     // the first one goes on with its own registry (the participant started by hand joins it).

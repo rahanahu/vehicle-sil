@@ -243,16 +243,11 @@ public:
             }
             catch (const std::exception& e)
             {
-                throw std::runtime_error(
-                    "the registry cannot listen at " + listen + ": " + one_line(e.what()) +
-                    (ctx_.config.registry_uri ? " (does another registry run there? choose another port in registry_uri, or "
-                                            "port 0 for a free one)"
-                     : fixed ? " (a run with a participant you start yourself (manual) listens there if the file has no "
-                               "registry_uri, so that its command stays the same; does another registry run there? write "
-                               "another port in registry_uri, or port 0 for a free one: the command then changes from run "
-                               "to run)"
-                             : ""));
+                throw std::runtime_error("the registry cannot listen at " + listen + ": " + one_line(e.what()) +
+                                         detail::registry_listen_hint(listen, ctx_.config.registry_uri.has_value(), fixed,
+                                                                      detail::host_addresses(true, true)));
             }
+            outcome_.registry_uri = uri;
             out_.event([&uri](EventStream& e) { e.registry(uri); });
             out_.say("registry at " + uri);
             if (!is_loopback_registry_uri(listen))
@@ -260,7 +255,8 @@ public:
                 // On [::]: IPv6, and IPv4 too where such a socket takes it.
                 const bool any6 = listened.rfind("silkit://[::]:", 0) == 0;
                 const bool ipv4 = !any6 || detail::ipv6_any_takes_ipv4();
-                out_.say(detail::other_computers_line(listened, detail::host_addresses(ipv4, any6), any6 && !ipv4));
+                out_.say(detail::other_computers_line(listened, detail::host_addresses(ipv4, any6), any6 && !ipv4,
+                                                      listen.substr(listen.rfind(':') + 1)));
             }
             SimulationControllerOptions c;
             c.participant_name = std::string(kControllerName);

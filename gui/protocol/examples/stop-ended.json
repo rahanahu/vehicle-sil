@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 228,
-      "last_t_ms": 2280,
+      "last_seq": 225,
+      "last_t_ms": 2250,
       "time": {
         "event": "time",
-        "seq": 214,
-        "t_ms": 2140,
-        "sim_ms": 93830,
+        "seq": 211,
+        "t_ms": 2110,
+        "sim_ms": 92000,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -370,7 +370,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 224,
+        "seq": 221,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -387,13 +387,14 @@
         "notes": 2,
         "simulation": "interrupted",
         "interrupted_by": "stop command",
+        "registry_uri": "silkit://127.0.0.1:8510",
         "timing": {
           "speed": "max",
           "time_step_ms": 10,
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 93830,
+          "sim_ms": 92000,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -457,7 +458,7 @@
           }
         ],
         "traffic": {
-          "before_ms": 93830,
+          "before_ms": 92000,
           "unplaced": [
             {
               "participant": "Logger",
@@ -484,8 +485,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 93820,
-                  "frames_sent": 940,
+                  "at_ms": 91990,
+                  "frames_sent": 921,
                   "frames_received": 0
                 },
                 {
@@ -493,9 +494,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 93820,
+                  "at_ms": 91990,
                   "frames_sent": 0,
-                  "frames_received": 940
+                  "frames_received": 921
                 }
               ]
             }
@@ -774,7 +775,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 188,
+          "kept": 185,
           "dropped": 0
         }
       },

@@ -693,6 +693,7 @@ TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
              {"http://localhost:8500", "the text \"http://localhost:8500\""},
              {"silkit://localhost", "the text \"silkit://localhost\""},
              {"silkit://localhost:-1", "the text \"silkit://localhost:-1\""},
+             {"silkit://localhost:-0", "the text \"silkit://localhost:-0\""},
              {"silkit://localhost:65536", "the text \"silkit://localhost:65536\""},
              {"silkit://localhost:85x0", "the text \"silkit://localhost:85x0\""},
              {"'silkit://local host:8500'", "the text \"silkit://local host:8500\""},

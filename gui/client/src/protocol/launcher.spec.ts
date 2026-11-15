@@ -34,6 +34,8 @@ const PASSED_THROUGH: readonly string[] = [
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
   'run result: strict',
+  // Where the run's registry listened: the same as the uri of the registry event, which the parser types
+  'run result: registry_uri',
   'run result: scenario.inputs',
   'run result: scenario.lines',
   // The file of --timeline as the launcher was given it (the GUI server's temporary file): screens use the summary's

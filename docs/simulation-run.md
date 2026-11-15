@@ -357,7 +357,7 @@ When participants listen on loopback only, TCP uses `127.0.0.1` (`::1` if the UR
 
 With a non-loopback address, anyone who can connect to this computer can join the simulation, because SIL Kit has no authentication (note `registry-on-network`).
 
-The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`).
+The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, or the host of `registry_uri` is not an address of this computer, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`). In parentheses, the error says which of these is likely and what to write in `registry_uri` instead.
 
 ### What counts as a loopback address
 
@@ -701,6 +701,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `errors`, `warnings`, `notes` | Counts for the check and the run together |
 | `simulation` | How the simulation ended (see the table below). `null` if nothing was started |
 | `interrupted_by` | The signal or key that interrupted the run (`"SIGINT"`, `"Ctrl+C"` and so on). `null` if the run was not interrupted |
+| `registry_uri` | Where the run's registry listened, as the participants got it: with port 0 in the file, the port it took (`registry_uri` of `check` is as written). `null` if no registry was started |
 | `timing` | How time progressed (see the table below). `null` if nothing was started |
 | `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants |
 | `traffic` | The traffic on each network (see [Network traffic](#network-traffic-traffic) and the table below). `null` if the simulation did not start |
@@ -811,6 +812,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
   "notes": 0,
   "simulation": "reached_stop_at",
   "interrupted_by": null,
+  "registry_uri": "silkit://127.0.0.1:<port>",
   "timing": {
     "speed": "max",
     "time_step_ms": 10,
@@ -1084,7 +1086,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
 }
 ```
 
-The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>` and `<actual_speed>`).
+The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>`, `<actual_speed>` and `<port>`).
 
 ## Recording a scenario run on a timeline (`--timeline`)
 

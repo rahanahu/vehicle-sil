@@ -94,6 +94,14 @@ void docs(const Options& o)
     expect_text(without_timing(without_versions(json.standard_output)),
                 without_versions(block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --json -->")),
                 "run simulation.yaml --json");
+    // registry_uri is where the registry listened (the port it took), as the "registry at" line says.
+    const std::string at = "[vehicle_sil_launch] registry at ";
+    const auto atLine = json.standard_error.find(at);
+    require(atLine != std::string::npos, "run --json says where the registry is on stderr:\n" + json.standard_error);
+    const std::string listened = json.standard_error.substr(atLine + at.size(), json.standard_error.find_first_of("\r\n", atLine) - atLine - at.size());
+    require(listened.rfind("silkit://127.0.0.1:", 0) == 0 && listened != "silkit://127.0.0.1:0" &&
+                contains(json.standard_output, "  \"registry_uri\": \"" + listened + "\",\n"),
+            "registry_uri of run --json is " + listened + ":\n" + json.standard_output);
     // As fast as possible: the time as it went, never late, never paused.
     require(contains(json.standard_output, "  \"timing\": {\n    \"speed\": \"max\",\n    \"time_step_ms\": 10,\n") &&
                 contains(json.standard_output, "    \"sim_ms\": 1000,\n") &&

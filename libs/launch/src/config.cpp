@@ -483,10 +483,12 @@ private:
         const std::string scheme = "silkit://";
         const auto colon = text.rfind(':');
         std::int64_t port = -1;
-        const bool hasPort = colon != std::string::npos && colon > scheme.size() &&
+        // Digits only, as the schema says: from_chars would take "-0" for 0.
+        const bool hasPort = colon != std::string::npos && colon > scheme.size() && colon + 1 < text.size() &&
+                             std::all_of(text.begin() + static_cast<std::ptrdiff_t>(colon) + 1, text.end(),
+                                         [](char c) { return c >= '0' && c <= '9'; }) &&
                              std::from_chars(text.data() + colon + 1, text.data() + text.size(), port).ptr ==
-                                 text.data() + text.size() &&
-                             colon + 1 < text.size();
+                                 text.data() + text.size();
         const bool plain = std::none_of(text.begin(), text.end(), [](char c) {
             return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
         });

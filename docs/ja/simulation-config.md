@@ -129,7 +129,7 @@ participants:
 |---|---|
 | 書かない | 127.0.0.1 の空いているポートです。 |
 | 書かず、自分で起動する必須の participant がいる | `silkit://127.0.0.1:8500` です（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。 |
-| ポート 0（`silkit://127.0.0.1:0`、`silkit://0.0.0.0:0`） | 実行を始めるときに選ぶ、空いているポートです。`registry at` と `join at` の行、participant のコマンド（自分で起動する participant に出すものも）、`--events` のイベント `registry` は、そのポートです。照合の JSON の `registry_uri` は、書いたとおりです。 |
+| ポート 0（`silkit://127.0.0.1:0`、`silkit://0.0.0.0:0`） | 実行を始めるときに選ぶ、空いているポートです。`registry at` と `join at` の行、participant のコマンド（自分で起動する participant に出すものも）、`--events` のイベント `registry`、`run --json` の結果の `registry_uri` は、そのポートです。照合の JSON の `registry_uri` は、書いたとおりです。ポートは実行ごとに変わるので、自分で起動する participant（manual）やほかの PC の participant のコマンドも、実行ごとに変わります。使い回すデバッガーの設定や、ほかの PC には、決まったポートを書きます。 |
 | ほかの PC の participant も参加させる | `silkit://0.0.0.0:8500` のように書きます（この PC の participant には `127.0.0.1` の URI を渡します）。 |
 | ループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`）でない | 注記 `registry-on-network` を表示し、`run` が起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
 

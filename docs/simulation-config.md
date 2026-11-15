@@ -129,7 +129,7 @@ Notes on individual keys:
 |---|---|
 | Omitted | A free port on 127.0.0.1. |
 | Omitted, and a required participant is one that you start yourself | `silkit://127.0.0.1:8500` (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)). |
-| Port 0 (`silkit://127.0.0.1:0`, `silkit://0.0.0.0:0`) | A free port, chosen when the run starts. The `registry at` and `join at` lines, the commands of the participants (also the one printed for a participant that you start yourself) and the `registry` event of `--events` have that port; `registry_uri` in the JSON of the check is as written. |
+| Port 0 (`silkit://127.0.0.1:0`, `silkit://0.0.0.0:0`) | A free port, chosen when the run starts. The `registry at` and `join at` lines, the commands of the participants (also the one printed for a participant that you start yourself) and the `registry` event of `--events` have that port, and so has `registry_uri` of the `run --json` result; `registry_uri` in the JSON of the check is as written. The port changes from run to run, and so does the command for a participant that you start yourself (manual) or that runs on another computer: for a debugger configuration you reuse, or for another computer, write a fixed port. |
 | Participants on other computers join too | Write an address such as `silkit://0.0.0.0:8500`. Participants on this computer get a URI with `127.0.0.1`. |
 | Not a loopback address (`127.x.x.x`, `[::1]`, `localhost`) | The check reports the note `registry-on-network`, and `run` passes the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` to the participants it starts (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
 

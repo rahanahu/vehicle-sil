@@ -357,7 +357,7 @@ SIL Kit の participant は、ほかの participant からの接続を待ち受�
 
 ループバックでないアドレスでは、SIL Kit には認証がないので、この PC に接続できる誰でもシミュレーションに参加できます（注記 `registry-on-network`）。
 
-registry は、自分の URI のアドレスで、TCP だけで待ち受けます（local-domain ソケットを使いません）。そのポートを別のプログラムや別の `run` が使っていれば、何も起動せずに `setup` のエラー（終了コード 3、`the registry cannot listen at <URI>: ...`）です。
+registry は、自分の URI のアドレスで、TCP だけで待ち受けます（local-domain ソケットを使いません）。そのポートを別のプログラムや別の `run` が使っているとき、または `registry_uri` のホストがこの PC のアドレスでないときは、何も起動せずに `setup` のエラー（終了コード 3、`the registry cannot listen at <URI>: ...`）です。エラーの括弧の中に、どちらの見込みが高いかと、`registry_uri` に代わりに書くものが出ます。
 
 ### ループバックのアドレスとみなすもの
 
@@ -701,6 +701,7 @@ passed: 0 errors, 1 warning, 1 note
 | `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
 | `simulation` | シミュレーションの終わり方（下の表）。何も起動しなかったときは `null` |
 | `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
+| `registry_uri` | 実行の registry が待ち受けた URI で、participant に渡したもの。ファイルのポートが 0 なら、取ったポートです（`check` の `registry_uri` は書いたとおり）。registry を起動しなかったときは `null` |
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
 | `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む |
 | `traffic` | ネットワークごとの送受信（[ネットワークの送受信](#ネットワークの送受信traffic)。下の表）。シミュレーションが始まらなかったときは `null` |
@@ -811,6 +812,7 @@ passed: 0 errors, 1 warning, 1 note
   "notes": 0,
   "simulation": "reached_stop_at",
   "interrupted_by": null,
+  "registry_uri": "silkit://127.0.0.1:<port>",
   "timing": {
     "speed": "max",
     "time_step_ms": 10,
@@ -1084,7 +1086,7 @@ passed: 0 errors, 1 warning, 1 note
 }
 ```
 
-この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` のバージョンと、`<wall_ms>`、`<actual_speed>` にした値を除いて、バイト単位で）。
+この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` のバージョンと、`<wall_ms>`、`<actual_speed>`、`<port>` にした値を除いて、バイト単位で）。
 
 ## シナリオの実行を時間の軸で記録する（`--timeline`）
 

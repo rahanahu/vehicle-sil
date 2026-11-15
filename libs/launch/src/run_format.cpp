@@ -434,6 +434,14 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
     {
         w.null("interrupted_by");
     }
+    if (report.run && !report.run->registry_uri.empty())
+    {
+        w.string("registry_uri", report.run->registry_uri);
+    }
+    else
+    {
+        w.null("registry_uri");
+    }
     if (report.run)
     {
         const RunTiming& t = report.run->timing;

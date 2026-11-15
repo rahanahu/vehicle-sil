@@ -28,12 +28,12 @@
       },
       "stop": "forced",
       "phase": "running",
-      "last_seq": 22,
-      "last_t_ms": 220,
+      "last_seq": 25,
+      "last_t_ms": 250,
       "time": {
         "event": "time",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -364,7 +364,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 2,
+          "kept": 5,
           "dropped": 0
         }
       },
