@@ -352,6 +352,8 @@ Cases that give exit code 3, each reported in one line before the ECU joins the 
 | The line cannot pick a node | A line without `from` on a network where the ECU adds a second node, or 2 nodes at the same address in the code. |
 | The line cannot be applied to its node | A NAME field for a node without a NAME, or 254 for a NAME that is not arbitrary address capable. |
 
+With `vehicle_sil_launch`, do not write this argument in `command`: write `j1939_nodes` for the participant in the configuration file instead (`j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }]`; see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)). `run` starts the executable with `--j1939-node` after the other arguments, and `check` applies the entries to the reported nodes before it compares the addresses and NAMEs. `--j1939-node` in the `command` of an ecu_main executable (`describe: true`) is the configuration error `launcher-argument`.
+
 A program that does not use `ecu_main` passes the same lines in `SilKitOptions::j1939_nodes` (`Simulation`, for each ECU name) or `PeerOptions::j1939_nodes` (`Peer`); see "SIL Kit options (`SilKitOptions`)" in [j1939-guide.md](j1939-guide.md#sil-kit-options-silkitoptions).
 
 ## Requirements for ECU authors

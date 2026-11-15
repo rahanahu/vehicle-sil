@@ -352,6 +352,8 @@ engine_ecu --registry-uri silkit://localhost:8500 --name Engine2 --j1939-node J1
 | 行がノードを選べない | `from` のない行で、ECU がそのネットワークに 2 つ目のノードを追加する。または、コードで同じアドレスの 2 つのノード。 |
 | 行をノードに当てられない | NAME のないノードへの NAME の欄、または NAME が arbitrary address capable でないノードへの 254。 |
 
+`vehicle_sil_launch` では、この引数を `command` に書かず、設定ファイルの participant の `j1939_nodes` に書きます（`j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }]`。[simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」）。`run` が、ほかの引数の後ろに `--j1939-node` を追加して起動し、`check` は、自己申告のノードに行を当ててから、アドレスと NAME を照合します。ecu_main の実行ファイル（`describe: true`）の `command` に書くと、設定ファイルのエラー `launcher-argument` です。
+
 `ecu_main` を使わないプログラムは、同じ行を `SilKitOptions::j1939_nodes`（`Simulation`。ECU の名前ごと）か `PeerOptions::j1939_nodes`（`Peer`）に渡します。[j1939-guide.md](j1939-guide.md#sil-kit-の設定silkitoptions) の「SIL Kit の設定（`SilKitOptions`）」にあります。
 
 ## ECU を作る人に依頼すること

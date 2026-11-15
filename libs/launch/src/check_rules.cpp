@@ -98,11 +98,20 @@ bool is_on_any(const ParticipantConfig& participant, const ParticipantResult& re
     return participant.enabled && result.status == ParticipantStatus::Described && result.ecu;
 }
 
-/// One J1939 node on a network: who has it, for messages.
+/// One J1939 node on a network: who has it, for messages, and where its values come from.
 struct NodeOnNetwork
 {
-    std::string label; ///< "Engine", or "Engine (node 2)" if Engine has more than one there
-    J1939NodeDescription node;
+    /// "Engine", or "Engine (node 2)" if Engine has more than one there; with " (set by
+    /// j1939_nodes, line 14)" after it if an entry of j1939_nodes gave it its values.
+    std::string label;
+    J1939NodeDescription node; ///< the values after j1939_nodes
+    std::size_t participant = 0; ///< the index of its participant in the configuration
+    std::size_t index = 0;       ///< its index among its participant's nodes on the network
+    j1939::Address coded_address = j1939::kNullAddress; ///< its address in the executable's code
+    std::size_t line = 0;        ///< the line of the j1939_nodes entry that gave it its values; 0: none
+    std::size_t own_nodes = 1;   ///< how many nodes its participant has on the network
+    bool has_entries = false;    ///< its participant has j1939_nodes for the network
+    bool takes_entries = false;  ///< its executable says it takes --j1939-node ("j1939-node" in features)
 };
 
 } // namespace
@@ -250,6 +259,12 @@ struct Rules
     /// participant is meant to be on them and is not seen there, so who is on them is not known:
     /// the rules that count the participants of a network do not speak of these.
     std::set<std::string> held{};
+    /// The participants (indexes) and networks (simulation's names) where an entry of j1939_nodes
+    /// takes no node: the participant's nodes there are not in the rules of the addresses and NAMEs
+    /// (the entry's own error comes first, and the values the file means are not known).
+    std::set<std::pair<std::size_t, std::string>> j1939_held{};
+    /// The version of vehicle_sil_launch, for the messages that say which version to build with.
+    std::string launcher_version{};
 
     void add(Severity severity, const char* code, std::size_t line, std::string message, const std::string& participant,
              const std::string& network) const
@@ -507,6 +522,337 @@ void check_network_names(const Rules& rules, std::size_t i, const ParticipantCon
     }
 }
 
+/// The addresses of `nodes` in the code, each once, in their order: "0x00", "any (254)".
+std::vector<std::string> coded_addresses(const std::vector<J1939NodeDescription>& nodes)
+{
+    std::vector<std::string> out;
+    for (const J1939NodeDescription& node : nodes)
+    {
+        const std::string text = j1939::coded_address_text(node.address);
+        if (std::find(out.begin(), out.end(), text) == out.end())
+        {
+            out.push_back(text);
+        }
+    }
+    return out;
+}
+
+/// The number of `nodes` whose address in the code is `address`.
+std::size_t nodes_at(const std::vector<J1939NodeDescription>& nodes, j1939::Address address)
+{
+    return static_cast<std::size_t>(
+        std::count_if(nodes.begin(), nodes.end(), [address](const J1939NodeDescription& n) { return n.address == address; }));
+}
+
+/// The settings of the NAME that `entry` gives, as written: "identity_number and ecu_instance".
+std::string name_settings(const j1939::NodeOverride& entry)
+{
+    std::vector<std::string> out;
+    if (entry.identity_number)
+    {
+        out.emplace_back("identity_number");
+    }
+    if (entry.function_instance)
+    {
+        out.emplace_back("function_instance");
+    }
+    if (entry.ecu_instance)
+    {
+        out.emplace_back("ecu_instance");
+    }
+    return and_list(out);
+}
+
+/// The finding of an entry of j1939_nodes that takes no node of the J1939 network `seen` of
+/// entry `i` (`match`: what apply_node_overrides() said).
+void j1939_entry_not_applied(const Rules& rules, const ParticipantConfig& p, const SeenNetwork& seen,
+                             const J1939NodeMatch& match)
+{
+    const J1939NodeEntry& entry = p.j1939_nodes[match.entry];
+    const std::string& network = seen.network.name;
+    const std::string at = participant_prefix(p.name) + "j1939_nodes (line " + std::to_string(match.line) + ") ";
+    const std::vector<J1939NodeDescription>& nodes = seen.coded_nodes;
+    const auto add = [&](const char* code, std::string message) {
+        rules.add(Severity::Error, code, match.line, std::move(message), p.name, network);
+    };
+    switch (match.result.match)
+    {
+    case j1939::NodeOverrideMatch::Applied:
+    case j1939::NodeOverrideMatch::Skipped:
+        return;
+    case j1939::NodeOverrideMatch::NoNodes:
+        add("j1939-node-unknown",
+            at + "changes a node on '" + network + "', but the executable has no node there (nodes that it adds after "
+                 "it starts are not described and cannot be changed): remove the entry, or correct network");
+        return;
+    case j1939::NodeOverrideMatch::NoNodeAtFrom:
+    {
+        const std::vector<std::string> addresses = coded_addresses(nodes);
+        add("j1939-node-unknown",
+            at + "changes the node that the executable's code puts at " + j1939::coded_address_text(*entry.node.from) +
+                " on '" + network + "', but the executable has no node at that address there (its nodes there: " +
+                detail::join(addresses) + "; nodes that it adds after it starts are not described and cannot be "
+                "changed). from is the address in the executable's code (the one the table shows without j1939_nodes), "
+                "not the new address: write from: " +
+                (addresses.size() == 1 ? j1939::node_override_address_text(nodes.front().address)
+                                       : std::string("with one of them")));
+        return;
+    }
+    case j1939::NodeOverrideMatch::Ambiguous:
+    {
+        // The addresses that pick one node, and those that hold more than one.
+        std::vector<std::string> single;
+        std::vector<std::string> shared;
+        std::vector<j1939::Address> seenAddresses;
+        j1939::Address example = j1939::kNullAddress;
+        for (const J1939NodeDescription& node : nodes)
+        {
+            if (std::find(seenAddresses.begin(), seenAddresses.end(), node.address) != seenAddresses.end())
+            {
+                continue;
+            }
+            seenAddresses.push_back(node.address);
+            const std::size_t count = nodes_at(nodes, node.address);
+            if (count == 1)
+            {
+                if (single.empty())
+                {
+                    example = node.address;
+                }
+                single.push_back(j1939::coded_address_text(node.address));
+            }
+            else
+            {
+                shared.push_back("the " + std::to_string(count) + " nodes at " + j1939::coded_address_text(node.address));
+            }
+        }
+        add("j1939-node-ambiguous",
+            at + "has no from, and the executable has " + std::to_string(nodes.size()) + " nodes on '" + network + "'" +
+                (single.empty() ? std::string{} : " (" + detail::join(single) + ")") +
+                (shared.empty() ? std::string{}
+                                : "; " + and_list(shared) + " cannot be told apart, and this file cannot change them") +
+                ": say which one with from: <the address in the executable's code>" +
+                (single.empty() ? std::string{} : ", for example from: " + j1939::node_override_address_text(example)));
+        return;
+    }
+    case j1939::NodeOverrideMatch::Indistinct:
+    {
+        const j1939::Address address = entry.node.from ? *entry.node.from : nodes.front().address;
+        add("j1939-node-indistinct",
+            at + "cannot pick a node: the executable's code puts " + std::to_string(nodes_at(nodes, address)) +
+                " nodes at " + j1939::coded_address_text(address) + " on '" + network +
+                "', and j1939_nodes tells nodes apart by that address, so this file cannot change them: remove the "
+                "entry, and ask the ECU's author to give the nodes addresses of their own in its code, or to take them "
+                "as arguments");
+        return;
+    }
+    case j1939::NodeOverrideMatch::CannotApply:
+        break;
+    }
+    const std::string node = j1939::coded_address_text(nodes[match.result.node].address);
+    switch (match.result.error.value_or(j1939::NodeOverrideError::FieldOutOfRange))
+    {
+    case j1939::NodeOverrideError::NameFieldWithoutName:
+    {
+        const std::string fields = name_settings(entry.node);
+        add("j1939-node-no-name",
+            at + "sets " + fields + ", but the node at " + node + " on '" + network +
+                "' has no NAME (it does not claim its address): remove " + fields +
+                "; for this node only address can be changed");
+        return;
+    }
+    case j1939::NodeOverrideError::AnyAddressNotCapable:
+        add("j1939-node-any-address",
+            at + "sets address: 254 (any free address), but the NAME of the node at " + node + " on '" + network +
+                "' is not arbitrary address capable, which this file cannot change: write an address of 0..253");
+        return;
+    case j1939::NodeOverrideError::AnyAddressWithoutName:
+        add("j1939-node-any-address",
+            at + "sets address: 254 (any free address), but the node at " + node + " on '" + network +
+                "' has no NAME, so it cannot claim a free address: write an address of 0..253");
+        return;
+    case j1939::NodeOverrideError::FieldOutOfRange:
+    case j1939::NodeOverrideError::AddressOutOfRange:
+        // Not from a file (its reader refuses such a value).
+        add("value", at + "has " + j1939::node_override_range_problem(entry.node));
+        return;
+    }
+}
+
+/// The entry `e` of j1939_nodes names a network on which the executable has no J1939 network.
+void j1939_entry_without_network(const Rules& rules, const ParticipantConfig& p, const std::vector<SeenNetwork>& seen,
+                                 std::size_t e)
+{
+    const J1939NodeEntry& entry = p.j1939_nodes[e];
+    const std::string at = participant_prefix(p.name) + "j1939_nodes (line " + std::to_string(entry.line) +
+                           ") changes a node on '" + entry.network + "', but the executable has no J1939 network";
+    std::vector<std::string> names;
+    std::vector<std::string> own; // the networks that keep the executable's name
+    for (const SeenNetwork& n : seen)
+    {
+        if (n.network.use != NetworkUse::J1939)
+        {
+            continue;
+        }
+        names.push_back("'" + n.network.name + "'" + (n.renamed() ? " (" + n.executable_name + " in its code)" : std::string{}));
+        if (!n.renamed())
+        {
+            own.push_back(n.network.name);
+        }
+    }
+    std::string message;
+    if (names.empty())
+    {
+        message = at + ": remove the entry";
+    }
+    else
+    {
+        message = at + " '" + entry.network + "' (its J1939 networks: " + detail::join(names) + "): " +
+                  (own.size() == 1 ? "if its '" + own.front() + "' is the simulation's '" + entry.network +
+                                         "', add network_names: { " + entry.network + ": " + own.front() +
+                                         " }; otherwise correct network"
+                                   : std::string("correct network"));
+    }
+    rules.add(Severity::Error, "j1939-node-unknown", entry.line, std::move(message), p.name, entry.network);
+}
+
+/// The note "j1939-node-changed": what the entries of j1939_nodes of entry `i`, all applied, change.
+void note_changed_nodes(const Rules& rules, const ParticipantConfig& p, const std::vector<SeenNetwork>& seen)
+{
+    std::vector<std::string> clauses;
+    std::vector<std::string> movedFrom;
+    std::vector<std::string> oldNames;
+    std::vector<std::string> networks;
+    for (const SeenNetwork& n : seen)
+    {
+        if (n.network.use != NetworkUse::J1939)
+        {
+            continue;
+        }
+        bool first = true;
+        for (std::size_t k = 0; k < n.network.nodes.size(); ++k)
+        {
+            const J1939NodeDescription& now = n.network.nodes[k];
+            const J1939NodeDescription& coded = n.coded_nodes[k];
+            const bool moved = now.address != coded.address;
+            // An entry cannot give a node without a NAME one (j1939-node-no-name).
+            const bool renamed = now.name && coded.name && *now.name != *coded.name;
+            if (n.node_lines[k] == 0 || (!moved && !renamed))
+            {
+                continue;
+            }
+            const bool any = coded.address == j1939::kNullAddress;
+            const std::string names = renamed ? vehicle_sil::detail::hex64(now.name->value()) + " (" +
+                                                    vehicle_sil::detail::hex64(coded.name->value()) + " in its code)"
+                                              : std::string{};
+            std::string clause = first ? "on '" + n.network.name + "', " : std::string{};
+            if (moved)
+            {
+                clause += (any ? std::string("the node that takes any free address in its code")
+                               : "the node at " + hex2(coded.address) + " in its code") +
+                          " is at " + j1939::coded_address_text(now.address) +
+                          (renamed ? ", with the NAME " + names : std::string{});
+            }
+            else
+            {
+                clause += (any ? std::string("the node that takes any free address") : "the node at " + hex2(coded.address)) +
+                          " has the NAME " + names;
+            }
+            clauses.push_back(std::move(clause));
+            if (first)
+            {
+                networks.push_back(n.network.name);
+            }
+            first = false;
+            if (moved && !any)
+            {
+                movedFrom.push_back(hex2(coded.address));
+            }
+            if (renamed)
+            {
+                oldNames.push_back(vehicle_sil::detail::hex64(coded.name->value()));
+            }
+        }
+    }
+    if (clauses.empty())
+    {
+        return; // every value is the code's
+    }
+    std::vector<std::string> relied;
+    if (!movedFrom.empty())
+    {
+        const std::string was = detail::or_list(movedFrom);
+        relied.push_back("an ECU whose code has " + was + " written in it for " + p.name +
+                         " (as a destination, or to tell senders apart) still uses " + was + ", and " + p.name +
+                         "'s own code may still have " + was + " in a filter or in the data it sends");
+    }
+    if (!oldNames.empty())
+    {
+        relied.push_back("an ECU that looks " + p.name + " up by its whole NAME " + detail::or_list(oldNames) +
+                         " does not find it");
+    }
+    std::string message = participant_prefix(p.name) + "j1939_nodes changes its nodes: ";
+    for (std::size_t c = 0; c < clauses.size(); ++c)
+    {
+        message += (c == 0 ? "" : "; ") + clauses[c];
+    }
+    if (!relied.empty())
+    {
+        message += ". Only " + p.name + " changes, and the check cannot see who relies on the old values: " +
+                   and_list(relied, ", and ") + "; if messages do not reach " + p.name +
+                   " or are taken for another ECU's, the author of that code has to change it";
+    }
+    const auto first = std::find_if(p.j1939_nodes.begin(), p.j1939_nodes.end(),
+                                    [](const J1939NodeEntry& e) { return e.node.changes(); });
+    rules.add(Severity::Note, "j1939-node-changed", first->line, std::move(message), p.name,
+              networks.size() == 1 ? networks.front() : std::string{});
+}
+
+/// The j1939_nodes of entry `i` against what its executable described: whether it takes
+/// --j1939-node, and whether each entry that changes something takes a node (the values are
+/// applied in seen_networks(); this reads what it found, it does not match again).
+void check_j1939_node_entries(const Rules& rules, std::size_t i, const ParticipantConfig& p, const ReportedEcu& reported,
+                              std::string_view launcher_version)
+{
+    if (j1939_node_arguments(p).empty())
+    {
+        return;
+    }
+    const std::optional<Finding> unsupported = j1939_nodes_unsupported(p, reported, launcher_version);
+    if (unsupported)
+    {
+        rules.out.push_back(*unsupported);
+    }
+    const std::vector<SeenNetwork>& seen = rules.seen[i];
+    bool allApplied = true;
+    for (const SeenNetwork& n : seen)
+    {
+        for (const J1939NodeMatch& match : n.j1939_matches)
+        {
+            if (match.result.match != j1939::NodeOverrideMatch::Applied && match.result.match != j1939::NodeOverrideMatch::Skipped)
+            {
+                allApplied = false;
+                j1939_entry_not_applied(rules, p, n, match);
+            }
+        }
+    }
+    // A network that a wrong line of network_names keeps away: network-map-unknown says it.
+    const std::vector<NetworkName> unknown = unknown_lines(p, seen);
+    for (const std::size_t e : unmatched_j1939_entries(p, seen))
+    {
+        allApplied = false;
+        if (std::none_of(unknown.begin(), unknown.end(),
+                         [&](const NetworkName& line) { return line.name == p.j1939_nodes[e].network; }))
+        {
+            j1939_entry_without_network(rules, p, seen, e);
+        }
+    }
+    if (allApplied && !unsupported)
+    {
+        note_changed_nodes(rules, p, seen);
+    }
+}
+
 /// The participant `p` (entry `i`) against its entry: name, step, networks, variables, version.
 void check_participant(const Rules& rules, std::size_t i, const ParticipantConfig& p, const ParticipantResult& result,
                        const std::map<std::string, const NetworkConfig*>& networks,
@@ -578,6 +924,7 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         }
     }
     check_network_names(rules, i, p, *result.ecu, launcher_version);
+    check_j1939_node_entries(rules, i, p, *result.ecu, launcher_version);
     const std::vector<NetworkName> unknown = unknown_lines(p, rules.seen[i]);
     std::set<std::string> reported;
     for (const SeenNetwork& seen : rules.seen[i])
@@ -668,6 +1015,75 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
     }
 }
 
+/// How to make the nodes `group` of a conflict on `network` differ in this file, after the message
+/// of the rule: give one of them (the last one in the file whose executable takes j1939_nodes)
+/// another address (`address`) and/or identity number (`identity`), with values that no node on the
+/// network (`all`, the values after j1939_nodes) has.
+std::string conflict_fix(const Rules& rules, const NetworkConfig& network, const std::vector<NodeOnNetwork>& all,
+                         const std::vector<const NodeOnNetwork*>& group, bool address, bool identity)
+{
+    const NodeOnNetwork* example = nullptr;
+    for (const NodeOnNetwork* n : group)
+    {
+        if (n->takes_entries &&
+            (example == nullptr || n->participant > example->participant ||
+             (n->participant == example->participant && n->index > example->index)))
+        {
+            example = n;
+        }
+    }
+    if (example == nullptr)
+    {
+        return "this file cannot change them, as their executables do not take j1939_nodes (no \"j1939-node\" in the "
+               "features of their --describe): build one of them again with vehicle-sil " +
+               rules.launcher_version + " or later and set it in j1939_nodes, or have its author change it in its code";
+    }
+    std::vector<std::string> settings;
+    if (address)
+    {
+        std::string free = "<a free address>";
+        for (unsigned a = 0; a < j1939::kNullAddress; ++a)
+        {
+            if (std::none_of(all.begin(), all.end(), [a](const NodeOnNetwork& n) { return n.node.address == a; }))
+            {
+                free = j1939::node_override_address_text(static_cast<j1939::Address>(a));
+                break;
+            }
+        }
+        settings.push_back("address: " + free);
+    }
+    if (identity && example->node.name)
+    {
+        std::string other = "<another number>";
+        for (std::uint32_t id = example->node.name->identity_number() + 1; id <= 2097151; ++id)
+        {
+            j1939::Name name = *example->node.name;
+            name.set_identity_number(id);
+            if (std::none_of(all.begin(), all.end(), [&name](const NodeOnNetwork& n) { return n.node.name == name; }))
+            {
+                other = std::to_string(id);
+                break;
+            }
+        }
+        settings.push_back("identity_number: " + other);
+    }
+    std::string text;
+    for (const std::string& setting : settings)
+    {
+        text += (text.empty() ? "" : ", ") + setting;
+    }
+    const std::string& who = rules.config.participants[example->participant].name;
+    if (example->line != 0)
+    {
+        return "to do it in this file, change the entry of j1939_nodes on line " + std::to_string(example->line) +
+               " (participant '" + who + "') to " + text;
+    }
+    const bool from = example->own_nodes > 1 || example->has_entries;
+    return "to do it in this file, write under participant '" + who + "': j1939_nodes: [{ network: " + network.name +
+           (from ? ", from: " + j1939::node_override_address_text(example->coded_address) : std::string{}) + ", " + text +
+           " }]";
+}
+
 /// The rules of a CAN network: the J1939 addresses and NAMEs of its nodes.
 void check_can_network(const Rules& rules, const NetworkConfig& network, const std::string& prefix,
                        const std::vector<NodeOnNetwork>& nodes)
@@ -728,7 +1144,8 @@ void check_can_network(const Rules& rules, const NetworkConfig& network, const s
                 asked + ", and " + and_list(nameless) +
                     (nameless.size() == 1 ? " has no NAME, so it does not take part in the address claim and keeps"
                                           : " have no NAME, so they do not take part in the address claim and keep") +
-                    " sending from that address: give each node its own address",
+                    " sending from that address: give each node its own address; " +
+                    conflict_fix(rules, network, nodes, group, true, false),
                 "", network.name);
         }
         else if (lowest.size() > 1)
@@ -741,14 +1158,15 @@ void check_can_network(const Rules& rules, const NetworkConfig& network, const s
                 asked + "; " + winner->label + " wins the address claim (its NAME is the lowest), and " +
                     and_list(stuck) + (stuck.size() == 1 ? " is" : " are") +
                     " not arbitrary address capable, so it is left without an address (Cannot Claim): give each "
-                    "node its own address",
+                    "node its own address; " + conflict_fix(rules, network, nodes, group, true, false),
                 "", network.name);
         }
         else
         {
             rules.add(Severity::Warning, "address-shared", network.line,
                 asked + "; " + winner->label + " keeps it (its NAME is the lowest) and " + and_list(movers) +
-                    " will claim another address: give each its own address to know where they are",
+                    " will claim another address: give each its own address to know where they are; " +
+                    conflict_fix(rules, network, nodes, group, true, false),
                 "", network.name);
         }
     }
@@ -780,7 +1198,7 @@ void check_can_network(const Rules& rules, const NetworkConfig& network, const s
                        : std::string{};
         rules.add(Severity::Error, "name-conflict", network.line,
             prefix + and_list(labels) + " have the same J1939 NAME " + vehicle_sil::detail::hex64(value) + address +
-                ": each node needs its own NAME (for a second copy of an ECU, change its identity number)",
+                ": each node needs its own NAME; " + conflict_fix(rules, network, nodes, same, oneAddress, true),
             "", network.name);
     }
 }
@@ -981,9 +1399,10 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         {
             continue;
         }
-        const std::string& who = rules.config.participants[i].name;
-        const bool test = rules.config.participants[i].role == ParticipantRole::Test;
-        std::vector<J1939NodeDescription> own;
+        const ParticipantConfig& p = rules.config.participants[i];
+        const std::string& who = p.name;
+        const bool test = p.role == ParticipantRole::Test;
+        std::vector<std::pair<const SeenNetwork*, std::size_t>> own;
         for (const SeenNetwork& seen : rules.seen[i])
         {
             const NetworkDescription& used = seen.network;
@@ -999,7 +1418,10 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                     tests.push_back(who);
                 }
             }
-            own.insert(own.end(), used.nodes.begin(), used.nodes.end());
+            for (std::size_t k = 0; k < used.nodes.size(); ++k)
+            {
+                own.emplace_back(&seen, k);
+            }
             if (used.use == NetworkUse::LinMaster)
             {
                 masters.push_back(who);
@@ -1013,10 +1435,22 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                 macs.emplace_back(who, used.mac);
             }
         }
-        for (std::size_t n = 0; n < own.size(); ++n)
+        // Not while an entry of j1939_nodes takes no node here: its own error says what to correct.
+        if (!rules.j1939_held.contains({i, network.name}))
         {
-            nodes.push_back(
-                NodeOnNetwork{own.size() == 1 ? who : who + " (node " + std::to_string(n + 1) + ")", own[n]});
+            const auto& features = rules.results[i].ecu->description.features;
+            const bool takes = std::find(features.begin(), features.end(), ecu_executable::kFeatureJ1939Node) != features.end();
+            const bool entries = std::any_of(p.j1939_nodes.begin(), p.j1939_nodes.end(),
+                                             [&network](const J1939NodeEntry& e) { return e.network == network.name; });
+            for (std::size_t n = 0; n < own.size(); ++n)
+            {
+                const auto& [seen, k] = own[n];
+                const std::size_t line = seen->node_lines[k];
+                nodes.push_back(NodeOnNetwork{
+                    (own.size() == 1 ? who : who + " (node " + std::to_string(n + 1) + ")") +
+                        (line != 0 ? " (set by j1939_nodes, line " + std::to_string(line) + ")" : std::string{}),
+                    seen->network.nodes[k], i, n, seen->coded_nodes[k].address, line, own.size(), entries, takes});
+            }
         }
         if (test && !own.empty())
         {
@@ -1119,6 +1553,45 @@ void check_network(const Rules& rules, const NetworkConfig& network)
 
 } // namespace
 
+std::optional<Finding> j1939_nodes_unsupported(const ParticipantConfig& participant, const ReportedEcu& ecu,
+                                               std::string_view launcher_version,
+                                               std::span<const J1939NodeSettingFeature> table)
+{
+    const auto& features = ecu.description.features;
+    const auto has = [&features](std::string_view word) {
+        return std::find(features.begin(), features.end(), word) != features.end();
+    };
+    const std::string prefix = participant_prefix(participant.name);
+    const std::string build = "have its author build it again with vehicle-sil " + std::string(launcher_version) + " or later";
+    const std::vector<J1939NodeFeatureNeed> needs = required_j1939_node_features(participant, table);
+    if (needs.empty())
+    {
+        return std::nullopt;
+    }
+    if (!has(ecu_executable::kFeatureJ1939Node))
+    {
+        return Finding{Severity::Error, "j1939-node-unsupported",
+                       prefix + "j1939_nodes needs an executable that takes --j1939-node, and this one does not say that "
+                                "it does (no \"j1939-node\" in the features of its --describe" +
+                           (ecu.vehicle_sil_version.empty() ? std::string{}
+                                                            : "; it was built with vehicle-sil " + ecu.vehicle_sil_version) +
+                           "): " + build + "; until then its addresses and NAMEs change only in its code",
+                       needs.front().line, participant.name, ""};
+    }
+    for (const J1939NodeFeatureNeed& need : needs)
+    {
+        if (!has(need.feature))
+        {
+            return Finding{Severity::Error, "j1939-node-unsupported",
+                           prefix + "j1939_nodes (line " + std::to_string(need.line) + ") sets " + need.setting +
+                               ", which needs \"" + need.feature + "\" in the features of the executable's --describe, "
+                               "and this one does not have it: " + build + ", or leave " + need.setting + " out",
+                           need.line, participant.name, ""};
+        }
+    }
+    return std::nullopt;
+}
+
 control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu)
 {
     return control::MappedSchema::make(ecu.description.variables, participant.variables);
@@ -1146,6 +1619,7 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
         return false;
     };
     Rules rules{config, results, out};
+    rules.launcher_version = std::string(launcher_version);
     rules.seen.resize(config.participants.size());
     for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
     {
@@ -1155,6 +1629,16 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
             for (const NetworkName& entry : unknown_lines(config.participants[i], rules.seen[i]))
             {
                 rules.held.insert(entry.name);
+            }
+            for (const SeenNetwork& seen : rules.seen[i])
+            {
+                if (std::any_of(seen.j1939_matches.begin(), seen.j1939_matches.end(), [](const J1939NodeMatch& m) {
+                        return m.result.match != j1939::NodeOverrideMatch::Applied &&
+                               m.result.match != j1939::NodeOverrideMatch::Skipped;
+                    }))
+                {
+                    rules.j1939_held.emplace(i, seen.network.name);
+                }
             }
         }
     }

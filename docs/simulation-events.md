@@ -479,7 +479,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "timeline-lines",
     "scenario-inputs",
     "network-names",
-    "run-traffic"
+    "run-traffic",
+    "j1939-nodes"
   ]
 }
 ```
@@ -521,6 +522,7 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `scenario-inputs` | The top-level `inputs` of a scenario (a `dither` overlaid on an input) and the `dither` step (see "Overlaying a dither (`dither`)" in [scenario.md](scenario.md#overlaying-a-dither-dither)) |
 | `network-names` | `network_names` in the configuration file (see "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names)) |
 | `run-traffic` | `traffic` in the run result: the J1939 traffic on each network and `delivered` (see "Network traffic (`traffic:`)" in [simulation-run.md](simulation-run.md#network-traffic-traffic)) |
+| `j1939-nodes` | `j1939_nodes` in the configuration file (see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
@@ -539,6 +541,7 @@ Each name indicates that the following are present:
 | `scenario-inputs` | The findings `scenario-dither-*` and `scenario-input-skipped`, `"dither"` as the `kind` of a step in the result and in events, `scenario.inputs` and `scenario.lines` in the check and result JSON, `"dither"` as the `kind` of `lines[]` in the `--timeline` file, and the third column (`columns`) of `series` |
 | `network-names` | `--map-network` passed to executables, `participants[].network_map` in the check JSON, and the findings `network-map-*` |
 | `run-traffic` | The `traffic:` line and table of the human-readable result, and `traffic` in `run --json` and in the event `result` |
+| `j1939-nodes` | `--j1939-node` passed to executables, `participants[].j1939_nodes` in the check JSON, the findings `j1939-node-*`, the end of `address-conflict`, `address-shared` and `name-conflict` that says how to fix them in the configuration file, and `0x01<-0x00` in the participant table of the check |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).

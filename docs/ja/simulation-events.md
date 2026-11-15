@@ -479,7 +479,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "timeline-lines",
     "scenario-inputs",
     "network-names",
-    "run-traffic"
+    "run-traffic",
+    "j1939-nodes"
   ]
 }
 ```
@@ -521,6 +522,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-inputs` | シナリオの最上位の `inputs`（入力に重ねる `dither`）と手順 `dither`（[scenario.md](scenario.md) の「細かい揺れを重ねる（`dither`）」） |
 | `network-names` | 設定ファイルの `network_names`（[simulation-config.md](simulation-config.md) の「ネットワークの名前を合わせる（`network_names`）」） |
 | `run-traffic` | 実行の結果の `traffic`（ネットワークごとの J1939 の送受信の数と `delivered`。[simulation-run.md](simulation-run.md) の「ネットワークの送受信（`traffic:`）」） |
+| `j1939-nodes` | 設定ファイルの `j1939_nodes`（[simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -539,6 +541,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-inputs` | 指摘 `scenario-dither-*` と `scenario-input-skipped`、結果とイベントの手順の `kind` の `"dither"`、照合と結果の JSON の `scenario.inputs` と `scenario.lines`、`--timeline` のファイルの `lines[]` の `kind` の `"dither"` と、`series` の 3 列目（`columns`） |
 | `network-names` | 実行ファイルに渡す `--map-network`、照合の JSON の `participants[].network_map`、指摘 `network-map-*` |
 | `run-traffic` | 人向けの結果の `traffic:` の行と表、`run --json` とイベント `result` の `traffic` |
+| `j1939-nodes` | 実行ファイルに渡す `--j1939-node`、照合の JSON の `participants[].j1939_nodes`、指摘 `j1939-node-*`、`address-conflict`、`address-shared`、`name-conflict` の終わりの設定ファイルでの直し方、照合の participant の表の `0x01<-0x00` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

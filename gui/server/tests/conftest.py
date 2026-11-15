@@ -141,7 +141,7 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
 REPOSITORY = TESTS.parents[2]
 CONTROL_FEATURES = ("events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,"
                     "scenario,manual-participants,scenario-wave,scenario-motion-expect,scenario-points-file,timeline,timeline-lines,scenario-inputs,"
-                    "network-names,run-traffic,control-server")
+                    "network-names,run-traffic,j1939-nodes,control-server")
 
 
 @pytest.fixture(scope="session")

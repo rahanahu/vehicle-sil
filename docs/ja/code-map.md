@@ -821,7 +821,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | 照合の全体の流れ | `src/check.cpp` |
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
-| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で渡す（`seen_networks()`） | `src/check_networks.cpp` |
+| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
@@ -1449,6 +1449,7 @@ flowchart TD
 | ランチャー | 照合のルールと `code` | [照合のルールと `code`](#照合のルールと-code) |
 | ランチャー | 設定ファイルかシナリオのキー、スキーマ | [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) |
 | ランチャー | `network_names` | [設定ファイルの `network_names`](#設定ファイルの-network_names) |
+| ランチャー | `j1939_nodes` | [設定ファイルの `j1939_nodes`](#設定ファイルの-j1939_nodes) |
 | ランチャー | `run --events`、`--stdin-commands`、`version --json` | [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) |
 | ランチャー | 速度、一時停止、ステップ実行、遅れ | [`run` の時間](#run-の時間) |
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
@@ -1615,6 +1616,37 @@ flowchart TD
 
 - `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`）
 - `launch_run.network_names`: 名前の違う ECU が 1 つのバスで通信する、機種で対応が替わる、`manual` のコマンドとイベント、`--map-network` を受け取れない実行ファイル
+- `schema.files_and_launcher`
+
+### 設定ファイルの `j1939_nodes`
+
+`j1939_nodes` は、participant の J1939 のノードに、実行ファイルのコードと別のアドレスと NAME の欄を与えます。
+
+変える場所:
+
+- 読むコードと、設定ファイルだけで分かるエラー: `libs/launch/src/config.cpp` の `read_j1939_nodes()` と `check_j1939_nodes()`
+- 機種の行の重ね方: `lay_j1939_nodes()`、引数にするコード: `j1939_node_arguments()`（行の文字列は `ecu_executable::format_j1939_node_argument()`。`ecu_main` が読み戻します）
+- 自己申告のノードに行を当てるコード: `libs/launch/src/check_networks.cpp` の `seen_networks()`（`j1939::apply_node_overrides()` を使う）
+- 行についての指摘と、`address-conflict`、`address-shared`、`name-conflict` の直し方: `libs/launch/src/check_rules.cpp` の `check_j1939_node_entries()` と `conflict_fix()`
+- 設定ごとに要る `features` の語: `vehicle_sil/launch/config.hpp` の `kJ1939NodeSettingFeatures`（後で足す設定は、自分の語を持ちます）
+
+守ること:
+
+- ランチャーで行を当てるのは `seen_networks()` だけです。ルールは、その結果（`SeenNetwork::j1939_matches`、`unmatched_j1939_entries()`）を読み、当て直しません。
+- 照合と実行ファイルは同じ決まり（`vehicle_sil/j1939/node_override.hpp`）で当てます。`launch.j1939_nodes_match_like_the_network_does` が、同じ場面を `seen_networks()` と `j1939::Network` の両方に通します。
+- ノードに当たらない行があると、その participant のそのネットワークのノードを、アドレスと NAME のルールに入れません（`Rules::j1939_held`）。
+
+合わせて直すドキュメント:
+
+- [simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」と、キーの表、機種の表
+- [simulation-check.md](simulation-check.md) の `j1939-node-*`、`address-conflict`、`address-shared`、`name-conflict`、participant の表、JSON の `j1939_nodes`
+- [simulation-events.md](simulation-events.md) の `features` の `j1939-nodes`
+- スキーマ（`schema/simulation.schema.json` とテンプレートのコピー）
+
+テスト:
+
+- `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`、`test_j1939_nodes_match.cpp`）
+- `launch_run.j1939_nodes`: 同じ ECU の 2 つが行で通信する、行がないと照合が書く行を言う、機種で行が替わる、`manual` のコマンドとイベント、`describe: false` の participant、`--j1939-node` を受け取れない実行ファイル
 - `schema.files_and_launcher`
 
 ### イベント、標準入力のコマンド、`version --json`
@@ -2006,7 +2038,7 @@ flowchart TD
 
 合わせて直すコード（`libs/ecu/include/vehicle_sil/ecu/executable.hpp`。ランチャーと `ecu_main` が同じものを使います）:
 
-- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数。`--map-network` は `network_names` から追加する。メッセージは `config.cpp` の `check_arguments()`）
+- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数。`--map-network` は `network_names` から、`--j1939-node` は `j1939_nodes` から追加する。メッセージは `config.cpp` の `check_arguments()`）
 - 終了コード、`kMaxMillis`
 
 合わせて直すドキュメント:

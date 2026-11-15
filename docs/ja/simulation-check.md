@@ -97,9 +97,9 @@
 | `step-mismatch` | エラー | `step_ms` が、`--describe` の出力のステップ幅と違います（実時間で、ステップ幅のない ECU も）。 | `step_ms` を指摘の文の値に直すか、削除します。 |
 | `unknown-network` | エラー | ECU が、`networks` にないネットワークを使います。 | 1 つのバスのつもりなら、指摘の文が言う `network_names` の行をその participant に書き、別のバスなら `networks` に追加します。 |
 | `kind-mismatch` | エラー | ECU が、ネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使います。`network_names` で名前を替えたネットワークは、指摘の文に両方の名前を書きます: `'VehicleCAN' ('J1939_CAN' in the executable)`。 | `networks` の `kind` か、ECU の側のネットワークを直します。 |
-| `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。 |
-| `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移ります。 | どのノードがどのアドレスにいるかを決めたいなら、ノードごとに別のアドレスにします。 |
-| `name-conflict` | エラー | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じです。 | ノードごとに別の NAME にします（同じ ECU の 2 つ目は、identity number を変えます）。 |
+| `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。指摘の文が、書く `j1939_nodes` の行か、このファイルでは変えられないこと（実行ファイルが `--j1939-node` を受け取れない）を言います。 |
+| `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移ります。 | どのノードがどのアドレスにいるかを決めたいなら、ノードごとに別のアドレスにします（指摘の文が、書く `j1939_nodes` の行を言います）。 |
+| `name-conflict` | エラー | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じです。 | ノードごとに別の NAME にします。`j1939_nodes` で、片方の identity number を変えます（指摘の文が、書く行を言います）。 |
 | `lin-masters` | エラー | 1 つの LIN のネットワークに master が 2 つ以上あります（同じ participant の 2 回も）。 | master を 1 つにします（ほかを slave にするか、`lin_master()` を 1 回だけ呼びます）。 |
 | `lin-no-master` | エラー（`describe: false` の participant がいるときは注記） | LIN の slave がいて、master がいません。 | master になる participant を追加します。 |
 | `ethernet-duplicate-mac` | エラー | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを `--describe` に出力しています。 | participant ごとに別のアドレスにします（`eth::ChannelOptions::mac` と、送信するフレームの送信元のアドレス）。 |
@@ -126,6 +126,17 @@
 | `network-map-unsupported` | エラー | `network_names` を書いた participant の実行ファイルが、`--map-network` を受け取れません（`--describe` の出力の `features` に `map-network` がない。前のバージョンの vehicle-sil で作った実行ファイル）。 | 実行ファイルを作り直すか、`networks` の名前をその実行ファイルの名前にして、ほかの participant の側に対応を書きます。 |
 | `network-map-not-ascii` | エラー | Windows のランチャーだけ: `network_names` のキーか値に、ASCII でない文字があります（Windows の ECU の実行ファイルは、その `--map-network` を拒否する）。 | 対応を書くネットワークの名前を ASCII にします。 |
 | `network-map-not-checked` | 注記 | `describe: false` の participant に `network_names` があります（照合できない）。 | ecu_main の実行ファイルなら対応は不要です。 |
+| `j1939-node-undeclared` | エラー | `j1939_nodes` の行の `network` が `networks` にない、CAN のネットワークでない、または `network_names` が名前を替えたネットワークの、実行ファイルでの名前です。 | ノードの CAN のネットワークの、シミュレーションでの名前を書きます（指摘の文が、近い名前か、`network_names` が付けた名前を言います）。 |
+| `j1939-node-duplicate` | エラー | 同じノード（同じ `network` と `from`）の `j1939_nodes` の行が 2 つ、または `from` のない行と同じネットワークのほかの行があります。何も変えない行も数えます。 | 1 つのノードの設定は 1 行に書きます。1 つのネットワークに 2 行以上あるときは、どの行にも `from` を書きます。 |
+| `j1939-node-not-ascii` | エラー | Windows のランチャーだけ: `j1939_nodes` の行の `network` に ASCII でない文字があります（Windows の ECU の実行ファイルは、そのような `--j1939-node` を断ります）。 | `j1939_nodes` のあるネットワークは ASCII の名前にします。 |
+| `j1939-node-not-checked` | 注記 | `describe: false` の participant に、何かを変える `j1939_nodes` があります（照合できない）。 | ecu_main の実行ファイルなら対応は不要です。 |
+| `j1939-node-unsupported` | エラー | `j1939_nodes` のある participant の実行ファイルが `--j1939-node` を受け取れません（`--describe` の `features` に `j1939-node` がない: 前の vehicle-sil で作った実行ファイル）。 | この版以降の vehicle-sil で実行ファイルを作り直します。 |
+| `j1939-node-unknown` | エラー | `j1939_nodes` の行がどのノードにも当たりません。`from` のアドレスにノードがない、そのネットワークにノードがない、その名前の J1939 のネットワークがない、のどれかです。 | `from`（実行ファイルのコードのアドレス。指摘の文が並べます）か `network` を直すか、行を消します。 |
+| `j1939-node-ambiguous` | エラー | `from` のない行で、実行ファイルがそのネットワークに違うアドレスのノードを持っています。 | 実行ファイルのコードのアドレスで `from` を書きます（指摘の文が並べます）。 |
+| `j1939-node-indistinct` | エラー | 行が選ぶアドレス（`from` があればそのアドレス、なければ全部のノードの同じアドレス）に、実行ファイルのコードがノードを 2 つ以上置いています。設定ファイルでは見分けられません。 | 行を消し、ECU を作る人に、ノードに別々のアドレスを付けるか、引数で受け取るように頼みます。 |
+| `j1939-node-no-name` | エラー | NAME のないノードに、NAME の欄（`identity_number`、`function_instance`、`ecu_instance`）を書いています。 | その設定を消します。そのノードで変えられるのは `address` だけです。 |
+| `j1939-node-any-address` | エラー | NAME が arbitrary address capable でないノードか、NAME のないノードに、`address: 254`（空いているアドレス）を書いています。 | 0..253 のアドレスを書きます。 |
+| `j1939-node-changed` | 注記 | participant の `j1939_nodes` の行が、ノードのアドレスか NAME を変えます（participant ごとに 1 件）。 | 古い値に頼っている ECU がないかを確かめます（下の補足）。 |
 | `variant-participant` | エラー | 機種（`variants`）の `participants` に、設定ファイルの `participants` にない名前があります。 | 名前を直すか、その機種にだけいる participant なら、`participants` に `enabled: false` で書きます。 |
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確認する手順（`expect`、`wait_until`）が、この設定（機種）では全部飛びます。 | 変数の名前が違うだけなら `variables` で対応させ、この機種向けでないシナリオなら、シナリオの `only` に対象の機種を書きます。 |
 | `usage` | エラー | 引数のエラーです（`--json` のときの JSON だけ）。 | 標準エラーの使い方に従って、引数を直します。 |
@@ -151,6 +162,10 @@
 | `variable-map-not-checked` | 合わない対応は、実行の指摘 `variable-map-not-applied` になります。 |
 | `network-map-unknown` | この行が原因の指摘は出しません。値に近い名前の実行ファイルのネットワーク（近い名前がなければ、キーと同じ種類のもの）の `unknown-network` と、キーのネットワークの `unused-network`、`single-participant`、`lin-no-master` です。ほかのネットワークの指摘は出ます。 |
 | `network-map-unsupported` | ほかのルールは、対応を当てた名前で続けます。 |
+| `j1939-node-ambiguous`、`j1939-node-indistinct` | 直す人が違います。`j1939-node-ambiguous` は設定ファイルで直せます（`from` を足す）。`j1939-node-indistinct` は ECU のコードでしか直せません。`from` は同じアドレスのノードを見分けられないためです。 |
+| `j1939-node-*`（ノードに当たらない行のもの） | その participant のそのネットワークのノードは、`address-conflict`、`address-shared`、`name-conflict` に入れません（ファイルが意図した値がわからないため）。そこにいるほかの participant どうしの競合は、今までどおり出します。participant の `network_names` がそのネットワークから遠ざけている行（`network-map-unknown` が言う）には、`j1939-node-unknown` を出しません。 |
+| `j1939-node-unsupported` | ほかの規則は、行が与えるはずの値で見ます（照合が自分で当てます）。実行ファイルを作り直した後に残る指摘と同じものが出ます。その participant には `j1939-node-changed` を出しません。 |
+| `j1939-node-changed` | 変わるノードごとに、コードの値と新しい値を並べます。照合は、古い値に頼っているものを見られません。古いアドレスをコードに書いているほかの ECU（宛先や、送り手の見分け）、古い NAME の全体で探すほかの ECU、ECU 自身のコードの定数（フィルター、送るデータの中の値）です。全部の行がコードと同じ値になる participant と、無効にした participant には出しません。コードで空いているアドレスを取るノードには、アドレスについての文を付けません。 |
 | `network-map-not-checked` | 指摘の文は、その実行で `run` が追加する引数を書きます。引数は、選んだ機種と `--disable` を当てた後の設定で決まり、追加する引数のない participant には出しません。`run` は `--map-network` を追加するので、ecu_main でない実行ファイルは、起動のときに引数のエラーで終わります。 |
 | `scenario-nothing-checked` | シナリオは、何も確認せずに通ります（[scenario.md](scenario.md) の「機種とパラメーター」）。 |
 | `usage` | 機種を書いた設定ファイルに `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます。 |
@@ -169,7 +184,7 @@
 
 ### J1939 のアドレスの重なり
 
-アドレスは、ノードを追加したときに求めたアドレスです（[ecu-executable.md](ecu-executable.md) の `nodes`）。254（任意アドレスの範囲から空いているものを取る）は、重なりとみなしません。同じアドレスを求めるノードについては、vehicle-sil の J1939 スタックの Address Claim で起きることを判定します。
+アドレスは、ノードを追加したときに求めたアドレスです（[ecu-executable.md](ecu-executable.md) の `nodes`）。アドレスと NAME は、participant の `j1939_nodes` を当てた後の値です（[simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」）。行から値の来たノードには、指摘の文で名前の後ろに `(set by j1939_nodes, line 14)` が付きます。254（任意アドレスの範囲から空いているものを取る）は、重なりとみなしません。同じアドレスを求めるノードについては、vehicle-sil の J1939 スタックの Address Claim で起きることを判定します。
 
 | 同じアドレスを求めるノード | 起きること | 重大度 |
 |---|---|---|
@@ -220,7 +235,7 @@
 | 指摘 | 1 つが 1 行で、エラー、警告、注記の順に、それぞれ行の順に並びます。 |
 | 結果の 1 行 | エラー、警告、注記の数です。 |
 
-participant の表では、J1939 のネットワークにノードの求めたアドレスを書きます（`any` は 254）。`network_names` で名前を替えたネットワークは、`VehicleCAN <- J1939_CAN (j1939 0x00)` と、シミュレーションの名前、実行ファイルの名前の順に書きます。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書きます。表の幅は文字の数でそろえるので、全角の文字があるとずれます。
+participant の表では、J1939 のネットワークにノードの求めたアドレスを書きます（`any` は 254）。`network_names` で名前を替えたネットワークは、`VehicleCAN <- J1939_CAN (j1939 0x00)` と、シミュレーションの名前、実行ファイルの名前の順に書きます。`j1939_nodes` でアドレスが変わったノードは、同じ向きで `0x01<-0x00`（矢印の前後に空白なし）と、シミュレーションでのアドレス、コードのアドレスの順に書きます。NAME だけの変化は表に出ません（注記 `j1939-node-changed` が言います）。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書きます。表の幅は文字の数でそろえるので、全角の文字があるとずれます。
 
 指摘の行は、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<コード>]` の形です。
 
@@ -282,9 +297,9 @@ network    kind  participants
 J1939_CAN  can   Engine, Engine2, Dashboard
 Body_LIN   lin   -
 
-error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
+error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME; to do it in this file, write under participant 'Engine2': j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }] [name-conflict]
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes) [unknown-key]
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
@@ -354,6 +369,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順） |
 | `variable_map` | 設定ファイルの `variables` に書いた対応の配列（書いた順）。`variables` を書いた participant だけにあります |
 | `network_map` | 設定ファイルの `network_names` に書いた行の配列（書いた順。機種の行を重ねた後）。`network_names` を書いた participant だけにあります |
+| `j1939_nodes` | 設定ファイルの `j1939_nodes` に書いた行と、各行が当たったノードの配列（書いた順。機種の行を重ねた後）。`j1939_nodes` を書いた participant だけにあります |
 | `control` | ECU が `--describe` に出力した、変数の公開の方法 |
 
 | `status` | 意味 |
@@ -364,7 +380,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `"skipped"` | 設定ファイルのエラーで進めなかった |
 | `"disabled"` | 無効にした（項目にエラーがあっても） |
 
-**`reported`**: キーは `vehicle_sil`、`name`、`step_ns`、`networks` です（`--describe` の JSON と同じ形）。ネットワークの名前は実行ファイルの名前のままで、`network_names` を当てる前です。変数は、次の `variables` にあります。
+**`reported`**: キーは `vehicle_sil`、`name`、`step_ns`、`networks` です（`--describe` の JSON と同じ形）。ネットワークの名前は実行ファイルの名前のままで、`network_names` を当てる前です。ノードのアドレスと NAME も、実行ファイルのコードの値のままで、`j1939_nodes` を当てる前です。変数は、次の `variables` にあります。
 
 **`variables`**: 設定ファイルの `variables`（対応表）を反映した後の名前、型、範囲、単位です。シナリオと Control API が見るものと同じです。対応表がなければ、ECU が出力したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。実行の前に、どの ECU にどの変数があるかを見るのに使います。
 
@@ -390,6 +406,15 @@ failed: 3 errors, 1 warning, 0 notes
 `scale` と `offset` の片方だけを書いたときは、もう片方が既定の 1 か 0 になります。
 
 **`network_map`**: 要素は `name`（シミュレーションの名前）、`line`（設定ファイルの行）、`from`（実行ファイルの名前）です。キーと値が同じ行も含みます。読めなかった行（エラー `value`）は含みません。
+
+**`j1939_nodes`**: 読めなかった行（エラー `value` など）は含みません。要素のキー:
+
+| キー | 値 |
+|---|---|
+| `network` | ネットワークのシミュレーションでの名前 |
+| `line` | 設定ファイルの行 |
+| `from`、`address`、`identity_number`、`function_instance`、`ecu_instance` | 書いた値（数。書いていなければ `null`） |
+| `node` | 行が当たったノード: `coded_address`（実行ファイルのコードのアドレス。`reported` の `address` と同じ）、行を当てた後の `address`、`j1939_name`、`arbitrary_address_capable`（`reported` のノードと同じ形）。どのノードにも当たらない行、何も変えない行、照合していない participant では `null` |
 
 **`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
 
