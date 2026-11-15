@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // run_bridge() with fake hooks: the exit code, the order of stopping (statistics before the SIL
-// Kit participant stops), failures, warnings, the monitor line, and a participant that is still
-// starting. Stops are asked from inside the loop (hooks, participant), so nothing waits for time.
+// Kit participant stops), failures, warnings, the monitor line, the statistics while running,
+// and a participant that is still starting. Stops are asked from inside the loop (hooks, participant), so nothing waits for time.
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -63,10 +63,12 @@ public:
     std::function<std::vector<std::string>(int)> on_warnings = [](int) { return std::vector<std::string>{}; };
     std::function<std::optional<std::string>(int)> on_health = [](int) { return std::nullopt; };
     std::function<void()> on_final_statistics = [] {};
+    std::function<std::string(int)> on_statistics = [](int) { return std::string("stats forwarded=0"); };
 
     std::optional<std::string> fault() override { return on_fault(++faults_); }
     std::vector<std::string> take_warnings() override { return on_warnings(++warnings_); }
     std::optional<std::string> health_line() override { return on_health(++healths_); }
+    std::string statistics_line() override { return on_statistics(++statistics_); }
     void stop() noexcept override { events_.push_back("hooks.stop"); }
     std::vector<std::string> final_statistics() override
     {
@@ -74,9 +76,11 @@ public:
         on_final_statistics();
         return {"stats forwarded=3", "last error: none really"};
     }
+    [[nodiscard]] int statistics_calls() const { return statistics_; }
 
 private:
     Events& events_;
+    int statistics_ = 0;
     int faults_ = 0;
     int warnings_ = 0;
     int healths_ = 0;
@@ -310,4 +314,43 @@ TEST_CASE(run_bridge_forgets_a_stop_requested_before_it_began)
 
     CHECK_EQ(run_bridge(participant, hooks, test_options(events)), 0);
     CHECK_EQ(participant.calls(), 5);
+    CHECK_EQ(hooks.statistics_calls(), 0); // without a statistics interval: only at the end
+}
+
+TEST_CASE(run_bridge_prints_the_statistics_while_running_first_and_then_where_they_changed)
+{
+    Events events;
+    FakeHooks hooks(events);
+    hooks.on_statistics = [](int call) {
+        if (call == 5)
+        {
+            request_stop();
+        }
+        return std::string(call <= 2 ? "stats forwarded=1" : call == 4 ? "stats forwarded=1" : "stats forwarded=2");
+    };
+    ScriptedParticipant participant(events, [](int) { return State::Running; });
+    auto options = test_options(events);
+    options.statistics_interval = 0ms; // asked on every round
+
+    CHECK_EQ(run_bridge(participant, hooks, options), 0);
+    CHECK_EQ(hooks.statistics_calls(), 5);
+    // The first line always; the same line again not; a changed line, also back to an earlier one.
+    CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "stats forwarded=1", "stats forwarded=2", "stats forwarded=1",
+                 "stats forwarded=2", "stopping", "hooks.stop", "hooks.final_statistics", "stats forwarded=3",
+                 "last error: none really", "participant.stop bridge stopped", "stopped");
+}
+
+TEST_CASE(run_bridge_prints_no_statistics_line_before_the_first_interval)
+{
+    // An interval longer than the run: the line is never due, only the final statistics come.
+    Events events;
+    FakeHooks hooks(events);
+    ScriptedParticipant participant(events, running_until_stop(5));
+    auto options = test_options(events);
+    options.statistics_interval = 1h;
+
+    CHECK_EQ(run_bridge(participant, hooks, options), 0);
+    CHECK_EQ(hooks.statistics_calls(), 0);
+    CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "stopping", "hooks.stop", "hooks.final_statistics",
+                 "stats forwarded=3", "last error: none really", "participant.stop bridge stopped", "stopped");
 }

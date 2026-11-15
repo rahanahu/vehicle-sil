@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // What the bridge executable says and decides outside the forwarding itself: which backend can be
-// used on which operating system, the line it prints when it starts, and the hint it gives when
-// answers do not arrive without promiscuous mode. Platform independent so it can be tested anywhere.
+// used on which operating system, the line it prints when it starts, and the hints it gives when
+// answers do not arrive (without promiscuous mode, or from no device at all). Platform independent so it can be tested anywhere.
 #pragma once
 
 #include "vehicle_sil/eth_link/external_link.hpp"
@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vehicle_sil::ethernet_bridge {
 
@@ -56,6 +57,17 @@ public:
 /// ...)".
 [[nodiscard]] std::string format_start_line(const BridgeOptions& options, std::string_view link,
                                             std::optional<bool> promiscuous = std::nullopt);
+
+/// The warning of a bridge on a real adapter that has sent frames out for `after` and got none
+/// from a device there (ext_from_devices is 0; bridge_runtime::NothingCameHint decides when):
+///   "nothing has come from a device on npcap 'vEthernet (A)' (network adapter through Npcap) in
+///    the 10 s since the bridge first sent a frame there (frames from the addresses of this
+///    computer's adapters do not count): if a device is meant to answer, check that it is on, its
+///    cable, and that this is the adapter it is on."
+/// `link`: eth_link::ExternalLink::describe(). `knows_this_computer`: whether the bridge knows the
+/// addresses of this computer's adapters; without them the parenthesis says that frames this
+/// computer sends there would count.
+[[nodiscard]] std::string nothing_came_warning(std::string_view link, bool knows_this_computer, std::chrono::seconds after);
 
 /// Wraps the link of a backend that reaches real adapters and, while the link is not in
 /// promiscuous mode, notices the usual sign of that being the trouble: the bridge sent frames
@@ -101,6 +113,10 @@ public:
     [[nodiscard]] std::string describe() const override { return link_.describe(); }
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
     [[nodiscard]] std::optional<bool> promiscuous() const noexcept override { return link_.promiscuous(); }
+    [[nodiscard]] std::optional<std::vector<eth_link::MacAddress>> this_computer_addresses() const override
+    {
+        return link_.this_computer_addresses();
+    }
 
 private:
     using Addresses = std::array<std::atomic<std::uint64_t>, kMaxAddresses>;

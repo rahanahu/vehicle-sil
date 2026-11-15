@@ -64,6 +64,16 @@ std::string format_start_line(const BridgeOptions& options, std::string_view lin
     return line + "; Ctrl+C to stop";
 }
 
+std::string nothing_came_warning(std::string_view link, bool knows_this_computer, std::chrono::seconds after)
+{
+    const std::string own = knows_this_computer ? "frames from the addresses of this computer's adapters do not count"
+                                                : "the bridge does not know the addresses of this computer's adapters, so frames "
+                                                  "this computer sends there would count";
+    return "nothing has come from a device on " + std::string(link) + " in the " + std::to_string(after.count()) +
+           " s since the bridge first sent a frame there (" + own +
+           "): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.";
+}
+
 PromiscuousHint::PromiscuousHint(eth_link::ExternalLink& link, eth_link::Promiscuous requested,
                                  std::chrono::milliseconds after, Clock clock) :
   link_(link),

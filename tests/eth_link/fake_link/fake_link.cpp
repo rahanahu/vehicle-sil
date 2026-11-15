@@ -136,6 +136,14 @@ void FakeLink::receive_checksum_incomplete(std::span<const std::uint8_t> frame)
     enqueue(Item{LinkEventKind::Frame, Bytes(frame.begin(), frame.end()), 0, {}, {}, true});
 }
 
+void FakeLink::receive_sent_here(std::span<const std::uint8_t> frame)
+{
+    Item item;
+    item.frame.assign(frame.begin(), frame.end());
+    item.sent_here = true;
+    enqueue(std::move(item));
+}
+
 void FakeLink::set_overruns_at_stop(std::uint64_t count)
 {
     const std::lock_guard lock(mutex_);
@@ -259,6 +267,7 @@ void FakeLink::run()
         event.state = item.state;
         event.detail = item.detail;
         event.checksum_incomplete = item.checksum_incomplete;
+        event.sent_here = item.sent_here;
         handler_(event); // handler_ changes only while the thread is not running
         lock.lock();
         delivering_ = false;

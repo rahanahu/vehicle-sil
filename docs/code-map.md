@@ -171,6 +171,7 @@ What the E2E tests check:
 - `--list-channels`, a channel that does not exist, argument errors
 - A registry that cannot be reached, a missing driver
 - The statistics line and exit code 0 after a stop request (skipped on Windows when there is no shared console)
+- The statistics line while running (`--stats-every-ms`) on a channel where nothing answers (`no-answers`)
 
 ### `step`
 
@@ -520,7 +521,10 @@ With fake `hooks` and a fake participant whose states are scripted, they check:
 - The shutdown order (the statistics are printed before the SIL Kit participant stops)
 - `fault()` and participant failures
 - Warnings and health lines
+- The statistics line while running (`RunBridgeOptions::statistics_interval`): the first, then only where it changed
 - A state in the middle of startup is not treated as a failure; the startup limit
+
+The rule of the hint that nothing came from a device (`NothingCameHint`) is checked with the time given by the test.
 
 One test uses a real participant with an in-process registry (on a free port). The message for a registry that cannot be reached (`registry_failure_message()`) is also checked with the text that SIL Kit actually throws.
 
@@ -914,7 +918,9 @@ Command-line handling shared by the executables (target `vehicle_sil_cli`).
 | `run_bridge()`, `BridgeHooks`, `judge_participant_state()`, `request_stop()`, `finish_console_close()` | `bridge_runtime/run_bridge.hpp` |
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`, `BridgeDescription` (`--describe` of a bridge) | `bridge_runtime/describe.hpp` |
+| `NothingCameHint`, `kNothingCameAfter` (when a bridge says that nothing came from a device) | `bridge_runtime/nothing_came_hint.hpp` |
 
+- Threads: the counts of a bridge are atomics that the receive threads (the external link's, SIL Kit's) add to. Only the thread of `run_bridge()` reads them, for the statistics line (`BridgeHooks::statistics_line()`) and the hint (`take_warnings()`); `NothingCameHint` has no lock for that reason.
 - Tests: `tests/bridge_runtime`, the E2E tests of the bridge executable (`integration.*` in `tests/vector_xl`)
 - `ctest -R`: `^bridge_runtime\.`, `^vector_xl\.integration\.`
 
@@ -932,7 +938,7 @@ In this entry, "external link" means a connection to an interface outside SIL Ki
 | `make_pcap_link()`, `pcap_interfaces()`, `format_pcap_interface_list()`, `pcap_interface_argument()` | `eth_link/pcap_link.hpp` (implemented in `libs/eth_link/src/pcap`) |
 | `EthernetBridge` | `ethernet_bridge/ethernet_bridge.hpp` |
 | `parse_bridge_options()` | `ethernet_bridge/bridge_options.hpp` |
-| `format_start_line()`, `backend_unavailable()`, `PromiscuousHint` | `ethernet_bridge/bridge_app.hpp` |
+| `format_start_line()`, `backend_unavailable()`, `PromiscuousHint`, `nothing_came_warning()` | `ethernet_bridge/bridge_app.hpp` |
 | The text and the JSON of `--list-interfaces` (`pcap_interfaces_json()` and others) | `ethernet_bridge/interface_list.hpp` |
 | Executable | `bridges/ethernet/app/main.cpp` |
 | Where external links are created | `app/link_factory.hpp`, `app/os_link_factory.cpp` |
@@ -1399,7 +1405,7 @@ flowchart TD
 | `vector_xl`, `vehicle_sil_vector_xl_bridge` | Only on Windows, when the XL Driver Library is available |
 | `bridge_runtime` (`bridges/common`) | On every platform |
 
-`bridge_runtime` keeps the shutdown, the monitoring loop, the exit codes and the `--describe` output of the bridge executables in one place.
+`bridge_runtime` keeps the shutdown, the monitoring loop, the statistics line while running, the hint that nothing came from a device, the exit codes and the `--describe` output of the bridge executables in one place.
 
 ```mermaid
 flowchart TD

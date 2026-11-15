@@ -9,6 +9,7 @@
 #include <silkit/util/HandlerId.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -117,9 +118,15 @@ struct CanBridgeStatistics
     std::uint64_t external_transmit_unsent = 0;  ///< Accepted frames lost unsent (at stop, at a bus-off restart).
 };
 
-/// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter. The key names are
-/// part of the bridge's documented output (docs/bridges.md); tests parse them.
+/// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter, in the order of
+/// CanBridgeStatistics. The keys and their order are part of the bridge's documented output
+/// (docs/bridges.md), for programs that read the line; tests hold them.
 [[nodiscard]] std::string format_statistics(const CanBridgeStatistics& statistics);
+
+/// The warning of a bridge that has sent frames to the XL channel for `after` and got none from a
+/// device there (xl_to_silkit is 0; bridge_runtime::NothingCameHint decides when). `channel`:
+/// what the start line names ("XL 'Virtual Channel 1'").
+[[nodiscard]] std::string nothing_came_warning(std::string_view channel, std::chrono::seconds after);
 
 /// What the bridge knows about the external bus at one moment (CanBridge::health()).
 struct CanBridgeHealth

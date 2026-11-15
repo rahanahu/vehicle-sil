@@ -40,6 +40,9 @@ inline constexpr std::size_t kMaxMacTableSize = eth_link::MacSideTable::kMaxCapa
 inline constexpr std::uint64_t kMaxStartTimeoutMs = 1'000'000'000'000;
 /// How long the bridge waits for its participant to run in SIL Kit without --start-timeout-ms.
 inline constexpr std::chrono::milliseconds kDefaultStartTimeout{15000};
+/// The range of --stats-every-ms.
+inline constexpr std::uint64_t kMinStatisticsIntervalMs = 100;
+inline constexpr std::uint64_t kMaxStatisticsIntervalMs = 3'600'000;
 
 struct BridgeOptions
 {
@@ -56,6 +59,9 @@ struct BridgeOptions
     std::string participant = "EthernetBridge";
     /// --start-timeout-ms: how long ParticipantRuntime::start() waits for Running.
     std::chrono::milliseconds start_timeout = kDefaultStartTimeout;
+    /// --stats-every-ms: print the statistics line while running, at this interval where it
+    /// changed. Unset: only once, when the bridge stops.
+    std::optional<std::chrono::milliseconds> statistics_interval;
     /// The SIL Kit Ethernet network. No default: the bridge never joins a network by mistake.
     std::string network;
 

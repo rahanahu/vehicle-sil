@@ -13,7 +13,9 @@
 #ifdef __linux__
 #include "../linux/linux_link.hpp"
 
+#include <linux/if_packet.h>
 #include <net/if.h>
+#include <sys/socket.h>
 #endif
 
 #include <algorithm>
@@ -30,6 +32,12 @@ namespace {
 static_assert(sizeof(timeval) == 2 * sizeof(long) && offsetof(timeval, tv_usec) == offsetof(PcapPacketHeader, microseconds) &&
                   offsetof(PcapPacketHeader, captured_bytes) == sizeof(timeval) && sizeof(PcapPacketHeader) == sizeof(timeval) + 8,
               "PcapPacketHeader (pcap_api.hpp) does not begin like this system's struct timeval: write it for this system");
+#ifdef __linux__
+// The link layer address in libpcap's list of devices (pcap_link.cpp reads it with these numbers).
+static_assert(AF_PACKET == kPcapPacketFamily && offsetof(sockaddr_ll, sll_halen) == kPcapPacketAddressLengthAt &&
+                  offsetof(sockaddr_ll, sll_addr) == kPcapPacketAddressAt,
+              "struct sockaddr_ll of this system is not laid out as pcap_api.hpp says");
+#endif
 
 /// The names libpcap is installed under: the first is the library's own (Fedora and others), the
 /// second is Debian's and Ubuntu's.

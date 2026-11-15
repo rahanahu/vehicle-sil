@@ -177,6 +177,19 @@ TEST_CASE(app_start_line_of_a_tap_says_nothing_about_promiscuous_mode)
                "device in this computer): SIL Kit MAC 02:00:00:00:00:01 only, both ways; MAC guard on; Ctrl+C to stop");
 }
 
+TEST_CASE(app_nothing_came_warning_names_the_adapter_and_what_does_not_count)
+{
+    CHECK_TEXT(nothing_came_warning("npcap 'vEthernet (A)' (network adapter through Npcap)", true, 10s),
+               "nothing has come from a device on npcap 'vEthernet (A)' (network adapter through Npcap) in the 10 s since the "
+               "bridge first sent a frame there (frames from the addresses of this computer's adapters do not count): if a "
+               "device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.");
+    CHECK_TEXT(nothing_came_warning("pcap 'enp3s0' (network interface through libpcap)", false, 10s),
+               "nothing has come from a device on pcap 'enp3s0' (network interface through libpcap) in the 10 s since the "
+               "bridge first sent a frame there (the bridge does not know the addresses of this computer's adapters, so frames "
+               "this computer sends there would count): if a device is meant to answer, check that it is on, its cable, and "
+               "that this is the adapter it is on.");
+}
+
 TEST_CASE(app_promiscuous_hint_warns_once_when_nothing_answers_the_silkit_side)
 {
     Hinted h;
@@ -320,6 +333,13 @@ TEST_CASE(app_promiscuous_hint_passes_the_link_through_and_starts_over)
     Hinted h;
     CHECK_TEXT(h.hint.describe(), "fake 'enp3s0' (virtual)");
     CHECK(!h.hint.echoes_own_transmissions());
+    CHECK(!h.hint.this_computer_addresses().has_value());
+    // The wrapped link's answer: without it the bridge would count this computer's frames as
+    // frames from devices.
+    const std::vector<vehicle_sil::eth_link::MacAddress> addresses{*vehicle_sil::eth_link::parse_mac_address("02:00:00:00:00:f0"),
+                                                                   *vehicle_sil::eth_link::parse_mac_address("02:00:00:00:00:f1")};
+    h.link.set_this_computer_addresses(addresses);
+    CHECK(h.hint.this_computer_addresses() == std::optional<std::vector<vehicle_sil::eth_link::MacAddress>>(addresses));
     h.send(kDevice, kEcu);
     CHECK_EQ(h.link.transmitted().size(), std::size_t{1});
     h.hint.stop();

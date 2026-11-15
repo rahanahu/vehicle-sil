@@ -63,6 +63,9 @@ struct PcapDevice
     std::string description; ///< the library's text, or empty
     std::string connection;  ///< the OS's name of the network connection (Windows), or empty
     std::uint32_t flags = 0; ///< the library's PCAP_IF_* flags
+    /// The interface's MAC address: on Linux from the library's list, on Windows from the OS
+    /// (with the connection name). nullopt where neither tells.
+    std::optional<MacAddress> hardware_address{};
 
     [[nodiscard]] bool up() const noexcept;
     [[nodiscard]] bool loopback() const noexcept;

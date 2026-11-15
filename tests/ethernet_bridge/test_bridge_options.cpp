@@ -205,6 +205,21 @@ TEST_CASE(options_start_timeout_is_how_long_the_start_may_take)
     }
 }
 
+TEST_CASE(options_stats_every_is_how_often_the_statistics_line_comes_while_running)
+{
+    CHECK(!parse(with({})).statistics_interval.has_value()); // once, at the end
+    CHECK(parse(with({"--stats-every-ms", "1000"})).statistics_interval == std::chrono::milliseconds(1000));
+    CHECK(parse(with({"--stats-every-ms", "100"})).statistics_interval == std::chrono::milliseconds(100));
+    CHECK(parse(with({"--stats-every-ms", "3600000"})).statistics_interval == std::chrono::milliseconds(3600000));
+    for (const std::string_view bad : {"99", "3600001", "0", "-1", "1s", "", "18446744073709551616"})
+    {
+        CHECK_TEXT(usage_error(with({"--stats-every-ms", bad})),
+                   "--stats-every-ms must be between 100 and 3600000, got: " + std::string(bad));
+    }
+    CHECK_TEXT(usage_error(with({"--stats-every-ms"})), "missing value for --stats-every-ms");
+    CHECK(bridge_usage().find("--stats-every-ms <ms>") != std::string::npos);
+}
+
 TEST_CASE(options_describe_needs_no_registry_and_checks_the_rest_as_a_run_does)
 {
     const auto o = parse({"--describe", "--name", "EthBridge", "--network", "ETH1", "--backend", "npcap", "--interface",

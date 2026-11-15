@@ -41,6 +41,8 @@ std::string bridge_usage()
            "  --name <name>            SIL Kit participant name (VectorXlBridge)\n"
            "  --participant <name>     the same as --name\n"
            "  --start-timeout-ms <ms>  how long to wait for the participant to run in SIL Kit (15000)\n"
+           "  --stats-every-ms <ms>    also print the statistics line while running, at this interval\n"
+           "                           where it changed, 100..3600000 (without it: once, when stopping)\n"
            "  --network <name>         SIL Kit CAN network (J1939_CAN1)\n"
            "  --xl-target <target>     virtual: Vector Virtual CAN, physical: CAN hardware (CANcase, VN16xx)\n"
            "  --xl-channel <n>         1-based channel number within the target, see --list-channels\n"
@@ -126,6 +128,18 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
                 throw BridgeUsageError("--start-timeout-ms must be between 1 and " + std::to_string(kMaxStartTimeoutMs));
             }
             options.start_timeout = std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(ms));
+        }
+        else if (key == "stats-every-ms")
+        {
+            std::uint64_t ms = 0;
+            const auto* const end = value.data() + value.size();
+            const auto [ptr, ec] = std::from_chars(value.data(), end, ms, 10);
+            if (value.empty() || ec != std::errc{} || ptr != end || ms < kMinStatisticsIntervalMs || ms > kMaxStatisticsIntervalMs)
+            {
+                throw BridgeUsageError("--stats-every-ms must be between " + std::to_string(kMinStatisticsIntervalMs) + " and " +
+                                       std::to_string(kMaxStatisticsIntervalMs) + ", got: " + std::string(value));
+            }
+            options.statistics_interval = std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(ms));
         }
         else if (key == "network")
         {

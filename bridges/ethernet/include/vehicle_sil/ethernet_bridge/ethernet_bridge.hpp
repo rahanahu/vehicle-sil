@@ -43,6 +43,14 @@ struct EthernetBridgeStatistics
 {
     std::uint64_t silkit_to_ext = 0;      ///< Frames from SIL Kit sent to the external link.
     std::uint64_t ext_to_silkit = 0;      ///< Frames from the external link handed to SIL Kit.
+    /// Frames from the external link that this computer did not send: not marked as sent here
+    /// (eth_link::LinkEvent::sent_here), not from an address of this computer's adapters
+    /// (eth_link::ExternalLink::this_computer_addresses()), and not from an address of the SIL
+    /// Kit side (--src-mac, and with the MAC guard the sources of the frames sent out). Counted
+    /// before the filter: a device that answers counts even where the filter does not let its
+    /// frames in. Not counted: frames shorter than a header or longer than the maximum, and frames
+    /// before the SIL Kit controller is activated.
+    std::uint64_t ext_from_devices = 0;
     std::uint64_t own_tx_dropped = 0;     ///< The bridge's own frames that came back from the link.
     std::uint64_t loop_suspected = 0;     ///< Frames whose source MAC is on both sides.
     /// Frames forwarded without the check against loops: their source did not fit in the MAC table.
@@ -62,8 +70,9 @@ struct EthernetBridgeStatistics
     std::uint64_t ext_checksum_incomplete = 0;
 };
 
-/// One line "stats silkit_to_ext=N ext_to_silkit=N ..." with every counter. The key names are
-/// part of the bridge's documented output (docs/ethernet-bridge.md); tests parse them.
+/// One line "stats silkit_to_ext=N ext_to_silkit=N ext_from_devices=N ..." with every counter, in
+/// the order of EthernetBridgeStatistics. The keys and their order are part of the bridge's
+/// documented output (docs/ethernet-bridge.md), for programs that read the line; tests hold them.
 [[nodiscard]] std::string format_statistics(const EthernetBridgeStatistics& statistics);
 
 /// What the bridge knows about the link at one moment (EthernetBridge::health()).
@@ -157,16 +166,28 @@ public:
     [[nodiscard]] std::vector<std::string> take_warnings();
     [[nodiscard]] std::string last_error() const;
     [[nodiscard]] const eth_link::FrameFilter& filter() const noexcept { return filter_; }
+    /// The addresses of this computer's adapters as start() learned them from the link
+    /// (eth_link::ExternalLink::this_computer_addresses()): frames from them do not count in
+    /// ext_from_devices. nullopt: the link cannot tell (then they count). Call it from the thread
+    /// that calls start().
+    [[nodiscard]] const std::optional<std::vector<eth_link::MacAddress>>& this_computer_addresses() const noexcept
+    {
+        return this_computer_;
+    }
 
 private:
     void on_silkit_frame(const SilKit::Services::Ethernet::EthernetFrameEvent& event);
     void on_silkit_transmit(const SilKit::Services::Ethernet::EthernetFrameTransmitEvent& event);
     void on_external_event(const eth_link::LinkEvent& event);
-    void on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete);
+    void on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete, bool sent_here);
     /// Whether a frame from the outside whose source is on the SIL Kit side is the bridge's own
     /// coming back. Today: whether the link echoes its transmissions at all. (A link that echoes
     /// could keep a record of the frames sent and match them here, to find a second bridge.)
     [[nodiscard]] bool is_own_frame_coming_back(std::span<const std::uint8_t> frame) const noexcept;
+    /// Whether `source` is one of the SIL Kit side's addresses of the filter (--src-mac).
+    [[nodiscard]] bool is_listed_silkit_address(const eth_link::MacAddress& source) const noexcept;
+    /// Whether `source` is one of this_computer_.
+    [[nodiscard]] bool is_this_computer(const eth_link::MacAddress& source) const noexcept;
     /// Undoes start(): removes the SIL Kit frame handler, stops the link if it was started,
     /// removes the transmit handler and deactivates the controller if it was activated.
     void teardown(bool external_started, bool silkit_activated) noexcept;
@@ -194,9 +215,13 @@ private:
     bool watch_for_sent_frames_ = false; // set by start() before the link starts
     std::atomic<std::uint64_t> last_sent_mark_{0}; ///< 0: nothing sent yet
     std::atomic<bool> sent_frame_came_back_{false};
+    /// Set by start() once the link has started, while controller_started_ is false: the link's
+    /// receive thread reads it only after it saw controller_started_ true (set after it).
+    std::optional<std::vector<eth_link::MacAddress>> this_computer_;
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};
     std::atomic<std::uint64_t> ext_to_silkit_{0};
+    std::atomic<std::uint64_t> ext_from_devices_{0};
     std::atomic<std::uint64_t> own_tx_dropped_{0};
     std::atomic<std::uint64_t> loop_suspected_{0};
     std::atomic<std::uint64_t> mac_unguarded_{0};

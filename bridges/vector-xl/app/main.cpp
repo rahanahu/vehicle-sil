@@ -9,6 +9,7 @@
 //               connection lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
@@ -51,10 +52,27 @@ constexpr auto kSilKitShutdownTimeout = std::chrono::milliseconds(2000);
 class XlBridgeHooks final : public bridge_runtime::BridgeHooks
 {
 public:
-    explicit XlBridgeHooks(CanBridge& bridge) : bridge_(bridge), reported_(bridge.health()) {}
+    /// `channel`: what the start line names ("XL 'Virtual Channel 1'").
+    XlBridgeHooks(CanBridge& bridge, const std::string& channel) :
+      bridge_(bridge),
+      reported_(bridge.health()),
+      nothing_came_([channel] { return nothing_came_warning(channel, bridge_runtime::kNothingCameAfter); })
+    {
+    }
 
     std::optional<std::string> fault() override { return bridge_.fault(); }
-    std::vector<std::string> take_warnings() override { return bridge_.take_warnings(); }
+    std::vector<std::string> take_warnings() override
+    {
+        auto warnings = bridge_.take_warnings();
+        const auto counts = bridge_.statistics();
+        // The receipts of the bridge's own frames are not in external_to_silkit (own_tx_dropped).
+        if (auto hint = nothing_came_.look(counts.silkit_to_external, counts.external_to_silkit, std::chrono::steady_clock::now()))
+        {
+            warnings.push_back(std::move(*hint));
+        }
+        return warnings;
+    }
+    std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
         const CanBridgeHealth now = bridge_.health();
@@ -66,7 +84,7 @@ public:
     void stop() noexcept override { bridge_.stop(); }
     std::vector<std::string> final_statistics() override
     {
-        std::vector<std::string> lines{format_statistics(bridge_.statistics())};
+        std::vector<std::string> lines{statistics_line()};
         if (auto error = bridge_.last_error(); !error.empty())
         {
             lines.push_back("last error: " + error);
@@ -78,6 +96,7 @@ private:
     CanBridge& bridge_;
     CanBridgeHealth reported_;
     bool problems_before_ = false;
+    bridge_runtime::NothingCameHint nothing_came_;
 };
 
 /// The participant, connected to the registry. A registry that does not answer is the usual first
@@ -228,9 +247,11 @@ int run(const BridgeOptions& options)
     }
     bridge_runtime::RunBridgeOptions runOptions;
     runOptions.tag = kTag;
+    const std::string xlChannel = "XL '" + channel.name + "'";
     runOptions.ready_line = "bridging SIL Kit network '" + options.network + "' (participant '" + options.participant
-                            + "', " + options.registry_uri + ") <-> XL '" + channel.name + "'; Ctrl+C to stop";
-    XlBridgeHooks hooks(*bridge);
+                            + "', " + options.registry_uri + ") <-> " + xlChannel + "; Ctrl+C to stop";
+    runOptions.statistics_interval = options.statistics_interval;
+    XlBridgeHooks hooks(*bridge, xlChannel);
     return bridge_runtime::run_bridge(*runtime, hooks, runOptions);
 }
 

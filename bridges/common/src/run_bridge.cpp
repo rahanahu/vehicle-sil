@@ -8,7 +8,10 @@
 
 #include <atomic>
 #include <csignal>
+#include <optional>
+#include <string>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -138,6 +141,8 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
     int result = cli::kExitOk;
     const auto began = std::chrono::steady_clock::now();
     auto nextReport = began + options.health_interval;
+    auto nextStatistics = began + options.statistics_interval.value_or(std::chrono::milliseconds{0});
+    std::optional<std::string> printedStatistics; // the last statistics line printed while running
     bool reachedRunning = false;
     bool noticedStarting = false;
     while (g_stop_requested.load() == 0)
@@ -192,6 +197,21 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
             if (const auto line = hooks.health_line())
             {
                 print(*line);
+            }
+        }
+        if (options.statistics_interval && std::chrono::steady_clock::now() >= nextStatistics)
+        {
+            // From the time it was due, so that a slow round does not shift the next ones; a round
+            // late by more than one interval asks once.
+            do
+            {
+                nextStatistics += *options.statistics_interval;
+            } while (options.statistics_interval->count() > 0 && nextStatistics <= std::chrono::steady_clock::now());
+            std::string line = hooks.statistics_line();
+            if (line != printedStatistics)
+            {
+                print(line);
+                printedStatistics = std::move(line);
             }
         }
         std::this_thread::sleep_for(options.poll_interval);

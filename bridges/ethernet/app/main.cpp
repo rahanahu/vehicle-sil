@@ -13,6 +13,7 @@
 #include "pcap_library.hpp"
 
 #include "vehicle_sil/bridge_runtime/describe.hpp"
+#include "vehicle_sil/bridge_runtime/nothing_came_hint.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
@@ -55,10 +56,13 @@ constexpr auto kSilKitShutdownTimeout = std::chrono::milliseconds(2000);
 class EthernetBridgeHooks final : public bridge_runtime::BridgeHooks
 {
 public:
-    /// `hint`: null when the link has no promiscuous mode (tap).
-    EthernetBridgeHooks(EthernetBridge& bridge, PromiscuousHint* hint, std::string interface_name) :
+    /// `hint`: null when the link has no promiscuous mode (tap). `nothing_came`: null when the
+    /// link stays in this computer (tap).
+    EthernetBridgeHooks(EthernetBridge& bridge, PromiscuousHint* hint, std::unique_ptr<bridge_runtime::NothingCameHint> nothing_came,
+                        std::string interface_name) :
       bridge_(bridge),
       hint_(hint),
+      nothing_came_(std::move(nothing_came)),
       interface_name_(std::move(interface_name)),
       reported_(bridge.health())
     {
@@ -75,8 +79,17 @@ public:
                 warnings.push_back(std::move(*hint));
             }
         }
+        if (nothing_came_)
+        {
+            const auto counts = bridge_.statistics();
+            if (auto hint = nothing_came_->look(counts.silkit_to_ext, counts.ext_from_devices, std::chrono::steady_clock::now()))
+            {
+                warnings.push_back(std::move(*hint));
+            }
+        }
         return warnings;
     }
+    std::string statistics_line() override { return format_statistics(bridge_.statistics()); }
     std::optional<std::string> health_line() override
     {
         const EthernetBridgeHealth now = bridge_.health();
@@ -88,7 +101,7 @@ public:
     void stop() noexcept override { bridge_.stop(); }
     std::vector<std::string> final_statistics() override
     {
-        std::vector<std::string> lines{format_statistics(bridge_.statistics())};
+        std::vector<std::string> lines{statistics_line()};
         if (auto error = bridge_.last_error(); !error.empty())
         {
             lines.push_back("last error: " + error);
@@ -99,6 +112,7 @@ public:
 private:
     EthernetBridge& bridge_;
     PromiscuousHint* hint_;
+    const std::unique_ptr<bridge_runtime::NothingCameHint> nothing_came_;
     const std::string interface_name_;
     EthernetBridgeHealth reported_;
     bool problems_before_ = false;
@@ -204,7 +218,17 @@ int run(const BridgeOptions& options)
     bridge_runtime::RunBridgeOptions runOptions;
     runOptions.tag = kTag;
     runOptions.ready_line = format_start_line(options, external.describe(), external.promiscuous());
-    EthernetBridgeHooks hooks(bridge, hint.get(), options.interface_name);
+    runOptions.statistics_interval = options.statistics_interval;
+    std::unique_ptr<bridge_runtime::NothingCameHint> nothingCame;
+    if (reaches_real_adapters(*options.backend))
+    {
+        nothingCame = std::make_unique<bridge_runtime::NothingCameHint>(
+            [&bridge, &external] {
+                return nothing_came_warning(external.describe(), bridge.this_computer_addresses().has_value(),
+                                            bridge_runtime::kNothingCameAfter);
+            });
+    }
+    EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name);
     return bridge_runtime::run_bridge(runtime, hooks, runOptions);
 }
 

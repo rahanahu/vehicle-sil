@@ -51,6 +51,13 @@ std::string format_statistics(const CanBridgeStatistics& s)
     return line;
 }
 
+std::string nothing_came_warning(std::string_view channel, std::chrono::seconds after)
+{
+    return "nothing has come from a device on " + std::string(channel) + " in the " + std::to_string(after.count()) +
+           " s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and "
+           "termination, the bit rate, and that this is the channel it is on.";
+}
+
 std::string_view to_string(ExternalBusState::Level level) noexcept
 {
     switch (level)

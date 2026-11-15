@@ -43,6 +43,10 @@ constexpr std::uint16_t kExperimental = 0x88B5;
 const char* const kEcu = "02:00:00:00:00:01";
 const char* const kOutside = "02:00:00:00:00:99";
 const char* const kBroadcast = "ff:ff:ff:ff:ff:ff";
+/// Addresses of this computer's adapters: what this computer sends on the interface comes from
+/// one of them (kThisComputer is the one of the interface, kOtherAdapter of another adapter).
+const char* const kOtherAdapter = "02:00:00:00:00:f1";
+const char* const kThisComputer = "02:00:00:00:00:f0";
 
 /// "02:00:00:00:01:nn"
 std::string numbered_mac(unsigned n)
@@ -59,10 +63,17 @@ struct Fixture
     EthernetBridge bridge;
 
     /// `echo`: the link returns the bridge's own frames (no link of vehicle-sil does today).
-    explicit Fixture(EthernetBridgeOptions options = {}, bool echo = false) :
+    /// `thisComputer`: the link knows this computer's addresses, kOtherAdapter and kThisComputer
+    /// (ExternalLink::this_computer_addresses()).
+    explicit Fixture(EthernetBridgeOptions options = {}, bool echo = false, bool thisComputer = false) :
       bridge(silkit, link, std::move(options))
     {
         link.set_echo_own(echo);
+        if (thisComputer)
+        {
+            link.set_this_computer_addresses(std::vector<vehicle_sil::eth_link::MacAddress>{
+                *vehicle_sil::eth_link::parse_mac_address(kOtherAdapter), *vehicle_sil::eth_link::parse_mac_address(kThisComputer)});
+        }
         bridge.start();
         bridge.start_controller(); // what the participant's CommunicationReady handler does
     }
@@ -499,6 +510,91 @@ TEST_CASE(bridge_filtered_frames_are_not_learned)
     CHECK_EQ(f.bridge.statistics().loop_suspected, std::uint64_t{0});
 }
 
+TEST_CASE(bridge_counts_frames_from_devices_but_not_from_this_computer)
+{
+    Fixture f({}, false, true);
+    CHECK(f.bridge.this_computer_addresses().has_value());
+    f.segment.send(make_frame(kBroadcast, kThisComputer, 0x86DD)); // this computer's OS: forwarded, not counted
+    f.segment.send(make_frame(kBroadcast, kOtherAdapter, 0x86DD)); // the same, from another adapter of it
+    f.segment.send(make_frame(kEcu, kOutside, kExperimental));      // a device
+    f.segment.send(make_frame(kBroadcast, kOutside, 0x0806));
+    f.link.receive_sent_here(make_frame(kBroadcast, "02:00:00:00:00:77", 0x0806)); // sent here, from any address
+    CHECK(eventually([&] { return f.silkit.sent_count() == 5; }, 5000ms));
+    CHECK(f.settled());
+    const auto s = f.bridge.statistics();
+    CHECK_EQ(s.ext_to_silkit, std::uint64_t{5});
+    CHECK_EQ(s.ext_from_devices, std::uint64_t{2});
+}
+
+TEST_CASE(bridge_counts_no_frame_from_the_sil_kit_side)
+{
+    {
+        // An address --src-mac names.
+        EthernetBridgeOptions options;
+        options.filter.silkit_macs = {*vehicle_sil::eth_link::parse_mac_address(kEcu)};
+        Fixture f(options, false, true);
+        f.segment.send(make_frame(kBroadcast, kEcu, kExperimental));
+        CHECK(eventually([&] { return f.bridge.statistics().loop_suspected == 1 && f.segment.idle(); }, 5000ms));
+        CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{0});
+    }
+    {
+        // An address the bridge learned from SIL Kit, sending out.
+        Fixture f({}, false, true);
+        f.silkit.deliver(make_frame(kOutside, kEcu, kExperimental));
+        f.segment.send(make_frame(kBroadcast, kEcu, kExperimental));
+        CHECK(eventually([&] { return f.bridge.statistics().loop_suspected == 1 && f.segment.idle(); }, 5000ms));
+        CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{0});
+    }
+}
+
+TEST_CASE(bridge_counts_no_frame_of_its_own_that_the_link_gives_back)
+{
+    Fixture f({}, true, true);
+    f.silkit.deliver(make_frame(kBroadcast, kEcu, kExperimental));
+    CHECK(eventually([&] { return f.bridge.statistics().own_tx_dropped == 1 && f.segment.idle(); }, 5000ms));
+    CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{0});
+}
+
+TEST_CASE(bridge_counts_frames_from_devices_before_the_filter)
+{
+    // The device answers in a way the filter keeps out of SIL Kit: it is there all the same.
+    EthernetBridgeOptions options;
+    options.filter.ether_types = {kExperimental};
+    Fixture f(options, false, true);
+    f.segment.send(make_frame(kEcu, kOutside, 0x0800));
+    f.segment.send(make_frame(kEcu, kThisComputer, 0x0800));
+    CHECK(eventually([&] { return f.bridge.statistics().filtered_from_ext == 2 && f.segment.idle(); }, 5000ms));
+    CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{1});
+    CHECK_EQ(f.silkit.sent_count(), std::size_t{0});
+}
+
+TEST_CASE(bridge_without_mac_guard_counts_by_the_src_mac_addresses)
+{
+    // No table: only the --src-mac list tells the SIL Kit side. An address that SIL Kit sent from
+    // and that is not listed counts (on a link that gives frames back, the bridge's own would).
+    EthernetBridgeOptions options;
+    options.mac_guard = false;
+    options.filter.silkit_macs = {*vehicle_sil::eth_link::parse_mac_address(kEcu)};
+    Fixture f(options, false, true);
+    f.segment.send(make_frame(kBroadcast, kEcu, kExperimental));           // listed: not counted
+    f.segment.send(make_frame(kBroadcast, kThisComputer, kExperimental));  // this computer: not counted
+    f.segment.send(make_frame(kBroadcast, kOutside, kExperimental));       // a device
+    f.segment.send(make_frame("02:00:00:00:00:44", kOutside, kExperimental)); // a device, filtered: counted
+    CHECK(eventually([&] { return f.bridge.statistics().filtered_from_ext == 1 && f.silkit.sent_count() == 3; }, 5000ms));
+    CHECK(f.settled());
+    CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{2});
+}
+
+TEST_CASE(bridge_on_a_link_that_does_not_know_its_address_counts_every_outside_source)
+{
+    Fixture f;
+    CHECK(!f.bridge.this_computer_addresses().has_value());
+    f.segment.send(make_frame(kBroadcast, kThisComputer, kExperimental));
+    CHECK(eventually([&] { return f.silkit.sent_count() == 1; }, 5000ms));
+    CHECK(f.settled());
+    CHECK_EQ(f.bridge.statistics().ext_from_devices, std::uint64_t{1});
+}
+
 TEST_CASE(bridge_counts_oversize_and_malformed_frames)
 {
     EthernetBridgeOptions options;
@@ -516,6 +612,7 @@ TEST_CASE(bridge_counts_oversize_and_malformed_frames)
     CHECK_EQ(s.malformed, std::uint64_t{2});
     CHECK_EQ(s.silkit_to_ext, std::uint64_t{0});
     CHECK_EQ(s.ext_to_silkit, std::uint64_t{1});
+    CHECK_EQ(s.ext_from_devices, std::uint64_t{1}); // not the oversize or the malformed frame
 }
 
 TEST_CASE(bridge_warns_once_when_the_mac_table_is_full_and_counts_what_it_could_not_guard)

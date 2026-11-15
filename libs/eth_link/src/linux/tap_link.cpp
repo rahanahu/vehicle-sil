@@ -32,6 +32,12 @@ public:
     {
         return "tap '" + name() + "' (TAP device in this computer" + (options_.create ? ", made by the bridge)" : ")");
     }
+    /// None: the other end of a TAP device is this computer's network stack, so what it sends
+    /// comes from the far side, as a device's frames would.
+    [[nodiscard]] std::optional<std::vector<MacAddress>> this_computer_addresses() const override
+    {
+        return std::vector<MacAddress>{};
+    }
 
 protected:
     Fd open() override

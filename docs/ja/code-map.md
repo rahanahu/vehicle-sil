@@ -171,6 +171,7 @@ E2E で確認すること:
 - `--list-channels`、存在しないチャネル、引数のエラー
 - registry に接続できない場合、ドライバがない場合
 - 停止の要求で止めたときの統計の 1 行と終了コード 0（Windows では、共有するコンソールがなければスキップ）
+- 何も答えないチャンネルでの、動いている間の統計の行（`--stats-every-ms`。`no-answers`）
 
 ### `step`
 
@@ -520,7 +521,10 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - 止める順（統計を、SIL Kit の participant の停止より先に出力する）
 - `fault()` と participant の失敗
 - 警告と監視の行
+- 動いている間の統計の行（`RunBridgeOptions::statistics_interval`）。最初の 1 回と、その後は変わったときだけ
 - 起動の途中の状態を失敗にしないこと、起動の上限
+
+機器から何も来ないときのヒントの決まり（`NothingCameHint`）は、テストが時刻を与えて確認します。
 
 1 つのテストは、プロセス内のレジストリ（空いているポート）で本物の participant を使います。registry に接続できないときの文（`registry_failure_message()`）は、SIL Kit が実際に投げる文でも確認します。
 
@@ -914,7 +918,9 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()` | `bridge_runtime/run_bridge.hpp` |
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 | `describe_json()`、`BridgeDescription`（ブリッジの `--describe`） | `bridge_runtime/describe.hpp` |
+| `NothingCameHint`、`kNothingCameAfter`（機器から何も来ないとブリッジが言う時点） | `bridge_runtime/nothing_came_hint.hpp` |
 
+- スレッド: ブリッジの数は atomic で、受信のスレッド（外部リンクのもの、SIL Kit のもの）が足します。読むのは `run_bridge()` のスレッドだけで、統計の行（`BridgeHooks::statistics_line()`）とヒント（`take_warnings()`）のためです。そのため `NothingCameHint` は鍵を持ちません。
 - テスト: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
 - `ctest -R`: `^bridge_runtime\.`、`^vector_xl\.integration\.`
 
@@ -932,7 +938,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `make_pcap_link()`、`pcap_interfaces()`、`format_pcap_interface_list()`、`pcap_interface_argument()` | `eth_link/pcap_link.hpp`（中身は `libs/eth_link/src/pcap`） |
 | `EthernetBridge` | `ethernet_bridge/ethernet_bridge.hpp` |
 | `parse_bridge_options()` | `ethernet_bridge/bridge_options.hpp` |
-| `format_start_line()`、`backend_unavailable()`、`PromiscuousHint` | `ethernet_bridge/bridge_app.hpp` |
+| `format_start_line()`、`backend_unavailable()`、`PromiscuousHint`、`nothing_came_warning()` | `ethernet_bridge/bridge_app.hpp` |
 | `--list-interfaces` の文と JSON（`pcap_interfaces_json()` など） | `ethernet_bridge/interface_list.hpp` |
 | 実行ファイル | `bridges/ethernet/app/main.cpp` |
 | 外部リンクを作る所 | `app/link_factory.hpp`、`app/os_link_factory.cpp` |
@@ -1399,7 +1405,7 @@ flowchart TD
 | `vector_xl`、`vehicle_sil_vector_xl_bridge` | Windows で、XL Driver Library があるときだけ |
 | `bridge_runtime`（`bridges/common`） | どのプラットフォームでも |
 
-`bridge_runtime` は、ブリッジの実行ファイルの止め方、監視のループ、終了コード、`--describe` の出力を 1 か所に置いたものです。
+`bridge_runtime` は、ブリッジの実行ファイルの止め方、監視のループ、動いている間の統計の行、機器から何も来ないときのヒント、終了コード、`--describe` の出力を 1 か所に置いたものです。
 
 ```mermaid
 flowchart TD

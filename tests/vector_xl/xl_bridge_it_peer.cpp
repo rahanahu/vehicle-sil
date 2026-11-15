@@ -4,10 +4,12 @@
 // for the bridge, sends every frame of frame_matrix() and expects exactly one answer per frame
 // from the fake XL echo node behind the bridge (same identifier; data frames: inverted bytes;
 // remote frames: a data frame with bytes 0,1,2,...). Anything extra (a forwarding loop) fails.
+// With --answers none it expects nothing back (no echo node): any frame within half a second fails.
 //
 // Exit codes: 0 pass, 1 verification failed, 2 timeout, 3 setup failed, 4 usage.
 #include "frame_matrix.hpp"
 
+#include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
 
 #include "vehicle_sil/core/participant_runtime.hpp"
@@ -53,7 +55,7 @@ std::string describe(std::uint32_t id, can::CanFrameFlagMask flags, std::uint16_
 
 void print_usage()
 {
-    std::fputs("usage: xl_bridge_it_peer --registry-uri <uri> --network <name> --bridge <participant> [--timeout-ms n]\n", stderr);
+    std::fputs("usage: xl_bridge_it_peer --registry-uri <uri> --network <name> --bridge <participant> [--timeout-ms n] [--answers echo|none]\n", stderr);
 }
 
 int run(const cli::Args& args)
@@ -62,6 +64,11 @@ int run(const cli::Args& args)
     const std::string network = args.required("network");
     const std::string bridge = args.required("bridge");
     const auto timeout = args.millis("timeout-ms", std::chrono::milliseconds(20000));
+    const std::string answers = args.str("answers", "echo");
+    if (answers != "echo" && answers != "none")
+    {
+        throw cli::UsageError("--answers must be echo or none, got: " + answers);
+    }
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -93,6 +100,19 @@ int run(const cli::Args& args)
     }
     std::printf("[peer] sent=%zu\n", matrix.size());
     std::fflush(stdout);
+
+    if (answers == "none")
+    {
+        // Time for the frames to reach the bridge, and for anything to come back that should not.
+        std::this_thread::sleep_for(500ms);
+        controller.RemoveFrameHandler(handler);
+        const std::lock_guard lock(mutex);
+        const bool quiet = inbox.empty();
+        std::printf("[peer] CHECK received=%zu expected=0 -> %s\n", inbox.size(), quiet ? "ok" : "MISMATCH");
+        runtime.stop("peer done");
+        std::printf("[peer] %s\n", quiet ? "PASS" : "FAIL");
+        return quiet ? cli::kExitOk : cli::kExitFailed;
+    }
 
     int result = cli::kExitOk;
     {

@@ -173,6 +173,14 @@ public:
         const int now = promiscuous_.load();
         return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
     }
+    /// The addresses of this computer's adapters as start() found them: on Linux those in the
+    /// library's list of devices, on Windows those the OS tells (all adapters, also those Npcap
+    /// does not offer, such as the vEthernet adapter of a Hyper-V switch a physical one is bound to).
+    [[nodiscard]] std::optional<std::vector<MacAddress>> this_computer_addresses() const override
+    {
+        const std::lock_guard lock(text_mutex_);
+        return this_computer_;
+    }
 
 private:
     /// Opens `device` for sending and receiving without blocking, in promiscuous mode as
@@ -231,6 +239,7 @@ private:
     mutable std::mutex text_mutex_;
     std::string last_error_;
     std::string described_;
+    std::optional<std::vector<MacAddress>> this_computer_; // under text_mutex_
 };
 
 PcapHandle* PcapLink::try_open(const PcapDevice& device, bool promiscuous, std::string& why)
@@ -387,10 +396,26 @@ void PcapLink::start(EventHandler handler)
     auto waiter = library_->make_waiter(handle);
     watch_ = library_->make_watch(device.name);
     reported_state_ = LinkState::Unknown;
+    std::vector<MacAddress> thisComputer;
+    const auto add = [&thisComputer](const std::optional<MacAddress>& address) {
+        if (address && std::find(thisComputer.begin(), thisComputer.end(), *address) == thisComputer.end())
+        {
+            thisComputer.push_back(*address);
+        }
+    };
+    for (const auto& listed : devices)
+    {
+        add(listed.hardware_address);
+    }
+    for (const auto& connection : library_->connection_names())
+    {
+        add(connection.hardware_address);
+    }
 
     {
         const std::lock_guard lock(text_mutex_);
         last_error_.clear();
+        this_computer_ = thisComputer.empty() ? std::nullopt : std::optional<std::vector<MacAddress>>(std::move(thisComputer));
         described_ = std::string(backend_name(flavor_)) + " '" + display_name(device) + "' (";
         if (device.name != display_name(device))
         {
@@ -742,6 +767,36 @@ std::string PcapLibrary::version() const
     return trimmed(pcap_text(api_.lib_version()));
 }
 
+namespace {
+
+/// The link layer address among a device's addresses in the library's list (Linux: a
+/// struct sockaddr_ll of 6 bytes), or nullopt. Elsewhere the list is not read for it: the families
+/// and their layout are the OS's own, and Npcap lists none.
+std::optional<MacAddress> hardware_address_in([[maybe_unused]] const PcapAddress* addresses) noexcept
+{
+#ifdef __linux__
+    for (const PcapAddress* entry = addresses; entry != nullptr; entry = entry->next)
+    {
+        const auto* const bytes = static_cast<const std::uint8_t*>(entry->address);
+        if (bytes == nullptr)
+        {
+            continue;
+        }
+        unsigned short family = 0;
+        std::memcpy(&family, bytes, sizeof(family));
+        if (family == kPcapPacketFamily && bytes[kPcapPacketAddressLengthAt] == 6)
+        {
+            MacAddress address;
+            std::memcpy(address.bytes.data(), bytes + kPcapPacketAddressAt, address.bytes.size());
+            return address;
+        }
+    }
+#endif
+    return std::nullopt;
+}
+
+} // namespace
+
 std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
 {
     const PcapApi& api = library.api();
@@ -762,6 +817,7 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
         device.name = entry->name;
         device.description = pcap_text(entry->description);
         device.flags = entry->flags;
+        device.hardware_address = hardware_address_in(entry->addresses);
         devices.push_back(std::move(device));
     }
     if (list != nullptr)
@@ -777,6 +833,10 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
             if (!id.empty() && same_ignoring_case(id, without_braces(connection.id)))
             {
                 device.connection = connection.name;
+                if (connection.hardware_address)
+                {
+                    device.hardware_address = connection.hardware_address;
+                }
                 break;
             }
         }

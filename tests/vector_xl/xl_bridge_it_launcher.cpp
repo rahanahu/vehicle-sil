@@ -25,6 +25,11 @@
 //   device-lost               the XL device disappears while the bridge runs (fake: 1.5 s after the
 //                             driver was opened): the bridge reports it and exits 1 on its own,
 //                             with its statistics.
+//   no-answers                registry + bridge (no echo node) with --stats-every-ms 100 + the
+//                             peer with --answers none: the bridge prints its statistics line
+//                             while it runs, a line only where it changed, and the one with every
+//                             frame sent out has xl_to_silkit=0. Only the lines while running are
+//                             checked, so that the bridge can be ended as on Windows.
 //   stop-request              registry + bridge: once the bridge says "Ctrl+C to stop", the
 //                             launcher asks it to stop (POSIX SIGTERM, Windows Ctrl+Break to its
 //                             process group). The bridge stops in order: one statistics line,
@@ -118,7 +123,7 @@ Options parse(int argc, char** argv)
 }
 
 /// Value of "key=<number>" in `text`, or nullopt.
-[[maybe_unused]] std::optional<unsigned long long> stat(const std::string& text, const std::string& key)
+std::optional<unsigned long long> stat(const std::string& text, const std::string& key)
 {
     const std::regex pattern("\\b" + key + "=([0-9]+)");
     std::smatch match;
@@ -319,6 +324,84 @@ private:
     std::unique_ptr<vehicle_sil::process::Process> process_;
 };
 
+/// The statistics lines the bridge printed while it ran (before "stopping"), without the tag.
+std::vector<std::string> running_statistics(const std::string& raw)
+{
+    std::string text = raw;
+    std::erase(text, '\r');
+    std::vector<std::string> lines;
+    std::size_t at = 0;
+    while (at < text.size())
+    {
+        const auto end = std::min(text.find('\n', at), text.size());
+        const std::string line = text.substr(at, end - at);
+        at = end + 1;
+        if (line == "[bridge] stopping")
+        {
+            break;
+        }
+        if (line.starts_with("[bridge] stats "))
+        {
+            lines.push_back(line.substr(std::string("[bridge] ").size()));
+        }
+    }
+    return lines;
+}
+
+int run_no_answers(const Options& options)
+{
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    StoppableBridge bridge(options.bridge, {"--registry-uri", registry.uri(), "--participant", "VectorXlBridge", "--network",
+                                            "XL_IT_CAN", "--xl-target", "virtual", "--xl-channel", "1", "--stats-every-ms", "100"});
+    const fs::path peerLog = options.workDir / "peer.log";
+    ChildProcess peer(options.peer,
+                      {"--registry-uri", registry.uri(), "--network", "XL_IT_CAN", "--bridge", "VectorXlBridge", "--answers", "none",
+                       "--timeout-ms", std::to_string(std::max<std::chrono::milliseconds>(options.timeout - 15s, 5s).count())},
+                      peerLog);
+    const auto peerCode = wait_or_kill(peer, deadline);
+    const auto sent = stat(read_file(peerLog), "sent");
+    // The line with every frame the peer sent going out: printed once the count changed.
+    std::string complete;
+    while (sent && std::chrono::steady_clock::now() < deadline && !bridge.process().poll())
+    {
+        const auto lines = running_statistics(bridge.lines());
+        if (!lines.empty() && stat(lines.back(), "silkit_to_xl") == sent)
+        {
+            complete = lines.back();
+            break;
+        }
+        std::this_thread::sleep_for(20ms);
+    }
+    bridge.process().kill_tree();
+    const std::string text = bridge.all_lines();
+    const auto lines = running_statistics(text);
+
+    bool ok = expect(peerCode == 0, "peer exit code " + exit_code_text(peerCode) + ", expected 0 (no frame came back)");
+    ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
+    ok = expect(!complete.empty(), "bridge printed a statistics line with silkit_to_xl == sent while running") && ok;
+    ok = expect(stat(complete, "xl_to_silkit") == std::optional<unsigned long long>(0), "that line has xl_to_silkit=0") && ok;
+    std::string keys = "stats";
+    for (const char* key : {"silkit_to_xl", "xl_to_silkit", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
+                            "xl_rejected", "xl_queue_full", "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
+    {
+        keys += std::string(" ") + key + "=";
+    }
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        ok = expect(i == 0 || lines[i] != lines[i - 1], "statistics line " + std::to_string(i + 1) + " differs from the one before") && ok;
+        ok = expect(std::regex_replace(lines[i], std::regex("=[0-9]+"), "=") == keys, "'" + lines[i] + "' has every key in order") && ok;
+    }
+    if (!ok)
+    {
+        dump_log(registry.log_file());
+    }
+    log("bridge output:\n" + text);
+    dump_log(peerLog);
+    return ok ? 0 : 1;
+}
+
 int run_stop_request(const Options& options)
 {
 #ifdef _WIN32
@@ -470,6 +553,10 @@ int main(int argc, char** argv)
         else if (options.scenario == "stop-request")
         {
             result = run_stop_request(options);
+        }
+        else if (options.scenario == "no-answers")
+        {
+            result = run_no_answers(options);
         }
         else
         {

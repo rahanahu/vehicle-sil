@@ -3,6 +3,8 @@
 
 #include "../os_link_errors.hpp"
 
+#include <ifaddrs.h>
+#include <linux/if_packet.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <poll.h>
@@ -11,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -83,6 +86,40 @@ std::optional<InterfaceState> interface_state(const std::string& name)
     return state;
 }
 
+std::optional<std::vector<MacAddress>> ethernet_addresses()
+{
+    struct ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0)
+    {
+        return std::nullopt;
+    }
+    std::vector<MacAddress> addresses;
+    for (const struct ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next)
+    {
+        if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_PACKET)
+        {
+            continue;
+        }
+        const auto* const link = reinterpret_cast<const sockaddr_ll*>(entry->ifa_addr);
+        if (link->sll_hatype != ARPHRD_ETHER || link->sll_halen != 6)
+        {
+            continue;
+        }
+        MacAddress address;
+        std::memcpy(address.bytes.data(), link->sll_addr, address.bytes.size());
+        if (std::find(addresses.begin(), addresses.end(), address) == addresses.end())
+        {
+            addresses.push_back(address);
+        }
+    }
+    ::freeifaddrs(list);
+    if (addresses.empty())
+    {
+        return std::nullopt;
+    }
+    return addresses;
+}
+
 std::vector<std::string> interface_names()
 {
     std::vector<std::string> names;
@@ -107,6 +144,12 @@ std::string executable_path()
 }
 
 LinuxLink::LinuxLink(std::string name) : name_(std::move(name)) {}
+
+std::optional<std::vector<MacAddress>> LinuxLink::this_computer_addresses() const
+{
+    const std::lock_guard errors(error_mutex_);
+    return this_computer_;
+}
 
 std::uint64_t LinuxLink::take_overruns(int) noexcept
 {
@@ -137,9 +180,11 @@ void LinuxLink::start(EventHandler handler)
     reported_state_ = LinkState::Unknown;
     checksum_warned_ = false;
     faulted_.store(false);
+    auto thisComputer = ethernet_addresses();
     {
         const std::lock_guard errors(error_mutex_);
         last_error_.clear();
+        this_computer_ = std::move(thisComputer);
     }
     {
         const std::unique_lock lock(fd_mutex_);
@@ -333,6 +378,7 @@ void LinuxLink::run()
                     event.kind = LinkEventKind::Frame;
                     event.frame = result.frame;
                     event.checksum_incomplete = result.checksum_incomplete;
+                    event.sent_here = result.sent_here;
                     handler_(event);
                 }
                 else if (result.status == ReadStatus::Empty)

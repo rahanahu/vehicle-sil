@@ -14,6 +14,7 @@
 
 #include "pcap_link.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -172,7 +173,7 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
                std::string("vehicle_sil_fake_pcap") + kSuffix);
     CHECK_TEXT(fake.library->version(), "fake pcap version 1.0 (TEST ONLY)");
     const auto devices = pcap_devices(*fake.library);
-    CHECK_EQ(devices.size(), std::size_t{14});
+    CHECK_EQ(devices.size(), std::size_t{15});
     CHECK_TEXT(devices.at(0).name, "fake0");
     CHECK_TEXT(devices.at(0).description, "Fake Ethernet adapter with a device that answers");
     CHECK_EQ(devices.at(0).flags, kPcapIfUp | kPcapIfRunning | kPcapIfConnected);
@@ -188,6 +189,36 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
     CHECK_TEXT(list.substr(0, head.size()), head);
     CHECK(list.find("  --interface fake-wifi       up, connected, wireless  (Fake wireless adapter)\n") != std::string::npos);
     CHECK(list.find("  --interface fake-down       down  (Fake Ethernet adapter that is down)\n") != std::string::npos);
+}
+
+TEST_CASE(pcap_link_knows_the_addresses_of_this_computer)
+{
+    const Fake fake;
+    const auto devices = pcap_devices(*fake.library);
+    const auto link = fake.link("fake1");
+    CHECK(!link->this_computer_addresses().has_value()); // not started yet
+    Recorder recorder;
+    link->start(recorder.handler());
+    const auto addresses = link->this_computer_addresses();
+#ifdef __linux__
+    // libpcap lists the link layer address of an interface (AF_PACKET): those of every device
+    // in the list are this computer's, not only the opened one's.
+    CHECK(devices.at(0).hardware_address == parse_mac_address("02:00:00:00:00:f0"));
+    CHECK(devices.at(1).hardware_address == parse_mac_address("02:00:00:00:00:f1"));
+    CHECK(!devices.at(2).hardware_address.has_value()); // fake-echo lists none
+    CHECK(addresses == std::optional<std::vector<MacAddress>>(std::vector<MacAddress>{
+                           *parse_mac_address("02:00:00:00:00:f0"), *parse_mac_address("02:00:00:00:00:f1"),
+                           *parse_mac_address("02:00:00:00:00:f2")}));
+#else
+    // Npcap lists no link layer address: the list is not read for one. The OS tells those of its
+    // adapters, which the fake devices are not.
+    CHECK(!devices.at(1).hardware_address.has_value());
+    for (const char* fakeAddress : {"02:00:00:00:00:f0", "02:00:00:00:00:f1", "02:00:00:00:00:f2"})
+    {
+        CHECK(!addresses || std::find(addresses->begin(), addresses->end(), *parse_mac_address(fakeAddress)) == addresses->end());
+    }
+#endif
+    link->stop();
 }
 
 TEST_CASE(pcap_library_that_is_not_there_is_library_missing)

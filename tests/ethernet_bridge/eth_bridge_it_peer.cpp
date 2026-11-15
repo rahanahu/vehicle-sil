@@ -8,6 +8,8 @@
 //                  expects exactly one answer per frame of the first kind, from the device behind
 //                  the bridge: to this peer, the bytes behind the header inverted. Anything else
 //                  (a missing answer, a frame too many: a forwarding loop) fails.
+//   --mode send    sends the same frames as ask and expects none back: for a link with nothing
+//                  behind it. Any frame that comes back within half a second fails.
 //   --mode answer  prints every frame it receives ("[peer] rx <hex>") and sends it back to its
 //                  source from this peer's address, the rest unchanged, until SIGTERM or SIGINT;
 //                  then prints "[peer] answered=<n>".
@@ -90,7 +92,7 @@ Bytes make_frame(const eth_link::MacAddress& destination, const eth_link::MacAdd
 
 void print_usage()
 {
-    std::fputs("usage: eth_bridge_it_peer --registry-uri <uri> --network <name> --bridge <participant> --mode <ask|answer>\n"
+    std::fputs("usage: eth_bridge_it_peer --registry-uri <uri> --network <name> --bridge <participant> --mode <ask|send|answer>\n"
                "                          [--mac <mac>] [--device-mac <mac>] [--timeout-ms n]\n",
                stderr);
 }
@@ -101,9 +103,9 @@ int run(const cli::Args& args)
     const std::string network = args.required("network");
     const std::string bridge = args.required("bridge");
     const std::string mode = args.required("mode");
-    if (mode != "ask" && mode != "answer")
+    if (mode != "ask" && mode != "send" && mode != "answer")
     {
-        throw cli::UsageError("--mode must be ask or answer, got: " + mode);
+        throw cli::UsageError("--mode must be ask, send or answer, got: " + mode);
     }
     const auto own = mac_option(args, "mac", "02:00:00:00:00:01");
     const auto device = mac_option(args, "device-mac", "02:00:00:00:00:02");
@@ -189,6 +191,19 @@ int run(const cli::Args& args)
     }
     std::printf("[peer] sent=%zu\n", sent.size());
     std::fflush(stdout);
+
+    if (mode == "send")
+    {
+        // Time for the frames to reach the bridge, and for anything to come back that should not.
+        std::this_thread::sleep_for(500ms);
+        controller.RemoveFrameHandler(handler);
+        const std::lock_guard lock(mutex);
+        const bool quiet = inbox.empty();
+        std::printf("[peer] CHECK received=%zu expected=0 -> %s\n", inbox.size(), quiet ? "ok" : "MISMATCH");
+        runtime.stop("peer done");
+        std::printf("[peer] %s\n", quiet ? "PASS" : "FAIL");
+        return quiet ? cli::kExitOk : cli::kExitFailed;
+    }
 
     int result = cli::kExitOk;
     {

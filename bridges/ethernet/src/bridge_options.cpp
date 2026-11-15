@@ -106,6 +106,19 @@ std::chrono::milliseconds parse_start_timeout(std::string_view text)
     return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(value));
 }
 
+std::chrono::milliseconds parse_statistics_interval(std::string_view text)
+{
+    std::uint64_t value = 0;
+    const auto* const end = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(text.data(), end, value, 10);
+    if (text.empty() || ec != std::errc{} || ptr != end || value < kMinStatisticsIntervalMs || value > kMaxStatisticsIntervalMs)
+    {
+        throw BridgeUsageError("--stats-every-ms must be between " + std::to_string(kMinStatisticsIntervalMs) + " and " +
+                               std::to_string(kMaxStatisticsIntervalMs) + ", got: " + std::string(text));
+    }
+    return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(value));
+}
+
 } // namespace
 
 std::string_view to_string(Backend backend) noexcept
@@ -159,6 +172,8 @@ std::string bridge_usage()
            "  --name <name>            SIL Kit participant name (EthernetBridge)\n"
            "  --participant <name>     the same as --name\n"
            "  --start-timeout-ms <ms>  how long to wait for the participant to run in SIL Kit (15000)\n"
+           "  --stats-every-ms <ms>    also print the statistics line while running, at this interval\n"
+           "                           where it changed, 100..3600000 (without it: once, when stopping)\n"
            "  --network <name>         SIL Kit Ethernet network (no default)\n"
            "  --backend <backend>      tap: a TAP device (Linux); packet: a network interface (Linux);\n"
            "                           npcap: a network adapter through Npcap (Windows);\n"
@@ -249,7 +264,7 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args, st
         const bool known = key == "registry-uri" || key == "participant" || key == "name" || key == "network" ||
                            key == "backend" || key == "interface" || key == "ethertype" || key == "src-mac" ||
                            key == "vlan-tpid" || key == "max-frame-bytes" || key == "mac-table-size" ||
-                           key == "start-timeout-ms";
+                           key == "start-timeout-ms" || key == "stats-every-ms";
         if (!known)
         {
             throw BridgeUsageError("unknown option: " + std::string(arg) + " (see --help)");
@@ -276,6 +291,10 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args, st
         else if (key == "start-timeout-ms")
         {
             options.start_timeout = parse_start_timeout(value);
+        }
+        else if (key == "stats-every-ms")
+        {
+            options.statistics_interval = parse_statistics_interval(value);
         }
         else if (key == "network")
         {
