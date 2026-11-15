@@ -112,6 +112,17 @@ inline std::string dll_start_failure(int exit_code)
 inline constexpr const char* kDllFix =
     "put that DLL, of the version the executable was built with, next to the executable or in a folder on PATH";
 
+/// What to do after dll_start_failure() of the bridge of a network of `kind`: the Vector XL bridge
+/// needs the DLL of the Vector XL Driver Library first.
+inline std::string bridge_dll_fix(NetworkKind kind)
+{
+    return kind == NetworkKind::Can ? std::string("vehicle_sil_vector_xl_bridge needs vxlapi64.dll of the Vector XL Driver "
+                                                  "Library: install the library, or put vxlapi64.dll next to the bridge; for "
+                                                  "another DLL, ") +
+                                          kDllFix
+                                    : std::string(kDllFix);
+}
+
 /// What to do about an ECU whose control agent speaks `version` of the control messages, not
 /// control::wire::kVersion: which side is the older one, and what to build or use again
 /// (control-link-version of the check and of the run).

@@ -67,9 +67,9 @@ std::string last_line(const std::string& text)
 std::string target_hint(NetworkKind kind)
 {
     return kind == NetworkKind::Can
-               ? "give a channel that vehicle_sil_vector_xl_bridge --list-channels lists, as virtual:<n> or physical:<n>, "
-                 "or none for SIL Kit only"
-               : "give an adapter that vehicle_sil_ethernet_bridge --list-interfaces lists, or none for SIL Kit only";
+               ? "give a channel as virtual:<n> or physical:<n> (vehicle_sil_launch connections <file> lists those of "
+                 "this computer), or none for SIL Kit only"
+               : "give an adapter that vehicle_sil_launch connections <file> lists, or none for SIL Kit only";
 }
 
 /// What the participants on the Ethernet network `network` say about their MAC addresses.
@@ -195,12 +195,7 @@ std::optional<std::string> describe_problem(const NetworkConfig& network, const 
     if (const std::string dll = run.signal ? std::string{} : detail::dll_start_failure(*run.exit_code); !dll.empty())
     {
         // Windows did not start it; its standard error is empty.
-        return prefix + run.command_text + " " + dll + ": " +
-               (network.kind == NetworkKind::Can
-                    ? std::string("vehicle_sil_vector_xl_bridge needs vxlapi64.dll of the Vector XL Driver Library: "
-                                  "install the library, or put vxlapi64.dll next to the bridge; for another DLL, ") +
-                          detail::kDllFix
-                    : std::string(detail::kDllFix)) +
+        return prefix + run.command_text + " " + dll + ": " + detail::bridge_dll_fix(network.kind) +
                "; to check without the real bus on this computer, leave --connect " + network.name + " out";
     }
     if (*run.exit_code != 0 || run.signal)
@@ -360,16 +355,13 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
             else
             {
-                const std::string where =
-                    tools->launcher_dir.empty()
-                        ? std::string("not on PATH")
-                        : "neither next to vehicle_sil_launch (" + process::shown_path(tools->launcher_dir) + ") nor on PATH";
+                const std::optional<std::string> none = no_bridge_here(network->kind, tools->can_bridge);
                 add(Severity::Error, "connect-tool-missing", network->line,
-                    prefix + "--connect needs " + outside.tool + ", which is " + where + ": " +
-                        (network->kind == NetworkKind::Can
-                             ? "build it with the Vector XL Driver Library (docs/bridges.md)"
-                             : std::string("build it (docs/ethernet-bridge.md)")) +
-                        " and put it next to vehicle_sil_launch, or its directory on PATH",
+                    none ? prefix + "--connect needs " + outside.tool + ", and " + *none +
+                               ": on this computer the network runs on SIL Kit only: leave --connect " + network->name +
+                               " out (or give " + network->name + "=none)"
+                         : prefix + "--connect needs " + outside.tool + ", which is " + tool_not_found(tools->launcher_dir) +
+                               ": " + tool_missing_fix(network->kind),
                     "", network->name);
             }
         }

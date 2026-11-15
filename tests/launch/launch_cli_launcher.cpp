@@ -19,6 +19,10 @@
 //               names: found on PATH and next to the launcher, not in the working directory or the
 //               configuration file's; the networks' "outside" in the JSON; a bridge that refuses
 //               its arguments; the command lines that are wrong (exit 4)
+//   connections where each network can be connected, with the same bridges (the fake pcap library's
+//               devices, the fake XL driver's channels): the --connect lines, which check takes; the
+//               JSON; --network; bridges that cannot list and no bridge (exit 1); the command line
+//               (exit 4) and a file that cannot be read (exit 3)
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
@@ -53,6 +57,7 @@ struct Options
     fs::path example_config; ///< examples/ecu_main/simulation.yaml in the source tree
     fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
     fs::path connect_tools; ///< vehicle_sil_launch and the two bridges under their names
+    fs::path fake_pcap_dir; ///< the fake pcap library (connections)
     fs::path work_dir;
     std::string scenario;
 };
@@ -68,6 +73,7 @@ Options parse(int argc, char** argv)
     o.example_config = args.required("example-config");
     o.docs = args.required("docs");
     o.connect_tools = args.required("connect-tools");
+    o.fake_pcap_dir = args.str("fake-pcap-dir", "");
     o.work_dir = args.required("work-dir");
     o.scenario = args.required("scenario");
     return o;
@@ -574,8 +580,8 @@ void usage(const Options& o)
         require(err.rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
                 "for the error '" + error + "' vehicle_sil_launch wrote:\n" + err);
     };
-    expect_usage({}, "no command: give check <file>, run <file>, test <file> or version");
-    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check, run, test and version");
+    expect_usage({}, "no command: give check <file>, run <file>, test <file>, connections <file> or version");
+    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check, run, test, connections and version");
     expect_usage({"check"}, "check needs the configuration file: vehicle_sil_launch check <file>");
     expect_usage({"check", "a.yaml", "b.yaml"}, "check takes one file, not 2");
     expect_usage({"check", "a.yaml", "--bogus"}, "unknown option --bogus");
@@ -908,10 +914,18 @@ void connect(const Options& o)
             vehicle_sil::process::CaptureOptions{120s, 1u << 20, o.work_dir});
         expect_code(missing, 1, "check --connect without the bridges");
         const std::string launcherDir = shown_path(o.launch.parent_path());
+        // The CAN bridge runs on Windows only: elsewhere there is nothing to build.
+#ifdef _WIN32
+        const std::string can = "--connect needs vehicle_sil_vector_xl_bridge, which is neither next to vehicle_sil_launch (" +
+                                launcherDir + ") nor on PATH";
+#else
+        const std::string can = "--connect needs vehicle_sil_vector_xl_bridge, and the Vector XL bridge is for Windows: on "
+                                "this computer the network runs on SIL Kit only: leave --connect J1939_CAN1 out (or give "
+                                "J1939_CAN1=none)";
+#endif
         require(contains(missing.standard_output, "--connect needs vehicle_sil_ethernet_bridge, which is neither next to "
                                                   "vehicle_sil_launch (" + launcherDir + ") nor on PATH") &&
-                    contains(missing.standard_output, "--connect needs vehicle_sil_vector_xl_bridge, which is neither next to "
-                                                      "vehicle_sil_launch (" + launcherDir + ") nor on PATH"),
+                    contains(missing.standard_output, can),
                 "check --connect without the bridges wrote:\n" + missing.standard_output);
     }
     log("CHECK --connect: the bridges on PATH and next to the launcher, not in the working directory -> ok");
@@ -948,6 +962,210 @@ void connect(const Options& o)
     require(contains(json.standard_output, "\n  \"file\": " + json_string(shown_path(config)) + ",\n"),
             "run --json --connect wrote:\n" + json.standard_output);
     log("CHECK --connect usage errors: exit code 4 and the message -> ok");
+}
+
+void set_environment(const std::string& name, const std::string& value)
+{
+#ifdef _WIN32
+    const bool ok = _putenv_s(name.c_str(), value.c_str()) == 0;
+#else
+    const bool ok = ::setenv(name.c_str(), value.c_str(), 1) == 0;
+#endif
+    require(ok, "cannot set the environment variable " + name);
+}
+
+/// The argument of the first --connect line of `network` in the output of connections, as the
+/// command line has it (the quotes that the line has for the shells taken away).
+std::string first_connect(const std::string& text, const std::string& network)
+{
+    const std::string head = "\n" + network + " (";
+    const auto at = text.find(head);
+    require(at != std::string::npos, "connections wrote no line for " + network + ":\n" + text);
+    const std::string mark = "\n  --connect ";
+    const auto line = text.find(mark, at + 1);
+    require(line != std::string::npos && text.find('\n', at + 1) == line,
+            "connections wrote no --connect line right after the line of " + network + ":\n" + text);
+    const auto begin = line + mark.size();
+    std::string argument = text.substr(begin, text.find_first_of(" \n", begin) - begin);
+    require(argument.rfind(network + "=", 0) == 0 && argument.find('"') == std::string::npos &&
+                argument.find('\'') == std::string::npos,
+            "the line for " + network + " is not --connect " + network + "=<target> without quotes: " + argument);
+    return argument;
+}
+
+void connections(const Options& o)
+{
+#if !defined(_WIN32) && !defined(__linux__)
+    log("SKIP: the Ethernet bridge has no pcap backend for this operating system");
+    return;
+#endif
+    require(!o.fake_pcap_dir.empty(), "the scenario connections needs --fake-pcap-dir");
+    // The bridge's backend without --backend: that of the OS (the fake library stands in for its library).
+#ifdef _WIN32
+    const std::string library = shown_path(o.fake_pcap_dir / "vehicle_sil_fake_pcap.dll");
+    const std::string backend = "npcap";
+#else
+    const std::string library = shown_path(o.fake_pcap_dir / "vehicle_sil_fake_pcap.so");
+    const std::string backend = "pcap";
+#endif
+    set_environment("VEHICLE_SIL_TEST_PCAP_LIBRARY", library);
+    set_environment("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "0");
+    const std::string helper = yaml_quote(shown_path(o.helper));
+    const auto described = [&](const std::string& name, const std::string& network) {
+        return "[" + helper + ", --out, '{\"vehicle_sil_ecu\": 1, \"name\": \"" + name +
+               "\", \"step_ns\": 1000000, \"networks\": [" + network + "]}']";
+    };
+    const fs::path config = o.work_dir / "connections.yaml";
+    write_file(config,
+               "vehicle_sil_simulation: 1\n"
+               "speed: 1\n"
+               "networks:\n"
+               "  - name: ETH_EXT\n"
+               "    kind: ethernet\n"
+               "  - name: J1939_CAN1\n"
+               "    kind: can\n"
+               "  - name: BODY_LIN\n"
+               "    kind: lin\n"
+               "participants:\n"
+               "  - name: Camera\n"
+               "    command: " + described("Camera", "{\"name\": \"ETH_EXT\", \"kind\": \"ethernet\", \"use\": \"ethernet\", "
+                                                    "\"nodes\": [], \"mac\": \"02:00:00:00:00:01\"}") + "\n"
+               "  - name: Engine\n"
+               "    command: " + described("Engine", "{\"name\": \"J1939_CAN1\", \"kind\": \"can\", \"use\": \"raw\", "
+                                                    "\"nodes\": []}") + "\n");
+    const fs::path beside = o.connect_tools / ("vehicle_sil_launch" + std::string(kExe));
+    const PathSetting path(runtime_path());
+    const auto connections_of = [&](const std::vector<std::string>& args) {
+        return vehicle_sil::process::run_captured(beside, args, vehicle_sil::process::CaptureOptions{120s});
+    };
+    const std::string file = shown_path(config);
+
+    // The bridges next to the launcher: every network, the lines to copy.
+    const Captured text = connections_of({"connections", file});
+    expect_code(text, 0, "connections");
+    const std::string out = lf(text.standard_output);
+    for (const std::string& part : std::vector<std::string>{
+             file + ": where each network can be connected on this computer\n"
+                    "ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, " + backend + ": fake pcap version 1.0 (TEST ONLY)):\n"
+                    "  --connect ETH_EXT=fake0  ",
+             "\n  --connect ETH_EXT=fake-echo  ",
+             "\nJ1939_CAN1 (can; vehicle_sil_vector_xl_bridge):\n"
+             "  --connect J1939_CAN1=virtual:1   Virtual Channel 1; virtual 1; ",
+             "\nBODY_LIN (lin): SIL Kit only (there is no bridge for LIN)\n"})
+    {
+        require(contains(out, part), "connections has not\n" + part + "--- it wrote ---\n" + out);
+    }
+    require(text.standard_error.empty(), "connections wrote on stderr:\n" + text.standard_error);
+    // What a line says is what check --connect takes.
+    const Captured checked = connections_of({"check", "--connect", first_connect(out, "ETH_EXT"), "--connect",
+                                             first_connect(out, "J1939_CAN1"), file});
+    expect_code(checked, 0, "check with the --connect lines of connections");
+    require(contains(lf(checked.standard_output), "ETH_EXT     ethernet  Camera        fake0\n") &&
+                contains(lf(checked.standard_output), "J1939_CAN1  can       Engine        virtual:1\n"),
+            "check with the --connect lines of connections wrote:\n" + checked.standard_output);
+    log("CHECK connections: the --connect lines of each network, which check takes -> ok");
+
+    // JSON: the bridge's list as it is; LIN without one.
+    const Captured json = connections_of({"connections", "--json", file});
+    expect_code(json, 0, "connections --json");
+    // The directory as the system names this launcher's (/proc/self/exe resolves symbolic links).
+    std::error_code ec;
+    const fs::path canonical = fs::canonical(o.connect_tools, ec);
+    const std::string given = shown_path(o.connect_tools);
+    const std::string found =
+        contains(json.standard_output, "\"tool_path\": " + json_string(given + "/vehicle_sil_ethernet_bridge" + kExe)) || ec
+            ? given
+            : shown_path(canonical);
+    for (const std::string& part : std::vector<std::string>{
+             "{\n  \"vehicle_sil_connections\": 1,\n",
+             "  \"file\": " + json_string(file) + ",\n  \"result\": \"listed\",\n",
+             "      \"name\": \"ETH_EXT\",\n      \"kind\": \"ethernet\",\n      \"tool\": \"vehicle_sil_ethernet_bridge\",\n"
+             "      \"tool_path\": " + json_string(found + "/vehicle_sil_ethernet_bridge" + kExe) + ",\n"
+             "      \"list\": {\n        \"vehicle_sil_targets\": 1,\n        \"tool\": \"vehicle_sil_ethernet_bridge\",\n"
+             "        \"backend\": \"" + backend + "\",\n",
+             "            \"value\": \"fake0\",\n",
+             "            \"can\": {\n              \"target\": \"virtual\",\n              \"number\": 1,\n",
+             "      \"name\": \"BODY_LIN\",\n      \"kind\": \"lin\",\n      \"tool\": null,\n      \"tool_path\": null,\n"
+             "      \"list\": null\n",
+             "  \"findings\": []\n}\n"})
+    {
+        require(contains(lf(json.standard_output), part), "connections --json has not\n" + part + "--- it wrote ---\n" +
+                                                            json.standard_output);
+    }
+    // --network: that one only.
+    const Captured one = connections_of({"connections", "--network", "J1939_CAN1", "--json", file});
+    expect_code(one, 0, "connections --network J1939_CAN1 --json");
+    require(contains(one.standard_output, "\"name\": \"J1939_CAN1\"") && !contains(one.standard_output, "ETH_EXT") &&
+                !contains(one.standard_output, "BODY_LIN"),
+            "connections --network J1939_CAN1 --json wrote:\n" + one.standard_output);
+    const Captured lin = connections_of({"connections", "--network", "BODY_LIN", file});
+    expect_code(lin, 0, "connections --network BODY_LIN");
+    expect_text(lf(lin.standard_output),
+                file + ": where each network can be connected on this computer\n"
+                       "BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)\n",
+                "connections --network BODY_LIN");
+
+    // The bridges cannot list: their own error, exit code 1.
+    set_environment("VEHICLE_SIL_TEST_PCAP_LIBRARY", shown_path(o.work_dir / "no-such-library"));
+    set_environment("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "1");
+    const Captured failed = connections_of({"connections", file});
+    set_environment("VEHICLE_SIL_TEST_PCAP_LIBRARY", library);
+    set_environment("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "0");
+    expect_code(failed, 1, "connections with bridges that cannot list");
+    require(contains(lf(failed.standard_output), "ETH_EXT (ethernet; vehicle_sil_ethernet_bridge, " + backend + "):\n  cannot list: ") &&
+                contains(failed.standard_output, " [library-missing]\n") &&
+                contains(lf(failed.standard_output), "J1939_CAN1 (can; vehicle_sil_vector_xl_bridge):\n  cannot list: cannot open "
+                                                     "the Vector XL driver: ") &&
+                contains(failed.standard_output, " [driver-missing]\n"),
+            "connections with bridges that cannot list wrote:\n" + failed.standard_output);
+
+    // Without the bridges (the launcher of the build, PATH without them): tool-missing, which is an
+    // answer (exit code 0); the CAN bridge, elsewhere than on Windows: none for the kind, as LIN.
+    const Captured missing = launch(o, {"connections", "--json", file});
+    expect_code(missing, 0, "connections without the bridges");
+    const std::string launcherDir = shown_path(o.launch.parent_path());
+    for (const std::string& part : std::vector<std::string>{
+             "  \"result\": \"listed\",\n",
+#ifdef _WIN32
+             "      \"tool\": \"vehicle_sil_vector_xl_bridge\",\n      \"tool_path\": null,\n",
+#else
+             "      \"name\": \"J1939_CAN1\",\n      \"kind\": \"can\",\n      \"tool\": null,\n      \"tool_path\": null,\n"
+             "      \"list\": null\n",
+#endif
+             "          \"code\": \"tool-missing\",\n          \"message\": " +
+                 json_string("vehicle_sil_ethernet_bridge is neither next to vehicle_sil_launch (" + launcherDir +
+                             ") nor on PATH: build it (docs/ethernet-bridge.md) and put it next to vehicle_sil_launch, or its "
+                             "directory on PATH") + "\n"})
+    {
+        require(contains(lf(missing.standard_output), part), "connections without the bridges has not\n" + part +
+                                                                 "--- it wrote ---\n" + missing.standard_output);
+    }
+    log("CHECK connections: --json, --network, a bridge that cannot list, no bridge -> ok");
+
+    // The command line and the file.
+    const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
+        const Captured run = launch(o, args);
+        expect_code(run, 4, "vehicle_sil_launch " + error);
+        require(lf(run.standard_error).rfind("error: " + error + "\n", 0) == 0,
+                "for the error '" + error + "' vehicle_sil_launch wrote:\n" + run.standard_error);
+    };
+    expect_usage({"connections", "--network", "ETH", file},
+                 "--network names the network 'ETH', which the file does not have: did you mean 'ETH_EXT'? (the networks: "
+                 "ETH_EXT, J1939_CAN1, BODY_LIN)");
+    expect_usage({"connections", "--variant", "a", file},
+                 "connections takes no --variant: every variant has the networks of the file, so leave it out");
+    expect_usage({"connections"}, "connections needs the configuration file: vehicle_sil_launch connections <file>");
+    expect_usage({"connections", "--strict", file}, "unknown option --strict");
+    const Captured usageJson = launch(o, {"connections", "--json", "--network", "NOPE", file});
+    expect_code(usageJson, 4, "connections --json --network NOPE");
+    require(contains(usageJson.standard_output, "  \"result\": \"usage\",\n  \"networks\": [],\n"),
+            "connections --json --network NOPE wrote:\n" + usageJson.standard_output);
+    const Captured unreadable = launch(o, {"connections", "--json", shown_path(o.work_dir / "missing.yaml")});
+    expect_code(unreadable, 3, "connections of a file that does not exist");
+    require(contains(unreadable.standard_output, "  \"result\": \"unreadable\",\n") &&
+                contains(unreadable.standard_output, "\"code\": \"file\""),
+            "connections of a file that does not exist wrote:\n" + unreadable.standard_output);
+    log("CHECK connections: the command line (exit 4) and a file that cannot be read (exit 3) -> ok");
 }
 
 } // namespace
@@ -989,6 +1207,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "connect")
         {
             connect(o);
+        }
+        else if (o.scenario == "connections")
+        {
+            connections(o);
         }
         else
         {

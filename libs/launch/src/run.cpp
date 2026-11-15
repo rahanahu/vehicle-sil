@@ -184,7 +184,7 @@ public:
         }
         for (const NetworkOutside& o : check.outside)
         {
-            outcome_.outside.push_back(RunOutside{o.network, o.target, o.participant, o.tool, std::nullopt, std::nullopt});
+            outcome_.outside.push_back(RunOutside{o.network, o.target, o.participant, std::nullopt, std::nullopt});
         }
     }
 

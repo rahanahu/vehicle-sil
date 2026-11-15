@@ -208,7 +208,9 @@ bool RunParticipants::start_children(const std::string& uri, Which which)
         }
         out_.say("starting " + p.name + ": " + command_text(executable, arguments));
         process::ProcessOptions options;
-        options.working_directory = workDir;
+        // A bridge in its own directory (bridge_working_directory()), a participant of the file in
+        // the configuration file's.
+        options.working_directory = bridge ? bridge_working_directory(executable) : workDir;
         options.on_line = [this, i](process::Stream, std::string_view line) { out_.on_line(i, line); };
         // Always, so that the value decides and not one that the launcher inherited: "1" if other
         // computers may reach the registry, although these participants connect to it at a loopback
