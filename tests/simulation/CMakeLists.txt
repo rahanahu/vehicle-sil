@@ -62,10 +62,12 @@ endif()
 
 # ECU executables made with ecu_main() (examples/ecu_main), as processes: --describe against
 # the JSON in docs/ecu-executable.md, --local, both ECUs on SIL Kit under
-# vehicle_sil_sim_controller, the usage, a stop request before and after the start.
+# vehicle_sil_sim_controller, two engines with --j1939-node, the usage, a stop request before and
+# after the start.
 if(TARGET vehicle_sil_engine_ecu)
   add_executable(vehicle_sil_ecu_main_launcher ecu_main_launcher.cpp)
-  target_link_libraries(vehicle_sil_ecu_main_launcher PRIVATE vehicle_sil_test_process vehicle_sil::core)
+  target_link_libraries(vehicle_sil_ecu_main_launcher PRIVATE vehicle_sil_test_process vehicle_sil::core
+                        vehicle_sil::control vehicle_sil::control_silkit)
   vehicle_sil_target_defaults(vehicle_sil_ecu_main_launcher)
   add_dependencies(vehicle_sil_ecu_main_launcher sil-kit-registry vehicle_sil_sim_controller vehicle_sil_engine_ecu
                    vehicle_sil_dashboard_ecu)
@@ -74,6 +76,7 @@ if(TARGET vehicle_sil_engine_ecu)
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/ecu_main
     SCENARIOS
       describe
+      j1939_node
       local
       signal
       silkit

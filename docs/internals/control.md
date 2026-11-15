@@ -416,7 +416,17 @@ Messages flow in this order: the hello; the start window before the first step (
 
 The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-Every message starts with the format version (`kVersion`), and the decoder accepts only its own version. The version goes up when the layout of a message changes. Adding a kind that the other side can safely ignore does not change it: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way). In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of another version.
+Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
+
+- Version 1 is fixed. Its bytes are what ECUs built with vehicle-sil 0.1.0 send and expect.
+- Version 2 can get new fields without a new version:
+  - Each variable, write, result and event starts with its size in bytes.
+  - The last byte of the header is the revision of the writer (`kRevision`).
+  - A new field goes at the end of its element, or at the end of the message if it belongs to the message, and `kRevision` goes up by one.
+  - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
+  - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer looks at the other side's revision before it sends one.
+- Version 2 carries two fields that version 1 has no place for: how many writes of a command were applied (`CommandResult::applied_writes`), and which write a refusal is about (`SubmitResult::failed_write`). Decoded from version 1, both are empty.
+- Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
 - The decoder never throws and never reads outside the bytes it is given.
 - It returns a distinct error for each of: truncated input, wrong kind, wrong version, oversized input, out-of-range value.

@@ -65,11 +65,16 @@ wire::Hello sample_hello()
     return hello;
 }
 
-wire::Bytes encoded(const wire::Hello& hello)
+/// Each version the format has: what holds for one holds for the other.
+constexpr std::uint16_t kVersions[] = {1, 2};
+/// A version no decoder reads.
+constexpr std::uint16_t kUnknownVersion = wire::kNewestVersion + 1;
+
+wire::Bytes encoded(const wire::Hello& hello, std::uint16_t version = wire::kVersion)
 {
     wire::Bytes bytes;
     std::string why;
-    CHECK(wire::encode_hello(hello, bytes, why));
+    CHECK(wire::encode_hello(hello, bytes, why, version));
     CHECK(why.empty());
     return bytes;
 }
@@ -107,21 +112,26 @@ bool same(const Command& a, const Command& b)
 /// The step messages of one step, decoded again.
 std::vector<wire::StepMessage> step_messages(std::uint64_t session, SimTime time, bool final,
                                              const std::vector<CommandResult>& results, const std::vector<Event>& events,
-                                             const Snapshot* sample, std::size_t max_bytes, std::size_t* largest = nullptr)
+                                             const Snapshot* sample, std::size_t max_bytes, std::size_t* largest = nullptr,
+                                             std::uint16_t version = wire::kVersion)
 {
     std::vector<wire::StepMessage> out;
     wire::Bytes scratch;
-    wire::encode_step(session, time, final, results, events, sample, max_bytes, scratch, [&](const wire::Bytes& message) {
-        CHECK(message.size() <= max_bytes);
-        if (largest != nullptr)
-        {
-            *largest = std::max(*largest, message.size());
-        }
-        wire::StepMessage decoded;
-        const wire::Error error = wire::decode_step(message, decoded);
-        CHECK(error.text.empty());
-        out.push_back(std::move(decoded));
-    });
+    wire::encode_step(
+        session, time, final, results, events, sample, max_bytes, scratch,
+        [&](const wire::Bytes& message) {
+            CHECK(message.size() <= max_bytes);
+            if (largest != nullptr)
+            {
+                *largest = std::max(*largest, message.size());
+            }
+            wire::StepMessage decoded;
+            const wire::Error error = wire::decode_step(message, decoded);
+            CHECK(error.text.empty());
+            CHECK_EQ(error.version, version);
+            out.push_back(std::move(decoded));
+        },
+        version);
     return out;
 }
 
@@ -168,7 +178,8 @@ Assembled assemble(const std::vector<wire::StepMessage>& messages)
 
 bool same(const CommandResult& a, const CommandResult& b)
 {
-    return a.seq == b.seq && a.status == b.status && a.applied_at == b.applied_at && a.late == b.late && a.reason == b.reason;
+    return a.seq == b.seq && a.status == b.status && a.applied_at == b.applied_at && a.late == b.late && a.reason == b.reason &&
+           a.applied_writes == b.applied_writes;
 }
 
 } // namespace
@@ -238,16 +249,16 @@ TEST_CASE(wire_hello_of_another_version_names_its_participant)
 {
     wire::Bytes bytes = encoded(sample_hello());
     // The version is the two bytes after the four of the magic.
-    bytes[4] = static_cast<std::uint8_t>(wire::kVersion + 1);
+    bytes[4] = static_cast<std::uint8_t>(kUnknownVersion);
     // Whatever a later version puts behind the participant.
     bytes.resize(8 + 4 + 6);
     bytes.push_back(0xFF);
     wire::Hello decoded;
     const wire::Error error = wire::decode_hello(bytes, decoded);
     CHECK(error.code == wire::ErrorCode::VersionMismatch);
-    CHECK_EQ(error.version, static_cast<std::uint16_t>(wire::kVersion + 1));
+    CHECK_EQ(error.version, kUnknownVersion);
     CHECK(decoded.participant == "Engine");
-    CHECK(error.text.find("version 2") != std::string::npos);
+    CHECK(error.text.find("version " + std::to_string(kUnknownVersion)) != std::string::npos);
 
     // Too short for the participant: still a mismatch, without a name.
     bytes.resize(8 + 4 + 2);
@@ -402,7 +413,8 @@ TEST_CASE(wire_step_beyond_the_size_limit_is_split_and_put_together_again)
     for (std::uint64_t i = 0; i < 300; ++i)
     {
         results.push_back({i, static_cast<CommandStatus>(i % 4), i % 4 == 0 ? std::optional<SimTime>(at(1ms * i)) : std::nullopt,
-                           i % 3 == 0, std::string(i % 97, 'r')});
+                           i % 3 == 0, std::string(i % 97, 'r'),
+                           i % 5 == 0 ? std::nullopt : std::optional<std::uint32_t>(static_cast<std::uint32_t>(i))});
     }
     // One reason and one text beyond the limit of a text: cut, and still within a message.
     results[7].reason.assign(3 * wire::kMaxTextBytes, 'L');
@@ -429,85 +441,96 @@ TEST_CASE(wire_step_beyond_the_size_limit_is_split_and_put_together_again)
         }
     }
 
-    for (const std::size_t limit : {wire::kMinMessageBytes, std::size_t{4096}, std::size_t{10000}, wire::kMaxMessageBytes})
+    for (const std::uint16_t version : kVersions)
     {
-        std::size_t largest = 0;
-        const auto messages = step_messages(5, at(42ms), true, results, events, &sample, limit, &largest);
-        CHECK(messages.size() > 1);
-        CHECK(largest <= limit);
-        // The messages are filled: nothing like one item per message.
-        CHECK(messages.size() <= (results.size() * 120 + events.size() * 150 + sample.values.size() * 9) / (limit / 2) + 3);
-        const Assembled all = assemble(messages);
-        CHECK_EQ(all.finals, std::size_t{1});
-        CHECK_EQ(all.results.size(), results.size());
-        for (std::size_t i = 0; i < results.size(); ++i)
+        for (const std::size_t limit : {wire::kMinMessageBytes, std::size_t{4096}, std::size_t{10000}, wire::kMaxMessageBytes})
         {
-            CommandResult expected = results[i];
-            if (expected.reason.size() > wire::kMaxTextBytes)
+            std::size_t largest = 0;
+            const auto messages = step_messages(5, at(42ms), true, results, events, &sample, limit, &largest, version);
+            CHECK(messages.size() > 1);
+            CHECK(largest <= limit);
+            // The messages are filled: nothing like one item per message.
+            CHECK(messages.size() <= (results.size() * 120 + events.size() * 150 + sample.values.size() * 9) / (limit / 2) + 3);
+            const Assembled all = assemble(messages);
+            CHECK_EQ(all.finals, std::size_t{1});
+            CHECK_EQ(all.results.size(), results.size());
+            for (std::size_t i = 0; i < results.size(); ++i)
             {
-                expected.reason.resize(wire::kMaxTextBytes);
+                CommandResult expected = results[i];
+                if (expected.reason.size() > wire::kMaxTextBytes)
+                {
+                    expected.reason.resize(wire::kMaxTextBytes);
+                }
+                if (version == 1)
+                {
+                    expected.applied_writes.reset(); // version 1 has no place for it
+                }
+                CHECK(same(all.results[i], expected));
             }
-            CHECK(same(all.results[i], expected));
+            CHECK_EQ(all.events.size(), events.size());
+            for (std::size_t i = 0; i < events.size(); ++i)
+            {
+                CHECK(all.events[i].text == events[i].text.substr(0, wire::kMaxTextBytes));
+            }
+            CHECK_EQ(all.samples.size(), std::size_t{1});
+            CHECK(all.samples[0].values == sample.values);
+            CHECK_EQ(all.samples[0].sequence, sample.sequence);
         }
-        CHECK_EQ(all.events.size(), events.size());
-        for (std::size_t i = 0; i < events.size(); ++i)
-        {
-            CHECK(all.events[i].text == events[i].text.substr(0, wire::kMaxTextBytes));
-        }
-        CHECK_EQ(all.samples.size(), std::size_t{1});
-        CHECK(all.samples[0].values == sample.values);
-        CHECK_EQ(all.samples[0].sequence, sample.sequence);
     }
 }
 
 TEST_CASE(wire_truncated_messages_are_refused_at_every_length)
 {
-    std::vector<wire::Bytes> messages;
-    messages.push_back(encoded(sample_hello()));
-    messages.emplace_back();
-    CHECK(wire::encode_command(sample_command(), messages.back()));
-    messages.emplace_back();
-    wire::encode_submitted(wire::SubmittedMessage{3, 4, SubmitResult{SubmitStatus::Busy, "too many"}}, messages.back());
-    const Snapshot sample{at(1ms), 1, {Value{true}, Value{std::int64_t{5}}, Value{1.5}}};
-    wire::Bytes scratch;
-    wire::encode_step(1, at(1ms), true, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r"}},
-                      std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
-                      [&](const wire::Bytes& m) { messages.push_back(m); });
-    CHECK_EQ(messages.size(), std::size_t{4});
-
-    const auto decode_any = [](std::span<const std::uint8_t> bytes, std::size_t kind) {
-        wire::Hello hello;
-        wire::CommandMessage command;
-        wire::SubmittedMessage submitted;
-        wire::StepMessage step;
-        switch (kind)
-        {
-        case 0:
-            return wire::decode_hello(bytes, hello);
-        case 1:
-            return wire::decode_command(bytes, command);
-        case 2:
-            return wire::decode_submitted(bytes, submitted);
-        default:
-            return wire::decode_step(bytes, step);
-        }
-    };
-    for (std::size_t kind = 0; kind < messages.size(); ++kind)
+    for (const std::uint16_t version : kVersions)
     {
-        const wire::Bytes& whole = messages[kind];
-        CHECK(!decode_any(whole, kind));
-        for (std::size_t n = 0; n < whole.size(); ++n)
+        std::vector<wire::Bytes> messages;
+        messages.push_back(encoded(sample_hello(), version));
+        messages.emplace_back();
+        CHECK(wire::encode_command(sample_command(), messages.back(), version));
+        messages.emplace_back();
+        wire::encode_submitted(wire::SubmittedMessage{3, 4, SubmitResult{SubmitStatus::Busy, "too many", 2U}}, messages.back(), version);
+        const Snapshot sample{at(1ms), 1, {Value{true}, Value{std::int64_t{5}}, Value{1.5}}};
+        wire::Bytes scratch;
+        wire::encode_step(
+            1, at(1ms), true, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r", 1U}},
+            std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
+            [&](const wire::Bytes& m) { messages.push_back(m); }, version);
+        CHECK_EQ(messages.size(), std::size_t{4});
+
+        const auto decode_any = [](std::span<const std::uint8_t> bytes, std::size_t kind) {
+            wire::Hello hello;
+            wire::CommandMessage command;
+            wire::SubmittedMessage submitted;
+            wire::StepMessage step;
+            switch (kind)
+            {
+            case 0:
+                return wire::decode_hello(bytes, hello);
+            case 1:
+                return wire::decode_command(bytes, command);
+            case 2:
+                return wire::decode_submitted(bytes, submitted);
+            default:
+                return wire::decode_step(bytes, step);
+            }
+        };
+        for (std::size_t kind = 0; kind < messages.size(); ++kind)
         {
-            // A copy of exactly n bytes: a read beyond it is a read outside the allocation.
-            const wire::Bytes part(whole.begin(), whole.begin() + static_cast<std::ptrdiff_t>(n));
-            const wire::Error error = decode_any(part, kind);
-            CHECK(error.code == wire::ErrorCode::Truncated);
-            CHECK(!error.text.empty());
+            const wire::Bytes& whole = messages[kind];
+            CHECK(!decode_any(whole, kind));
+            for (std::size_t n = 0; n < whole.size(); ++n)
+            {
+                // A copy of exactly n bytes: a read beyond it is a read outside the allocation.
+                const wire::Bytes part(whole.begin(), whole.begin() + static_cast<std::ptrdiff_t>(n));
+                const wire::Error error = decode_any(part, kind);
+                CHECK(error.code == wire::ErrorCode::Truncated);
+                CHECK(!error.text.empty());
+            }
+            // Bytes after the end are refused as well.
+            wire::Bytes longer = whole;
+            longer.push_back(0);
+            CHECK(decode_any(longer, kind).code == wire::ErrorCode::Malformed);
         }
-        // Bytes after the end are refused as well.
-        wire::Bytes longer = whole;
-        longer.push_back(0);
-        CHECK(decode_any(longer, kind).code == wire::ErrorCode::Malformed);
     }
 }
 
@@ -516,43 +539,47 @@ TEST_CASE(wire_corrupted_lengths_and_enumerators_are_refused)
     // Every byte of every message set to every of a few values: the decoder answers (an error or
     // not), reads nothing outside the message and allocates nothing a length field asks for
     // beyond what the message can hold.
-    std::vector<wire::Bytes> messages;
-    messages.push_back(encoded(sample_hello()));
-    messages.emplace_back();
-    CHECK(wire::encode_command(sample_command(), messages.back()));
     const Snapshot sample{at(1ms), 1, {Value{true}, Value{std::int64_t{5}}, Value{1.5}}};
     wire::Bytes scratch;
-    wire::encode_step(1, at(1ms), false, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r"}},
-                      std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
-                      [&](const wire::Bytes& m) { messages.push_back(m); });
-    std::size_t refused = 0;
-    std::size_t tried = 0;
-    for (std::size_t kind = 0; kind < messages.size(); ++kind)
+    for (const std::uint16_t version : kVersions)
     {
-        for (std::size_t i = 0; i < messages[kind].size(); ++i)
+        std::vector<wire::Bytes> messages;
+        messages.push_back(encoded(sample_hello(), version));
+        messages.emplace_back();
+        CHECK(wire::encode_command(sample_command(), messages.back(), version));
+        wire::encode_step(
+            1, at(1ms), false, std::vector<CommandResult>{{1, CommandStatus::Applied, at(1ms), false, "r", 1U}},
+            std::vector<Event>{{at(1ms), EventLevel::Info, "event"}}, &sample, wire::kMaxMessageBytes, scratch,
+            [&](const wire::Bytes& m) { messages.push_back(m); }, version);
+        std::size_t refused = 0;
+        std::size_t tried = 0;
+        for (std::size_t kind = 0; kind < messages.size(); ++kind)
         {
-            for (const std::uint8_t value : {std::uint8_t{0x00}, std::uint8_t{0x7F}, std::uint8_t{0x80}, std::uint8_t{0xFF}})
+            for (std::size_t i = 0; i < messages[kind].size(); ++i)
             {
-                wire::Bytes bytes = messages[kind];
-                if (bytes[i] == value)
+                for (const std::uint8_t value : {std::uint8_t{0x00}, std::uint8_t{0x7F}, std::uint8_t{0x80}, std::uint8_t{0xFF}})
                 {
-                    continue;
+                    wire::Bytes bytes = messages[kind];
+                    if (bytes[i] == value)
+                    {
+                        continue;
+                    }
+                    bytes[i] = value;
+                    wire::Hello hello;
+                    wire::CommandMessage command;
+                    wire::StepMessage step;
+                    const wire::Error error = kind == 0   ? wire::decode_hello(bytes, hello)
+                                              : kind == 1 ? wire::decode_command(bytes, command)
+                                                          : wire::decode_step(bytes, step);
+                    ++tried;
+                    refused += error ? 1 : 0;
                 }
-                bytes[i] = value;
-                wire::Hello hello;
-                wire::CommandMessage command;
-                wire::StepMessage step;
-                const wire::Error error = kind == 0   ? wire::decode_hello(bytes, hello)
-                                          : kind == 1 ? wire::decode_command(bytes, command)
-                                                      : wire::decode_step(bytes, step);
-                ++tried;
-                refused += error ? 1 : 0;
             }
         }
+        // Most corruptions are seen (a changed digit of a number or letter of a name is not).
+        CHECK(tried > 1000);
+        CHECK(refused > tried / 4);
     }
-    // Most corruptions are seen (a changed digit of a number or letter of a name is not).
-    CHECK(tried > 1000);
-    CHECK(refused > tried / 4);
 
     // A count that the message cannot hold, in each place that has one.
     wire::Bytes hello_bytes = encoded(sample_hello());
@@ -589,9 +616,14 @@ TEST_CASE(wire_corrupted_lengths_and_enumerators_are_refused)
 TEST_CASE(wire_random_bytes_never_crash_a_decoder)
 {
     std::mt19937_64 rng(4242);
-    const wire::Bytes valid_hello = encoded(sample_hello());
-    wire::Bytes valid_command;
-    CHECK(wire::encode_command(sample_command(), valid_command));
+    // Of both versions, in turn.
+    wire::Bytes valid_hello[2];
+    wire::Bytes valid_command[2];
+    for (std::size_t v = 0; v < 2; ++v)
+    {
+        valid_hello[v] = encoded(sample_hello(), kVersions[v]);
+        CHECK(wire::encode_command(sample_command(), valid_command[v], kVersions[v]));
+    }
     std::size_t accepted = 0;
     for (int round = 0; round < 20000; ++round)
     {
@@ -610,8 +642,13 @@ TEST_CASE(wire_random_bytes_never_crash_a_decoder)
         {
             // A valid message with a few random bytes changed, cut at a random length: gets past
             // the header, which pure noise almost never does.
-            bytes = round % 2 == 0 ? valid_hello : valid_command;
+            const std::size_t v = static_cast<std::size_t>(round / 4) % 2;
+            bytes = round % 2 == 0 ? valid_hello[v] : valid_command[v];
             bytes[6] = static_cast<std::uint8_t>(1 + rng() % 4);
+            if (v == 1 && rng() % 2 == 0)
+            {
+                bytes[7] = 1; // from a newer revision: the decoder skips what it does not know
+            }
             for (int i = 0; i < 3; ++i)
             {
                 bytes[8 + rng() % (bytes.size() - 8)] = static_cast<std::uint8_t>(rng());
@@ -700,14 +737,14 @@ TEST_CASE(wire_hello_is_bounded_in_what_it_makes_a_reader_keep)
 
     // A hello of another version: not read beyond the size limit either, and a name that is
     // too long is not handed on.
-    const wire::Error large = wire::decode_hello(raw_hello(wire::kVersion + 1, "Newer", 0, wire::kMaxHelloBytes + 1), decoded);
+    const wire::Error large = wire::decode_hello(raw_hello(kUnknownVersion, "Newer", 0, wire::kMaxHelloBytes + 1), decoded);
     CHECK(large.code == wire::ErrorCode::TooLarge);
     CHECK(decoded.participant.empty());
-    const wire::Error other = wire::decode_hello(raw_hello(wire::kVersion + 1, "Newer", 0, wire::kMaxHelloBytes), decoded);
+    const wire::Error other = wire::decode_hello(raw_hello(kUnknownVersion, "Newer", 0, wire::kMaxHelloBytes), decoded);
     CHECK(other.code == wire::ErrorCode::VersionMismatch);
     CHECK(decoded.participant == "Newer");
     const wire::Error long_name =
-        wire::decode_hello(raw_hello(wire::kVersion + 1, std::string(wire::kMaxNameBytes + 1, 'n'), 0, 0), decoded);
+        wire::decode_hello(raw_hello(kUnknownVersion, std::string(wire::kMaxNameBytes + 1, 'n'), 0, 0), decoded);
     CHECK(long_name.code == wire::ErrorCode::VersionMismatch);
     CHECK(decoded.participant.empty());
 }
@@ -732,7 +769,7 @@ TEST_CASE(wire_probe_and_ready_and_whom_a_message_is_for)
             CHECK(!wire::addressed(wire::Bytes(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(n))).has_value());
         }
         wire::Bytes other = bytes;
-        other[4] = static_cast<std::uint8_t>(wire::kVersion + 1);
+        other[4] = static_cast<std::uint8_t>(kUnknownVersion);
         CHECK(!wire::addressed(other).has_value());
         wire::Error error;
         CHECK(wire::peek(bytes, error).has_value());

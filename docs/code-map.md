@@ -43,6 +43,7 @@ Where scenario tests live:
 - `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
 - Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
 - The shared code is in `tests/integration/launcher_support.hpp`.
+- The `launch_run` scenarios are in `tests/launch/launch_run_<topic>.cpp`, one file for each topic. `main()` is in `launch_run_launcher.cpp`, and the code they share is in `launch_run_support.hpp`.
 
 Rules for areas (the directories directly under `tests/`):
 
@@ -371,6 +372,7 @@ What `simulation.*` checks:
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
+- `simulation.ecu_main_j1939_node*`: `--j1939-node` of `ecu_main()` gives the node the values of the line (also on a renamed network), the message for a line that applies to no node (exit code 3), a node added in a step keeps the values of the code; the usage errors of its value are in `simulation.ecu_main_refuses_bad_command_lines`
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -386,6 +388,7 @@ What `ecu_main.*` checks:
 - The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
 - `--local`
 - 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- 2 copies of the engine, the second with `--j1939-node` (`ecu_main.j1939_node`: the addresses in the monitoring output)
 - Usage, stop requests
 
 ### `core` / `lin`
@@ -1176,13 +1179,12 @@ No test compares the following. Keep them in sync by hand.
 
 ## Dependency direction
 
-In every diagram, an arrow means "links" (`target_link_libraries`), except the thick arrow (see the table). Do not create dependencies in the opposite direction.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
 
 | In the diagrams | Meaning |
 |---|---|
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
-| Thick arrow | No link of its own: the public headers include the other target's headers, and the link comes through another target's public link |
 | Node name | Target name (without `vehicle_sil::`) |
 
 ### Layers
@@ -1336,11 +1338,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1351,7 +1353,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `control`: the public headers of `launch` include headers of `control` (`hub.hpp`, `agent.hpp`, `variable_map.hpp`). `launch` gets `control` through the public link of `ecu`.
 - `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
 
 ### Vector XL CAN Bridge
@@ -1472,7 +1473,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Control API | `run --control` | [The launcher's Control Server](#the-launchers-control-server) |
 | Control API | Read-only access while a scenario runs | [The Control Server during a scenario](#the-control-server-during-a-scenario) |
 | Control API | `GetSnapshot` | [Reading time and values together](#reading-time-and-values-together) |
-| Control API | `wire.cpp`, `kVersion` | [Messages between Agent and Hub](#messages-between-agent-and-hub) |
+| Control API | `wire.cpp`, `kVersion`, `kRevision` | [Messages between Agent and Hub](#messages-between-agent-and-hub) |
 | Control API | `control_silkit`, the start window | [The SIL Kit transport and the start window](#the-sil-kit-transport-and-the-start-window) |
 | Bridges | Shutdown, exit codes, health lines | [Bridge shutdown and exit codes](#bridge-shutdown-and-exit-codes) |
 | Bridges | Output and error messages of the Ethernet Bridge | [Ethernet Bridge output](#ethernet-bridge-output) |
@@ -2250,9 +2251,13 @@ Where to change:
 
 Rules:
 
-- If you change the layout, raise `kVersion` in `control/wire.hpp`. The decoder accepts only its own version.
-- If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
-- Never change the hello from its start up to the participant name, in any version. This lets a peer with a different version read the name.
+- Do not change version 1. ECUs built with vehicle-sil 0.1.0 speak it.
+- To add a field to version 2, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
+- A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kNewestVersion` and keep reading the older versions.
+- `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
+- The smallest size of each element differs by version (`kLeastV1`, `kLeastV2`). The decoder checks a count against it before it reads anything. Update it when an element gets a field.
+- If you only add a kind that the other side can safely ignore, raise neither the version nor the revision. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
+- Never change the eight bytes of the header, the participant name right after the header of a hello, or the session right after the header of every other message, in any version. This lets a peer with a different version read the name, and lets an ECU see whom a message is for.
 
 Documentation to update:
 
@@ -2261,6 +2266,9 @@ Documentation to update:
 Tests:
 
 - `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
+- `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit in both versions.
+- `^control\.wire_building_`: building the step messages of a step allocates nothing once the buffer has grown (a binary of its own, `tests/control/test_wire_allocation.cpp`).
+- `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
 
 ### The SIL Kit transport and the start window
 
