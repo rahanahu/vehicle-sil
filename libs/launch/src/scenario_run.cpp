@@ -1260,8 +1260,8 @@ TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::
         case control::TargetStatus::Rejected:
             // The ECU applies the writes of a command one after the other and stops at the one
             // whose setter throws: the ones before it are applied. Not known when the result
-            // does not say how many (an ECU built with vehicle-sil 0.1.0, for a command of
-            // several writes).
+            // does not say how many (a transport of its own that leaves the number out, for a
+            // command of several writes).
             if (target.applied_writes && *target.applied_writes <= command.size())
             {
                 for (std::size_t k = 0; k < command.size(); ++k)

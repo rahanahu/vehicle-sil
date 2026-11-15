@@ -61,7 +61,7 @@
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
 // With the file "test-ecu-no-variables" in its working directory, the --describe of every test ECU
-// there has no variables at all and offers its control agent (wire version 1): an executable
+// there has no variables at all and offers its control agent (wire version 2): an executable
 // that is not built with ecu_main, whose ECUs always have the built-in variables.
 #include "spawn_sleeper.hpp"
 

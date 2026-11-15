@@ -1314,6 +1314,8 @@ struct RawAgent
 {
     std::string name;
     std::uint64_t session;
+    std::mutex mutex;
+    std::vector<wire::Bytes> commands; ///< guarded by mutex: the commands for its session, as they arrived
     std::atomic<bool> answers{false};
     std::atomic<int> probes{0};
     std::atomic<int> last_word_answers{0}; ///< received for its session; it takes no other notice of them
@@ -1347,6 +1349,11 @@ struct RawAgent
                                                   {
                                                       ready();
                                                   }
+                                              }
+                                              if (to && to->kind == wire::Kind::Command && to->session == session)
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  commands.emplace_back(event.data.begin(), event.data.end());
                                               }
                                               if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
                                               {
@@ -1389,6 +1396,17 @@ struct RawAgent
         submitted_out->Publish(topics::span_of(bytes));
     }
     void step(const wire::Bytes& bytes) { step_out->Publish(topics::span_of(bytes)); }
+    void submitted(const wire::SubmittedMessage& message)
+    {
+        wire::Bytes bytes;
+        wire::encode_submitted(message, bytes);
+        submitted_out->Publish(topics::span_of(bytes));
+    }
+    [[nodiscard]] std::vector<wire::Bytes> commands_so_far()
+    {
+        const std::lock_guard lock(mutex);
+        return commands;
+    }
 };
 
 /// A participant that speaks the hub's side by hand, as a hub from before the answer to the last
@@ -1939,26 +1957,20 @@ TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_another_version)
     a.end();
 }
 
-// Which write a refusal is about: an agent of version 2 says it with a number, and its reason is
-// not read; an agent of version 1 cannot say it, and the hub reads the name its reason begins with.
-TEST_CASE(the_reason_of_a_refusal_is_read_only_for_an_agent_of_version_1)
+// Which write a refusal is about travels as a number; the reason is never read for it.
+TEST_CASE(the_write_a_refusal_is_about_travels_as_a_number_and_the_reason_is_not_read)
 {
     const InProcessRegistry registry;
     HubSide side(registry.uri, {"Unused"});
     auto& hub = side.hub;
-    RawAgent old("Old", registry.uri, 0x0101, 1);
-    RawAgent fresh("New", registry.uri, 0x0202, 2);
-    for (RawAgent* agent : {&old, &fresh})
-    {
-        agent->answers.store(true);
-        agent->hello(3);
-    }
-    side.wait_ready({"Old", "New"});
-    // The same refusal from both: the second write of the command, named in the reason.
-    const auto refuse = [&](RawAgent& agent, std::optional<std::uint32_t> failed_write) {
+    RawAgent agent("Agent", registry.uri, 0x0202);
+    agent.answers.store(true);
+    agent.hello(3);
+    side.wait_ready({"Agent"});
+    // A refusal of the second write of the command, named in the reason.
+    const auto refuse = [&](std::optional<std::uint32_t> failed_write) {
         const std::size_t before = agent.commands_so_far().size();
-        const std::uint64_t seq =
-            hub.write(OperationRequest{{{agent.name, "v1", Value{std::int64_t{1}}}, {agent.name, "v2", Value{0.5}}}});
+        const std::uint64_t seq = hub.write(OperationRequest{{{agent.name, "v1", Value{std::int64_t{1}}}, {agent.name, "v2", Value{0.5}}}});
         if (!eventually([&] { return agent.commands_so_far().size() == before + 1; }, 30s))
         {
             throw vehicle_sil::unit::Failure("the command did not arrive at " + agent.name);
@@ -1969,19 +1981,14 @@ TEST_CASE(the_reason_of_a_refusal_is_read_only_for_an_agent_of_version_1)
             throw vehicle_sil::unit::Failure("the command for " + agent.name + " cannot be read");
         }
         agent.submitted(wire::SubmittedMessage{agent.session, command.command.seq,
-                                               SubmitResult{SubmitStatus::Invalid, "v2: out of range", failed_write}},
-                        agent.version);
+                                               SubmitResult{SubmitStatus::Invalid, "v2: out of range", failed_write}});
         const OperationResult done = settled(hub.wait_done(seq, scaled_timeout(30s)), seq, "the refused write to " + agent.name);
         check_status(done, agent.name, TargetStatus::Invalid);
         return target(done, agent.name);
     };
-    // Version 1 has no place for the number: read from the reason.
-    const TargetResult from_old = refuse(old, 1);
-    CHECK(from_old.failed_write == std::optional<std::uint32_t>{1});
-    CHECK(from_old.applied_writes == std::optional<std::uint32_t>{0});
-    // Version 2 says it ...
-    CHECK(refuse(fresh, 1).failed_write == std::optional<std::uint32_t>{1});
-    // ... and when it does not, the reason is not read for it.
-    CHECK(!refuse(fresh, std::nullopt).failed_write.has_value());
+    const TargetResult said = refuse(1);
+    CHECK(said.failed_write == std::optional<std::uint32_t>{1});
+    CHECK(said.applied_writes == std::optional<std::uint32_t>{0});
+    CHECK(!refuse(std::nullopt).failed_write.has_value());
     CHECK_EQ(side.transport->stats().undecodable, std::uint64_t{0});
 }

@@ -60,12 +60,6 @@ struct PeerHello
     /// The agent's steps run on the simulation's time (false: in real time; its samples carry
     /// another clock, see none_after()).
     bool virtual_time = true;
-    /// The agent does not say which writes of a command took effect, nor which write a refusal is
-    /// about (wire version 1: CommandResult::applied_writes and SubmitResult::failed_write never
-    /// come from it). The hub then reads them from the reason where it can: such an agent begins
-    /// the reason of a refused write with the write's name ("<name>: "). The reasons of an agent
-    /// that does say are never read.
-    bool legacy_reasons = false;
 };
 
 /// What the transport learns about a peer outside its steps (Peer::failed(), Peer::error()).
@@ -142,12 +136,12 @@ enum class TargetStatus
 /// Invalid: the write at which the hub's own check stopped, or the one the agent names; empty
 /// when the command as a whole was refused (the peer is not connected, the link refused it).
 /// Rejected: the agent applied the writes before the one whose setter threw, so both numbers are
-/// its position. A command that writes a parameter after the first step is rejected with nothing
-/// applied and no setter called: applied_writes is 0, and failed_write is empty unless the
-/// command has one write only. A number from the agent that is larger than n is not believed
-/// (both are empty). An agent of PeerHello::legacy_reasons does not say: both are 0 for a
-/// command of one write, the position of the write its reason names if exactly one write of the
-/// command has that name, and empty otherwise.
+/// its position. A command that the agent took before its first step and that writes a parameter
+/// at a later step is rejected with nothing applied and no setter called: applied_writes is 0,
+/// and failed_write is empty unless the command has one write only. A number from the agent that is n or larger is not believed (a
+/// rejected command has a write that did not take effect): both are empty. An agent that does not
+/// say (a transport of its own): both are 0 for a command of one write, and empty otherwise. The
+/// reason is never read to find a write.
 struct TargetResult
 {
     std::string peer;
@@ -398,7 +392,6 @@ private:
         std::deque<std::uint64_t> outbox; ///< seqs to send, in order
         bool sending = false;            ///< a thread is in AgentLink::send() for this peer
         std::uint64_t generation = 0;    ///< unique per entry: tells an entry made again after forget_peer() apart
-        bool legacy_reasons = false;     ///< PeerHello::legacy_reasons of its incarnation
     };
     struct Target
     {
@@ -407,9 +400,6 @@ private:
         Command command;         ///< kept until it is sent
         std::uint32_t writes = 0;      ///< of the command (which is not kept)
         bool writes_parameter = false; ///< one of them is for a parameter
-        /// For a peer of PeerHello::legacy_reasons only: the names of the writes as they were sent
-        /// (the executable's names), to find the write its reason names.
-        std::vector<std::string> names;
         ConnectionId handed_to = 0; ///< the connection whose link took it
     };
     struct Operation

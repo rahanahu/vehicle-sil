@@ -334,9 +334,9 @@ With the state, each peer's result says which of its writes took effect and whic
 | Rejected | The position of the write whose setter threw (the writes before it took effect) | The same position |
 | Sent, Queued, Disconnected, Unknown | empty | empty |
 
-- A command that writes a Parameter after the first step is Rejected with nothing applied and no setter called: `applied_writes` is 0, and `failed_write` is empty unless the command has only one write.
-- A number from the Agent that is larger than `n` is not believed: both are empty.
-- An Agent of wire version 1 (an ECU built with vehicle-sil 0.1.0) does not say either number. For such a peer (`PeerHello::legacy_reasons`) the Hub reads the name its reason begins with (`"<name>: "`): it fills both when exactly one write of the command has that name, and leaves them empty otherwise. A command of one write is always known. This is the only place that reads a reason to find a write (`write_named()` in `libs/control/src/hub.cpp`); the reasons of an Agent of version 2 are never read.
+- A command that the Agent received before its first step and that writes a Parameter at a later step is Rejected with nothing applied and no setter called: `applied_writes` is 0, and `failed_write` is empty unless the command has only one write. (A command that writes a Parameter and arrives after the first step is Invalid at once.)
+- A number from the Agent that is `n` or larger is not believed (a Rejected command has a write that did not take effect): both are empty.
+- An Agent that does not say the numbers (a transport of its own that leaves them out): both are 0 for a command of one write, and empty otherwise. The Hub never reads a `reason` to find a write.
 - Callers tell which writes took effect from these numbers, not from `reason` (the launcher's scenario does: `ScenarioEngine::failed_write()`).
 
 ### Waiting for queued and done (`wait_queued()`, `wait_done()`)

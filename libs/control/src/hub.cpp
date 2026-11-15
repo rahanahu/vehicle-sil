@@ -478,7 +478,6 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     entry.mapped = std::move(mapped);
     entry.info.connected = true;
     entry.info.virtual_time = hello.virtual_time;
-    entry.legacy_reasons = hello.legacy_reasons;
     entry.connection = id;
     entry.max_pending = hello.max_pending;
     announce_peer(entry);
@@ -586,33 +585,6 @@ void Hub::set_variable_map(const std::string& participant, VariableMap map)
     }
 }
 
-namespace {
-
-/// The write that the reason of an agent of PeerHello::legacy_reasons is about: such an agent
-/// begins the reason with the name of the write ("<name>: <why>"). `names` are the names of the
-/// command's writes as they were sent (empty for every other agent: their reasons are not read).
-/// Empty if no write has that name, or more than one has (the name does not say which).
-/// The only place that reads a reason to learn which write it means.
-std::optional<std::uint32_t> write_named(const std::string& reason, const std::vector<std::string>& names)
-{
-    std::optional<std::uint32_t> found;
-    for (std::size_t i = 0; i < names.size(); ++i)
-    {
-        const std::string& name = names[i];
-        if (reason.compare(0, name.size(), name) == 0 && reason.compare(name.size(), 2, ": ") == 0)
-        {
-            if (found)
-            {
-                return std::nullopt;
-            }
-            found = static_cast<std::uint32_t>(i);
-        }
-    }
-    return found;
-}
-
-} // namespace
-
 std::string Hub::reason_as_seen(const std::string& participant, const std::string& reason) const
 {
     const auto it = peers_.find(participant);
@@ -642,10 +614,9 @@ void Hub::agent_submitted(ConnectionId id, std::uint64_t seq, const SubmitResult
         break;
     case SubmitStatus::Invalid:
         t->result.status = TargetStatus::Invalid;
-        // The write it is about: what the agent says (not a position the command does not have);
-        // an agent that does not say names it in the reason.
-        t->result.failed_write = result.failed_write ? (*result.failed_write < t->writes ? result.failed_write : std::nullopt)
-                                                     : write_named(result.reason, t->names);
+        // The write it is about: what the agent says (not a position the command does not have).
+        t->result.failed_write =
+            result.failed_write && *result.failed_write < t->writes ? result.failed_write : std::nullopt;
         break;
     }
     t->result.reason = reason_as_seen(c->participant, result.reason);
@@ -680,22 +651,18 @@ void Hub::agent_result(ConnectionId id, const CommandResult& result)
         t->result.failed_write.reset();
         if (result.applied_writes)
         {
-            // The writes before the one whose setter threw took effect. A parameter after the first
-            // step is refused with nothing applied and no setter called: then no write is the one,
+            // The writes before the one whose setter threw took effect, and that one did not (a
+            // number of n or more says otherwise: not believed). A parameter after the first step
+            // is refused with nothing applied and no setter called: then no write is the one,
             // unless there is one only.
-            if (const std::uint32_t applied = *result.applied_writes; applied <= t->writes)
+            if (const std::uint32_t applied = *result.applied_writes; applied < t->writes)
             {
                 t->result.applied_writes = applied;
-                if (applied < t->writes && !(applied == 0 && t->writes_parameter && t->writes > 1))
+                if (!(applied == 0 && t->writes_parameter && t->writes > 1))
                 {
                     t->result.failed_write = applied;
                 }
             }
-        }
-        else if (const auto named = write_named(result.reason, t->names))
-        {
-            t->result.applied_writes = named;
-            t->result.failed_write = named;
         }
         else if (t->writes == 1)
         {
@@ -959,13 +926,6 @@ std::uint64_t Hub::write(OperationRequest request)
             if (why.empty())
             {
                 t.result.failed_write.reset(); // every write passed
-                if (entry->second.legacy_reasons)
-                {
-                    for (const auto& w : t.command.writes)
-                    {
-                        t.names.push_back(w.name);
-                    }
-                }
             }
             if (why.empty() && open_targets(t.result.peer) >= entry->second.max_pending)
             {
