@@ -1,0 +1,18 @@
+# The messages of the example in docs/j1939-guide.md ("Listen-only participants"): a tool writes a
+# value to an ECU and the ECU answers. Made up, Proprietary A. Without its comment lines, this file
+# is the guide's block (j1939_spy.guide_example_is_the_guides).
+namespace: cal
+indicators: none
+messages:
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x01}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: value, start_bit: 24, length: 16, scale: 0.1, unit: V}
+  - name: WriteAnswer
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x81}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}

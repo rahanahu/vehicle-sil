@@ -913,13 +913,35 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ほかの ECU が受信するもの、送信するもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator でテストしています）。
 
-聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。何を見るかは、見張り（watch）のクラスに書いて `Spy` に追加します。
+聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。型のあるメッセージ（「データの形（Codec）」）なら、`watch<M>()` が、自分のコードなしで信号ごとの値と来た時刻を書きます。それ以外は、何を見るかを見張り（watch）のクラスに書いて `Spy` に追加します。
 
-この見本は、`main()` を除いて `tests/spy/test_spy.cpp` にあり、テストしています。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+見本は、作りものの較正の手順の 2 つのメッセージ（ツールが ECU 0x21 に値を書き、0x21 が答える）と、0x21 の Proprietary A のメッセージ全部を見張ります。メッセージは YAML に書き、CMake の `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` が `cal_messages.hpp` にします（`cal_messages` と `vehicle_sil::spy` をリンクし、下のコードは `cal_messages.hpp` と `vehicle_sil/spy/watch.hpp` をインクルードします）。下の 2 つのブロック（`tests/spy/cal_messages.yaml`、`tests/spy/guide_example.hpp`）は、試験が作って動かし、この手引きがそのまま載せていることも確かめます。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+
+<!-- tests/spy/cal_messages.yaml -->
+
+```yaml
+namespace: cal
+indicators: none
+messages:
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x01}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: value, start_bit: 24, length: 16, scale: 0.1, unit: V}
+  - name: WriteAnswer
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x81}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+```
+
+<!-- tests/spy/guide_example.hpp -->
 
 ```cpp
 namespace cal {
-inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
 
 class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
@@ -937,11 +959,15 @@ private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0
 class CalSpy {
 public:
     explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.watch<cal::Write>("write", {.from = 0xF9, .to = 0x21});               // write.address, write.value, write.count ...
+        spy_.watch<cal::WriteAnswer>("answer", {.from = 0x21, .stale_after = 500ms}); // answer.result ..., answer.stale
         spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
     }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
+```
 
+```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
 
@@ -951,6 +977,22 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 | 生の CAN で受信する | `ecu.can(network)` の `on_frame` | 全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受信します。 |
 
 - `Spy(ecu, network)` は、その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作ります。ノードを追加しない `Network` は、Address Claim も、Request への応答も、ACK と NACK もしません。`Listener` も聞くだけで、何も送信しません。
+- `watch<M>(名前, options)` は、型のあるメッセージ `M` を見張ります。`M` は `vehicle_sil_add_j1939_codec()` が作った型か、同じ形で手で書いた型です。ヘッダー `vehicle_sil/spy/watch.hpp` が要ります（`vehicle_sil::j1939_codec` も要りますが、作ったメッセージのターゲットがリンクします）。`M` の PGN のメッセージのうち `M` に直せるもの（長さが足り、`M` にセレクターがあればそれが合うもの）を、`options.from` と `options.to` を書いたときはその送り元からとその宛先へのもの（ブロードキャストは `j1939::kGlobalAddress`）だけ受け取り、次の変数を書きます。
+
+  | 変数 | 型 | 中身 |
+  |---|---|---|
+  | `<名前>.<信号>` | 整数か実数 | 信号の最後の有効な値。単位は定義のもの。列挙（生の値。値の名前は書きません）と、scale が 1 で offset が整数の信号は整数、ほかは実数です。有効な値が来るまでは 0 で、有効でない値が来ても前の値のままです |
+  | `<名前>.<信号>.state` | 列挙 | 有効でない値を持ちうる信号（特別な値がある、有効な範囲がビットより狭い、列挙）だけ。最後のメッセージで何だったか。`none`（まだ来ていない）、`valid`、`error`、`not_available`、`special`、`out_of_range`、`undefined` |
+  | `<名前>.count` | 整数 | 受けたメッセージの数 |
+  | `<名前>.last_ms` | 整数 | 最後のメッセージの時刻（ms 未満は切り捨て。-1: まだ来ていない） |
+  | `<名前>.period_ms` | 整数 | 最後のメッセージとその前のメッセージの間隔（ms 未満は切り捨て。-1: 2 回来ていない） |
+  | `<名前>.size` | 整数 | 最後のメッセージのバイト数（型より長く来たメッセージは、その長さ） |
+  | `<名前>.invalid` | 整数 | 有効でない信号を含んでいたメッセージの数 |
+  | `<名前>.stale` | bool | `options.stale_after` を書いたときだけ。その時間より長く 1 回も来ていない間 true（最初のメッセージの前は、時刻 0 から数えます）。ECU のステップで変わるので、最大 1 ステップ遅れます |
+
+  - 「最後」は `Message::time` で決めます。最後のメッセージより古いメッセージ（接続のメッセージは受け手の確認の後に渡るので、後から来た単一フレームより後に渡ることがあります）は、`count` と `invalid` にだけ数え、ほかは変えません。
+  - 項目と同じ名前（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state`）の信号は、ビルドの誤りになり、文がそう言います（「a signal of M is named like an item the watch publishes ...」。どの信号かはコンパイラーが示します）。定義の側で信号の名前を変えます。
+  - `watch()` は `spy::Watch<M>&` を返します。その `count()` と `latest()`（最後のメッセージを `M` で）は、自分のコードから使えます。名前の誤り、空の名前、聞きこぼしの前置きと同じ名前、始まった後の追加は `add()` と同じに断り、0 以下の `stale_after` は `std::invalid_argument` です（「... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<名前>.stale"」）。
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラーは、追加した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer_end`、`on_frame`: `Listener` の同じ名前の口にハンドラーを追加します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
   - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を書きます。形は `ecu.output()` と同じです。

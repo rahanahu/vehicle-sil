@@ -314,9 +314,11 @@ Typed messages (`j1939_codec.*`):
 - The destruction order (the handlers are removed, then the watchers are destroyed, and the `Listener` last), watchers added by a watcher, `Scope::on_step`
 - If a `Spy` that wrote variables is destroyed before its ECU, the next step stops (on the virtual bus and on SIL Kit)
 - The breakdown and the sum of the missed-traffic variables, and the error messages
+- `watch<M>()` with generated and hand-written types: each signal (integer or real), its state, `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, the `from` and `to` filters, a message older than the latest one, and the error messages
+- `j1939_spy.watch_of_a_signal_named_count_does_not_build`: a signal named like an item of the watch is a build error (it builds a target outside the build, `vehicle_sil_spy_watch_clash`)
 - With a `Spy`, the records of the other ECUs do not change, and the `Spy` sends nothing
 - No memory allocation in steady-state steps
-- The example in the guide
+- The example in the guide (`tests/spy/guide_example.hpp`, `cal_messages.yaml`); `j1939_spy.guide_example_is_the_guides`: both guides show these files unchanged
 - `j1939_spy.boundary`: `libs/spy` does not use the engine's internals. `j1939.sniffer_boundary` also checks that the engine does not know `vehicle_sil::spy`
 
 ### `peer` / `testkit`
@@ -702,7 +704,8 @@ Main classes and functions:
 
 | Name | Location |
 |---|---|
-| `Spy`, `Scope`, `SpyOptions` (a listen-only participant writes what it hears to ECU variables; a watcher is a class that takes a `Scope&`) | `spy/spy.hpp` |
+| `Spy`, `Scope`, `SpyOptions` (a listen-only participant writes what it hears to ECU variables; a watcher is a class that takes a `Scope&`), `WatchOptions` | `spy/spy.hpp` |
+| `Spy::watch<M>()`, `Watch<M>` (a typed message as variables; needs `vehicle_sil::j1939_codec`) | `spy/watch.hpp` |
 
 - Tests: `tests/spy`
 - `ctest -R`: `^j1939_spy\.`

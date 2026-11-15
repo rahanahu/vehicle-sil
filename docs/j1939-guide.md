@@ -913,13 +913,35 @@ To check the communication between other ECUs in a scenario, add an ECU that sen
 
 What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
 
-`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). Write what to watch in a watcher class and add it to the `Spy`.
+`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). For a message with a type (see "Data layout (Codec)"), `watch<M>()` writes each signal and when the message came, with no code of your own. For anything else, write what to watch in a watcher class and add it to the `Spy`.
 
-`tests/spy/test_spy.cpp` contains this example without `main()` and tests it. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+The example watches two messages of a made-up calibration protocol (a tool writes a value to the ECU 0x21, which answers) and every Proprietary A message of 0x21. The messages are defined in YAML, and `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` in CMake turns them into `cal_messages.hpp` (link `cal_messages` and `vehicle_sil::spy`; the code below includes `cal_messages.hpp` and `vehicle_sil/spy/watch.hpp`). The tests build and run the two blocks below (`tests/spy/cal_messages.yaml`, `tests/spy/guide_example.hpp`) and check that this guide shows them unchanged. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+
+<!-- tests/spy/cal_messages.yaml -->
+
+```yaml
+namespace: cal
+indicators: none
+messages:
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x01}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: value, start_bit: 24, length: 16, scale: 0.1, unit: V}
+  - name: WriteAnswer
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x81}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+```
+
+<!-- tests/spy/guide_example.hpp -->
 
 ```cpp
 namespace cal {
-inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
 
 class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
@@ -937,11 +959,15 @@ private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0
 class CalSpy {
 public:
     explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.watch<cal::Write>("write", {.from = 0xF9, .to = 0x21});               // write.address, write.value, write.count ...
+        spy_.watch<cal::WriteAnswer>("answer", {.from = 0x21, .stale_after = 500ms}); // answer.result ..., answer.stale
         spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
     }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
+```
 
+```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
 
@@ -951,6 +977,22 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 | On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
 
 - `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
+- `watch<M>(name, options)` watches the typed message `M`: a type that `vehicle_sil_add_j1939_codec()` generated, or one written by hand in the same form. It needs the header `vehicle_sil/spy/watch.hpp` (and `vehicle_sil::j1939_codec`, which the target of the generated messages links). It takes the messages of `M`'s PGN that decode as `M` (long enough, and with `M`'s selector if it has one), only from `options.from` and only to `options.to` when they are given (`j1939::kGlobalAddress` for broadcasts), and writes these variables:
+
+  | Variable | Type | What it holds |
+  |---|---|---|
+  | `<name>.<signal>` | Integer or real | The signal's latest valid value, with the unit of the definition. An integer for an enumeration (its raw value; the names of its values are not written) and for a signal with scale 1 and a whole offset; a real number otherwise. 0 until a valid value came; a value that is not valid leaves it as it was |
+  | `<name>.<signal>.state` | Enum | Only for a signal that can hold a value that is not valid (special values, a valid range narrower than its bits, an enumeration): what the latest message held. `none` (no message yet), `valid`, `error`, `not_available`, `special`, `out_of_range`, `undefined` |
+  | `<name>.count` | Integer | Messages heard |
+  | `<name>.last_ms` | Integer | Time of the latest message, in whole ms (-1: none yet) |
+  | `<name>.period_ms` | Integer | Time between the latest message and the one before, in whole ms (-1: fewer than 2) |
+  | `<name>.size` | Integer | Bytes of the latest message (a message that came longer than the type keeps its length) |
+  | `<name>.invalid` | Integer | Messages with a signal that was not valid |
+  | `<name>.stale` | Bool | Only with `options.stale_after`: true while no message came for more than that (before the first one: since time 0). It changes in the ECU's steps, so it shows up to one step late |
+
+  - "Latest" is by `Message::time`. A message older than the latest one (the message of a connection is passed after the receiver's acknowledgement, so possibly after a single frame that came later) is counted in `count` and `invalid` and changes nothing else.
+  - A signal named like one of the items (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `state`) is a build error that says so ("a signal of M is named like an item the watch publishes ..."; the compiler shows which signal). Rename the signal in the definition.
+  - `watch()` returns the `spy::Watch<M>&`; its `count()` and `latest()` (the latest message as `M`) are for code of your own. The names, the empty name, the name of the missed-traffic prefix and "after the run started" are refused as with `add()`, and a `stale_after` that is not above 0 is a `std::invalid_argument` ("... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<name>.stale"").
 - `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
   - `on_message(pgn, handler)`, `on_any_message`, `on_transfer_end`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
   - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
