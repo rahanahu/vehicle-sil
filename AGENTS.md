@@ -93,7 +93,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/run-gui.py` | リポジトリからブラウザの GUI を起動する（足りないものは、作るコマンドを言う。ビルドはしない） |
 
 - GUI の試験は、pytest、ng、Playwright を直接呼ばずに `verify-web.py` と `verify-gui.py` から回します。この 2 つは、時間に敏感な試験の前に、この PC でビルドや試験や Windows の VM が動いている間は待ちます（同時に回すと時間の条件で落ちるため。`--wait-limit`）。
-- 遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が待つ上限を伸ばします。CTest の `TIMEOUT` は構成のときの値で決まるので、値を変えたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
+- 遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が待つ上限を伸ばします。CTest の `TIMEOUT` は構成のときの値で決まるので、値を変えたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」にあります。
 
 ```sh
 scripts/doctor.py                                    # 最初に: 要るものがそろっているか

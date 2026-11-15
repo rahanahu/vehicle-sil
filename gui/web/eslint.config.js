@@ -1,11 +1,11 @@
 // @ts-check
-// 書き方の決まり（README.md の「書き方の決まり」）を lint で強制する。
+// 書き方の決まり（README.md の「コーディングのルール」）を lint で強制する。
 const eslint = require('@eslint/js');
 const { defineConfig } = require('eslint/config');
 const tseslint = require('typescript-eslint');
 const angular = require('angular-eslint');
 
-// RxJS をどこで使うかは lint で縛らない（README の「書き方の決まり」で判断する）。
+// RxJS をどこで使うかは lint で縛らない（README の「コーディングのルール」で判断する）。
 // lint には、どこに書いても誤りと言える規則だけを置く。
 
 /** gui/client のソースを相対パスで import しない（入口 @vehicle-sil/gui-client から使う）。 */
@@ -91,7 +91,7 @@ module.exports = defineConfig([
   },
   {
     // 部品（widgets/）と包み（core/）は、別の Angular のアプリへ写して使える: 画面（run/、variables/）とアプリの殻に
-    // 頼らない（docs/gui.md の「サンプルの部品を写して使う」）
+    // 頼らない（docs/gui.md の「サンプルのコンポーネントをコピーして使う」）
     files: ['src/app/widgets/**/*.ts', 'src/app/core/**/*.ts'],
     ignores: ['src/**/*.spec.ts'],
     rules: {

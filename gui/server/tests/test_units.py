@@ -726,7 +726,7 @@ def test_the_docs_show_the_csp_that_the_screens_get() -> None:
     # docs/gui.md tells the authors of their own screens what the CSP allows: it shows the server's own.
     from vehicle_sil_gui.server import CSP
     docs = (Path(__file__).resolve().parents[3] / "docs" / "gui.md").read_text(encoding="utf-8")
-    assert f"\n{CSP}\n" in docs, "docs/gui.md, section 守りの線: copy the CSP of gui/server/.../server.py there"
+    assert f"\n{CSP}\n" in docs, "docs/gui.md, section CSP による制限: copy the CSP of gui/server/.../server.py there"
 
 
 # ---------------------------------------------------------------- processes

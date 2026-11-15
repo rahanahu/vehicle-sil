@@ -67,6 +67,12 @@ test('the example dashboard file: its layout, and its panel shows the engine spe
     if (directory) {
       await page.setViewportSize({ width: 1280, height: 900 });
       await page.locator('mat-sidenav-content').evaluate((element) => element.scrollTo(0, 0));
+      // 写真には値の変化を写す: スロットルを 20 % から 60 % へ動かし（step 5 を 8 回）、回転数が上がりきるのを待つ
+      await throttle.getByRole('slider', { name: 'Throttle' }).focus();
+      for (let i = 0; i < 8; i += 1) await page.keyboard.press('ArrowRight');
+      await expect
+        .poll(() => numberOf(page, 'Engine', 'engine.speed'), { timeout: RUN_TIMEOUT })
+        .toBe(2000);
       await page.waitForTimeout(800);
       await page.screenshot({ path: `${directory}/dashboard-1280.png` });
     }

@@ -72,7 +72,7 @@ export interface ParticipantView {
   stopRequested: boolean;
   /** 要約に入りきらず、サーバーが省いた欄の名前（その後の事象が届けば空）。 */
   omittedFields: readonly string[];
-  /** 変数を読み書きする口のつながり方（control_link の事象、または結果の control_link）。まだわからなければ null。 */
+  /** ECU の変数との接続の状態（control_link のイベント、または結果の control_link）。まだわからなければ null。 */
   controlLink: ControlLink | null;
   /** 利用者が起動する participant（照合の結果の manual、または manual の事象）。 */
   manual: boolean;
