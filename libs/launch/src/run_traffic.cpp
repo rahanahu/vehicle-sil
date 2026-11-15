@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_traffic.hpp"
 
+#include "seen_ecu.hpp"
+
 #include "vehicle_sil/ecu/monitor_names.hpp"
 
 #include <algorithm>
@@ -152,7 +154,7 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
         if (p.describe && i < check.participants.size() && check.participants[i].ecu)
         {
             who.described = true;
-            for (const SeenNetwork& seen : seen_networks(p, *check.participants[i].ecu))
+            for (const SeenNetwork& seen : SeenEcu(p, *check.participants[i].ecu).seen_networks())
             {
                 who.on.push_back(seen.network.name);
             }

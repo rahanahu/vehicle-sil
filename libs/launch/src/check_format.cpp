@@ -6,6 +6,7 @@
 
 #include "check_format.hpp"
 #include "check_words.hpp"
+#include "seen_ecu.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
 
@@ -104,7 +105,7 @@ bool is_on(const ParticipantConfig& participant, const ParticipantResult& result
     {
         return false;
     }
-    const std::vector<SeenNetwork> seen = seen_networks(participant, *result.ecu);
+    const std::vector<SeenNetwork> seen = SeenEcu(participant, *result.ecu).seen_networks();
     return std::any_of(seen.begin(), seen.end(), [&](const SeenNetwork& n) {
         return n.network.name == network.name && (!network.valid || n.network.kind() == network.kind);
     });
@@ -179,10 +180,10 @@ std::string detail::check_text_body(const CheckReport& report)
                                                                          : std::string(" (role: ") + to_string(p.role) + ")")};
             if (result.status == ParticipantStatus::Described && result.ecu)
             {
-                const EcuDescription& ecu = result.ecu->description;
-                row.push_back(ecu.step ? step_text(*ecu.step) : "real time");
+                const SeenEcu ecu(p, *result.ecu);
+                row.push_back(ecu.step() ? step_text(*ecu.step()) : "real time");
                 std::string cells;
-                for (const SeenNetwork& network : seen_networks(p, *result.ecu))
+                for (const SeenNetwork& network : ecu.seen_networks())
                 {
                     cells += (cells.empty() ? "" : ", ") + network_cell(network);
                 }
@@ -575,7 +576,8 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             }
             else
             {
-                const EcuDescription& ecu = result.ecu->description;
+                const SeenEcu seen(p, *result.ecu);
+                const EcuDescription& ecu = seen.as_described();
                 w.begin_object("reported");
                 optional_text("vehicle_sil", result.ecu->vehicle_sil_version);
                 optional_text("name", ecu.name);
@@ -586,7 +588,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             if (result.ecu && result.ecu->variables_reported)
             {
                 // As the simulation sees them (the run's hub applies the same map).
-                vehicle_sil::write_variables(w, "variables", seen_variables(p, *result.ecu).schema());
+                vehicle_sil::write_variables(w, "variables", SeenEcu(p, *result.ecu).variables().schema());
             }
             else
             {
@@ -663,7 +665,7 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
             else
             {
                 const std::vector<SeenNetwork> seen = p.enabled && result.status == ParticipantStatus::Described && result.ecu
-                                                          ? seen_networks(p, *result.ecu)
+                                                          ? SeenEcu(p, *result.ecu).seen_networks()
                                                           : std::vector<SeenNetwork>{};
                 const auto number = [&w](const char* key, const auto& value) {
                     if (value)
@@ -725,11 +727,11 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
                 w.end_array();
             }
-            if (result.ecu && result.ecu->description.control)
+            if (const std::optional<ControlOffer> offer = result.ecu ? SeenEcu(p, *result.ecu).control() : std::nullopt)
             {
                 w.begin_object("control");
-                w.string("transport", result.ecu->description.control->transport);
-                w.integer("wire_version", result.ecu->description.control->wire_version);
+                w.string("transport", offer->transport);
+                w.integer("wire_version", offer->wire_version);
                 w.end_object();
             }
             else

@@ -3,6 +3,7 @@
 
 #include "vehicle_sil/launch/check.hpp"
 #include "scenario_reader.hpp"
+#include "seen_ecu.hpp"
 #include "yaml_reader.hpp"
 
 #include <algorithm>
@@ -1333,9 +1334,9 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
         }
         else
         {
-            const EcuDescription& d = result->ecu->description;
+            const SeenEcu d(p, *result->ecu);
             // As the run's hub shows them.
-            auto seen = std::make_shared<const control::MappedSchema>(seen_variables(p, *result->ecu));
+            auto seen = std::make_shared<const control::MappedSchema>(d.variables());
             c.variables = seen->schema();
             for (const control::VariableMapping& mapping : p.variables)
             {
@@ -1348,18 +1349,18 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
             {
                 c.map = std::move(seen);
             }
-            if (!d.step)
+            if (!d.step())
             {
                 c.unusable = "runs in real time (it has no step): a scenario needs the virtual time of its steps";
             }
-            else if (!d.variables.empty() && !d.control)
+            else if (d.has_variables() && !d.control())
             {
                 c.unusable = "does not offer its variables to the simulation (--no-control, or an executable of an earlier "
                              "vehicle-sil): build it with this vehicle-sil and run it without --no-control";
             }
             else
             {
-                c.step = *d.step;
+                c.step = *d.step();
             }
         }
         out.push_back(std::move(c));

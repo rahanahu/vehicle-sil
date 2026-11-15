@@ -6,6 +6,7 @@
 #include "vehicle_sil/launch/check.hpp"
 
 #include "check_words.hpp"
+#include "seen_ecu.hpp"
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
@@ -468,8 +469,7 @@ void check_network_names(const Rules& rules, std::size_t i, const ParticipantCon
     }
     const std::string prefix = participant_prefix(p.name);
     const std::vector<SeenNetwork>& seen = rules.seen[i];
-    const auto& features = reported.description.features;
-    if (std::find(features.begin(), features.end(), ecu_executable::kFeatureMapNetwork) == features.end())
+    if (!SeenEcu(p, reported).takes(ecu_executable::kFeatureMapNetwork))
     {
         std::vector<std::string> own;
         for (const NetworkName& entry : renames)
@@ -941,30 +941,30 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
     {
         return;
     }
-    const EcuDescription& ecu = result.ecu->description;
-    if (ecu.name != p.name)
+    const SeenEcu ecu(p, *result.ecu);
+    if (ecu.name() != p.name)
     {
         rules.add(Severity::Error, "name-mismatch", p.line,
-            prefix + "the executable reports the name '" + ecu.name + "' although it was given --name " + p.name +
+            prefix + "the executable reports the name '" + ecu.name() + "' although it was given --name " + p.name +
                 ": its main() must pass all of its arguments to ecu_main",
             p.name, "");
     }
     if (p.step_ms)
     {
         const SimDuration wanted = std::chrono::milliseconds(*p.step_ms);
-        if (!ecu.step)
+        if (!ecu.step())
         {
             rules.add(Severity::Error, "step-mismatch", p.step_line,
                 prefix + "step_ms is " + std::to_string(*p.step_ms) +
                     ", but the executable reports no step (it runs in real time): remove step_ms",
                 p.name, "");
         }
-        else if (*ecu.step != wanted)
+        else if (*ecu.step() != wanted)
         {
-            const auto ns = ecu.step->count();
+            const auto ns = ecu.step()->count();
             rules.add(Severity::Error, "step-mismatch", p.step_line,
                 prefix + "step_ms is " + std::to_string(*p.step_ms) + ", but the executable's step is " +
-                    step_text(*ecu.step) +
+                    step_text(*ecu.step()) +
                     (ns % 1'000'000 == 0 ? ": write step_ms: " + std::to_string(ns / 1'000'000) + ", or remove step_ms"
                                          : ": remove step_ms (it takes whole milliseconds)"),
                 p.name, "");
@@ -1005,9 +1005,9 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         }
     }
     // The variables: whether vehicle_sil_launch run can read and write them (run.hpp, ControlLink).
-    if (!result.ecu->description.variables.empty())
+    if (ecu.has_variables())
     {
-        const auto& offer = result.ecu->description.control;
+        const auto& offer = ecu.control();
         if (!offer)
         {
             rules.add(Severity::Note, "control-link-not-offered", p.line,
@@ -1038,14 +1038,14 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
     // same rules to what its agent announces).
     if (!p.variables.empty())
     {
-        const control::MappedSchema seen = seen_variables(p, *result.ecu);
+        const control::MappedSchema seen = ecu.variables();
         for (const control::MapProblem& problem : seen.problems())
         {
             std::string more;
             if (problem.kind == control::MapProblemKind::Unknown)
             {
                 std::vector<std::string> names;
-                for (const auto& v : ecu.variables)
+                for (const auto& v : ecu.own_variables())
                 {
                     names.push_back(v.name);
                 }
@@ -1557,8 +1557,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         // Not while an entry of j1939_nodes takes no node here: its own error says what to correct.
         if (!rules.j1939_held.contains({i, network.name}))
         {
-            const auto& features = rules.results[i].ecu->description.features;
-            const bool takes = std::find(features.begin(), features.end(), ecu_executable::kFeatureJ1939Node) != features.end();
+            const bool takes = SeenEcu(p, *rules.results[i].ecu).takes(ecu_executable::kFeatureJ1939Node);
             const bool entries = std::any_of(p.j1939_nodes.begin(), p.j1939_nodes.end(),
                                              [&network](const J1939NodeEntry& e) { return e.network == network.name; });
             for (std::size_t n = 0; n < own.size(); ++n)
@@ -1680,10 +1679,8 @@ std::optional<Finding> j1939_nodes_unsupported(const ParticipantConfig& particip
                                                std::string_view launcher_version,
                                                std::span<const J1939NodeSettingFeature> table)
 {
-    const auto& features = ecu.description.features;
-    const auto has = [&features](std::string_view word) {
-        return std::find(features.begin(), features.end(), word) != features.end();
-    };
+    const SeenEcu seen(participant, ecu);
+    const auto has = [&seen](std::string_view word) { return seen.takes(word); };
     const std::string prefix = participant_prefix(participant.name);
     const std::string build = "have its author build it again with vehicle-sil " + std::string(launcher_version) + " or later";
     const std::vector<J1939NodeFeatureNeed> needs = required_j1939_node_features(participant, table);
@@ -1715,11 +1712,6 @@ std::optional<Finding> j1939_nodes_unsupported(const ParticipantConfig& particip
     return std::nullopt;
 }
 
-control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu)
-{
-    return control::MappedSchema::make(ecu.description.variables, participant.variables);
-}
-
 std::vector<Finding> check_participants(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
                                         std::string_view launcher_version)
 {
@@ -1748,7 +1740,7 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
     {
         if (is_on_any(config.participants[i], results[i]))
         {
-            rules.seen[i] = seen_networks(config.participants[i], *results[i].ecu);
+            rules.seen[i] = SeenEcu(config.participants[i], *results[i].ecu).seen_networks();
             for (const NetworkName& entry : unknown_lines(config.participants[i], rules.seen[i]))
             {
                 rules.held.insert(entry.name);

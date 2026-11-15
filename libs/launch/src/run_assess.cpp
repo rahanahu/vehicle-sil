@@ -7,6 +7,7 @@
 
 #include "check_words.hpp"
 #include "run_words.hpp"
+#include "seen_ecu.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
@@ -440,7 +441,7 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
         if (i < check.participants.size() && check.participants[i].status == ParticipantStatus::Described &&
             check.participants[i].ecu)
         {
-            if (const auto& step = check.participants[i].ecu->description.step)
+            if (const std::optional<SimDuration> step = SeenEcu(config.participants[i], *check.participants[i].ecu).step())
             {
                 steps.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(*step).count());
             }

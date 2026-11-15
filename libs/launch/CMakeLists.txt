@@ -38,6 +38,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/scenario_shapes.cpp
   src/scenario_values.cpp
   src/scenario_waves.cpp
+  src/seen_ecu.cpp
   src/test.cpp
   src/timeline.cpp
   src/time_commands.cpp
