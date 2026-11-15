@@ -223,6 +223,8 @@ def test_what_the_control_server_says_is_turned_into_the_servers_words(control_e
     targets = [pb.TargetResult(peer=name, status=getattr(pb, "TARGET_STATUS_" + name.upper())) for name in statuses]
     targets[3].applied_at_ns = 5 * MS
     targets[4].late, targets[5].reason = True, "a setter threw"
+    targets[3].applied_writes = 2
+    targets[5].applied_writes, targets[5].failed_write = 0, 0  # 0 is told apart from not set
     targets.append(pb.TargetResult(peer="none"))  # unspecified
     targets.append(pb.TargetResult(peer="later", status=99))  # a status of a newer server
     op = source._operation(pb.Operation(seq=7, targets=targets, done=True))
@@ -230,6 +232,7 @@ def test_what_the_control_server_says_is_turned_into_the_servers_words(control_e
     assert [t.status for t in op.targets] == statuses + ["unknown", "unknown"]
     assert [t.applied_at_ns for t in op.targets[:5]] == [None, None, None, 5 * MS, None]
     assert op.targets[4].late and op.targets[5].reason == "a setter threw"
+    assert [(t.applied_writes, t.failed_write) for t in op.targets[2:6]] == [(None, None), (2, None), (None, None), (0, 0)]
     peer = source._peer(pb.PeerInfo(participant="P", incarnation="i", connected=False, schema=[
         pb.VariableInfo(name="a", type=pb.VALUE_TYPE_BOOL, causality=pb.CAUSALITY_INPUT),
         pb.VariableInfo(name="b", type=pb.VALUE_TYPE_INTEGER, causality=pb.CAUSALITY_OUTPUT, min=-1, max=2, step=0.5),

@@ -228,6 +228,37 @@ void Hub::announce_peer(const PeerEntry& entry)
 
 void Hub::target_changed(Operation& op)
 {
+    // What a status says about the writes by itself (TargetResult): here, where every change of
+    // a status passes, so that no place that sets one can leave it out. What only a result of the
+    // agent or the hub's check knows (Rejected; the write an Invalid is about) is set there.
+    for (Target& t : op.targets)
+    {
+        switch (t.result.status)
+        {
+        case TargetStatus::Applied:
+            t.result.applied_writes = t.writes;
+            t.result.failed_write.reset();
+            break;
+        case TargetStatus::Late:
+        case TargetStatus::Cancelled:
+        case TargetStatus::Busy:
+            t.result.applied_writes = 0;
+            t.result.failed_write.reset();
+            break;
+        case TargetStatus::Invalid:
+            t.result.applied_writes = 0;
+            break;
+        case TargetStatus::Rejected:
+            break;
+        case TargetStatus::Sent:
+        case TargetStatus::Queued:
+        case TargetStatus::Disconnected:
+        case TargetStatus::Unknown:
+            t.result.applied_writes.reset();
+            t.result.failed_write.reset();
+            break;
+        }
+    }
     changed_.notify_all();
     const auto result = view(op);
     for (auto it = subscriptions_.begin(); it != subscriptions_.end();)
@@ -583,6 +614,9 @@ void Hub::agent_submitted(ConnectionId id, std::uint64_t seq, const SubmitResult
         break;
     case SubmitStatus::Invalid:
         t->result.status = TargetStatus::Invalid;
+        // The write it is about: what the agent says (not a position the command does not have).
+        t->result.failed_write =
+            result.failed_write && *result.failed_write < t->writes ? result.failed_write : std::nullopt;
         break;
     }
     t->result.reason = reason_as_seen(c->participant, result.reason);
@@ -613,6 +647,28 @@ void Hub::agent_result(ConnectionId id, const CommandResult& result)
         break;
     case CommandStatus::Rejected:
         t->result.status = TargetStatus::Rejected;
+        t->result.applied_writes.reset();
+        t->result.failed_write.reset();
+        if (result.applied_writes)
+        {
+            // The writes before the one whose setter threw took effect, and that one did not (a
+            // number of n or more says otherwise: not believed). A parameter after the first step
+            // is refused with nothing applied and no setter called: then no write is the one,
+            // unless there is one only.
+            if (const std::uint32_t applied = *result.applied_writes; applied < t->writes)
+            {
+                t->result.applied_writes = applied;
+                if (!(applied == 0 && t->writes_parameter && t->writes > 1))
+                {
+                    t->result.failed_write = applied;
+                }
+            }
+        }
+        else if (t->writes == 1)
+        {
+            t->result.applied_writes = 0;
+            t->result.failed_write = 0;
+        }
         break;
     case CommandStatus::Cancelled:
         t->result.status = TargetStatus::Cancelled;
@@ -818,6 +874,7 @@ std::uint64_t Hub::write(OperationRequest request)
     for (auto& t : op.targets)
     {
         t.command.seq = seq;
+        t.writes = static_cast<std::uint32_t>(t.command.writes.size());
     }
     std::vector<std::string> to_flush;
     for (auto& t : op.targets)
@@ -835,6 +892,8 @@ std::uint64_t Hub::write(OperationRequest request)
             const auto& schema = entry->second.info.schema;
             for (auto& w : t.command.writes)
             {
+                // The write at which the check stops, if it does.
+                t.result.failed_write = static_cast<std::uint32_t>(&w - t.command.writes.data());
                 // A name of a mapping that was not applied is not what its writer takes it for.
                 if (const std::string* unfit = entry->second.mapped ? entry->second.mapped->not_writable(w.name) : nullptr)
                 {
@@ -852,6 +911,7 @@ std::uint64_t Hub::write(OperationRequest request)
                     why = w.name + ": an output is not writable";
                     break;
                 }
+                t.writes_parameter = t.writes_parameter || v->causality == Causality::Parameter;
                 // Checked against the seen schema; from here the write is the executable's own
                 // (the command is sent only to this incarnation).
                 if (entry->second.mapped)
@@ -862,6 +922,10 @@ std::uint64_t Hub::write(OperationRequest request)
                         break;
                     }
                 }
+            }
+            if (why.empty())
+            {
+                t.result.failed_write.reset(); // every write passed
             }
             if (why.empty() && open_targets(t.result.peer) >= entry->second.max_pending)
             {

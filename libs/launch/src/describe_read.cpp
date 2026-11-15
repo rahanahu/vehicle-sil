@@ -92,7 +92,7 @@ public:
             ControlOffer offer;
             offer.transport = text(member(control, "transport", "control"), "control.transport");
             const auto version = integer(member(control, "wire_version", "control"), "control.wire_version");
-            if (version < 0 || version > 65535)
+            if (version < 1 || version > 65535)
             {
                 fail("control.wire_version is " + std::to_string(version) + ", not a version");
             }

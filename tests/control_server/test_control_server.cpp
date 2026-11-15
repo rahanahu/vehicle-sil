@@ -19,6 +19,7 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -109,6 +110,15 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     engine.set_agent_options(control::AgentOptions{.sample_period = 10ms});
     engine.input("engine.level", &level, {.unit = "%", .min = 0.0, .max = 200.0});
     engine.input_enum("engine.mode", &mode, {{"off", 0}, {"eco", 1}, {"sport", 2}});
+    // An input whose setter refuses true: the writes before it in a command stay applied.
+    engine.input(
+        "engine.fault", [] { return false; },
+        [](bool on) {
+            if (on)
+            {
+                throw std::runtime_error("no fault now");
+            }
+        });
     // Body declares nothing: its agent has ecu.connected and the peer's monitoring outputs. The links: after
     // the ECUs, before the start; destroyed before the peers, after their stop().
     auto engine_link = std::make_unique<control_silkit::AgentTransport>(engine.agent(), engine.runtime());
@@ -194,6 +204,7 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     v1::Operation op;
     CHECK(call(&v1::ControlService::Stub::WaitOperation, wait_queued, op).ok());
     CHECK(op.targets(0).status() == v1::TARGET_STATUS_QUEUED);
+    CHECK(!op.targets(0).has_applied_writes() && !op.targets(0).has_failed_write()); // not known yet
 
     // Run to 300 ms and stand still there.
     v1::RunUntilRequest run;
@@ -209,6 +220,8 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     CHECK(op.done());
     CHECK(op.targets(0).status() == v1::TARGET_STATUS_APPLIED);
     CHECK_EQ(op.targets(0).applied_at_ns(), ns(110ms));
+    CHECK(op.targets(0).has_applied_writes() && op.targets(0).applied_writes() == 2);
+    CHECK(!op.targets(0).has_failed_write());
     {
         // Engine broadcasts every 20 ms: the one at 120 ms is the first to carry 7.
         const std::lock_guard lock(received_mutex);
@@ -258,6 +271,40 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
         CHECK(call(&v1::ControlService::Stub::WaitOperation, wait_refused, refused_op).ok());
         CHECK(refused_op.done() && refused_op.targets(0).status() == v1::TARGET_STATUS_INVALID);
         CHECK(!refused_op.targets(0).reason().empty());
+        CHECK(refused_op.targets(0).applied_writes() == 0 && refused_op.targets(0).failed_write() == 0);
+    }
+
+    // A command whose second setter throws: the first write took effect, the client is told which.
+    {
+        v1::WriteRequest two;
+        auto* first = two.add_writes();
+        first->set_peer("Engine");
+        first->set_name("engine.level");
+        first->mutable_value()->set_i(9);
+        auto* second = two.add_writes();
+        second->set_peer("Engine");
+        second->set_name("engine.fault");
+        second->mutable_value()->set_b(true);
+        v1::WriteReply taken;
+        CHECK(call(&v1::ControlService::Stub::Write, two, taken).ok());
+        CHECK(call(&v1::ControlService::Stub::Step, step, state).ok());
+        CHECK(call(&v1::ControlService::Stub::WaitPaused, wait_paused, state).ok());
+        v1::WaitOperationRequest wait_rejected;
+        wait_rejected.set_seq(taken.seq());
+        wait_rejected.set_timeout_ms(10000);
+        v1::Operation rejected;
+        CHECK(call(&v1::ControlService::Stub::WaitOperation, wait_rejected, rejected).ok());
+        CHECK(rejected.done() && rejected.targets(0).status() == v1::TARGET_STATUS_REJECTED);
+        CHECK(rejected.targets(0).has_applied_writes() && rejected.targets(0).applied_writes() == 1);
+        CHECK(rejected.targets(0).has_failed_write() && rejected.targets(0).failed_write() == 1);
+        CHECK(rejected.targets(0).reason().find("no fault now") != std::string::npos);
+        CHECK(eventually([&] {
+            v1::GetValuesRequest request;
+            request.set_peer("Engine");
+            v1::GetValuesReply values;
+            return call(&v1::ControlService::Stub::GetValues, request, values).ok() && values.has_values()
+                   && values.snapshot().values(1).i() == 9;
+        }));
     }
 
     // Errors are reported as gRPC statuses.

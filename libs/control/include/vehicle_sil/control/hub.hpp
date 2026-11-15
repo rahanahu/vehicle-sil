@@ -121,6 +121,29 @@ enum class TargetStatus
 /// Sent, Queued and Disconnected may still change; every other status is final.
 [[nodiscard]] bool is_final(TargetStatus status) noexcept;
 
+/// The writes of an operation for one peer are that peer's command: the writes of the request
+/// for it, in the order they appear there (none is dropped, also not a variable written twice).
+/// The positions below count in that command, from 0, and `n` is the number of its writes.
+///
+/// | status                               | applied_writes        | failed_write                      |
+/// |--------------------------------------|-----------------------|-----------------------------------|
+/// | Applied                              | n                     | empty                             |
+/// | Late, Cancelled, Busy                | 0                     | empty                             |
+/// | Invalid                              | 0                     | the write that was refused, if one |
+/// | Rejected                             | what the agent says   | the write whose setter threw      |
+/// | Sent, Queued, Disconnected, Unknown  | empty                 | empty                             |
+///
+/// Invalid: the write at which the hub's own check stopped, or the one the agent names; empty
+/// when the command as a whole was refused (the peer is not connected, the link refused it).
+/// Rejected: the agent applied the writes before the one whose setter threw, so both numbers are
+/// its position. A command that the agent took before its first step and that writes a parameter
+/// at a later step is rejected with nothing applied and no setter called, and the agent says 0 for
+/// that too. So for a command that writes a parameter and has two or more writes, a 0 from the
+/// agent gives applied_writes 0 and an empty failed_write: the hub cannot tell which of the two
+/// happened. A number from the agent that is n or larger is not believed (a rejected command has
+/// a write that did not take effect): both are empty. An agent that does not say (a transport of
+/// its own): both are 0 for a command of one write, and empty otherwise. The reason is never read
+/// to find a write.
 struct TargetResult
 {
     std::string peer;
@@ -128,6 +151,13 @@ struct TargetResult
     std::optional<SimTime> applied_at;
     bool late = false;
     std::string reason;
+    /// How many writes of the peer's command took effect, counted from the first: the writes
+    /// [0, applied_writes) did and the rest did not. Empty: not known (yet). Tell which writes
+    /// took effect from this number, not from `reason`.
+    std::optional<std::uint32_t> applied_writes = std::nullopt;
+    /// The write `reason` is about, as its position in the peer's command. Empty: none, or not
+    /// known.
+    std::optional<std::uint32_t> failed_write = std::nullopt;
 };
 
 struct OperationResult
@@ -371,6 +401,8 @@ private:
         TargetResult result;
         std::string incarnation; ///< the one the command was meant for
         Command command;         ///< kept until it is sent
+        std::uint32_t writes = 0;      ///< of the command (which is not kept)
+        bool writes_parameter = false; ///< one of them is for a parameter
         ConnectionId handed_to = 0; ///< the connection whose link took it
     };
     struct Operation

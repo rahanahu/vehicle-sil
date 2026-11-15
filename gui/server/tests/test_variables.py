@@ -93,7 +93,8 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             got = await ws.until(is_values(paused=True, sim_ms=200))
             applied = next(m for m in ws.received if is_operation(1, "applied")(m))
             assert applied["done"] is True and applied["peers"] == {
-                "Engine": {"state": "applied", "applied_at_ms": 0, "late": False, "reason": None}}
+                "Engine": {"state": "applied", "applied_at_ms": 0, "late": False, "reason": None, "applied_writes": 2,
+                           "failed_write": None}}
             # Standing still at 200: every step that began before it is in (and the one that begins there has
             # run too), for every peer.
             assert got[-1]["peers"] == {
@@ -283,13 +284,17 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
             assert (await c.get("api/write"))[0] == 404
             status, body = await c.post("api/write", raw=(b'{"session": %d, "writes": {"Engine": {"' % session["id"]) + b"x" * 70000 + b'": 1}}}')
             assert (status, body["error"]["code"]) == (413, "too-large")
-            # A parameter after the first step: the control server's answer, as the operation's result.
+            # A parameter after the first step, as the second write: the control server's answer, as the
+            # operation's result, with how many writes took effect and which one was refused.
             await c.post("api/time", {"command": "step", "ms": 100})
             await ws.until(is_time(sim_ms=100, paused=True))
-            status, body = await c.post("api/write", {"session": session["id"], "writes": {"Engine": {"engine.mode": 1}}})
+            status, body = await c.post("api/write", {"session": session["id"],
+                                                      "writes": {"Engine": {"engine.demand": 1, "engine.mode": 1}}})
             assert status == 200
             got = await ws.until(is_operation(body["operation"], "invalid"))
-            assert "parameter" in got[-1]["peers"]["Engine"]["reason"]
+            refused = got[-1]["peers"]["Engine"]
+            assert "parameter" in refused["reason"]
+            assert (refused["applied_writes"], refused["failed_write"]) == (0, 1)
 
             # Standing still at 100, the step that begins at 100 has run: a write for 100 (or earlier) is too
             # late: at the next step it is refused, or made when asked so; a write for 101 is in time.
@@ -302,10 +307,11 @@ def test_writes_that_are_wrong_are_refused_before_they_reach_the_launcher(tmp_pa
             await ws.until(is_operation(timely["operation"], "applied"))
             done = {m["seq"]: m["peers"]["Engine"] for m in ws.received if m["type"] == "operation" and m["done"]}
             assert done[late["operation"]] == {"state": "late", "applied_at_ms": None, "late": True,
-                                               "reason": "its time had passed"}
-            assert done[apply["operation"]] == {"state": "applied", "applied_at_ms": 200, "late": True, "reason": None}
+                                               "reason": "its time had passed", "applied_writes": 0, "failed_write": None}
+            assert done[apply["operation"]] == {"state": "applied", "applied_at_ms": 200, "late": True, "reason": None,
+                                                "applied_writes": 1, "failed_write": None}
             assert done[timely["operation"]] == {"state": "applied", "applied_at_ms": 200, "late": False,
-                                                 "reason": None}
+                                                 "reason": None, "applied_writes": 1, "failed_write": None}
             await c.post("api/stop")
             await ws.until(is_ended)
         run_async(talk, gui)

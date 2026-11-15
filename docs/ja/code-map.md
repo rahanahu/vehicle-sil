@@ -2308,11 +2308,12 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- バージョン 1 は変えません。vehicle-sil 0.1.0 でビルドした ECU が話します。
-- バージョン 2 に項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
-- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kNewestVersion` を上げ、古いバージョンも読み続けます。
+- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/launch/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
+- コマンドのどの書き込みが反映されたかと、断った理由がどの書き込みについてかは、数で運びます（`CommandResult::applied_writes`、`SubmitResult::failed_write` と、同じ 2 つの名前を持つ Hub の `TargetResult`）。そのために `reason` を読まないでください（[internals/control.md](internals/control.md) の「Control Server の中核」）。
+- 項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
+- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。
 - `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
-- 要素の最小の大きさは、バージョンごとに違います（`kLeastV1`、`kLeastV2`）。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
+- `kLeast` は、要素の最小の大きさです。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
 - 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
 - ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
 
@@ -2323,9 +2324,10 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 テスト:
 
 - `^control\.wire_`: 1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと、sanitizer のプリセットで失敗します。
-- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージがどちらのバージョンでも上限ちょうどまで詰まること。
+- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。古いバージョンと新しいバージョンを読まないこと、新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージが上限ちょうどまで詰まること。
 - `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
-- `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
+- `^control\.wire_v2_revision_0_`: バージョン 2、改訂 0 のバイト列（`tests/control/wire_v2_golden.hpp` に手で書いたもの）。項目を追加するときは、新しい改訂のバイト列を横に追加し、これは変えません。
+- `control_silkit.a_hello_of_another_version_is_reported_and_makes_no_peer`、`control_silkit.an_agent_does_not_answer_what_is_written_to_it_in_another_version`: 古いバージョンと新しいバージョンを、それぞれの側で。
 
 ### SIL Kit の上のトランスポートと開始前の窓
 

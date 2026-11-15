@@ -237,12 +237,13 @@ class FakeControl:
                     if target["status"] != "QUEUED":
                         continue
                     if late and not q["apply_late"]:
-                        target.update(status="LATE", late=True, reason="its time had passed")
+                        target.update(status="LATE", late=True, reason="its time had passed", applied_writes=0)
                         continue
                     for name, value in q["writes"][target["peer"]]:
                         index = [v["name"] for v in self.peers[target["peer"]]].index(name)
                         self.values[target["peer"]][index] = value
-                    target.update(status="APPLIED", applied_at_ns=start_ms * NS_PER_MS, late=late)
+                    target.update(status="APPLIED", applied_at_ns=start_ms * NS_PER_MS, late=late,
+                                  applied_writes=len(q["writes"][target["peer"]]))
                 op["done"] = True
                 op["version"] = self.version
             for name, variables in self.peers.items():
@@ -330,8 +331,9 @@ class FakeControl:
         for t in op["targets"]:
             target = pb.TargetResult(peer=t["peer"], status=getattr(pb, "TARGET_STATUS_" + t["status"]),
                                      late=t.get("late", False), reason=t.get("reason", ""))
-            if t.get("applied_at_ns") is not None:
-                target.applied_at_ns = t["applied_at_ns"]
+            for optional in ("applied_at_ns", "applied_writes", "failed_write"):
+                if t.get(optional) is not None:
+                    setattr(target, optional, t[optional])
             targets.append(target)
         return pb.Operation(seq=op["seq"], targets=targets, done=op["done"])
 
@@ -351,21 +353,22 @@ class FakeControl:
             targets, queued = [], False
             for peer, writes in by_peer.items():
                 variables = {v["name"]: v for v in self.peers.get(peer, [])}
-                problem = None
+                problem, failed = None, None
                 if peer not in self.peers:
                     problem = f"no peer {peer}"
                 elif self.time["ended"]:
                     problem = "the simulation has ended"
-                for name, _ in writes:
+                for i, (name, _) in enumerate(writes):
                     v = variables.get(name)
                     if problem is None and v is None:
-                        problem = f"no variable {name}"
+                        problem, failed = f"no variable {name}", i
                     elif problem is None and v["causality"] == "output":
-                        problem = f"{name} is an output"
+                        problem, failed = f"{name} is an output", i
                     elif problem is None and v["causality"] == "parameter" and self.steps > 0:
-                        problem = f"{name} is a parameter: it can be written before the first step only"
+                        problem, failed = f"{name} is a parameter: it can be written before the first step only", i
                 if problem is not None:
-                    targets.append({"peer": peer, "status": "INVALID", "reason": problem})
+                    targets.append({"peer": peer, "status": "INVALID", "reason": problem, "applied_writes": 0,
+                                    "failed_write": failed})
                 else:
                     targets.append({"peer": peer, "status": "QUEUED"})
                     queued = True

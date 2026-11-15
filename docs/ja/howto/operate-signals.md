@@ -193,6 +193,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
 | 500 ms 進めて一時停止する | `uv run python -m vehicle_sil_control step 500` |
 | 変数と値を表示する | `uv run python -m vehicle_sil_control show Engine` |
 | 範囲の外の値を書き込んで、結果を見る | `uv run python -m vehicle_sil_control set Engine engine.throttle=150 --wait done` |
+| 2 つの変数を書き、2 つめは出力の変数にする | `uv run python -m vehicle_sil_control set Engine engine.throttle=30 engine.speed=5 --wait done` |
 | 再開する | `uv run python -m vehicle_sil_control resume` |
 
 ### 確認
@@ -236,6 +237,14 @@ engine.speed     1800  rpm    output integer
 ```text
 seq 1794666759502164
 seq 1794666759502164 Engine: invalid (engine.throttle: 150 is out of range)
+```
+
+いくつもの変数を書くと、行の終わりに、反映された数と、断られた書き込みが出ます。ここでは 2 つめの書き込み（出力の変数）を確認が断るので、どれも反映されません。
+
+<!-- vehicle_sil_control set Engine engine.throttle=30 engine.speed=5 --wait done -->
+```text
+seq 1794666759502165
+seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 0 of 2 writes took effect, refused: engine.speed
 ```
 
 <!-- vehicle_sil_control resume -->
@@ -418,7 +427,7 @@ expect(done.target("Engine").status == "applied" and done.target("Engine").appli
 | `applied` | 反映されました（`applied_at` が、反映されたステップの時刻です）。 |
 | `late` | 指定した時刻のステップに間に合いませんでした。 |
 | `invalid` | 名前、型、範囲、書き込めるかの検査で拒否されました（接続していない宛先への書き込みも、この値です）。 |
-| `rejected` | ECU の setter が拒否しました。理由は、その変数の名前で始まります。いくつもの変数の書き込みでは、それより前の変数は、もう反映されています（[control-api.md](../control-api.md#書き込みが反映される時点) の「書き込みが反映される時点」）。 |
+| `rejected` | ECU の setter が拒否しました。いくつもの変数の書き込みでは、それより前の変数は、もう反映されています。`applied_writes` がその数、`failed_write` が拒否された書き込みの位置です（[control-api.md](../control-api.md#書き込みが反映される時点) の「書き込みが反映される時点」）。 |
 | `unknown` | 反映されたかどうかが、わかりません。 |
 
 待つときのルールは、次の 3 つです。

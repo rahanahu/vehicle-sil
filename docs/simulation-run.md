@@ -154,6 +154,7 @@ Each participant has one of 5 connection states. The state appears in `participa
 - `run` does not wait for a `not_offered` ECU.
 - A participant whose `--describe` output does not offer variables but that sends hello is `connected`.
 - The simulation runs in every state (with `--strict`, warnings are failures).
+- `vehicle_sil_launch` reads and writes the variables only of ECU executables whose message format version is its own. An ECU built with vehicle-sil 0.1.0 under a newer launcher, or a newer ECU under the launcher of 0.1.0, takes part in the simulation, but its variables cannot be read or written; the check reports `control-link-version`.
 
 ### Waiting before the start
 
@@ -656,7 +657,7 @@ Notes on individual codes:
 - Another program writes to the same topics (`vehicle_sil.control.*`).
 - The hello of a participant that joined during the run had not arrived yet.
 
-If `control-link-version` appears, build with the same vehicle-sil version.
+If `control-link-version` appears, the message says which side is older: rebuild an older ECU with the vehicle-sil of `vehicle_sil_launch`, or use a `vehicle_sil_launch` of a newer ECU's vehicle-sil version.
 
 With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`): at the start for an ECU that is connected by then, and at the end of the run for one that connected later. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
 
@@ -986,7 +987,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       },
       {
@@ -1062,7 +1063,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         ],
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       }
     ],
@@ -1204,9 +1205,9 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   | `false` | The ECU did not apply it: the ECU or its Agent refused it, it comes after the refused write in the same `set`, or it was never sent. |
   | `null` | Not known: no result came, or the ECU's result does not say which writes took effect. |
 
-  An ECU applies the writes of one `set` one after the other and stops at the write that its setter rejects. So the writes before the rejected one are already applied (`true`), and the rejected one and the ones after it are not (`false`). When the ECU's Agent refuses a write as it receives it (wrong name, type or range), none of that participant's writes in the `set` is applied.
+  An ECU applies the writes of one `set` one after the other and stops at the write that its setter rejects. So the writes before the rejected one are already applied (`true`), and the rejected one and the ones after it are not (`false`). When the ECU's Agent refuses a write as it receives it (wrong name, type or range), none of that participant's writes in the `set` is applied. The same holds when the `set` writes a parameter after the first step: the ECU refuses that participant's writes as a whole.
 - `point` is the index (from 0) in the `points` of that variable's `written` series; that point is this write. It is `null` if nothing was sent. A point whose `applied` is `false` or `null` is at or after the `not_applied_from` of its series.
-- `write` is the index (from 0) in `writes[]` of the write that caused the failure: the write that the ECU or its Agent named when it refused, or the only write for the participant that refused. It is `null` if no single write is known to be the cause (a participant refused several writes together without naming one, or no result came), and in a step that did not fail on a write.
+- `write` is the index (from 0) in `writes[]` of the write that caused the failure: the write that the ECU or its Agent pointed at when it refused (by its position among that participant's writes, not by its name), or the only write for the participant that refused. It is `null` if no single write is known to be the cause (a participant refused several writes together without pointing at one, or no result came), and in a step that did not fail on a write.
 - If the step failed before it sent anything (the variable cannot be written, or a `ramp` or `wave` had no start value), `writes[]` holds that one write with `point: null` and `applied: false`. Its `value` is `null` if the value was never computed.
 
 ### Value series (`series[]`)

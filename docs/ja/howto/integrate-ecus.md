@@ -87,7 +87,7 @@ ECU を作る人には、名前のほかに次のことも依頼します。
 |---|---|
 | `main()` を `ecu_main()` で作ります。 | `check` がその ECU を照合できません。 |
 | 決めた名前を使い、渡す前に `--describe` で確認します（手順 2）。 | 手順 3 の指摘になります。 |
-| 設定ファイルを書く人と同じバージョンの vehicle-sil でビルドします。 | `version-mismatch` の注記が出ます。変数を読み書きする形式のバージョンが違うと、警告 `control-link-version` が出て、その ECU の変数を読み書きできません。 |
+| 設定ファイルを書く人と同じバージョンの vehicle-sil でビルドします。 | `version-mismatch` の注記が出ます。変数を読み書きする形式のバージョンも違うと（たとえば vehicle-sil 0.1.0 でビルドした ECU と新しい `vehicle_sil_launch`、またはその逆）、シミュレーションは動きますが、その ECU の変数を読み書きできず、警告 `control-link-version` が出ます。 |
 | ECU が自分で起動したプロセスは、ECU が終わるときに終了させます。 | 警告 `left-processes` が出ます。 |
 | 標準出力と標準エラーは UTF-8 で出力します。 | UTF-8 でないバイトは `?` と表示されます。 |
 
@@ -278,7 +278,8 @@ passed: 0 errors, 2 warnings, 0 notes
 | `[address-conflict]`、`[address-shared]`、`[name-conflict]` | 同じネットワークで、J1939 のアドレスか NAME が重なっています。 | 指摘の文の例のとおり、設定ファイルの `j1939_nodes` で直します。文が「this file cannot change them」と言うときは手順 4 です。 |
 | `[describe-failed]`、`[describe-output]`、`[describe-timeout]` | ECU が `--describe` に正しく応答しません。 | 手順 4 です。`ecu_main()` で作っていないツールなら、`describe: false` を書きます。 |
 | `[describe-version]`、`[describe-unknown-value]` | ECU と `vehicle_sil_launch` で、vehicle-sil のバージョンが違います。 | 指摘の文にある古いほうを、新しくします。 |
-| `[version-mismatch]`、`[control-link-version]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
+| `[version-mismatch]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
+| `[control-link-version]` | 変数を読み書きするメッセージのバージョンが ECU と `vehicle_sil_launch` で違う（または ECU が別のトランスポートで変数を出している）ので、ランチャーがその ECU の変数を読み書きできません。どちらが古いかは文に出ます。 | ECU のほうが古ければ、自分のバージョンの vehicle-sil でビルドし直してもらいます。新しければ、ECU と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。 |
 
 ### ビルドし直せないとき
 

@@ -519,7 +519,7 @@ Writes while paused:
 - To write after pausing, set `at_ms` later than the paused time. Some ECUs have already run the step at that time (a launcher rule: [docs/control-api.md](../../docs/control-api.md)).
 - A write for the paused time itself (or earlier) becomes `queued` first and ends as `late` at the ECU's next step (with `late: "apply"`, it is applied in that step).
 
-`{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason"}}}`
+`{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write"}}}`
 
 The per-participant `state`:
 
@@ -536,6 +536,7 @@ The per-participant `state`:
 | `busy` | Yes | |
 | `unknown` | Yes | Unknown whether it was applied |
 
+- `applied_writes` and `failed_write` are the Control Server's `TargetResult` values, passed on as they are: how many of the participant's writes took effect (from the first) and the position (from 0) of the write `reason` is about. The participant's writes are those of the `api/write` request for it, in the order given. `null` when not known or not said (see "When a write is applied" in [docs/control-api.md](../../docs/control-api.md#when-a-write-is-applied)).
 - The overall `state`: while in progress, `sent` (some ECU has not received it yet) or `queued`. Once final (`done` is `true`), it is the participants' state if they all agree, otherwise `mixed`. A final operation does not change.
 - Each time the state changes, the server sends it to every connection (operations that other clients wrote directly to the Control Server arrive too).
 - `operation` is never dropped, even for a slow connection. But if that connection's queue overflows and a `resync` (sending everything again from `hello`) happens, only the operations in `operations` of the summary (the open ones and the last 32) arrive again. Results of operations that completed before that do not reach that connection (`operations_from_seq` of the summary tells which).

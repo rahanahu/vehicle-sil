@@ -104,11 +104,17 @@ class Peer:
 
 @dataclasses.dataclass(frozen=True)
 class Target:
+    """One peer's result of a write. Its writes are those of the request for this peer, in the
+    order given; positions count from 0 (see TargetResult in control.proto)."""
     peer: str
     status: str  # "sent", "queued", "disconnected", "applied", "late", ...
     applied_at: Optional[int] = None  # ns
     late: bool = False
     reason: str = ""
+    # how many writes took effect, from the first (None: not known, e.g. still queued)
+    applied_writes: Optional[int] = None
+    # the position of the write `reason` is about (None: none, or not known)
+    failed_write: Optional[int] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -227,7 +233,9 @@ def _to_value(x: Number):
 def _operation(o) -> Operation:
     targets = [
         Target(t.peer, _enum_name(pb.TargetStatus, t.status, "TARGET_STATUS_"),
-               t.applied_at_ns if t.HasField("applied_at_ns") else None, t.late, t.reason) for t in o.targets
+               t.applied_at_ns if t.HasField("applied_at_ns") else None, t.late, t.reason,
+               t.applied_writes if t.HasField("applied_writes") else None,
+               t.failed_write if t.HasField("failed_write") else None) for t in o.targets
     ]
     return Operation(o.seq, targets, o.done)
 

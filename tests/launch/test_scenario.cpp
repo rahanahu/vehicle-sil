@@ -151,7 +151,8 @@ public:
     /// What the engine notes for a timeline, if set (run()).
     TimelineRecord* record = nullptr;
     /// If set: what `peer` answers at once to a command for the time `at` instead of taking it
-    /// (its status and reason; empty: it takes the command as ever).
+    /// (its status and reason, and failed_write if it is about one write; empty: it takes the
+    /// command as ever).
     std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
 
     World()
@@ -166,6 +167,7 @@ public:
         const std::uint64_t ticket = ++tickets_;
         control::OperationResult op;
         op.seq = ticket;
+        std::map<std::string, std::uint32_t> positions; // by peer: of the next write in its command
         for (const auto& w : writes)
         {
             auto target = std::find_if(op.targets.begin(), op.targets.end(), [&w](const auto& t) { return t.peer == w.peer; });
@@ -174,23 +176,41 @@ public:
                 op.targets.push_back(control::TargetResult{w.peer, control::TargetStatus::Queued, std::nullopt, false, ""});
                 target = op.targets.end() - 1;
             }
+            const std::uint32_t position = positions[w.peer]++;
             const auto ecu = std::find_if(ecus.begin(), ecus.end(), [&w](const ModelEcu& e) { return e.name == w.peer; });
             if (ecu == ecus.end())
             {
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "unknown peer";
+                target->applied_writes = 0;
                 continue;
             }
             if (const auto refused = refuse ? refuse(w.peer, time) : std::nullopt)
             {
                 target->status = refused->status;
                 target->reason = refused->reason;
+                target->applied_writes = 0;
+                target->failed_write = refused->failed_write;
+                continue;
+            }
+            if (ecu->last_step && std::any_of(writes.begin(), writes.end(), [&w](const control::PeerWrite& other) {
+                    return other.peer == w.peer && other.name == "gain";
+                }))
+            {
+                // As control::Agent::submit(): a command that writes a parameter and arrives after
+                // the first step is refused as a whole when it arrives (no write is the one).
+                target->status = control::TargetStatus::Invalid;
+                target->reason = "a parameter is writable only before the first step";
+                target->applied_writes = 0;
                 continue;
             }
             if (w.name == "level" && (std::get<std::int64_t>(w.value) < 0 || std::get<std::int64_t>(w.value) > 100))
             {
+                // The agent's check: the hub knows the write from the agent's number.
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "level: out of range";
+                target->applied_writes = 0;
+                target->failed_write = position;
                 continue;
             }
             auto command = std::find_if(ecu->queue.begin(), ecu->queue.end(), [ticket](const auto& c) { return c.ticket == ticket; });
@@ -308,27 +328,35 @@ private:
                 ++it;
                 continue;
             }
-            control::TargetResult r{m.name, control::TargetStatus::Applied, now, false, ""};
+            // As control::Hub fills them for an agent (see TargetResult): the positions count in
+            // this command.
+            const auto n = static_cast<std::uint32_t>(it->writes.size());
+            control::TargetResult r{m.name, control::TargetStatus::Applied, now, false, "", n};
             if (m.last_step && *m.last_step >= it->at)
             {
-                r = control::TargetResult{m.name, control::TargetStatus::Late, std::nullopt, true, "its time had passed"};
+                r = control::TargetResult{m.name, control::TargetStatus::Late, std::nullopt, true, "its time had passed", 0U};
+            }
+            else if (m.last_step &&
+                     std::any_of(it->writes.begin(), it->writes.end(), [](const auto& w) { return w.first == "gain"; }))
+            {
+                // A command taken before the first step that writes a parameter at a later step:
+                // refused as a whole, no setter is called.
+                r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
+                                          "a parameter is writable only before the first step", 0U,
+                                          n == 1 ? std::optional<std::uint32_t>(0) : std::nullopt};
             }
             else
             {
+                std::uint32_t position = 0;
                 for (const auto& [name, value] : it->writes)
                 {
-                    if (name == "gain" && m.last_step)
-                    {
-                        r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "a parameter is writable only before the first step"};
-                        break;
-                    }
                     if (name == "level" && std::get<std::int64_t>(value) == 13)
                     {
                         r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "level: a setter threw: 13 is not a level"};
+                                                  "level: a setter threw: 13 is not a level", position, position};
                         break;
                     }
+                    ++position;
                     if (name == "level")
                     {
                         m.level = std::get<std::int64_t>(value);
@@ -3202,8 +3230,9 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "    }\n"
                "  ],\n"
                "");
-    // A result that does not name a write (here: a parameter after the first step): which of
-    // the writes were applied is not known, and no write is named as the reason.
+    // A parameter and an input in one command, sent after the first step: the ECU's agent refuses
+    // the command as a whole when it arrives. None of its writes was applied (the result says so:
+    // 0), and no write is named as the reason (the refusal is about the command).
     // (Described as an input, so that the check lets it through: as with an ECU that says less
     // than its agent checks.)
     ScenarioCatalog unnamed = catalog();
@@ -3212,21 +3241,21 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                               "  - at_ms: 20\n"
                               "    set: { Body.mode: 2, Body.gain: 3 }\n",
                       unnamed),
-               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a parameter is writable only before the first step); which of the 2 writes of that command the ECU applied is not known\",\n"
+               "      \"message\": \"the write for 20 ms was not taken by participant 'Body': the ECU's agent refused it (a parameter is writable only before the first step); none of the 2 writes of that command was applied\",\n"
                "        \"writes\": [\n"
                "          {\n"
                "            \"variable\": \"Body.mode\",\n"
                "            \"at_ms\": 20,\n"
                "            \"value\": 2,\n"
                "            \"point\": 0,\n"
-               "            \"applied\": null\n"
+               "            \"applied\": false\n"
                "          },\n"
                "          {\n"
                "            \"variable\": \"Body.gain\",\n"
                "            \"at_ms\": 20,\n"
                "            \"value\": 3,\n"
                "            \"point\": 0,\n"
-               "            \"applied\": null\n"
+               "            \"applied\": false\n"
                "          }\n"
                "        ],\n"
                "        \"write\": null  \"series\": [\n"
@@ -4060,8 +4089,8 @@ TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_kno
                    "scenario-write: the dither of Body.level (line 3) wrote 97 at 10 ms, and participant 'Body' did not take the write: "
                    "the ECU's agent refused it (level: the simulation has ended)\n");
     }
-    // Two dithered inputs of Body in one command, and the agent says which one it refuses (its
-    // reason begins with the variable's name): that input and its range, though it is the
+    // Two dithered inputs of Body in one command, and the agent says which one it refuses (the
+    // result points at its position in the command): that input and its range, though it is the
     // second of the command.
     {
         World world;

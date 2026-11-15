@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
-// Version 2 of the messages between a control agent and a hub (control/wire.hpp), and the two
-// versions side by side: what version 2 carries that version 1 does not, that the bytes of
-// version 1 are still read and written when asked for, what a reader skips from a newer revision
-// and refuses from its own, and that the sizes the encoder counts with are the sizes it writes.
+// Version 2 of the messages between a control agent and a hub (control/wire.hpp): that another
+// version is not read, what a reader skips from a newer revision and refuses from its own, and
+// that the sizes the encoder counts with are the sizes it writes.
 //
 // The messages "of a newer revision" are written by hand here (Raw), not by the library's
 // encoders: no encoder of this build writes them.
 #include "test_harness.hpp"
-#include "wire_v1_golden.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
 
@@ -17,7 +15,6 @@
 #include <cstring>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,12 +25,9 @@ using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::control;
 namespace wire = vehicle_sil::control::wire;
-namespace golden = vehicle_sil::control::wire_v1_golden;
-using vehicle_sil::unit::throws;
 
-constexpr std::uint16_t kVersions[] = {1, 2};
 constexpr std::size_t kRevisionAt = 7;
-/// "No number" in an optional u32 of version 2.
+/// "No number" in an optional u32.
 constexpr std::uint32_t kNone = 0xFFFF'FFFF;
 
 SimTime at(SimDuration d)
@@ -46,18 +40,13 @@ std::optional<std::uint32_t> number(std::uint32_t n)
     return n;
 }
 
-wire::Bytes bytes_of(std::span<const std::uint8_t> bytes)
-{
-    return {bytes.begin(), bytes.end()};
-}
-
 /// A message written field by field.
 struct Raw
 {
     wire::Bytes bytes;
 
-    Raw(wire::Kind kind, std::uint8_t revision, std::uint16_t version = 2)
-        : bytes{'V', 'S', 'C', 'W', static_cast<std::uint8_t>(version), static_cast<std::uint8_t>(version >> 8),
+    Raw(wire::Kind kind, std::uint8_t revision)
+        : bytes{'V', 'S', 'C', 'W', static_cast<std::uint8_t>(wire::kVersion), static_cast<std::uint8_t>(wire::kVersion >> 8),
                 static_cast<std::uint8_t>(kind), revision}
     {
     }
@@ -279,14 +268,12 @@ bool same(const Command& a, const Command& b)
 
 /// The step messages of one step, as they were written.
 std::vector<wire::Bytes> step_bytes(std::uint64_t session, SimTime time, bool final, const std::vector<CommandResult>& results,
-                                    const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes,
-                                    std::uint16_t version)
+                                    const std::vector<Event>& events, const Snapshot* sample, std::size_t max_bytes)
 {
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
-    wire::encode_step(
-        session, time, final, results, events, sample, max_bytes, scratch, [&](const wire::Bytes& message) { out.push_back(message); },
-        version);
+    wire::encode_step(session, time, final, results, events, sample, max_bytes, scratch,
+                      [&](const wire::Bytes& message) { out.push_back(message); });
     return out;
 }
 
@@ -311,33 +298,12 @@ wire::Error decode_any(wire::Kind kind, std::span<const std::uint8_t> bytes)
 
 } // namespace
 
-TEST_CASE(wire_v2_the_versions_that_are_spoken)
+TEST_CASE(wire_v2_another_version_is_not_read)
 {
-    CHECK(!wire::speaks(0));
-    CHECK(wire::speaks(1));
-    CHECK(wire::speaks(2));
-    CHECK(!wire::speaks(3));
-    CHECK_EQ(wire::kOldestVersion, std::uint16_t{1});
-    CHECK_EQ(wire::kNewestVersion, std::uint16_t{2});
-    CHECK(wire::speaks(wire::kVersion));
-
-    // No encoder writes a version that no decoder reads.
-    wire::Bytes bytes;
-    wire::Bytes scratch;
-    std::string why;
-    for (const std::uint16_t version : {std::uint16_t{0}, std::uint16_t{3}, std::uint16_t{0x0101}})
-    {
-        CHECK(throws<std::invalid_argument>([&] { static_cast<void>(wire::encode_hello(small_hello(), bytes, why, version)); }));
-        CHECK(throws<std::invalid_argument>([&] { static_cast<void>(wire::encode_command(small_command(), bytes, version)); }));
-        CHECK(throws<std::invalid_argument>([&] { wire::encode_submitted(wire::SubmittedMessage{}, bytes, version); }));
-        CHECK(throws<std::invalid_argument>([&] { wire::encode_session(wire::Kind::Probe, 1, bytes, version); }));
-        CHECK(throws<std::invalid_argument>([&] {
-            wire::encode_step(1, at(0ms), true, {}, {}, nullptr, wire::kMaxMessageBytes, scratch, [](const wire::Bytes&) {}, version);
-        }));
-    }
-
-    // Read: a mismatch that says the version, and a hello still names its participant.
-    for (const std::uint16_t version : {std::uint16_t{0}, std::uint16_t{3}})
+    CHECK_EQ(wire::kVersion, std::uint16_t{2});
+    // An older version and a newer one alike (and 0, which no build wrote): a mismatch that says
+    // the version, and a hello still names its participant.
+    for (const std::uint16_t version : {std::uint16_t{0}, std::uint16_t{1}, std::uint16_t{3}})
     {
         wire::Bytes hello = raw_hello(0, {}).bytes;
         hello[4] = static_cast<std::uint8_t>(version);
@@ -346,7 +312,8 @@ TEST_CASE(wire_v2_the_versions_that_are_spoken)
         CHECK(error.code == wire::ErrorCode::VersionMismatch);
         CHECK_EQ(error.version, version);
         CHECK(decoded.participant == "Engine");
-        CHECK(error.text.find("this side reads versions 1 to 2") != std::string::npos);
+        CHECK(error.text.find("written in version " + std::to_string(version) + " of the format; this side reads version 2") !=
+              std::string::npos);
 
         wire::Bytes command = raw_command(0, {}).bytes;
         command[4] = static_cast<std::uint8_t>(version);
@@ -354,8 +321,15 @@ TEST_CASE(wire_v2_the_versions_that_are_spoken)
         CHECK(!wire::addressed(command).has_value());
         wire::Error peeked;
         const auto header = wire::peek(command, peeked);
-        CHECK(header.has_value()); // readable: a version that is not read is no error here
+        CHECK(header.has_value()); // readable: another version is no error here
         CHECK_EQ(header->version, version);
+        CHECK_EQ(header->revision, std::uint8_t{0});
+        for (const wire::Kind kind : {wire::Kind::Probe, wire::Kind::Ready, wire::Kind::LastWordReceived})
+        {
+            wire::Bytes session = Raw(kind, wire::kRevision).u64(1).bytes;
+            session[4] = static_cast<std::uint8_t>(version);
+            CHECK(!wire::addressed(session).has_value());
+        }
     }
 }
 
@@ -364,9 +338,8 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
     // The hand-written messages are what the encoder writes: this pins the layout of version 2.
     const wire::Hello hello = small_hello();
     wire::Bytes bytes;
-    wire::Bytes v1;
     std::string why;
-    CHECK(wire::encode_hello(hello, bytes, why, 2));
+    CHECK(wire::encode_hello(hello, bytes, why));
     CHECK(bytes == raw_hello(wire::kRevision, {}).bytes);
     CHECK_EQ(bytes[kRevisionAt], wire::kRevision);
     wire::Hello decoded_hello;
@@ -380,17 +353,9 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
     CHECK(header.has_value());
     CHECK_EQ(header->version, std::uint16_t{2});
     CHECK_EQ(header->revision, wire::kRevision);
-    // The only difference from version 1: the size in front of each variable.
-    CHECK(wire::encode_hello(hello, v1, why, 1));
-    CHECK_EQ(bytes.size(), v1.size() + 4 * hello.schema.size());
-    error = wire::decode_hello(v1, decoded_hello);
-    CHECK(!error);
-    CHECK_EQ(error.version, std::uint16_t{1});
-    CHECK_EQ(error.revision, std::uint8_t{0});
-    CHECK(decoded_hello == hello);
 
     const wire::CommandMessage command = small_command();
-    CHECK(wire::encode_command(command, bytes, 2));
+    CHECK(wire::encode_command(command, bytes));
     CHECK(bytes == raw_command(wire::kRevision, {}).bytes);
     wire::CommandMessage decoded_command;
     error = wire::decode_command(bytes, decoded_command);
@@ -402,15 +367,11 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
     CHECK(to.has_value());
     CHECK(to->kind == wire::Kind::Command);
     CHECK_EQ(to->session, command.session);
-    CHECK_EQ(to->version, std::uint16_t{2});
     CHECK_EQ(to->revision, wire::kRevision);
-    CHECK(wire::encode_command(command, v1, 1));
-    CHECK_EQ(bytes.size(), v1.size() + 4 * command.command.writes.size());
-    CHECK_EQ(wire::addressed(v1)->version, std::uint16_t{1});
 
     // Submitted: the write the reason is about, or none.
     const wire::SubmittedMessage refused{9, 42, SubmitResult{SubmitStatus::Invalid, "gear: no", 1U}};
-    wire::encode_submitted(refused, bytes, 2);
+    wire::encode_submitted(refused, bytes);
     CHECK(bytes == raw_submitted(wire::kRevision, {}).bytes);
     wire::SubmittedMessage decoded_submitted;
     error = wire::decode_submitted(bytes, decoded_submitted);
@@ -423,15 +384,10 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
     CHECK(decoded_submitted.result.failed_write == number(1));
     for (const auto& failed : {std::optional<std::uint32_t>{}, number(0), number(65535)})
     {
-        wire::encode_submitted(wire::SubmittedMessage{9, 42, SubmitResult{SubmitStatus::Invalid, "why", failed}}, bytes, 2);
+        decoded_submitted.result.failed_write = 7U;
+        wire::encode_submitted(wire::SubmittedMessage{9, 42, SubmitResult{SubmitStatus::Invalid, "why", failed}}, bytes);
         CHECK(!wire::decode_submitted(bytes, decoded_submitted));
         CHECK(decoded_submitted.result.failed_write == failed);
-        // Version 1 has no place for it.
-        wire::encode_submitted(wire::SubmittedMessage{9, 42, SubmitResult{SubmitStatus::Invalid, "why", failed}}, v1, 1);
-        CHECK_EQ(bytes.size(), v1.size() + 4);
-        decoded_submitted.result.failed_write = 7U;
-        CHECK(!wire::decode_submitted(v1, decoded_submitted));
-        CHECK(!decoded_submitted.result.failed_write);
     }
 
     // Step: how many writes of each command were applied.
@@ -443,7 +399,7 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
     const Snapshot sample{at(3ms), 4, {Value{true}, Value{2.5}}};
     for (const bool values : {false, true})
     {
-        const auto messages = step_bytes(11, at(3ms), false, results, events, values ? &sample : nullptr, wire::kMaxMessageBytes, 2);
+        const auto messages = step_bytes(11, at(3ms), false, results, events, values ? &sample : nullptr, wire::kMaxMessageBytes);
         CHECK_EQ(messages.size(), std::size_t{1});
         CHECK(messages[0] == raw_step(wire::kRevision, {}, values).bytes);
         wire::StepMessage step;
@@ -458,126 +414,30 @@ TEST_CASE(wire_v2_messages_round_trip_and_say_their_version)
         {3, CommandStatus::Late, std::nullopt, true, "its time had passed", 0U},
     };
     wire::StepMessage step;
-    CHECK(!wire::decode_step(step_bytes(1, at(1ms), false, counted, {}, nullptr, wire::kMaxMessageBytes, 2).at(0), step));
+    CHECK(!wire::decode_step(step_bytes(1, at(1ms), false, counted, {}, nullptr, wire::kMaxMessageBytes).at(0), step));
     CHECK_EQ(step.results.size(), counted.size());
     for (std::size_t i = 0; i < counted.size(); ++i)
     {
         CHECK(step.results[i].applied_writes == counted[i].applied_writes);
         CHECK(step.results[i].reason == counted[i].reason);
     }
-    CHECK(!wire::decode_step(step_bytes(1, at(1ms), false, counted, {}, nullptr, wire::kMaxMessageBytes, 1).at(0), step));
-    for (const auto& result : step.results)
-    {
-        CHECK(!result.applied_writes); // version 1 has no place for it
-    }
+    // Not said: empty, also in an object that had a number from a message before.
+    std::vector<CommandResult> unsaid = counted;
+    unsaid[0].applied_writes.reset();
+    CHECK(!wire::decode_step(step_bytes(1, at(1ms), false, unsaid, {}, nullptr, wire::kMaxMessageBytes).at(0), step));
+    CHECK(!step.results.at(0).applied_writes);
 
-    // Probe, ready, last word received: the session and nothing else, in both versions.
+    // Probe, ready, last word received: the session and nothing else.
     for (const wire::Kind kind : {wire::Kind::Probe, wire::Kind::Ready, wire::Kind::LastWordReceived})
     {
-        wire::encode_session(kind, 0xFEDCBA9876543210ULL, bytes, 2);
+        wire::encode_session(kind, 0xFEDCBA9876543210ULL, bytes);
         CHECK(bytes == Raw(kind, wire::kRevision).u64(0xFEDCBA9876543210ULL).bytes);
         const auto whom = wire::addressed(bytes);
         CHECK(whom.has_value());
         CHECK(whom->kind == kind);
         CHECK_EQ(whom->session, std::uint64_t{0xFEDCBA9876543210ULL});
-        CHECK_EQ(whom->version, std::uint16_t{2});
+        CHECK_EQ(whom->revision, wire::kRevision);
     }
-}
-
-TEST_CASE(wire_v2_the_bytes_of_version_1_are_read_and_are_written_when_asked_for)
-{
-    // What a hub writes to an agent of version 1, and what an agent of version 1 writes: the
-    // version is said here, whatever the default of the encoders is.
-    wire::Bytes bytes;
-    std::string why;
-    CHECK(wire::encode_hello(golden::hello(), bytes, why, 1));
-    CHECK(bytes == bytes_of(golden::kHello));
-    CHECK(wire::encode_command(golden::command_at(), bytes, 1));
-    CHECK(bytes == bytes_of(golden::kCommandAt));
-    CHECK(wire::encode_command(golden::command_next_step(), bytes, 1));
-    CHECK(bytes == bytes_of(golden::kCommandNextStep));
-    wire::encode_submitted(golden::submitted(), bytes, 1);
-    CHECK(bytes == bytes_of(golden::kSubmitted));
-    // The fields version 1 has no place for change nothing of its bytes.
-    wire::SubmittedMessage with_position = golden::submitted();
-    with_position.result.failed_write = 0U;
-    wire::encode_submitted(with_position, bytes, 1);
-    CHECK(bytes == bytes_of(golden::kSubmitted));
-    std::vector<CommandResult> with_counts = golden::step_results();
-    with_counts[0].applied_writes = 3U;
-    with_counts[1].applied_writes = 0U;
-    const Snapshot sample = golden::step_sample();
-    auto messages = step_bytes(golden::kSession, golden::step_time(), false, with_counts, golden::step_events(), &sample,
-                               golden::kStepMaxBytes, 1);
-    CHECK_EQ(messages.size(), std::size_t{1});
-    CHECK(messages[0] == bytes_of(golden::kStep));
-    const Snapshot split = golden::split_sample();
-    messages = step_bytes(golden::kSession, golden::step_time(), false, {}, {}, &split, golden::kSplitMaxBytes, 1);
-    CHECK_EQ(messages.size(), std::size_t{2});
-    CHECK_EQ(messages[0].size(), std::size_t{2046});
-    CHECK(std::equal(std::begin(golden::kSplitFirstHead), std::end(golden::kSplitFirstHead), messages[0].begin()));
-    CHECK(messages[1] == bytes_of(golden::kSplitSecond));
-    messages = step_bytes(golden::kSession, golden::final_time(), true, golden::final_results(), {}, nullptr, golden::kStepMaxBytes, 1);
-    CHECK_EQ(messages.size(), std::size_t{1});
-    CHECK(messages[0] == bytes_of(golden::kFinalStep));
-    const std::pair<wire::Kind, std::span<const std::uint8_t>> sessions[] = {
-        {wire::Kind::Probe, golden::kProbe},
-        {wire::Kind::Ready, golden::kReady},
-        {wire::Kind::LastWordReceived, golden::kLastWordReceived},
-    };
-    for (const auto& [kind, expected] : sessions)
-    {
-        wire::encode_session(kind, golden::kSession, bytes, 1);
-        CHECK(bytes == bytes_of(expected));
-        const auto to = wire::addressed(expected);
-        CHECK(to.has_value());
-        CHECK_EQ(to->version, std::uint16_t{1});
-        CHECK_EQ(to->revision, std::uint8_t{0});
-    }
-
-    // Read: the decoder says it was version 1, and the fields version 1 does not carry are empty
-    // (also in an object that had them from a message before).
-    wire::Hello hello;
-    wire::Error error = wire::decode_hello(golden::kHello, hello);
-    CHECK(!error);
-    CHECK_EQ(error.version, std::uint16_t{1});
-    CHECK_EQ(error.revision, std::uint8_t{0});
-    CHECK(hello == golden::hello());
-    wire::CommandMessage command;
-    error = wire::decode_command(golden::kCommandAt, command);
-    CHECK(!error);
-    CHECK_EQ(error.version, std::uint16_t{1});
-    CHECK(same(command.command, golden::command_at().command));
-    wire::SubmittedMessage submitted;
-    CHECK(!wire::decode_submitted(raw_submitted(wire::kRevision, {}).bytes, submitted));
-    CHECK(submitted.result.failed_write.has_value());
-    error = wire::decode_submitted(golden::kSubmitted, submitted);
-    CHECK(!error);
-    CHECK_EQ(error.version, std::uint16_t{1});
-    CHECK(!submitted.result.failed_write);
-    wire::StepMessage step;
-    CHECK(!wire::decode_step(raw_step(wire::kRevision, {}, true).bytes, step));
-    CHECK(step.results.at(0).applied_writes.has_value());
-    error = wire::decode_step(golden::kStep, step);
-    CHECK(!error);
-    CHECK_EQ(error.version, std::uint16_t{1});
-    CHECK_EQ(step.results.size(), std::size_t{2});
-    CHECK(!step.results[0].applied_writes);
-    CHECK(!step.results[1].applied_writes);
-
-    // The last byte of the header means nothing in version 1: it is not looked at.
-    wire::Bytes odd = bytes_of(golden::kSubmitted);
-    odd[kRevisionAt] = 9;
-    error = wire::decode_submitted(odd, submitted);
-    CHECK(!error);
-    CHECK_EQ(error.revision, std::uint8_t{0});
-    odd.push_back(0);
-    CHECK(wire::decode_submitted(odd, submitted).code == wire::ErrorCode::Malformed);
-    wire::Bytes probe = bytes_of(golden::kProbe);
-    probe[kRevisionAt] = 9;
-    CHECK(wire::addressed(probe).has_value());
-    probe.push_back(0);
-    CHECK(!wire::addressed(probe).has_value());
 }
 
 TEST_CASE(wire_v2_what_a_newer_revision_added_is_skipped_and_from_an_equal_one_refused)
@@ -746,141 +606,135 @@ TEST_CASE(wire_v2_the_size_of_an_element_is_checked)
     CHECK(decode_any(wire::Kind::Hello, items.bytes).code == wire::ErrorCode::Malformed);
 }
 
-TEST_CASE(wire_v2_a_step_message_is_filled_to_the_byte_in_both_versions)
+TEST_CASE(wire_v2_a_step_message_is_filled_to_the_byte)
 {
     // What encode_step() counts for a result and an event is what it writes: results and events
     // that fill a message exactly go into one message of exactly that size, and one byte more
     // makes two, none of them beyond the limit.
     const std::size_t head = 8 + 8 + 8 + 1 + 2 + 2;
-    for (const std::uint16_t version : kVersions)
+    const std::size_t result = 4 + 8 + 1 + 1 + 4 + 4; // without applied_at and reason
+    const std::size_t event = 4 + 8 + 1 + 4;          // without text
+    for (const std::size_t limit : {wire::kMinMessageBytes, std::size_t{3001}, wire::kMaxMessageBytes})
     {
-        const std::size_t result = version == 1 ? 8 + 1 + 1 + 4 : 4 + 8 + 1 + 1 + 4 + 4; // without applied_at and reason
-        const std::size_t event = version == 1 ? 8 + 1 + 4 : 4 + 8 + 1 + 4;              // without text
-        for (const std::size_t limit : {wire::kMinMessageBytes, std::size_t{3001}, wire::kMaxMessageBytes})
+        // Results: one with applied_at and a text of the largest size, and as many plain ones
+        // as it takes; the last one takes what is left.
+        std::vector<CommandResult> results;
+        results.push_back({1, CommandStatus::Applied, at(1ms), false, std::string(wire::kMaxTextBytes, 'r'), 1U});
+        std::size_t used = head + result + 8 + wire::kMaxTextBytes;
+        CHECK(used <= wire::kMinMessageBytes); // the largest result alone fits the smallest message
+        while (limit - used >= result)
         {
-            // Results: one with applied_at and a text of the largest size, and as many plain ones
-            // as it takes; the last one takes what is left.
-            std::vector<CommandResult> results;
-            results.push_back({1, CommandStatus::Applied, at(1ms), false, std::string(wire::kMaxTextBytes, 'r'), 1U});
-            std::size_t used = head + result + 8 + wire::kMaxTextBytes;
-            CHECK(used <= wire::kMinMessageBytes); // the largest result alone fits the smallest message
-            while (limit - used >= result)
-            {
-                const std::size_t reason = std::min<std::size_t>(limit - used - result, 700);
-                // Not a rest that no result fits.
-                const std::size_t take = limit - used - result - reason != 0 && limit - used - result - reason < result ? reason / 2 : reason;
-                results.push_back({results.size() + 1, CommandStatus::Rejected, std::nullopt, true, std::string(take, 'x'), 0U});
-                used += result + take;
-            }
-            CHECK_EQ(used, limit);
-            auto messages = step_bytes(1, at(1ms), false, results, {}, nullptr, limit, version);
-            CHECK_EQ(messages.size(), std::size_t{1});
-            CHECK_EQ(messages[0].size(), limit);
-            CHECK(!decode_any(wire::Kind::Step, messages[0]));
-            results.back().reason += 'x';
-            messages = step_bytes(1, at(1ms), false, results, {}, nullptr, limit, version);
-            CHECK_EQ(messages.size(), std::size_t{2});
-            CHECK_EQ(messages[0].size(), limit - result - results.back().reason.size() + 1);
-            CHECK_EQ(messages[1].size(), head + result + results.back().reason.size());
-
-            // Events, the same way.
-            std::vector<Event> events;
-            used = head;
-            while (limit - used >= event)
-            {
-                const std::size_t text = std::min<std::size_t>(limit - used - event, wire::kMaxTextBytes);
-                const std::size_t take = limit - used - event - text != 0 && limit - used - event - text < event ? text / 2 : text;
-                events.push_back({at(1ms), EventLevel::Info, std::string(take, 'e')});
-                used += event + take;
-            }
-            CHECK_EQ(used, limit);
-            messages = step_bytes(1, at(1ms), false, {}, events, nullptr, limit, version);
-            CHECK_EQ(messages.size(), std::size_t{1});
-            CHECK_EQ(messages[0].size(), limit);
-            CHECK(!decode_any(wire::Kind::Step, messages[0]));
-            events.back().text.pop_back();
-            events.back().text += "ee";
-            messages = step_bytes(1, at(1ms), false, {}, events, nullptr, limit, version);
-            CHECK_EQ(messages.size(), std::size_t{2});
-            CHECK(messages[0].size() < limit);
-            CHECK_EQ(messages[1].size(), head + event + events.back().text.size());
+            const std::size_t reason = std::min<std::size_t>(limit - used - result, 700);
+            // Not a rest that no result fits.
+            const std::size_t take = limit - used - result - reason != 0 && limit - used - result - reason < result ? reason / 2 : reason;
+            results.push_back({results.size() + 1, CommandStatus::Rejected, std::nullopt, true, std::string(take, 'x'), 0U});
+            used += result + take;
         }
+        CHECK_EQ(used, limit);
+        auto messages = step_bytes(1, at(1ms), false, results, {}, nullptr, limit);
+        CHECK_EQ(messages.size(), std::size_t{1});
+        CHECK_EQ(messages[0].size(), limit);
+        CHECK(!decode_any(wire::Kind::Step, messages[0]));
+        results.back().reason += 'x';
+        messages = step_bytes(1, at(1ms), false, results, {}, nullptr, limit);
+        CHECK_EQ(messages.size(), std::size_t{2});
+        CHECK_EQ(messages[0].size(), limit - result - results.back().reason.size() + 1);
+        CHECK_EQ(messages[1].size(), head + result + results.back().reason.size());
 
-        // The largest event alone fits the smallest message too.
-        const std::vector<Event> largest{{at(1ms), EventLevel::Error, std::string(3 * wire::kMaxTextBytes, 'T')}};
-        const auto one = step_bytes(1, at(1ms), false, {}, largest, nullptr, wire::kMinMessageBytes, version);
-        CHECK_EQ(one.size(), std::size_t{1});
-        CHECK_EQ(one[0].size(), head + event + wire::kMaxTextBytes);
+        // Events, the same way.
+        std::vector<Event> events;
+        used = head;
+        while (limit - used >= event)
+        {
+            const std::size_t text = std::min<std::size_t>(limit - used - event, wire::kMaxTextBytes);
+            const std::size_t take = limit - used - event - text != 0 && limit - used - event - text < event ? text / 2 : text;
+            events.push_back({at(1ms), EventLevel::Info, std::string(take, 'e')});
+            used += event + take;
+        }
+        CHECK_EQ(used, limit);
+        messages = step_bytes(1, at(1ms), false, {}, events, nullptr, limit);
+        CHECK_EQ(messages.size(), std::size_t{1});
+        CHECK_EQ(messages[0].size(), limit);
+        CHECK(!decode_any(wire::Kind::Step, messages[0]));
+        events.back().text.pop_back();
+        events.back().text += "ee";
+        messages = step_bytes(1, at(1ms), false, {}, events, nullptr, limit);
+        CHECK_EQ(messages.size(), std::size_t{2});
+        CHECK(messages[0].size() < limit);
+        CHECK_EQ(messages[1].size(), head + event + events.back().text.size());
     }
+
+    // The largest event alone fits the smallest message too.
+    const std::vector<Event> largest{{at(1ms), EventLevel::Error, std::string(3 * wire::kMaxTextBytes, 'T')}};
+    const auto one = step_bytes(1, at(1ms), false, {}, largest, nullptr, wire::kMinMessageBytes);
+    CHECK_EQ(one.size(), std::size_t{1});
+    CHECK_EQ(one[0].size(), head + event + wire::kMaxTextBytes);
 }
 
-TEST_CASE(wire_v2_the_smallest_elements_are_counted_right_in_both_versions)
+TEST_CASE(wire_v2_the_smallest_elements_are_counted_right)
 {
     // A decoder refuses a count that the rest of the message cannot hold, counting with the
     // smallest element there can be. Messages made of nothing but smallest elements are read:
     // the size it counts with is not larger than the smallest element.
-    for (const std::uint16_t version : kVersions)
-    {
-        const std::size_t size = version == 1 ? 0 : 4; // the size in front of an element
-        wire::Hello hello;
-        hello.participant = "E";
-        hello.max_pending = 1;
-        VariableInfo plain;
-        plain.name = "v";
-        hello.schema.assign(100, plain);
-        wire::Bytes bytes;
-        std::string why;
-        CHECK(wire::encode_hello(hello, bytes, why, version));
-        CHECK_EQ(bytes.size(), 8 + 5 + 8 + 1 + 8 + 8 + 4 + 4 + 100 * (size + 5 + 1 + 1 + 4 + 1 + 4 + 4));
-        wire::Hello decoded_hello;
-        CHECK(!wire::decode_hello(bytes, decoded_hello));
-        CHECK(decoded_hello == hello);
+    const std::size_t size = 4; // the size in front of an element
+    wire::Hello hello;
+    hello.participant = "E";
+    hello.max_pending = 1;
+    VariableInfo plain;
+    plain.name = "v";
+    hello.schema.assign(100, plain);
+    wire::Bytes bytes;
+    std::string why;
+    CHECK(wire::encode_hello(hello, bytes, why));
+    CHECK_EQ(bytes.size(), 8 + 5 + 8 + 1 + 8 + 8 + 4 + 4 + 100 * (size + 5 + 1 + 1 + 4 + 1 + 4 + 4));
+    wire::Hello decoded_hello;
+    CHECK(!wire::decode_hello(bytes, decoded_hello));
+    CHECK(decoded_hello == hello);
 
-        wire::CommandMessage command;
-        command.command.writes.assign(100, Write{"", Value{true}});
-        CHECK(wire::encode_command(command, bytes, version));
-        CHECK_EQ(bytes.size(), 8 + 8 + 8 + 1 + 8 + 1 + 4 + 100 * (size + 4 + 2));
-        wire::CommandMessage decoded_command;
-        CHECK(!wire::decode_command(bytes, decoded_command));
-        CHECK_EQ(decoded_command.command.writes.size(), std::size_t{100});
+    wire::CommandMessage command;
+    command.command.writes.assign(100, Write{"", Value{true}});
+    CHECK(wire::encode_command(command, bytes));
+    CHECK_EQ(bytes.size(), 8 + 8 + 8 + 1 + 8 + 1 + 4 + 100 * (size + 4 + 2));
+    wire::CommandMessage decoded_command;
+    CHECK(!wire::decode_command(bytes, decoded_command));
+    CHECK_EQ(decoded_command.command.writes.size(), std::size_t{100});
 
-        const std::size_t result = version == 1 ? 8 + 1 + 1 + 4 : 4 + 8 + 1 + 1 + 4 + 4;
-        const std::size_t event = version == 1 ? 8 + 1 + 4 : 4 + 8 + 1 + 4;
-        const std::vector<CommandResult> results(100, CommandResult{1, CommandStatus::Late, std::nullopt, true, {}, 0U});
-        const std::vector<Event> events(100, Event{at(1ms), EventLevel::Info, {}});
-        wire::StepMessage step;
-        auto messages = step_bytes(1, at(1ms), false, results, {}, nullptr, wire::kMaxMessageBytes, version);
-        CHECK_EQ(messages.size(), std::size_t{1});
-        CHECK_EQ(messages[0].size(), 8 + 8 + 8 + 1 + 2 + 2 + 100 * result);
-        CHECK(!wire::decode_step(messages[0], step));
-        CHECK_EQ(step.results.size(), std::size_t{100});
-        messages = step_bytes(1, at(1ms), false, {}, events, nullptr, wire::kMaxMessageBytes, version);
-        CHECK_EQ(messages.size(), std::size_t{1});
-        CHECK_EQ(messages[0].size(), 8 + 8 + 8 + 1 + 2 + 2 + 100 * event);
-        CHECK(!wire::decode_step(messages[0], step));
-        CHECK_EQ(step.events.size(), std::size_t{100});
+    const std::size_t result = 4 + 8 + 1 + 1 + 4 + 4;
+    const std::size_t event = 4 + 8 + 1 + 4;
+    const std::vector<CommandResult> results(100, CommandResult{1, CommandStatus::Late, std::nullopt, true, {}, 0U});
+    const std::vector<Event> events(100, Event{at(1ms), EventLevel::Info, {}});
+    wire::StepMessage step;
+    auto messages = step_bytes(1, at(1ms), false, results, {}, nullptr, wire::kMaxMessageBytes);
+    CHECK_EQ(messages.size(), std::size_t{1});
+    CHECK_EQ(messages[0].size(), 8 + 8 + 8 + 1 + 2 + 2 + 100 * result);
+    CHECK(!wire::decode_step(messages[0], step));
+    CHECK_EQ(step.results.size(), std::size_t{100});
+    messages = step_bytes(1, at(1ms), false, {}, events, nullptr, wire::kMaxMessageBytes);
+    CHECK_EQ(messages.size(), std::size_t{1});
+    CHECK_EQ(messages[0].size(), 8 + 8 + 8 + 1 + 2 + 2 + 100 * event);
+    CHECK(!wire::decode_step(messages[0], step));
+    CHECK_EQ(step.events.size(), std::size_t{100});
 
-        // One more announced than the message holds: refused by the count, before any is read.
-        const std::size_t results_at = 8 + 8 + 8 + 1;
-        wire::Bytes more_results = step_bytes(1, at(1ms), false, results, {}, nullptr, wire::kMaxMessageBytes, version).at(0);
-        ++more_results[results_at];
-        wire::Error error = wire::decode_step(more_results, step);
-        CHECK(error.code == wire::ErrorCode::Truncated);
-        CHECK(error.text.find("more results or events announced") != std::string::npos);
-        wire::Bytes more_events = messages[0];
-        ++more_events[results_at + 2];
-        error = wire::decode_step(more_events, step);
-        CHECK(error.code == wire::ErrorCode::Truncated);
-        CHECK(error.text.find("more results or events announced") != std::string::npos);
-        CHECK(wire::encode_command(command, bytes, version));
-        ++bytes[8 + 8 + 8 + 1 + 8 + 1];
-        error = wire::decode_command(bytes, decoded_command);
-        CHECK(error.code == wire::ErrorCode::Truncated);
-        CHECK(error.text.find("writes announced") != std::string::npos);
-        CHECK(wire::encode_hello(hello, bytes, why, version));
-        ++bytes[8 + 5 + 8 + 1 + 8 + 8 + 4];
-        error = wire::decode_hello(bytes, decoded_hello);
-        CHECK(error.code == wire::ErrorCode::Truncated);
-        CHECK(error.text.find("variables announced") != std::string::npos);
-    }
+    // One more announced than the message holds: refused by the count, before any is read.
+    const std::size_t results_at = 8 + 8 + 8 + 1;
+    wire::Bytes more_results = step_bytes(1, at(1ms), false, results, {}, nullptr, wire::kMaxMessageBytes).at(0);
+    ++more_results[results_at];
+    wire::Error error = wire::decode_step(more_results, step);
+    CHECK(error.code == wire::ErrorCode::Truncated);
+    CHECK(error.text.find("more results or events announced") != std::string::npos);
+    wire::Bytes more_events = messages[0];
+    ++more_events[results_at + 2];
+    error = wire::decode_step(more_events, step);
+    CHECK(error.code == wire::ErrorCode::Truncated);
+    CHECK(error.text.find("more results or events announced") != std::string::npos);
+    CHECK(wire::encode_command(command, bytes));
+    ++bytes[8 + 8 + 8 + 1 + 8 + 1];
+    error = wire::decode_command(bytes, decoded_command);
+    CHECK(error.code == wire::ErrorCode::Truncated);
+    CHECK(error.text.find("writes announced") != std::string::npos);
+    CHECK(wire::encode_hello(hello, bytes, why));
+    ++bytes[8 + 5 + 8 + 1 + 8 + 8 + 4];
+    error = wire::decode_hello(bytes, decoded_hello);
+    CHECK(error.code == wire::ErrorCode::Truncated);
+    CHECK(error.text.find("variables announced") != std::string::npos);
 }
