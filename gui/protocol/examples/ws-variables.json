@@ -259,7 +259,9 @@
           "state": "queued",
           "applied_at_ms": null,
           "late": false,
-          "reason": null
+          "reason": null,
+          "applied_writes": null,
+          "failed_write": null
         }
       }
     },
@@ -274,7 +276,9 @@
           "state": "applied",
           "applied_at_ms": 0,
           "late": false,
-          "reason": null
+          "reason": null,
+          "applied_writes": 2,
+          "failed_write": null
         }
       }
     },
@@ -449,7 +453,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -546,7 +550,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -812,7 +816,9 @@
                 "state": "applied",
                 "applied_at_ms": 0,
                 "late": false,
-                "reason": null
+                "reason": null,
+                "applied_writes": 2,
+                "failed_write": null
               }
             }
           }
@@ -967,7 +973,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1064,7 +1070,7 @@
               ],
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1417,7 +1423,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1514,7 +1520,7 @@
                 ],
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {

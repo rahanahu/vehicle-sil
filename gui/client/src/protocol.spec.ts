@@ -198,7 +198,7 @@ describe('the readers accept every example of gui/protocol', () => {
     });
     expect(links).toEqual([
       ['Engine', link('no_hello')],
-      ['Dashboard', link('version_mismatch', { version: 2 })],
+      ['Dashboard', link('version_mismatch', { version: 1 })],
       ['Gauge', link('not_offered')],
       ['Logger', link('none')],
     ]);
@@ -206,8 +206,8 @@ describe('the readers accept every example of gui/protocol', () => {
       m?.type === 'event' && m.event.event === 'check' ? [m.event.check] : [],
     )[0];
     expect(check?.participants.map((p) => p.control)).toEqual([
-      { transport: 'silkit', wire_version: 1 },
-      { transport: 'silkit', wire_version: 1 },
+      { transport: 'silkit', wire_version: 2 },
+      { transport: 'silkit', wire_version: 2 },
       null,
       null,
     ]);

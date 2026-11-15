@@ -366,16 +366,11 @@ private:
     /// The same conditions, for the record: which, with the value and the time of its sample.
     [[nodiscard]] TimelineFailure unmet_values(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
     [[nodiscard]] bool is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const;
-    /// The write of `writes` to `peer` that was not made, for the record.
-    /// Of the writes at `command` (indices in `writes`: one participant's, in the order sent)
-    /// the one whose name `reason` begins with, as an agent names the write it refused or
-    /// whose setter threw.
-    [[nodiscard]] std::optional<std::size_t> named_write(const std::vector<ScenarioWrite>& writes, const std::vector<std::size_t>& command,
-                                                         const std::string& reason) const;
     /// What a step failed of when `failed` (a target of `result`) did not apply its part of
     /// `write`: every write of the request with whether it was applied, as the results of
-    /// their participants say, and which one is the reason, if that is known. Without a
-    /// result (null) nothing is known.
+    /// their participants say, and which one is the reason, if that is known: both from the
+    /// positions in control::TargetResult (applied_writes, failed_write), never from the text
+    /// of a reason. Without a result (null) nothing is known.
     [[nodiscard]] TimelineFailure failed_write(const Write& write, const control::OperationResult* result,
                                                const control::TargetResult& failed) const;
     /// For the message of that failure: which writes of the participant's command took effect

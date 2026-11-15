@@ -63,7 +63,7 @@ describe('ParticipantStatus', () => {
     fixture.componentInstance.participants.set([
       participant('Engine', { controlLink: link('connected', { variables: 17 }) }),
       participant('Dashboard', {
-        controlLink: link('version_mismatch', { version: 2 }),
+        controlLink: link('version_mismatch', { version: 1 }),
       }),
       participant('Gauge', { controlLink: link('no_hello') }),
       participant('Meter', { controlLink: link('not_offered') }),
@@ -74,7 +74,7 @@ describe('ParticipantStatus', () => {
     const control = (name: string) =>
       (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="control-${name}"]`);
     expect(control('Engine')?.textContent).toContain('つながった（17 個）');
-    expect(control('Dashboard')?.textContent).toContain('形式の版 2 が違う');
+    expect(control('Dashboard')?.textContent).toContain('形式の版 1 が違う');
     expect(control('Dashboard')?.textContent).toContain('⚠');
     expect(control('Gauge')?.textContent).toContain('hello が来なかった');
     expect(control('Meter')?.textContent).toContain('読み書きの口を出していない');

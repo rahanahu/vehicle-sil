@@ -724,7 +724,8 @@ def test_writes_go_to_the_source_in_the_order_asked_and_fail_with_a_reason() -> 
         # each is told as an operation at once (the source's own news of it may come later, or earlier)
         ops = [m for m in sent if m["type"] == "operation"]
         assert [(m["seq"], m["state"], m["done"]) for m in ops] == [(n, "sent", False) for n in range(1, 6)]
-        assert ops[0]["peers"] == {"Engine": {"state": "sent", "applied_at_ms": None, "late": False, "reason": None}}
+        assert ops[0]["peers"] == {"Engine": {"state": "sent", "applied_at_ms": None, "late": False, "reason": None,
+                                              "applied_writes": None, "failed_write": None}}
         for kind, status, code in (("timeout", 504, "write-timeout"), ("refused", 400, "write-refused"),
                                    ("unavailable", 502, "write-failed")):
             source.write_error = SourceError(kind, "X: why")
@@ -768,16 +769,20 @@ def test_operations_are_told_once_per_change_and_summed_up() -> None:
     v.on_operations([op(1, False, ("Engine", "sent"))])  # the same again: not told twice
     v.on_operations([op(1, False, ("Engine", "queued"), ("Body", "sent"))])
     v.on_operations([op(1, False, ("Engine", "queued"), ("Body", "disconnected"))])
-    v.on_operations([op(1, True, ("Engine", "applied", 30 * MS + 5), ("Body", "applied", 40 * MS, True))])
+    v.on_operations([op(1, True, ("Engine", "applied", 30 * MS + 5, False, "", 2), ("Body", "applied", 40 * MS, True))])
     assert [m["state"] for m in sent] == ["sent", "sent", "queued", "applied"]
     assert sent[-1] == {"type": "operation", "session": 7, "seq": 1, "state": "applied", "done": True, "peers": {
-        "Engine": {"state": "applied", "applied_at_ms": 30, "late": False, "reason": None},
-        "Body": {"state": "applied", "applied_at_ms": 40, "late": True, "reason": None}}}
-    for targets, state in (((("A", "late"),), "late"), ((("A", "rejected", None, False, "the setter failed"),), "rejected"),
+        "Engine": {"state": "applied", "applied_at_ms": 30, "late": False, "reason": None, "applied_writes": 2,
+                   "failed_write": None},
+        "Body": {"state": "applied", "applied_at_ms": 40, "late": True, "reason": None, "applied_writes": None,
+                 "failed_write": None}}}
+    for targets, state in (((("A", "late"),), "late"), ((("A", "rejected", None, False, "the setter failed", 1, 1),), "rejected"),
                            ((("A", "applied", 0), ("B", "invalid")), "mixed"), ((("A", "busy"), ("B", "busy")), "busy"),
                            ((), "unknown")):
         v.on_operations([op(9, True, *targets)])
         assert sent[-1]["state"] == state
+        if state == "rejected":  # the counts pass through as they came
+            assert (sent[-1]["peers"]["A"]["applied_writes"], sent[-1]["peers"]["A"]["failed_write"]) == (1, 1)
     assert v.summary()["operations"] == [{k: x for k, x in m.items() if k not in ("type", "session")}
                                          for m in (sent[3], sent[-1])]
 
@@ -805,8 +810,9 @@ def test_operations_are_kept_up_to_a_limit_open_ones_last_and_get_their_end_with
         await v.close()
         assert sent[0] == {"type": "operation", "session": 7, "seq": 4, "state": "mixed", "done": True, "peers": {
             "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
-                       "reason": "the run ended before the result came"},
-            "Body": {"state": "applied", "applied_at_ms": 0, "late": False, "reason": None}}}
+                       "reason": "the run ended before the result came", "applied_writes": None, "failed_write": None},
+            "Body": {"state": "applied", "applied_at_ms": 0, "late": False, "reason": None, "applied_writes": None,
+                     "failed_write": None}}}
         assert sent[1]["type"] == "variables" and len(sent) == 2
     asyncio.run(main())
 
@@ -853,7 +859,7 @@ def test_a_write_taken_while_the_run_ends_gets_its_end() -> None:
         await closing
         assert sent == [{"type": "operation", "session": 7, "seq": 1, "state": "unknown", "done": True, "peers": {
             "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
-                       "reason": "the run ended before the result came"}}}]
+                       "reason": "the run ended before the result came", "applied_writes": None, "failed_write": None}}}]
         assert [o["seq"] for o in v.summary()["operations"]] == [1]
     asyncio.run(main())
 

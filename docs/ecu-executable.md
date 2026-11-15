@@ -364,7 +364,7 @@ When you run several ECUs with `vehicle_sil_launch`, each ECU executable must me
 |---|---|
 | Build `main()` with `ecu_main()`. | `check` cannot check the ECU. |
 | Use the names agreed with the integrator (the person who writes the configuration file), such as network names, and check them with `--describe` before handing the ECU over. | `check` reports findings ([simulation-check.md](simulation-check.md)). |
-| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The check reports the note `version-mismatch`. If the format version of the messages that read and write variables also differs, it reports the warning `control-link-version`, and the variables of that ECU cannot be read or written. |
+| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The check reports the note `version-mismatch`. If the format version of the messages that read and write variables also differs (for example an ECU built with vehicle-sil 0.1.0 under a newer `vehicle_sil_launch`, or the other way round), the simulation still runs, but the variables of that ECU cannot be read or written, and the check reports the warning `control-link-version`. |
 | End the processes that the ECU started itself when the ECU ends. | The run reports the warning `left-processes` (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). |
 | Write stdout and stderr in UTF-8. | `vehicle_sil_launch run` shows bytes that are not UTF-8 as `?`. |
 | Do not use the prefixes in the next table in variable names. | The ECU exits with exit code 3. |
@@ -573,7 +573,7 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   ],
   "control": {
     "transport": "silkit",
-    "wire_version": 1
+    "wire_version": 2
   },
   "features": [
     "map-network",

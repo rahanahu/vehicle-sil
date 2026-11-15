@@ -519,7 +519,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - 一時停止してから書くときは、`at_ms` を止まっている時刻より後にします。その時刻のステップは、もう実行した ECU があるためです（ランチャーのルール: [docs/control-api.md](../../docs/ja/control-api.md)）。
 - 止まっている時刻そのもの（か、それより前）を指定した書き込みは、いったん `queued` になり、ECU の次のステップで `late` に確定します（`late: "apply"` なら、そのステップで反映されます）。
 
-`{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason"}}}`
+`{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason", "applied_writes", "failed_write"}}}`
 
 participant ごとの `state` は次のとおりです。
 
@@ -536,6 +536,7 @@ participant ごとの `state` は次のとおりです。
 | `busy` | 確定 | |
 | `unknown` | 確定 | 反映されたかわからない |
 
+- `applied_writes` と `failed_write` は、Control Server の `TargetResult` の値をそのまま渡したものです。participant の書き込みのうち先頭から反映された数と、`reason` が言っている書き込みの位置（0 から）です。participant の書き込みは、`api/write` のリクエストのうちその participant への書き込みを、書いた順に並べたものです。わからないとき、言われないときは `null` です（[docs/ja/control-api.md](../../docs/ja/control-api.md#書き込みが反映される時点) の「書き込みが反映される時点」）。
 - 全体の `state`: 途中は `sent`（まだ受け取っていない ECU がある）か `queued` です。確定（`done` が `true`）したら、全部の participant が同じならその状態、違えば `mixed` です。確定した操作は変わりません。
 - 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。
 - 受信の遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（未確定の操作と、最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません（どれがそうかは、要約の `operations_from_seq` でわかります）。
