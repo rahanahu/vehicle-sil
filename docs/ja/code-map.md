@@ -280,6 +280,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 隠れていたアドレスの衝突の解決
 - 時刻同期なしの SIL Kit での実時間の動作
 - ツールキット（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
+- `j1939.seat_*`: エンジンの内部の口である聞き役の席（聞こえるもの、`Observer`、ハンドラー、タイマーとの順、読み取り専用であること、席の有無で記録が変わらないこと）
 
 仮想バスと SIL Kit の一致:
 
@@ -625,6 +626,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Observer` | `j1939/observer.hpp` |
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
+| 聞き役の席（内部の口） | `src/frame_seat.hpp` |
 
 - テスト: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`

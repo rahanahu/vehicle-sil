@@ -280,6 +280,7 @@ What they check in the engine:
 - Resolution of a hidden address conflict
 - Real-time behavior on SIL Kit without time synchronization
 - The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
+- `j1939.seat_*`: the listener seat, an internal interface of the engine (what it hears, its order against the `Observer`, handlers and timers, that it is read-only, that having it or not changes no trace)
 
 Virtual bus and SIL Kit give the same result:
 
@@ -625,6 +626,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | `Observer` | `j1939/observer.hpp` |
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
+| Listener seat (internal interface) | `src/frame_seat.hpp` |
 
 - Tests: `tests/j1939`
 - `ctest -R`: `^j1939\.`, `^j1939_silkit\.`

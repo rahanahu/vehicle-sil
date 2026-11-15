@@ -20,6 +20,14 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
   LINK vehicle_sil::j1939)
 target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# The listener's seat of the engine (detail::FrameSeat): an internal header, so this binary has
+# the engine's src/ on its include path. With the test kit's recorder on the same network.
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_seat_tests
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  SOURCES test_j1939_seat.cpp
+  LINK vehicle_sil::j1939 vehicle_sil::testkit)
+target_include_directories(vehicle_sil_j1939_seat_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/j1939/src)
+
 # The protocol parts (DM13, diagnostics, identification, periodic sender, requester, monitor,
 # address commander): built only from the engine's public API
 # and toolbox; the boundary test checks their sources and links.
@@ -122,7 +130,8 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
   LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
        vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander vehicle_sil::j1939_exchange
        vehicle_sil_codec_test_messages)
-target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${PROJECT_SOURCE_DIR}/libs/j1939/src) # the listener's seat
 
 # The J1939 stack on SIL Kit participants (in-process registry): same traces as on the
 # virtual bus, with SIL Kit's trivial simulation and with the simple CAN network simulator
