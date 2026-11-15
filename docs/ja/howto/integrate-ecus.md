@@ -57,7 +57,7 @@ cd build/linux-gcc-control/examples/integrate_ecus
 | 途中で止める、止まらない実行に上限を付ける | Ctrl+C、`--timeout-ms` | [止める](#止める) |
 | スクリプトや CI から結果を読む | `--json`、`--events` | [スクリプトから使う](#スクリプトから使う--json--events) |
 | 実時間に合わせて動かす | `--speed` | [等速で動かす](#等速で動かす--speedと遅れの見方) |
-| 同じ ECU を 2 つ並べる | `command` の引数 | [同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる) |
+| 同じ ECU を 2 つ並べる | `j1939_nodes` | [同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる) |
 | `ecu_main()` で作っていないツールを一緒に起動する | `describe: false` | [`ecu_main()` で作っていないツールを並べる](#ecu_main-で作っていないツールを並べる) |
 
 ## 手順 1: 名前を決めて伝える
@@ -274,7 +274,7 @@ passed: 0 errors, 2 warnings, 0 notes
 | `[unknown-network]`、`[kind-mismatch]` | ECU が使うネットワークの名前か種類が、`networks` と違います。 | 手順 1 で決めた名前と違うのが設定ファイルなら設定ファイルを直します。ECU の名前が違うなら、指摘の文が言う `network_names` の行を書くか、手順 4 です。種類が違うなら手順 4 です。 |
 | `[single-participant]`、`[unused-network]` | ネットワークに ECU が 1 つしかないか、1 つもありません。 | ECU を無効にしたせいなら、そのままで構いません。名前の違いが原因なら、指摘の文が言う `network_names` の行を書くか、手順 4 です。 |
 | `[step-mismatch]` | `step_ms` が、ECU のステップ幅と違います。 | 伝えてもらった値と違うのが設定ファイルなら設定ファイル、ECU なら手順 4 です。 |
-| `[address-conflict]`、`[address-shared]`、`[name-conflict]` | 同じネットワークで、J1939 のアドレスか NAME が重なっています。 | 手順 4 です。 |
+| `[address-conflict]`、`[address-shared]`、`[name-conflict]` | 同じネットワークで、J1939 のアドレスか NAME が重なっています。 | 指摘の文の例のとおり、設定ファイルの `j1939_nodes` で直します。文が「this file cannot change them」と言うときは手順 4 です。 |
 | `[describe-failed]`、`[describe-output]`、`[describe-timeout]` | ECU が `--describe` に正しく応答しません。 | 手順 4 です。`ecu_main()` で作っていないツールなら、`describe: false` を書きます。 |
 | `[describe-version]`、`[describe-unknown-value]` | ECU と `vehicle_sil_launch` で、vehicle-sil のバージョンが違います。 | 指摘の文にある古いほうを、新しくします。 |
 | `[version-mismatch]`、`[control-link-version]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
@@ -678,7 +678,7 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 
 ## 同じ ECU を 2 つ載せる
 
-同じ実行ファイルを 2 つの participant として並べると、participant 名は `--name` で変わりますが、J1939 の NAME、アドレス、変数名は同じままです。同じネットワークにいれば、`check` が `name-conflict` を報告します。これも設定ファイルだけでは直せないので、ECU を作った人に、NAME とアドレスを引数で受け取れるようにしてもらいます。
+同じ実行ファイルを 2 つの participant として並べると、participant 名は `--name` で変わりますが、J1939 の NAME、アドレス、変数名は同じままです。同じネットワークにいれば、`check` が `name-conflict` を報告し、片方に別のアドレスと identity number を与える `j1939_nodes` の行を示します。その行を設定ファイルに書きます（[simulation-config.md](../simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」）。前の vehicle-sil で作った実行ファイルで `j1939_nodes` を受け取れないときは、ECU を作った人に作り直してもらうか、下のように NAME とアドレスを引数で受け取れるようにしてもらいます。
 
 | すること | 担当 | 内容 |
 |---|---|---|

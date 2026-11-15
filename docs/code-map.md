@@ -825,7 +825,7 @@ Implementation:
 |---|---|
 | The overall flow of the check | `src/check.cpp` |
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
-| The reported networks under the names after `network_names` of the configuration file (`seen_networks()`) | `src/check_networks.cpp` |
+| The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check output | `src/check_format.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
@@ -1453,6 +1453,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | Check rules and `code` | [Check rules and `code`](#check-rules-and-code) |
 | Launcher | Configuration file or scenario keys, the schemas | [Configuration file or scenario keys](#configuration-file-or-scenario-keys) |
 | Launcher | `network_names` | [`network_names` in the configuration file](#network_names-in-the-configuration-file) |
+| Launcher | `j1939_nodes` | [`j1939_nodes` in the configuration file](#j1939_nodes-in-the-configuration-file) |
 | Launcher | `run --events`, `--stdin-commands`, `version --json` | [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) |
 | Launcher | Speed, pause, stepping, lateness | [Timing of `run`](#timing-of-run) |
 | Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
@@ -1619,6 +1620,37 @@ Tests:
 
 - `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`)
 - `launch_run.network_names`: ECUs with different names communicate on one bus, a variant changes the map, the command of `manual` and the event, an executable that cannot take `--map-network`
+- `schema.files_and_launcher`
+
+### `j1939_nodes` in the configuration file
+
+`j1939_nodes` gives a participant's J1939 nodes other addresses and NAME fields than its executable's code.
+
+Where to change:
+
+- Reading it, and the errors that the configuration file alone shows: `read_j1939_nodes()` and `check_j1939_nodes()` in `libs/launch/src/config.cpp`
+- Merging the entries of a variant: `lay_j1939_nodes()`; turning them into arguments: `j1939_node_arguments()` (the text of an entry is `ecu_executable::format_j1939_node_argument()`, which `ecu_main` reads back)
+- Applying the entries to the reported nodes: `seen_networks()` in `libs/launch/src/check_networks.cpp`, with `j1939::apply_node_overrides()`
+- The findings about the entries, and how `address-conflict`, `address-shared` and `name-conflict` say to fix them: `check_j1939_node_entries()` and `conflict_fix()` in `libs/launch/src/check_rules.cpp`
+- The `features` word that each setting needs: `kJ1939NodeSettingFeatures` in `vehicle_sil/launch/config.hpp` (a setting added later gets its own word)
+
+Rules:
+
+- `seen_networks()` is the only place that applies the entries in the launcher. The rules read the outcome (`SeenNetwork::j1939_matches`, `unmatched_j1939_entries()`) and do not match again.
+- The check and the executable apply the same rules (`vehicle_sil/j1939/node_override.hpp`). `launch.j1939_nodes_match_like_the_network_does` passes the same scenes through `seen_networks()` and a `j1939::Network`.
+- An entry that takes no node keeps that participant's nodes on that network out of the rules of the addresses and NAMEs (`Rules::j1939_held`).
+
+Documentation to update:
+
+- "[Matching J1939 addresses and NAMEs (`j1939_nodes`)](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)", the key table and the variant table in [simulation-config.md](simulation-config.md)
+- `j1939-node-*`, `address-conflict`, `address-shared`, `name-conflict`, the participant table and `j1939_nodes` in the JSON in [simulation-check.md](simulation-check.md)
+- `j1939-nodes` in `features` in [simulation-events.md](simulation-events.md)
+- The schema (`schema/simulation.schema.json` and its copy in the template)
+
+Tests:
+
+- `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`, `test_j1939_nodes_match.cpp`)
+- `launch_run.j1939_nodes`: 2 copies of one ECU communicate with an entry, the check says which entry to write without one, a variant changes the entry, the command of `manual` and the event, a `describe: false` participant, an executable that cannot take `--j1939-node`
 - `schema.files_and_launcher`
 
 ### Events, stdin commands, `version --json`
@@ -2014,7 +2046,7 @@ Where to change:
 
 Code to update (`libs/ecu/include/vehicle_sil/ecu/executable.hpp`; the launcher and `ecu_main` share it):
 
-- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file; `--map-network` comes from `network_names`, and the message is in `check_arguments()` of `config.cpp`)
+- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file; `--map-network` comes from `network_names` and `--j1939-node` from `j1939_nodes`, and the message is in `check_arguments()` of `config.cpp`)
 - Exit codes, `kMaxMillis`
 
 Documentation to update:

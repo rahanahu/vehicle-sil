@@ -148,7 +148,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes) [unknown-key]\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file [not-checked]\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "

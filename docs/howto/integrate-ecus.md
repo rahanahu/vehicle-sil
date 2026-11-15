@@ -57,7 +57,7 @@ Do steps 1–5 in order. Read the remaining sections when you need them.
 | Stop a run partway, or limit a run that does not end | Ctrl+C, `--timeout-ms` | [Stop the simulation](#stop-the-simulation) |
 | Read the result from a script or CI | `--json`, `--events` | [Use from scripts](#use-from-scripts---json---events) |
 | Run in sync with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
-| Run 2 instances of the same ECU | Arguments in `command` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
+| Run 2 instances of the same ECU | `j1939_nodes` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
 | Start tools not built with `ecu_main()` together with the ECUs | `describe: false` | [Add tools not built with `ecu_main()`](#add-tools-not-built-with-ecu_main) |
 
 ## Step 1: Agree on names and share them
@@ -274,7 +274,7 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU's name differs, write the `network_names` line that the finding gives, or go to step 4. If the kind differs, go to step 4. |
 | `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, write the `network_names` line that the finding gives, or go to step 4. |
 | `[step-mismatch]` | `step_ms` differs from the ECU's step size. | If the configuration file differs from the value you were given, fix the configuration file. If the ECU differs, go to step 4. |
-| `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
+| `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Fix them in `j1939_nodes` of the configuration file, as the example in the finding shows. When the finding says "this file cannot change them", go to step 4. |
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
 | `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
 | `[version-mismatch]`, `[control-link-version]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
@@ -678,7 +678,7 @@ For the definition of lateness, how to choose the tolerance, and how time steps 
 
 ## Run two instances of the same ECU
 
-If you list the same executable as 2 participants, `--name` gives them different participant names, but the J1939 NAME, the address and the variable names stay the same. If both are on the same network, `check` reports `name-conflict`. The configuration file alone cannot fix this either, so ask the ECU author to make the NAME and address configurable through arguments.
+If you list the same executable as 2 participants, `--name` gives them different participant names, but the J1939 NAME, the address and the variable names stay the same. If both are on the same network, `check` reports `name-conflict`, and the finding gives the `j1939_nodes` entry that gives one of them another address and identity number. Write it in the configuration file (see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](../simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)). If the executable was built with an earlier vehicle-sil and does not take `j1939_nodes`, ask the ECU author to rebuild it, or to make the NAME and address configurable through arguments as below.
 
 | Task | Who | Details |
 |---|---|---|

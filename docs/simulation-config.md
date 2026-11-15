@@ -20,6 +20,7 @@ vehicle_sil_launch run simulation.yaml
 | Running an ECU from a debugger | [Starting a participant yourself](#starting-a-participant-yourself-manual---manual) |
 | Aligning variable names that differ between executables | [Matching variable names and values](#matching-variable-names-and-values-variables) |
 | Aligning network names that differ between executables | [Matching network names](#matching-network-names-network_names) |
+| Putting 2 copies of one ECU on a network (other J1939 addresses and NAMEs) | [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes) |
 | Changing executables or values per variant | [Variants](#variants-variants---variant), [Scenario parameters](#scenario-parameters-params---param) |
 | Arguments and exit codes | [Arguments and exit codes](#arguments-and-exit-codes) |
 
@@ -116,6 +117,7 @@ Keys of each element of `participants`:
 | `participants[].role` | | What the participant is for (`ecu`, `test` or `bridge`; see [Test participants and bridges](#test-participants-and-bridges-role)) | `ecu` |
 | `participants[].variables` | | Variable map (see [Matching variable names and values](#matching-variable-names-and-values-variables)) | Variables appear under the executable's names |
 | `participants[].network_names` | | Network name map, from the simulation's names (the names in `networks`) to the names this executable uses in its code (see [Matching network names](#matching-network-names-network_names)) | Networks keep the executable's names |
+| `participants[].j1939_nodes` | | Other addresses and NAME fields for the J1939 nodes of this executable, one entry for each node (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)) | Nodes keep the values in the executable's code |
 
 Notes on individual keys:
 
@@ -235,7 +237,7 @@ In `command`, only `{word}` (letters, digits and `_` between `{` and `}`) is spe
 | The check | `--describe --name <participant name>` |
 | `run` | `--name <participant name> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-With `network_names`, `run` then adds `--map-network <simulation name>=<executable name>` for each line, in the order written (the check's `--describe` gets none).
+With `network_names`, `run` then adds `--map-network <simulation name>=<executable name>` for each line, in the order written, and with `j1939_nodes`, `--j1939-node <network>=<settings>` for each entry that changes something (the check's `--describe` gets none of them).
 
 `<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. It is the launcher that waits for the start and names the participants that did not join; the limit on the ECU side covers the case where the launcher has gone away. In the following 2 kinds of run, the ECU's wait for the start has no limit, so `<ms>` is 10^12 (`1000000000000`):
 
@@ -248,7 +250,7 @@ What you can and cannot write in `command`:
 
 | What you write | Handling |
 |---|---|
-| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)). |
+| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--j1939-node`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)) and `--j1939-node` in `j1939_nodes` (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)). |
 | `--no-control` | Allowed. The ECU does not expose its variables. |
 | `--silkit-config <file>` | Allowed. Passes a SIL Kit configuration file to the ECU. |
 | `required: false` | Not allowed (the error `not-required-ecu`). |
@@ -352,13 +354,13 @@ Rules for combining the options:
 
 #### The command `run` prints
 
-When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, and `--map-network` if it has `network_names`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable, `--map-network` if it has `network_names`, and `--j1939-node` if it has `j1939_nodes`). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
 
 The arguments are quoted for the shell you paste them into:
 
 - On Linux, for POSIX sh (bash, zsh).
 - On Windows, for the Command Prompt (cmd.exe), with `\` as the separator in the executable path.
-- In the cmd.exe form, the arguments are quoted by the rules the C runtime uses to read a command line, and arguments that contain `&` `|` `<` `>` `^` are also enclosed in `"`.
+- In the cmd.exe form, the arguments are quoted by the rules the C runtime uses to read a command line, and arguments that contain `&` `|` `<` `>` `^` `,` `;` are also enclosed in `"` (PowerShell reads an unquoted `a,b` as 2 arguments and `;` as the end of a statement).
 - cmd.exe expands `%...%` even inside `"`, so edit arguments that contain `%` before you paste them.
 - To paste into PowerShell, add `&` before the quoted executable, and edit arguments that contain `$` or `` ` ``.
 
@@ -647,6 +649,66 @@ Limits:
 - The check does not find a mapping for the name of a J1939 network on a port passed in from outside (`j1939(name, port)`) either (exit code 3 at start).
 - `network_names` does not tell the check which networks a `describe: false` participant is on (the check still does not know the networks of that participant).
 
+### Matching J1939 addresses and NAMEs (`j1939_nodes`)
+
+A J1939 node has its address and NAME in the ECU's code (`add_node()`). 2 copies of one ECU executable on one network ask for the same address with the same NAME, and neither gets an address (`name-conflict`). With an entry in `j1939_nodes`, a copy gets another address and NAME fields without a rebuild of the executable.
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]          # one node at 0x00 in the code
+  - name: Engine2
+    command: [engine/engine_ecu]          # the same executable
+    j1939_nodes:
+      - { network: J1939_CAN, address: 0x01, identity_number: 2 }
+```
+
+Keys of an entry:
+
+| Key | Required | Value |
+|---|---|---|
+| `network` | Yes | The simulation's name of the node's CAN network (a name in `networks`; with `network_names`, the key, not the executable's name) |
+| `from` | | The node's address in the executable's code, 0..254 (254: a node whose code asks for any free address). Can be left out when the executable has one node on the network |
+| `address` | | The address that the node asks for, 0..254 (254: any free address, only for a NAME that is arbitrary address capable) |
+| `identity_number` | | The identity number field of the NAME, 0..2097151 |
+| `function_instance` | | The function instance field of the NAME, 0..31 |
+| `ecu_instance` | | The ECU instance field of the NAME, 0..7 |
+
+- Write numbers without quotes, as YAML 1.2 writes an integer: in decimal (`010` is ten), or in hexadecimal with a lower-case `0x` (`0x01`; YAML reads `0X01` as text, and also `1_0` and `0b11`). A value out of its range is the error `value`; nothing is cut to the width of the field.
+- `from` is the address in the executable's code: the address that the table of `check` shows for the node without `j1939_nodes`. It is not the new address. With 2 or more nodes of the executable on the network, every entry needs `from` (otherwise the error `j1939-node-ambiguous`).
+- An entry without `from` follows the executable's only node there, also when the ECU's author changes that node's address in the code. To point at a fixed address, write `from`.
+- Write one entry for each node (the error `j1939-node-duplicate` for 2 entries with the same `network` and `from`, and for an entry without `from` beside another entry for the same network).
+- An entry with only `network` and `from` changes nothing. `run` does not pass it on, and the check does not match it. A variant uses it to remove a common entry.
+- The NAME fields need a node that has a NAME (otherwise `j1939-node-no-name`). The other fields of the NAME (manufacturer code, function, arbitrary address capable and the rest) cannot be changed.
+- `run` adds `--j1939-node <network>=<settings>` for each entry that changes something, after `--map-network` (`--j1939-node J1939_CAN=address:0x01,identity_number:2`). The command of a participant that you start yourself (`manual`) and the `command` of the `participant` event carry the same arguments. See "Changing J1939 node addresses and NAMEs" in [ecu-executable.md](ecu-executable.md#changing-j1939-node-addresses-and-names---j1939-node).
+- The check applies the entries to the nodes that the executable reports, with the same rules as the executable, before the rules of the addresses and NAMEs (`address-conflict`, `address-shared`, `name-conflict`). In the table, a node whose address an entry changes shows both addresses, the simulation's first: `J1939_CAN (j1939 0x01<-0x00)` (254 is `any`). The note `j1939-node-changed` lists what changes. In `check --json`, `participants[].j1939_nodes` lists the entries with the node each one takes, and `participants[].reported` keeps the values in the code.
+- An entry that takes no node is an error (`j1939-node-unknown`, `j1939-node-ambiguous`, `j1939-node-indistinct`, `j1939-node-no-name`, `j1939-node-any-address`; see [simulation-check.md](simulation-check.md#finding-codes)). An executable built with an earlier vehicle-sil does not take `--j1939-node` (`j1939-node-unsupported`: no `j1939-node` in `features`). With any of these errors, `run` starts nothing.
+- A `describe: false` participant can have `j1939_nodes` too. It cannot be checked, so the check reports the note `j1939-node-not-checked`, which shows the arguments that `run` adds. Only ecu_main executables accept `--j1939-node`. You can write `--j1939-node` yourself in the `command` of a `describe: false` participant, but not together with `j1939_nodes` that change something (the error `launcher-argument`).
+
+**In a variant**, an entry for the same node (the same `network` and `from`, or both without `from`) replaces the common entry whole: the settings are not merged. Write the entry of a variant in the same form as the common one; a common entry without `from` and a variant's entry with `from` are 2 entries (`j1939-node-duplicate`). To remove a common entry, write it with `network` and `from` only:
+
+```yaml
+participants:
+  - name: Engine2
+    command: [engine/engine_ecu]
+    j1939_nodes:
+      - { network: J1939_CAN, from: 0x00, address: 0x01, identity_number: 2 }
+variants:
+  standard: {}
+  alone:
+    participants:
+      Engine2:
+        j1939_nodes:
+          - { network: J1939_CAN, from: 0x00 }   # removes the common entry
+```
+
+Limits:
+
+- What other ECUs have in their code about this ECU does not change: its address (as a destination, or to tell senders apart) and its whole NAME. An ECU that looks this one up with `address_of()` by the whole NAME does not find a copy whose NAME fields changed. Other constants in the ECU's own code (a filter, a value in the data it sends) do not change either. The note `j1939-node-changed` says so for each participant.
+- A node that the ECU adds after it starts is not in `--describe` and keeps the values in its code.
+- Moving a node to another address can change how long it waits to send after its address claim (the wait depends on the address range). Whether this matches the standard has not been checked.
+- On a Windows launcher, the `network` of an entry that changes something must be ASCII (the error `j1939-node-not-ascii`), as for `network_names`.
+
 ### Variants (`variants`, `--variant`)
 
 When the executables or variable maps differ by variant, write the common part in `participants` and the differences of each variant in `variants`. `check` and `run` apply the differences of the variant selected with `--variant <name>` on top of the common part, then check and run the result. `test` runs all variants in turn (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). Scenarios use only the common names, so the same scenario works for every variant.
@@ -678,6 +740,7 @@ variants:
 | `…<participant>.command` | Executable and arguments (replaces the whole common `command`) |
 | `…<participant>.variables` | Variable map (merged into the common `variables`, one mapping at a time) |
 | `…<participant>.network_names` | Network name map (merged into the common `network_names`, line by line) |
+| `…<participant>.j1939_nodes` | J1939 node entries (merged into the common `j1939_nodes`, node by node) |
 | `…<participant>.enabled` | `true` or `false` (replaces the common `enabled`) |
 | `variants.<variant>.params` | Parameters (merged into the common `params`, name by name) |
 
@@ -687,8 +750,9 @@ variants:
 - `…<participant>.command` follows the same syntax and rules as `participants[].command`.
 - In `…<participant>.variables`, a mapping with the same name (key) replaces the common one, and a new name is added.
 - In `…<participant>.network_names`, a line with the same key replaces the common one (a line whose key and value are the same removes the common line), and a new key is added.
+- In `…<participant>.j1939_nodes`, an entry with the same `network` and `from` replaces the common one whole (an entry with only `network` and `from` removes it), and a new one is added (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)).
 
-A variant can change only these 5 keys: `command`, `variables`, `network_names`, `enabled` and `params`. Any other key is an error (`unknown-key`). Networks, `step_ms`, `describe`, `required`, `role` and the rest are the same in every variant.
+A variant can change only these 6 keys: `command`, `variables`, `network_names`, `j1939_nodes`, `enabled` and `params`. Any other key is an error (`unknown-key`). Networks, `step_ms`, `describe`, `required`, `role` and the rest are the same in every variant.
 
 | Goal | How to write it |
 |---|---|
