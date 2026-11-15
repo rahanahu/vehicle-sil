@@ -105,6 +105,7 @@ add_subdirectory(tools/sim_controller ${_vehicle_sil_exclude})
 
 if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/ecu_main)
+  add_subdirectory(examples/integrate_ecus)
   add_subdirectory(examples/ethernet)
   add_subdirectory(examples/fault_injection)
   add_subdirectory(examples/getting_started)

@@ -1,5 +1,6 @@
-// 自分の画面の最小の形: クライアントのライブラリ（@vehicle-sil/gui-client）だけを使う、ビルドなしの素の JavaScript。
-// つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ見て書く、スライダーとランプ。README.md に使い方がある。
+// The smallest screen of your own: plain JavaScript with no build, using only the client library (@vehicle-sil/gui-client).
+// Connect, check a configuration file, start and stop a run, watch and write one variable, a slider and a lamp.
+// README.md explains how to use it.
 import {
   WriteError,
   createClient,
@@ -11,32 +12,32 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
-// サーバーが表示した URL の #token= を読み、URL から消す（画面が URL を書き換える前に）
+// Read #token= from the URL the server printed and remove it from the URL (before the screen rewrites the URL)
 const token = takeToken(window);
 if (token === null) {
   $('connection').textContent = 'No token: open the URL that vehicle-sil-gui printed (with #token=...).';
   throw new Error('no token');
 }
 
-// サーバーの根からの URL で口を呼ぶ（画面の経路の上でも、api/app が /<経路>/api/app にならないように）
+// Call the API relative to the server root (so that on a screen path, api/app does not become /<path>/api/app)
 const client = createClient({ baseUrl: new URL('/', location.href).href, token });
 const show = (id, text) => ($(id).textContent = text);
 const fail = (error) => show('error', errorMessage(error));
 
-// つながり方
+// Connection
 client.connection.state.subscribe((state) => show('connection', `connection: ${state}`));
 client.session.rejected.subscribe((rejected) => {
   if (rejected) show('connection', 'The server refused the token: open the URL it printed again.');
 });
 
-// 構成ファイルの一覧（起動のときに渡したものを選んでおく）
+// Configuration files (preselect the one given at startup)
 const app = await client.loadApp();
 client.connect();
 const { files } = await client.configs();
 for (const file of files) $('config').add(new Option(file.path, file.path));
 if (app.initial_file) $('config').value = app.initial_file;
 
-// 照合、開始、停止
+// Check, start, stop
 const file = () => $('config').value;
 $('check').onclick = async () => {
   show('error', '');
@@ -53,13 +54,13 @@ $('start').onclick = () => {
 };
 $('stop').onclick = () => client.run.stop().catch(fail);
 
-// 実行の状態（セッションの写し）
+// Run state (a copy of the session)
 client.session.session.subscribe((session) => {
   show('phase', session?.phase ?? '-');
   show('result', session?.result?.result ?? '-');
 });
 
-// 変数: 一覧から 1 つ選んで見る、書く
+// Variables: pick one from the list to watch and write
 let variables = [];
 let watch = null;
 client.variables.state.subscribe((state) => {
@@ -80,7 +81,7 @@ function chosen() {
 }
 
 function watchChosen() {
-  watch?.close(); // 使い終わった watch は必ず閉じる
+  watch?.close(); // always close a watch you no longer need
   watch = null;
   const v = chosen();
   show('value', '-');
@@ -98,7 +99,7 @@ $('write').onclick = async () => {
   const v = chosen();
   if (!v) return;
   const text = $('new-value').value.trim();
-  // 型に合わせる: bool は true / false、列挙は項目の名前か数、ほかは数
+  // Convert to the type: true / false for bool, an item name or a number for an enum, a number otherwise
   const item = v.info.enum?.find((e) => e.name === text);
   const value = v.info.type === 'bool' ? text === 'true' : item ? item.value : Number(text);
   show('write-result', 'sending…');
@@ -106,14 +107,15 @@ $('write').onclick = async () => {
     const operation = await client.variables.write({ [v.peer]: { [v.info.name]: value } });
     show('write-result', `applied at ${operation.peers[v.peer]?.appliedAtMs} ms`);
   } catch (error) {
-    // 反映されたかわからない（no-answer）書き込みは、確かめずに送り直さない
+    // Do not resend a write whose outcome is unknown (no-answer) without checking first
     show('write-result', error instanceof WriteError ? `${error.kind}: ${error.message}` : errorMessage(error));
   }
 };
 
-// スライダーとランプ: 部品 1 つと変数 1 つをつなぐ client.variables.bind を使う。値の状態（まだない、古い、など）、
-// 書けるかどうかと理由、書き込みの様子が 1 つの state にまとまっているので、部品はそれを描くだけでよい。
-// ここでは、範囲のある書ける数の変数をスライダーに、bool の変数（読むだけのものがあればそれ）をランプにする。
+// Slider and lamp: they use client.variables.bind, which binds one widget to one variable. One state holds the value's
+// condition (none yet, stale and so on), whether it can be written and why not, and the progress of a write, so the
+// widget only draws it. Here a writable number variable with a range drives the slider, and a bool variable (a
+// read-only one if there is one) drives the lamp.
 let slider = null;
 let lamp = null;
 let dragging = false;
@@ -127,7 +129,7 @@ function bindParts() {
   lamp = rebind(lamp, forLamp, {}, 'lamp-name', showLamp);
 }
 
-/** 変数が替わったときだけ、つなぎ直す（使い終わったつながりは必ず閉じる）。 */
+/** Rebinds only when the variable changes (always close a binding you no longer need). */
 function rebind(bound, v, options, nameId, draw) {
   const same = bound && v && bound.ref.peer === v.peer && bound.ref.name === v.info.name;
   if (same) return bound;
@@ -135,14 +137,15 @@ function rebind(bound, v, options, nameId, draw) {
   show(nameId, v ? `${v.peer}.${v.info.name}` : '-');
   if (!v) return null;
   const next = client.variables.bind({ peer: v.peer, name: v.info.name }, options);
-  next.state.subscribe(draw); // 変わるたびに呼ばれる。いまの様子は get() で
+  next.state.subscribe(draw); // called on every change; get() returns the current state
   draw(next.state.get());
   return next;
 }
 
 function showSlider({ info, reading, pending, block, writeStatus }) {
   const input = $('slider');
-  // block は、いま書けない理由（read-only、not-ready、ended、peer-disconnected、no-value など）。書けるなら null
+  // block is why it cannot be written now (read-only, not-ready, ended, peer-disconnected, no-value and so on),
+  // or null if it can
   input.disabled = block !== null;
   show('slider-why', block === null ? '' : `(cannot write: ${block})`);
   if (info) {
@@ -150,11 +153,12 @@ function showSlider({ info, reading, pending, block, writeStatus }) {
     input.max = String(info.max);
     input.step = info.type === 'integer' ? '1' : String(info.step ?? 'any');
   }
-  // pending は、送って結果を待っている値。あれば、読んだ値の代わりに出す（離したつまみが元へ戻って見えない）
+  // pending is the value sent and waiting for its result. Show it instead of the value read, so the released thumb
+  // does not appear to jump back
   const value = pending ?? reading?.value;
   if (!dragging && typeof value === 'number') input.value = String(value);
   show('slider-value', typeof value === 'number' ? `${value} ${info?.unit ?? ''}` : '-');
-  // writeStatus: idle、sending、queued、applied、または、うまくいかなかった理由（message つき）
+  // writeStatus: idle, sending, queued, applied, or the reason the write failed (with a message)
   show('slider-write', isWriteError(writeStatus) ? `${writeStatus.kind}: ${writeStatus.message}` : writeStatus.kind);
 }
 
@@ -162,12 +166,14 @@ function showLamp({ reading, condition }) {
   const value = reading?.value;
   $('lamp').dataset.on = String(value === true);
   show('lamp', value === undefined ? '-' : value ? 'on' : 'off');
-  // condition は値の状態: live のほかは、古い（stale）、止まっている時刻の値（paused）、終わった実行の値（ended）など
+  // condition is the state of the value: besides live, stale, a value at the paused time (paused), a value of an
+  // ended run (ended) and so on
   show('lamp-condition', condition.kind === 'live' ? '' : `(${condition.kind})`);
 }
 
-// 動かしている間は書かず、離したとき（change）に書く。続けて書いても、サーバーが前の書き込みを受け取るまでは
-// 最後の値だけを覚えておいて送る（bind がする）。結果は state の writeStatus に出る
+// Write when the slider is released (change), not while it moves. If writes come in a row, only the last value is
+// kept until the server has received the previous write, then sent (bind does this). The result shows in writeStatus
+// of the state
 $('slider').oninput = () => {
   dragging = true;
 };

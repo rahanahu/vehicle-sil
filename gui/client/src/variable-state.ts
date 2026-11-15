@@ -1,18 +1,19 @@
 import type { VariableInfo, VariableReading, VariablesStatus } from './variables';
 
-// 変数 1 つの「いまの様子」を決める純粋な関数と、その形。画面の部品（スライダー、ランプなど）は、この形を読めば、
-// 値をどう見せるか、書けるか、書き込みがどうなったかを出せる。組み立ては client.variables.bind（variable-binding.ts）。
+// Pure functions that decide the current state of one variable, and their shapes. A screen widget (slider, lamp and
+// so on) reads these shapes to know how to show the value, whether it can write, and what became of a write.
+// client.variables.bind (variable-binding.ts) puts them together.
 
 /**
- * 値の状態（valueCondition が決める）。
- * - unavailable: 変数の機能が使えない（実行していない、この実行に変数はない、つないでいる、つながらない）。
- * - missing: いまの実行にない変数。
- * - waiting: いまの実行にあるが、値がまだ届いていない。
- * - live: 動いている途中の最後の値。
- * - paused: 止まっている時刻の値（その時刻より前に始まったステップの値は入っている）。
- * - stale: 古いかもしれない値（why: 画面とサーバーの接続が切れた、ランチャーにつなぎ直している、ECU が切れた、
- *   値の読み取りが失敗し続けている）。
- * - ended: 終わった実行の、最後に読めた値。
+ * State of the value (decided by valueCondition).
+ * - unavailable: the variable API is unavailable (not running, this run has no variables, connecting, cannot connect).
+ * - missing: the variable is not in the current run.
+ * - waiting: in the current run, but no value has arrived yet.
+ * - live: the last value while running.
+ * - paused: the value at the paused time (includes the values of steps that began before that time).
+ * - stale: a value that may be out of date (why: the screen lost its connection to the server, the server is
+ *   reconnecting to the launcher, the ECU disconnected, or reading values keeps failing).
+ * - ended: the last value read in a run that has ended.
  */
 export type ValueCondition =
   | { kind: 'unavailable'; status: VariablesStatus }
@@ -27,28 +28,29 @@ export type ValueCondition =
     }
   | { kind: 'ended'; reading: VariableReading };
 
-/** valueCondition に渡すもの。 */
+/** Input of valueCondition. */
 export interface ConditionInput {
-  /** 変数の機能の状態（client.variables.state の status）。 */
+  /** State of the variable API (the status of client.variables.state). */
   status: VariablesStatus;
-  /** いまの実行の一覧にある変数か。 */
+  /** Whether the variable is in the list of the current run. */
   known: boolean;
-  /** 最後の値（なければ undefined）。 */
+  /** The last value (undefined if none). */
   reading: VariableReading | undefined;
-  /** クライアントと GUI サーバーの接続が開いているか。 */
+  /** Whether the connection between the client and the GUI server is open. */
   connected: boolean;
-  /** その ECU が Control Server とつながっているか。 */
+  /** Whether that ECU is connected to the Control Server. */
   peerConnected: boolean;
   /**
-   * 値の読み取りが失敗し続けている（状態は ready のまま、要約の reason に理由がある）。届いている値は最後に読めたもの。
+   * Reading values keeps failing (the status stays ready; the summary's reason says why). The values received are the
+   * last ones read.
    */
   readFailing?: boolean;
 }
 
-/** 値の状態を決める。 */
+/** Decides the state of the value. */
 export function valueCondition(input: ConditionInput): ValueCondition {
   const { status, known, reading } = input;
-  // 一覧がある状態（ready、ended、つなぎ直している間の connecting）でなければ、変数の名前も確かでない
+  // Unless there is a list (ready, ended, or connecting while reconnecting), even the variable's name is not certain
   if (!known) {
     return status === 'ready' || status === 'ended'
       ? { kind: 'missing' }
@@ -67,7 +69,7 @@ export function valueCondition(input: ConditionInput): ValueCondition {
   return reading.paused ? { kind: 'paused', reading } : { kind: 'live', reading };
 }
 
-/** 2 つの値の状態が同じか（種類、値、理由）。 */
+/** Whether two value states are the same (kind, value, reason). */
 export function sameCondition(a: ValueCondition, b: ValueCondition): boolean {
   if (a.kind !== b.kind) return false;
   const reading = (c: ValueCondition) => ('reading' in c ? c.reading : undefined);
@@ -77,17 +79,19 @@ export function sameCondition(a: ValueCondition, b: ValueCondition): boolean {
 }
 
 /**
- * いま書けない理由（書けるなら null）。
- * - read-only: 読むだけの変数（role が output）。
- * - disconnected: クライアントと GUI サーバーの接続が切れている。
- * - not-ready: 変数の機能が使えない（実行していない、つないでいる、つながらない）。
- * - ended: 実行が終わった。
- * - missing: いまの実行にない変数。
- * - peer-disconnected: その ECU が Control Server とつながっていない。
- * - parameter: parameter は最初のステップの前だけ書ける。
- * - scenario: シナリオの実行中（見るだけ。ランチャーが書き込みを断る）。
- * - no-range: 範囲（min と max）がない変数に、範囲の要る部品（スライダー）を当てた（BindOptions.needsRange）。
- * - no-value: 値がまだないので、値から動かす部品（スライダー）は動かせない（BindOptions.needsValue）。
+ * Why the variable cannot be written now (null if it can).
+ * - read-only: a read-only variable (role output).
+ * - disconnected: the connection between the client and the GUI server is down.
+ * - not-ready: the variable API is unavailable (not running, connecting, cannot connect).
+ * - ended: the run has ended.
+ * - missing: the variable is not in the current run.
+ * - peer-disconnected: that ECU is not connected to the Control Server.
+ * - parameter: a parameter can only be written before the first step.
+ * - scenario: a scenario is running (watch only; the launcher refuses writes).
+ * - no-range: a widget that needs a range (slider) is bound to a variable without one (min and max)
+ *   (BindOptions.needsRange).
+ * - no-value: there is no value yet, so a widget that moves from the value (slider) cannot move
+ *   (BindOptions.needsValue).
  */
 export type WriteBlock =
   | 'read-only'
@@ -101,20 +105,20 @@ export type WriteBlock =
   | 'no-value'
   | 'scenario';
 
-/** writeBlock に渡すもの。 */
+/** Input of writeBlock. */
 export interface WriteBlockInput {
   info: VariableInfo | undefined;
   status: VariablesStatus;
   connected: boolean;
-  /** 止めて始めた実行が、最初のステップの前で待っているか（client.time.state の beforeStart）。 */
+  /** Whether a run started paused is waiting before the first step (beforeStart of client.time.state). */
   beforeStart: boolean;
-  /** その ECU が Control Server とつながっているか。 */
+  /** Whether that ECU is connected to the Control Server. */
   peerConnected: boolean;
 }
 
 /**
- * いま書けない理由を決める（書けるなら null）。部品に依らない分だけ: scenario、no-range、no-value は
- * client.variables.bind が足す。
+ * Decides why the variable cannot be written now (null if it can). Only the reasons that do not depend on the widget:
+ * client.variables.bind adds scenario, no-range and no-value.
  */
 export function writeBlock(input: WriteBlockInput): WriteBlock | null {
   const { info, status } = input;
@@ -128,19 +132,21 @@ export function writeBlock(input: WriteBlockInput): WriteBlock | null {
   return null;
 }
 
-/** 書く値: bool は真偽、数は数、列挙は項目の値（数）か名前。 */
+/** Value to write: a boolean for bool, a number for numbers, an item's value (number) or name for enums. */
 export type WriteValue = number | boolean | string;
 
 /**
- * 書き込みの様子（変数ごと、実行ごと。最後に送った書き込みのもの）。
- * - idle: 書いていない。
- * - sending: 送った。サーバーの答えを待っている。
- * - queued: サーバーが受け取った（操作の番号 seq）。ECU のステップで反映されるのを待っている。
- * - applied: 反映された（atMs: 反映したステップの仮想時間）。
- * - invalid: 送る前に部品が断った（形や範囲の誤り。VariableBinding.reject に渡した文）。送っていない。
- * - dropped: 前の書き込みを待つ間に覚えた値を、書けなくなった（実行が終わった、ECU が切れた、など）ので送らなかった。
- * - refused、failed、no-answer、closed: WriteError の kind（サーバーが断った、反映されなかった、答えが来なかった、
- *   閉じた）。message はサーバーかライブラリの英語の文。
+ * Write status (per variable and per run; that of the last write sent).
+ * - idle: nothing written.
+ * - sending: sent; waiting for the server's answer.
+ * - queued: the server accepted it (operation number seq). Waiting to be applied in an ECU step.
+ * - applied: applied (atMs: virtual time of the step that applied it).
+ * - invalid: the widget refused it before sending (wrong shape or out of range; the text passed to
+ *   VariableBinding.reject). Not sent.
+ * - dropped: a value held while waiting for the previous write was not sent, because writing became impossible (the
+ *   run ended, the ECU disconnected and so on).
+ * - refused, failed, no-answer, closed: the kind of the WriteError (the server refused, it was not applied, no answer
+ *   came, closed). message is the English text from the server or the library.
  */
 export type WriteStatus =
   | { kind: 'idle' }
@@ -151,14 +157,14 @@ export type WriteStatus =
   | { kind: 'dropped'; message: string }
   | { kind: 'refused' | 'failed' | 'no-answer' | 'closed'; message: string; code: string | null };
 
-/** 書き込みの様子が、うまくいかなかったものか。 */
+/** Whether the write status is one that went wrong. */
 export function isWriteError(
   status: WriteStatus,
 ): status is Extract<WriteStatus, { message: string }> {
   return 'message' in status;
 }
 
-/** 範囲が決まっている（両端が有限で、下が上より小さい）か。 */
+/** Whether the range is set (both ends finite, the lower below the upper). */
 export function hasRange(info: Pick<VariableInfo, 'min' | 'max'>): boolean {
   return (
     info.min !== null &&

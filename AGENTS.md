@@ -1,110 +1,110 @@
 # AGENTS.md
 
-vehicle-sil で作業する開発者と AI エージェント向けの指示です。
+Instructions for developers and AI agents who work on vehicle-sil.
 
-## ドキュメントの管理
+## Documentation
 
-確定した仕様は Git で管理し、作業中の資料はローカルにだけ置きます。仕様の正本は Git で管理しているコード、テスト、ドキュメントです。
+Keep the settled specification in Git and working material locally only. The authoritative specification is the code, tests and documentation tracked in Git.
 
-### Git で管理するもの
+### What goes into Git
 
-- `README.md`、`AGENTS.md`
-- `docs/` に置く次の文書
-  - ビルドと開発の手順
-  - API リファレンス、利用者向けマニュアル
-  - 確定したアーキテクチャ、外部に公開するインターフェースの仕様
-  - 実装が守るべき設計上の契約と制約
+- `README.md`, `AGENTS.md`
+- These documents in `docs/`:
+  - Build and development procedures
+  - API references and user manuals
+  - The settled architecture and the specifications of externally exposed interfaces
+  - The design contracts and constraints that the implementation must keep
 
-確定仕様は簡潔に書きます。検討の過程は転載しません。
+Write the settled specification concisely. Do not copy the deliberation into it.
 
-### ローカルにだけ置くもの
+### What stays local
 
-次の資料はリポジトリ直下の `.local/` に置き、コミットしません。`.local/` は `.git/info/exclude` で除外しています。
+Put the material below in `.local/` at the repository root and do not commit it. `.git/info/exclude` excludes `.local/`.
 
-| ディレクトリ | 内容 |
+| Directory | Contents |
 |---|---|
-| `.local/research/` | 技術調査 |
-| `.local/decisions/` | 設計案、比較検討、判断に至った議論、却下した案 |
-| `.local/reviews/` | コードレビューの記録 |
-| `.local/experiments/` | 実験ログ、性能測定の作業記録 |
-| `.local/plans/` | 一時的な実装計画、AI エージェントの作業記録 |
+| `.local/research/` | Technical research |
+| `.local/decisions/` | Design proposals, comparisons, the discussion that led to a decision, rejected proposals |
+| `.local/reviews/` | Code review records |
+| `.local/experiments/` | Experiment logs, working notes of performance measurements |
+| `.local/plans/` | Temporary implementation plans, working notes of AI agents |
 
-新しいクローンでは、次のコマンドで除外設定とディレクトリを用意します。
+In a new clone, set up the exclusion and the directories with these commands:
 
 ```sh
 grep -qxF '/.local/' .git/info/exclude || echo '/.local/' >> .git/info/exclude
 mkdir -p .local/research .local/decisions .local/reviews .local/experiments .local/plans
 ```
 
-### 設計判断の扱い
+### Design decisions
 
-検討の過程と確定事項を分けて記録します。
+Record the deliberation and the settled decisions separately.
 
-- 検討の過程は `.local/decisions/<topic>.md` に置きます。代替案、測定結果、却下した理由もここに書きます。
-- 確定事項は `docs/` に反映します。対象は、採用した方式、公開 API の契約、不変条件、安全性とスレッド安全性の制約、重要な制限、将来の変更で注意すべき点です。
-- 確定事項が既存の仕様と矛盾する場合は、仕様の文書も更新します。
-- 設計の根拠をローカル資料への参照だけで説明しません。Git で管理している文書だけを読んで、現在の仕様がわかるようにします。
+- Put the deliberation in `.local/decisions/<topic>.md`, including the alternatives, the measurements and the reasons for rejecting proposals.
+- Put the settled decisions in `docs/`: the chosen approach, public API contracts, invariants, safety and thread-safety constraints, important limitations, and what future changes must watch out for.
+- If a settled decision contradicts the existing specification, update the specification documents too.
+- Do not justify a design only by referring to local material. A reader of the documents tracked in Git alone must be able to understand the current specification.
 
-### AI エージェントへの指示
+### Instructions for AI agents
 
-- 調査結果と設計の検討は `.local/` に保存します。新しい設計判断をしたら、必要に応じて経緯を `.local/decisions/` に残します。
-- 実装が終わって仕様が確定したら、必要な情報だけを `docs/` に反映します。
-- 次のことは禁止です。
-  - 調査メモをそのまま `docs/` に保存する。
-  - AI との議論の全文をコミットする。
-  - 一時的な設計案を確定仕様として書く。
-  - 整理していない検討資料を大量にコミットする。
-  - ローカル資料を唯一の仕様書として扱う。
+- Save research results and design deliberation in `.local/`. When you make a new design decision, record how you reached it in `.local/decisions/` where useful.
+- When the implementation is done and the specification is settled, put only the necessary information into `docs/`.
+- Never:
+  - Save research notes as they are in `docs/`.
+  - Commit the full text of a discussion with an AI.
+  - Write a temporary design proposal as the settled specification.
+  - Commit large amounts of unorganized deliberation material.
+  - Treat local material as the only specification.
 
-### コミットメッセージ
+### Commit messages
 
-タイトルは [Conventional Commits](https://www.conventionalcommits.org/ja/v1.0.0/) の形式で書きます（例: `feat: add LIN signal encoding`、`fix(j1939): keep the frame order within a step`）。
+Write the title in the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) format (for example, `feat: add LIN signal encoding`, `fix(j1939): keep the frame order within a step`).
 
-- 主な型: `feat`（機能の追加）、`fix`（不具合の修正）、`refactor`、`test`、`docs`、`build`（CMake、依存ライブラリ、パッチ）、`ci`、`chore`。
-- スコープ（括弧内）は任意です。`core`、`j1939`、`lin`、`vector-xl`、`deps` などを使います。
-- 本文には、何を変えたかではなく、なぜ変えたかを書きます。
-- `patches/` の上流向けパッチのコミットメッセージは、上流の書き方に合わせます。この形式にはしません。
+- Main types: `feat` (new feature), `fix` (bug fix), `refactor`, `test`, `docs`, `build` (CMake, dependencies, patches), `ci`, `chore`.
+- The scope (in parentheses) is optional. Use `core`, `j1939`, `lin`, `vector-xl`, `deps` and similar.
+- In the body, write why you made the change, not what you changed.
+- Commit messages of the upstream patches in `patches/` follow the upstream conventions, not this format.
 
-### コミット前の確認
+### Before you commit
 
-1. `.local/` のファイルがステージされていない。
-2. 一時的な調査資料やレビュー資料が含まれていない。
-3. 公開 API や確定仕様を変えた場合は、関係するマニュアルを更新した。
-4. 設計上の重要な制約をドキュメントに反映した。
-5. ドキュメントの内容が実際のコードと合っている。
+1. No file in `.local/` is staged.
+2. No temporary research or review material is included.
+3. If you changed a public API or the settled specification, you updated the related manuals.
+4. You put important design constraints into the documentation.
+5. The documentation matches the actual code.
 
-既存のコミット履歴は書き換えません。追跡済みのファイルは ignore の設定だけでは追跡対象から外れないので、無断で削除、移動、追跡解除をしません。
+Do not rewrite existing commit history. Ignore settings alone do not untrack a tracked file, so do not delete, move or untrack tracked files without permission.
 
-## 検証とスクリプト
+## Verification and scripts
 
-`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。どれも、出力は要約だけで（詳細は `build/logs/` のログ。要約に場所が出る）、終了コードは 0 が成功、1 が失敗、2 が使い方の誤りです。引数と細かい動きは、それぞれの `--help` にあります。CI（GitHub Actions）では、CI が呼ぶスクリプトが同じ要約を job の Summary にも書きます（`scripts/job_summary.py`。失敗には、ログのアーティファクトの名前を添えます）。
+`scripts/` contains the scripts used in development and CI. They are written with the Python 3.11+ standard library only. Every script prints only a summary (the details are in logs under `build/logs/`, and the summary names the location) and exits with 0 on success, 1 on failure and 2 on a usage error. Each script's `--help` gives its arguments and the details of its behavior. In CI (GitHub Actions), the scripts that CI calls also write the same summary to the job's Summary (`scripts/job_summary.py`; a failure names the artifact that holds the logs).
 
-| スクリプト | 内容 |
+| Script | What it does |
 |---|---|
-| `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ。足りないものには入れ方を出す） |
-| `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する（落ちたテストと出力の先頭、ログの場所） |
-| `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイルを確かめる |
-| `scripts/check-docs.py` | 追跡している Markdown の相対リンクと、リンクの後に「…」で挙げた節の名前を確かめる |
-| `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる |
-| `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の書式、lint、単体試験、ビルド、e2e |
-| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験、クライアントの例、その後に `verify-web.py`（`--skip-web` でサーバーだけ、`--launcher` で本物のランチャーでも） |
-| `scripts/verify-python.py` | uv で環境を作り、C++ のビルドなしで回せる Python の確認（3.11、`.python-version` の版、依存の下限） |
-| `scripts/package.py` | ビルド済みの道具の圧縮ファイルを作る（`tools`）、使う人の手順で確かめる（`verify`）、ひな形の圧縮ファイル（`template`）、版の番号の照合（`version`） |
-| `scripts/run-gui.py` | リポジトリからブラウザの GUI を起動する（足りないものは、作るコマンドを言う。ビルドはしない） |
+| `scripts/doctor.py` | Checks whether this computer has what the build and the tests need, and prints one line per requirement (read-only; for anything missing, prints how to install it) |
+| `scripts/verify.py` | Configures, builds and tests each preset, and summarizes the result (failed tests with the start of their output, and the log locations) |
+| `scripts/check-commits.py` | Checks the format of commit messages, and that no file that must not be committed is included |
+| `scripts/check-docs.py` | Checks the relative links in the tracked Markdown files, and the section names quoted after a link in the form `の「…」`. Also checks that each English page (`docs/`, `README.md`) and its Japanese page (`docs/ja/`, `README.ja.md`) agree in the sequence of heading levels, the code blocks and the link targets (a page without its English edition is only counted; with `--require-english` it is an error) |
+| `scripts/mutate.py` | Applies the mutations written in a TOML file one at a time and checks that the tests fail |
+| `scripts/verify-web.py` | Formatting, lint, unit tests, build and e2e tests of the screens (`gui/web`) and the client library (`gui/client`) |
+| `scripts/verify-gui.py` | The whole GUI: the tests of the GUI server (`gui/server`), the client examples, then `verify-web.py` (`--skip-web` for the server only, `--launcher` to also use the real launcher) |
+| `scripts/verify-python.py` | Creates environments with uv and checks the Python code that needs no C++ build (on 3.11, on the version in `.python-version`, and with the lower bounds of the dependencies) |
+| `scripts/package.py` | Creates the prebuilt tools archive (`tools`), checks it by following the steps a user takes (`verify`), creates the template archive (`template`), and checks that the version numbers agree (`version`) |
+| `scripts/run-gui.py` | Starts the browser GUI from the repository (for anything missing, it names the command that builds it; it builds nothing itself) |
 
-- GUI の試験は、pytest、ng、Playwright を直接呼ばずに `verify-web.py` と `verify-gui.py` から回します。この 2 つは、時間に敏感な試験の前に、この PC でビルドや試験や Windows の VM が動いている間は待ちます（同時に回すと時間の条件で落ちるため。`--wait-limit`）。
-- 遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が待つ上限を伸ばします。CTest の `TIMEOUT` は構成のときの値で決まるので、値を変えたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
+- Run the GUI tests through `verify-web.py` and `verify-gui.py`; do not call pytest, ng or Playwright directly. Before their timing-sensitive tests, these 2 scripts wait while a build, a test run or a Windows VM is running on this computer, because tests that run at the same time fail their timing conditions (`--wait-limit`).
+- On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map.md](docs/code-map.md#timeouts-and-the-scale-factor).
 
 ```sh
-scripts/doctor.py                                    # 最初に: 要るものがそろっているか
-scripts/verify.py --linux                            # Linux の全部のプリセット
-scripts/verify.py linux-gcc-debug --tests '^launch'  # 1 つのプリセットで一部のテストだけ
+scripts/doctor.py                                    # first: is everything in place?
+scripts/verify.py --linux                            # all Linux presets
+scripts/verify.py linux-gcc-debug --tests '^launch'  # some tests on one preset
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
-scripts/check-commits.py                             # ステージした内容（--range origin/main..HEAD で範囲の各コミット）
-scripts/check-docs.py                                # docs を変えたら
-scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
-scripts/verify-python.py                             # Python のコード
-scripts/verify-gui.py                                # GUI（--skip-web でサーバーだけ）
-scripts/run-gui.py                                   # リポジトリから GUI を起動
+scripts/check-commits.py                             # the staged changes (--range origin/main..HEAD: each commit in the range)
+scripts/check-docs.py                                # after you change docs
+scripts/mutate.py mutations.toml --check             # only checks that the places to mutate are found
+scripts/verify-python.py                             # Python code
+scripts/verify-gui.py                                # GUI (--skip-web: the server only)
+scripts/run-gui.py                                   # starts the GUI from the repository
 scripts/package.py tools && scripts/package.py verify build/dist/vehicle-sil-tools-*-linux-x86_64.tar.gz
 ```

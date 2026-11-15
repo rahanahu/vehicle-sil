@@ -1,11 +1,11 @@
 /**
- * サーバーへの URL の組み立て。
+ * Builds the URLs to the server.
  *
- * URL は先頭に / を付けず、<base href> からの相対で書く（`api/app`、`ws`）。
- * 画面を / 以外のパス（例: /gui/）に置いても、そのまま動く。
+ * URLs have no leading / and are relative to <base href> (`api/app`, `ws`), so a screen served under a path other
+ * than / (for example /gui/) works unchanged.
  */
 
-/** base href を基準にした WebSocket の URL（http は ws、https は wss）。 */
+/** WebSocket URL relative to the base href (ws for http, wss for https). */
 export function webSocketUrl(baseUri: string, path: string): string {
   const url = new URL(path, baseUri);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';

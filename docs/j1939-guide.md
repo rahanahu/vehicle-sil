@@ -1,113 +1,255 @@
-# J1939 のノードの作り方
+# Writing J1939 nodes
 
-ECU を書く人向けです。先に README の「[最初の ECU を動かす](../README.md#最初の-ecu-を動かす)」を読みます。次は [j1939-codec.md](j1939-codec.md)（信号を値として読み書きする）と [ecu-executable.md](ecu-executable.md)（ECU を実行ファイルにする）です。
+[日本語](ja/j1939-guide.md)
 
-vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [internals/j1939.md](internals/j1939.md) にあります。API はまだ変わることがあります。
+This page shows, in C++, how to use the J1939 stack of vehicle-sil to create ECU nodes, send and receive messages, and run and test the ECUs in a simulation. For the API's guarantees and rules in detail, see [internals/j1939.md](internals/j1939.md). The API may still change.
 
-最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードを試験でも使っています。
+| Goal | Use | Section |
+|---|---|---|
+| Create a node | `Ecu::j1939()`, `Network::add_node()` | [Create a node](#create-a-node) |
+| Relay between 2 networks | `Ecu::j1939()` with another network name | [ECUs with several networks](#ecus-with-several-networks) |
+| Send and receive frames that are not J1939 | `Ecu::can()` | [Protocols other than J1939 (raw CAN)](#protocols-other-than-j1939-raw-can) |
+| Receive messages | `codec::on_message`, `Node::on_message` | [Receive messages](#receive-messages) |
+| Send a message once, at a set time or periodically | `Node::send`, `Ecu::at`, `PeriodicSender` | [Send messages](#send-messages) |
+| Respond to a Request | `Node::on_request` | [Respond to a Request](#respond-to-a-request) |
+| Send a Request and receive the response | `Requester` | [Send a Request and receive the response](#send-a-request-and-receive-the-response) |
+| Read the latest value and detect message loss | `Monitor` | [Monitor reception](#monitor-reception) |
+| Read the DTCs of other nodes | `parse_dtc_list()` | [Read other nodes' DTCs (DM1, DM2)](#read-other-nodes-dtcs-dm1-dm2) |
+| Change the address of another node | `AddressCommander` | [Change another node's address](#change-another-nodes-address) |
+| Write periodic processing | `PeriodicSender`, `Ecu::every` and others | [Choose a periodic mechanism](#choose-a-periodic-mechanism) |
+| Handle send failures and usage errors | `SendStatus`, exceptions | [Handle errors](#handle-errors) |
+| Implement a manufacturer-specific protocol | `Exchange`, `Timer`, `Subscription` | [Implement your own protocol](#implement-your-own-protocol) |
+| Run ECUs in a simulation | `Simulation` | [Run in a simulation](#run-in-a-simulation) |
+| Test an ECU | `Simulation::local()`, `vehicle_sil::testkit` | [Test an ECU](#test-an-ecu) |
+| Disconnect an ECU from the bus | The variable `ecu.connected` | [Disconnect an ECU from the bus (`ecu.connected`)](#disconnect-an-ecu-from-the-bus-ecuconnected) |
+| Receive bus traffic without sending anything | `vehicle_sil::spy::Spy`, `j1939::Listener`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
+| Read and write an ECU's values from a UI or a test | `Ecu::input`, `Ecu::output` | [Read and write signals from outside (UI, tests)](#read-and-write-signals-from-outside-ui-tests) |
+| Work with signals without writing bit positions | Typed messages | [Data layout (Codec)](#data-layout-codec) |
 
-## 利用者が書くものと、スタックが受け持つもの
+To run something first, use [examples/getting_started](../examples/getting_started). The complete example is [examples/j1939/ecu_pair](../examples/j1939/ecu_pair). It builds 2 ECUs, an engine and a cab, from protocol parts only, and runs them with `Simulation`, either on the virtual bus or as 2 SIL Kit participants. The tests use the same code.
 
-| 利用者が書くもの | スタックが受け持つもの |
-|---|---|
-| ノードのアドレスと NAME | Address Claim（競合、任意アドレス、Commanded Address の受信、250 ms の待ち） |
-| 送る PG と周期、データの作り方 | 周期の管理、アドレスを持つ間だけ送ること、DM13 による停止 |
-| 受ける PG と、受けたときの処理 | 宛先の振り分け、トランスポートプロトコル（9〜1785 バイト）の組み立て |
-| Request を送る相手と、答えの使い方 | 応答待ち、時間切れ、送り直し、同じ要求の相乗り |
-| 独自プロトコルのコマンドと、応答の見分け方 | 送れるようになってから送ること、応答待ち、途中の応答、送り直し、自分と相手のアドレスの変化、長いコマンドの転送 |
-| モデル（ふつうの C++） | 仮想時間、ステップ、スレッド、SIL Kit の participant とコントローラ |
+## Reading the code examples
 
-## ノードを作る
+The code on this page consists of excerpts. They do not compile as is: they leave out `#include` lines, `using` declarations and variable declarations. Each excerpt names the file and function that hold the complete, compilable code. An excerpt that shortens a file of the repository says "shortened".
 
-ノードは `j1939::Network` の上に作ります。`Network` は 1 つの CAN ネットワーク（チャネル）への接続で、`Ecu::j1939(network)` が作ります。`vehicle_sil::Ecu` は ECU のアプリケーションを組み立てる入口です。SIL Kit の participant（`Peer`）と、プロセス内の仮想バスの ECU（`LocalBench::add_ecu()`）が実装するので、`Ecu&` を受け取る関数かクラスに ECU を書くと、同じコードがどちらの上でも動きます。
+The excerpts use the same aliases as [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp):
 
 ```cpp
-j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
+using namespace std::chrono_literals;
+namespace j1939 = vehicle_sil::j1939;
+namespace codec = vehicle_sil::j1939::codec;
+```
+
+## What you write and what the stack handles
+
+| You write | The stack handles |
+|---|---|
+| The node's address and NAME | Address Claim (contention, arbitrary address capability, receiving Commanded Address, the 250 ms wait) |
+| The PGs to send, their periods and how to build their data | Keeping the periods, sending only while the node holds an address, stopping on DM13 |
+| The PGs to receive and what to do with them | Sorting by destination, reassembling transport protocol messages (9–1785 bytes) |
+| Whom to send a Request to, and what to do with the response | Waiting for the response, timeouts, retries, merging identical requests into one |
+| The commands of your own protocol, and how to recognize their responses | Sending once the node can send, waiting for the response, interim responses, retries, address changes of the node and of the peer, transferring long commands |
+| The model (plain C++) | Virtual time, steps, threads, SIL Kit participants and controllers |
+
+## Create a node
+
+You create nodes on a `j1939::Network`. A `Network` is the connection to one CAN network (channel), and `Ecu::j1939(network)` creates it.
+
+`vehicle_sil::Ecu` is the interface for building an ECU application. A SIL Kit participant (`Peer`) implements it, and so does an ECU on the in-process virtual bus (`LocalBench::add_ecu()`). If you write the ECU as a function or class that takes an `Ecu&`, the same code runs on either.
+
+Here is `install_engine()` from [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp):
+
+```cpp
+inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 {
-    auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x00, .name = kEngineName});   // Address Claim はスタックが行う
-    ecu.every(10ms, [&engine](vehicle_sil::SimTime) { engine.tick(); });                    // モデルを進める
-    codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) { m.speed.set(engine.rpm); });
-    codec::on_message<SpeedRequest>(node, [&engine](const SpeedRequest& m) {
-        if (const auto rpm = m.speed.value()) { engine.requested = static_cast<std::uint16_t>(*rpm); }
+    auto& node = ecu.j1939("J1939_CAN").add_node({.address = kEngineAddress, .name = kEngineName});
+    ecu.every(10ms, [&engine](vehicle_sil::SimTime) { engine.tick(); });
+    codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) {
+        m.speed.set(engine.rpm);
+        m.state.set(engine.rpm > 0 ? EngineStatus::State::running : EngineStatus::State::stopped);
     });
+    codec::on_message<SpeedRequest>(node, [&engine](const SpeedRequest& m) {
+        if (const auto rpm = m.speed.value()) // not when the cab sends "not available"
+        {
+            engine.requested = static_cast<std::uint16_t>(*rpm);
+        }
+    });
+    const std::string software[] = {"ENGINE", "1.0.3"};
+    node.attach<j1939::Identification>().set_software_identification(software);
     return node;
 }
 ```
 
-`EngineStatus` と `SpeedRequest` は、YAML の定義から生成した型付きメッセージです（[j1939-codec.md](j1939-codec.md)）。信号を値として読み書きし、ビット位置やスケーリングを書きません。バイト列を直接扱うこともできます（下の各節）。
+| Line | What it does |
+|---|---|
+| `add_node()` | Creates the node (the stack performs the Address Claim). |
+| `ecu.every()` | Advances the model every 10 ms. |
+| `codec::attach_sender` | Sends `EngineStatus` every 20 ms. |
+| `codec::on_message` | Receives `SpeedRequest` and passes it to the model. |
 
-- `NodeOptions::name` を付けると、ノードは最初のステップでアドレスを要求します。NAME を付けないノードは、指定したアドレスをすぐに使います（試験用）。
-- `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。
-- ハンドラが参照するモデルやアプリのオブジェクトは、`ecu.emplace<T>(args...)` で ECU に持たせます。ECU は、それをネットワークの後に（最後に emplace したものから先に）破棄するので、ハンドラや部品は破棄の間も参照してかまいません。`emplace` は実行の開始前だけ使えます。
-- 1 ステップの順序は、ネットワークの受信と処理、時刻の来た変数の書き込みの反映、`on_step`、`every`、`at`（足した順）、LIN のノードの処理（足した順）、変数の記録、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`on_step()`、`every()`、`at()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
-- 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、「周期的な処理の使い分け」の「ステップの外から渡す」を参照してください。
+`EngineStatus` and `SpeedRequest` are typed messages generated from a YAML definition (see [j1939-codec.md](j1939-codec.md)). You read and write their signals as values, without writing bit positions or scaling. You can also work with the bytes directly (see the sections below).
 
-### 複数のネットワークを持つ ECU
+Nodes and the objects an ECU owns follow these rules:
 
-ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送ると、同じステップで出ます。
+| Item | Rule |
+|---|---|
+| A node with `NodeOptions::name` | Claims its address in the first step. |
+| A node without a NAME | Uses the given address at once (for tests). |
+| Protocol parts attached with `node.attach<T>(...)` | The `Network` owns them and destroys them in the correct order. |
+| Model and application objects that handlers refer to | Let the ECU own them with `ecu.emplace<T>(args...)` (`emplace` works only before the run starts). |
+| Destruction of `emplace`d objects | The ECU destroys them after the networks, the last one emplaced first, so handlers and protocol parts may still refer to them during destruction. |
+| Thread that calls protocol parts and handlers | The thread that runs the step (to work from other threads, see "Pass data in from outside a step" under "Choose a periodic mechanism"). |
 
-例: [examples/vehicle](../examples/vehicle)（2 つの CAN と 1 つの LIN）。
+Within one step, the ECU does the following, in this order:
+
+1. Receiving and processing on the networks
+2. Applying the variable writes that are due
+3. Calling `on_step`, `every` and `at` (in the order they were added)
+4. Processing the LIN nodes (in the order they were added)
+5. Recording variables
+6. Transmitting on the networks
+
+These calls have limits:
+
+| Call | Limit |
+|---|---|
+| `j1939()` with the same network name | Only once per ECU. |
+| `j1939()`, `on_step()`, `every()`, `at()`, `emplace()` after the start | Throw `std::logic_error`. |
+| Adding nodes | Follows the rules of `Network::add_node()`; also possible from within a step. |
+
+### ECUs with several networks
+
+A gateway calls `j1939()` with different network names. When a handler of one network sends on the other, the message goes out in the same step.
+
+Here is `Gateway` from [examples/vehicle/main.cpp](../examples/vehicle/main.cpp) (2 CAN networks and 1 LIN network):
 
 ```cpp
-class Gateway {
+class Gateway // one ECU on two networks: what it receives on one it sends on the other
+{
 public:
-    explicit Gateway(vehicle_sil::Ecu& ecu) {
-        auto& a = ecu.j1939("CAN_A").add_node({.address = 0x30});
-        auto& b = ecu.j1939("CAN_B").add_node({.address = 0x30});
-        a.on_message(kPgn, [&b](const j1939::Message& m) { static_cast<void>(b.send(kPgn, m.data)); });
+    explicit Gateway(vehicle_sil::Ecu& ecu)
+    {
+        auto& to_body = ecu.j1939("Body").add_node({.address = 0x31});
+        ecu.j1939("Powertrain").add_node({.address = 0x30}).on_message(kSpeed, [&to_body](const j1939::Message& m) {
+            static_cast<void>(to_body.send(kSpeed, m.data));
+        });
     }
 };
 ```
 
-### J1939 でないプロトコル（生の CAN）
+### Protocols other than J1939 (raw CAN)
 
-`ecu.can(network)` は、J1939 を通さない生の CAN チャネル（`can::RawChannel`）を返します。`on_frame(handler)` で受け、`send(frame)` で送ります。タイマーも分割もないので、周期の処理は `every()` や `on_step()` で書きます。
+`ecu.can(network)` returns a raw CAN channel (`can::RawChannel`) that bypasses J1939. Receive with `on_frame(handler)` and send with `send(frame)`. The channel has no timers and no segmentation, so write periodic processing with `every()` or `on_step()`.
 
-例: [examples/pid_stream](../examples/pid_stream)。
+For code that uses `ecu.can()`, see `Engine` and `Dashboard` in `tests/simulation/test_disconnect.cpp`.
 
-- `send()` を呼べるのは、ステップの中だけです（コンストラクターから呼ぶと `std::logic_error`）。結果は `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）で返ります。
-- 送ったフレームは、そのステップの最後に、ステップの時刻で出ます。
-- 同じ ECU が同じネットワーク名で `j1939()` と `can()` の両方を持ってもかまいません。別のコントローラーになるので、互いのフレームを受けます（J1939 のネットワークは 11 ビットのフレームを無視します）。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは別のバスになり、互いのフレームは受けません。生の CAN は常に SIL Kit の上にあるためです。
-- 違う ECU から同じ時刻に届いたフレームの順は、SIL Kit では決まりません。順に依存する処理を書かないでください。
+| Item | Rule |
+|---|---|
+| Where you can call `send()` | Only within a step (calling it from a constructor throws `std::logic_error`). |
+| Result of `send()` | A `RawSendStatus` (`Ok`, `QueueFull`, `InvalidFrame`). |
+| Transmission time | Frames are sent at the end of the step, with the step's time. |
+| Order of frames received from different ECUs at the same time | Not defined on SIL Kit. Do not write processing that depends on it. |
 
-## 受ける
+One ECU can call both `j1939()` and `can()` with the same network name. They are separate controllers, so each receives the other's frames (the J1939 network ignores 11-bit frames).
+
+The exception is a `Peer` whose J1939 network runs on a user port (`j1939(name, port)`, such as Vector XL). The two are then on different buses and do not receive each other's frames, because raw CAN always runs on SIL Kit.
+
+## Receive messages
+
+A fragment (`node` is the node, `engine` the model). For the complete `codec::on_message`, see `install_engine()` above; for `Node::on_message`, see `Gateway` above.
 
 ```cpp
 codec::on_message<SpeedRequest>(node, [&](const SpeedRequest& m) { engine.target_rpm = m.speed.value_or(800.0); });
-node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バイト列のまま
+node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // as bytes
 ```
 
-- 自分のアドレス宛てとグローバル宛てのメッセージを受けます。9 バイト以上は、トランスポートプロトコルで組み立てたものを 1 回で受けます。その `Message::time` は転送が終わった時刻（最後のパケットの時刻）で、送り手が送り始めた時刻ではありません。相手の送信の周期を受けた時刻から確かめるときは、単一フレームのメッセージで確かめます。
-- `codec::on_message<M>` は、decode できたもの（長さが足り、セレクターが合うもの）だけを渡します。
-- `Message::data` は呼び出しの間だけ有効です。残すときはコピーします。
-- 解除が要る登録は `j1939::Subscription` に持たせます（破棄で解除します）。
-- 最新の値と途絶だけが要るなら、`Monitor` を使います（下）。
+| Item | Rule |
+|---|---|
+| Messages received | Those addressed to the node's own address and those sent to the global address. |
+| Messages of 9 bytes or more | Received once, reassembled by the transport protocol. |
+| `codec::on_message<M>` | Passes only the messages that decode (long enough, with a matching selector). |
+| `Message::data` | Valid only during the call. Copy it to keep it. |
+| Registrations that you need to remove | Let a `j1939::Subscription` hold them (destroying it removes them). |
+| You need only the latest value and loss detection | Use `Monitor` (see "Monitor reception"). |
 
-## 送る
+For a reassembled message, `Message::time` is the time the transfer ended (the time of the last packet), not the time the sender started sending. To check the sender's period from reception times, use a single-frame message.
 
-- その場で 1 回送るときは `node.send(pgn, data, destination)` です。送れるのはステップの中（ハンドラ、タイマー、`Ecu::every`、`Ecu::on_step`、`Ecu::at` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
-- シナリオの「ある時刻に 1 回」（要求を送る、購読を始める、止める）は `ecu.at(time, fn)` で書きます。開始時刻が `time` 以後の最初のステップで 1 回だけ呼ぶので、ステップ幅が時刻を割り切らなくても動きます。実行が `time` に届かずに終われば呼ばれません。登録は最初の実行の前だけです。`main` から直接 `send()` や、送る部品の関数（`examples/pid_stream` の `subscribe()`、`unsubscribe()` など）は呼べません（ステップの外のため）。
+## Send messages
+
+| How | Use |
+|---|---|
+| Once, right now | `node.send(pgn, data, destination)` |
+| Once, at a set time | `send()` inside `ecu.at(time, fn)` |
+| Periodically | `PeriodicSender` |
+
+### Send once
+
+`node.send()` works only within a step, that is, in application code such as handlers, timers, `Ecu::every`, `Ecu::on_step` and `Ecu::at`. It returns the result as a `SendStatus` (not as an exception).
+
+You cannot call `send()`, or a sending function of a protocol part (such as `subscribe()` and `unsubscribe()` in `examples/pid_stream`), directly from `main`, because that is outside a step.
+
+### Send once at a set time
+
+Write the ECU's scripted one-time actions (send a request, start a subscription, stop it) with `ecu.at(time, fn)`.
+
+| Item | Rule |
+|---|---|
+| Step in which `fn` is called | Called once, in the first step whose start time is at or after `time` (also when the step size does not divide `time`). |
+| The run does not reach `time` | Not called. |
+| When you can register it | Only before the first run. |
+
+Here is the constructor of `Tool` from [examples/pid_stream/main.cpp](../examples/pid_stream/main.cpp):
 
 ```cpp
-ecu.at(vehicle_sil::SimTime{} + 100ms, [&client](vehicle_sil::SimTime) { client.subscribe(0x00, {kRpm}, 50ms, on_reply); });
-ecu.at(vehicle_sil::SimTime{} + 600ms, [&client](vehicle_sil::SimTime) { client.unsubscribe(); });
+        auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x80});
+        auto& client = node.attach<pid_stream::PidClient>(format);
+        auto record = [this](const pid_stream::Reply& r) { replies_.push_back(r); };
+        // The tool's script. Each action runs once, in the first step at or after its time (also
+        // with a step size that does not divide it), from the step: subscribe() sends.
+        ecu.at(SimTime{} + 100ms, [&client, record](SimTime) {
+            client.subscribe(0x00, {kRpm, kCoolant, kLoad}, 50ms, record); // 11 bytes: transport protocol
+        });
+        ecu.at(SimTime{} + 300ms, [&client, record](SimTime) {
+            client.subscribe(0x00, {kRpm, 0x7E}, 100ms, record); // renew: new period, 0x7E is unknown
+        });
+        ecu.at(SimTime{} + 600ms, [&client](SimTime) { client.unsubscribe(); });
 ```
 
-- 周期的に送るときは `PeriodicSender` です。
+### Send periodically (`PeriodicSender`)
+
+A fragment (`node` is the node; `fill`, `encoder` and `bytes` are yours). For the complete `codec::attach_sender`, see `install_engine()` above. `tests/j1939/test_j1939_periodic_sender.cpp` tests changing the period and the destination, and stopping transmission.
 
 ```cpp
-codec::attach_sender<EngineStatus>(node, 20ms, fill);                                   // 送るたびに新しい EngineStatus を fill で埋める
-codec::send(node, request, 0x80);                                                        // 型付きメッセージを 1 回
-auto& status = node.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encoder);   // 送るたびに encoder を呼ぶ
-auto& fixed = node.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // 決まったバイト列
-fixed.set_data(new_bytes);                                                              // 次の送信から
-status.trigger();                                                                       // 次の機会にすぐ送る
-status.set_period(50ms);                                                                // 今から数え直す
+codec::attach_sender<EngineStatus>(node, 20ms, fill);                                   // fills a new EngineStatus with fill for each transmission
+codec::send(node, request, 0x80);                                                        // a typed message, once
+auto& status = node.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encoder);   // calls encoder for each transmission
+auto& fixed = node.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // fixed bytes
+fixed.set_data(new_bytes);                                                              // from the next transmission
+status.trigger();                                                                       // sends at the next opportunity
+status.set_period(50ms);                                                                // restarts the count from now
 ```
 
-- `codec::attach_sender` は、定義の優先度と長さで送ります。
-- `Encoder` は部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。9 バイト以上（`max_length` を上げる）はトランスポートプロトコルで送ります。
-- 長さが送るたびに変わるメッセージは、`std::vector<std::uint8_t>&` に追記する関数（`PeriodicSender::VectorEncoder`）で作ります。ベクターは空で渡され、その大きさが長さです。部品がベクターを持ち回るので、追記だけなら送るたびの確保はありません。引数の型は書きます（`std::vector<std::uint8_t>&` か `auto&`）。span を取る関数は長さを返す `Encoder` として扱います。`max_length` を超えると、span の形と同じく `Network` が失敗します。
+There are 3 ways to build the data:
+
+| Way | Details |
+|---|---|
+| `codec::attach_sender` | Sends with the priority and length of the definition. |
+| `Encoder` (a function that takes a span) | Writes into the part's buffer (`max_length` bytes, default 8) and returns the length written. |
+| `PeriodicSender::VectorEncoder` (a function that appends to a `std::vector<std::uint8_t>&`) | Builds messages whose length changes from one transmission to the next. |
+
+Messages of 9 bytes or more (raise `max_length` for them) are sent with the transport protocol. To send a PDU1 PG to one address, use `PeriodicSenderOptions{.destination = address}`.
+
+`VectorEncoder` follows these rules:
+
+| Item | Rule |
+|---|---|
+| The vector passed in | Empty. Its size becomes the message length. |
+| Memory allocation | The part reuses the vector, so if you only append, nothing is allocated per transmission. |
+| Parameter type | Write it explicitly (`std::vector<std::uint8_t>&` or `auto&`). |
+| A function that takes a span | Treated as an `Encoder` that returns the length. |
+| Exceeding `max_length` | The `Network` fails, as with the span form. |
+
+A fragment (`ids`, `value_of` and `client` are yours). `PidStreamer` in [examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp) has code of the same form.
 
 ```cpp
 auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vector<std::uint8_t>& out) {
@@ -115,124 +257,223 @@ auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vect
 }, j1939::PeriodicSenderOptions{.destination = client, .max_length = 64});
 ```
 
-- 周期、宛先、優先度は後から変えられます（`set_period()`、`set_destination()`、`set_priority()`）。`set_period()` は呼んだ時点から新しい周期を数え直します（すぐ送るなら `trigger()` も呼ぶ）。宛先と優先度は次の送信から効き、周期の刻みは変わりません。一時停止の間に変えれば、再開したときに新しい値で動きます。不正な値は `std::invalid_argument` で、何も変わりません。同じ相手からの新しい要求は、作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
-- ノードが送れるようになるまで（Address Claim の後の 250 ms の待ちの間も）送らず、送れるようになったときに 1 回送ってから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
-- `trigger()` をアプリの処理（`Ecu::every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
-- 全体宛ての放送は、DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません。1 つのアドレス宛ての送信は、既定では止めません（規格での扱いを確かめていないため）。既定では、そのときの宛先で決まります（`set_destination()` で決め直す。1 つのアドレス宛てで作った送信を全体宛てにするには、組み立てで `BroadcastSuppression::of(node)` を付けておく。なければ `std::logic_error`）。どちらも `PeriodicSenderOptions::suppressible`（true か false）で固定できます。
-- PDU1 の PG を 1 つのアドレスへ送るときは `PeriodicSenderOptions{.destination = address}` です。
+You can change the period, the destination and the priority later:
 
-## Request に答える
+| Function | Takes effect |
+|---|---|
+| `set_period()` | Restarts counting with the new period from the call (to send at once, call `trigger()` too). |
+| `set_destination()`, `set_priority()` | From the next transmission. The starting point of the period does not change. |
+| `trigger()` | Called from application code (such as `Ecu::every`), it sends in the next step. |
+
+- If you change them while the sender is paused, it uses the new values when it resumes.
+- An invalid value throws `std::invalid_argument` and changes nothing.
+- To answer a new request from the same peer, change the period instead of re-creating the part (`examples/pid_stream`).
+- To send in the step of the call, use `node.send()` instead of `trigger()`.
+
+The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (this includes the 250 ms wait after the Address Claim). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
+
+While broadcasts are stopped by DM13 (another node's DM13, or the node's own `BroadcastSuppression::suspend()`), the behavior depends on the destination:
+
+| Transmission | While stopped by DM13 |
+|---|---|
+| Broadcast to the global address | Not sent. |
+| To one address | Not stopped by default, because its treatment in the standard has not been verified. |
+
+By default, the current destination decides whether a transmission stops (calling `set_destination()` decides again). To change a sender created for one address to the global address, attach `BroadcastSuppression::of(node)` during setup; without it, the change throws `std::logic_error`. For either kind of transmission, you can fix the behavior with `PeriodicSenderOptions::suppressible` (true or false).
+
+## Respond to a Request
+
+A fragment (`node` is the node; `encode(model)` is yours). `tests/j1939/test_j1939_request.cpp` tests `on_request` and `respond()`.
 
 ```cpp
 node.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(model)); });
 ```
 
-- 応答者のない PGN への宛先指定の Request には、スタックが NACK を返します。
-- ソフトウェア ID などの識別情報は `Identification` 部品が答えます（`node.attach<j1939::Identification>().set_software_identification(fields)`）。診断（DM1 など）は `Diagnostics` 部品です。
-- 何ステップかかけて答えるときは `r.defer()` で要求を値として取っておき、後で `node.respond(pending, data)` を呼びます。
+| Case | Behavior, and how to write it |
+|---|---|
+| A Request to a specific destination for a PGN with no responder | The stack returns a NACK. |
+| Identification, such as the software ID | The `Identification` part responds (`node.attach<j1939::Identification>().set_software_identification(fields)`). |
+| Diagnostics (DM1 and others) | The `Diagnostics` part responds. |
+| Responding over several steps | Keep the request as a value with `r.defer()`, and call `node.respond(pending, data)` later. |
 
-## Request を送って答えを受ける
+## Send a Request and receive the response
+
+Here is part of `install_cab()` from [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) (`cab` is the node, `dash` the dashboard model):
 
 ```cpp
-j1939::Requester::of(cab).request(kPgnSoftwareId, 0x00, [&](const j1939::RequestResult& r) {
-    if (r.outcome == j1939::RequestOutcome::Response) { dash.software.assign(r.data.begin(), r.data.end()); }
-});
+    j1939::Requester::of(cab).request(kPgnSoftwareId, kEngineAddress, [&dash](const j1939::RequestResult& r) {
+        if (r.outcome == j1939::RequestOutcome::Response)
+        {
+            dash.engine_software.assign(r.data.begin(), r.data.end());
+        }
+    });
 ```
 
-| `RequestOutcome` | 意味 |
+| `RequestOutcome` | Meaning |
 |---|---|
-| `Response` | 要求した PG が届いた（`data`、`source`）。長い PG はトランスポートプロトコルで組み立てたもの |
-| `Acknowledged` | 相手が Acknowledgement を返した（`ack` は肯定、否定、アクセス拒否、応答不能） |
-| `Timeout` | 送り直しても答えがなかった（グローバルの要求では、待ち時間の終わり） |
-| `NotSent` | 送れなかった（`send_status`。アドレスを要求できないときは `NoAddress`） |
+| `Response` | The requested PG arrived (`data`, `source`). The transport protocol reassembles a long PG. |
+| `Acknowledged` | The peer returned an Acknowledgement (`ack`: positive, negative, access denied or cannot respond). |
+| `Timeout` | No response arrived, even after the retries (for a global request: the waiting time ended). |
+| `NotSent` | The request could not be sent (`send_status`; `NoAddress` if the node cannot claim an address). |
 
-- `request()` はいつ呼んでもかまいません。ノードがアドレスを持つまで待ってから送ります。
-- グローバル（`kGlobalAddress`）へ送ると、待ち時間の間に届いた応答をそのたびに `last == false` で受け、最後に `Timeout` を受けます。
-- 同じ PG を同じ相手に重ねて要求しても、Request は 1 つで、全員が同じ答えを受けます。待ち時間、送り直しの回数、間隔の下限は `RequesterOptions` です（`j1939::Requester::attach(node, options)` を、何かが `of()` を使う前に呼びます。`Requester` はノードに 1 つです）。
+| Item | Rule |
+|---|---|
+| When you can call `request()` | Any time (it waits until the node has an address before sending). |
+| A request to the global address (`kGlobalAddress`) | Each response received during the waiting time arrives with `last == false`, and `Timeout` arrives at the end. |
+| The same PG requested again from the same peer | One Request is sent, and every caller receives the same response. |
+| Waiting time, number of retries, minimum interval | Set them in `RequesterOptions`. |
 
-## 受信を監視する
+Pass `RequesterOptions` with `j1939::Requester::attach(node, options)`. Call it before anything uses `of()` (a node has one `Requester`).
+
+## Monitor reception
+
+A fragment (`cab` is the node, `dash` the dashboard model). For the complete code that attaches the `Monitor`, see `install_cab()` in [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp). `tests/j1939/test_j1939_codec_node.cpp` tests reading `Monitor::data()` as a type.
 
 ```cpp
 auto& eec = cab.attach<j1939::Monitor>(kPgnEngineStatus,
     j1939::MonitorOptions{.name = kEngineName, .timeout = 100ms,
                           .on_state = [&](const j1939::MonitorChange& c) { dash.silent = c.state == j1939::MonitorState::Lost; }});
 ...
-if (const auto status = EngineStatus::decode(eec.data())) { use(status->speed.value()); }   // まだ受けていなければ空
+if (const auto status = EngineStatus::decode(eec.data())) { use(status->speed.value()); }   // empty until something is received
 ```
 
-- 送信元を NAME で指定すると、相手のアドレスが変わっても追います。
-- `MonitorOptions::accept` に関数を渡すと、それが受け入れたメッセージだけを最新の値と受信に数えます（`.accept = [](const j1939::Message& m) { return j1939::codec::decode<EngineStatus>(m).has_value(); }` で 1 つの型だけ、通し番号や検査値の確認も同じ形）。受け入れなかったものは `rejected()` に数え、途絶の判定にも使いません。
-- 途絶（`Lost`）は最後の受信から `timeout` で知らせ、受信が戻れば `Receiving` に戻ります。最初の受信までは `Waiting` で、途絶にしません。
+| `MonitorState` | When |
+|---|---|
+| `Waiting` | Until the first reception (this is not counted as loss) |
+| `Receiving` | While messages arrive, and when they arrive again after a loss |
+| `Lost` | When `timeout` has passed since the last reception |
 
-## ほかのノードの故障コード（DM1、DM2）を読む
+- If you identify the sender by NAME, the monitor follows it when its address changes.
+- If you pass a function to `MonitorOptions::accept`, only the messages it accepts count as the latest value and as receptions.
+- Messages that it does not accept are counted in `rejected()` and are not used for loss detection either.
+
+Here `accept` accepts only one type. Checks of sequence numbers or check values take the same form.
+
+```cpp
+.accept = [](const j1939::Message& m) { return j1939::codec::decode<EngineStatus>(m).has_value(); }
+```
+
+## Read other nodes' DTCs (DM1, DM2)
+
+A fragment (`node` is the node; `dash` and `log` are yours). `tests/j1939/test_j1939_diagnostics.cpp` tests `parse_dtc_list()`.
 
 ```cpp
 node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
-    const auto list = j1939::parse_dtc_list(m.data);   // 確保しない。m.data を指すだけ
-    if (!list.valid()) { return; }                        // 長さが合わない
+    const auto list = j1939::parse_dtc_list(m.data);   // no allocation; only points into m.data
+    if (!list.valid()) { return; }                        // the length does not match
     dash.amber = list.lamp(j1939::Lamp::AmberWarning).has_value();
     dash.low_oil = list.has(0x7F0, 1);
     for (const j1939::ReadDtc& dtc : list) { log(dtc.spn, dtc.fmi, dtc.occurrences); }
 });
 ```
 
-- `parse_dtc_list()`（`j1939/diagnostics.hpp`、部品 `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` 部品が送る形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）。8 バイト以下は故障コード 1 つ（後ろは埋め草）、それより長いものは 2 + 4 × 件数 のバイトでなければ `valid()` が偽で、`size()` は 0 です。どんな長さのバイト列を渡しても落ちません。
-- 故障コードのない一覧（ただ 1 つの故障コードが 4 バイトの 0）は、`valid()` が真で `size()` が 0 です。
-- 戻り値はビューです。確保せず、渡したバイト列を指すだけなので、そのバイト列が生きている間だけ使えます（ハンドラでは呼び出しの間だけ）。残すときは `ReadDtc` をコピーします。
-- `lamp(Lamp)` は、ランプが点いていれば点滅の速さ（`LampFlash`）を、消えていれば空を返します。`Diagnostics` が送らない値は、状態なら消灯、点滅なら点灯（`Solid`）として読みます。別の読み方が要るときは、`data()` の生のバイトを読みます。
-- 4 バイト目の最上位ビットは解釈しません。`ReadDtc::byte4_high_bit` にそのまま入れ、`ReadDtc::raw` に 1 件の 4 バイトを生のまま入れます（`occurrences` は下位 7 ビット）。このビットの意味は規格と照らして確かめていないので、使う人が決めます。`Diagnostics` は 0 で送ります。
+`parse_dtc_list()` (`j1939/diagnostics.hpp`, CMake target `vehicle_sil::j1939_diagnostics`) is the inverse of the `Diagnostics` part's encoding: it reads 2 lamp bytes, followed by 4 bytes per DTC (diagnostic trouble code: SPN, FMI, occurrence count). It reads bytes of any length safely.
 
-## ほかのノードのアドレスを変える
+| Bytes passed | How they are read |
+|---|---|
+| 8 bytes or less | One DTC (the rest is padding). |
+| More than 8 bytes | Unless the length is 2 + 4 × count, `valid()` is false and `size()` is 0. |
+| A single DTC of 4 zero bytes (a list with no DTCs) | `valid()` is true and `size()` is 0. |
+
+| Item | How to read it |
+|---|---|
+| Return value | A view (no allocation; it only points into the bytes you passed). |
+| Lifetime | Only while the bytes you passed are valid (in a handler, only during the call). |
+| To keep entries | Copy the `ReadDtc` values. |
+| `lamp(Lamp)` | Returns the flash rate (`LampFlash`) if the lamp is on, and empty if it is off. |
+| Lamp values that `Diagnostics` does not send | A status value reads as off, a flash value as on (`Solid`). |
+| You need another interpretation | Read the raw bytes from `data()`. |
+| `ReadDtc::raw` | The 4 bytes of the entry, raw. |
+| `ReadDtc::occurrences` | The low 7 bits of byte 4. |
+| `ReadDtc::byte4_high_bit` | The most significant bit of byte 4, as is, without interpretation. |
+
+The meaning of the most significant bit of byte 4 has not been verified against the standard, so you decide how to interpret it. `Diagnostics` sends it as 0.
+
+## Change another node's address
+
+A fragment (`service` is the node). `tests/j1939/test_j1939_monitor.cpp` tests `AddressCommander`.
 
 ```cpp
 auto& tool = service.attach<j1939::AddressCommander>();
 tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome == CommandOutcome::Moved */ });
 ```
 
-相手が新しいアドレスで Address Claimed を送ると `Moved` です。任意アドレス可能でない相手は従いません（`Timeout`）。
+When the peer sends Address Claimed with the new address, the result is `Moved`. A peer that is not arbitrary address capable does not comply (`Timeout`).
 
-## 周期的な処理の使い分け
+## Choose a periodic mechanism
 
-### いつ動かすか
+### Run on a period or at a set time
 
-| 使うもの | 向いているもの | 時刻 |
+| Use | Suited to | Timing |
 |---|---|---|
-| `PeriodicSender` | PG を周期的に送る | 期限は仮想時間の格子でずれない。送信はその後の最初のステップ。PG ごとにタイマーを 1 つ使う |
-| `Ecu::every(period, fn)` | モデルの計算（`tick()`）、アプリの周期的な処理 | 0、period、2 * period、… の時刻以後の最初のステップ。1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい（ステップ幅 10 ms、period 25 ms なら 0、30、50、80、100 ms…） |
-| `Ecu::on_step(fn)` | 毎ステップの処理 | ステップの時刻。受信の処理の後、送信の前 |
-| `Ecu::at(time, fn)` | シナリオの 1 回きりの操作（要求を送る、購読を始める、止める） | 開始時刻が `time` 以後の最初のステップで 1 回。`time` がステップ幅で割り切れなくてもよい |
-| `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`）。`Ecu` の外、`ParticipantRuntime` のステップハンドラで使う | ステップ幅の倍数の周期だけ（違えば例外） |
-| `j1939::Timer` | 部品の中の時間（待ち時間、遅延、独自の周期） | 事象の時刻から数える（ステップ幅によらない） |
+| `PeriodicSender` | Sending a PG periodically | Deadlines stay on the virtual-time grid without drift; each message is sent in the first step after its deadline (one timer per PG) |
+| `Ecu::every(period, fn)` | Model computation (`tick()`), periodic application processing | The first step at or after 0, period, 2 * period, … (at most once per step) |
+| `Ecu::on_step(fn)` | Processing in every step | The time of the step (after reception processing, before transmission) |
+| `Ecu::at(time, fn)` | The ECU's scripted one-time actions (send a request, start a subscription, stop it) | Once, in the first step whose start time is at or after `time` (`time` need not be a multiple of the step size) |
+| `TickScheduler` | Existing fixed-period models (a DLL's `tick()`). Used outside `Ecu`, in the step handler of `ParticipantRuntime` | Only periods that are multiples of the step size (any other period throws) |
+| `j1939::Timer` | Time inside a protocol part (waiting times, delays, custom periods) | Counted from the time of the event (independent of the step size) |
 
-### ステップの外から渡す
+The period of `Ecu::every` need not be a multiple of the step size. With a step size of 10 ms and a period of 25 ms, `fn` is called at 0, 30, 50, 80, 100 ms, …
 
-| 使うもの | 向いているもの | 決定性 |
+Write the model's period and the messages' periods separately. Advance the model with `every`, and build each PG to send from the model's current values, in the `Encoder` of a `PeriodicSender`.
+
+Keep the step size at or below the shortest message period; the number of transmissions then does not depend on the step size. If the step size is longer, the deadlines that fall within one step are merged into one transmission.
+
+### Pass data in from outside a step
+
+| Use | Suited to | Determinism |
 |---|---|---|
-| `StepInbox` | ほかのスレッドや SIL Kit のハンドラで受けたデータを、ステップで取り出す | 時刻つきで入れ、そのステップより前の時刻のものを、時刻、タイブレーク、到着の順に出す。決定的になるのは、次の 2 つを守るときだけです。1 つ目は、送り手を区別するタイブレークを選ぶことです（異なる送り手の同じ時刻のものは、選ばないと順が決まらない）。2 つ目は、容量を最悪の場合に合わせて取り、あふれを誤りとして扱うことです（上限の近くのあふれは決定的でない） |
-| Control Agent の書き込み | Control API からの変数の書き込み | 仮想時刻（`Command::at`）を指定すれば決定的。指定しなければ次のステップ |
-| `Host::post(fn)`（`LocalBench::host(ecu)`、`Peer::host()`） | ほかのスレッドや、ステップの外からの操作 | 時刻はなし。動くステップは post した時刻による。決定性が要るデータは `StepInbox` に入れる |
+| `StepInbox` | Data received on other threads or in SIL Kit handlers, to be taken out in a step | Deterministic only if you follow the 2 rules below |
+| Control Agent writes | Variable writes from the Control API | Deterministic if you give a virtual time (`Command::at`); without one, applied in the next step |
+| `Host::post(fn)` (`LocalBench::host(ecu)`, `Peer::host()`) | Operations from other threads, or from outside a step | No time; the step in which `fn` runs depends on when it was posted |
 
-モデルの周期とメッセージの周期は分けて書きます。モデルは `every` で進め、送る PG は `PeriodicSender` の `Encoder` でモデルの今の値から作ります。ステップ幅はメッセージの最短の周期以下にすると、送信の回数がステップ幅によりません（長いと、1 ステップの期限をまとめて 1 回送ります）。
+Put items into a `StepInbox` with a time. In each step, the items with times before that step are taken out in order of time, tie-break and arrival. The result is deterministic only if you follow these 2 rules:
 
-## エラーの扱い
+| Rule | Reason |
+|---|---|
+| Choose a tie-break that tells the sources apart | Otherwise, the order of items from different sources with the same time is not defined. |
+| Size the capacity for the worst case, and treat overflow as an error | Overflow near the limit is not deterministic. |
 
-- 送信の結果は `SendStatus` の戻り値です（`QueueFull`、`Busy`、`NoAddress` など）。部品は送信の失敗を数えて（`statistics()`）、次の機会にまた送ります。
-- 使い方の誤り（不正な PGN、範囲外の値）は、部品の生成や呼び出しの時点で `std::invalid_argument` などの例外です。タイマーの枠（`NetworkOptions::timer_capacity`、既定 64）が足りないときは部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。
-- 受けた要求ごとに部品（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に `node.network().timers_free()`（残りの枠の数）を、作る部品の `kTimers`（`PeriodicSender::kTimers` など）と比べて確かめ、足りなければ要求を断ります。ハンドラの中の `std::length_error` は `Network` を失敗させるので、確かめないと、多数のアドレスから要求を送るだけでその ECU の通信を止められます。各部品が使うタイマーの数は、部品のヘッダーのコメントと [internals/j1939.md](internals/j1939.md) の「プロトコル部品」にあります。
-- ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Simulation` では `SimulationError` になります（「動かす」）。`Peer` を直接使うときは、`Peer::failed()` と `error()` で分かります。
-- 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
+Pass data that must be deterministic through a `StepInbox`, not through `Host::post`.
 
-## 独自のプロトコルを作る
+## Handle errors
 
-Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更せずに、利用者の部品として作れます。使うのはノードの公開 API、道具箱（`Subscription`、`Timer`、`Node::attach`）、既存の部品、型付きメッセージだけです。
+| What happens | How it shows |
+|---|---|
+| A send fails | The `SendStatus` return value (`QueueFull`, `Busy`, `NoAddress` and others) |
+| Usage error (invalid PGN, out-of-range value) | An exception such as `std::invalid_argument`, when the part is created or the function is called |
+| Not enough timer slots | Creating the part throws `std::length_error` (the message names `timer_capacity`) |
+| An exception thrown from a handler, an `Encoder` or a callback | The `Network` enters the failed state |
 
-最初の手本は [examples/pid_stream](../examples/pid_stream) です（要求を受けて周期的に返す部品）。
+- Protocol parts count send failures (`statistics()`) and send again at the next opportunity.
+- With `Simulation`, the failed state becomes a `SimulationError` (see "Run in a simulation").
+- When you use `Peer` directly, `Peer::failed()` and `error()` report the failure.
+- To see the state of communication, look at `Network::statistics()`, the parts' `statistics()` and the state of each `Monitor`.
 
-完全な例は [examples/j1939/param_service](../examples/j1939/param_service) です。サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします（セッションの開始と終了、書き込み中の途中の応答、トランスポートプロトコルで送るブロック、エラー応答、無通信でのセッションの終了、相手の消失）。試験は `tests/testkit/test_param_service.cpp` です。
+### Timer slots (`timer_capacity`)
 
-### メッセージを決める
+`NetworkOptions::timer_capacity` sets the number of timer slots (default 64). For a node with many periodic messages, raise it with `Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})` (for `Peer`, `J1939ChannelOptions::network.timer_capacity`). For the number of timers each protocol part uses, see the comments in the part's header and "Protocol parts" in [internals/j1939.md](internals/j1939.md#protocol-parts-libsj1939parts).
 
-固定長のメッセージは YAML で定義します（[j1939-codec.md](j1939-codec.md)）。1 つの PGN に複数のメッセージを載せるときは、操作のバイトを `selector` にします。
+If a handler creates a protocol part (`PeriodicSender`, `Timer` and others) for each request it receives, check the free slots first. Compare `node.network().timers_free()` (the number of free slots) with the `kTimers` of the part (such as `PeriodicSender::kTimers`), and refuse the request if there are not enough.
+
+A `std::length_error` inside a handler makes the `Network` fail. So without this check, requests sent from many addresses are enough to stop that ECU's communication. For code that does the check, see `PidStreamer` in [examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp).
+
+## Implement your own protocol
+
+You can implement Proprietary A/B and manufacturer-specific protocols as your own protocol parts, without changing vehicle-sil. They use only the node's public API, the toolbox (`Subscription`, `Timer`, `Node::attach`), the existing protocol parts and typed messages.
+
+| Example | Contents |
+|---|---|
+| [examples/pid_stream](../examples/pid_stream) | The first example to follow (a part that receives a request and replies periodically). |
+| [examples/j1939/param_service](../examples/j1939/param_service) | The complete example (a service tool reads and writes the parameters and blocks of an engine ECU over Proprietary A). |
+
+`param_service` covers opening and closing a session, interim responses during a write, blocks sent with the transport protocol, error responses, closing a session after inactivity and loss of the peer. Its test is `tests/testkit/test_param_service.cpp`.
+
+### Define the messages
+
+Define fixed-length messages in YAML (see [j1939-codec.md](j1939-codec.md)). To carry several messages on one PGN, make the operation byte the `selector`.
+
+Here is one entry of `messages` in [examples/j1939/param_service/param_service_messages.yaml](../examples/j1939/param_service/param_service_messages.yaml):
 
 ```yaml
   - name: Read
@@ -243,105 +484,162 @@ Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更�
       - {name: parameter, start_bit: 16, length: 16}
 ```
 
-可変長のデータ（ブロックの中身など）は、バイト列のまま `node.send()` と `Message::data` で扱います。型付きメッセージとバイト列は、同じ PGN で混ぜて使えます（型の `decode()` は、セレクターの違うものを空で返します）。
+Handle variable-length data (such as the contents of a block) as bytes, with `node.send()` and `Message::data`. You can mix typed messages and bytes on the same PGN (a type's `decode()` returns empty for a different selector).
 
-### 要求する側（`Exchange`）
+### The requesting side (`Exchange`)
 
-コマンドを 1 つの相手へ送り、応答を待つのは `j1939::Exchange` です（ターゲット `vehicle_sil::j1939_exchange`）。
+`j1939::Exchange` sends a command to one peer and waits for the response (CMake target `vehicle_sil::j1939_exchange`).
+
+Here are `ParamClient::run()` and `answer_to()` from [examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp), shortened to reads only. The repository does not contain the code in this exact form.
 
 ```cpp
 j1939::Exchange exchange(node, {.timeout = 200ms, .retries = 1});
 messages::Read read;
 read.session.set_raw(session);
 read.parameter.set_raw(0x0100);
-exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（アドレスでもよい）
-    [](const j1939::Message& m) {                         // 受けたメッセージが何か（PGN も見る）
+exchange.start(kPgn, read.bytes(), kEngineName,          // the peer by NAME (an address works too)
+    [](const j1939::Message& m) {                         // what the received message is (checks the PGN too)
         if (const auto ok = j1939::codec::decode<messages::ReadOk>(m); ok && ok->parameter.raw() == 0x0100) {
-            return j1939::ReplyMatch::Final;              // この読み出しの答え
+            return j1939::ReplyMatch::Final;              // the response to this read
         }
         if (const auto e = j1939::codec::decode<messages::Error>(m); e && e->request.raw() == kRead) {
-            return j1939::ReplyMatch::Final;              // 読み出しへのエラー
+            return j1939::ReplyMatch::Final;              // an error for this read
         }
         if (const auto p = j1939::codec::decode<messages::Pending>(m); p && p->request.raw() == kRead) {
             return j1939::ReplyMatch::Pending;
         }
         return j1939::ReplyMatch::Ignore;
     },
-    [](const j1939::ExchangeResult& r) {                  // 1 回だけ呼ばれる
+    [](const j1939::ExchangeResult& r) {                  // called exactly once
         if (r.outcome == j1939::ExchangeOutcome::Reply) { use(j1939::codec::decode<messages::ReadOk>(r.reply)); }
     },
-    {.on_address_change = j1939::AddressChangePolicy::SendAgain}); // 読み出しは 2 回実行してよい
+    {.on_address_change = j1939::AddressChangePolicy::SendAgain}); // a read may run twice
 ```
 
-| `ExchangeOutcome` | 意味 |
+| `ExchangeOutcome` | Meaning |
 |---|---|
-| `Reply` | `match` が `Final` を返した（`reply`） |
-| `Timeout` | 送り直しても応答がなかった（`Pending` の後は送り直さず、最後の `Pending` から `timeout`） |
-| `NotSent` | 相手に届いていない: 一度も送れなかった（`send_status`。アドレスを要求できなくなったときは `NoAddress`）か、長いコマンドの転送が最後のパケットの前に終わった・相手に中断された（`transfer`、`reason`） |
-| `Interrupted` | 送ったが、応答が来られなくなった: 自分のアドレスが変わった・失われた、長いコマンドの最後のパケットの後にこのノードが時間切れで転送を中断した、送り直しを送れなかった。相手が実行したかは分からない |
-| `PeerLost` | 相手がアドレスを失った、移った、別の NAME に取られた。NAME で指定した相手が `timeout` の間にアドレスを要求しなかった |
+| `Reply` | `match` returned `Final` (`reply`). |
+| `Timeout` | No response arrived, even after the retries (after a `Pending`, there are no retries, and `timeout` counts from the last `Pending`). |
+| `NotSent` | The command did not reach the peer (table below). |
+| `Interrupted` | The command was sent, but the response can no longer be received (table below). Whether the peer executed it is unknown. |
+| `PeerLost` | The peer is gone (table below). |
 
-#### 応答を見分ける（`match`）
-
-- `match` には、相手のアドレスから来たメッセージが PGN によらずすべて渡ります（このノード宛てとグローバル。相手の周期の放送も来ます）。`M::decode(data)` はバイト列だけを見るので、PGN も確かめる `j1939::codec::decode<M>(message)` を使います。
-- 自分のコマンドへの応答かどうかは、操作のバイト、セッション、コマンドが指す項目（パラメーターの番号など）で見分けます。`Pending`（途中の応答）を返すと、待ち時間を数え直し、送り直しをやめます。
-- 前のコマンドへの遅れた応答（送り直した元のコマンドへの応答、`cancel()` したコマンドへの応答）も `match` に来ます。応答が項目や番号を持たない手順では、それを次のやり取りの応答と取り違えます。応答が遅れうるなら、コマンドと応答に項目か通し番号を持たせて照合します。
-- `cancel()` は送ったコマンドを取り消しません（応答は来ます）。
-
-#### コマンドごとの設定（`CommandOptions`）
-
-`start()` の最後の引数です。指定しない項目は `Exchange` 全体の設定（`ExchangeOptions`）を使います。
-
-| 項目 | 意味 |
+| `ExchangeOutcome` | When |
 |---|---|
-| `priority` | 優先度（既定 6） |
-| `timeout` | このコマンドの応答の待ち時間。消去のように時間のかかるコマンドだけ長くする |
-| `retries` | 時間切れの後に送り直す回数。書き込みや消去は 0 にする |
-| `long_answer` | トランスポートプロトコルで来る応答の PGN（下の「長いコマンドと長い応答」） |
-| `on_address_change` | 送った後に自分のアドレスが変わったとき: `Stop`（既定。`Interrupted` で終える）か `SendAgain`（新しいアドレスから送り直す） |
+| `NotSent` | The command could never be sent (`send_status`; `NoAddress` if the node can no longer claim an address). |
+| `NotSent` | The transfer of a long command ended before the last packet, or the peer aborted it (`transfer`, `reason`). |
+| `Interrupted` | The node's own address changed or was lost. |
+| `Interrupted` | After the last packet of a long command, this node aborted the transfer on a timeout. |
+| `Interrupted` | A retry could not be sent. |
+| `PeerLost` | The peer lost its address, moved, or had its address taken by another NAME. |
+| `PeerLost` | A peer given by NAME did not claim an address within `timeout`. |
 
-待ち時間は、コマンドを送ったステップから数えます。次のときは、そこから数え直します。
+#### Match responses (`match`)
 
-- 送り直したとき（その送り直しを送ったステップから）
-- 長いコマンドの転送が終わったとき
-- `Pending` を受けたとき（その時刻から）
-- `long_answer` の転送が終わったとき（その時刻から）
+`match` receives every message from the peer's address, whatever its PGN (messages to this node and to the global address, including the peer's periodic broadcasts). `M::decode(data)` looks only at the bytes, so use `j1939::codec::decode<M>(message)`, which also checks the PGN.
 
-#### 送り直し
+To tell whether a message is the response to your command, look at the operation byte, the session and the item the command refers to (such as the parameter number).
 
-- 時間切れの後の送り直し（`retries`）は既定で 0 です。同じコマンドを 2 回受けても困らない手順（読み出し、同じ値の書き込み、番号付きのコマンド）でだけ使います。
-- 自分のアドレスが変わったときの送り直しは、時間切れの送り直しとは別に、`on_address_change` で選びます（`retries` には数えません）。既定は送り直さず `Interrupted` です。書き込みや消去は既定のままにし、`Interrupted` を受けたら、読み出して確かめるなど手順の側で判断します。2 回実行してよいコマンドだけ `SendAgain` にします。
-- `SendAgain` で送り直すと、相手から見ると送り手が変わるので、相手がセッションを持つ手順では「セッションがない」と答えることがあります（下の例では、ツールがセッションを開き直します）。
+When `match` returns `Pending` (an interim response), the waiting time restarts and retries stop.
 
-#### 長いコマンドと長い応答
+Late responses to earlier commands (to the original of a retried command, or to a command you cancelled with `cancel()`) also reach `match`. In a protocol whose responses carry no item or number, such a response is mistaken for the response to the next exchange. If responses can arrive late, give commands and responses an item or a sequence number, and match on it.
 
-- 9 バイト以上のコマンドはトランスポートプロトコルで送り、転送が終わってから待ち時間を数えます（`max_length` を上げます）。
-- 長い応答（とくに BAM。パケットの間隔は 50 ms 以上）は、`long_answer` にその PGN を指定すると、受けている間は時間切れになりません。対象は、相手がこのノード宛てかグローバルに送る、その PGN の転送だけです（無関係な放送では止まりません）。
-- 止めておけるのは 1 回の試行につき `ExchangeOptions::answer_transfer_limit`（既定 60 秒）までで、終わらない転送や繰り返し始まる転送でも、待ちは必ず終わります。
-- `long_answer` を指定しなければ、長い応答の時間を `timeout` に含めます。
+`cancel()` does not take back a command already sent (its response still arrives).
 
-#### 相手のアドレスと NAME
+#### Per-command options (`CommandOptions`)
 
-- `start()` はいつ呼んでもかまいません（ステップの外、アドレスを得る前も）。ノードが送れるようになってから送ります。
-- NAME で指定した相手がまだアドレスを要求していなければ（起動の直後）、その Address Claimed を待って送ります。
-- NAME で指定した相手が待ちの間に移ると、送り直しが残っていても `PeerLost` で終わります（相手がやり取りの状態を失ったかもしれないため）。次のやり取りは新しいアドレスへ送ります。
+`CommandOptions` is the last argument of `start()`. Items you leave out take the values set for the whole `Exchange` (`ExchangeOptions`).
 
-#### 扱わないことと上限
+| Item | Meaning |
+|---|---|
+| `priority` | Priority (default 6) |
+| `timeout` | Waiting time for this command's response (make it longer only for slow commands, such as an erase) |
+| `retries` | Number of retries after a timeout (set 0 for writes and erases) |
+| `long_answer` | PGN of a response that arrives over the transport protocol (see "Long commands and long responses" below) |
+| `on_address_change` | What to do if the node's own address changes after sending: `Stop` (default; ends with `Interrupted`) or `SendAgain` (sends again from the new address) |
 
-- `Exchange` は 1 つの相手とのやり取りだけを扱います。全体への問い合わせと複数の応答の収集（`Requester` のグローバルの要求を使う）や、相手と別のアドレスから来る応答（ゲートウェイ経由など）は扱いません。
-- 同時に動かせるやり取りは `capacity`（既定 4）です。タイマーは `Exchange` ごとに 2 つ使います。
-- コールバックと `match` の中から、次のコマンドを `start()` し、`cancel()` し、`Exchange` を破棄できます。破棄すると、残りのやり取りのコールバックは呼ばれません。
+The waiting time counts from the step in which the command was sent. It restarts:
 
-### 手順を書く（複数のメッセージ）
+- On a retry (from the step that sent the retry)
+- When the transfer of a long command ends
+- When a `Pending` arrives (from that time)
+- When the transfer of the `long_answer` ends (from that time)
 
-手順は、前の応答のコールバックで次のコマンドを `start()` してつなぎます。セッションのように前の応答で次のコマンドが決まる手順や、操作を順に 1 つずつ行う手順は、利用者の部品が操作の待ち行列を持ちます（例の `ParamClient`: セッションがなければ開いてから操作し、「セッションがない」と答えられたら 1 回だけ開き直す。読み出しと Open、Close は `SendAgain`、書き込みは既定の `Stop` で、移ったら `Interrupted` を利用者に返す。ブロックの読み出しは `long_answer` を指定する）。
+#### Retries
 
-- 利用者へのコールバックは、自分の状態を確定してから呼びます（例では、次の操作を始めてから前の操作のコールバックを呼ぶので、コールバックの中で部品を破棄しても安全です）。
-- `read()` などの呼び出しの中で、その利用者のコールバックを呼ばないようにします（呼び出し側の状態が途中のことがあります）。
+There are 2 kinds of retry, configured separately.
 
-### 応答する側
+| Retry | Setting | Default | Commands to use it for |
+|---|---|---|---|
+| After a timeout | `retries` | 0 | Only protocols where receiving the same command twice does no harm (reads, writes of the same value, numbered commands) |
+| When the node's own address changes | `on_address_change` (not counted in `retries`) | No retry; `Interrupted` | Set `SendAgain` only for commands that may run twice |
 
-応答側は `on_message` とノードの `send()` で書きます（専用の部品はありません）。
+For writes and erases, leave `on_address_change` at its default. When you receive `Interrupted`, let your procedure decide what to do, for example by reading the value back.
+
+To the peer, a retry with `SendAgain` comes from a different source address. So in a protocol where the peer keeps a session, the peer may respond "no session" (in the `param_service` example, the tool then reopens the session).
+
+#### Long commands and long responses
+
+| Case | Behavior |
+|---|---|
+| A command of 9 bytes or more (raise `max_length`) | Sent with the transport protocol. The waiting time starts after the transfer ends. |
+| A long response whose PGN you give in `long_answer` | Does not time out while it is being received. |
+| A long response without `long_answer` | Its transfer time counts toward `timeout`. |
+
+Use `long_answer` especially for BAM responses (packets at least 50 ms apart). It covers only transfers of that PGN that the peer sends to this node or to the global address (an unrelated broadcast does not hold the timeout).
+
+The timeout can be held for at most `ExchangeOptions::answer_transfer_limit` per attempt (default 60 s). So the wait always ends, even for a transfer that never finishes or keeps starting again.
+
+#### The peer's address and NAME
+
+| Case | Behavior |
+|---|---|
+| When you can call `start()` | Any time (also outside a step, and before the node has an address). The command is sent once the node can send. |
+| A peer given by NAME has not claimed an address yet (right after startup) | Waits for the peer's Address Claimed, then sends. |
+| A peer given by NAME moves during the wait | Ends with `PeerLost`, even if retries remain (the peer may have lost the state of the exchange). |
+
+After the peer has moved, the next exchange goes to its new address.
+
+#### Out of scope, and limits
+
+`Exchange` handles only exchanges with one peer. It does not handle:
+
+- Queries to all nodes that collect several responses (use a global request of `Requester`)
+- Responses that come from an address other than the peer's (such as through a gateway)
+
+| Limit | Value |
+|---|---|
+| Exchanges running at the same time | `capacity` (default 4) |
+| Timers | 2 per `Exchange` |
+
+From inside the callbacks and `match`, you can start the next command with `start()`, call `cancel()` and destroy the `Exchange`. After the `Exchange` is destroyed, the callbacks of its remaining exchanges are not called.
+
+### Write a sequence (several messages)
+
+Chain a sequence by calling `start()` for the next command in the callback of the previous response. For sequences where the previous response decides the next command, such as sessions, and for sequences that run operations one at a time, your protocol part keeps a queue of operations.
+
+The example `ParamClient` ([examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp)) does the following:
+
+| Situation | What `ParamClient` does |
+|---|---|
+| No session | Opens one, then performs the operation. |
+| The response is "no session" | Reopens the session once. |
+| Read, Open, Close | Uses `SendAgain`. |
+| Write | Keeps the default `Stop`. If the address changes, it returns `Interrupted` to its user. |
+| Block read | Gives `long_answer`. |
+
+Callbacks to the part's users follow 2 rules:
+
+- Settle the part's own state before calling a user's callback.
+- Do not call a user's callback from inside that user's call, such as `read()` (the caller's state may be half-updated).
+
+The example starts the next operation before it calls the callback of the previous one. That makes it safe to destroy the part inside the callback.
+
+### The responding side
+
+Write the responding side with `on_message` and the node's `send()` (there is no dedicated part).
+
+Here are the constructor of `ParamServer` and `ParamServer::on_command()` from [examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp), shortened. The repository does not contain the code in this exact form.
 
 ```cpp
 ParamServer(j1939::Node& node, ParameterTable& table)
@@ -351,130 +649,219 @@ ParamServer(j1939::Node& node, ParameterTable& table)
     idle_(node, j1939::TimerKind::Timeout, [this] { end_session(); }) {}
 
 void on_command(const j1939::Message& m) {
-    if (m.destination != node_.address()) { return; }              // Proprietary A のグローバル宛ては使わない
+    if (m.destination != node_.address()) { return; }              // ignores Proprietary A sent to the global address
     ...
-    j1939::codec::send(node_, reply, m.source);                    // 応答は送ってきたアドレスへ
-    idle_.start_after(2s);                                          // 受けたメッセージの時刻から数える
+    j1939::codec::send(node_, reply, m.source);                    // the response goes to the sender's address
+    idle_.start_after(2s);                                          // counts from the time of the received message
 }
 ```
 
-- 9 バイト以上の応答は `node.send(pgn, data, to, priority, j1939::WhenBusy::Queue)` で送ります（同じ相手への前の転送が終わるのを待ちます）。
-- 時間のかかる処理（フラッシュへの書き込みなど）は、`Timer` で後から応答します。その間に `Pending` のような途中の応答を周期的に送ると、要求側の `Exchange` は待ち続けます。
-- 相手の消失は、セッションを開いたときに `node.network().name_at(m.source)` で相手の NAME を控え、Address Claimed を受けるたびに `node.network().address_of(name)` が同じアドレスかを確かめて見つけます（Cannot Claim と、別の NAME にアドレスを取られた場合を含みます）。NAME の分からない相手は、無通信の時間切れで終えます。
-- 自分のアドレスが変わったら（`on_address_change`）、相手のコマンドは古いアドレスへ来ていたので、セッションを終えます。
-
-### 共通の規則
-
-- スレッド、イベントループ、OS の時計を使いません。時間は `Timer`（仮想時間）で数えます。
-- 登録は `Subscription`、タイマーは `Timer`、要求は `Exchange` に持たせると、部品の破棄で自動で解除されます。部品は `attach` で `Network` に持たせるか、`Network` より先に破棄します。
-- アプリが持つ部品（`std::unique_ptr` など）は、ハンドラやタイマーのコールバックの中で破棄してかまいません（相手の Stop を受けたら止める、など）。破棄した部品のハンドラは、同じ配送の残りでも呼ばれず、タイマーも発火しません。部品が呼ぶ関数（`PeriodicSender` の Encoder、`Monitor` と `Exchange` のコールバック）の中でも、その部品を破棄してかまいません。例外は `AddressCommander` のコールバックと `Diagnostics` の `on_clear` です。
-- ハンドラの中で部品を作るときは、`timers_free()` で枠を確かめてから作ります（「エラーの扱い」）。
-- 標準の Request（PGN 59904）を使うなら `Requester::of(node)` を使います（`Exchange` で作り直しません）。
-- 自分の利用者を呼ぶループでは、通知の前に自分の状態を確定し、通知の中で足されたものを同じループで扱いません（[internals/j1939.md](internals/j1939.md) の「道具箱」）。
-- `on_any_request` と `Network::set_observer` は使いません。
-
-### 独自のプロトコルを試験する
-
-例の試験（`tests/testkit/test_param_service.cpp`）は、正常系のほかに次のことを確かめています。どれも仮想時間で、同じ入力からは同じフレームが出ます。
-
-| 起こすこと | 方法 |
+| Situation | How |
 |---|---|
-| 相手の無応答 | `bus.endpoint("engine").add_outage(from, until)` |
-| 相手・自分のアドレスの喪失と移動 | 優先度の高い NAME の Address Claimed を `bus.inject()` で入れる |
-| 無通信でのセッションの終了 | `bus.run_for()` で待つ |
-| 2 台目のツール | 同じバスに `add_j1939()` でもう 1 つのネットワークを足す |
-| 部品の破棄（処理中、コールバックの中） | 部品を `std::unique_ptr` で持ち、途中で `reset()` する |
+| A response of 9 bytes or more | Send it with `node.send(pgn, data, to, priority, j1939::WhenBusy::Queue)` (it waits for the previous transfer to the same peer to end). |
+| Slow work (such as writing to flash) | Respond later, with a `Timer`. |
+| The node's own address changed (`on_address_change`) | The peer sent its commands to the old address, so end the session. |
+| A peer whose NAME is unknown | End the session on an inactivity timeout. |
 
-コールバックの中で時刻を見るときは、そのネットワークの `now()`（ステップの時刻）を使います。`LocalBench::now()` は、最後の `run_until()` の終わりの時刻です。
+If the responder periodically sends an interim response such as `Pending` during slow work, the requester's `Exchange` keeps waiting.
 
-## 動かす
+Detect the loss of the peer as follows (this also covers Cannot Claim, and the address being taken by another NAME):
 
-`vehicle_sil::Simulation`（ターゲット `vehicle_sil::simulation`）が ECU を動かします。動かす場所はコンストラクターで選び、ECU のコードは変わりません。実行時に選ぶときは、`std::optional<SilKitOptions>` を渡します（空ならプロセス内の仮想バス）。
+1. When the session opens, record the peer's NAME with `node.network().name_at(m.source)`.
+2. Each time Address Claimed arrives, check that `node.network().address_of(name)` is still the same address.
 
-層を自分で組み立てる例は [examples/low_level](../examples/low_level) です。
+### Common rules
+
+| Item | Rule |
+|---|---|
+| Time | Count it with `Timer` (virtual time), not with threads, event loops or the OS clock. |
+| Removal | Let a `Subscription` hold each registration, a `Timer` each timer and an `Exchange` each request. Destroying the part then removes them automatically. |
+| Owner of a protocol part | Let the `Network` own the part with `attach`, or destroy the part before the `Network`. |
+| Creating a part inside a handler | Check the slots with `timers_free()` first (see "Handle errors"). |
+| The standard Request (PGN 59904) | Use `Requester::of(node)` (do not rebuild it with `Exchange`). |
+| Loops that call the part's users | Settle the part's own state before notifying, and do not handle items added during a notification in the same loop (see "Loops that notify the user" under "Toolbox" in [internals/j1939.md](internals/j1939.md#loops-that-notify-the-user)). |
+| `on_any_request` and `Network::set_observer` | Do not use them. |
+
+You may destroy a part that the application owns (in a `std::unique_ptr` or similar) inside a handler or a timer callback, for example to stop when the peer's Stop arrives. The handlers of a destroyed part are not called, even in the rest of the same delivery, and its timers do not fire.
+
+You may also destroy a part inside the functions that it calls (the `Encoder` of `PeriodicSender`, the callbacks of `Monitor` and `Exchange`). The exceptions are the callback of `AddressCommander` and `on_clear` of `Diagnostics`.
+
+### Test your protocol
+
+Besides the normal cases, the example's test (`tests/testkit/test_param_service.cpp`) checks the following. All of it runs in virtual time, and the same input produces the same frames.
+
+| To cause | How |
+|---|---|
+| No response from the peer | `bus.endpoint("engine").add_outage(from, until)` |
+| Loss and moves of the peer's address or the node's own | Inject an Address Claimed with a higher-priority NAME with `bus.inject()` |
+| Closing a session after inactivity | Wait with `bus.run_for()` |
+| A second tool | Add another network to the same bus with `add_j1939()` |
+| Destroying the part (during processing, inside a callback) | Hold the part in a `std::unique_ptr` and `reset()` it midway |
+
+To read the time inside a callback, use the network's `now()` (the time of the step). `LocalBench::now()` is the end time of the last `run_until()`.
+
+## Run in a simulation
+
+`vehicle_sil::Simulation` (CMake target `vehicle_sil::simulation`) runs the ECUs. The constructor decides where they run; the ECU code stays the same. To choose at run time, pass a `std::optional<SilKitOptions>` (empty means the in-process virtual bus).
+
+Here is `main()` from [examples/j1939/ecu_pair/main.cpp](../examples/j1939/ecu_pair/main.cpp), shortened by removing the argument handling and the output. For an example that builds the layers by hand, see [examples/low_level](../examples/low_level).
 
 ```cpp
-vehicle_sil::Simulation sim;                                   // プロセス内の仮想バス
-// vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});  // SIL Kit の participant（registry はプロセス内に立つ）
-auto& engine_ecu = sim.add_ecu("Engine", 10ms);                // 10 ms ごとに進む ECU
+vehicle_sil::Simulation sim;                                   // in-process virtual bus
+// vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});  // SIL Kit participants (the registry runs in this process)
+auto& engine_ecu = sim.add_ecu("Engine", 10ms);                // an ECU that advances every 10 ms
 install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());
 auto& cab_ecu = sim.add_ecu("Cab", 5ms);
 install_cab(cab_ecu, cab_ecu.emplace<Dashboard>());
-sim.run_for(3s);                                               // 仮想時間で 3 秒
+sim.run_for(3s);                                               // 3 s of virtual time
 ```
 
-`sim.add<App>("Engine", 10ms, args...)` は、`add_ecu()` と、`App{ecu, args...}` を ECU に持たせる `emplace` の略です。
+`sim.add<App>("Engine", 10ms, args...)` is short for `add_ecu()` plus an `emplace` that lets the ECU own `App{ecu, args...}`.
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|
-| ECU | 仮想バス（`LocalBench`）のホスト。呼んだスレッドで進む | 仮想時間の Coordinated な participant（`Peer`）。SIL Kit のスレッドで進む |
-| `run_for(d)` | 続きから何度でも呼べる | 1 回だけ（2 回目は `std::logic_error`） |
-| 戻るとき | `d` だけ進んだとき | 全 participant が止まった後 |
-| 低水準 | `local()`: バス（CAN と LIN）、故障注入、生フレーム、tap（`vehicle_sil/local/local_bench.hpp`） | `peer(name)`: tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
+| ECU | A host on the virtual bus (`LocalBench`). Advances on the calling thread | A coordinated participant in virtual time (`Peer`). Advances on SIL Kit threads |
+| `run_for(d)` | Can be called any number of times; each call continues from the last | Once only (a second call throws `std::logic_error`) |
+| Returns | When it has advanced by `d` | After every participant has stopped |
+| After an exception in a step | The next `run_for()` throws `SimulationError` too | `run_for()` ends the simulation, then throws |
+| Low level | `local()`: buses (CAN and LIN), fault injection, raw frames, taps (`vehicle_sil/local/local_bench.hpp`) | `peer(name)`: taps, Control Agent, SIL Kit ports (`vehicle_sil/peer/peer.hpp`). `registry_uri()` |
 
-- `run_for(d)` は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、1 回しか動かせません。止まった時刻のステップがまだ走っていることがあり、メインスレッドからモデルを読むと競合するためです。止めながら確かめるときは、仮想バスを使います。
-- ステップの例外は、`SimulationError` として `run_for()` から出ます。`what()` は `<ECU 名>: <理由>` です。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit では、失敗した participant があっても simulation は終わらず、仮想時間が止まるだけです。そのため `run_for()` は、失敗を見つけると simulation を終えてから投げます。
-- SIL Kit では、ステップは SIL Kit のスレッドで走ります。ステップが書いた値は、`run_for()` が戻ってから読んでください。`Simulation` の関数は 1 つのスレッドから呼びます。
-- 破棄の順序は、後から足した ECU から先に、ECU の持ち物（`emplace`）まで壊し、次に controller、最後にプロセス内の registry です。
-- LIN の Master/Slave は `Ecu::lin_master(network, schedule)` と `Ecu::lin_slave(network)` で作ります。仮想バスでも SIL Kit でも同じ結果になります（[internals/lin.md](internals/lin.md)）。
+`run_for(d)` runs only the steps that start before the end time (on the virtual bus, the current time plus `d`).
 
-`SilKitOptions` で、既存の registry（`registry_uri`）や、ほかのプロセスの participant との併用を選べます。
+On SIL Kit, `run_for()` runs only once: the step at the stop time may still be running, and reading the model from the main thread would race with it. To stop, inspect and continue, use the virtual bus.
 
-| 項目 | 意味 |
+An exception in a step is thrown from `run_for()` as a `SimulationError`. Its `what()` is `<ECU name>: <reason>`. On SIL Kit, a failed participant does not end the simulation; it only stops virtual time. So when `run_for()` finds a failure, it ends the simulation, then throws.
+
+| Item | Rule |
 |---|---|
-| `registry_uri` | 接続する registry。空ならプロセス内に立てる（`registry_uri()` で場所が分かる） |
-| `controller` | `true`（既定）: このプロセスが simulation を始め、終える。`false`: 外の controller（`vehicle_sil_sim_controller`、Control Server）が決める。`run()` で終わりまで待つ |
-| `other_participants` | 始める前にそろっていなければならない、ほかのプロセスの Coordinated な participant（`controller` が `true` のときだけ） |
-| `start_timeout` | 始まるまでに許す時間（既定 30 秒） |
+| Threads on SIL Kit | Steps run on SIL Kit threads, so read the values that steps write only after `run_for()` returns. |
+| `Simulation` functions | Call them from one thread. |
+| Destruction order | ECUs are destroyed in reverse order of addition, together with what they own (`emplace`), then the controller, and last the in-process registry. |
+| LIN master and slave | Create them with `Ecu::lin_master(network, schedule)` and `Ecu::lin_slave(network)` (the result is the same on the virtual bus and on SIL Kit; see [internals/lin.md](internals/lin.md)). |
 
-`run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。`controller` が `true` のときは、Error で離脱した participant を失敗にします。Error 以外で離脱した participant が数秒のうちに simulation を終えなければ、それも失敗です。`controller` が `false` のときに失敗にするのは、このプロセスの ECU の失敗だけです。
+### SIL Kit options (`SilKitOptions`)
 
-`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
+With `SilKitOptions`, you can use an existing registry (`registry_uri`) or run together with participants in other processes.
 
-## 試験する
+| Item | Meaning |
+|---|---|
+| `registry_uri` | Registry to connect to. If empty, a registry runs in the process (`registry_uri()` tells you where) |
+| `controller` | Whether this process starts and ends the simulation (default `true`). If `false`, an outside controller (`vehicle_sil_sim_controller`, the Control Server) decides, and `run()` waits until the end |
+| `other_participants` | Coordinated participants in other processes that must be present before the start (only when `controller` is `true`) |
+| `start_timeout` | Time allowed until the start (default 30 s) |
 
-自分の ECU は、`Simulation` の仮想バスで試験します。時刻は仮想時間で、`sleep` は要りません。同じ入力からは同じ結果になります。
+`run()` waits until the simulation ends, whoever ends it (SIL Kit only). What counts as a failure depends on `controller`:
 
-故障の注入と観測の例は [examples/fault_injection](../examples/fault_injection) です。
+| `controller` | What `run()` treats as a failure |
+|---|---|
+| `true` | A participant that left with Error |
+| `true` | A participant that left without Error and did not end the simulation within a few seconds |
+| `false` | Only failures of this process's ECUs |
+
+### Use `Peer` directly
+
+Use `Peer` directly in these cases (see "Peer" in [internals/execution.md](internals/execution.md#peer-vehicle_silpeer), and [peers.md](peers.md)):
+
+- To run in real time
+- To run as one participant in a separate process
+- To embed a Control Agent
+
+`Peer` is also an `Ecu`, so the same functions work with it, as in `install_engine(peer, model)`. To split ECUs into separate participants, make them `Coordinated` and start them with a `SimulationController` (in one process, `start_together`).
+
+## Test an ECU
+
+Test your ECUs on the virtual bus of `Simulation`. Time is virtual, so you need no `sleep`. The same input gives the same result.
+
+A fragment (`CHECK` is the test macro). `tests/testkit/test_ecu_personas.cpp` tests the same 2 ECUs with the same tools, and [examples/fault_injection](../examples/fault_injection) is an example of fault injection and observation.
 
 ```cpp
-vehicle_sil::Simulation sim;                               // 仮想バス
+vehicle_sil::Simulation sim;                               // virtual bus
 auto& engine_ecu = sim.add_ecu("engine", 10ms);
 install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());
 auto& cab_ecu = sim.add_ecu("cab", 5ms);
 auto& dash = cab_ecu.emplace<Dashboard>();
 install_cab(cab_ecu, dash);
-auto& bus = sim.local();                                   // LocalBench（vehicle_sil/local/local_bench.hpp）
-testkit::J1939Events events(bus.network("cab"));           // スタックの出来事（読み取り専用）
-testkit::FrameLog wire(bus.tap("engine"));                 // バスのフレーム（読み取り専用）
-sim.run_for(1s);                                           // 刻んで進め、そのたびに確かめられる
-bus.endpoint("engine").add_outage(sim.now(), sim.now() + 300ms);   // エンジンがバスから外れる
+auto& bus = sim.local();                                   // LocalBench (vehicle_sil/local/local_bench.hpp)
+testkit::J1939Events events(bus.network("cab"));           // stack events (read-only)
+testkit::FrameLog wire(bus.tap("engine"));                 // bus frames (read-only)
+sim.run_for(1s);                                           // advance a little at a time, checking after each
+bus.endpoint("engine").add_outage(sim.now(), sim.now() + 300ms);   // disconnects the engine from the bus
 sim.run_for(1s);
 CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 ```
 
-- `local()` の `LocalBench` から、故障注入（フレームの欠落、遅延、通信断。`testkit::faults`、`add_outage`）と、生フレームの注入（`inject()`）ができます。バスが 1 つなら `inject(t, frame)` のように名前を省けます。2 つ以上なら、バスの名前を渡します（例: `inject("J1939_CAN", t, frame)`）。記録と故障注入の道具（`testkit::J1939Events`、`FrameLog`、`faults`）は `vehicle_sil::testkit` にあり、使うときはそれをリンクします（`vehicle_sil::simulation` はリンクしません）。
-- `Monitor` は通信の途絶を、`J1939Events` は送信の要求、フレームの送出、転送の終わり、アドレスの変化を、`FrameLog` はバス上のフレームを見せます。
-- 参照するときは、ECU の名前とネットワークの名前を渡します。`network("cab", "J1939_CAN")` のように 2 つ渡します。ネットワークが 1 つの ECU には 1 つの名前の形も使えます。
-- `LocalBench` を直接使うこともできます。`LocalBench::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、1 つのネットワークを持つ ECU の略記です。`add_j1939()` と、`bus()`、`injector()`、`inject(time, frame)` のようにバスの名前を省く形は、ただ 1 つのバスを使います。バスがまだなければ作り、そのバスは後から来た `Ecu::j1939(network)` か `Ecu::can(network)` の名前になります。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前でバスを引くだけで、名前を付けません（その名前のバスがなければ `std::out_of_range`）。どちらの順で書いても同じバスです。バスが 2 つ以上あるときに名前を省くと `std::logic_error` です。`add_j1939()` で ECU を足した後に 2 つ目のバスの名前を使うのも `std::logic_error` です（その ECU のバスが決まらないためです）。バスを複数使うときは、ECU を `add_ecu(name, step).j1939(network)` で足し、`inject(network, time, frame)` のようにバスの名前を渡します。
+| Use | What you can do |
+|---|---|
+| `testkit::faults`, `add_outage` | Fault injection (dropped frames, delays, disconnection) |
+| `inject()` | Inject raw frames |
+| `Monitor` | Watch for loss of communication |
+| `testkit::J1939Events` | Watch send requests, frames put on the bus, ends of transfers and address changes |
+| `testkit::FrameLog` | Watch the frames on the bus |
 
-### ECU をバスから外す（`ecu.connected`）
+The recording and fault injection tools (`testkit::J1939Events`, `FrameLog`, `faults`) are in `vehicle_sil::testkit`. Link it to use them (`vehicle_sil::simulation` does not link it).
 
-どの ECU にも、bool の入力 `ecu.connected` があります。false を書くと、その ECU は動いたまま、すべてのバスから外れます。`add_outage` と違って、`Simulation()`（仮想バス）でも SIL Kit でも、シナリオ（[scenario.md](scenario.md) の「ECU をバスから外す」）、Control API、`agent()` のどれからでも同じように使えます。
+`LocalBench` functions take names:
+
+| Names passed | Rule |
+|---|---|
+| ECU and network | Pass both, as in `network("cab", "J1939_CAN")` (for an ECU with one network, the one-name form works too). |
+| Bus | With one bus, you can leave it out, as in `inject(t, frame)`. |
+| Bus (with 2 or more buses) | Pass it, as in `inject("J1939_CAN", t, frame)`. |
+
+### Use `LocalBench` directly
+
+`LocalBench::add_ecu(name, step)` returns an `Ecu&`. `add_j1939(name, step)` is shorthand for an ECU with one network.
+
+The forms that take a bus name and the forms that leave it out differ as follows. Whichever order you call them in, they refer to the same bus.
+
+| Form | Functions | Behavior |
+|---|---|---|
+| Name left out | `add_j1939()`, `bus()`, `injector()`, `inject(time, frame)` | Use the only bus, and create it if it does not exist yet. |
+| Name given | `bus(network)`, `injector(network)`, `inject(network, time, frame)` | Only look up the bus by name; they do not give a bus its name (`std::out_of_range` if there is no bus with that name). |
+
+A bus created by a form without a name takes the name of the `Ecu::j1939(network)` or `Ecu::can(network)` that is called later.
+
+| Usage | Result |
+|---|---|
+| Leaving out the name when there are 2 or more buses | `std::logic_error` |
+| Using the name of a second bus after adding an ECU with `add_j1939()` | `std::logic_error` (the bus of that ECU would be ambiguous) |
+
+To use several buses, add the ECUs with `add_ecu(name, step).j1939(network)`, and pass the bus name, as in `inject(network, time, frame)`.
+
+### Disconnect an ECU from the bus (`ecu.connected`)
+
+Every ECU has a bool input, `ecu.connected`. Writing false disconnects the ECU from all buses while it keeps running. Unlike `add_outage`, it works the same with `Simulation()` (the virtual bus) and on SIL Kit, and from a scenario (see "Disconnecting an ECU from the bus" in [scenario.md](scenario.md#disconnecting-an-ecu-from-the-bus)), the Control API or `agent()`.
+
+A fragment (`sim` is a `Simulation`). `tests/simulation/test_disconnect.cpp` tests the same writes.
 
 ```cpp
 sim.ecu("engine").agent().submit({1, {{"ecu.connected", false}}, SimTime{} + 300ms});
 sim.ecu("engine").agent().submit({2, {{"ecu.connected", true}}, SimTime{} + 600ms});
 ```
 
-J1939 では次のように見えます（契約は [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
+On J1939, a disconnection looks like this (for the guarantees, see "Disconnecting from the bus" under "The `Ecu` class" in [internals/execution.md](internals/execution.md#disconnecting-from-the-bus-ecuconnected)):
 
-- 外れた ECU: `send()` は `Ok` を返しますが、フレームはバスに出ず、`Network` の `send_failures` に数えて捨てます（溜めないので、戻ったときにまとめて出ることはありません）。受信はありません。周期送信、タイマー、アドレスの状態はそのままです。トランスポートプロトコルは、相手の応答が来ないので時間切れで終わります。
-- ほかの ECU: 外れた ECU のメッセージが来なくなります。`Monitor` の `Lost` など、受信の途絶で検出します。アドレス表はそのままです。
-- 戻ったとき: ネットワークの `NetworkOptions::on_reconnect` で選びます。どちらも規格と照らして確かめていないので、模擬する ECU のふるまいに合わせて選んでください。
-  - `j1939::OnReconnect::Announce`（既定）: NAME を持つ各ノードが、Request for Address Claimed を全体へ送り、自分の Address Claimed も送ります。ほかのノードの答えで、外れている間に同じアドレスを取ったノードとの競合が解けます。ノードは Claim の後の 250 ms の待ちをしません。
-  - `j1939::OnReconnect::Nothing`: 何も送りません。外れていたことに気づかない ECU を模擬します。
-  - Address Claim を最初からやり直す（待ちを含む）選択肢はまだありません。
+| Where you look | While disconnected |
+|---|---|
+| `send()` of the disconnected ECU | Returns `Ok`, but the frame does not go on the bus: it is counted in the `Network`'s `send_failures` and dropped. |
+| Reception by the disconnected ECU | None. |
+| Periodic transmissions, timers and address state of the disconnected ECU | Unchanged. |
+| Transport protocol of the disconnected ECU | Ends on a timeout, because the peer's responses do not arrive. |
+| Reception by the other ECUs | The disconnected ECU's messages stop arriving (detect it as message loss, for example as `Lost` of a `Monitor`). |
+| Address tables of the other ECUs | Unchanged. |
+
+Dropped frames are not kept, so they are not sent in a burst on reconnection.
+
+Choose the behavior on reconnection with the network's `NetworkOptions::on_reconnect`. Neither option has been verified against the standard; choose the one that matches the behavior of the ECU you simulate.
+
+| `on_reconnect` | Behavior |
+|---|---|
+| `j1939::OnReconnect::Announce` (default) | Each node with a NAME sends a Request for Address Claimed to the global address, and also sends its own Address Claimed. |
+| `j1939::OnReconnect::Nothing` | Sends nothing (simulates an ECU that does not notice it was disconnected). |
+
+With `Announce`, the other nodes' responses resolve conflicts with any node that took the same address during the disconnection. The node does not do the 250 ms wait after the claim. There is no option yet to restart the Address Claim from the beginning (with the wait).
+
+A fragment (`ecu` is an `Ecu&`, `kName` a NAME). `tests/simulation/test_disconnect.cpp` tests both values of `on_reconnect`.
 
 ```cpp
 j1939::NetworkOptions options;
@@ -482,113 +869,141 @@ options.on_reconnect = j1939::OnReconnect::Nothing;
 auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = kName});
 ```
 
-### 聞くだけの participant
+### Listen-only participants
 
-ほかの ECU どうしのやり取りをシナリオで確かめるときは、何も送らない ECU を構成に足して、聞いたことを変数に出します（「外から信号を操作する・読む」）。送らなければ、バスには何も出ません。ほかの ECU が受けるもの、送るもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator で試験しています）。
+To check the communication between other ECUs in a scenario, add an ECU that sends nothing to the configuration file, and write what it hears to variables (see "Read and write signals from outside"). If it sends nothing, it puts nothing on the bus.
 
-聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。何を見るかは、見張り（watch）のクラスに書いて `Spy` に足します。
+What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
+
+`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). Write what to watch in a watcher class and add it to the `Spy`.
+
+`tests/spy/test_spy.cpp` contains this example without `main()` and tests it. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
 
 ```cpp
 namespace cal {
 inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
 }
 
-class BlockWatch {                                   // 見張り: Scope& と自分の設定を取る。継がない、Listener を作らない
+class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
 public:
     BlockWatch(vehicle_sil::spy::Scope& s, j1939::Address from) {
-        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // 登録は Scope が持つ（解除を書かなくてよい）
-            if (m.source != from || m.time < latest_) { return; }        // 渡る順は前後しうる。新しさは時刻で比べる
+        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // the Scope keeps the registration (no removal to write)
+            if (m.source != from || m.time < latest_) { return; }        // the order of delivery can vary: compare times to find the newest
             latest_ = m.time; ++count_; bytes_ = static_cast<int>(m.data.size());
         });
-        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // "block.count" になる
+        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // becomes "block.count"
     }
 private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0;
 };
 
 class CalSpy {
 public:
-    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // ノードなし: 何も送らない
-        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count、block.bytes
-    }                                                                               // spy.missed と内訳は Spy が出す
+    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
+    }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
 
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
 
-- `Spy(ecu, network)` は、その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作ります。ノードを足さない `Network` は、Address Claim も、Request への応答も、ACK と NACK もしません。`Listener` も聞くだけで、何も送りません。
-- `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラは、足した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
-  - `on_message(pgn, handler)`、`on_any_message`、`on_transfer`、`on_frame`: `Listener` の同じ名前の口にハンドラを足します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
-  - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を出します。形は `ecu.output()` と同じです。
-  - `on_step(fn)`: ECU のステップごとに、そのステップの時刻で `fn` を呼びます。そのステップのハンドラの後、変数の標本の前です。時間が過ぎたことで決まること（来なくなった回数を数えるなど）に使います。結果はステップ幅の粒で変わります。ハンドラと同じく、見張りのメンバーを書き換えるだけにします。
+| How it receives | Use | What it sees |
+|---|---|---|
+| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `vehicle_sil::spy::Spy` on it (or a `j1939::Listener` directly) | The messages and frames that other participants sent, whatever their destination, with their times. |
+| On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
+
+- `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
+- `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
+  - `on_message(pgn, handler)`, `on_any_message`, `on_transfer`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
+  - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
+  - `on_step(fn)`: calls `fn` every ECU step with the time of that step, after the handlers of the step and before the variables are sampled. Use it for what follows from elapsed time (such as counting how often messages stopped coming). The result depends on the granularity of the step size. As in handlers, only update the watcher's members.
 
     ```cpp
-    s.on_step([this](vehicle_sil::SimTime now) {           // 100 ms 来なかったら 1 回数える
+    s.on_step([this](vehicle_sil::SimTime now) {           // count once when nothing came for 100 ms
         if (count_ > 0 && !quiet_ && now - latest_ > 100ms) { quiet_ = true; ++silences_; }
-    });                                                     // ハンドラで受けたら quiet_ = false に戻す
+    });                                                     // the handler sets quiet_ = false again when a message arrives
     ```
 
-  - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラの中では 1 つ前のステップの時刻です。ハンドラでは `Message::time` を使います。
-  - 見張りの追加も、ハンドラと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
-- 見張りのコンストラクターの中から、受け取った `Spy&` で別の見張りを `add()` できます（見張りを組み合わせた見張り）。足した見張りは、組み合わせた見張りより後に壊れます（`Spy` は `add()` が返った順の逆に壊します）。コンストラクターが投げると、それまでに登録したハンドラと `on_step` の関数を外し、足した見張りも壊します。
-- 聞きこぼしの変数: `Spy` は、`Listener` と `Network` の数を、次の変数に出します（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなのを確かめると、「来なかった」と「聞きこぼした」を見分けられます。
+  - `now()`: the time of the ECU's last step. In a variable's getter it is the time of the step being sampled, so "how many ms since the last message" is the difference between `now()` and the last `Message::time` (the result depends on the granularity of the step size). In a handler it is the time of the previous step; use `Message::time` there.
+  - Add watchers, and register their handlers and variables, in the constructor of the ECU class. After the run has started, these are a `std::logic_error` ("... after the run started: add the watchers in the ECU class's constructor"). A wrong name is a `std::invalid_argument`: a name used a second time, an empty name, a name that starts or ends with `.`, or the name of the missed-traffic prefix (below). The message says how to fix it.
+- From inside a watcher's constructor, you can `add()` another watcher through the `Spy&` it received (a watcher composed of watchers). The added watcher is destroyed after the composing one (the `Spy` destroys watchers in the reverse order in which `add()` returned). If the constructor throws, the handlers and `on_step` functions it registered so far are removed, and the watchers it added are destroyed.
+- Missed-traffic variables: the `Spy` writes the counts of the `Listener` and the `Network` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, it can tell "did not come" from "missed".
 
-  | 変数 | 数えるもの |
+  | Variable | What it counts |
   |---|---|
-  | `spy.missed` | 下の 8 つの和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、パケットの欠け・重なり・順の違いや空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です（見えないものは下） |
-  | `spy.no_session` | 空きがなくて追わなかった接続（同時に追える数は `ListenerOptions::sniffer.sessions`、既定 32） |
-  | `spy.incomplete` | パケットを見逃した接続 |
-  | `spy.replaced` | 終わる前に告知し直された接続 |
-  | `spy.lost` | 同じ participant のノードがそのアドレスを取ったので、追うのをやめた接続 |
-  | `spy.conflicting_packets` | 同じ番号で中身の違うパケット（下の「受け手と違うかもしれないメッセージ」） |
-  | `spy.receive_overflows` | `Network` が受け取れなかったフレーム（`NetworkOptions::receive_capacity`） |
-  | `spy.transport_rejected` | `Network` が組み立てを始めなかった BAM（形の正しくない告知、空きのセッションなし）と、同じ participant のノードが断った RTS（別の PGN で話し中、大きすぎ、形の誤り、空きなし） |
-  | `spy.transport_bam_dropped` | `Network` が組み立ての途中で捨てた BAM（パケットの欠け、重なり、順の違い） |
+  | `spy.missed` | The sum of the 8 below. While it stays 0, the `Network` dropped none of the frames it received; the BAM and connections that the `Network` and the `Listener` started to follow were not lost to missing, repeated or out-of-order packets or to a lack of free places; and every message passed has the receiver's bytes (for what it cannot see, see below) |
+  | `spy.no_session` | Connections not followed because no place was free (the number followed at the same time is `ListenerOptions::sniffer.sessions`, default 32) |
+  | `spy.incomplete` | Connections with missed packets |
+  | `spy.replaced` | Connections announced again before they ended |
+  | `spy.lost` | Connections no longer followed because a node of the same participant took the address |
+  | `spy.conflicting_packets` | Packets with the sequence number of an earlier packet but different bytes (see "Messages that may differ from the receiver's" below) |
+  | `spy.receive_overflows` | Frames that the `Network` could not accept (`NetworkOptions::receive_capacity`) |
+  | `spy.transport_rejected` | BAM that the `Network` did not start to reassemble (a malformed announcement, no free session), and RTS that a node of the same participant refused (busy with another PGN, too large, malformed, no free place) |
+  | `spy.transport_bam_dropped` | BAM that the `Network` dropped in the middle of reassembly (missing, repeated or out-of-order packets) |
 
-  - 見えないもの: スパイの ECU をバスから外した間（`ecu.connected` が false）に来たフレームは、`Network` の手前で捨てられ、どこにも数えられません。`Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）も入れません。
-  - 前置きは `SpyOptions::statistics_as`（既定 `"spy"`）で変えられます。空にすると出しません。
-- 寿命: 出した変数は取り消せないので、変数を出す `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。変数を出した `Spy` を ECU より先に壊すと、その ECU の次のステップが、変数を読む前に `std::logic_error`（「vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ...」）で止まります。`Spy` は壊れるとき、見張りごとに（`add()` が後に返ったものから）ハンドラと `on_step` の関数を外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
-- 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。`Listener` をほかのコードと分けるときは、自分で作った `Listener` を `Spy(ecu, network, listener)` に渡します。その `Listener` に `Spy` を 2 つ置くときは、2 つ目の `SpyOptions::statistics_as` を `""` にします。
-- 見張りを試験する: `LocalBench` の ECU に見張りを足したクラスを置き、フレームを入れて回し、変数を読みます（`tests/spy` の見本の試験がこの形です）。見張りに参照で渡すもの（記録の `std::vector` など）は、`LocalBench` より前に宣言します。見張りは ECU と一緒に、`LocalBench` が壊れるときに壊れるためです。
+  - What they cannot see: frames that arrive while the spy ECU is disconnected from the bus (`ecu.connected` is false) are dropped before the `Network` and counted nowhere. They also leave out `frames_ignored` of `Network::statistics()` (11-bit frames and so on; on a bus that also carries 11-bit frames it always grows) and connections that started before the announcement was heard (`orphan_data` of `sniffer_statistics()`).
+  - `SpyOptions::statistics_as` (default `"spy"`) changes the prefix. An empty prefix writes none of these variables.
+- Lifetime: variables cannot be withdrawn, so make a `Spy` that writes variables a member of the ECU class, and keep it alive as long as the ECU (as in the example; the classes that `ecu_main` and `Simulation::add()` create are destroyed after the ECU's networks and variables). If a `Spy` that wrote variables is destroyed before its ECU, the next step of that ECU stops with a `std::logic_error` before it reads the variables ("vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ..."). When the `Spy` is destroyed, it removes the handlers and `on_step` functions of each watcher and then destroys the watcher (from the one whose `add()` returned last), and finally destroys the `Listener` it created.
+- A `Network` has one `Listener` (a second one is a `std::logic_error`). To share the `Listener` with other code, create it yourself and pass it as `Spy(ecu, network, listener)`. To put 2 `Spy` objects on that `Listener`, set `SpyOptions::statistics_as` of the second one to `""`.
+- To test a watcher, put a class that adds it on an ECU of a `LocalBench`, inject frames, run, and read the variables (the example tests in `tests/spy` take this form). Declare what you pass to a watcher by reference (such as a `std::vector` for records) before the `LocalBench`, because the watchers are destroyed with the ECUs when the `LocalBench` is destroyed.
 
   ```cpp
   auto& ecu = bench.add_ecu("CalSpy", 5ms); ecu.emplace<CalSpy>(ecu);
   bench.inject("J1939_CAN", t, frame); bench.run_until(end);
-  // 値: ecu.agent().schema() で名前の位置 i を探し、ecu.agent().latest().values[i] を読む
+  // values: find the position i of the name in ecu.agent().schema(), and read ecu.agent().latest().values[i]
   ```
 
-- `Listener` を直に使う: `Spy` を使わずに、`Network` に `j1939::Listener` を作ってハンドラを足し、`ecu.output()` で出すこともできます。見張りのコードは `Listener&` を受け取ってハンドラを足し、`Listener` を自分で作りません。足したハンドラは、外すか `Listener` を壊すまで呼ばれるので、`Listener` より先に壊れうる見張りは、登録の戻り値（`Listener::HandlerId`）を `j1939::ListenerSubscription` のメンバーに持ちます（ノードのハンドラの `j1939::Subscription` と同じ形）。`ListenerSubscription` は、壊れるか `reset()` でハンドラを外します。ステップの中でも、そのハンドラ自身の中からでも外せ、`Listener` が先に壊れた後に壊しても安全です。聞きこぼしの数は `Listener::sniffer_statistics()` と `Network::statistics()` にあります。
-- J1939 で聞く（`Listener` が渡すもの）:
-  - `on_message(pgn, handler)` と `on_any_message(handler)`: ほかの participant が送ったメッセージが、宛先が誰でも渡ります。単一フレーム、BAM で送られたもの、2 つの ECU の間の接続（RTS/CTS）で送られたものです。ハンドラが受け取る型はノードのハンドラと同じ `j1939::Message` なので、読む関数をノードと共用できます。同じ PGN に複数のハンドラを足せます（登録の順に呼ばれます）。
-  - `on_transfer(handler)`: ほかの ECU どうしの接続がどう終わったか（`SniffedTransfer`。完了のほか、Abort、時間切れ、聞きこぼし）。
-  - `on_frame(handler)`: フレーム 1 つずつ（TP.CM と TP.DT、ほかのアドレス宛てを含む）。自分で組み立てるときに使います。
-- 聞こえないもの:
-  - 同じ `Network` のノードが送ったもの。`Listener` が渡すのは「ほかの participant が言ったこと」です。自分のノードの送信は、送った側の結果（`Node::on_transfer_end`、`Requester` の結果）で数えます。`ListenerOptions::hear_local` を入れると、同じ `Network` のノードどうしで折り返したフレームとメッセージも渡りますが（`ReceivedFrame::local` が立ちます）、折り返しはノードが 2 つ以上のときにしか起きないので、ノードが 1 つの `Network` では何も増えません。`hear_local` を入れても、ノードからほかの participant 宛ての接続（RTS/CTS）はフレームだけが渡り、メッセージは渡りません。
-  - `Network` が無視するフレーム（`frames_ignored`。11 ビットのフレーム、送り元が 255 のフレーム、送り元が 254 で Address Claimed と Request 以外のフレーム、形の正しくないフレーム）と、`Network` が受け取らなかったフレーム（`receive_overflows`）。11 ビットを見るときは生の CAN で聞きます。
-  - 組み立てなかったもの、追えなかった接続: 上の聞きこぼしの変数の内訳です。
-- 受け手と違うかもしれないメッセージ: ほかの ECU どうしの接続のメッセージが受け手のノードのものと同じバイト列なのは、その転送の `conflicting_packets`（同じ番号で中身の違うパケットを見た数）が 0 のときです。0 でなければ、受け手がどちらを取ったかはバスからは分かりません（`Listener` は先に見たほうを渡します）。`Message` にはその印がありません。見分け方は 2 つです。`spy.conflicting_packets`（`spy.missed` に含まれます）が 0 のままなら、渡ったメッセージは全部受け手と同じです。または、`on_message` のハンドラでは値を控えるだけにし、同じ転送について直後に呼ばれる `on_transfer` のハンドラで `SniffedTransfer::conflicting_packets` が 0 なのを見てから使います。
-- 自分のノードを持つ participant でも使えます。ノード宛ての接続とノードが送る接続は `Network` が扱い、ノード宛てのメッセージは 1 回だけ渡ります（`on_transfer` には出ません）。
-- ハンドラは読むだけです。ハンドラの中から送信やハンドラの登録をすると `std::logic_error` で、その participant は失敗して止まります（例外を握りつぶしても止まります）。ハンドラでは変数を更新し、送るのは `ecu.on_step` からにします。
-- 時刻と順: 接続で送られたメッセージの `Message::time` は、受け手がメッセージを受け取った時点（最後のパケット）の時刻で、受け手のノードが見る時刻と同じです。ただしハンドラが呼ばれるのは、受け手が「受け取った」と返した後です。そのため、後の時刻のメッセージより後に、前の時刻のメッセージが渡ることがあります。最後の値や周期を出すときは、呼ばれた順ではなく `time` を比べます。フレームから決まること（メッセージ、Abort）は、聞く participant のステップ幅によりません。時間の経過から決まること（`TimedOut` など）は、`time` はステップ幅によりませんが、ハンドラが呼ばれるステップは変わるので、これも `time` で比べます。
-- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer`（`Spy` では `SpyOptions::listener.sniffer`）で変えられます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
-- 記録や試験のために `Network` の出来事（送信、アドレスの変化を含む）を見るなら `j1939::Observer` です（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。`Listener` と同時に付けられます。
-- 生の CAN で聞く: `ecu.can(network)` の `on_frame` で、全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受けます。`send()` を呼ばなければ何も送りません。独自の組み立てをするときに、接続だけを追わせたいなら `j1939::TransferSniffer` にフレームを渡します。
-- 確かめていないこと: Vector の Network Simulator の上で、送らない CAN コントローラーがバスの動き（ACK を返す相手の数など）を変えないかどうか。
+- Using a `Listener` directly: instead of a `Spy`, you can create a `j1939::Listener` on the `Network`, add handlers and write variables with `ecu.output()`. Watching code takes a `Listener&` and adds handlers instead of creating its own `Listener`. An added handler is called until it is removed or the `Listener` is destroyed, so a watcher that can be destroyed before the `Listener` keeps the return value of the registration (`Listener::HandlerId`) in a `j1939::ListenerSubscription` member (the same shape as `j1939::Subscription` for a node's handlers). A `ListenerSubscription` removes the handler when destroyed or on `reset()`. It works within a step and from inside that handler itself, and destroying it after the `Listener` is safe. The missed-traffic counts are in `Listener::sniffer_statistics()` and `Network::statistics()`.
+- On J1939 (what a `Listener` passes):
+  - `on_message(pgn, handler)` and `on_any_message(handler)`: messages sent by other participants, whatever their destination: single frames, messages sent with BAM, and messages sent over a connection (RTS/CTS) between 2 ECUs. The handler takes the same `j1939::Message` type as a node's handler, so nodes and listeners can share the functions that read it. You can add several handlers for the same PGN; they are called in the order they were added.
+  - `on_transfer(handler)`: how a connection between other ECUs ended (`SniffedTransfer`: completed, aborted, timed out or missed).
+  - `on_frame(handler)`: one frame at a time (including TP.CM, TP.DT and frames to other addresses). Use it to reassemble messages yourself.
+- What it does not hear:
+  - What nodes of the same `Network` sent. A `Listener` passes "what other participants said". Count the transmissions of your own nodes with the results on the sending side (`Node::on_transfer_end`, the results of `Requester`). With `ListenerOptions::hear_local`, frames and messages looped back between nodes of the same `Network` are passed too (with `ReceivedFrame::local` set), but loopback happens only with 2 or more nodes, so on a `Network` with one node it adds nothing. Even with `hear_local`, a connection (RTS/CTS) from a node to another participant passes only its frames, not its message.
+  - Frames that the `Network` ignores (`frames_ignored`: 11-bit frames, frames from source 255, frames from source 254 other than Address Claimed and Request, malformed frames), and frames that the `Network` did not accept (`receive_overflows`). To see 11-bit frames, listen on raw CAN.
+  - What was not reassembled, and connections that could not be followed: the breakdown of the missed-traffic variables above.
+- Messages that may differ from the receiver's: a message of a connection between other ECUs has the same bytes as the receiving node's message when the transfer's `conflicting_packets` (packets seen with the sequence number of an earlier packet but different bytes) is 0. Otherwise the bus does not show which of the two the receiver took (the `Listener` passes the one it saw first). `Message` carries no mark for this. There are 2 ways to tell:
+  - While `spy.conflicting_packets` (included in `spy.missed`) stays 0, every message passed is the same as the receiver's.
+  - In the `on_message` handler, only keep the values. Use them after the `on_transfer` handler, called right after for the same transfer, sees that `SniffedTransfer::conflicting_packets` is 0.
+- A participant with its own nodes can use a `Listener` too. The `Network` handles connections addressed to its nodes and connections they send, and a message addressed to a node is passed once (it does not appear in `on_transfer`).
+- Handlers only read. Sending or registering a handler from inside a handler is a `std::logic_error`, and the participant fails and stops (also if the exception is swallowed). Update variables in handlers and send from `ecu.on_step`.
+- Time and order: the `Message::time` of a message sent over a connection is the time at which the receiver received the message (the last packet), the same time that the receiving node sees. The handler, however, is called after the receiver has answered that it received the message. So a message with an earlier time can be passed after a message with a later time. To find the latest value or a period, compare `time`, not the order of the calls. What follows from frames (messages, Aborts) does not depend on the step size of the listening participant. What follows from elapsed time (such as `TimedOut`) has a `time` that does not depend on the step size, but the step in which the handler is called does, so compare `time` here too.
+- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (with a `Spy`, `SpyOptions::listener.sniffer`) (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
+- To see the events of a `Network` (including transmissions and address changes) for recording or tests, use a `j1939::Observer` (see "Observation (`Observer`)" in [internals/j1939.md](internals/j1939.md#observation-observer)). It can be set together with a `Listener`.
+- Raw CAN sends nothing unless you call `send()`. If you reassemble messages yourself but want only the connections followed for you, pass the frames to a `j1939::TransferSniffer`.
 
-## 外から信号を操作する・読む（UI、試験）
+Not verified: whether a CAN controller that sends nothing changes the behavior of the bus (such as the number of nodes that return ACK) on the Vector Network Simulator.
 
-UI や試験から ECU の値を読み書きするときは、ECU に変数を宣言し、Control API を使います。Control API が扱うのは宣言した変数と時間の操作で、J1939 のフレームは扱いません。受けた信号を外に見せるときは、その値を `output` に、外から決める値は `input` にします（例: [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp)）。
+## Read and write signals from outside (UI, tests)
+
+To read and write the values of an ECU from a UI or a test, declare variables in the ECU and use the Control API. The Control API handles declared variables and time control; it does not handle J1939 frames.
+
+| Value | Declare it as |
+|---|---|
+| Values to show outside, such as received signals | `output` |
+| Values set from outside | `input` |
+
+Here is part of the constructor of `Engine` from [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp):
 
 ```cpp
 ecu.input("engine.throttle", &throttle_,
           {.unit = "%", .min = 0.0, .max = 100.0, .description = "accelerator pedal position"});
-ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // 送る PG の元にする値
+ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // the value the transmitted PG is built from
 ```
 
-宣言の規則、同じプロセスからの読み書き、Control Server へのつなぎ方は [control-api.md](control-api.md) にあります。
+For the declaration rules, reading and writing from the same process, and how to connect to the Control Server, see [control-api.md](control-api.md).
 
-## データの形（Codec）
+## Data layout (Codec)
 
-部品とエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。独自プロトコルの部品も、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。
+Protocol parts and the engine handle bytes only (the `Encoder` of a `PeriodicSender` is a function that writes into a buffer and returns the length, and reception gives a `std::span` in `Message::data`). Typed messages generated from YAML ([j1939-codec.md](j1939-codec.md)) handle signal layout and scaling, and the functions in `codec_node.hpp` connect the two.
 
-YAML で定義して使う例は [examples/typed_messages](../examples/typed_messages) です。
+Your own protocol parts can define their message layouts in the same YAML (with a `selector` when several messages share one PGN, as with Proprietary A). [examples/typed_messages](../examples/typed_messages) is an example that defines messages in YAML and uses them.
+
+## See also
+
+| Page | Contents |
+|---|---|
+| "[Writing an ECU](../README.md#writing-an-ecu)" in the README | The minimal form of an ECU. Read it before this page. |
+| [j1939-codec.md](j1939-codec.md) | Typed messages that read and write signals as values |
+| [ecu-executable.md](ecu-executable.md) | How to build an ECU as an executable |
+| [internals/j1939.md](internals/j1939.md) | Details of the API's guarantees and rules |

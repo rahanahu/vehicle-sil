@@ -1,4 +1,4 @@
-// 試験のための部品（`@vehicle-sil/gui-client/testing`）。本番のコードからは import しない。
+// Helpers for tests (`@vehicle-sil/gui-client/testing`). Do not import them from production code.
 export { FakeHttp, FakeRequest } from './fake-http';
 export { FakeSocket, FakeWebSockets } from './fake-web-socket';
 export { httpExamples, protocolExamples, webSocketExamples } from './protocol-examples';

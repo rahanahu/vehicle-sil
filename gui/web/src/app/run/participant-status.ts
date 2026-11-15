@@ -241,7 +241,7 @@ export class ParticipantStatus {
   protected readonly rows = computed(() =>
     this.participants().map((p) => {
       const omitted = p.omittedFields.length > 0 ? this.list.format(p.omittedFields) : null;
-      // 変数を読み書きする口（ランチャーの英語の状態は title に）
+      // ECU の変数との接続（ランチャーの英語の状態は title に）
       const control = p.controlLink
         ? { ...controlLabel(p.controlLink), raw: p.controlLink.state }
         : null;

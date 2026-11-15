@@ -5,10 +5,10 @@ import { FakeHttp } from './testing/fake-http';
 import { FakeSocket, FakeWebSockets } from './testing/fake-web-socket';
 import { httpExamples, webSocketExamples } from './testing/protocol-examples';
 
-/** 試験の中の、ランチャーの答えを待つ時間（本番より短く）。 */
+/** How long the tests wait for the launcher's answer (shorter than in production). */
 const ANSWER_MS = 1000;
 
-/** 試験が読むもの（時刻の状態の欄を、呼べば値が返る形にしたもの）と、命令。 */
+/** What the tests read (the fields of the time state, as functions that return the value), and the commands. */
 function view(client: GuiClient) {
   const control: ClientTime = client.time;
   const s = () => control.state.get();
@@ -66,7 +66,7 @@ describe('TimeControl', () => {
     vi.useRealTimers();
   });
 
-  /** サーバーの情報（features を変えられる）を読ませ、WebSocket を開く。 */
+  /** Loads the server information (features can be changed) and opens the WebSocket. */
   async function open(features?: string[]): Promise<{ time: TimeView; socket: FakeSocket }> {
     const loaded = client.loadApp();
     const answer = structuredClone(app) as {
@@ -81,7 +81,7 @@ describe('TimeControl', () => {
     return { time: view(client), socket };
   }
 
-  /** 例の通知を、条件に合う通知まで（それも含めて）流す。流した数を返す。 */
+  /** Feeds the example's notifications up to and including the first that matches. Returns how many were fed. */
   async function play(
     socket: FakeSocket,
     name: string,
@@ -114,7 +114,7 @@ describe('TimeControl', () => {
     expect(time.supported()).toBe(true);
     expect(time.controllable()).toBe(false);
 
-    // 止めた状態で始まった: 再開とステップ送りだけ
+    // Started paused: only resume and step
     let at = await play(socket, 'ws-time', 0, timeEvent({ paused: true }));
     expect(time.simMs()).toBe(0);
     expect(time.paused()).toBe(true);
@@ -127,21 +127,22 @@ describe('TimeControl', () => {
     expect(step.request.body).toEqual({ command: 'step', ms: 25 });
     expect(time.sending()).toBe('step');
     step.flush({ session_id: 1, command: { command: 'step', ms: 25 } });
-    // ランチャーの答え（command の事象）が届くまでは、次の命令を送らない（ダブルクリックで 2 回進まない）
+    // No further command is sent until the launcher's answer (the command event) arrives (a double click does not
+    // advance twice)
     expect(time.sending()).toBe('step');
     expect(time.canStep()).toBe(false);
-    // 待っている間に送ろうとしても送らず、そう返す（黙って捨てない）
+    // An attempt to send while waiting sends nothing and says so (rather than dropping it silently)
     expect(time.step(25)).toEqual({ sent: false, reason: 'waiting' });
     http.expectNone('api/time');
 
-    // ランチャーが刻みに切り上げた量と、着いた時刻
+    // The amount the launcher rounded up to the time step, and the time reached
     at = await play(socket, 'ws-time', at, timeEvent({ sim_ms: 30, paused: true }));
     expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: true, ms: 30 });
     expect(time.simMs()).toBe(30);
     expect(time.sending()).toBeNull();
     expect(time.canStep()).toBe(true);
 
-    // 動いている: 一時停止だけ。等速では遅れを数える
+    // Running: only pause. At real-time speed, lateness is counted
     at = await play(socket, 'ws-time', at, timeEvent({ paused: false }));
     expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([true, false, false]);
     expect(time.speed()).toBe(1);
@@ -149,7 +150,7 @@ describe('TimeControl', () => {
     expect(time.lateness()).toEqual({ lateSteps: 0, maxLateMs: 0, slippedMs: 0, lateMs: 0 });
     expect(time.behind()).toBe(false);
 
-    // ランチャーが断った命令は、その理由
+    // A command the launcher refused carries the reason
     at = await play(
       socket,
       'ws-time',
@@ -159,7 +160,7 @@ describe('TimeControl', () => {
     expect(time.lastCommand()).toMatchObject({ name: 'step', accepted: false });
     expect(time.lastCommand()?.message).toContain('paused');
 
-    // 終わったら、どれも押せない
+    // Once ended, nothing can be used
     await play(socket, 'ws-time', at);
     expect(time.controllable()).toBe(false);
     expect([time.canPause(), time.canResume(), time.canStep()]).toEqual([false, false, false]);
@@ -170,7 +171,7 @@ describe('TimeControl', () => {
     const { time, socket } = await open();
     const phase = (name: string) => (m: Record<string, unknown>) =>
       (m['event'] as Record<string, unknown> | undefined)?.['phase'] === name;
-    // ws-pass: stop_at_ms に着いて、ランチャーが participant を終わらせている間（結果はまだ）
+    // ws-pass: reached stop_at_ms, and the launcher is ending the participants (no result yet)
     let at = await play(socket, 'ws-pass', 0, timeEvent({ sim_ms: 0, paused: false }));
     expect(time.controllable()).toBe(true);
     expect(time.canPause()).toBe(true);
@@ -237,14 +238,14 @@ describe('TimeControl', () => {
     expect(time.behind()).toBe(false);
   });
 
-  /** 送って、サーバーの応答（200）まで進める。ランチャーの答えはまだ来ない。 */
+  /** Sends and advances to the server's answer (200). The launcher's answer has not come yet. */
   async function sendStep(time: TimeView): Promise<void> {
     expect(time.step(10)).toEqual({ sent: true });
     http.expectOne('api/time').flush({ session_id: 1, command: { command: 'step', ms: 10 } });
     expect(time.sending()).toBe('step');
   }
 
-  /** ws-time の最後の要約（終わった実行）を、変えて写したもの。 */
+  /** The last summary of ws-time (an ended run), copied with changes. */
   function lastSummary(change: (s: Record<string, unknown>) => void): Record<string, unknown> {
     const messages = server.get('ws-time') ?? [];
     const last = structuredClone(
@@ -306,12 +307,12 @@ describe('TimeControl', () => {
         };
       }),
     });
-    // 送る前の答えだけの要約: まだ待つ
+    // A summary with only an answer from before the send: keep waiting
     const before = client.session.session.get()?.lastCommand?.seq ?? -1;
     socket.send(hello(before));
     vi.advanceTimersByTime(BATCH_MS);
     expect(time.sending()).toBe('step');
-    // 送った後の答えのある要約: 待つのをやめる
+    // A summary with an answer from after the send: stop waiting
     socket.send(hello(before + 50));
     vi.advanceTimersByTime(BATCH_MS);
     expect(time.sending()).toBeNull();
@@ -341,7 +342,7 @@ describe('TimeControl', () => {
       );
     expect(time.error()).toBe('no simulation is running');
     expect(time.errorFromServer()).toBe(true);
-    expect(time.sending()).toBeNull(); // 送れなかった: 答えは待たない
+    expect(time.sending()).toBeNull(); // Not sent: no answer to wait for
     time.pause();
     expect(time.error()).toBeNull();
     http.expectOne('api/time').flush({ session_id: 1, command: { command: 'pause' } });
