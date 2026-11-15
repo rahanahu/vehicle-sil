@@ -117,7 +117,7 @@ test('the starter screen shows the timeline of a scenario run with the element',
   });
   expect(run.status(), await run.text()).toBe(200);
   const timeline = page.getByTestId('timeline');
-  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^Step 2 failed at [\d.]+ ms$/,
     { timeout: RUN_TIMEOUT },
   );

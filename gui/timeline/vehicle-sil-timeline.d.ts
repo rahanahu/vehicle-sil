@@ -69,7 +69,10 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   hide: string;
   /** Smaller lanes for a small box (attribute compact). */
   compact: boolean;
-  /** 'light', 'dark', or 'auto' (the browser's setting; attribute theme). */
+  /**
+   * 'light', 'dark', or 'auto': the color-scheme of the page around the element (light where the page declares
+   * none; attribute theme).
+   */
   theme: 'light' | 'dark' | 'auto';
   /** Words that the page adds or changes; a language here can be named in lang. */
   messages: VehicleSilTimelineMessages | null;

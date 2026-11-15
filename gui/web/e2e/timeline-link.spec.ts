@@ -75,7 +75,7 @@ test('timeline: a failed scenario run links its timeline, which opens in the GUI
   });
   await expect(timeline.locator('html')).toHaveAttribute('lang', 'ja');
   const failure = timeline.getByTestId('failure');
-  await expect(failure.getByRole('heading', { level: 2 })).toHaveText(
+  await expect(failure.getByRole('heading', { level: 3 })).toHaveText(
     /^手順 2 が [\d.]+ ms で失敗しました$/,
     { timeout: RUN_TIMEOUT },
   );
@@ -98,7 +98,7 @@ test('timeline: a failed scenario run links its timeline, which opens in the GUI
     await expect(alert).not.toContainText('落として');
     // The second way it names: "#token=" added to the page's address (only the hash changes) loads the file.
     await alone.goto(`${new URL(href, base).href}#token=${server.token}`);
-    await expect(alone.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+    await expect(alone.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
       /^手順 2 が [\d.]+ ms で失敗しました$/,
     );
     await expect(alone).not.toHaveURL(/token=/);
@@ -123,7 +123,7 @@ test('timeline: the Scenario card shows the timeline on the screen itself, with 
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const timeline = card.getByTestId('timeline-element');
   // [src], [lang] and [token] from the screen's signals: the run's file, in the GUI's language, with its token
-  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^手順 2 が [\d.]+ ms で失敗しました$/,
     { timeout: RUN_TIMEOUT },
   );
@@ -162,7 +162,7 @@ test('timeline: in an English GUI the link says Timeline and the page is in Engl
   await link.click();
   const timeline = await opened;
   await expect(timeline.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^Step 2 failed at [\d.]+ ms$/,
     { timeout: RUN_TIMEOUT },
   );

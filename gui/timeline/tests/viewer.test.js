@@ -697,6 +697,31 @@ test('the scripts can be put inline in a page: no closing script tag, no comment
   }
 });
 
+test('the colours: public --vst- properties read once with a default, never set, and the docs name them all', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'timeline.css'), 'utf8');
+  // Each colour is read into its private name; the public name is never set, so that an ancestor can set it
+  const read = [...css.matchAll(/^ {2}--_([\w-]+): var\(\s*--vst-([\w-]+),\s*light-dark\(/gm)];
+  assert.ok(read.length >= 20, 'the colours are read');
+  for (const [, own, pub] of read) assert.equal(own, pub);
+  const names = read.map((m) => m[2]);
+  assert.equal(
+    [...css.matchAll(/--vst-[\w-]+/g)].length,
+    names.length,
+    'a --vst- name used elsewhere',
+  );
+  assert.doesNotMatch(css, /--vst-[\w-]+\s*:/, 'a --vst- property is set');
+  // Every private colour used is one of them, and every one is used
+  const used = new Set([...css.matchAll(/var\(--_([\w-]+)\)/g)].map((m) => m[1]));
+  assert.deepEqual([...used].sort(), [...names].sort());
+  // The tables of the docs name exactly these
+  for (const docs of ['gui.md', path.join('ja', 'gui.md')]) {
+    const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', docs), 'utf8');
+    const rows = text.split('\n').filter((line) => line.startsWith('| `--vst-'));
+    const listed = rows.flatMap((row) => [...row.matchAll(/`--vst-([\w-]+)`/g)].map((m) => m[1]));
+    assert.deepEqual(listed.sort(), [...names].sort(), docs);
+  }
+});
+
 // --- the words of the page (messages.js)
 
 const M = SOURCES.VehicleSilTimelineMessages;

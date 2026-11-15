@@ -1126,7 +1126,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 | | `labels` | オブジェクト | `null` | 変数の名前ごとのラベル。レーンの名前の上に出します |
 | `hide` | `hide` | 空白（かコンマ）で区切った語 | なし | 出さない部分: `header`、`summary`、`toolbar`、`help`、`steps`（手順のレーン）、`readout`、`legend`、`tables` |
 | `compact` | `compact` | 真偽（属性があれば真） | 偽 | 狭い所向け: レーンの見出しを狭く、数のレーンを低く、文字を小さく |
-| `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` はブラウザーの明るい・暗いの設定に従います |
+| `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` は、要素を置いたページの `color-scheme` に従います。`light dark`（サンプルの画面と時間の軸のページの宣言）ならブラウザーの明るい・暗いの設定に、ページが宣言していなければ明るい色になります |
 
 `cursor`、`step`、`from`、`to` のゲッターは、いま出しているもの（利用者が動かした後も）を返します。メソッドの `reload()` は、`src` を読み直します。
 
@@ -1142,15 +1142,16 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - プロパティや属性で変えたことでは、事象は出ません。なので、2 つの時間の軸、または時間の軸と自分の図を、繰り返しにならずに揃えられます: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`。
 - 大きさ: 要素はブロックで、幅は入れ物いっぱい、高さは中身のとおりです。高さ（`max-height` など）を与えると、中でスクロールします。
 - スロットの `actions` に置いたボタンは、見出しの右に出ます（時間の軸のページは、そこに「ファイルを開く」を置きます）。
+- 要素の見出しは `h2` です（中の部分は `h3` と `h4`）。自分のページの `h1` の下に入ります。
 
-見た目は要素の shadow root の中にあります。自分のページの CSS は中に届かず、要素の CSS は外に出ません。色を変えるときは、要素に次のカスタムプロパティを設定します。例: `vehicle-sil-timeline { --bad: #b00020; }`（暗い色も変えるときは、自分の `@media (prefers-color-scheme: dark)` の中で、または `theme` と合わせて）。
+見た目は要素の shadow root の中にあります。自分のページの CSS は中に届かず、要素の CSS は外に出ません。色を変えるときは、その色のカスタムプロパティ（`--vst-` と下の表の名前）を、要素か、要素を囲むどの要素（`:root` など）にでも設定します。明るい色と暗い色を `light-dark()` で書くと、要素は `theme` に合う方を使います。例: `:root { --vst-bad: light-dark(#b00020, #ff8080); }`。色を 1 つだけ書くと、両方で使います。
 
 | カスタムプロパティ | 使う所 |
 |---|---|
-| `--bg`、`--panel`、`--fg`、`--muted`、`--border`、`--grid` | 背景、枠の中、文字、線 |
-| `--sent`、`--seen`、`--base`、`--true` | シナリオが送った値、見た値、線の基準、真の bool |
-| `--ok`、`--ok-fill`、`--ok-bg`、`--bad`、`--bad-fill`、`--bad-bg`、`--warn`、`--warn-fill`、`--warn-bg`、`--neutral`、`--neutral-fill` | 通った、失敗した、注意、結果のない手順 |
-| `--unrecorded`、`--e0`、`--e1`、`--e2`、`--cursor`、`--selection` | 記録の後の時間、列挙の状態、カーソル、範囲の選択 |
+| `--vst-bg`、`--vst-panel`、`--vst-fg`、`--vst-muted`、`--vst-border`、`--vst-grid` | 背景、枠の中、文字、線 |
+| `--vst-sent`、`--vst-seen`、`--vst-base`、`--vst-true` | シナリオが送った値、見た値、線の基準、真の bool |
+| `--vst-ok`、`--vst-ok-fill`、`--vst-ok-bg`、`--vst-bad`、`--vst-bad-fill`、`--vst-bad-bg`、`--vst-warn`、`--vst-warn-fill`、`--vst-warn-bg`、`--vst-neutral`、`--vst-neutral-fill` | 通った、失敗した、注意、結果のない手順 |
+| `--vst-unrecorded`、`--vst-e0`、`--vst-e1`、`--vst-e2`、`--vst-cursor`、`--vst-selection` | 記録の後の時間、列挙の状態、カーソル、範囲の選択 |
 
 Angular では、`CUSTOM_ELEMENTS_SCHEMA` で要素を許し、スクリプトを 1 回 import し、プロパティは signal に、事象はメソッドにつなぎます。動く見本は `gui/web/src/app/run/timeline-view.ts` です（サンプルの画面の「時間の軸をここに表示」。初めて出すときにスクリプトを import します）。
 

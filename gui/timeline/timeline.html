@@ -13,10 +13,13 @@
     <meta name="color-scheme" content="light dark" />
     <title>vehicle-sil</title>
     <style>
+      :root {
+        color-scheme: light dark;
+      }
       body {
         margin: 0;
-        background: #f7f7f5;
-        color: #1b1d20;
+        background: light-dark(#f7f7f5, #131518);
+        color: light-dark(#1b1d20, #e4e6e9);
         font:
           14px/1.45 system-ui,
           -apple-system,
@@ -32,7 +35,7 @@
         font: inherit;
         color: inherit;
         background: transparent;
-        border: 1px solid #d7dadd;
+        border: 1px solid light-dark(#d7dadd, #343940);
         border-radius: 6px;
         padding: 4px 10px;
         cursor: pointer;
@@ -42,7 +45,7 @@
         outline-offset: 2px;
       }
       #load {
-        border: 2px dashed #d7dadd;
+        border: 2px dashed light-dark(#d7dadd, #343940);
         border-radius: 8px;
         padding: 40px 16px;
         text-align: center;
@@ -63,20 +66,20 @@
       .small {
         font-size: 0.85rem;
       }
-      @media (prefers-color-scheme: dark) {
-        body {
-          background: #131518;
-          color: #e4e6e9;
-        }
-        button,
-        #load {
-          border-color: #343940;
-        }
+      /* the page's h1 is for screen readers: the element's own title (an h2) shows the scenario */
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
     </style>
   </head>
   <body>
     <main>
+      <h1 class="visually-hidden" data-text="page.title"></h1>
       <vehicle-sil-timeline>
         <button id="open" slot="actions" type="button" data-text="page.open"></button>
       </vehicle-sil-timeline>

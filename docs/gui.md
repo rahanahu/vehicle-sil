@@ -1118,7 +1118,7 @@ Every option below can be changed after the element is on the page. The element 
 | | `labels` | object | `null` | A label for a variable, by its name, shown in its lane above the name |
 | `hide` | `hide` | Words separated by spaces (or commas) | none | The parts to leave out: `header`, `summary`, `toolbar`, `help`, `steps` (the lane of the steps), `readout`, `legend`, `tables` |
 | `compact` | `compact` | boolean (the attribute is present) | off | Narrower lane heads, lower number lanes and smaller text, for a small box |
-| `theme` | `theme` | `light`, `dark`, `auto` | `auto` | The colours; `auto` follows the browser's light or dark setting |
+| `theme` | `theme` | `light`, `dark`, `auto` | `auto` | The colours. `auto` takes the `color-scheme` of the page around the element: with `light dark` (as the sample screens and the timeline page declare), the browser's light or dark setting; where the page declares none, light |
 
 The getters of `cursor`, `step`, `from` and `to` return what the element shows now, also after the user has changed it. The method `reload()` loads `src` again.
 
@@ -1134,15 +1134,16 @@ The getters of `cursor`, `step`, `from` and `to` return what the element shows n
 - A change made through a property or an attribute raises no event. So a screen can keep two timelines, or a timeline and its own chart, in step without a loop: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`.
 - Size: the element is a block as wide as its container and as high as its contents. Give it a height (`max-height`, for example) and it scrolls inside.
 - The slot `actions` puts your own buttons at the right of its header (the timeline page puts **Open a file** there).
+- Its title is an `h2` (its parts use `h3` and `h4`), so that it sits under the `h1` of your page.
 
-Its look is inside its shadow root: the CSS of your page does not reach in, and its CSS does not reach out. To change a colour, set these custom properties on the element, for example `vehicle-sil-timeline { --bad: #b00020; }` (for the dark colours too, in your own `@media (prefers-color-scheme: dark)` or with `theme`):
+Its look is inside its shadow root: the CSS of your page does not reach in, and its CSS does not reach out. To change a colour, set its custom property (`--vst-` and the name below) on the element or on any element around it, such as `:root`. Give the light and the dark colour with `light-dark()`, and the element picks the one of its `theme`: `:root { --vst-bad: light-dark(#b00020, #ff8080); }`. A plain colour is used in both.
 
 | Custom properties | Used for |
 |---|---|
-| `--bg`, `--panel`, `--fg`, `--muted`, `--border`, `--grid` | The background, the panels, the text, the lines |
-| `--sent`, `--seen`, `--base`, `--true` | The values the scenario sent, the values seen, the base of a line, a true bool |
-| `--ok`, `--ok-fill`, `--ok-bg`, `--bad`, `--bad-fill`, `--bad-bg`, `--warn`, `--warn-fill`, `--warn-bg`, `--neutral`, `--neutral-fill` | Passed, failed, warnings, and steps without a result |
-| `--unrecorded`, `--e0`, `--e1`, `--e2`, `--cursor`, `--selection` | The time after the record, the states of an enum, the cursor, a selection |
+| `--vst-bg`, `--vst-panel`, `--vst-fg`, `--vst-muted`, `--vst-border`, `--vst-grid` | The background, the panels, the text, the lines |
+| `--vst-sent`, `--vst-seen`, `--vst-base`, `--vst-true` | The values the scenario sent, the values seen, the base of a line, a true bool |
+| `--vst-ok`, `--vst-ok-fill`, `--vst-ok-bg`, `--vst-bad`, `--vst-bad-fill`, `--vst-bad-bg`, `--vst-warn`, `--vst-warn-fill`, `--vst-warn-bg`, `--vst-neutral`, `--vst-neutral-fill` | Passed, failed, warnings, and steps without a result |
+| `--vst-unrecorded`, `--vst-e0`, `--vst-e1`, `--vst-e2`, `--vst-cursor`, `--vst-selection` | The time after the record, the states of an enum, the cursor, a selection |
 
 In Angular, allow the element with `CUSTOM_ELEMENTS_SCHEMA`, import the script once, and bind properties to signals and events to methods. The working model is `gui/web/src/app/run/timeline-view.ts` (the **Show the timeline here** of the sample screens, which imports the script when it is first shown):
 
