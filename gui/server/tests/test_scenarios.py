@@ -101,7 +101,7 @@ def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
         assert (status, body["error"]["code"]) == (400, "outside-root")
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": PASS})
         assert status == 200 and body["scenario"] == PASS
-        assert body["check"]["scenario"] == {"file": PASS, "name": "throttle up", "steps": 3}
+        assert body["check"]["scenario"] == {"file": PASS, "name": "throttle up", "steps": 3, "inputs": [], "lines": []}
         status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "simulation.yaml"})
         assert (status, body["error"]["code"]) == (400, "scenario-not-listed")
         assert "GET api/scenarios?file=simulation.yaml" in body["error"]["message"]
