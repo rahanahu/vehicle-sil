@@ -761,6 +761,11 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `Simulation`、`SilKitOptions`、`SimulationError` | `simulation/simulation.hpp` |
 | `ecu_main()`、`EcuMainOptions` | `simulation/ecu_main.hpp` |
+| `ecu_main()` の流れ: 準備、`--describe`、実行、終了コード | `src/ecu_main.cpp` |
+| `ecu_main()` のコマンドライン: 引数の読み取り、使い方の文 | `src/ecu_main_command_line.*` |
+| 標準出力への `--describe` の JSON と使い方の文 | `src/ecu_main_describe_stdout.*` |
+| シグナルやコンソールのイベントで止める（`--registry-uri`） | `src/ecu_main_stop_on_signal.*` |
+| `ecu_main()` の部品がメッセージで共有する文字列の処理 | `src/ecu_main_text.*` |
 
 - テスト: `tests/simulation`
 - `ctest -R`: `^simulation\.`、`^ecu_main\.`（`examples/ecu_main` のプロセス）
@@ -2063,7 +2068,8 @@ flowchart TD
 
 変える場所:
 
-- `libs/simulation/src/ecu_main.cpp`
+- `libs/simulation/src/ecu_main_command_line.cpp`（引数、使い方の文）
+- `libs/simulation/src/ecu_main.cpp`（それぞれの引数ですること）
 
 合わせて直すコード（`libs/ecu/include/vehicle_sil/ecu/executable.hpp`。ランチャーと `ecu_main` が同じものを使います）:
 

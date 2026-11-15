@@ -5,6 +5,10 @@
 # API may change.
 add_library(vehicle_sil_simulation STATIC
   src/ecu_main.cpp
+  src/ecu_main_command_line.cpp
+  src/ecu_main_describe_stdout.cpp
+  src/ecu_main_stop_on_signal.cpp
+  src/ecu_main_text.cpp
   src/simulation.cpp
 )
 add_library(vehicle_sil::simulation ALIAS vehicle_sil_simulation)
