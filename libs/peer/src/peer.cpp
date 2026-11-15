@@ -12,6 +12,7 @@
 #include <atomic>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1043,15 +1044,12 @@ EcuDescription Peer::describe() const
     {
         networks.add(e->order, {e->name, NetworkUse::Ethernet, {}, e->mac});
     }
-    EcuDescription out;
-    out.name = options_.participant;
+    std::optional<SimDuration> step;
     if (options_.virtual_time)
     {
-        out.step = options_.virtual_time->step;
+        step = options_.virtual_time->step;
     }
-    out.networks = std::move(networks).networks();
-    out.variables = agent_.variables();
-    return out;
+    return detail::ecu_description(options_.participant, step, std::move(networks), agent_);
 }
 
 std::vector<std::string> Peer::network_names() const

@@ -11,6 +11,7 @@
 #include "vehicle_sil/simulation/simulation.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -251,6 +252,190 @@ TEST_CASE(describe_a_real_time_peer_has_no_step)
     CHECK(!d.step);
     CHECK_EQ(d.networks.size(), 1u);
     CHECK(d.networks[0].use == NetworkUse::J1939);
+}
+
+namespace {
+
+/// One network of every use and two variables, for the fixed text below.
+class Pinned
+{
+public:
+    explicit Pinned(Ecu& ecu)
+    {
+        ecu.j1939("CAN1").add_node({.address = 0x22, .name = kName});
+        static_cast<void>(ecu.ethernet("ETH", {.mac = vehicle_sil::eth::MacAddress{{0x02, 0x00, 0x00, 0x00, 0x00, 0x05}}}));
+        ecu.input("a.gain", &gain_, {.unit = "%", .min = 0.0});
+        static_cast<void>(ecu.lin_slave("LIN2", {.subscriptions = {0x10}}));
+        static_cast<void>(ecu.can("CAN2"));
+        static_cast<void>(ecu.lin_master(
+            "LIN1", {{0x10, 2, lin::LinChecksumModel::Enhanced, 10ms, lin::LinPublisher::Master}}));
+        ecu.output("b.count", &count_);
+    }
+
+private:
+    double gain_ = 1.0;
+    std::uint32_t count_ = 0;
+};
+
+/// to_json(description) with the version of vehicle-sil replaced by "<version>".
+std::string pinned_json(const EcuDescription& description)
+{
+    std::string text = to_json(description);
+    const std::string version = std::string("\"vehicle_sil\": \"") + vehicle_sil::version() + "\"";
+    const std::size_t at = text.find(version);
+    if (at != std::string::npos)
+    {
+        text.replace(at, version.size(), "\"vehicle_sil\": \"<version>\"");
+    }
+    return text;
+}
+
+} // namespace
+
+TEST_CASE(describe_gives_the_same_text_on_local_and_silkit)
+{
+    // The whole text, so that a change to how either implementation assembles its description
+    // shows here.
+    const std::string expected = R"({
+  "vehicle_sil_ecu": 1,
+  "vehicle_sil": "<version>",
+  "name": "Pinned",
+  "step_ns": 5000000,
+  "networks": [
+    {
+      "name": "CAN1",
+      "kind": "can",
+      "use": "j1939",
+      "nodes": [
+        {
+          "address": 34,
+          "j1939_name": "0x00000000FE000007",
+          "arbitrary_address_capable": false
+        }
+      ],
+      "mac": null
+    },
+    {
+      "name": "ETH",
+      "kind": "ethernet",
+      "use": "ethernet",
+      "nodes": [],
+      "mac": "02:00:00:00:00:05"
+    },
+    {
+      "name": "LIN2",
+      "kind": "lin",
+      "use": "lin_slave",
+      "nodes": [],
+      "mac": null
+    },
+    {
+      "name": "CAN2",
+      "kind": "can",
+      "use": "raw",
+      "nodes": [],
+      "mac": null
+    },
+    {
+      "name": "LIN1",
+      "kind": "lin",
+      "use": "lin_master",
+      "nodes": [],
+      "mac": null
+    }
+  ],
+  "variables": [
+    {
+      "name": "ecu.connected",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "step": null,
+      "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+      "items": [],
+      "builtin": true
+    },
+    {
+      "name": "a.gain",
+      "type": "real",
+      "causality": "input",
+      "unit": "%",
+      "min": 0,
+      "max": null,
+      "step": null,
+      "description": "",
+      "items": [],
+      "builtin": false
+    },
+    {
+      "name": "b.count",
+      "type": "integer",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "step": null,
+      "description": "",
+      "items": [],
+      "builtin": false
+    }
+  ],
+  "control": null,
+  "features": []
+}
+)";
+    for (const bool silkit : {false, true})
+    {
+        Simulation sim(on(silkit));
+        sim.add<Pinned>("Pinned", 5ms);
+        check_text(pinned_json(sim.ecu("Pinned").describe()), expected, silkit ? "SIL Kit" : "local");
+    }
+}
+
+TEST_CASE(describe_gives_the_text_of_a_real_time_peer)
+{
+    Simulation sim(SilKitOptions{}); // a registry of this process
+    vehicle_sil::PeerOptions options;
+    options.participant = "Bridge";
+    options.registry_uri = sim.registry_uri();
+    options.virtual_time = std::nullopt;
+    vehicle_sil::Peer peer(options);
+    static_cast<void>(peer.can("CAN"));
+    const std::string expected = R"({
+  "vehicle_sil_ecu": 1,
+  "vehicle_sil": "<version>",
+  "name": "Bridge",
+  "step_ns": null,
+  "networks": [
+    {
+      "name": "CAN",
+      "kind": "can",
+      "use": "raw",
+      "nodes": [],
+      "mac": null
+    }
+  ],
+  "variables": [
+    {
+      "name": "ecu.connected",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "step": null,
+      "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+      "items": [],
+      "builtin": true
+    }
+  ],
+  "control": null,
+  "features": []
+}
+)";
+    check_text(pinned_json(peer.describe()), expected, "real-time Peer");
 }
 
 TEST_CASE(describe_reserved_variable_names_are_refused_alike)

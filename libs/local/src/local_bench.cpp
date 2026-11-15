@@ -249,12 +249,7 @@ public:
         {
             networks.add(e->order, {e->network, NetworkUse::Ethernet, {}, e->mac});
         }
-        EcuDescription out;
-        out.name = name_;
-        out.step = step_;
-        out.networks = std::move(networks).networks();
-        out.variables = agent_.variables();
-        return out;
+        return detail::ecu_description(name_, step_, std::move(networks), agent_);
     }
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
