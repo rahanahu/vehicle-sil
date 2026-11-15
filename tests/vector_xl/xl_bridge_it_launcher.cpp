@@ -16,6 +16,9 @@
 //                             are, not the whole usage text.
 //   no-registry               no registry at the address: exit 3, with the address and what to do.
 //   no-driver                 the XL driver cannot be opened: exit 3.
+//   describe                  --describe writes the JSON of an ecu_main executable and exits 0
+//                             without the XL driver (one that cannot be opened makes no
+//                             difference); a missing argument is still exit 4.
 //   device-lost               the XL device disappears while the bridge runs (fake: 1.5 s after the
 //                             driver was opened): the bridge reports it and exits 1 on its own,
 //                             with its statistics.
@@ -399,6 +402,19 @@ int main(int argc, char** argv)
         {
             const ScopedEnv fail("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "1");
             result = run_single(options, {"--list-channels"}, cli::kExitSetupFailed, {"cannot open the Vector XL driver"}, {});
+        }
+        else if (options.scenario == "describe")
+        {
+            const ScopedEnv fail("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "1");
+            result = run_single(options,
+                                {"--describe", "--name", "XlBridge", "--network", "VehicleCAN", "--xl-target", "physical",
+                                 "--xl-channel", "2"},
+                                cli::kExitOk,
+                                {"\"vehicle_sil_ecu\": 1,", "\"name\": \"XlBridge\",", "\"step_ns\": null,",
+                                 "\"name\": \"VehicleCAN\",", "\"kind\": \"can\",", "\"use\": \"raw\","},
+                                {"[bridge]", "cannot open"});
+            result |= run_single(options, {"--describe", "--xl-target", "physical"}, cli::kExitUsage,
+                                 {"missing --xl-channel"}, {"\"vehicle_sil_ecu\""});
         }
         else if (options.scenario == "device-lost")
         {

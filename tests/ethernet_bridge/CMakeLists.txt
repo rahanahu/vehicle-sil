@@ -52,12 +52,18 @@ target_link_libraries(vehicle_sil_ethernet_bridge_it_peer PRIVATE vehicle_sil::c
 vehicle_sil_target_defaults(vehicle_sil_ethernet_bridge_it_peer)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_ethernet_bridge_it_peer)
 
+# The ECU of the scenario pcap-launcher: an ecu_main executable on the bridge's network.
+add_executable(vehicle_sil_ethernet_bridge_it_ecu eth_bridge_it_ecu.cpp)
+target_link_libraries(vehicle_sil_ethernet_bridge_it_ecu PRIVATE vehicle_sil::simulation)
+vehicle_sil_target_defaults(vehicle_sil_ethernet_bridge_it_ecu)
+vehicle_sil_copy_runtime_dlls(vehicle_sil_ethernet_bridge_it_ecu)
+
 add_executable(vehicle_sil_ethernet_bridge_it_launcher eth_bridge_it_launcher.cpp)
 target_link_libraries(vehicle_sil_ethernet_bridge_it_launcher PRIVATE vehicle_sil_test_process)
 vehicle_sil_target_defaults(vehicle_sil_ethernet_bridge_it_launcher)
 add_dependencies(vehicle_sil_ethernet_bridge_it_launcher
   sil-kit-registry vehicle_sil_ethernet_bridge_on_fake vehicle_sil_ethernet_bridge_on_fake_pcap vehicle_sil_ethernet_bridge
-  vehicle_sil_ethernet_bridge_it_peer)
+  vehicle_sil_ethernet_bridge_it_peer vehicle_sil_ethernet_bridge_it_ecu vehicle_sil_launch)
 
 vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
   PREFIX ethernet_bridge.integration LABELS ethernet_bridge integration TIMEOUT 120
@@ -72,7 +78,9 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
     no-interface
     no-registry
     non-ascii-arguments
+    pcap-describe
     pcap-fault
+    pcap-launcher
     pcap-list
     pcap-no-interface
     pcap-no-library
@@ -85,6 +93,8 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
        --pcap-bridge $<TARGET_FILE:vehicle_sil_ethernet_bridge_on_fake_pcap>
        --fake-pcap-dir ${VEHICLE_SIL_FAKE_PCAP_DIR}
        --peer $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_peer>
+       --ecu $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_ecu>
+       --launch $<TARGET_FILE:vehicle_sil_launch>
        --timeout-ms 60000)
 
 # The real executable on a TAP device and on a veth pair, in a network namespace of a user

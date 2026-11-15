@@ -27,13 +27,19 @@ std::string bridge_usage()
            "  vehicle_sil_vector_xl_bridge --list-channels\n"
            "  vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical>\n"
            "                               --xl-channel <n> [options]\n"
+           "  vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]\n"
            "\n"
            "Forwards classic CAN frames in both directions between a SIL Kit CAN network and a\n"
            "Vector XL CAN channel until Ctrl+C.\n"
            "\n"
            "  --list-channels          print the CAN channels the XL driver offers and exit\n"
+           "  --describe               write what the bridge is (its name and network) as JSON to stdout,\n"
+           "                           as an ecu_main executable does for vehicle_sil_launch, and exit\n"
+           "                           without opening the XL driver or joining SIL Kit\n"
            "  --registry-uri <uri>     SIL Kit registry\n"
-           "  --participant <name>     SIL Kit participant name (VectorXlBridge)\n"
+           "  --name <name>            SIL Kit participant name (VectorXlBridge)\n"
+           "  --participant <name>     the same as --name\n"
+           "  --start-timeout-ms <ms>  how long to wait for the participant to run in SIL Kit (15000)\n"
            "  --network <name>         SIL Kit CAN network (J1939_CAN1)\n"
            "  --xl-target <target>     virtual: Vector Virtual CAN, physical: CAN hardware (CANcase, VN16xx)\n"
            "  --xl-channel <n>         1-based channel number within the target, see --list-channels\n"
@@ -57,6 +63,7 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     BridgeOptions options;
     bool haveTarget = false;
     bool haveChannel = false;
+    std::string_view named; // "name" or "participant", whichever was given
 
     for (std::size_t i = 0; i < args.size(); ++i)
     {
@@ -69,6 +76,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         if (arg == "--list-channels")
         {
             options.list_channels = true;
+            continue;
+        }
+        if (arg == "--describe")
+        {
+            options.describe = true;
             continue;
         }
         if (arg == "--no-bus-monitor")
@@ -91,9 +103,23 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         {
             options.registry_uri = value;
         }
-        else if (key == "participant")
+        else if (key == "participant" || key == "name")
         {
+            if (!named.empty() && named != key)
+            {
+                throw BridgeUsageError("--name and --participant are the same option: give one of them");
+            }
+            named = key;
             options.participant = value;
+        }
+        else if (key == "start-timeout-ms")
+        {
+            const auto ms = parse_unsigned(key, value, kMaxStartTimeoutMs);
+            if (ms == 0)
+            {
+                throw BridgeUsageError("--start-timeout-ms must be between 1 and " + std::to_string(kMaxStartTimeoutMs));
+            }
+            options.start_timeout = std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(ms));
         }
         else if (key == "network")
         {
@@ -165,9 +191,13 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
 
     if (options.list_channels)
     {
+        if (options.describe)
+        {
+            throw BridgeUsageError("--describe and --list-channels exclude each other: give one of them");
+        }
         return options;
     }
-    if (options.registry_uri.empty())
+    if (options.registry_uri.empty() && !options.describe)
     {
         throw BridgeUsageError("missing --registry-uri");
     }
@@ -179,9 +209,13 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     {
         throw BridgeUsageError("missing --xl-channel (see --list-channels)");
     }
-    if (options.participant.empty() || options.network.empty())
+    if (options.participant.empty())
     {
-        throw BridgeUsageError("--participant and --network must not be empty");
+        throw BridgeUsageError("--" + std::string(named) + " must not be empty");
+    }
+    if (options.network.empty())
+    {
+        throw BridgeUsageError("--network must not be empty");
     }
     return options;
 }

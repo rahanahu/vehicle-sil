@@ -252,7 +252,7 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 | `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--j1939-node`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー `launcher-argument`）。`--map-network` は `network_names` に（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）、`--j1939-node` は `j1939_nodes` に（[J1939 のアドレスと NAME を合わせる](#j1939-のアドレスと-name-を合わせるj1939_nodes)）書きます。 |
 | `--no-control` | 書けます（その ECU は変数を公開しません）。 |
 | `--silkit-config <file>` | 書けます（その ECU に SIL Kit の設定ファイルを渡します）。 |
-| `required: false` | 書けません（エラー `not-required-ecu`）。 |
+| `required: false` | 書けません（エラー `not-required-ecu`）。`role: bridge` なら書けます。 |
 
 **`--no-control`**: 照合の `--describe` にも同じ引数が渡るので、`--describe` の出力の `control` が `null` になり、`run` はその ECU の hello を待ちません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。
 
@@ -262,7 +262,7 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 - SIL Kit が受け付けない。
 - participant 名と違う `ParticipantName` がある。
 
-**`required: false`**: 書けないのは、ecu_main の実行ファイルが coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を除いて動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を無効にする](#participant-を無効にするenabled--disable--enable)）。
+**`required: false`**: 書けないのは、ecu_main の実行ファイルが coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を除いて動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を無効にする](#participant-を無効にするenabled--disable--enable)）。`role: bridge` の participant には書けます。ブリッジは、自分で、実時間で参加するためです（[テスト用の participant とブリッジ](#テスト用の-participant-とブリッジrole)）。
 
 ### ほかの実行ファイル（`describe: false`）
 
@@ -503,6 +503,17 @@ passed: 0 errors, 0 warnings, 1 note
 | `role: bridge` の participant が 1 つもない | `role` を書いていない `describe: false` の participant を「ブリッジかもしれない」とみなします（警告の文もそう言い分けます）。 |
 
 ブリッジでないツールには `role: ecu` か `role: test` を書くと、ブリッジかもしれないとはみなしません。
+
+このリポジトリのブリッジ（`vehicle_sil_ethernet_bridge`、`vehicle_sil_vector_xl_bridge`）は `--describe` に答え、`run` が足す引数を受けるので、`describe: true`（既定）と `required: false` で書きます。`--describe` が `--network` のネットワークを報告するので、検査はブリッジが何を中継するかを知っています。
+
+```yaml
+  - name: EthBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, packet, --interface, eth1, --all-frames]
+```
+
+引数は、[ethernet-bridge.md](ethernet-bridge.md#設定ファイルから起こす) と [bridges.md](bridges.md#設定ファイルから起こす) の「設定ファイルから起こす」にあります。
 
 警告の理由は次のとおりです。ブリッジは、SIL Kit の側で送信されたものを実機のバスに送信します。そのため、J1939 のノードを持つテスト用の participant の送信、とくにアドレスの要求（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを無効にする（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送信する participant は、`--describe` の出力からはわからないので、警告しません。
 

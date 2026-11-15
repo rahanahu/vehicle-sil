@@ -502,7 +502,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `ethernet_bridge.*` | 偽の SIL Kit のコントローラーと偽の外部リンクで、ブリッジの動作と出力を確認する |
 | `ethernet_bridge.silkit_*` | プロセス内のレジストリ（空いているポート）で、本物の SIL Kit の側を確認する |
 | `ethernet_bridge.integration.*`（`integration` ラベル） | 偽の外部リンクをリンクした実行ファイルをプロセスとして動かし、往復、終了コード、止め方を確認する |
-| `ethernet_bridge.integration.pcap-*` | OS の外部リンクの実行ファイルに偽の pcap のライブラリを読み込ませて、同じことを確認する |
+| `ethernet_bridge.integration.pcap-*` | OS の外部リンクの実行ファイルに偽の pcap のライブラリを読み込ませて、同じことを確認する。`pcap-describe` は `--describe` を、`pcap-launcher` は `vehicle_sil_launch` の設定ファイルから ECU といっしょにブリッジを起こす形を確認する |
 | `ethernet_bridge.netns.*`（Linux だけ、`integration` ラベル） | 名前空間の中の TAP デバイスと veth で、本物の実行ファイルの `tap`、`packet`、`pcap`（本物の libpcap）を確認する |
 
 `ethernet_bridge.*` が確認するのは、転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通るループ（止まる順序と止まらない順序）、失ったフレーム、`Fault`、警告、統計と監視の行、引数のエラーの文言です。`ethernet_bridge.netns.*` は、名前空間を作れない所と libpcap がない所ではスキップします。
@@ -520,6 +520,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - 起動の途中の状態を失敗にしないこと、起動の上限
 
 1 つのテストは、プロセス内のレジストリ（空いているポート）で本物の participant を使います。registry に接続できないときの文（`registry_failure_message()`）は、SIL Kit が実際に投げる文でも確認します。
+
+`describe_json()`（ブリッジが `--describe` で書くもの）は、`libs/ecu` の `to_json()` とバイトごとに比べ、`vehicle_sil_launch` の読み手（`read_description()`）で読みます。ブリッジは `libs/ecu` をリンクせずに、ecu_main の実行ファイルの形を保ちます。
 
 ### `fetchcontent`
 
@@ -902,6 +904,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()` | `bridge_runtime/run_bridge.hpp` |
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
+| `describe_json()`、`BridgeDescription`（ブリッジの `--describe`） | `bridge_runtime/describe.hpp` |
 
 - テスト: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
 - `ctest -R`: `^bridge_runtime\.`、`^vector_xl\.integration\.`
@@ -944,6 +947,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | 偽の外部リンクの実行ファイル | `tests/ethernet_bridge` の `fake_link_factory.cpp` |
 | 偽の pcap のライブラリを読む実行ファイル | `tests/ethernet_bridge` の `fake_pcap_library.cpp` |
 | 名前空間のテスト | `tests/ethernet_bridge` の `bridge_netns.py` |
+| 設定ファイルからブリッジを起こす試験（`pcap-launcher`）の ECU | `tests/ethernet_bridge` の `eth_bridge_it_ecu.cpp` |
 
 ### `examples/j1939`（sender と receiver）
 
@@ -1385,7 +1389,7 @@ flowchart TD
 | `vector_xl`、`vehicle_sil_vector_xl_bridge` | Windows で、XL Driver Library があるときだけ |
 | `bridge_runtime`（`bridges/common`） | どのプラットフォームでも |
 
-`bridge_runtime` は、ブリッジの実行ファイルの止め方、監視のループ、終了コードを 1 か所に置いたものです。
+`bridge_runtime` は、ブリッジの実行ファイルの止め方、監視のループ、終了コード、`--describe` の出力を 1 か所に置いたものです。
 
 ```mermaid
 flowchart TD
@@ -1402,6 +1406,7 @@ flowchart TD
     vehicle_sil_vector_xl_bridge -.-> vehicle_sil_cli
     bridge_runtime --> SilKit
     bridge_runtime -.-> core
+    bridge_runtime -.-> json
     bridge_runtime -.-> vehicle_sil_cli
 ```
 

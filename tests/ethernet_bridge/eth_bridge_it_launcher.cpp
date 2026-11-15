@@ -36,6 +36,16 @@
 //   pcap-old-library   the library lacks a function the bridge needs: exit 3, the same.
 //   pcap-no-interface  a device the library does not have: exit 3 with the devices it has.
 //   pcap-fault         reading fails while the bridge runs: FAIL, the statistics, exit 1.
+//   pcap-describe      --describe writes the JSON of an ecu_main executable and exits 0, also
+//                      where the pcap library is not there (it is not loaded); a wrong argument
+//                      is still exit 4.
+//   pcap-launcher      the bridge in a configuration file of vehicle_sil_launch (role: bridge,
+//                      describe: true, required: false, registry_uri with port 0), beside an ECU
+//                      on its network (eth_bridge_it_ecu.cpp): check passes and lists the bridge on
+//                      the network; run starts the bridge with --name, --registry-uri (a real port)
+//                      and --start-timeout-ms, the ECU's frames go out through the bridge and the
+//                      device's answers come back to the ECU (a scenario expects them), and when
+//                      the run ends the launcher stops the bridge, which ends with exit code 0.
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
@@ -47,6 +57,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -101,7 +112,7 @@ const char* const kStatisticsKeys[] = {"silkit_to_ext", "ext_to_silkit", "own_tx
 
 struct Options
 {
-    fs::path registry, bridge, realBridge, pcapBridge, fakePcapDir, peer, workDir;
+    fs::path registry, bridge, realBridge, pcapBridge, fakePcapDir, peer, ecu, launch, workDir;
     std::string scenario;
     std::chrono::milliseconds timeout{60000};
 };
@@ -116,6 +127,8 @@ Options parse(int argc, char** argv)
     options.pcapBridge = args.required("pcap-bridge");
     options.fakePcapDir = args.required("fake-pcap-dir");
     options.peer = args.required("peer");
+    options.ecu = args.required("ecu");
+    options.launch = args.required("launch");
     options.workDir = args.required("work-dir");
     options.scenario = args.required("scenario");
     // An upper bound of waiting: scaled by VEHICLE_SIL_TEST_TIMEOUT_SCALE.
@@ -432,6 +445,102 @@ int run_stop_request(const Options& options)
     return ok ? 0 : 1;
 }
 
+/// `path` for a YAML file: with '/' and in single quotes (no escapes there; a quote is doubled).
+std::string yaml_path(const fs::path& path)
+{
+    std::string text = path.generic_string();
+    std::string out = "'";
+    for (const char c : text)
+    {
+        out += c == '\'' ? std::string("''") : std::string(1, c);
+    }
+    return out + "'";
+}
+
+/// The bridge in a configuration file of vehicle_sil_launch, beside an ECU on its network.
+int run_launcher(const Options& options)
+{
+    use_fake_pcap(options, "vehicle_sil_fake_pcap");
+    const fs::path config = options.workDir / "simulation.yaml";
+    const fs::path scenario = options.workDir / "answers.yaml";
+    {
+        std::ofstream out(config, std::ios::binary);
+        out << "vehicle_sil_simulation: 1\n"
+               "stop_at_ms: 60000\n"
+               "speed: 1\n"
+               "registry_uri: silkit://127.0.0.1:0\n"
+               "networks:\n"
+               "  - name: ETH_EXT\n"
+               "    kind: ethernet\n"
+               "participants:\n"
+               "  - name: Pinger\n"
+               "    command: [" << yaml_path(options.ecu) << "]\n"
+               "  - name: EthBridge\n"
+               "    role: bridge\n"
+               "    required: false\n"
+               "    command: [" << yaml_path(options.pcapBridge) << ", --network, ETH_EXT, --backend, " << kPcapBackend
+            << ",\n"
+               "              --interface, fake0, --src-mac, \"02:00:00:00:00:01\", --promiscuous]\n";
+    }
+    {
+        // The bridge joins in real time, outside the coordinated start: the answers come once it runs.
+        std::ofstream out(scenario, std::ios::binary);
+        out << "vehicle_sil_scenario: 1\n"
+               "steps:\n"
+               "  - expect: { Pinger.answers: { ge: 3 } }\n"
+               "    within_ms: 55000\n";
+    }
+
+    const fs::path checkLog = options.workDir / "check.log";
+    ChildProcess check(options.launch, {"check", config.string()}, checkLog);
+    const auto checked = wait_or_kill(check, std::chrono::steady_clock::now() + options.timeout);
+    const std::string checkText = read_text(checkLog);
+    bool ok = expect(checked == 0, "check exit code " + exit_code_text(checked) + ", expected 0");
+    ok = expect(checkText.find("EthBridge (role: bridge)  real time  ETH_EXT (ethernet)\n") != std::string::npos,
+                "check lists the bridge on ETH_EXT, in real time") && ok;
+    ok = expect(checkText.find("ETH_EXT  ethernet  Pinger, EthBridge\n") != std::string::npos,
+                "check has the bridge among the participants of ETH_EXT") && ok;
+    ok = expect(checkText.find("passed: 0 errors, 0 warnings, 0 notes\n") != std::string::npos,
+                "check passes without a finding") && ok;
+    dump_log(checkLog);
+    if (!ok)
+    {
+        return 1;
+    }
+
+    const fs::path runLog = options.workDir / "run.log";
+    ChildProcess run(options.launch, {"run", config.string(), "--scenario", scenario.string()}, runLog);
+    const auto ran = wait_or_kill(run, std::chrono::steady_clock::now() + options.timeout);
+    const std::string text = read_text(runLog);
+    ok = expect(ran == 0, "run exit code " + exit_code_text(ran) + ", expected 0 (the scenario passed)");
+    const std::regex started("starting EthBridge: [^\n]* --name EthBridge --registry-uri silkit://127\\.0\\.0\\.1:([0-9]+) "
+                             "--start-timeout-ms [0-9]+\n");
+    std::smatch match;
+    ok = expect(std::regex_search(text, match, started) && match[1].str() != "0",
+                "run starts the bridge with --name, the registry's real port and --start-timeout-ms") && ok;
+    ok = expect(text.find("--interface fake0 --src-mac 02:00:00:00:00:01 --promiscuous") != std::string::npos,
+                "run passes the bridge's own arguments as written") && ok;
+    ok = expect(text.find("promiscuous on;") != std::string::npos && text.find("Ctrl+C to stop") != std::string::npos,
+                "the bridge started bridging, in promiscuous mode") && ok;
+    for (const char* key : {"silkit_to_ext", "ext_to_silkit"})
+    {
+        const auto value = stat(text, key);
+        ok = expect(value && *value >= 3, std::string("bridge ") + key + " >= 3") && ok;
+    }
+#ifndef _WIN32
+    // On Windows the launcher can ask only where it shares a console with the bridge (Ctrl+Break),
+    // and else ends it: either way, the bridge does not stay.
+    ok = expect(text.find("[EthBridge] [eth-bridge] stopped\n") != std::string::npos,
+                "the launcher stopped the bridge when the run ended") && ok;
+    ok = expect(text.find("EthBridge    no        stopped (SIGTERM), exit code 0\n") != std::string::npos,
+                "the bridge ended with exit code 0 after the stop request") && ok;
+#endif
+    ok = expect(text.find("left processes") == std::string::npos && text.find("ending EthBridge") == std::string::npos,
+                "nothing of the bridge was left running") && ok;
+    dump_log(runLog);
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -567,6 +676,26 @@ int main(int argc, char** argv)
                                 bridge_args(registry.uri(), "fake-fault", {"--ethertype", "0x88b5"}, kPcapBackend), cli::kExitFailed,
                                 {"[eth-bridge] FAIL: reading from 'fake-fault' failed: The interface disappeared (fake)",
                                  "stats silkit_to_ext=", "stopped"});
+        }
+        else if (options.scenario == "pcap-describe")
+        {
+            // Not loaded for --describe: a library that is not there makes no difference.
+            use_fake_pcap(options, "no_such_pcap");
+            result = run_single(options, options.pcapBridge,
+                                {"--describe", "--name", "EthBridge", "--network", "ETH_EXT", "--backend", kPcapBackend,
+                                 "--interface", "fake0", "--all-frames", "--promiscuous"},
+                                cli::kExitOk,
+                                {"\"vehicle_sil_ecu\": 1,\n", "\"name\": \"EthBridge\",\n", "\"step_ns\": null,\n",
+                                 "\"name\": \"ETH_EXT\",\n", "\"kind\": \"ethernet\",\n", "\"control\": null,\n"},
+                                {"[eth-bridge]", "not installed"});
+            result |= run_single(options, options.pcapBridge,
+                                 {"--describe", "--name", "EthBridge", "--network", "ETH_EXT", "--backend", kPcapBackend,
+                                  "--interface", "fake0"},
+                                 cli::kExitUsage, {"sends to a real adapter: say what may pass with"}, {"\"vehicle_sil_ecu\""});
+        }
+        else if (options.scenario == "pcap-launcher")
+        {
+            result = run_launcher(options);
         }
         else
         {

@@ -77,7 +77,8 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--participant <name>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
 | 引数 | 意味 |
@@ -88,7 +89,10 @@ vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <vi
 | `--xl-channel <n>` | そのターゲットの CAN 対応チャネルの中での、1 始まりの番号です（必須）。 |
 | `--bitrate <bit/s>` | XL のチャネルのビットレートを 15000〜1000000 bit/s（`xlCanSetChannelBitrate` の範囲）で設定します。 |
 | `--network <name>` | SIL Kit の CAN ネットワークの名前です（既定 `J1939_CAN1`）。 |
-| `--participant <name>` | participant の名前です（既定 `VectorXlBridge`）。 |
+| `--name <name>` | participant の名前です（既定 `VectorXlBridge`）。 |
+| `--participant <name>` | `--name` と同じです（どちらか 1 つを書きます）。 |
+| `--start-timeout-ms <ms>` | SIL Kit で participant が Running になるのを待つ上限です（1〜10^12、既定 15000）。なれなければ終了コード 3 で終わります。 |
+| `--describe` | ブリッジが何かを JSON で標準出力に書いて終わります（「[設定ファイルから起こす](#設定ファイルから起こす)」を参照）。 |
 | `--rx-queue-size <n>` | XL の受信キューの容量です（2 のべき乗、16〜32768、既定 16384）。 |
 | `--tx-timeout-ms <ms>` | バスが詰まっているあいだ、新しいフレームを捨てます（100〜60000。「[バスに出たフレームの数え方（送信レシート）](#バスに出たフレームの数え方送信レシート)」）。 |
 | `--bus-off-restart-ms <ms>` | バスオフがこの時間続いたら、チャネルを有効にし直します（既定 1000、0 で無効、100〜60000。「[実行中のバスの監視](#実行中のバスの監視)」）。 |
@@ -101,15 +105,34 @@ vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <vi
 - `--bitrate` を指定するときは、init 権限が必要です。ほかのアプリケーションが init 権限を持っている場合は、黙って別のビットレートで動かずに、起動を失敗させます。指定しなければ、チャネルの設定を変えません。
 - `--rx-queue-size` でドライバが実際に保持できるのは、指定した値から 1 を引いたイベント数です。
 - `--tx-timeout-ms` と `--bus-off-restart-ms` は、init 権限（`--bitrate`）があるときだけ使います。init 権限がないのに指定すると、ブリッジは起動時に `warning:` を出力します。
-- Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--participant` と `--network` に ASCII 以外の文字を使えます。
+- Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--name` と `--network` に ASCII 以外の文字を使えます。
 
 チャネルとデバイスは、起動のときにこの CLI で決めます。Control API と設定ファイル（`vehicle_sil_launch`）には、チャネルとデバイスを選ぶ項目はありません。Control API、設定ファイル、GUI に選ぶ手段を追加するときは、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
+
+## 設定ファイルから起こす
+
+`vehicle_sil_launch` は、シミュレーションのほかの participant といっしょにブリッジを起こせます。設定ファイルには ECU と同じように（`describe: true`、既定）書き、`role: bridge` と `required: false` を付けます。
+
+```yaml
+participants:
+  - name: XlBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_vector_xl_bridge, --network, VehicleCAN, --xl-target, physical, --xl-channel, "1"]
+```
+
+ネットワーク（`VehicleCAN`）は、`networks` に `kind: can` で書きます。`check` は `--describe --name XlBridge` を、`run` は `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` を足します（そのため `registry_uri` のポートは 0 でもかまいません）。
+
+- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がそれを報告します）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、XL Driver を開かず SIL Kit にもつながずに、終了コード 0 で終わります。`--registry-uri` は要りません（書いてあっても使いません）。
+- JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "can"`、`"use": "raw"`）、空の変数、`"control": null`、空の `features` が入ります。そのため `check` は、ブリッジがどのネットワークを中継するかを知っています（[simulation-config.md](simulation-config.md) の「テスト用の participant とブリッジ（`role`）」）。
+- 実行ファイルは、`--describe` でも、`vxlapi64.dll` がないと起動しません。Windows が実行ファイルといっしょに読み込むためです（ビルドは、見つけたときに実行ファイルの隣にコピーします）。
+- `required: false`: シミュレーションはブリッジを待たず（「[起動の順序](#起動の順序)」）、実行が終わるとランチャーがブリッジに止める要求を送ります。
 
 ## 終了コード
 
 | 終了コード | 意味 |
 |---|---|
-| 0 | 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたとき）による正常終了です。 |
+| 0 | 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたとき）による正常終了です。`--list-channels`、`--describe`、`--help` が終わったときも 0 です。 |
 | 1 | 実行中の失敗です。 |
 | 3 | 準備の失敗です（XL ドライバ、チャネル選択、SIL Kit）。 |
 | 4 | 引数のエラーです。 |
@@ -455,3 +478,4 @@ VN5620 のループバックで、次の点も確認しています。
 - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
 - `tests/vector_xl/xl_bridge_it_launcher` の往復の E2E テストは、Windows では bridge を強制終了するため、統計と終了コードを検査しません。止める要求（POSIX は SIGTERM、Windows はプロセスグループへの Ctrl+Break）で止めたときの統計の 1 行と終了コード 0 は、`stop-request` のシナリオが確認します。Windows では、テストの実行ファイルとブリッジが共有するコンソールがないと Ctrl+Break を送信できないので、このシナリオはスキップされます（`device-lost` のシナリオは、ブリッジが自分で終わるので、どこでも検査します）。
 - `ExternalPortAdapter` で XL のチャネルにプロトコルスタックを載せた動作（自動テストは `ExternalCanPort` のフェイクに対してだけです）
+- `vehicle_sil_launch` の設定ファイルからブリッジを起こす形。自動の試験は、フェイクのドライバーで `--describe` を確かめます（`tests/vector_xl/xl_bridge_it_launcher` の `describe`）。設定ファイルからの実行は、Ethernet ブリッジでだけ確かめています（`ethernet_bridge.integration.pcap-launcher`）。

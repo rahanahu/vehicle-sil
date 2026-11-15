@@ -254,7 +254,7 @@ What you can and cannot write in `command`:
 | Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--map-network`, `--j1939-node`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (the error `launcher-argument`). Write `--map-network` in `network_names` (see [Matching network names](#matching-network-names-network_names)) and `--j1939-node` in `j1939_nodes` (see [Matching J1939 addresses and NAMEs](#matching-j1939-addresses-and-names-j1939_nodes)). |
 | `--no-control` | Allowed. The ECU does not expose its variables. |
 | `--silkit-config <file>` | Allowed. Passes a SIL Kit configuration file to the ECU. |
-| `required: false` | Not allowed (the error `not-required-ecu`). |
+| `required: false` | Not allowed (the error `not-required-ecu`), except with `role: bridge`. |
 
 **`--no-control`**: The `--describe` of the check gets the same argument, so `control` in the `--describe` output is `null`, and `run` does not wait for the ECU's hello (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)).
 
@@ -264,7 +264,7 @@ What you can and cannot write in `command`:
 - SIL Kit does not accept it.
 - It has a `ParticipantName` that differs from the participant name.
 
-**`required: false`**: Not allowed, because an ecu_main executable joins as a coordinated participant, and SIL Kit does not start a coordinated participant that is not required. To run without an ECU, write `enabled: false` or pass `--disable <participant name>` (see [Disabling a participant](#disabling-a-participant-enabled---disable---enable)).
+**`required: false`**: Not allowed, because an ecu_main executable joins as a coordinated participant, and SIL Kit does not start a coordinated participant that is not required. To run without an ECU, write `enabled: false` or pass `--disable <participant name>` (see [Disabling a participant](#disabling-a-participant-enabled---disable---enable)). A `role: bridge` participant may have it: a bridge joins on its own, in real time (see [Test participants and bridges](#test-participants-and-bridges-role)).
 
 ### Other executables (`describe: false`)
 
@@ -505,6 +505,17 @@ The check treats these participants as bridges:
 | Has no `role: bridge` participant | The check treats each `describe: false` participant without `role` as "may be a bridge" (the warning text makes the same distinction). |
 
 If you write `role: ecu` or `role: test` for a tool that is not a bridge, the check no longer treats it as a possible bridge.
+
+The bridges of this repository (`vehicle_sil_ethernet_bridge`, `vehicle_sil_vector_xl_bridge`) answer `--describe` and take the arguments that `run` adds, so you write them with `describe: true` (the default) and `required: false`. Their `--describe` reports the network of `--network`, so the check knows what they relay:
+
+```yaml
+  - name: EthBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, packet, --interface, eth1, --all-frames]
+```
+
+For the arguments, see "Starting from a configuration file" in [ethernet-bridge.md](ethernet-bridge.md#starting-from-a-configuration-file) and [bridges.md](bridges.md#starting-from-a-configuration-file).
 
 The reason for the warning: a bridge sends what is sent on the SIL Kit side to the real bus. So the transmissions of a test participant with a J1939 node, in particular its address claim (Address Claimed), also go out on the real bus, and the participant competes for its address with a real ECU that has the same address. To fix this, either make the participant only receive on that network (create no J1939 node), or disable the bridge in the runs that use the participant (`--disable <bridge>`, or `enabled: false` in a variant). The `--describe` output does not show that a participant sends raw CAN, so the check does not warn about such participants.
 

@@ -47,6 +47,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
   SCENARIOS
     bad-channel
     bad-usage
+    describe
     device-lost
     echo-roundtrip
     echo-roundtrip-physical

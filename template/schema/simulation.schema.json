@@ -98,7 +98,7 @@
           },
           "required": {
             "type": "boolean",
-            "description": "Whether the simulation waits for this participant. false only with describe: false (a tool that only listens, such as a logger). At least one participant that is not left out must be required.",
+            "description": "Whether the simulation waits for this participant. false only with describe: false (a tool that only listens, such as a logger) or with role: bridge (a bridge joins on its own, in real time). At least one participant that is not left out must be required.",
             "default": true
           },
           "enabled": {

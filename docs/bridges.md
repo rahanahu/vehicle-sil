@@ -77,7 +77,8 @@ If something goes wrong, find the symptom in this table.
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--participant <name>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
 | Argument | Meaning |
@@ -88,7 +89,10 @@ vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <vi
 | `--xl-channel <n>` | 1-based channel number among the CAN channels of that target (required). |
 | `--bitrate <bit/s>` | Sets the bit rate of the XL channel, 15000–1000000 bit/s (the range of `xlCanSetChannelBitrate`). |
 | `--network <name>` | Name of the SIL Kit CAN network (default `J1939_CAN1`). |
-| `--participant <name>` | Participant name (default `VectorXlBridge`). |
+| `--name <name>` | Participant name (default `VectorXlBridge`). |
+| `--participant <name>` | The same as `--name` (give one of them). |
+| `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |
+| `--describe` | Writes what the bridge is as JSON to stdout and exits (see "[Starting from a configuration file](#starting-from-a-configuration-file)"). |
 | `--rx-queue-size <n>` | Size of the XL receive queue (a power of two, 16–32768, default 16384). |
 | `--tx-timeout-ms <ms>` | Drops new frames while the bus is congested (100–60000; see "[Counting frames on the bus (transmit receipts)](#counting-frames-on-the-bus-transmit-receipts)"). |
 | `--bus-off-restart-ms <ms>` | Reactivates the channel when bus-off lasts this long (100–60000, or 0 to disable; default 1000; see "[Bus monitoring while running](#bus-monitoring-while-running)"). |
@@ -101,15 +105,34 @@ Notes on the arguments:
 - `--bitrate` needs init access. If another application holds init access, startup fails; the bridge does not silently run at a different bit rate. Without `--bitrate`, the bridge leaves the channel configuration as it is.
 - With `--rx-queue-size`, the driver actually holds 1 event fewer than the value you give.
 - `--tx-timeout-ms` and `--bus-off-restart-ms` take effect only with init access (`--bitrate`). If you give them without init access, the bridge prints a `warning:` at startup.
-- On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--participant` and `--network` can therefore contain non-ASCII characters.
+- On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--name` and `--network` can therefore contain non-ASCII characters.
 
 You choose the channel and the device on this command line when the bridge starts. The Control API and the configuration file (`vehicle_sil_launch`) have no setting to choose them. If you add a way to choose them to the Control API, the configuration file or the GUI, use the same model as the command line (`vehicle_sil::vector_xl::XlTarget` and the channel number).
+
+## Starting from a configuration file
+
+`vehicle_sil_launch` can start the bridge with the other participants of a simulation. Write it in the configuration file like an ECU (`describe: true`, the default), with `role: bridge` and `required: false`:
+
+```yaml
+participants:
+  - name: XlBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_vector_xl_bridge, --network, VehicleCAN, --xl-target, physical, --xl-channel, "1"]
+```
+
+The network (`VehicleCAN`) must be in `networks` with `kind: can`. `check` adds `--describe --name XlBridge`, and `run` adds `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` (so `registry_uri` may have port 0).
+
+- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0, without opening the XL driver or connecting to SIL Kit. `--registry-uri` is not needed; if it is given, it is not used.
+- The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "can"` and `"use": "raw"`, no variables, `"control": null` and an empty `features` list. `check` therefore knows which network the bridge carries (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)).
+- The executable needs `vxlapi64.dll` to start at all, also for `--describe`: Windows loads it with the executable (the build copies it next to the executable when it finds it).
+- `required: false`: the simulation does not wait for the bridge (see "[Startup order](#startup-order)"), and when the run ends, the launcher asks the bridge to stop.
 
 ## Exit codes
 
 | Exit code | Meaning |
 |---|---|
-| 0 | Normal end on a stop request (Ctrl+C, Ctrl+Break, SIGTERM, closing the console window). |
+| 0 | Normal end on a stop request (Ctrl+C, Ctrl+Break, SIGTERM, closing the console window). Also 0 when `--list-channels`, `--describe` or `--help` finishes. |
 | 1 | Failure while running. |
 | 3 | Failure during setup (XL driver, channel selection, SIL Kit). |
 | 4 | Argument error. |
@@ -455,3 +478,4 @@ The following are not yet verified with Vector's driver and hardware:
 - The behavior when a channel running in CAN FD mode is opened with a classic CAN port (`XL_INTERFACE_VERSION`)
 - The round-trip end-to-end test in `tests/vector_xl/xl_bridge_it_launcher` kills the bridge on Windows, so it does not check the statistics and the exit code. The `stop-request` scenario checks the statistics line and exit code 0 after a stop request (SIGTERM on POSIX, Ctrl+Break to the process group on Windows). On Windows, Ctrl+Break can only be sent when the test executable and the bridge share a console, so this scenario is skipped there (the `device-lost` scenario is checked everywhere, because the bridge ends on its own).
 - A protocol stack placed on an XL channel with `ExternalPortAdapter` (the automated tests run only against a fake `ExternalCanPort`)
+- Starting the bridge from a configuration file of `vehicle_sil_launch`. The automated tests check `--describe` with the fake driver (`describe` in `tests/vector_xl/xl_bridge_it_launcher`); a run from a configuration file is checked with the Ethernet Bridge only (`ethernet_bridge.integration.pcap-launcher`).

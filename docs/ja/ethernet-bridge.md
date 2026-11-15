@@ -93,13 +93,17 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ```
 vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]
 vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> --backend <tap|packet|npcap|pcap> --interface <name> [options]
+vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name> [options]
 ```
 
 | 引数 | 意味 |
 |---|---|
 | `--registry-uri <uri>` | SIL Kit の registry のアドレスです（必須）。 |
 | `--network <name>` | SIL Kit の Ethernet ネットワークの名前です（必須。既定の名前はありません）。 |
-| `--participant <name>` | participant の名前です（既定 `EthernetBridge`）。 |
+| `--name <name>` | participant の名前です（既定 `EthernetBridge`）。 |
+| `--participant <name>` | `--name` と同じです（どちらか 1 つを書きます）。 |
+| `--start-timeout-ms <ms>` | SIL Kit で participant が Running になるのを待つ上限です（1〜10^12、既定 15000）。なれなければ終了コード 3 で終わります。 |
+| `--describe` | ブリッジが何かを JSON で標準出力に書いて終わります（「[設定ファイルから起こす](#設定ファイルから起こす)」を参照）。 |
 | `--backend <tap\|packet\|npcap\|pcap>` | 外部のインターフェースの開き方です（必須。「[バックエンド](#バックエンド)」）。 |
 | `--interface <name>` | 接続するインターフェースです（必須。「最初に見つかったもの」は選びません）。 |
 | `--ethertype <hex>,...` | 通す EtherType です（`0x` で始まる 16 進。繰り返すと追加されます）。 |
@@ -120,7 +124,7 @@ vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name>
 - `--backend` の `tap` は PC の中の仮想のインターフェース、ほかは物理のアダプターにフレームが出うるものとして扱います。`tap`、`packet`、`pcap` は Linux、`npcap` は Windows で使えます。
 - `--max-frame-bytes` の下限が 60 なのは、SIL Kit が 60 バイトより短いフレームを渡さないためです。
 - `--list-interfaces` に `--backend npcap` か `--backend pcap` を付けると、pcap のライブラリが返す一覧を表示します。
-- Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--participant`、`--network`、`--interface` に ASCII 以外の文字を使えます。
+- Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます。そのため、`--name`、`--network`、`--interface` に ASCII 以外の文字を使えます。
 
 物理のアダプターにフレームが出うる `--backend`（`packet`、`npcap`、`pcap`）では、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）の指定が必須です。指定がないと次のエラーになります。
 
@@ -130,11 +134,37 @@ vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name>
 
 引数は、`vehicle_sil/ethernet_bridge/bridge_options.hpp` の `parse_bridge_options()` が解釈します。エラーは `BridgeUsageError` で、何がエラーかと直し方を示します。使い方の全文は `bridge_usage()` が返します。
 
+## 設定ファイルから起こす
+
+`vehicle_sil_launch` は、シミュレーションのほかの participant といっしょにブリッジを起こせます。設定ファイルには ECU と同じように（`describe: true`、既定）書き、`role: bridge` と `required: false` を付けます。
+
+```yaml
+participants:
+  - name: EthBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, npcap,
+              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01", --promiscuous]
+```
+
+Linux では `--backend packet`（か `pcap`）とネットワークインターフェースの名前を書きます。ネットワーク（`ETH_EXT`）は、`networks` に `kind: ethernet` で書きます。
+
+| コマンド | `vehicle_sil_launch` が足す引数 |
+|---|---|
+| `check` | `--describe --name EthBridge` |
+| `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
+
+- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がそれを報告します）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、終了コード 0 で終わります。インターフェースを開かず、pcap のライブラリを読み込まず、SIL Kit にもつながないので、Npcap や libpcap のない PC でも `check` が通ります。`--registry-uri` は要りません（書いてあっても使いません）。
+- JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "ethernet"`、`"use": "ethernet"`、`"mac": null`）、空の変数、`"control": null`、空の `features` が入ります。
+- そのため `check` は、ブリッジがどのネットワークを中継するかを知っています。`networks` にないネットワークは、ECU と同じに報告します（`unknown-network`）。自分の MAC アドレスを持たないブリッジは、注記 `ethernet-mac-unknown` の対象になりません。
+- URI はランチャーが渡すので、`registry_uri` のポートは 0 でもかまいません。
+- `required: false`: シミュレーションはブリッジを待たず、実行が終わるとランチャーがブリッジに止める要求を送ります（ブリッジが参加する前に送られたフレームについては、[bridges.md](bridges.md#起動の順序) の「起動の順序」）。
+
 ## 終了コード
 
 | 終了コード | 意味 | 出力 |
 |---|---|---|
-| 0 | 止める要求で止まりました。`--list-interfaces`、`--help` が終わったときも 0 です。 | 統計の 1 行と `stopped` |
+| 0 | 止める要求で止まりました。`--list-interfaces`、`--describe`、`--help` が終わったときも 0 です。 | 統計の 1 行と `stopped` |
 | 1 | 実行中の失敗です。 | `FAIL: <理由>` |
 | 3 | 準備の失敗です（この OS で使えないバックエンド、インストールされていない pcap のライブラリ、インターフェース、SIL Kit）。 | `FAIL setup: <理由>` |
 | 4 | 引数のエラーです。 | `error: <理由>` |
@@ -900,7 +930,7 @@ Linux:
 
 そのほか:
 
-- ランチャーの設定ファイル（`describe: false`、`required: false`）から起動する形。
+- Windows の本物の Npcap、Linux の物理の NIC で、設定ファイルから起こす形。自動の試験 `ethernet_bridge.integration.pcap-launcher` は、フェイクの pcap のライブラリで、設定ファイルから起こします。
 - EtherType の位置、VLAN の TPID、最大長は、「[フィルター](#フィルターframefilter)」の注のとおり、規格では確認していません。
 
 ## テスト
@@ -950,6 +980,8 @@ Linux:
 - 関数が 1 つ足りないバージョンが 2 つあります（古いバージョンと、`pcap_open` のないバージョン）。
 - `ethernet_bridge.integration.pcap-*` は、インストールする実行ファイルと同じ中身で、ライブラリを読み込む場所だけをフェイクのライブラリに変えたもの（`vehicle_sil_ethernet_bridge_on_fake_pcap`）を使います。
 - `ethernet_bridge.integration.pcap-*` が確認するのは、往復と統計、一覧、ライブラリがない・古いときのメッセージ（3。SIL Kit に接続する前）、ないデバイス（3）、読み取りの失敗（1）です。
+- `pcap-describe` は、ライブラリがなくても `--describe` が答えることを確かめます。
+- `pcap-launcher` は、ブリッジ（`role: bridge`、`required: false`、`--promiscuous`）と、そのネットワークの ECU（`eth_bridge_it_ecu.cpp`）を書いた設定ファイルを、`registry_uri` のポート 0 で作ります。`check` が所見なしで通り、ブリッジをそのネットワークに挙げること、ECU のフレームがブリッジを通って外に出て、デバイスの応答が ECU に戻ること（シナリオで確かめる）、実行が終わるとブリッジが終了コード 0 で終わることを確かめます。
 
 ### `ethernet_bridge.netns.*`
 

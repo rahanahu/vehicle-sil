@@ -15,13 +15,25 @@
 
 namespace vehicle_sil::vector_xl {
 
+/// The longest --start-timeout-ms: the longest that vehicle_sil_launch gives (kMaxMillis of
+/// vehicle_sil/ecu/executable.hpp).
+inline constexpr std::uint64_t kMaxStartTimeoutMs = 1'000'000'000'000;
+/// How long the bridge waits for its participant to run in SIL Kit without --start-timeout-ms.
+inline constexpr std::chrono::milliseconds kDefaultStartTimeout{15000};
+
 struct BridgeOptions
 {
     bool help = false;
     bool list_channels = false;
+    /// --describe: write the bridge's description and exit, without the XL driver or SIL Kit;
+    /// --registry-uri is not needed.
+    bool describe = false;
 
     std::string registry_uri;
+    /// --name, or --participant (the same option).
     std::string participant = "VectorXlBridge";
+    /// --start-timeout-ms: how long ParticipantRuntime::start() waits for Running.
+    std::chrono::milliseconds start_timeout = kDefaultStartTimeout;
     std::string network = "J1939_CAN1";
 
     XlTarget target = XlTarget::Virtual;

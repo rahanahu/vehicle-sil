@@ -85,7 +85,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `step-not-checked` | Note | A `describe: false` participant has `step_ms`. | Delete `step_ms`, or set `describe: true` if it is an ecu_main executable. |
 | `executable` | Error | The executable does not exist (a name without a separator is not on `PATH` either), is a directory or a batch file, or has no execute permission. | Correct the path in `command`, or put the executable there. |
 | `found-on-path` | Note | The executable was found on `PATH` (the note shows where). | Check that the location shown is the executable you meant. |
-| `not-required-ecu` | Error | A `describe: true` participant has `required: false`. | Delete `required: false` (to run without that ECU, use `enabled: false` or `--disable`). |
+| `not-required-ecu` | Error | A `describe: true` participant that is not `role: bridge` has `required: false`. | Delete `required: false` (to run without that ECU, use `enabled: false` or `--disable`). |
 | `no-required-participant` | Error | Every participant that is not disabled has `required: false`, or all participants are disabled (the simulation has no participant to wait for). | Enable at least one required (`required: true`) participant. |
 | `describe-start` | Error | The executable cannot be started. | Check that the file is an executable that runs on this computer. |
 | `describe-timeout` | Error | `--describe` does not end in time. | Fix what the ECU waits for during construction (a connection, input), or increase `--describe-timeout-ms`. |
@@ -177,7 +177,7 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 
 **`ethernet-duplicate-mac`**: The finding message gives the participants and the address. In a setup that uses the same address on purpose (a standby and an active unit, for example), keep `eth::ChannelOptions::mac` on one participant and do not pass it on the others. Only the note `ethernet-mac-unknown` then remains. A channel without `mac` cannot use `Accept::Addressed`, however. In SIL Kit, the order of frames sent in the same step can change from run to run.
 
-**`ethernet-mac-unknown`**: Reported when an ECU does not pass its address to `ethernet()`. The note tells you that the check cannot confirm that the addresses do not overlap.
+**`ethernet-mac-unknown`**: Reported when an ECU does not pass its address to `ethernet()`. The note tells you that the check cannot confirm that the addresses do not overlap. A `role: bridge` participant that reports no address (a bridge carries the frames of others) is left out of this note and of `ethernet-duplicate-mac`.
 
 **`participant-manual`**: If `registry_uri` is not a loopback address, the text of this note tells you to start the participant with the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` set. The variable is needed only when you start the participant on the same computer as the launcher, with a URI that has a loopback address. When you start it on another computer, do not set it (see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual)). The note text does not distinguish which computer you start it on.
 
