@@ -43,6 +43,7 @@ vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-si
 
 ```sh
 python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
+# 続けて、表示された PATH の行を実行する（コマンド プロンプトか PowerShell から実行したときは、自分のシェルの名前の行）
 ```
 
 `get_tools.py` は、次の順に処理します。
@@ -57,7 +58,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 
 ダウンロードする URL とバージョンは、`get_tools.py` の `VERSION` と `URL` に書いてあります。最新のバージョンを自動でダウンロードすることはありません。
 
-最後に表示されたコマンド（Linux では `export PATH="…/bin:$PATH"`）を実行します。このコマンドは、シェルを開くたびに実行します。
+`put their bin directory on PATH` の後に表示された行を実行します。この行は、シェルを開くたびに実行します。Linux と MSYS2 のシェルでは、`export PATH=...` の 1 行が表示されます。Windows でコマンド プロンプトか PowerShell から実行したときは、その 2 つの行が表示されるので、自分のシェルの名前の行を実行します。
 
 ### 確認
 
@@ -105,7 +106,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示されたコマンドを実行します。 |
+| `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された、自分のシェルの PATH の行を実行します。 |
 | Windows で、ECU が何も表示せずに終了する | ECU は MinGW のランタイムの DLL（`libstdc++-6.dll` など）を UCRT64 の `PATH` から読み込みます。 | `vehicle_sil_launch` と `vehicle-sil-gui` を UCRT64 シェルから起動します。 |
 | `check` が `version-mismatch` を表示する | ECU とツールで、vehicle-sil のバージョンが違います。 | 下の「vehicle-sil のバージョンを上げる」で、バージョンをそろえます。 |
 

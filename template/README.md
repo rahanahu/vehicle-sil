@@ -43,6 +43,7 @@ The template and the tools exist only for released versions. A copy of `template
 
 ```sh
 python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
+# then run the PATH line that it prints (from Command Prompt or PowerShell, the line named after your shell)
 ```
 
 `get_tools.py` does the following, in order:
@@ -57,7 +58,7 @@ python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
 
 `VERSION` and `URL` in `get_tools.py` set the version and the download URL. It never downloads the latest version on its own.
 
-Run the command that it prints last (on Linux, `export PATH="…/bin:$PATH"`). Run it again in every new shell.
+Run the line that it prints after `put their bin directory on PATH`, and run it again in every new shell. On Linux and in an MSYS2 shell, it prints one `export PATH=...` line. Run from Command Prompt or PowerShell on Windows, it prints a line for each of the two: run the one named after your shell.
 
 ### Verify the tools
 
@@ -105,7 +106,7 @@ Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` is not found | You are in a new shell and have not run the command that adds the tools to `PATH`. | Run `python3 get_tools.py` again, then run the command it prints. |
+| `vehicle_sil_launch` is not found | You are in a new shell and have not run the command that adds the tools to `PATH`. | Run `python3 get_tools.py` again, then run the PATH line that it prints for your shell. |
 | On Windows, an ECU exits without printing anything | ECUs load the MinGW runtime DLLs (`libstdc++-6.dll` and others) from the `PATH` of UCRT64. | Start `vehicle_sil_launch` and `vehicle-sil-gui` from the UCRT64 shell. |
 | `check` prints `version-mismatch` | The ECUs and the tools use different versions of vehicle-sil. | Make the versions match, as described in "Upgrade vehicle-sil" below. |
 
