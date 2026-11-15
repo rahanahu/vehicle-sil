@@ -94,7 +94,7 @@ Top-level keys:
 | `variants` | | Variants (variant name → its differences from the common part; see [Variants](#variants-variants---variant)) | The configuration file has no variants |
 | `params` | | Values of scenario parameters (name → value; see [Scenario parameters](#scenario-parameters-params---param)) | |
 
-Keys of each element of `networks`. List every network that the ECUs use in `networks`.
+Keys of each element of `networks` (list every network that the ECUs use):
 
 | Key | Required | Value |
 |---|---|---|
@@ -140,14 +140,14 @@ For the steps to let participants join from other computers, see the guide [Run 
 |---|---|
 | Omitted, running as fast as possible | 10. |
 | Omitted, running as fast as possible, and `stop_at_ms` is not a multiple of 10 | The greatest common divisor of `stop_at_ms` and 10. |
-| Omitted, with a set speed | In addition, the greatest common divisor with the step sizes of the ECUs (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
+| Omitted, with a set speed | As above, further reduced to the greatest common divisor with the step sizes of the ECUs (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
 | Written | Must divide `stop_at_ms` (otherwise the error `value`). |
 
 **`late_tolerance_ms`**: A time step that is late by more than this value counts as a late time step.
 
 **`participants[].name`**: The name must not be empty, must fit on one line (no control characters) and must not start with `-`. `SimulationController` (the participant name of vehicle-sil's controller) is not allowed. For the check, the name is passed to ecu_main executables with `--name`.
 
-**`participants[].command`**: With no arguments, a single string is enough. It is not split at spaces.
+**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces.
 
 **`participants[].step_ms`**: Checked only if written.
 
@@ -167,7 +167,7 @@ For the steps to let participants join from other computers, see the guide [Run 
 | A key written twice | An error. |
 | Integers | Write them without quotes (`"5000"` is a string, so it is an error). |
 | Booleans | `true` or `false` without quotes (`True`, `TRUE`, `False` and `FALSE` are also read). |
-| `yes`, `on` and similar | An error as a boolean. |
+| `yes`, `on` and similar | An error where a boolean is expected. |
 
 `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri`, `speed`, `time_step_ms` and `late_tolerance_ms` are values for running the simulation. `check` checks only their form (and the combination of `stop_at_ms` and `time_step_ms`).
 
@@ -205,7 +205,7 @@ When the executable is found on `PATH`, the check reports its location in the no
 
 ### Braces and placeholders
 
-In `command`, only the form `{word}`, letters, digits and `_` between `{` and `}`, is special. Other braces are passed as they are: the JSON argument `'{"a":{"b":1}}'` does not change by a single byte.
+In `command`, only `{word}` (letters, digits and `_` between `{` and `}`) is special. Other braces are passed as they are: the JSON argument `'{"a":{"b":1}}'` does not change by a single byte.
 
 | What you write | Handling |
 |---|---|
@@ -221,7 +221,7 @@ In `command`, only the form `{word}`, letters, digits and `_` between `{` and `}
 - An unknown `{word}` is an error so that typos are caught.
 - `{{word}}` works the same way in `describe: true` arguments and in the executable path.
 - In YAML, put `{...}` in quotes (`"{registry_uri}"`).
-- Without quotes, it becomes a YAML mapping and an error (the finding message says how to fix it).
+- Without quotes, YAML reads it as a mapping, which is an error (the finding message says how to fix it).
 - Also quote a value that starts with `*` or `&`. Without quotes, it is an alias or an anchor.
 
 ### ecu_main executables (`describe: true`)
@@ -233,10 +233,12 @@ In `command`, only the form `{word}`, letters, digits and `_` between `{` and `}
 | The check | `--describe --name <participant name>` |
 | `run` | `--name <participant name> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. The launcher is the one that waits for the start and names the participants that did not join; the limit on the ECU side is for the case where the launcher has gone away. In the following 2 kinds of run, the wait for the ECU to start has no limit, so `<ms>` is 10^12 (`1000000000000`). In these 2 kinds of run too, the launcher finds a participant that does not start, with `start_timeout_ms`. In a run with a manual participant, it counts per interval, as the table in "[How `run` waits](#how-run-waits)" below shows. In a run that pauses before time 0, it counts from when the launcher starts waiting for participants until the pause, does not count during the pause, and counts a new `start_timeout_ms` from when the run moves on.
+`<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. It is the launcher that waits for the start and names the participants that did not join; the limit on the ECU side covers the case where the launcher has gone away. In the following 2 kinds of run, the ECU's wait for the start has no limit, so `<ms>` is 10^12 (`1000000000000`):
 
 - A run with a required participant that you start yourself.
 - A run with `--control` and `--start-paused`, which pauses before the step at time 0.
+
+In these 2 kinds of run too, the launcher uses `start_timeout_ms` to detect a participant that does not start. In a run with a manual participant, it counts per phase, as the table in "[How `run` waits](#how-run-waits)" below shows. In a run that pauses before time 0, it counts from when the launcher starts waiting for participants until the pause, stops counting during the pause, and counts a fresh `start_timeout_ms` from when the run continues.
 
 What you can and cannot write in `command`:
 
@@ -262,7 +264,7 @@ What you can and cannot write in `command`:
 | Item | Rule |
 |---|---|
 | Check | Not checked. A note says that the name, step size and networks cannot be checked. |
-| `step_ms` | Not checked even if written, so a note says so. |
+| `step_ms` | Not checked even if written; a note says so. |
 | Start | `run` starts the executable with the arguments as written (with the placeholders replaced). |
 | Participant with `required: true` (the default) | Must join the registry at `{registry_uri}` under its participant name, with the coordinated lifecycle. The simulation waits for it. |
 | A tool that does not take part in the simulation (one that only records logs, for example) | Set `required: false`. |
@@ -290,7 +292,7 @@ A disabled participant is handled as follows:
 | Entries with the same name | An error even when disabled, because otherwise it is unclear which one `--disable <name>` means. |
 | Note | `participant-disabled` for each participant. It does not fail the check, even with `--strict`. |
 
-- Because the entry is checked, no error appears for the first time when you enable the participant again.
+- Because the entry is checked, enabling the participant again never brings up errors for the first time.
 - A participant whose `enabled` is not a boolean is neither checked nor started, because it is unclear whether it is disabled. It is an error, so the check fails.
 - To replace an ECU with another one, give the other one a different name, or use a separate configuration file.
 - The note keeps a result with some participants disabled from being mistaken for a result with all of them.
@@ -310,7 +312,7 @@ The remaining participants are checked as follows:
 | A name not in the configuration file, and the file is readable and has no errors | A usage error (exit code 4). The message lists the valid names and every name that does not match. |
 | A name not in the configuration file, and the file is unreadable (exit code 3) or has errors (exit code 1) | The errors of the file are reported first, and the names that do not match are not mentioned. |
 
-The names that do not match are not mentioned because an entry whose name could not be read may be the reason. Meanwhile, the names that are in the configuration file still take effect.
+The names that do not match are not mentioned because an entry whose name could not be read may be the reason they do not match. The names that are in the configuration file still take effect.
 
 <!-- vehicle_sil_launch check simulation.yaml --disable Dashboard -->
 ```text
@@ -354,7 +356,7 @@ The arguments are quoted for the shell you paste them into:
 - On Windows, for the Command Prompt (cmd.exe), with `\` as the separator in the executable path.
 - In the cmd.exe form, the arguments are quoted by the rules the C runtime uses to read a command line, and arguments that contain `&` `|` `<` `>` `^` are also enclosed in `"`.
 - cmd.exe expands `%...%` even inside `"`, so edit arguments that contain `%` before you paste them.
-- To paste into PowerShell, add `&` before the executable in `"`, and edit arguments that contain `$` or `` ` ``.
+- To paste into PowerShell, add `&` before the quoted executable, and edit arguments that contain `$` or `` ` ``.
 
 If `registry_uri` is not written, a run with a required manual participant starts the registry at `silkit://127.0.0.1:8500`. The command is the same in every run, so you can set up the debugger configuration once and reuse it. If another program uses that port, `run` fails with a `setup` error; write another port in `registry_uri`.
 
@@ -380,9 +382,9 @@ In a run with a required manual participant, the time limit for the start is spl
 | 3. After that, until all participants reach the first step | `start_timeout_ms`. |
 
 - In phase 1, if a participant that `run` starts does not join within `start_timeout_ms`, the result is `not-joined`, as in a run without manual participants.
-- When all required participants that are not manual are there, `run` prints the line `waiting for <name> to join (manual): ...` once.
+- When all required participants that are not manual have joined, `run` prints the line `waiting for <name> to join (manual): ...` once.
 - In phase 3, if a participant that `run` started hangs during initialization, the result is a `simulation-start` error, as in a run without manual participants.
-- In every phase, Ctrl+C, the `stop` command and `Stop` from the Control Server stop the run (exit code 130).
+- In every phase, Ctrl+C, the `stop` command and a `Stop` call through the Control Server stop the run (exit code 130).
 - `run` does not wait for a manual participant with `required: false`. It only prints the command.
 
 In a run with a required manual participant, `--timeout-ms` counts from the moment `run` starts to wait for the participants. It covers the wait for them to join, the wait for the start and the run itself. If it runs out before the start, the result is a `timeout` error, and the message names what `run` was waiting for: participants that have not joined, or participants that have not reached the first step. To run a configuration file with `manual: true` in CI, pass `--timeout-ms`, so that the run ends even if nobody starts the participant.
@@ -401,7 +403,7 @@ That participant does not start. `run` keeps waiting for the participants named 
 
 | Item | Manual participant |
 |---|---|
-| Detecting a failure | `run` does not watch the process, so it detects that the participant left the simulation (the connection was lost, or the participant is in the Error state) (`participant-failed`). |
+| Detecting a failure | `run` does not watch the process; it detects that the participant has left the simulation (the connection was lost, or the participant is in the Error state) and reports `participant-failed`. |
 | Output | Goes where you started the participant (a terminal, a debugger). |
 | While it is stopped in a debugger | Virtual time does not advance. |
 | With a set speed | The time it is stopped counts as lateness (`behind-real-time`). |
@@ -419,7 +421,7 @@ That participant does not start. `run` keeps waiting for the participants named 
 | A participant does not leave (it is stopped in a debugger, for example) | `run` says so and ends. This is not an error. |
 | `run` was killed (SIGKILL, a crash, the console closed on Windows) | Participants that you started yourself may remain. End them yourself. |
 
-- While `run` waits for the participants to leave, pressing Ctrl+C or sending the `stop` command once more cuts the wait short.
+- While `run` waits for the participants to leave, a second Ctrl+C or `stop` command cuts the wait short.
 - If `run` was killed before the start, the remaining participants keep waiting for the start.
 - You can stop `run` (Ctrl+C, the `stop` command) while a participant is stopped in a debugger.
 - `run` then waits as described above, prints the result and ends.
@@ -470,7 +472,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 ### Test participants and bridges (`role`)
 
-`role` tells the check what a participant is for. Only the rules and the output of the check use it. `run` starts every participant and lets it join in the same way, whatever the value. The role is neither in the `--describe` JSON nor in the communication of the simulation.
+`role` tells the check what a participant is for. Only the rules and the output of the check use it. `run` starts every participant and lets it join in the same way, whatever the value. The role appears neither in the `--describe` JSON nor in the simulation's communication.
 
 | Value | Meaning | What changes in the check |
 |---|---|---|
@@ -489,15 +491,15 @@ The check treats these participants as bridges:
 | `role: bridge` with `describe: false` | The check cannot tell which networks it relays, so it assumes that it may relay any network. |
 | Has no `role: bridge` participant | The check treats each `describe: false` participant without `role` as "may be a bridge" (the warning text makes the same distinction). |
 
-Write `role: ecu` or `role: test` for a tool that is not a bridge, and the check no longer treats it as a possible bridge.
+If you write `role: ecu` or `role: test` for a tool that is not a bridge, the check no longer treats it as a possible bridge.
 
-The reason for the warning: a bridge sends what is sent on the SIL Kit side to the real bus. So the transmissions of a test participant with a J1939 node, in particular its address claim (Address Claimed), also go out on the real bus, and the participant competes for its address with a real ECU that has the same address. To fix this, either make the participant only receive on that network (create no J1939 node), or disable the bridge in the runs that use the participant (`--disable <bridge>`, or `enabled: false` in a variant). The check cannot see participants that send raw CAN in the `--describe` output, so it does not warn about them.
+The reason for the warning: a bridge sends what is sent on the SIL Kit side to the real bus. So the transmissions of a test participant with a J1939 node, in particular its address claim (Address Claimed), also go out on the real bus, and the participant competes for its address with a real ECU that has the same address. To fix this, either make the participant only receive on that network (create no J1939 node), or disable the bridge in the runs that use the participant (`--disable <bridge>`, or `enabled: false` in a variant). The `--describe` output does not show that a participant sends raw CAN, so the check does not warn about such participants.
 
 Other rules:
 
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
-- Variants (`variants`) cannot change it, as with `describe` and `required`.
+- A variant (`variants`) cannot change it, as with `describe` and `required`.
 
 ### Matching variable names and values (`variables`)
 
@@ -580,7 +582,7 @@ Writes are rejected so that a value meant for the common name is not applied to 
 
 ### Variants (`variants`, `--variant`)
 
-When the executables or variable maps differ by variant, write the common part in `participants` and the differences of each variant in `variants`. `check` and `run` lay the differences of the variant selected with `--variant <name>` over the common part, then check and run the result. `test` runs all variants in turn (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). Scenarios use only the common names, so the same scenario works for every variant.
+When the executables or variable maps differ by variant, write the common part in `participants` and the differences of each variant in `variants`. `check` and `run` apply the differences of the variant selected with `--variant <name>` on top of the common part, then check and run the result. `test` runs all variants in turn (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). Scenarios use only the common names, so the same scenario works for every variant.
 
 ```yaml
 participants:
@@ -607,9 +609,9 @@ variants:
 | `variants.<variant>` | The differences of that variant |
 | `variants.<variant>.participants.<participant>` | How a participant of the common part differs in this variant |
 | `…<participant>.command` | Executable and arguments (replaces the whole common `command`) |
-| `…<participant>.variables` | Variable map (laid over the common `variables`, one mapping at a time) |
+| `…<participant>.variables` | Variable map (merged into the common `variables`, one mapping at a time) |
 | `…<participant>.enabled` | `true` or `false` (replaces the common `enabled`) |
-| `variants.<variant>.params` | Parameters (laid over the common `params`, name by name) |
+| `variants.<variant>.params` | Parameters (merged into the common `params`, name by name) |
 
 - If `variants.<variant>` is `{}` (or has no value), the variant is the common part as is.
 - A variant name must not be empty, must fit on one line and must not start with `-`.
@@ -643,9 +645,9 @@ Other rules:
 
 - When the file is read, the form of every variant is checked, including the variants that are not selected.
 - Only the selected variant is checked against the executables.
-- `--disable`, `--enable` and `--manual` apply after the variant is laid over.
+- `--disable`, `--enable` and `--manual` apply after the variant is applied.
 - `check --json` includes `variant` (the selected variant) and `variants` (all names).
-- `participants` in `check --json` shows the participants after the variant is laid over.
+- `participants` in `check --json` shows the participants after the variant is applied.
 
 ### Scenario parameters (`params`, `--param`)
 
@@ -703,11 +705,11 @@ The usage above shows which commands accept each option. The Condition column of
 | `--events` | `run` only | Writes the progress and the result as events ([Programmatic use](simulation-events.md); not with `--json`). |
 | `--events-stall-ms <ms>` | `run` with `--events` only | If writing events makes no progress at all for this long, the reader is treated as gone (an integer from 1000 to 86400000; default 30000). |
 | `--stdin-commands` | `run` only | Reads commands from stdin (the end of stdin is also a stop request). |
-| `--start-paused` | `run` with `--stdin-commands` or `--control` only | When all participants are there, pauses at virtual time 0 and waits for the `resume` or `step` command. |
+| `--start-paused` | `run` with `--stdin-commands` or `--control` only | When all participants have joined, pauses at virtual time 0 and waits for the `resume` or `step` command. |
 | `--control <address>` | `run` only, and only in builds with the Control Server | Starts a Control API (gRPC) server (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher)). |
 | `--control-credentials <file>` | `--control` only | A file of tokens and roles (one `<role> <name> <token>` per line). With it, every call needs a token. |
 | `--control-tls-cert <file>`, `--control-tls-key <file>` | `--control` only | The server's certificate chain and private key (PEM). Passing both turns on TLS. |
-| `--control-audit-log <file>` | `--control` only | Appends who changed what. |
+| `--control-audit-log <file>` | `--control` only | Appends a record of who changed what. |
 | `--scenario <file>` | | The scenario file ([scenario.md](scenario.md)). |
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
@@ -779,9 +781,9 @@ When each exit code occurs:
 | 4 | The error and the usage go to stderr (the table below lists the cases). |
 | 130 | Ctrl+C, `{"command":"stop"}`, the end of stdin, a closed stdout, `Stop` from a Control Server client and so on. |
 
-On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the JSON in the shape of that command holds an error whose `code` is `internal`.
+On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.
 
-These arguments give exit code 4:
+The following give exit code 4:
 
 | Applies to | Usage error |
 |---|---|

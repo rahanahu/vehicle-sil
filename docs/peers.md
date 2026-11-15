@@ -2,7 +2,7 @@
 
 [日本語](ja/peers.md)
 
-This page shows how to build `Peer`s or SIL Kit participants yourself, without `Simulation` or `ecu_main`, and run them as separate processes. It gives the commands that start the example executables, and the `PeerOptions` settings for writing your own peer.
+This page shows how to set up `Peer` objects or SIL Kit participants yourself, without `Simulation` or `ecu_main`, and run them as separate processes. It gives the commands that start the example executables and the `PeerOptions` settings for writing your own peer.
 
 | Goal | Use | Section |
 |---|---|---|
@@ -10,11 +10,11 @@ This page shows how to build `Peer`s or SIL Kit participants yourself, without `
 | Synchronize several peers in one virtual time | `vehicle_sil_sim_controller`, `PeerOptions` | [Run in virtual time](#run-in-virtual-time) |
 | Reproduce CAN bus arbitration and transmission time | `vehicle_sil_can_bus_simulator` | [Simulate CAN bus arbitration and transmission time](#simulate-can-bus-arbitration-and-transmission-time) |
 
-The integration tests use the executables listed here too.
+The integration tests also use these executables.
 
 ## Prerequisites
 
-Run the commands in the root of the repository, after you have built it. `B` in the commands is the build directory (`build/<preset>`).
+Build the repository first, then run the commands in its root directory. `B` in the commands is the build directory (`build/<preset>`).
 
 | Executable | Location |
 |---|---|
@@ -22,7 +22,7 @@ Run the commands in the root of the repository, after you have built it. `B` in 
 | Example peers | Under `$B/examples/` |
 | `vehicle_sil_sim_controller`, `vehicle_sil_can_bus_simulator` | Under `$B/tools/` |
 
-The location of `sil-kit-registry` follows the output rules of SIL Kit. In a build with tests disabled, build `sil-kit-registry` explicitly:
+SIL Kit's output rules decide where `sil-kit-registry` goes. In a build with tests disabled, build `sil-kit-registry` explicitly:
 
 ```sh
 cmake --build build/linux-gcc-release --target sil-kit-registry
@@ -39,12 +39,12 @@ $B/examples/j1939/vehicle_sil_j1939_sender   --registry-uri silkit://127.0.0.1:8
 
 | Peer | What it does |
 |---|---|
-| Sender | Claims address 0x80 with a node of the J1939 stack. Once the address is its own, it sends PGN 0xFF10 5 times. |
-| Receiver | Verifies the CAN ID and the payload, and returns exit code 0 on success. |
+| Sender | Claims address 0x80 with a node of the J1939 stack. Once it holds the address, it sends PGN 0xFF10 5 times. |
+| Receiver | Verifies the CAN ID and the payload, and exits with code 0 if both are correct. |
 
 ### Verify the manual run
 
-On success, Sender and Receiver both end with exit code 0.
+If the run succeeds, the sender and the receiver both exit with code 0.
 
 | Exit code | Meaning |
 |---|---|
@@ -58,7 +58,7 @@ Started without arguments, each executable prints an error line followed by the 
 
 ## Run in virtual time
 
-Give each peer its own step size and synchronize all peers in one virtual time. The whole simulation advances at the pace of the slowest peer. Unless you set a speed, it advances as fast as it can (faster than real time).
+Give each peer its own step size and synchronize all peers in one virtual time. The whole simulation advances at the pace of the slowest peer. Unless you set a speed, it runs as fast as it can (faster than real time).
 
 | Peer | Participant name | Step size | Role |
 |---|---|---|---|
@@ -67,7 +67,7 @@ Give each peer its own step size and synchronize all peers in one virtual time. 
 | `vehicle_sil_vt_lin_sensor` | `LinSensor` | 2 ms | LIN slave |
 | `vehicle_sil_vt_body_controller` | `BodyController` | 5 ms | LIN master |
 
-`vehicle_sil_sim_controller` starts the simulation at T=0 once the 4 required peers are there, and stops it at 5 seconds of virtual time.
+`vehicle_sil_sim_controller` starts the simulation at T=0 once the 4 required peers have joined, and stops it at 5 seconds of virtual time.
 
 ```sh
 B=build/linux-gcc-release
@@ -85,7 +85,7 @@ $E/vehicle_sil_vt_body_controller --registry-uri $URI --end-ms 5000 --trace body
 
 ### Verify the virtual-time run
 
-On success, the 4 peers and the controller end with exit code 0, and 4 traces (`physics.trace` and the others) are written. When the controller ends, it prints the wall-clock time that the run took from virtual time 0 to the stop time.
+If the run succeeds, the 4 peers and the controller exit with code 0, and 4 trace files (`physics.trace` and the others) are written. When the controller exits, it prints the wall-clock time that the run took from virtual time 0 to the stop time:
 
 ```text
 [sim-controller] result sim_ms=5000 wall_us=... speed=...
@@ -95,19 +95,19 @@ On success, the 4 peers and the controller end with exit code 0, and 4 traces (`
 
 | Argument | Applies to | Behavior |
 |---|---|---|
-| `--real-time-factor 1` | Peers | Advances in step with real time (the other peers wait for it too). |
-| `--real-time-factor 4`, `0.5` | Peers | Advances at 4 times the speed, or at half the speed. |
+| `--real-time-factor 1` | Peers | Advances in step with real time (the other peers wait for it as well). |
+| `--real-time-factor 4`, `0.5` | Peers | Advances at 4 times or half the real-time speed. |
 | `--tick-cost-us 25000` | `vehicle_sil_vt_ecu` | Simulates a slow ECU whose `tick()` takes 25 ms of wall-clock time. |
 | `--stop-at-ms` | Controller | Without it, the controller keeps running until Ctrl+C. |
 | `--end-ms` | Peers | A peer does its processing and tracing only in steps before this time. |
-| `--timeout-ms` | Peers | Limit on the wait for the start. |
+| `--timeout-ms` | Peers | Limit on the wait for start-up. |
 | `--run-timeout-ms` | Peers | Limit on the whole run (no limit if omitted). |
 
 With `--tick-cost-us`, the whole simulation runs slower than real time, but the content of the traces does not change.
 
 ### Write your own peer
 
-This is a shortened version of `peer_options()` and `run_until_finished()` in [examples/virtual_time/common/vt_peer.hpp](../examples/virtual_time/common/vt_peer.hpp) and of [examples/virtual_time/ecu/main.cpp](../examples/virtual_time/ecu/main.cpp). The repository has no code in exactly this form (`name`, `pgn`, `ecu_tick()` and `ecu_output()` are yours).
+The code below is condensed from `peer_options()` and `run_until_finished()` in [examples/virtual_time/common/vt_peer.hpp](../examples/virtual_time/common/vt_peer.hpp) and from [examples/virtual_time/ecu/main.cpp](../examples/virtual_time/ecu/main.cpp). No file in the repository contains it in this form; `name`, `pgn`, `ecu_tick()` and `ecu_output()` stand for your own code.
 
 ```cpp
 vehicle_sil::PeerOptions options;
@@ -129,18 +129,18 @@ peer.wait(std::chrono::minutes(10));
 ```
 
 > [!NOTE]
-> The default of `PeerOptions` is the autonomous lifecycle with virtual time. If a peer with this combination starts first and virtual time is already advancing, SIL Kit aborts the whole simulation as soon as a coordinated participant (such as an ECU that `vehicle_sil_launch run` starts) starts later. The peer that was there first ends too.
+> By default, `PeerOptions` selects the autonomous lifecycle with virtual time. If such a peer starts first and virtual time is already advancing, SIL Kit aborts the whole simulation as soon as a coordinated participant (such as an ECU that `vehicle_sil_launch run` starts) starts later. The peer that started first ends too.
 
 A peer that runs together with coordinated participants must do one of these:
 
 - Use `Coordinated`, as in the example above, and be one of the required participants.
 - Start after all coordinated participants have started.
 
-For how received messages are handled, the determinism of J1939 and LIN, and the constraints on LIN step sizes, see [internals/virtual-time.md](internals/virtual-time.md) and [internals/lin.md](internals/lin.md). You can also run without `Peer`, from a step handler of `ParticipantRuntime` (`bind_host()`; the LIN example `examples/lin`).
+For how received messages are handled, the determinism of J1939 and LIN, and the constraints on LIN step sizes, see [internals/virtual-time.md](internals/virtual-time.md) and [internals/lin.md](internals/lin.md). You can also do without `Peer` and run your code from a step handler of `ParticipantRuntime` (`bind_host()`; see the LIN example in `examples/lin`).
 
 ## Simulate CAN bus arbitration and transmission time
 
-The standard CAN of SIL Kit delivers a sent frame to every participant with the time at which it was sent. To reproduce arbitration and transmission time in virtual time, add the simple CAN Network Simulator as a participant. The code of the peers does not change.
+SIL Kit's standard CAN delivers each frame to every participant with the time at which it was sent. To reproduce arbitration and transmission time in virtual time, add the simple CAN Network Simulator as a participant. The peers' code stays the same.
 
 `B` and `URI` are the same as in "Run in virtual time" above. Replace `Ecu1,Ecu2` with the participant names of your peers.
 
@@ -163,11 +163,11 @@ $B/tools/sim_controller/vehicle_sil_sim_controller --registry-uri $URI --require
 | Frames sent at the same time | Delivered in CAN ID order (frames from the same controller in the order they were sent). |
 | What decides the result | Only the transmit times and the step size of the simulator. |
 | What is simulated | CAN networks only. Stuff bits, errors and CAN FD are not modeled. |
-| Configuration file and command line | In the same form as the Vector SIL Kit Network Simulator. |
+| Configuration file and command line | Same format as for the Vector SIL Kit Network Simulator. |
 
-- Running with Vector's executable instead (which needs a CANoe license) has not been verified yet.
-- In peers that use `SilKitCanPort`, set `SilKitCanPortOptions::transmit_queue_capacity` to `--transmit-queue` (default 64) or less.
-- When the transmit queue of the simulator overflows, frames are not sent.
+- Running Vector's executable instead (it needs a CANoe license) has not been verified yet.
+- In peers that use `SilKitCanPort`, set `SilKitCanPortOptions::transmit_queue_capacity` to no more than the simulator's `--transmit-queue` (default 64).
+- If the simulator's transmit queue overflows, frames are not sent.
 - For the rules, the assumptions for determinism and the limitations, see "Bus timing (`CanBusModel`)" and "Simple CAN Network Simulator (`vehicle_sil::can_netsim`, `vehicle_sil_can_bus_simulator`)" in [internals/can.md](internals/can.md).
 
 ## See also

@@ -29,7 +29,7 @@ Clients (Python, the CLI, the GUI server) use the Control API: gRPC (Protocol Bu
 
 The only transport between an ECU's Agent and the Hub is SIL Kit publish/subscribe (`vehicle_sil::control_silkit`). An ECU created with `ecu_main()` attaches the Agent side, and `vehicle_sil_launch run` holds the Hub side in its own participant. ECU executables depend on neither gRPC nor Protocol Buffers. The Hub receives values and results in step with virtual time (see "Transport over SIL Kit" below).
 
-Processes and connections. Each line is a connection, labeled with how it communicates:
+The processes and their connections. Each line is labeled with how it communicates:
 
 ```mermaid
 flowchart LR
@@ -48,7 +48,7 @@ flowchart LR
 | Part | What it does | Implementation | Connection |
 |---|---|---|---|
 | Control Agent | Each ECU has one. It exposes the ECU's variables (and the state of the `Peer`) and accepts operations. | `vehicle_sil::control::Agent`, `Ecu::input()`, `output()`, `agent()` | To the Hub through `vehicle_sil::control_silkit::AgentTransport` (attached by `ecu_main()`) |
-| Control Server | Accepts the Agents of the peers, relays operations, aggregates state and controls time through the time gate. | `vehicle_sil::control::Hub` | Agent side: `vehicle_sil::control_silkit::HubTransport` (held by `vehicle_sil_launch run` in the controller's participant). Client side: `ControlService` of `vehicle_sil::control_grpc::ControlServer` (`vehicle_sil_launch run --control`). |
+| Control Server | Accepts the peers' Agents, relays operations, aggregates state and controls time through the time gate. | `vehicle_sil::control::Hub` | Agent side: `vehicle_sil::control_silkit::HubTransport` (held by `vehicle_sil_launch run` in the controller's participant). Client side: `ControlService` of `vehicle_sil::control_grpc::ControlServer` (`vehicle_sil_launch run --control`). |
 | Client | Python, the CLI and the GUI server all use the same Control API. | The Python package and CLI (`python/vehicle_sil_control`); the GUI server's own client (`vehicle_sil_gui/control.py` in `gui/server`) | Connects to the Control Server over gRPC (the GUI server relays to the screen over HTTP and WebSocket; see [gui.md](../gui.md)) |
 
 ## Supported operations
@@ -110,11 +110,11 @@ public:
 
 | Causality (as in FMI) | Writes |
 |---|---|
-| Input | Writable while running |
+| Input | Writable, also while running |
 | Output | Read-only |
 | Parameter | Writable only before the first step |
 
-The metadata is the name (`.` separates levels), the unit, the minimum and the maximum (both inclusive; NaN is not allowed), the value increment (`step`; a hint for editing, not enforced), the description and the enum items. `schema()` returns the variables in the order they were registered.
+The metadata consists of the name (`.` separates levels), the unit, the minimum and the maximum (both inclusive; NaN is not allowed), the value increment (`step`; a hint for editing, not enforced), the description and the enum items. `schema()` returns the variables in the order they were registered.
 
 #### When the schema is fixed
 
@@ -151,7 +151,7 @@ A write is applied in the first step whose start time is at or after `Command::a
 
 In a `Peer`, J1939 receive processing, handlers and timers (such as the Encoder of a `PeriodicSender`) run before the application. They use the new value from the next step on.
 
-Writes applied in the same step are applied in (at, seq) order (a write without `at` sorts as the time of that step).
+Writes applied in the same step are applied in (at, seq) order (a write without `at` sorts as if its time were the time of that step).
 
 | Condition | Result |
 |---|---|
@@ -165,12 +165,12 @@ Writes applied in the same step are applied in (at, seq) order (a write without 
 
 - Every queued operation gets exactly one `CommandResult`: `Applied` with the time of the step that applied it, `Late`, `Rejected` or `Cancelled`.
 - When the simulation ends, `finish()` sets the remaining operations to `Cancelled` (for an ECU's Agent, the ECU calls it; see "When variable writes are applied" in [execution.md](execution.md#when-variable-writes-are-applied)).
-- Operations with a time at or after `VirtualTimeOptions::end`, and operations on a `Peer` whose step failed, also stay unsettled until `finish()`.
+- Operations with a time at or after `VirtualTimeOptions::end`, and operations on a `Peer` whose step failed, also remain unsettled until `finish()`.
 - In a real-time `Peer`, `at` is a time on the clock of that `Peer`'s driver.
 
 ### Reading values
 
-At the end of the step (in a `Peer`, after LIN processing), the Agent reads all variables. `latest()` returns the latest set. The Agent reads in the first step at or after the times 0, `sample_period`, 2 `sample_period`, … (counted as `Ecu::every()` counts; default 10 ms; 0 means every step). The values are handed over through three buffers, without locks.
+At the end of the step (in a `Peer`, after LIN processing), the Agent reads all variables. `latest()` returns the latest set. It reads them in the first step at or after each of the times 0, `sample_period`, 2 `sample_period`, … (counted as `Ecu::every()` counts; default 10 ms; 0 means every step). The values are handed over through three buffers, without locks.
 
 ### Sending from inside a step (`set_step_sink()`)
 
@@ -237,11 +237,11 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 
 | Condition | What happens |
 |---|---|
-| `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the Peer and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
+| `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the `Peer` and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
 | A node is added after the schema is fixed | The node is not monitored |
 | Raw CAN and LIN | Not monitored |
 | An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
-| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the Peer and `PeerOptions::monitor = false`. |
+| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
@@ -263,7 +263,7 @@ The Hub is the part of the Control Server that does not depend on how it communi
 ### `AgentLink::send()`
 
 - The Hub calls it without holding its own lock.
-- For one peer, it is called from one thread, one operation at a time, in sequence-number order. It may wait briefly and may call back into the Hub.
+- For one peer, it is called from one thread, one operation at a time, in sequence-number order, so it may wait briefly and may call back into the Hub.
 - If it returns `false`, the operation becomes Invalid. If it throws, the operation becomes Unknown.
 - The thread that called `write()` may also take over sending earlier operations to the same peer, so `write()` may wait for those `send()` calls.
 - The Hub releases its last reference to a link outside its lock.
@@ -326,7 +326,7 @@ For each peer, the state goes from Sent to Queued (the Agent queued it), then to
 - `wait_queued(seq)` waits until no target is Sent, then returns the operation as it is at that point (empty on timeout and for an unknown number).
 - If you write with a time after the stop position (see "Determinism" under "Control Agent") and resume only after you confirm that every target is Queued, no write is late.
 - `wait_done(seq)` waits until the operation is settled and returns it, so you know the result even if the operation is forgotten right after.
-- It also returns empty if the operation is forgotten while it waits. Make `max_operations` larger than the number of operations you wait for.
+- It also returns empty if the operation is forgotten while it waits, so make `max_operations` larger than the number of operations you wait for.
 
 ### Subscriptions (`subscribe()`)
 
@@ -354,7 +354,7 @@ The conversion happens in only 4 places in the Hub. The list that is shown is bu
 |---|---|
 | The list (`agent_connected()`) | Builds the list to show from the hello's list, once per connection |
 | Values (`agent_values()`) | Converts values before the Hub stores them |
-| Writes (`write()`) | Where the name and direction are checked, converts to the executable's names and values before putting them into the `Command` |
+| Writes (`write()`) | Converts to the executable's names and values where the name and direction are checked, before putting them into the `Command` |
 | Reasons | Changes the variable name at the start of a reason returned by the Agent to the name that is shown |
 
 The list:
@@ -420,7 +420,7 @@ Every message starts with the format version (`kVersion`), and the decoder accep
 - It checks the size limit before the version (it does not read past the limit, even for a message of another version).
 - For a count field, it checks that the count fits in the remaining bytes, and does not reserve space for the declared count up front.
 - Decoding again into the same message object reuses its storage.
-- A function reads only the destination (session) first (`addressed()`), so an ECU does not decode commands addressed to another ECU.
+- A separate function (`addressed()`) reads only the destination (session) first, so an ECU does not decode commands addressed to another ECU.
 
 ### Size limits
 
@@ -438,7 +438,7 @@ The decoder also rejects input with the same limits.
 | The output of one step (results, events, values) | Split into several step messages, sent within the same step. The Hub side reassembles one set of values. |
 | A command | Not split (all writes of one command are applied in the same step). It is not sent, and the operation is Invalid. |
 
-A hello is a single message (a subscriber that joins later receives only the last one sent).
+A hello is always a single message, because a subscriber that joins later receives only the last one sent.
 
 ### Topics
 
@@ -483,7 +483,7 @@ A hello is a single message (a subscriber that joins later receives only the las
 
 ### Until commands can be sent
 
-Receiving a hello does not mean that the ECU's subscription to commands is established (each direction connects separately). `HubTransport` sends a probe, and sends commands to an Agent only after it receives the ECU's answer (ready) (`LinkInfo::ready`). It sends the probe when a hello arrives, with step messages until ready arrives (once every 8 messages), and in `wait_for_hellos()`.
+Receiving a hello does not mean that the ECU's subscription to commands is established (each direction connects separately). `HubTransport` sends a probe, and sends commands to an Agent only after it receives the ECU's answer (ready) (`LinkInfo::ready`). It sends a probe when a hello arrives, once every 8 step messages until ready arrives, and in `wait_for_hellos()`.
 
 `AgentLink::send()` refuses the following writes, and the Hub makes them Invalid at once. This keeps a command that reaches no one from leaving its operation unsettled.
 
@@ -605,7 +605,7 @@ This layer is built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER` (default OFF). 
 
 - The only service is `ControlService`, for clients (peer list, values, reading time and values together, writes, operation results and waiting, subscriptions, forgetting peers, time control).
 - Agents do not connect over gRPC (the Hub-side transport is `HubTransport`, which the code that uses the Server attaches).
-- In every enum, 0 is UNSPECIFIED. An unknown value from a client is read on the safe side (as Reject, for the handling of late writes).
+- In every enum, 0 is UNSPECIFIED. An unknown value from a client is treated as the safe choice (for the handling of late writes, as Reject).
 
 ### `ControlServer`
 
@@ -616,7 +616,7 @@ This layer is built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER` (default OFF). 
 - If a `TimeControl` is given (`time_control_of(controller)` uses the time gate of a SimulationController), the Server accepts time control.
 - Without a `TimeControl`, time control returns `FAILED_PRECONDITION`, and `GetTime` returns `available = false`.
 - `Stop` only requests a stop and does not wait (several clients may call it at the same time).
-- The reason given with `Stop` reaches every participant and the SIL Kit log. Control characters are replaced with `?`, and the reason is cut to 200 bytes (never inside a UTF-8 character). It is also recorded in the audit.
+- The reason given with `Stop` reaches every participant and the SIL Kit log, so control characters in it are replaced with `?` and it is cut to 200 bytes (never inside a UTF-8 character). It is also recorded in the audit.
 - A `Stop` before the simulation starts stops it right after it starts. `ParticipantRuntime::request_stop()` keeps a request made before the lifecycle reaches Running, and delivers it at the first step, because SIL Kit ignores a Stop before Running.
 
 ### Simulation monitoring (`SimulationMonitor`)
@@ -639,7 +639,7 @@ If a `TimeControl` is given, the Server reads it on one thread every `ServerOpti
 
 - `SimulationMonitor` depends only on `TimeControl`.
 - `TimeControl::left_participant()` is pure virtual (if an implementation forgot it, the monitor would run without ever judging a failure).
-- The SIL Kit implementation reads participant states from SIL Kit again only once, at first (SIL Kit may not pass states that arrived while the handler was being registered). After that, it reads the states that its handlers received.
+- The SIL Kit implementation queries SIL Kit for the participant states directly only once, at the start, because SIL Kit may not pass on states that arrived while the handlers were being registered. After that, it reads the states that its handlers received.
 
 ### Peer list (`ListPeers`)
 
@@ -712,7 +712,7 @@ Pass a server certificate and private key (PEM) in `SecurityOptions` to listen w
 
 #### Tokens
 
-If credentials (`Credential`: name, token, role) are given, every call needs `authorization: Bearer <token>` (`Bearer` is case-insensitive). Without credentials, anyone can do anything. Tokens are compared in a time that does not depend on their length.
+If credentials (`Credential`: name, token, role) are given, every call needs `authorization: Bearer <token>` (`Bearer` is case-insensitive). Without credentials, anyone can do anything. Token comparison takes the same time wherever the tokens differ.
 
 | Case | Result |
 |---|---|
@@ -848,7 +848,7 @@ Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it
 | During the hold | None |
 | After the hold ends | `start_timeout_ms` again |
 
-In a run with a required participant that the user starts (a manual participant), there is no deadline until every manual participant has reached ReadyToRun or later. `start_timeout_ms` counts from that moment. The reason is that such a participant may be stopped in a debugger. The same applies to the phase until the hold.
+In a run with a required participant that you start yourself (a manual participant), there is no deadline until every manual participant has reached ReadyToRun or later. `start_timeout_ms` counts from that moment. The reason is that such a participant may be stopped in a debugger. The same applies to the phase until the hold.
 
 In such a run, in every phase, `give_up` watches for a stop request (an interrupt) and for `--timeout-ms` (counted from when the launcher starts waiting for participants), to get out of the waits that have no deadline. In a run without manual participants, a stop request takes effect after the start has finished.
 
@@ -859,7 +859,7 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 
 ### Values after the end
 
-`TimeCommands::detach()` calls the function set with `set_on_detach()` before it detaches the controller. In that function, `LaunchTimeControl` reads the last time (counted as the result's `sim_ms` is), the participants and the participants that left. `GetTime` after detachment returns those values.
+`TimeCommands::detach()` calls the function set with `set_on_detach()` before it detaches the controller. In that function, `LaunchTimeControl` reads the last time (counted the same way as the result's `sim_ms`), the participants and the participants that left. `GetTime` after detachment returns those values.
 
 ### How it ends
 

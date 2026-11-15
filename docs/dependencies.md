@@ -31,7 +31,7 @@ Used only with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` (default OFF). Only `vehicl
 | Case | gRPC used |
 |---|---|
 | `find_package(gRPC CONFIG)` finds gRPC | The one found (on MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-grpc`). |
-| Not found | gRPC is pulled in with FetchContent (`grpc/grpc` on GitHub, tag `v1.76.0`, which `VEHICLE_SIL_GRPC_VERSION` changes; of its submodules, only abseil, protobuf, re2, c-ares, BoringSSL and zlib). |
+| Not found | gRPC is pulled in with FetchContent (`grpc/grpc` on GitHub, tag `v1.76.0`, which `VEHICLE_SIL_GRPC_VERSION` overrides; of its submodules, only abseil, protobuf, re2, c-ares, BoringSSL and zlib). |
 
 The pulled-in gRPC gets no install rules (only the export settings of abseil are enabled) and is excluded from warnings (`SYSTEM`). Pulling it in with FetchContent needs CMake 3.28 or later. With an older CMake, install gRPC and let `find_package` find it. To reuse downloaded sources, pass `-DFETCHCONTENT_SOURCE_DIR_GRPC=<path>`.
 
@@ -51,7 +51,7 @@ The Python client (`python/vehicle_sil_control`) uses `grpcio` and `protobuf`, a
 
 ### How Python is found
 
-The repository root pins the Python version and the Python packages in `pyproject.toml` (`requires-python` and `[dependency-groups]`), `.python-version` (the version used for development) and `uv.lock` (the resolved versions).
+These files at the repository root pin the Python version and the Python packages: `pyproject.toml` (`requires-python` and `[dependency-groups]`), `.python-version` (the version used for development) and `uv.lock` (the resolved versions).
 
 | Group | Packages |
 |---|---|
@@ -74,7 +74,7 @@ On Windows, `find_package(Python3)` finds Pythons registered in the Windows regi
 | Case | Behavior |
 |---|---|
 | You created `.venv` with `uv sync`, or added packages to `.venv` | The generator's Python is searched for again at every configure, so a normal reconfigure picks it up (no `--fresh` needed). |
-| A consumer's build that includes vehicle-sil with FetchContent or `add_subdirectory` | The `.venv` of vehicle-sil is not used. The consumer's Python is (an activated virtual environment, `Python3_EXECUTABLE`, `PATH`). |
+| A consumer's build that includes vehicle-sil with FetchContent or `add_subdirectory` | The `.venv` of vehicle-sil is not used. The consumer's Python is used (an activated virtual environment, `Python3_EXECUTABLE`, `PATH`). |
 | Windows | `.venv` is not a candidate (using uv's Python from a MinGW build is not verified). The Python from the MSYS2 UCRT64 pacman packages is found and used as before. |
 
 ### Python 3 and PyYAML (J1939 typed message generation)
@@ -91,13 +91,13 @@ PyYAML reads YAML 1.1. How the generator reads it:
 | Integers | Only decimal (no leading 0), hexadecimal and binary are accepted. Octal, and sexagesimal integers and floats, are errors. |
 | Duplicate keys | Error. Overriding a key brought in with a merge key is allowed. |
 
-A configure result in which Python or PyYAML was not found is not kept in the cache. After you install them, reconfigure, and the configure step finds them.
+A configure result in which Python or PyYAML was not found is not kept in the cache. After you install them, reconfigure; the configure step then finds them.
 
 ### aiohttp and PyYAML (browser GUI server)
 
 The GUI server (`gui/server`, distribution name `vehicle-sil-gui`, [gui.md](gui.md)) depends on aiohttp and PyYAML (for reading dashboard files). aiohttp provides an HTTP server, WebSocket and the client that the tests use in one package. It runs on the default asyncio event loop on Windows (ProactorEventLoop, which can run child processes), and has wheels for Windows (3.11 and later). It needs no C++ build.
 
-Only to read and write ECU variables does the GUI server use grpcio and protobuf, as a client of the launcher's Control Server (the optional dependency `vehicle-sil-gui[variables]`, which the `gui` group installs). Without them, the GUI server runs; only the variables are unavailable, and it says why. The optional dependency alone is not enough: the stubs are needed too. The GUI server assumes that you run it in the repository after `uv sync`, or use the prebuilt tools, which bundle the stubs; the Python package does not contain them. For the gRPC stubs, it generates them from `proto/` with grpcio-tools (the `control` group) at every start, or uses those that `python -m vehicle_sil_control.generate` created, or those in the directory `VEHICLE_SIL_CONTROL_STUBS`.
+The GUI server uses grpcio and protobuf only to read and write ECU variables, as a client of the launcher's Control Server (the optional dependency `vehicle-sil-gui[variables]`, which the `gui` group installs). Without them, the GUI server still runs, but variables are unavailable and it says why. The optional dependency alone is not enough: the stubs are needed too. The GUI server assumes that you run it in the repository after `uv sync`, or use the prebuilt tools, which bundle the stubs; the Python package does not contain them. It generates the gRPC stubs from `proto/` with grpcio-tools (the `control` group) at every start, or uses the stubs that `python -m vehicle_sil_control.generate` created, or those in the directory that `VEHICLE_SIL_CONTROL_STUBS` names.
 
 | Library | License |
 |---|---|
@@ -111,7 +111,7 @@ The vehicle-sil repository does not contain these libraries; uv installs them.
 
 ### Vector XL Driver Library (Vector XL CAN Bridge, Windows only)
 
-vehicle-sil does not include the XL Driver Library, not even as a submodule. Get it from Vector and set its location with `VEHICLE_SIL_VECTOR_XL_DIR`. The files used are `vxlapi.h`, `vxlapi64.lib` (`vxlapi.lib` for 32 bit) and, at run time, `vxlapi64.dll`. If they are not found, the bridge (`vehicle_sil::vector_xl` and `vehicle_sil_vector_xl_bridge`) is not built.
+vehicle-sil does not include the XL Driver Library, not even as a submodule. Get it from Vector and set its location with `VEHICLE_SIL_VECTOR_XL_DIR`. The files used are `vxlapi.h`, `vxlapi64.lib` (`vxlapi.lib` for 32-bit) and, at run time, `vxlapi64.dll`. If they are not found, the bridge (`vehicle_sil::vector_xl` and `vehicle_sil_vector_xl_bridge`) is not built.
 
 The APIs used are those for classic CAN (`XL_INTERFACE_VERSION`, `XL_BUS_TYPE_CAN`).
 
@@ -124,7 +124,7 @@ The APIs used are those for classic CAN (`XL_INTERFACE_VERSION`, `XL_BUS_TYPE_CA
 
 Only `bridges/vector-xl/src/xl_backend_vector.cpp` calls these APIs. This file implements an internal interface of vehicle-sil (`src/xl_backend.hpp`; its names, types and values are vehicle-sil's own) with calls into the XL Driver Library. It only converts types and values; it makes no decisions and holds no state. It is built only on Windows, and only if the XL Driver Library is found.
 
-The decisions and state of the bridge (classification of events, handling of overruns, the receive thread, the order of opening and closing, cleanup, building of errors) are in `src/xl_driver.cpp`. It depends only on the internal interface, so it builds on every platform.
+The decisions and state of the bridge (classification of events, handling of overruns, the receive thread, the order of opening and closing, cleanup, construction of errors) are in `src/xl_driver.cpp`. It depends only on the internal interface, so it builds on every platform.
 
 The tests link `src/xl_driver.cpp` with a test-only fake that implements the internal interface (`tests/vector_xl/fake_xl/`). They use neither the Vector headers nor the Vector library. The repository contains no Vector headers and no copies of them.
 
@@ -169,7 +169,7 @@ The decisions and state of the pcap interface (order of opening, the receive thr
 | Transmission and reception | `pcap_next_ex`, `pcap_sendpacket`, `pcap_geterr`, `pcap_stats` |
 | Waiting | `pcap_getevent` on Windows, `pcap_get_selectable_fd` on Linux |
 
-If any one of them is missing, the bridge does not open and prints the library version and the names of the missing functions.
+If any one of them is missing, the bridge stops before opening and prints the library version and the names of the missing functions.
 
 The tests load a test-only fake shared library with functions of the same names (`tests/eth_link/fake_pcap`, built from vehicle-sil's declarations) through the same path as the real one. The Linux test `ethernet_bridge.netns.pcap` verifies the bridge against the real libpcap (it is skipped on computers without libpcap). There is no test against the real Npcap.
 
@@ -188,7 +188,7 @@ The Npcap behavior the implementation relies on (verified by hand against the re
 
 The pcap interface opens adapters with this flag and declares that it does not echo its own transmissions. vehicle-sil declares the flag values passed to `pcap_open` (promiscuous, no capture of the handle's own transmissions, immediate delivery) itself.
 
-2 assumptions are not verified:
+These 2 assumptions are not verified:
 
 - That the number of dropped frames in `pcap_stats` is cumulative since the handle was opened.
 - That the "immediate delivery" flag of Npcap's `pcap_open` delivers frames as fast as `pcap_set_immediate_mode`.
@@ -199,7 +199,7 @@ Dependencies are added with `add_subdirectory(... EXCLUDE_FROM_ALL)`. Only linke
 
 ### Copying and patching SIL Kit
 
-The submodule `external/sil-kit` is copied into `external/sil-kit-patched/` in the build tree (nested submodules included, `.git` excluded). Then `patches/sil-kit/*.patch` are applied with `git apply` in file-name order, and the copy is added. If there are no patches, the submodule is added directly, without a copy.
+The submodule `external/sil-kit` is copied into `external/sil-kit-patched/` in the build tree (nested submodules included, `.git` excluded). Then `patches/sil-kit/*.patch` are applied with `git apply` in file-name order, and the copy is added to the build. If there are no patches, the submodule is added directly, without a copy.
 
 The copy and the patching are redone only if the contents of the patches or of the submodule files (`.git` excluded) differ from those of the last configure. The check uses a stamp that lists the SHA-256 of every file (`sil-kit-patched.stamp`). It does not look at the Git state, so it also works when the submodule is not a Git checkout. When the copy is redone, every copied file is touched, so the whole library is rebuilt.
 
@@ -217,15 +217,15 @@ Patches are applied with `--ignore-whitespace`, so they also apply to a submodul
 
 If the consumer already defines `SilKit::SilKit`, SIL Kit is not added. Only v5.0.8 is verified. Older SIL Kit versions lack some of the behavior that vehicle-sil relies on (see "[SIL Kit versions that can be mixed](#sil-kit-versions-that-can-be-mixed)").
 
-The consumer's SIL Kit does not have the patches of "Patches to SIL Kit" applied. A patch takes effect only if it is applied to the SIL Kit of the process in the table below. The same happens in a setup where another tool (CANoe, the `sil-kit-registry` that ships with SIL Kit and others) plays the role of that process.
+The consumer's SIL Kit does not have the patches of "Patches to SIL Kit" applied. A patch takes effect only if it is applied to the SIL Kit of the process in the table below. The same applies when another tool (CANoe, the `sil-kit-registry` that ships with SIL Kit and others) plays the role of that process.
 
 | Patch | Process that needs it | Without it |
 |---|---|---|
-| 0001 | The LIN master that sends the headers | In a setup where several `LinSlave`s take turns responding to the same LIN ID (diagnostic 0x3D, for example), headers for that ID are no longer sent after the second response |
-| 0002 | Participants with CAN controllers | Where a controller is called from outside the SIL Kit threads (closing, transmission on a real-time port, the Vector XL CAN Bridge), a data race occurs when the call overlaps with the network simulator joining or leaving (rare) |
-| 0003 | Registry | After a participant refused for its name disconnects, participants that cannot connect directly to the earlier participant with that name can no longer connect to it through the relay |
-| 0004 | The participant that creates the network simulator (`vehicle_sil_can_bus_simulator`) | Rarely, the network is not announced and all controllers stay in trivial simulation. The bit rate and the mode do not reach the simulator, with no error and no warning |
-| 0005 | Registry | When a participant joins right after another one ended, it rarely fails after waiting 5 seconds (`Middleware.ConnectTimeoutSeconds`) with "Timeout during connection handshake with the SIL Kit Registry". Creating the participant again connects |
+| 0001 | The LIN master that sends the headers | In a setup where several `LinSlave`s take turns responding to the same LIN ID (diagnostic 0x3D, for example), headers for that ID are no longer sent after the second response. |
+| 0002 | Participants with CAN controllers | Where a controller is called from outside the SIL Kit threads (closing, transmission on a real-time port, the Vector XL CAN Bridge), a data race occurs when the call overlaps with the network simulator joining or leaving (rare). |
+| 0003 | Registry | After a participant refused for its name disconnects, participants that cannot connect directly to the earlier participant with that name can no longer connect to it through the relay. |
+| 0004 | The participant that creates the network simulator (`vehicle_sil_can_bus_simulator`) | Rarely, the network is not announced and all controllers stay in trivial simulation. The bit rate and the mode do not reach the simulator, with no error and no warning. |
+| 0005 | Registry | When a participant joins right after another one ended, it rarely fails after waiting 5 seconds (`Middleware.ConnectTimeoutSeconds`) with "Timeout during connection handshake with the SIL Kit Registry". Creating the participant again connects. |
 
 The registry that `vehicle_sil_launch run` starts, and the executables built with vehicle-sil, have all patches applied.
 
@@ -237,7 +237,7 @@ Upstream options are overridden with normal variables in function scope (CMP0077
 
 | Library | Setting | Reason |
 |---|---|---|
-| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF` | Does not build what is not needed. |
+| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF` | Skips what is not needed. |
 | SIL Kit | `SILKIT_BUILD_UTILITIES=ON` | The integration tests need `sil-kit-registry`. |
 | SIL Kit | `SILKIT_BUILD_STATIC` equals `VEHICLE_SIL_STATIC` (default OFF) | Makes SIL Kit a static library with `VEHICLE_SIL_STATIC=ON` (see the next paragraph). |
 
@@ -322,9 +322,9 @@ The CommunicationReady handler of a coordinated participant is called after all 
 
 If a participant with a started lifecycle disconnects without Shutdown, the other participants receive its state as Error (`HubTransport` uses this to end the connection of an Agent that has gone).
 
-It is assumed that `EnableMessageAggregation` in the participant configuration stays at its default, Off. A participant with it On buffers data messages before it sends them, which changes the ordering assumptions above.
+The implementation assumes that `EnableMessageAggregation` in the participant configuration stays at its default, Off. A participant with it On buffers data messages before it sends them, which changes the ordering assumptions above.
 
-When a participant is destroyed, transmissions not yet written to the socket are dropped (if an earlier transmission to the same receiver is still being written, the transmissions queued after it are not written). The "last notification" of the Agent therefore waits for the Hub's reply before it destroys the participant (destructor of `AgentTransport`; "End of a connection" in internals/control.md). While the participant lives, queued transmissions are written in order.
+When a participant is destroyed, transmissions not yet written to the socket are dropped (if an earlier transmission to the same receiver is still being written, the transmissions queued after it are not written). The Agent's last word therefore waits for the Hub's reply before it destroys the participant (destructor of `AgentTransport`; "End of a connection" in internals/control.md). While the participant lives, queued transmissions are written in order.
 
 ### Threading and ordering guarantees
 
@@ -358,7 +358,7 @@ Without a Network Simulator, Ethernet delivers a sent frame to all other control
 
 `EthernetBridge` relies on the behavior below (the tests `ethernet_bridge.silkit_*` check the padding, and that the bridge's own transmissions do not reach its RX handler).
 
-`SendFrame` copies the frame bytes within the call. The bridge passes on, as it is, a buffer that is valid only during the handler of the external interface.
+`SendFrame` copies the frame bytes within the call. The bridge passes it, without copying, a buffer that is valid only during the handler of the external interface.
 
 In trivial simulation, a sent frame reaches the other participants as RX and the sender itself as TX. A handler registered for the RX direction only does not receive the sender's own transmissions.
 
@@ -392,7 +392,7 @@ If the checksum model of the Rx configuration or of the response is `LinChecksum
 
 A frame the master sends (`MasterResponse` in `SendFrame`) is not sent within `SendFrame`. It is created when SIL Kit delivers the header to the master itself (a task on the I/O thread) and is sent from there as a further task. The status of the master's own frame (`LIN_TX_OK`) is also reported within that delivery of the header. Its timestamp is the master's `Now()` at that moment.
 
-The SIL Kit `SendMsg` only queues the transmission as a task on the I/O thread. With a blocking step handler, a task that notifies the next step time is queued as soon as the handler returns, so the second-stage transmission above comes after that notification. In addition, the I/O thread processes several messages received in one read in a row (`VAsioPeer::DispatchBuffer`) and may run the next step directly among them (`ReceiveNextSimTask`). With the asynchronous version, `CompleteSimulationStep` queues the completion as a task, and the next step does not run until the step completes. `ParticipantRuntime` uses this to make the master's frame go out before the notification of the next step time.
+The SIL Kit `SendMsg` only queues the transmission as a task on the I/O thread. With a blocking step handler, a task that notifies the next step time is queued as soon as the handler returns, so the second round of sends above comes after that notification. In addition, the I/O thread processes several messages received in one read in a row (`VAsioPeer::DispatchBuffer`) and may run the next step directly among them (`ReceiveNextSimTask`). With the asynchronous version, `CompleteSimulationStep` queues the completion as a task, and the next step does not run until the step completes. `ParticipantRuntime` uses this to make the master's frame go out before the notification of the next step time.
 
 ## SIL Kit versions that can be mixed
 
@@ -489,7 +489,7 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 
 **Upstream reproduction test**: None (verified with the ThreadSanitizer tests of vehicle-sil). Not fixed: on a second switch, when the simulator leaves and appears again, a call that uses the behavior from before the switch can overlap with the rewrite of the simulator link.
 
-**Verification**: Verified by running the simple CAN Network Simulator tests of vehicle-sil (`can_netsim.*`) with ThreadSanitizer. The race overlaps only rarely, so the tests do not necessarily catch it if the patch is removed. The tests therefore cannot tell whether the patch can go. Decide by checking whether the code still has the places listed under "Why vehicle-sil needs it" above, which call the controller from outside the SIL Kit thread.
+**Verification**: Verified by running the simple CAN Network Simulator tests of vehicle-sil (`can_netsim.*`) with ThreadSanitizer. The race overlaps only rarely, so the tests do not necessarily catch it if the patch is removed. The tests therefore cannot tell whether the patch can be dropped. Decide by checking whether the code still has the places listed under "Why vehicle-sil needs it" above, which call the controller from outside the SIL Kit thread.
 
 ### 0003: The registry removes only the peer's own name entry
 

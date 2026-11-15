@@ -34,8 +34,8 @@ A test is named `<prefix>.<name>`. The prefix is `PREFIX` in `tests/<area>/CMake
 
 To add a harness test:
 
-- To add a `TEST_CASE` to an existing source file, do not change CMake.
-- Add a new source file to `SOURCES` in its `CMakeLists.txt`.
+- Adding a `TEST_CASE` to an existing source file needs no change to CMake.
+- Add a new source file to `SOURCES` in the `CMakeLists.txt` of its directory.
 - The macros (`TEST_CASE`, `CHECK`, `CHECK_EQ`) are in `tests/unit/test_harness.hpp`.
 
 Where scenario tests live:
@@ -53,8 +53,8 @@ Rules for areas (the directories directly under `tests/`):
 
 ### Run a subset of tests
 
-- To run one test, pass its name to the test executable (`<executable> <name>`). ctest does the same.
-- To select by prefix only, include the `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.` and `j1939_silkit.`.
+- To run one test, pass its name to the test executable (`<executable> <name>`). This is also how ctest runs it.
+- To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.` and `j1939_silkit.`.
 - To select by label, use `-L` (see [Test labels](#test-labels)).
 
 ### Ports and locks
@@ -76,7 +76,7 @@ A scenario that needs a fixed port shown in the documentation (such as 8500 for 
 
 ### Timeouts and the scale factor
 
-Wait for something that is expected to happen with `eventually(condition, limit)` (`test_harness.hpp`) or with a means that signals that it happened. Do not sleep for a fixed time and assume that things have progressed.
+Wait for something that is expected to happen with `eventually(condition, limit)` (`test_harness.hpp`) or with a mechanism that signals that it happened. Do not sleep for a fixed time and assume that things have progressed.
 
 Wait limits are multiplied by a scale factor.
 
@@ -279,7 +279,7 @@ What they check in the engine:
 - TP timeouts and recovery when one ECU is disconnected from the bus (receive only, and both transmit and receive)
 - Resolution of a hidden address conflict
 - Real-time behavior on SIL Kit without time synchronization
-- The toolbox (reentrancy of release and destruction, destruction after the network, the origin and scheduling of timers)
+- The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
 
 Virtual bus and SIL Kit give the same result:
 
@@ -388,7 +388,7 @@ Runs a registry, a controller and 4 peers (1 / 2 / 5 / 10 ms, all on `Peer`) as 
 
 - Compares traces to confirm that data passes between the peers at the predicted virtual times.
 - Confirms that a J1939 ECU starts transmitting 250 ms after its Address Claim.
-- Confirms that the traces match at full speed, with a slow `tick()`, at 4x speed and at 0.5x speed, and that the wall-clock duration is shorter or longer than real time accordingly.
+- Confirms that the traces match when running as fast as possible, with a slow `tick()`, at 4x speed and at 0.5x speed, and that the wall-clock duration is shorter or longer than real time accordingly.
 - `peer-failure`: confirms that the controller detects a peer that fails midway and aborts, and that every process ends with exit code 1.
 
 ### `lin` (`lin_cluster.*`)
@@ -425,7 +425,7 @@ What `launch_run.*` checks:
 
 What `process.*` checks:
 
-- Capture of stdout and stderr, passing on line by line, timeouts
+- Capture of stdout and stderr, line-by-line forwarding, timeouts
 - Empty stdin, the working directory, handles that are not inherited
 - Stop requests, ending each process that was started
 - Paths and arguments that contain spaces and non-ASCII characters
@@ -447,7 +447,7 @@ Registered only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` (preset `linux-gcc-co
 What the Control Server tests (`control_server.*`; the `unit` and `control` labels are also set) check:
 
 - The generated gRPC code and calls
-- End to end in one process (a Hub that the Agents of 2 J1939 peers connect to over SIL Kit, the time gate, a gRPC client)
+- End to end in one process (a Hub that the Agents of 2 J1939 `Peer` objects connect to over SIL Kit, the time gate, a gRPC client)
 - Authentication, roles, TLS and the audit log
 - Which role can call which RPC (and that the RPCs in the proto match the table of rules)
 - Message conversion, limits and input checks
@@ -480,7 +480,7 @@ Tests of the Ethernet Bridge (all platforms). The `unit` label is also set.
 | `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library |
 | `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable with TAP devices and veth in a namespace |
 
-`ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (orders that stop and orders that do not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
+`ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (frame orders in which the loop stops and in which it does not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
 
 ### `bridge_runtime`
 
@@ -492,7 +492,7 @@ With fake `hooks` and a fake participant whose states are scripted, they check:
 - The shutdown order (the statistics are printed before the SIL Kit participant stops)
 - `fault()` and participant failures
 - Warnings and health lines
-- A state in the middle of startup is not treated as a failure, the startup limit
+- A state in the middle of startup is not treated as a failure; the startup limit
 
 One test uses a real participant with an in-process registry (on a free port). The message for a registry that cannot be reached (`registry_failure_message()`) is also checked with the text that SIL Kit actually throws.
 
@@ -769,7 +769,7 @@ Public headers:
 | `check_file()` | `launch/check.hpp` |
 | `run_file()`, `TimeCommands` | `launch/run.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
-| `read_scenario()` for scenarios, the interface of time functions `Waveform` | `launch/scenario.hpp` |
+| `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
 
 Implementation:
@@ -793,7 +793,7 @@ The comment at the top of `run.cpp` and the class comments in each `run_*.hpp` d
 - Tests: `tests/launch`, `tests/multi_host`
 - `ctest -R`: `^launch\.` (no processes), `^launch_cli\.` (`check`), `^launch_run\.` (`run`), `^multi_host\.`
 
-`tests/multi_host` creates 2 computers with Linux network namespaces. Where it cannot create them, it prints the reason and skips. With `VEHICLE_SIL_REQUIRE_MULTI_HOST=1`, it fails instead of skipping.
+`tests/multi_host` simulates 2 computers with Linux network namespaces. Where it cannot create the namespaces, it prints the reason and skips. With `VEHICLE_SIL_REQUIRE_MULTI_HOST=1`, it fails instead of skipping.
 
 ### `tools/common`
 
@@ -1463,7 +1463,7 @@ Documentation to update:
 Code and files to update:
 
 - `examples/ecu_main/simulation.live.yaml` (no `stop_at_ms`, `speed: 1`; the configuration file for working from the GUI): `launch_run.live` confirms that it has the same participants and networks as `simulation.yaml`.
-- `template.check_and_run` confirms the same file of the template.
+- `template.check_and_run` checks the template's file of the same name.
 - `simulation.live.dashboard.yaml` in the build directory is a copy of `simulation.dashboard.yaml` made by CMake.
 - The recordings of launcher output that the GUI tests replay (`gui/server/tests/recordings/`): record them again with `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>`.
 - `scripts/verify-gui.py --launcher <path>` finds mismatches between the recordings and the real launcher.
@@ -1512,7 +1512,7 @@ How the key branches relate to the lists:
 
 - Most of the code that reads files accepts keys in branches (`key == "..."`) and prints a separate list in the unknown-key message.
 - When you add a branch, add the key to the list too.
-- The tests compare the list, so if you forget it, the schema passes without knowing the new key.
+- The tests compare the list, not the branches. If you forget the list, the schema passes the tests without the new key.
 
 To add a step kind:
 
@@ -1553,7 +1553,7 @@ Decisions for each change:
 
 Rules:
 
-- The invariants of the thread that writes events and of the queue are written in the comment of `EventStream` in `events.hpp`. Make the documentation match it.
+- The invariants of the thread that writes events and of the queue are described in the comment of `EventStream` in `events.hpp`. Make the documentation match it.
 - The invariants are: the thread that produces events does not wait for the reader; only `log` may be dropped; and the time after which the launcher stops waiting for a reader that does not read.
 - That time is set by `--events-stall-ms` (`events_stall_timeout()` and `kMinEventsStallMs` in `tools/launch/main.cpp`; the default is `EventStreamOptions::stall_timeout`).
 
@@ -1586,9 +1586,9 @@ Documentation to update:
 
 Rules:
 
-- The definition of lateness is written in the comment of `TimeControlOptions` (`simulation_controller.hpp`). Make the documentation match it.
+- The definition of lateness is described in the comment of `TimeControlOptions` (`simulation_controller.hpp`). Make the documentation match it.
 - The thread that reads stdin passes commands to the gate (without waiting). Do not add anything that waits inside the lock of `TimeCommands`.
-- Check lateness numbers with the tests `core.time_gate_model_*`, examples with fixed times. Tests that use real time check one side only.
+- Check lateness numbers with the tests `core.time_gate_model_*`, examples with fixed times. Tests that use real time make one-sided checks only.
 
 Tests:
 
@@ -1719,8 +1719,8 @@ Tests:
 - `^signal\.`
 - `launch_run.scenario`
 - `launch_run.scenario_wave`: the time at which the ECU saw the waveform, passing with a different time step, the warning and `undersampled: ok`
-- `launch_run.scenario_expect_beside`: the sample that broke an `expect` beside a step, `expect_skipped`
-- `launch_run.scenario_same`: the same result at maximum speed, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
+- `launch_run.scenario_expect_beside`: the sample that failed an `expect` beside `ramp` or `wave`, `expect_skipped`
+- `launch_run.scenario_same`: the same result as fast as possible, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
@@ -1735,16 +1735,16 @@ Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/test
 |---|---|
 | `list_scenarios()` | How scenarios are collected from a directory, and their order |
 | `test_file()` | Calls `run_file()` for each run |
-| `format_test_text()` | The arguments in the command that reruns a single run are `TestArguments` |
+| `format_test_text()` | The command that reruns a single run takes its arguments from `TestArguments` |
 | `format_test_json()` | `kTestFormat` |
-| `TestReport::remarks()` | The findings of `test` as a whole, `test-nothing-run` and `test-runs-left` |
+| `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run` and `test-runs-left` |
 | `TestReport::result()` | Result and exit code |
 | `ScenarioCheck::not_for_variant` | Marks a run that does not match `only` as `skipped` |
 | `CheckOptions::params_for_many` | Relaxes the check of `--param` |
 | `CheckOptions::file_only` | Reads only the configuration file |
 | `test()` and `spread_scenarios()` in `tools/launch/main.cpp` | Arguments |
 
-Before `run_file()`, `test_file()` reads the configuration file, checks the variants, and rejects a `--param` that no scenario uses and enabled manual participants.
+Before `run_file()`, `test_file()` reads the configuration file, checks the variants, and rejects both a `--param` that no scenario uses and any enabled manual participant.
 
 Documentation to update:
 
@@ -2042,7 +2042,7 @@ Rules:
 
 - If you change the layout, raise `kVersion` in `control/wire.hpp`. The decoder accepts only its own version.
 - If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
-- Do not change the hello from its start up to the participant name in any version. This lets each side read the name of a peer with a different version.
+- Never change the hello from its start up to the participant name, in any version. This lets a peer with a different version read the name.
 
 Documentation to update:
 

@@ -288,7 +288,7 @@ On a slave's port, `on_response()` never carries a go-to-sleep command or the sl
 `SilKitLinPort(controller, role)` registers SIL Kit handlers in its constructor and removes them in its destructor. It does not own the controller, so destroy it before the participant. Type conversion (`LinFrame`, checksum model, state) happens only inside this port.
 
 - `open()` calls `Init` on the master (with an empty frame response configuration) and `InitDynamic` on a slave.
-- Only the slave's header handler is registered after `InitDynamic` in `open()`. The SIL Kit C API treats registration before that as a state error. Both happen inside the same handler, so no header is received in between.
+- The slave's header handler is the exception: it is registered in `open()`, after `InitDynamic`. The SIL Kit C API treats registration before `InitDynamic` as a state error. Both happen inside the same handler, so no header is received in between.
 - If the ID has not yet been configured for reception, `send_header()` configures it with the header's length and checksum model (`SetFrameResponse`) before sending the header. The IDs of the first schedule are configured through the same path.
 
 ### Virtual LIN bus (`VirtualLinBus`)

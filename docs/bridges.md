@@ -20,12 +20,12 @@ These steps connect the bridge to the first channel of Vector Virtual CAN. The b
 
 | Step | What you do | What you see |
 |---|---|---|
-| 1 | Build the bridge with the location of the XL Driver Library (see "[Build](#build)"). | `vehicle_sil_vector_xl_bridge` is built. |
+| 1 | Build the bridge, giving the location of the XL Driver Library (see "[Build](#build)"). | `vehicle_sil_vector_xl_bridge` is built. |
 | 2 | List the available channels. | A numbered list of channels for each target. |
 | 3 | Start the SIL Kit registry, then start the bridge. | The line `bridging SIL Kit network ...` appears. |
 | 4 | Stop the bridge with Ctrl+C. | One line of statistics appears and the bridge exits with code 0. |
 
-Step 2 lists the channels with this command. Use the number after `--xl-channel` in step 3.
+The command for step 2 prints a list of this form. In step 3, use the number shown after `--xl-channel`.
 
 ```sh
 vehicle_sil_vector_xl_bridge --list-channels
@@ -62,9 +62,9 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 The bridge stops on Ctrl+C, and on Windows also when you close its console window. In both cases it prints the forwarding statistics.
 
 > [!CAUTION]
-> Do not unplug the USB cable of the CAN interface while the bridge runs. The bridge stops (exit code 1), but a VN5620 was sometimes not detected again after it was plugged back in and had to be power-cycled.
+> Do not unplug the USB cable of the CAN interface while the bridge runs. The bridge stops (exit code 1), but after being plugged back in, a VN5620 was sometimes not detected until it was power-cycled.
 
-If something goes wrong, look it up in this table.
+If something goes wrong, find the symptom in this table.
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -84,14 +84,14 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 |---|---|
 | `--list-channels` | Prints the CAN channels that the XL driver offers, numbered per target, and exits. |
 | `--registry-uri <uri>` | Address of the SIL Kit registry (required). |
-| `--xl-target <virtual\|physical>` | `virtual` selects Vector Virtual CAN (`XL_HWTYPE_VIRTUAL`); `physical` selects the CAN channels of any other hardware (CANcase, VN16xx and others) (required). |
-| `--xl-channel <n>` | 1-based number among the CAN channels of that target (required). |
+| `--xl-target <virtual\|physical>` | `virtual` selects Vector Virtual CAN (`XL_HWTYPE_VIRTUAL`); `physical` selects the CAN channels of all other hardware, such as CANcase and VN16xx (required). |
+| `--xl-channel <n>` | 1-based channel number among the CAN channels of that target (required). |
 | `--bitrate <bit/s>` | Sets the bit rate of the XL channel, 15000–1000000 bit/s (the range of `xlCanSetChannelBitrate`). |
 | `--network <name>` | Name of the SIL Kit CAN network (default `J1939_CAN1`). |
 | `--participant <name>` | Participant name (default `VectorXlBridge`). |
 | `--rx-queue-size <n>` | Size of the XL receive queue (a power of two, 16–32768, default 16384). |
 | `--tx-timeout-ms <ms>` | Drops new frames while the bus is congested (100–60000; see "[Counting frames on the bus (transmit receipts)](#counting-frames-on-the-bus-transmit-receipts)"). |
-| `--bus-off-restart-ms <ms>` | Reactivates the channel when bus-off lasts this long (default 1000, 0 disables it, 100–60000; see "[Bus monitoring while running](#bus-monitoring-while-running)"). |
+| `--bus-off-restart-ms <ms>` | Reactivates the channel when bus-off lasts this long (100–60000, or 0 to disable; default 1000; see "[Bus monitoring while running](#bus-monitoring-while-running)"). |
 | `--no-bus-monitor` | Does not ask the XL driver for the error state of the CAN controller. |
 | `--help` | Prints the usage. |
 
@@ -117,7 +117,7 @@ You choose the channel and the device on this command line when the bridge start
 The exit code is 1 in any of these cases:
 
 - The SIL Kit participant went into a stopping or ended state (the registry stopped or the connection was lost).
-- The participant stays in a starting state and never reaches Running.
+- The participant stayed in a starting state and never reached Running.
 - The XL channel became unusable (the device was removed).
 
 ### Participant state while running
@@ -134,23 +134,23 @@ The bridge never pauses on its own.
 
 ### Closing the console window (Windows)
 
-When you close the console window on Windows (and also on logoff or shutdown), the `SetConsoleCtrlHandler` handler requests a stop, waits up to 4 seconds for the statistics to be printed, then ends the process with the bridge's exit code. The reason: Windows ends the process as soon as the handler returns, and waits only about 5 seconds for it. Those 5 seconds cannot be changed, so the bridge prints the statistics before it stops the SIL Kit participant, and waits at most 2 seconds for the participant to stop. If it still takes longer than 4 seconds, Windows ends the process and the exit code is not 0 (the statistics are already printed by then).
+When you close the console window on Windows (and also on logoff or shutdown), the `SetConsoleCtrlHandler` handler requests a stop, waits up to 4 seconds for the bridge to finish stopping (which includes printing the statistics), then ends the process with the bridge's exit code. The handler waits because Windows ends the process as soon as the handler returns, and gives the handler only about 5 seconds. Those 5 seconds cannot be changed, so the bridge prints the statistics before it stops the SIL Kit participant, and waits at most 2 seconds for the participant to stop. If it still takes longer than 4 seconds, Windows ends the process and the exit code is not 0 (the statistics are already printed by then).
 
 ### Code shared by the bridge executables
 
-The bridge executables share the following, in `run_bridge()` (`vehicle_sil::bridge_runtime`) in `bridges/common`:
+The bridge executables share the following through `run_bridge()` (`vehicle_sil::bridge_runtime`) in `bridges/common`:
 
 - How stop requests are received
 - The monitoring loop
 - The stop sequence (warnings raised just before the stop, then the statistics, are printed before the SIL Kit participant is stopped)
 - The exit codes
-- The 4 seconds when the console is closed
+- The 4-second wait when the console window is closed
 
 ## Error messages
 
 ### Argument errors
 
-On an argument error, the bridge prints only 2 lines to stderr, the error and a pointer to the usage, and exits with code 4. `--help` prints the full usage.
+On an argument error, the bridge prints only 2 lines to stderr (the error and a pointer to the usage) and exits with code 4. `--help` prints the full usage.
 
 ```
 error: --xl-target must be 'virtual' or 'physical', got: cancase
@@ -169,15 +169,15 @@ If the bridge cannot connect to the registry, it prints one line with the addres
 [bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit text>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.
 ```
 
-The part after `(<SIL Kit text>).` depends on the address. The host is compared without regard to case.
+The part after `(<SIL Kit text>).` depends on the address. The host is compared case-insensitively.
 
 | Host in `--registry-uri` | What the message tells you |
 |---|---|
 | A loopback address of this computer (`localhost`, `127.x.y.z`, `::1`), or an address that cannot be parsed | As in the line above: start the registry first, or give the address it listens at. |
-| Any other host | On the computer with the registry, check that the registry runs, that it listens on an address reachable from here, and the firewall. |
+| Any other host | On the computer with the registry, check that the registry runs and listens on an address reachable from here, and check its firewall. |
 | `0.0.0.0` and `::` (`[::]`) | These are addresses to listen on and cannot be connected to. Give the address of the computer the registry runs on. |
 
-The text for "any other host" follows. The bridge does not find out which computer the address belongs to (another computer, or a LAN address of this one), so the text does not claim either.
+The text for "any other host" is below. The bridge does not determine whether the address belongs to another computer or is a LAN address of this one, so the text claims neither.
 
 ```
 ... <host> is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:<port>' there listens on all of its addresses, not only on its loopback), and that its firewall lets port <port> through.
@@ -200,10 +200,10 @@ The bridges (`vehicle_sil_vector_xl_bridge`, `vehicle_sil_ethernet_bridge`) and 
 | A console (Command Prompt, PowerShell) | As UTF-16 (`WriteConsoleW`). |
 | A file or a pipe | As UTF-8 bytes. |
 
-- In a console, non-ASCII characters (a `--participant` name, the name of a network connection) are readable whatever the code page (932 on Japanese Windows). The code page is not changed, so you do not need `chcp`.
-- An MSYS2 shell (mintty) is a pipe, so it receives UTF-8 bytes. Read them as UTF-8.
+- In a console, non-ASCII characters (a `--participant` name, the name of a network connection) are readable whatever the code page (932 on Japanese Windows). The bridges do not change the code page, and you do not need `chcp`.
+- An MSYS2 terminal (mintty) counts as a pipe, so it receives UTF-8 bytes. Have it read them as UTF-8.
 - In Windows PowerShell 5.1, `>` and `|` re-decode the bytes they receive with `[Console]::OutputEncoding` (by default the console code page), which garbles non-ASCII characters. Run `[Console]::OutputEncoding = [Text.Encoding]::UTF8` first, or use `>` in Command Prompt.
-- SIL Kit's own log does not go through this.
+- SIL Kit's own log is not written this way.
 
 ## Statistics
 
@@ -226,18 +226,18 @@ When the bridge ends, it prints the statistics on one line that starts with `sta
 
 ## Physical CAN and virtual time
 
-- When you connect to physical CAN, run in real time as a rule.
-- Treat Vector Virtual CAN, too, as not synchronized with SIL Kit's virtual time.
+- When you connect to physical CAN, run the simulation in real time as a rule.
+- Treat Vector Virtual CAN, too, as not synchronized automatically with SIL Kit's virtual time.
 - The Vector XL CAN Bridge uses the autonomous lifecycle and runs in real time. Do not make it a participant of a virtual-time simulation.
 - A protocol stack placed directly on an XL channel (`ExternalPortAdapter`) also runs in real time only. Registering it with a host that runs with time synchronization is a configuration error.
 
-If you put the bridge on the same network as virtual-time ECUs, an ECU receives a frame that the bridge forwarded at the time of the ECU step in which it receives it. A frame received before the simulation starts gets time 0. The wall clock decides which ECU step receives a frame, so the result is not deterministic (see "SIL Kit port (`SilKitCanPort`)" in [internals/can.md](internals/can.md#sil-kit-port-silkitcanport)).
+If you put the bridge on the same network as ECUs that run in virtual time, each ECU receives a forwarded frame with the time of the ECU step in which the frame arrives. A frame received before the simulation starts gets time 0. The wall clock decides which ECU step receives a frame, so the result is not deterministic (see "SIL Kit port (`SilKitCanPort`)" in [internals/can.md](internals/can.md#sil-kit-port-silkitcanport)).
 
 ## Forwarding behavior
 
-| What | What the bridge does |
+| Case | What the bridge does |
 |---|---|
-| Classic CAN frames | Forwards the identifier (11 bit / 29 bit), IDE, RTR, DLC and data unchanged. |
+| Classic CAN frames | Forwards the identifier (11-bit or 29-bit), IDE, RTR, DLC and data unchanged. |
 | DLC 9–15 from SIL Kit to XL | Sends them as DLC 8. |
 | CAN FD, CAN XL, and frames with an invalid ID or DLC | Does not forward them; counts them in `silkit_rejected` or `xl_rejected`. |
 | XL error frames | Does not forward them; counts them in `error_frames`. |
@@ -246,7 +246,7 @@ If you put the bridge on the same network as virtual-time ECUs, an ECU receives 
 - DLC 9–15 becomes DLC 8 because `xlCanTransmit` accepts DLC 0–8 only (XL Driver Library manual). In classic CAN, DLC 9–15 all mean 8 data bytes. From XL to SIL Kit, the bridge forwards the DLC as received.
 - On the XL side, the ID is taken from the receive event as 11 or 29 bits, so in practice `xl_rejected` counts only frames with a DLC above 15.
 
-Forwarding from XL to SIL Kit starts once the participant reaches SIL Kit's CommunicationReady. At that point the bridge starts the SIL Kit controller (the point that SIL Kit recommends). Frames received from XL before then are neither forwarded nor counted (a short time just after startup). Forwarding from SIL Kit to XL runs from before that point.
+Forwarding from XL to SIL Kit starts when the participant reaches CommunicationReady in SIL Kit's lifecycle. At that point the bridge starts the SIL Kit controller (the point that SIL Kit recommends). Frames received from XL before then, during a short time right after startup, are neither forwarded nor counted. Forwarding from SIL Kit to XL already runs before that point.
 
 ### Counting frames on the bus (transmit receipts)
 
@@ -254,9 +254,9 @@ Forwarding from XL to SIL Kit starts once the participant reaches SIL Kit's Comm
 
 `XlCanPort` enables transmit receipts and counts the frames it handed over that have no receipt yet. `own_tx_dropped` (the number of receipts of the bridge's own transmissions) is the number of frames that went out on the bus.
 
-The receipts are used if the port could enable them (with init access), or after at least one receipt has arrived. On a channel without init access where another application has disabled receipts, the wait on stop does not work and `xl_tx_unsent` stays 0.
+The port relies on receipts if it could enable them itself (with init access), or once at least one receipt has arrived. On a channel without init access where another application has disabled receipts, the wait on stop does not work and `xl_tx_unsent` stays 0.
 
-On stop (`XlCanPort::stop()`), before it deactivates the channel, the port waits up to 1 second for the handed-over frames to go out on the bus (`XlCanPortOptions::drain_timeout`). Frames that still have not gone out are counted in `xl_tx_unsent`, because deactivating the channel discards what is left in the XL transmit queue. If the bridge on the other side stops at the same time, no node acknowledges the frames, and they may not go out however long the port waits.
+On stop (`XlCanPort::stop()`), before it deactivates the channel, the port waits up to 1 second for the handed-over frames to go out on the bus (`XlCanPortOptions::drain_timeout`). Frames that still have not gone out are counted in `xl_tx_unsent`, because deactivating the channel discards what is left in the XL transmit queue. If the bridge on the other side stops at the same time, no node acknowledges the frames, and they may never go out, however long the port waits.
 
 There is no backpressure when the simulation runs faster than the bus. If you run faster than the CAN bandwidth allows, frames pile up in the XL transmit queue and, without `--tx-timeout-ms`, end up in `xl_tx_unsent` on stop.
 
@@ -264,9 +264,9 @@ The bridge does not use `xlCanFlushTransmitQueue`, which removes frames from the
 
 #### `--tx-timeout-ms` (drop frames while the bus is congested)
 
-With `--tx-timeout-ms <ms>` (100–60000, `XlCanPortOptions::transmit_timeout`), while the bus is congested the bridge drops new frames instead of handing them to XL, and counts them in `xl_tx_dropped` (`TransmitResult::Dropped`). The bus is congested when none of the frames handed over since the last transmit receipt has received a receipt for the given time. This limits the stale frames that flood the bus when it recovers to that time's worth plus the probe frames described below. Without this option, frames wait any number of seconds and then go out.
+With `--tx-timeout-ms <ms>` (100–60000, `XlCanPortOptions::transmit_timeout`), while the bus is congested the bridge drops new frames instead of handing them to XL, and counts them in `xl_tx_dropped` (`TransmitResult::Dropped`). The bus is congested when none of the frames handed over since the last transmit receipt has received a receipt for the given time. This limits the stale frames that flood the bus when it recovers to that time's worth plus the probe frames described below. Without this option, frames wait as long as it takes, then go out.
 
-Congestion is decided only by when receipts arrive, not by the number of waiting frames. The number drifts when receipts are lost in an overflow of the receive queue (on an overflow, the count is reset to 0 and congestion is judged afresh). A receipt for the next frame ends the congestion.
+Congestion is decided only by when receipts arrive, not by the number of waiting frames. That count drifts when receipts are lost in an overflow of the receive queue (on an overflow, the count is reset to 0 and congestion is judged afresh). A receipt for the next frame ends the congestion.
 
 While the bus is congested, the bridge still hands 1 frame to XL now and then as a probe. Without probes, receipts would never arrive again if one was lost or if the driver discarded the waiting frames (after bus-off, for example). The probe intervals:
 
@@ -275,7 +275,7 @@ While the bus is congested, the bridge still hands 1 frame to XL now and then as
 | First | The given time after congestion is detected (at least 1 second if the controller reports error warning, error passive or bus-off) |
 | From the second on | Doubles with each probe, up to 5 seconds (or the given time if that is longer) |
 
-The interval grows because the probe frames, too, wait in the driver queue until the bus recovers, and should not pile up during a long congestion. After D seconds of congestion, roughly D / 5 probe frames plus a few have piled up.
+The interval grows because the probe frames, too, wait in the driver queue until the bus recovers, and should not pile up during a long period of congestion. After D seconds of congestion, roughly D / 5 probe frames plus a few have piled up.
 
 This option relies on receipts, so it takes effect only with init access (`--bitrate`): with init access the port can enable receipts itself. Without init access, another application could disable receipts at any time and the congestion would never end, so the bridge does not use the option and prints a `warning:` at startup.
 
@@ -305,7 +305,7 @@ The bridge executable looks at the state every second and prints a line (`format
 [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
 ```
 
-If no problem counter increases in the round after one did, the bridge prints one line ending in `; no new problems since the last report`. A controller that only transmits does not lower its receive error counter until it receives successfully, so it may stay error passive after the bus recovers. This line is the sign of recovery.
+If no problem counter increases in the next check after one did, the bridge prints one line ending in `; no new problems since the last report`. A controller that only transmits does not lower its receive error counter until it receives successfully, so it may stay error passive after the bus recovers. This line is therefore the sign that the bus has recovered.
 
 On a `Fault`, the bridge prints `FAIL: <reason>`, prints the statistics and exits with code 1.
 
@@ -341,8 +341,8 @@ The bridge has no forwarding queue of its own.
 
 - If the XL transmit queue is full, the frame is dropped and counted in `xl_queue_full`.
 - `--rx-queue-size` sets the size of the XL receive queue (a power of two, 16–32768, default 16384). The driver actually holds 1 event fewer than that value.
-- `xlReceive` is called for one event at a time. Vector's samples also receive one at a time, and receiving several events in one call is not verified.
-- The channel is activated with `XL_ACTIVATE_NONE`. The bridge does not use timestamps, and `XL_ACTIVATE_RESET_CLOCK` cannot be combined with Vector's newer time synchronization protocol.
+- `xlReceive` is called for one event at a time, because Vector's samples also receive one at a time and receiving several events in one call is not verified.
+- The channel is activated with `XL_ACTIVATE_NONE`, because the bridge does not use timestamps and `XL_ACTIVATE_RESET_CLOCK` cannot be combined with Vector's newer time synchronization protocol.
 - XL calls on one port are serialized with a mutex.
 
 ### Startup order
@@ -377,7 +377,7 @@ The launcher does not wait for a bridge with `required: false` to join the simul
 
 - Hardware timestamps come from a different clock, so they are not used as the arrival time.
 - Receipts of its own transmissions are dropped because the stack itself delivers to the nodes of the same stack.
-- Transmitting returns the synchronous result of `transmit()` as it is (`Ok` becomes `Accepted`; `QueueFull` and `Dropped` become `QueueFull`). Whether the frame later went out on the bus is not reported.
+- Transmitting returns the synchronous result of `transmit()` (`Ok` becomes `Accepted`; `QueueFull` and `Dropped` become `QueueFull`). Whether the frame later went out on the bus is not reported.
 - Not verified on real hardware (see "[Test coverage](#test-coverage)").
 
 ## Build
@@ -436,17 +436,17 @@ The VN5620 loopback also verified the following:
 - On physical channels, too, transmit receipts come back with or without init access, and `own_tx_dropped` equals the number of frames sent. When the bridge runs faster than the CAN bandwidth allows, the frames that could not be sent by the time of the stop are counted in `xl_tx_unsent`.
 - With no node to acknowledge, `--tx-timeout-ms` drops new frames (`xl_tx_dropped`), and all frames already handed to XL go out on the bus once a node appears (`silkit_to_xl` and `own_tx_dropped` match).
 - If another application (another bridge with init access) uses the same channel, the bridge receives the frames that application sends as normal received frames and forwards them to SIL Kit. Whichever side opens the channel later with `--bitrate` fails to start, because it has no init access.
-- Bus monitoring (see "[Bus monitoring while running](#bus-monitoring-while-running)"). With no node to acknowledge, with a different bit rate, and with the cable unplugged, the bridge shows error passive and the increase in error frames every second, and shows "no new problems" once the bus recovers. A controller that only transmits does not lower its receive error counter until it receives successfully, so it may stay error passive after the bus recovers.
+- Bus monitoring (see "[Bus monitoring while running](#bus-monitoring-while-running)"): with no node to acknowledge, with a different bit rate, and with the cable unplugged, the bridge shows error passive and the increase in error frames every second, and shows "no new problems" once the bus recovers. A controller that only transmits does not lower its receive error counter until it receives successfully, so it may stay error passive after the bus recovers.
 - If you unplug the USB cable while the bridge runs, `xlCanRequestChipState` keeps failing with `XL_ERR_INVALID_ACCESS` and the bridge exits with code 1. However, the VN5620 sometimes did not reappear as a USB device after it was plugged back in, and had to be power-cycled. Do not unplug the USB cable while the bridge runs.
 - Error state queries are accepted on Vector Virtual CAN and on a physical channel without init access (no `warning:` is printed).
 - Removing the termination and shorting CAN_H and CAN_L puts the controller into bus-off, and the XL driver stays bus-off after the fault is fixed. When the bridge reactivates the channel, forwarding resumes on the repaired bus (with init access). Removing the termination alone leads to error passive through receive errors, not to bus-off.
 - On a receive queue overflow (caused by stopping the receiving process), received frames are lost and transmitting continues afterwards. No transmit receipt was lost in this test, but it is not verified that receipts are never lost on an overflow.
-- Printing of the statistics and exit code 0 when the console window is closed, and stopping with Ctrl+C
-- The `windows-mingw-static` bridge and launcher run without MinGW in `PATH` (the only DLLs they import are Windows, UCRT and `vxlapi64.dll`)
+- Closing the console window prints the statistics and gives exit code 0, and Ctrl+C stops the bridge.
+- The `windows-mingw-static` bridge and launcher run without MinGW in `PATH` (the only DLLs they import are Windows, UCRT and `vxlapi64.dll`).
 
 ### Not verified
 
-The following is not yet verified with Vector's driver and hardware:
+The following are not yet verified with Vector's driver and hardware:
 
 - Sending, receiving and transmit receipts with other physical CAN setups and devices
 - Whether activating the channel alone, without reactivating it, brings it out of bus-off. Whether deactivating the channel discards the events left in the receive queue (receipts that arrive late)

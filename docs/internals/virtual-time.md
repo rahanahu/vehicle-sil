@@ -38,11 +38,11 @@ You pass the per-step work with `set_step_handler()`. If you do not pass it befo
 
 ### Start and order of advance
 
-Start and stop are aligned with `LifecycleMode::Coordinated`. `SimulationController` (or `vehicle_sil_sim_controller`) distributes the workflow configuration once the required participants are all present. As a result, all participants start together at T = 0.
+Participants start and stop together through `LifecycleMode::Coordinated`. `SimulationController` (or `vehicle_sil_sim_controller`) distributes the workflow configuration once the required participants are all present. As a result, all participants start together at T = 0.
 
 SIL Kit makes a participant wait to run step T until all the others have finished their steps before T. The slowest peer sets the pace of the whole simulation.
 
-- If a step handler takes long in wall-clock time (a heavy `tick()`, for example), the other peers wait for it. No step is skipped.
+- If a step handler takes a long wall-clock time (a heavy `tick()`, for example), the other peers wait for it. No step is skipped.
 - So whatever the execution speed, each peer's sequence of steps and the data it receives are the same.
 
 ### End time (`stop_at` and `VirtualTimeOptions::end`)
@@ -71,7 +71,7 @@ If a required participant leaves during the run, the controller aborts the simul
 
 The 5 seconds are a grace period so that a simulation a participant stopped on its own is not mistaken for a failure.
 
-This decision is `vehicle_sil::FailureCheck` (`vehicle_sil/core/failure_check.hpp`), shared by `vehicle_sil::Simulation`, `vehicle_sil_launch run` and the Control Server's `SimulationMonitor`. The tools that own a controller (`Simulation`, `vehicle_sil_sim_controller`, `vehicle_sil_launch run`) also share the loop that waits for the end and aborts or stops: `vehicle_sil::watch_simulation()` (`vehicle_sil/core/simulation_watch.hpp`). Every tool logs the participant's name, state and reason. This matters because SIL Kit does not stop the simulation when a participant fails; virtual time just stops advancing.
+This decision is `vehicle_sil::FailureCheck` (`vehicle_sil/core/failure_check.hpp`), shared by `vehicle_sil::Simulation`, `vehicle_sil_launch run` and the Control Server's `SimulationMonitor`. The tools that own a controller (`Simulation`, `vehicle_sil_sim_controller`, `vehicle_sil_launch run`) also share the loop that waits for the end and aborts or stops: `vehicle_sil::watch_simulation()` (`vehicle_sil/core/simulation_watch.hpp`). Every tool logs the participant's name, state and reason. This matters because SIL Kit does not stop the simulation when a participant fails; instead, virtual time stops advancing.
 
 ### Step handler exceptions and stopping
 
@@ -124,11 +124,11 @@ With `set_speed(f)`, the controller delays the completion of each step until a w
 
 ### Holding a step
 
-The hold happens outside the step handler (`ParticipantRuntime::set_step_hold()` and `release_step()`). The controller's SIL Kit thread stays free, so it receives state notifications and stops even while stopped. SIL Kit's HealthCheck does not time out the held step. `stop()` and `abort()` while stopped end the whole simulation directly.
+The hold happens outside the step handler (`ParticipantRuntime::set_step_hold()` and `release_step()`). The controller's SIL Kit thread stays free, so it receives state notifications and stop requests even while stopped. SIL Kit's HealthCheck does not time out the held step. `stop()` and `abort()` while stopped end the whole simulation directly.
 
 ### Determinism
 
-The time gate decides only where to stop and how fast to run. Whether a run is stopped part way, stepped one step at a time or run at changed speeds, each peer runs the same steps and receives the same data as in a run without stops.
+The time gate decides only where to stop and how fast to run. Whether a run is stopped partway, stepped one step at a time or run at changed speeds, each peer runs the same steps and receives the same data as in a run without stops.
 
 ### Combining with `stop_at`
 
@@ -174,7 +174,7 @@ The comments of `TimeControlOptions` are the authoritative definitions. Lateness
 
 If a run ends while stopped, its lateness remains.
 
-**Stopped time.** Time spent stopped is not counted (a resume takes the base again). `running_for` is the time up to now while the next step is past its deadline, and while no speed is set and the gate holds nothing. Startup and shutdown are not included.
+**Stopped time.** Time spent stopped is not counted (a resume takes the base again). In 2 cases `running_for` counts up to now: while the next step is past its deadline, and while no speed is set and the gate holds nothing. Startup and shutdown are not included.
 
 **Step granularity.** The gate keeps pace with the wall clock only at the boundaries of controller steps. A peer step that starts at time T runs at the deadline of the first controller step at or after T. That is up to "controller step − (greatest common divisor of the controller step and the peer step)" later than the wall-clock time for T, and never earlier. When you connect devices that run in real time, make the controller step the greatest common divisor of the peer steps (`vehicle_sil_launch` does this by default when a speed is given).
 
@@ -217,7 +217,7 @@ Within one step, the order is receive and process, application processing, then 
 
 ## Integrating a fixed-period tick()
 
-Call an existing ECU model (such as a DLL with a fixed-period `tick()`) from the step handler through `TickScheduler`. vehicle-sil is a shared library that a DLL can use; it does not take in the DLL itself.
+Call an existing ECU model (such as a DLL with a fixed-period `tick()`) from the step handler through `TickScheduler`. vehicle-sil is a library that a DLL can use; it does not incorporate the DLL itself.
 
 | How it is called | Relation between period and step size |
 |---|---|

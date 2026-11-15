@@ -22,7 +22,7 @@ For building your own screen from scratch, and for copying the widgets of these 
 
 | Requirement                      | Details and use                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------------- |
-| Node.js                          | 24 (`.nvmrc`). `engines` in `package.json` allows 24 from 24.15, and 26               |
+| Node.js                          | 24 (`.nvmrc`). `engines` in `package.json` allows 24 (24.15 or later) and 26          |
 | npm                              | 11.12.1 or later (the one that comes with Node.js). Do not use other package managers |
 | [uv](https://docs.astral.sh/uv/) | Runs the GUI server `gui/server` (used in development and in the end-to-end tests)    |
 | Browser for the end-to-end tests | Install it with `npx playwright install chromium --only-shell`                        |
@@ -166,7 +166,7 @@ The wrapper only turns the library's `Readable` (read-only value) into signals.
 
 ### `widgets/`
 
-The variable widgets are: value display, number input, slider, switch, lamp, select and graph.
+The variable widgets are: value display, number input, slider, switch, lamp, choice and chart.
 
 | File                  | Contents                                                                         |
 | --------------------- | -------------------------------------------------------------------------------- |
@@ -258,7 +258,7 @@ A service exposes only read-only signals (`asReadonly()`) and methods that chang
 - To a caller that needs the stream itself, expose an Observable whose name says it is a stream; the caller turns it into a signal with `toSignal` (`latestValue` and `recentValues` in `core/streams/stream-signals.ts`).
 - Reconnection and waits belong to the library's `Connection` (which does not use RxJS).
 - A screen that wants to apply notifications itself (values that arrive dozens of times a second, for example) subscribes to `ServerConnection.batches` (an Observable of notifications read in batches) and applies them to its own signals. Screens do not each hold their own connection or authentication.
-- Do not push more than a few dozen updates a second to a screen (thinning out is the server's job). Graphs use a fixed-length history (`recentValues`).
+- Do not push more than a few dozen updates a second to a screen (thinning out is the server's job). Charts use a fixed-length history (`recentValues`).
 
 ```ts
 // good: the stream is an Observable inside the service; the screen reads a signal (the subscription stops when the screen is destroyed)

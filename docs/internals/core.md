@@ -2,7 +2,7 @@
 
 [日本語](../ja/internals/core.md)
 
-`ParticipantRuntime` owns the SIL Kit participant and its lifecycle. This page describes what its public API guarantees, ownership and shutdown order, threads and queues, time in real-time mode and the SIL Kit configuration defaults. For how virtual time advances and for the time gate, see [virtual-time.md](virtual-time.md).
+`ParticipantRuntime` owns the SIL Kit participant and its lifecycle. This page describes the guarantees of its public API, ownership and shutdown order, threads and queues, time in real-time mode and the SIL Kit configuration defaults. For how virtual time advances and for the time gate, see [virtual-time.md](virtual-time.md).
 
 | Section | Contents |
 |---|---|
@@ -28,11 +28,11 @@
 
 Right after it returns, `state()` is Running or a later state. A short run may already be over by the time you look; that still counts as a successful start. `start()` never returns in a state before Running (such as ReadyToRun).
 
-To keep this guarantee, the wait in `start()` keeps 2 orders.
+To keep this guarantee, the wait in `start()` keeps 2 orderings.
 
 First, it waits until the state leaves ReadyToRun. For a participant without time synchronization, SIL Kit calls the starting handler in ReadyToRun and switches to Running only after the handler returns. So `start()` does not return on the flag that says the handler was called; it waits until the state has left ReadyToRun.
 
-Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, so that a run that passed through Running and stopped after the flags were read does not count as a failure, the wait reads the flags again when it sees a stopping or ended state.
+Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, when the wait sees a stopping or ended state, it reads the flags again, so that a run that passed through Running and stopped after the flags were read does not count as a failure.
 
 The tests `core.participant_start_*` check both orders, using a test hook in `libs/core/src/participant_runtime_probe.hpp` to force the order (only tests use it; it is not installed).
 
@@ -41,11 +41,11 @@ The tests `core.participant_start_*` check both orders, using a test hook in `li
 | Function | What it does |
 |---|---|
 | `add_communication_ready_handler(handler)` | Adds a handler that is called on SIL Kit's CommunicationReady |
-| `set_communication_ready_handler_async(handler)` and `complete_communication_ready()` | Keeps the participant before the first step (CommunicationInitialized) after the handler returns, until `complete_communication_ready()` is called |
+| `set_communication_ready_handler_async(handler)` and `complete_communication_ready()` | Keeps the participant before the first step (CommunicationInitialized), even after the handler returns, until `complete_communication_ready()` is called |
 
 #### `add_communication_ready_handler()`
 
-The handler is called on a SIL Kit thread, before the first step. An autonomous participant uses the same thread.
+The handler is called on a SIL Kit thread, before the first step. The thread is the same for an autonomous participant.
 
 Start the controllers in this handler: `SilKitCanPort::start()`, `SilKitEthPort::start()`, LIN `init()` and the bridge's `start_controller()`. SIL Kit recommends calling CAN `SetBaudRate` and `Start`, LIN `Init` and Ethernet `Activate` at this point.
 
@@ -58,7 +58,7 @@ Start the controllers in this handler: `SilKitCanPort::start()`, `SilKitEthPort:
 
 #### `set_communication_ready_handler_async()` and `complete_communication_ready()`
 
-In coordinated mode every participant waits before the first step, so participants can exchange data over publish/subscribe during that wait. They cannot do so inside the handler. Call the completion from another thread that the handler started.
+In coordinated mode every participant waits before the first step, so participants can exchange data over publish/subscribe during that wait. They cannot do so inside the handler. Call `complete_communication_ready()` from another thread that the handler starts.
 
 | Situation | What happens |
 |---|---|
@@ -66,7 +66,7 @@ In coordinated mode every participant waits before the first step, so participan
 | It is called before the handler is called, or a second time | Does nothing and returns false |
 | The wait before the first step begins after `stop()` has returned | The handler is not called; the runtime completes by itself |
 
-No participant's step starts until the completion. Always complete, even when the work done during the wait fails. `SimulationController::set_start_window()` uses this function (see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [control.md](control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)).
+No participant's step starts until the wait is completed. So always complete it, even when the work done during the wait fails. `SimulationController::set_start_window()` uses this function (see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [control.md](control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)).
 
 ### Notifications of other participants' states
 
@@ -90,7 +90,7 @@ CommunicationReady handlers need this guarantee when the start fails before Runn
 
 | When CommunicationReady arrives | Handlers |
 |---|---|
-| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and no step runs) and stops where the stop reaches it |
+| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). In virtual time, the stop that `stop()` kept is passed at the first step, and the lifecycle stops there |
 | While `stop()` waits for the shutdown | Called as usual |
 
 The tests are `core.communication_ready_after_stop_*` and `core.communication_ready_handler_that_runs_is_waited_for_by_stop`.
@@ -198,7 +198,7 @@ A participant without the `DynamicSimulationStep` key has its step shrunk by SIL
 
 ### Listen address
 
-`is_loopback_registry_uri()` decides whether the address is a loopback address. It counts as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names.
+`is_loopback_registry_uri()` decides whether the address is a loopback address. These count as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names.
 
 On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On systems other than Windows, it also listens on a local-domain socket with a new name in the temporary directory.
 
@@ -220,13 +220,13 @@ On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On s
 
 ### With your own configuration
 
-If you pass your own configuration (a YAML or JSON string), `merged_participant_configuration()` lays the defaults above over it. The `ParticipantRuntime` constructor calls it. `Peer`, `SimulationController` and `Simulation` use this constructor too.
+If you pass your own configuration (a YAML or JSON string), `merged_participant_configuration()` merges the defaults above into it. The `ParticipantRuntime` constructor calls it. `Peer`, `SimulationController` and `Simulation` use this constructor too.
 
 First, SIL Kit reads the configuration (`ParticipantConfigurationFromString()`: schema check and resolution of `Includes`). Errors stay SIL Kit's `ConfigurationError`. If the string cannot be read as YAML, " (at line <line>, column <column> of the configuration text)" is appended to SIL Kit's message, because SIL Kit's message sometimes has no location.
 
 The content of the configuration is taken from what SIL Kit read (`ParticipantConfigurationToJson()`, also read with rapidyaml). A key counts the same whichever file in `Includes` it is written in.
 
-Missing keys are added as follows. They are added to the string that was passed in.
+Missing keys are added as follows. They are added to the passed-in string itself.
 
 | State of the key | What is added |
 |---|---|
@@ -239,9 +239,9 @@ On Windows, `EnableDomainSockets` is set to `false` even when the configuration 
 To add keys, the string is read with the rapidyaml bundled with SIL Kit, the keys are added, and the result is written back as YAML.
 
 - Other keys stay as written.
-- A key with nothing under it, such as `Experimental:` (also when only a comment is under it), reads as missing to SIL Kit, so the new key is added under it.
+- A key with nothing under it, such as `Experimental:` (also when only a comment is under it), counts as missing for SIL Kit, so the new key is added under it.
 - SIL Kit's JSON is never used in place of the configuration, because it leaves out part of what was read (such as `Format` of a log sink).
-- A configuration that needs nothing added is not changed by a single character.
+- A configuration that needs nothing added is left unchanged, byte for byte.
 
 ### Rejected settings
 
@@ -251,7 +251,7 @@ To add keys, the string is read with the rapidyaml bundled with SIL Kit, the key
 - `Middleware.RegistryUri` differs from the registry URI (not compared if the URI is empty).
 - `DynamicSimulationStep` is `true`.
 
-SIL Kit takes the name and the URI from the configuration, so going ahead would join under another name or connect to another registry. Identical values are accepted.
+SIL Kit takes the name and the URI from the configuration, so accepting a different value would make the participant join under another name or connect to another registry. Identical values are accepted.
 
 ### `participant_configuration_from_file()`
 
@@ -269,7 +269,7 @@ A build without rapidyaml (when SIL Kit is not built from the submodule) uses th
 
 | Action | Build without rapidyaml |
 |---|---|
-| Adding keys | Not done (the listen address is also as the configuration says) |
+| Adding keys | Not done (the listen address is also whatever the configuration says) |
 | The 3 checks above (`ParticipantName`, `Middleware.RegistryUri`, `DynamicSimulationStep: true`) | Not done |
 | `merged_participant_configuration()` has SIL Kit read the configuration | Not done (a configuration SIL Kit does not accept shows up when the participant is created) |
 | `participant_configuration_from_file()` adds `SearchPathHints` | Not done |

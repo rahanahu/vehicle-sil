@@ -90,7 +90,7 @@ CommunicationReady のハンドラーにこの保証が必要なのは、開始�
 
 | CommunicationReady が来る時点 | ハンドラーの扱い |
 |---|---|
-| `stop()` が戻った後 | 呼ばずに先へ進む（コントローラーは始まらず、ステップも動かない）。停止が渡る所で止まる |
+| `stop()` が戻った後 | 呼ばずに先へ進む（コントローラーは始まらず、ステップのハンドラーも呼ばない）。仮想時間では、`stop()` が預かった停止を最初のステップで渡し、そこで止まる |
 | `stop()` が終了を待っている間 | ふつうに呼ぶ |
 
 確認するテストは、`core.communication_ready_after_stop_*` と `core.communication_ready_handler_that_runs_is_waited_for_by_stop` です。

@@ -85,8 +85,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送ったコマンド） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{session}`（なければ `null`） | `session-*.json` |
-| `GET api/dashboard?file=<設定ファイル>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
-| `GET api/scenarios?file=<設定ファイル>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
+| `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
+| `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
 
 - `api/app` のレスポンスは、サーバーのバージョン、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`）です。`limits` には `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` などがあります。
@@ -128,7 +128,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 ### 停止（`api/stop`）
 
-本文は `{"force": 真偽}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。
+本文は `{"force": boolean}` です。省略は `false` で、本文なしで `Content-Type` もないリクエストも `false` です。
 
 | `force` | すること | すでに頼んであるとき |
 |---|---|---|
@@ -148,8 +148,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 |---|---|
 | `{"command": "pause"}` | |
 | `{"command": "resume"}` | |
-| `{"command": "step", "ms": <整数>}` | 1 から `limits.step_ms_max` |
-| `{"command": "speed", "value": <"max" か数>}` | `speed` と同じ範囲 |
+| `{"command": "step", "ms": <integer>}` | 1 から `limits.step_ms_max` |
+| `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
@@ -430,7 +430,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 画面は、認証の後に次を送ります。
 
-- `{"type": "watch", "id": <0 から 2^53 の整数>, "variables": "all" または [{"peer", "name"}, ...], "period_ms": <整数>}`: 変数の値の受信を始めます。
+- `{"type": "watch", "id": <integer from 0 to 2^53>, "variables": "all" or [{"peer", "name"}, ...], "period_ms": <integer>}`: 変数の値の受信を始めます。
 - `{"type": "unwatch", "id": <id>}`: やめます（ない `id` は何もしません）。
 
 | `watch` のフィールド | 内容 |
@@ -444,7 +444,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 - 接続が切断されると、その接続の watch は全部なくなります（再接続したら送り直します）。
 - watch は実行をまたいで続きます。実行がないとき、変数の状態が `ready` と `ended` のどちらでもないとき、いまの実行にない変数（その分だけ）には、何も届きません。いまの実行にない名前を挙げてもエラーではありません（実行の前に watch できます）。
 
-サーバーは `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <値>}}}}` を送ります。
+サーバーは `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}` を送ります。
 
 **いつ届くか**
 
@@ -493,7 +493,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ### 書き込み（`api/write`、`operation`）
 
-`POST api/write` `{"session": <実行の id>, "writes": {"<peer>": {"<name>": <値>}}, "at_ms": <整数>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+`POST api/write` `{"session": <run id>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
 
 | フィールド | 内容 |
 |---|---|
@@ -547,7 +547,7 @@ participant ごとの `state` は次のとおりです。
 
 ### シナリオの一覧（`api/scenarios`）
 
-`GET api/scenarios?file=<設定ファイル>` は、設定ファイルの隣のディレクトリ `scenarios` の `.yaml` と `.yml` を返します（名前の順。200 個まで）。`file` は `api/check` と同じ検査を通ります。
+`GET api/scenarios?file=<configuration file>` は、設定ファイルの隣のディレクトリ `scenarios` の `.yaml` と `.yml` を返します（名前の順。200 個まで）。`file` は `api/check` と同じ検査を通ります。
 
 | フィールド | 内容 |
 |---|---|
@@ -615,7 +615,7 @@ GUI サーバーは、実行ごとに、自分を通した書き込み（`api/wr
 - 入れなかった理由は YAML の先頭のコメントに書きます。理由は、上限の 2000 個を超えた、participant の名前に `.` がある、のどちらかです。シナリオでは最初の `.` までが participant の名前なので、`.` を含む名前の participant は指定できません。
 - YAML の先頭のコメントには、何を記録したか、シナリオが最後の手順の時刻で終わること、最後の手順の後も実行を続けたいときに追加する手順の例（`expect` と `hold_for_ms`）を書きます。ランチャーは最後の手順の時刻でシミュレーションを止めます。記録した実行がそれより先まで進んでいれば、その時刻も書きます。
 - YAML は `vehicle_sil_scenario: 1`、`name`、`steps` で、手順は `at_ms`（反映したステップの仮想時間）と `set` だけです。同じ時刻に反映された値は 1 つの `set` にまとめ、同じ変数の 2 つ目はその時刻の最後の値にします。
-- 変数は `<participant>.<変数名>`、列挙は項目の名前（いつも引用符つき。名前が 1 つに決まらなければ値）です。
+- 変数は `<participant>.<variable name>`、列挙は項目の名前（いつも引用符つき。名前が 1 つに決まらなければ値）です。
 
 YAML の書き方は次のとおりです。
 
@@ -633,7 +633,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 ## ダッシュボードのファイル
 
-`GET api/dashboard?file=<設定ファイル>` は、設定ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確認して JSON で返します（書き方は [docs/gui.md](../../docs/ja/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
+`GET api/dashboard?file=<configuration file>` は、設定ファイルの隣の `<name without extension>.dashboard.yaml` を読み、形を確認して JSON で返します（書き方は [docs/gui.md](../../docs/ja/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
 
 | フィールド | 内容 |
 |---|---|
@@ -665,7 +665,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 ### パネルのモジュール
 
-`GET panels/<key>/<root からの相対パス>` が、カスタムパネルの ES モジュールを `text/javascript`（`X-Content-Type-Options: nosniff`、ほかのレスポンスと同じ CSP、`Cache-Control: no-store`）で返します。
+`GET panels/<key>/<path relative to the root>` が、カスタムパネルの ES モジュールを `text/javascript`（`X-Content-Type-Options: nosniff`、ほかのレスポンスと同じ CSP、`Cache-Control: no-store`）で返します。
 
 - `<key>` は起動ごとの乱数で、`api/dashboard` の `url` にだけ入っています。ブラウザはモジュールの import にヘッダーを付けられないので、トークンの代わりに URL に入れます。トークンとは別の値で、知っていてもパネルのモジュールを読めるだけです。
 - 返すのは、root の下の `panels` という名前のディレクトリの中の `.js` / `.mjs` の通常のファイルだけです（1 MiB まで。リンクをたどった先も、その `panels` の中）。`panels` は root の下のどの場所のものでもかまいませんが、`panels` とその上のディレクトリがシンボリックリンクでないものに限ります。

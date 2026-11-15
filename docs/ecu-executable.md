@@ -2,7 +2,7 @@
 
 [日本語](ja/ecu-executable.md)
 
-This is the reference for `ecu_main()`, the function that turns an ECU class (a class that takes an `Ecu&`) into an executable. It covers the arguments and exit codes of the executable, how it stops, and the format of `--describe`, with which the ECU prints its configuration as JSON. The API may still change.
+This is the reference for `ecu_main()`, the function that turns an ECU class (a class that takes an `Ecu&`) into an executable. It covers the executable's arguments and exit codes, how it stops, and the JSON format in which `--describe` prints the ECU's configuration. The API may still change.
 
 Use it when different people build the executables of different ECUs and you run them together in one SIL Kit simulation. Every ECU executable takes the same arguments, so you can run an ECU without knowing what is inside it.
 
@@ -34,15 +34,15 @@ The library is `vehicle_sil::simulation`. Its header does not include the SIL Ki
 | `ecu_main<App>(argc, argv, EcuMainOptions, args...)` | Gives the ECU an `App{ecu, args...}` (`Ecu::emplace()`) and runs it as the arguments say. |
 | `ecu_main(argc, argv, EcuMainOptions, std::function<void(Ecu&)>)` | Builds the ECU with a function instead of a class, and runs it as the arguments say. |
 
-`args` are passed to the constructor of `App` as they are. `App` is constructed only once, so move-only values can be passed too. In the form with a function, the function is called once, before anything runs.
+`args` are passed unchanged to the constructor of `App`. `App` is constructed only once, so move-only values can be passed too. In the form with a function, the function is called once, before anything runs.
 
 | Member of `EcuMainOptions` | Meaning |
 |---|---|
 | `name` | Name of the ECU (the SIL Kit participant name, and `name` in `--describe`). |
 | `step` | Step size (must be greater than 0). |
-| `last_word_wait` | When the ECU ends under `--registry-uri`, how long it waits at most for the launcher's response to its last notification (default 500 ms; 0 does not wait). |
+| `last_word_wait` | The longest time that the ECU, when it ends under `--registry-uri`, waits for the launcher's response to its last word (default 500 ms; 0 means no wait). |
 
-The last notification that `last_word_wait` waits for tells the launcher about writes that were cancelled and the like. The response usually comes at once, so change this value only on a computer so slow that the response takes 500 ms or more. No argument changes this value.
+The last word that `last_word_wait` waits on tells the launcher about cancelled writes and similar results. The response usually comes at once, so change this value only on a computer so slow that the response takes 500 ms or more. No command-line argument sets this value.
 
 ### Arguments and exit codes
 
@@ -52,7 +52,7 @@ The last notification that `last_word_wait` waits for tells the launcher about w
 | `--registry-uri <uri>` | Joins the SIL Kit simulation of the registry at `<uri>` as a coordinated virtual-time participant, and runs until the simulation ends. |
 | `--start-timeout-ms <ms>` | Only with `--registry-uri`. How long to wait from joining until the simulation starts (an integer of 1 or more; default 30000). |
 | `--no-control` | With `--registry-uri`, does not expose the ECU's variables to the simulation (see [Exposing variables](#exposing-variables---registry-uri)). |
-| `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |
+| `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit participant configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |
 | `--local --run-for-ms <ms>` | Runs this ECU alone on in-process virtual buses for `<ms>` milliseconds of virtual time (an integer of 1 or more). |
 | `--name <name>` | Participant name used instead of `EcuMainOptions::name` (ASCII or UTF-8). |
 | `--help` (`-h`) | Writes the usage to stdout and exits with 0. |
@@ -67,7 +67,7 @@ Exactly one of `--describe`, `--registry-uri` and `--local` is required. Notes o
 | `--start-timeout-ms` | If the simulation does not start in time, the ECU exits with exit code 3. |
 | `--start-timeout-ms` | Use it when you start many ECUs, or on a slow computer. |
 | `--no-control` | Does not change how the ECU behaves. |
-| `--no-control` | With `--describe`, `variables` stays as it is and `control` becomes `null` (`vehicle_sil_launch run` does not wait for this ECU). |
+| `--no-control` | With `--describe`, `variables` is unchanged and `control` becomes `null` (`vehicle_sil_launch run` does not wait for this ECU). |
 | `--no-control` | With `--local`, it changes nothing. |
 | `--silkit-config` | With `--describe`, the file is only read and checked (an error gives exit code 3). |
 | `--silkit-config` | Not allowed with `--local` (exit code 4). |
@@ -75,9 +75,9 @@ Exactly one of `--describe`, `--registry-uri` and `--local` is required. Notes o
 | `--name` | Also changes `name` in `--describe`. |
 | `--name` | Only the name changes. The J1939 NAME, the addresses and the variable names stay the same. |
 | `--help` | Writes the usage even if other arguments have errors. |
-| `--help` | A `-h` after an argument that takes a value is that value (`--name -h` sets the name to `-h`). |
+| `--help` | A `-h` right after an argument that takes a value is read as that value (`--name -h` sets the name to `-h`). |
 
-To run two instances of the same ECU, make sure that what `--name` does not change (NAME, addresses, variable names) does not overlap. For how, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
+To run two instances of the same ECU, make sure that what `--name` leaves unchanged (the NAME, the addresses and the variable names) does not overlap. For how, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
 
 The exit codes are the same as those of the other tools.
 
@@ -89,7 +89,7 @@ The exit codes are the same as those of the other tools.
 | 4 | Usage error |
 | 130 | Under `--registry-uri`, the ECU was asked to stop (see [When asked to stop](#when-asked-to-stop---registry-uri)) |
 
-These arguments give exit code 4. The ECU starts nothing and writes the usage to stderr.
+The following give exit code 4. The ECU starts nothing and writes the usage to stderr.
 
 | Usage error | Notes |
 |---|---|
@@ -113,11 +113,11 @@ On failure, the ECU writes one line `error: <ECU name>: <reason and how to fix i
 | Usage error | The usage follows the line. |
 | The simulation does not start | Different messages for a timeout and for other causes. |
 
-A timeout means that there is no controller or that the required participants did not all join. The message adds how to check the controller and `--start-timeout-ms`. An example of another cause is a variable name that collides with a monitoring variable of `Peer`.
+A timeout means that there is no controller or that the required participants did not all join; its message also says how to check the controller and points to `--start-timeout-ms`. An example of another cause is a variable name that collides with a monitoring variable of `Peer`.
 
 The message when the registry cannot be reached (`cannot join the simulation at "<URI>": ...`) lists what to check: that `vehicle_sil_launch run` was started first and is waiting, the address and port of the URI, the firewall of that computer, and a participant with the same name.
 
-When the registry refuses the participant because the name is in use, the ECU keeps creating the participant again for 5 seconds before it fails (or for `--start-timeout-ms`, if that is shorter than 5 seconds). This is because, when you restart a participant with the same name right away, the registry may not have noticed yet that the previous process ended. The message then mentions only the time it waited and the name. The registry was reached, so the message does not add the list of things to check.
+When the registry refuses the participant because its name is in use, the ECU retries creating the participant for 5 seconds before it fails (or for `--start-timeout-ms`, if that is shorter). The reason: when you restart a participant with the same name right away, the registry may not yet have noticed that the previous process ended. The message then mentions only the time it waited and the name. Because the registry was reached, the message leaves out the list of things to check.
 
 ### ECU-specific arguments
 
@@ -130,7 +130,7 @@ When the registry refuses the participant because the name is in use, the ECU ke
 | Names you cannot use | The names of the `ecu_main()` arguments (table above). |
 | `--help` | The `--help` of `ecu_main()` does not show the ECU's own arguments. |
 
-`vehicle_sil_launch` starts the ECU with the arguments written in `command` of the configuration file, for `check` and for `run`. So the `--describe` output shows the configuration built from the ECU's own arguments (the addresses and NAMEs of its nodes).
+For both `check` and `run`, `vehicle_sil_launch` starts the ECU with the arguments in its `command` in the configuration file. So the `--describe` output shows the configuration that the ECU's own arguments produce (the addresses and NAMEs of its nodes).
 
 ### Stdout and stderr
 
@@ -150,7 +150,7 @@ After `ecu_main` returns, fd 1 is still stderr, so call `ecu_main` at the end of
 
 When the ECU joins with `--registry-uri`, it exposes its variables to the simulation with SIL Kit publish/subscribe, with no code of your own (`vehicle_sil::control_silkit::AgentTransport`; see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)). An ECU that declares no variables still has `ecu.connected`, so every ECU exposes variables.
 
-`vehicle_sil_launch run` receives them and reads and writes the variables (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). If no process receives them, what the ECU sends reaches no one, and nothing else happens.
+`vehicle_sil_launch run` receives what the ECU publishes and reads and writes the variables (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). If no process receives it, what the ECU sends reaches no one, and nothing else happens.
 
 | Item | Details |
 |---|---|
@@ -166,7 +166,7 @@ If the application has attached its own transport (something that holds a `contr
 
 ### Passing a SIL Kit configuration file (`--silkit-config`)
 
-Use it to change the SIL Kit middleware or logging settings: listen on a fixed port, try to connect more times, write the SIL Kit log to a file and so on. The ECU runs without it.
+Use this option to change SIL Kit's middleware or logging settings, for example to listen on a fixed port, to try to connect more times or to write the SIL Kit log to a file. The ECU runs without it.
 
 ```yaml
 # engine.silkit.yaml: listen on a fixed port, and also write the SIL Kit log to a file
@@ -186,7 +186,7 @@ engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-c
 
 The file format and the keys are those of the SIL Kit participant configuration ("Configuration" in the SIL Kit documentation). A relative path is relative to the working directory of the process.
 
-What you write is used as written. vehicle-sil adds its defaults for what you do not write.
+Settings that you write are used as written. For settings that you leave out, vehicle-sil adds its own defaults.
 
 | Key | If not written |
 |---|---|
@@ -196,13 +196,13 @@ What you write is used as written. vehicle-sil adds its defaults for what you do
 
 On Windows, `Middleware.EnableDomainSockets` becomes `false` even if you write `true`. The SIL Kit default is `true`, so vehicle-sil cannot tell whether you wrote it.
 
-Settings that cause an error:
+How problems in the file are handled:
 
 | Setting | Handling | Reason and notes |
 |---|---|---|
-| Unknown keys | SIL Kit gives a warning. | |
-| Values of the wrong type | SIL Kit gives an error. | The message is `error: <name>: --silkit-config "<file>": SIL Kit does not accept the configuration: ...`. |
-| A file that cannot be read as YAML | SIL Kit gives an error. | The message above gets "(at line <line>, column <column> of the configuration text)". |
+| Unknown keys | SIL Kit prints a warning. | |
+| Values of the wrong type | SIL Kit reports an error. | The message is `error: <name>: --silkit-config "<file>": SIL Kit does not accept the configuration: ...`. |
+| A file that cannot be read as YAML | SIL Kit reports an error. | The message above ends with "(at line <line>, column <column> of the configuration text)". |
 | `ParticipantName` differs from the participant name (`--name`, or `EcuMainOptions::name` without it) | An error before connecting. | SIL Kit joins under the name in the configuration file, so a process that waits for the participant name keeps waiting. |
 | `Middleware.RegistryUri` differs from `--registry-uri` | An error before connecting. | SIL Kit connects to the URI in the configuration file. |
 | `DynamicSimulationStep: true` | An error before connecting. | vehicle-sil participants run with their own fixed step size. |
@@ -212,11 +212,11 @@ An error before connecting gives exit code 3, and the message (`error: <name>: -
 Other rules:
 
 - Files split off with `Includes` are also searched for in the directory of the configuration file.
-- The checks and defaults above look at the result with the split files included (it does not matter which file a setting is in).
-- Do not write controller sections (`Network` in `CanControllers` and so on). The network names would no longer match the `--describe` output, and nothing checks this.
-- With `vehicle_sil_launch`, write the option in `command` (see "ecu_main executables (`describe: true`)" in [simulation-config.md](simulation-config.md#ecu_main-executables-describe-true)). The `--describe` of the check gets it too, so `check` finds errors in the configuration.
+- The checks and defaults above apply to the configuration with the split files included (it does not matter which file a setting is in).
+- Do not write controller sections (`Network` in `CanControllers` and so on). The network names would no longer match the `--describe` output, and nothing detects this.
+- With `vehicle_sil_launch`, write the option in `command` (see "ecu_main executables (`describe: true`)" in [simulation-config.md](simulation-config.md#ecu_main-executables-describe-true)). The check's `--describe` run gets the option too, so `check` finds errors in the SIL Kit configuration.
 
-From the library, pass the configuration as a string to `SilKitOptions::participant_configuration` or `ParticipantRuntimeOptions::participant_configuration`. `SilKitOptions` belongs to `Simulation` and reaches every participant of the process. To read it from a file, use `participant_configuration_from_file()` (for the rules, see "SIL Kit configuration defaults" in [internals/core.md](internals/core.md#sil-kit-configuration-defaults)).
+From the library, pass the configuration as a string to `SilKitOptions::participant_configuration` or `ParticipantRuntimeOptions::participant_configuration`. `SilKitOptions` belongs to `Simulation` and applies to every participant in the process. To read it from a file, use `participant_configuration_from_file()` (for the rules, see "SIL Kit configuration defaults" in [internals/core.md](internals/core.md#sil-kit-configuration-defaults)).
 
 ### When asked to stop (`--registry-uri`)
 
@@ -228,24 +228,24 @@ Under `--registry-uri`, `ecu_main` stops when it receives SIGINT (Ctrl+C) or SIG
 | Before the start (while connecting to the registry, or while waiting for the start) | Exits at once with exit code 130, without running destructors. | `error: <ECU name>: interrupted (SIGTERM) before the simulation started: it ends at once` |
 | A second time, while stopping | Exits at once. | |
 
-When a coordinated participant stops, the whole simulation stops in order. That destructors do not run when the signal arrives before the start is the same as the default action of the signal. Even then, the buffers of the C standard I/O (`printf` and so on) are flushed before the process ends.
+When a coordinated participant stops, the whole simulation stops in an orderly way. Skipping the destructors when the signal arrives before the start matches the signal's default action. Even then, the C standard I/O buffers (`printf` and so on) are flushed before the process ends.
 
 | Item | Rule |
 |---|---|
 | When the signals are handled | Only while the `--registry-uri` simulation runs inside `ecu_main`. |
-| Destructor of `App` | When it runs, the signal settings have already been restored to the previous ones. |
+| Destructor of `App` | By the time it runs, the previous signal settings have been restored. |
 | `--describe` and `--local` | Do not handle the signals (the default action ends the process at once). |
-| `read()` and the like in `App` | Not interrupted, because `SA_RESTART` is used. |
-| Signals that the starting process set to be ignored (`nohup`) | Stay ignored. |
+| `read()` and similar calls in `App` | Not interrupted, because `SA_RESTART` is used. |
+| Signals that the parent process set to be ignored (`nohup`) | Stay ignored. |
 | Closing the console on Windows | The ECU waits up to 4 seconds for the orderly stop to finish (then Windows ends the process). |
 
-While `ecu_main` handles these signals, they belong to it. An ECU that wants to handle the signals itself uses `Simulation` directly instead of `ecu_main`.
+While `ecu_main` handles these signals, they are its own. An ECU that needs to handle them itself must use `Simulation` directly instead of `ecu_main`.
 
-`vehicle_sil_launch run` uses this to ask participants to stop: those that do not end after the simulation ends, and those of a simulation that did not start (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)).
+`vehicle_sil_launch run` uses these signals to ask participants to stop: those that do not end after the simulation ends, and those of a simulation that did not start (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)).
 
 ### When another participant leaves during a run (`--registry-uri`)
 
-`ecu_main` ends by itself in only 3 cases:
+`ecu_main` exits on its own in only 3 cases:
 
 | Case | Exit code |
 |---|---|
@@ -265,22 +265,22 @@ What happens when another process goes away:
 
 The controller reports which participant failed (in the output of `vehicle_sil_sim_controller`, and with exit code 1).
 
-In every case, the process that started the ECUs must watch the controller end and then stop the ECU processes. `vehicle_sil_launch run` does this (see [simulation-run.md](simulation-run.md)). If you start them yourself, follow these 2 rules.
+In every case, the process that started the ECUs must watch for the controller to end and then stop the ECU processes. `vehicle_sil_launch run` does this (see [simulation-run.md](simulation-run.md)). If you start them yourself, follow these 2 rules.
 
 Decide the result of the simulation by the exit code of the controller, not by the exit codes of the ECUs alone. An ECU can end with 0 even when another participant failed. An exit code 1 from an ECU means only that a step of that ECU failed.
 
-If the controller process goes away without a result, stop all ECUs (they do not end by themselves). Also stop ECUs that are still running some time after the controller ended (when the registry has gone away, for example). First ask them to stop with SIGTERM (on Windows: Ctrl+Break) (see "When asked to stop" above), and kill those that still do not end.
+If the controller process goes away without a result, stop all ECUs (they do not end by themselves). Also stop ECUs that are still running some time after the controller ended (when the registry has gone away, for example). First ask them to stop with SIGTERM (Ctrl+Break on Windows; see "When asked to stop" above), and kill those that still do not end.
 
 ## Requirements for ECU authors
 
-What an ECU executable must do when you run several ECUs with `vehicle_sil_launch`. If one of these is not met, it shows in a finding or in the output of the launcher.
+When you run several ECUs with `vehicle_sil_launch`, each ECU executable must meet these requirements. A requirement that is not met shows up as a finding or in the launcher's output.
 
 | Ask the ECU author to | If they do not |
 |---|---|
 | Build `main()` with `ecu_main()`. | `check` cannot check the ECU. |
 | Use the names agreed with the integrator (the person who writes the configuration file), such as network names, and check them with `--describe` before handing the ECU over. | `check` reports findings ([simulation-check.md](simulation-check.md)). |
-| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The note `version-mismatch` appears. If the message format version for reading and writing variables also differs, the warning `control-link-version` appears and the variables of that ECU cannot be read or written. |
-| End the processes that the ECU started itself when the ECU ends. | The warning `left-processes` appears (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). |
+| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The check reports the note `version-mismatch`. If the format version of the messages that read and write variables also differs, it reports the warning `control-link-version`, and the variables of that ECU cannot be read or written. |
+| End the processes that the ECU started itself when the ECU ends. | The run reports the warning `left-processes` (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). |
 | Write stdout and stderr in UTF-8. | `vehicle_sil_launch run` shows bytes that are not UTF-8 as `?`. |
 | Do not use the prefixes in the next table in variable names. | The ECU exits with exit code 3. |
 
@@ -304,7 +304,7 @@ When a colliding name causes an error depends on how it is declared and on the p
 | A name registered directly with `agent()` collides with a monitoring variable of `Peer` | Not checked at registration; found when the ECU starts on SIL Kit (exit code 3 with `ecu_main`). |
 | Declaring a name that collides with a monitoring variable that starts with `j1939.<network name>.` | Found only when the ECU starts on SIL Kit. |
 
-The `std::invalid_argument` of `input()` and the like is the same for `Peer` and `LocalBench`, and its message gives the variable name and the rule. Variable names are independent per ECU, so they need not be aligned between ECUs.
+The `std::invalid_argument` of `input()` and the like is the same for `Peer` and `LocalBench`, and its message gives the variable name and the rule. Variable names belong to each ECU, so they need not be aligned between ECUs.
 
 ## `Ecu::describe()`
 
@@ -323,7 +323,7 @@ The `std::invalid_argument` of `input()` and the like is the same for `Peer` and
 
 **`mac`**: Empty if no address was passed to `ethernet()` (an ECU whose application decides the address at run time). The channel does not write this value into frames. The check uses it to confirm that the addresses of the ECUs on a network do not overlap.
 
-**`nodes`**: `address` is the address the node asked for. It does not change when Address Claim gives the node another address (the current address is `Node::address()`, the requested one `Node::requested_address()`). `j1939::kNullAddress` (254) marks a node that takes a free address from the arbitrary address range. `name` is the NAME (empty for a node without a NAME; the JSON key is `j1939_name`). `arbitrary_address_capable()` is the arbitrary address bit of the NAME.
+**`nodes`**: `address` is the address that the node requested. It does not change when address claiming leaves the node at another address (the current address is `Node::address()`, the requested one `Node::requested_address()`). `j1939::kNullAddress` (254) marks a node that takes a free address from the arbitrary address range. `name` is the NAME (empty for a node without a NAME; the JSON key is `j1939_name`). `arbitrary_address_capable()` is the arbitrary address bit of the NAME.
 
 **`variables`**: First comes `ecu.connected`, the input that every ECU has; it is listed even before the Agent is created. Then come the variables the ECU declared (with `input()`, `output()` and the like, and those registered directly with `agent()`), in declaration order. The monitoring variables that `Peer` adds (`PeerOptions::monitor`) are not included.
 
@@ -347,9 +347,9 @@ When you can call `describe()`, and what it returns:
 | Item | How it is written |
 |---|---|
 | Key order | As in the table below. |
-| Keys without a value | Not left out (`null`, an empty string, an empty array). |
+| Keys without a value | Always written (as `null`, an empty string or an empty array). |
 | Indent and lines | An indent of 2 spaces, one key or element per line, and a line break at the end. |
-| Line endings | LF (`--describe` never writes `\r\n`, also on Windows). |
+| Line endings | LF (`--describe` never writes `\r\n`, not even on Windows). |
 | Integers | Decimal, with no digits lost. |
 | Floating-point numbers | The shortest form that reads back as the same `double` (`std::to_chars`; for example `0.1`, `100`, `1e+300`). |
 | Non-finite values | `null`. |
@@ -357,7 +357,7 @@ When you can call `describe()`, and what it returns:
 | NAME | A string of `"0x"` and 16 upper-case hexadecimal digits (key `j1939_name`), because the 64-bit value is an identifier. |
 | Strings | Valid UTF-8 is written as is. `"`, `\` and control characters below 0x20 are escaped (`\b`, `\f`, `\n`, `\r`, `\t`, others as `\u00XX`). |
 | Bytes that do not start a valid UTF-8 sequence | Each byte becomes U+FFFD (the output is always valid JSON). |
-| Enumerator values out of range (a `NetworkUse` made with a cast, for example) | `std::logic_error` instead of a made-up name. |
+| Enumerator values out of range (a `NetworkUse` made with a cast, for example) | `std::logic_error` is thrown instead of writing a made-up name. |
 
 Enum values are 64-bit integers and can exceed 2^53. Read them as integers.
 
@@ -371,7 +371,7 @@ The first key, `vehicle_sil_ecu`, is the format version.
 | A key is added | Does not go up. |
 | A key that takes fixed values (`kind`, `use`, `type`, `causality`) gets a new value | Does not go up. |
 
-A reader rejects an unknown version and ignores unknown keys. An unknown value of a key that takes fixed values is an error for that ECU (the `vehicle_sil_launch check` finding `describe-unknown-value`; the check of the other participants goes on). This happens when an old `vehicle_sil_launch` reads an ECU from a newer vehicle-sil.
+A reader rejects an unknown version and ignores unknown keys. An unknown value of a key that takes fixed values is an error for that ECU (the `vehicle_sil_launch check` finding `describe-unknown-value`; checking of the other participants continues). This happens when an old `vehicle_sil_launch` reads an ECU from a newer vehicle-sil.
 
 `vehicle_sil` is the version of vehicle-sil that the ECU was built with (the version of the CMake project). Use it to find version differences when you run executables built separately in one simulation.
 
@@ -413,7 +413,7 @@ How to read JSON in which a key is missing:
 | `networks[].mac` | The JSON of an ECU from an earlier version. Read it as `null`. |
 | `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
 
-Screens and the like use `variables[].builtin` to show these variables apart from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
+Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
 
 Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_main.describe` compares the output of the executable with this block, byte for byte.
 
@@ -497,7 +497,7 @@ Before you run, you can use the configuration file and `vehicle_sil_launch check
 
 ### Running without the launcher
 
-The same setup, put together with commands and without the launcher. The ECUs join with `--registry-uri`, and `vehicle_sil_sim_controller` waits for all of them to join, starts the simulation and stops it at 1 second of virtual time.
+The same setup, started with plain commands and without the launcher. The ECUs join with `--registry-uri`, and `vehicle_sil_sim_controller` waits for all of them to join, starts the simulation and stops it at 1 second of virtual time.
 
 ```sh
 sil-kit-registry --listen-uri silkit://localhost:8500 &

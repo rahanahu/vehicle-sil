@@ -758,7 +758,7 @@ The JSON files in `examples/` are produced by a server test (`gui/server/tests/t
 
 ## See also
 
-| Goal | Read |
+| Goal | Document |
 |---|---|
 | Build your own screen | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) |
 | Use the API from TypeScript (connection, reconnection, applying events to the summary, time commands, watching ECU variables, writes and their results) | The client library [gui/client](../client/README.md) |

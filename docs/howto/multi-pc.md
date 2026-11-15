@@ -15,7 +15,7 @@ This guide splits one simulation across 2 computers. One computer runs `vehicle_
 | Build | Both computers have a build made as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
 | Address of the launcher computer | This guide uses `192.0.2.10`. Use the address of your own computer instead. |
 
-On both computers, run these 2 lines in the repository root. Run all later commands in that directory (the one that contains `simulation.yaml`).
+On both computers, run these 2 lines in the repository root. Run all later commands in the directory they change to (the one that contains `simulation.yaml`).
 
 ```sh
 export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"
@@ -54,7 +54,7 @@ flowchart LR
 |---|---|---|
 | `vehicle_sil_launch` | `run` in step 2 | It runs the registry itself and listens for connections from the other 2. |
 | `Engine` | The launcher starts it. | The registry on the same computer |
-| `Dashboard` | The command of step 3, on the joining computer | The registry given with `--registry-uri`, then `Engine` as well |
+| `Dashboard` | The command in step 3, on the joining computer | The registry given with `--registry-uri`, then `Engine` as well |
 
 ## Overview
 
@@ -96,7 +96,7 @@ participants:
     manual: true
 ```
 
-It differs in 2 keys from `simulation.yaml`, which runs on one computer:
+It differs from `simulation.yaml`, which runs on one computer, in 2 keys:
 
 | Key | Meaning |
 |---|---|
@@ -134,7 +134,7 @@ note: simulation.two-pcs.yaml:18: participant 'Dashboard': you start it yourself
 passed: 0 errors, 0 warnings, 2 notes
 ```
 
-The `[...]` at the end of each `note:` line is the code of the note:
+The `[...]` at the end of each `note:` line is the finding code:
 
 | Code | What it tells you |
 |---|---|
@@ -155,7 +155,7 @@ On Windows, the firewall must allow the launcher (see "[Differences on Windows](
 
 ### Verify that `run` waits
 
-`run` prints these lines to stderr and waits at the line `waiting for Dashboard to join`. Where this example shows `/home/you/vehicle-sil/.../ecu_main`, you see the absolute path of the directory you ran in.
+`run` prints these lines to stderr and waits after the line `waiting for Dashboard to join`. Where this example shows `/home/you/vehicle-sil/.../ecu_main`, you see the absolute path of the directory you ran in.
 
 ```text
 [vehicle_sil_launch] registry at silkit://127.0.0.1:8500
@@ -176,7 +176,7 @@ When `registry_uri` is `0.0.0.0`, the launcher lists the IPv4 addresses of this 
 
 | Address | How to choose |
 |---|---|
-| The first address | It is the address on the network with the default route, usually on the same LAN as the other computer. If there are other addresses, the launcher says so next to the first one. |
+| The first address | It is the address on the network with the default route, usually on the same LAN as the other computer. If there are other addresses, the launcher adds a note that the first one is this address. |
 | An address such as `172.x.x.x` | Addresses on the virtual networks of WSL, Docker and virtual machines are often unreachable from other computers. Choose the address on the same LAN as the other computer. |
 
 ### Troubleshoot starting `run`
@@ -196,8 +196,8 @@ dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192
 | Argument | Meaning |
 |---|---|
 | `--name Dashboard` | Must match `name` in the configuration file exactly, including case. |
-| `--registry-uri silkit://192.0.2.10:8500` | The URI printed after `join at` in step 2 |
-| `--start-timeout-ms 1000000000000` | The time limit for waiting for the simulation to start. It is the value in the command that the launcher prints, and in effect means no limit. |
+| `--registry-uri silkit://192.0.2.10:8500` | The URI that the launcher printed after `join at` in step 2. |
+| `--start-timeout-ms 1000000000000` | The time limit for waiting for the simulation to start. It is the value from the command that the launcher prints, and in effect means no limit. |
 
 Do not set the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK`. An ECU that connects to a registry at a non-loopback address listens on all addresses without it.
 
@@ -221,12 +221,12 @@ In each row, either `Dashboard` on the joining computer exits with exit code 3, 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The ECU exits at once and prints `cannot join the simulation at ...: ... Failed to connect to SIL Kit Registry` | The launcher is not running yet, or the address or port is wrong. | Start the launcher first, and pass the URI printed after `join at`. |
+| The ECU exits immediately and prints `cannot join the simulation at ...: ... Failed to connect to SIL Kit Registry` | The launcher is not running yet, or the address or port is wrong. | Start the launcher first, and pass the URI printed after `join at`. |
 | The ECU exits after about 5 s and prints `Timeout during connection handshake ...` | The firewall of the launcher computer blocks the connection. | Run the `netsh` line from "[Differences on Windows](#differences-on-windows)". |
 | The ECU exits after about 5 s and prints `... already exists ... (the registry refused the name "<name>" for 5000 ms: ...)` | A participant with the same name has already joined. | Check `--name`. |
 | The launcher prints `participant 'x' joined the simulation, but this run has no participant of that name (...)` | `--name` differs from the name in the configuration file. | Stop that ECU with Ctrl+C and start it again with the name from the configuration file. |
 
-`Timeout during connection handshake` in the second row is a SIL Kit message, and the sentence after it suggests a participant with the same name as the cause. It appeared in a setup with port forwarding, when the firewall blocked the connection. The message in the third row also appears when you merely restart an ECU at once under the same name. While the registry refuses the name, the ECU retries joining for up to 5 s (or for `--start-timeout-ms`, if that is shorter). If the registry sees the end of the earlier participant within that time, the ECU joins. An ECU with a wrong name, as in the fourth row, keeps waiting, and the simulation does not start.
+`Timeout during connection handshake` in the second row is a SIL Kit message, and the sentence after it suggests a participant with the same name as the cause. It appeared in a setup with port forwarding, when the firewall blocked the connection. The message in the third row also appears when you only restart an ECU immediately under the same name. While the registry refuses the name, the ECU retries joining for up to 5 s (or for `--start-timeout-ms`, if that is shorter). If the registry sees the end of the earlier participant within that time, the ECU joins. An ECU with a wrong name, as in the fourth row, keeps waiting, and the simulation does not start.
 
 ## Step 4: Read the result
 
@@ -250,17 +250,17 @@ To stop the run early, do as you would on one computer: stop the launcher with C
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The joined ECU remains after the launcher has ended | If the launcher is killed (crash, power loss, SIGKILL), the ECU keeps waiting. | Stop the ECU with Ctrl+C. |
+| The joined ECU keeps running after the launcher has ended | The launcher was killed (crash, power loss, SIGKILL), so the ECU keeps waiting. | Stop the ECU with Ctrl+C. |
 | The launcher prints `virtual time has not advanced for 10 s ...` | The network is down, a debugger has stopped a process, or an ECU hangs inside a step. | When the network comes back, the run continues from where it stopped (`virtual time advances again`). |
-| Each join takes about 5 s | The other computer cannot connect directly to the ECUs on the launcher computer (the firewall allows only the launcher, or there is NAT). | Leave it as it is, or allow the ECU executables on that computer in the firewall too. |
+| Each join takes about 5 s | The other computer cannot connect directly to the ECUs on the launcher computer (the firewall allows only the launcher, or there is NAT). | Leave it as it is, or also allow the ECU executables on the launcher computer through the firewall. |
 
-SIL Kit takes a long time to notice a broken connection; on Linux, more than ten minutes. If you do not want to wait with virtual time stopped, stop the launcher with Ctrl+C. For unattended runs, add `--timeout-ms` to `run`.
+SIL Kit takes a long time to notice a broken connection; on Linux, more than 10 minutes. If you do not want to wait with virtual time stopped, stop the launcher with Ctrl+C. For unattended runs, add `--timeout-ms` to `run`.
 
 ## Listen on a fixed port
 
 To choose the port that the joining ECU listens on, for example for a firewall or port forwarding, pass a SIL Kit participant configuration file with `--silkit-config`. The same file can also raise the number of connection attempts.
 
-Write this into `dashboard.silkit.yaml`:
+Save this as `dashboard.silkit.yaml`:
 
 ```yaml
 Middleware:
@@ -268,7 +268,7 @@ Middleware:
   ConnectAttempts: 5
 ```
 
-Start the ECU with the command of step 3 plus `--silkit-config`:
+Start the ECU with the command from step 3 plus `--silkit-config`:
 
 ```sh
 dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192.0.2.10:8500 --start-timeout-ms 1000000000000 --silkit-config dashboard.silkit.yaml
@@ -306,7 +306,7 @@ Allowing the ECUs that the launcher starts is optional. Without it, a direct con
 
 ## Use the Control API from another computer
 
-Open the launcher's Control Server on an address that other computers can reach. On such an address, the Control Server requires TLS and credentials. For the rules, see "Authentication" in [control-api.md](../control-api.md#authentication).
+Make the launcher's Control Server listen on an address that other computers can reach. On such an address, the Control Server requires TLS and credentials. For the rules, see "Authentication" in [control-api.md](../control-api.md#authentication).
 
 Do items 1 and 2 below on the launcher computer, and item 3 on the client computer.
 
@@ -319,7 +319,7 @@ Do items 1 and 2 below on the launcher computer, and item 3 on the client comput
 
    This creates `server.key` (the key) and `server.crt` (the certificate).
 
-2. Create the credentials file `credentials.txt` and pass it to `run`. The file has one entry per line, in the form `<role> <name> <token>`. `role` is `viewer`, `operator` or `admin`, and the token is a secret string of 16 or more characters. This line creates an `admin` entry with a random token:
+2. Create the credentials file `credentials.txt` and pass it to `run`. The file has one entry per line, in the form `<role> <name> <token>`. `role` is `viewer`, `operator` or `admin`, and the token is a secret string of at least 16 characters. This line creates an `admin` entry with a random token:
 
    ```sh
    python3 -c "import secrets; print('admin', 'lead', secrets.token_hex(16))" > credentials.txt
@@ -331,7 +331,7 @@ Do items 1 and 2 below on the launcher computer, and item 3 on the client comput
 
    `simulation.live.yaml` is a configuration file that runs the same 2 ECUs until you stop them. The launcher prints `[vehicle_sil_launch] control server at 0.0.0.0:8510` to stderr. Read `0.0.0.0` as the address of this computer.
 
-3. Give `server.crt` and the token to the client computer. Do not give it the key (`server.key`). The token is the third word in `credentials.txt`; on the client computer, save it in `token.txt`. Write this into `list_peers.py`:
+3. Copy `server.crt` and the token to the client computer. Do not copy the key (`server.key`). The token is the third word in `credentials.txt`; on the client computer, save it in `token.txt`. Write this into `list_peers.py`:
 
    ```python
    from vehicle_sil_control import Control
@@ -341,7 +341,7 @@ Do items 1 and 2 below on the launcher computer, and item 3 on the client comput
        print(sorted(p.participant for p in c.peers()))
    ```
 
-   Run it in a shell where you have prepared the client with the commands in "Python" in [control-api.md](../control-api.md#python):
+   Run it in a shell in which you have set up the client as described in "Python" in [control-api.md](../control-api.md#python):
 
    ```sh
    python list_peers.py
@@ -374,20 +374,20 @@ The GUI server listens only on 127.0.0.1. For now, open it through SSH port forw
    scripts/run-gui.py --port 8765 --no-browser
    ```
 
-   In the template project, the command is `vehicle-sil-gui --port 8765 --no-browser simulation.yaml`. Pass the printed URL on to the computer that opens the browser.
+   In the template project, the command is `vehicle-sil-gui --port 8765 --no-browser simulation.yaml`. Copy the printed URL to the computer that runs the browser.
 
    ```text
    http://127.0.0.1:8765/#token=...
    vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
    ```
 
-2. On the browser computer, forward **the same port number**:
+2. On the computer that runs the browser, forward **the same port number**:
 
    ```sh
    ssh -L 8765:127.0.0.1:8765 <user>@<GUI server computer>
    ```
 
-3. In the browser on that computer, open the URL you were given.
+3. In the browser on that computer, open the URL from item 1.
 
 ### Troubleshoot the remote GUI
 
@@ -404,7 +404,7 @@ Every step costs a round trip between the computers.
 | Run | Effect |
 |---|---|
 | As fast as possible (no `speed`) | Slower than on one computer |
-| At a set speed (`speed: 1` and others) | No effect, if the round trip is well under the real time available for one step |
+| At a set speed (`speed: 1` and others) | No effect, as long as the round trip takes much less than the real time available for one step |
 
 The `time:` line of the result shows any lateness.
 

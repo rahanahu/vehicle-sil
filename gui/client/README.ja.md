@@ -20,18 +20,18 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ライブラリは TypeScript のソースで、依存はありません。npm のレジストリには公開していません。
 
-| 使い方                                                | 入手                                                                                                                 | import の書き方                                               |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| ビルドなしの素の JavaScript                           | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、画面のディレクトリに置く                            | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
-| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<バージョン>.tgz` を入手し、自分のプロジェクトで `npm install <その .tgz>` をする | `import { createClient } from '@vehicle-sil/gui-client'`      |
-| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                            | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| 使い方                                                | 入手                                                                                                              | import の書き方                                               |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| ビルドなしの素の JavaScript                           | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、画面のディレクトリに置く                         | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
+| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<version>.tgz` を入手し、自分のプロジェクトで `npm install <that .tgz>` をする | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                         | `import { createClient } from '@vehicle-sil/gui-client'`      |
 
 2 つのファイルは、次の場所にあります。
 
-| ファイル                                  | ビルド済みのツール                                        | リポジトリでビルドする（`gui/web` で実行）                                                 |
-| ----------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `vehicle-sil-gui-client.mjs`              | `<ツール>/client/vehicle-sil-gui-client.mjs`              | `npm run build:client` が `build/gui-client/vehicle-sil-gui-client.mjs` を作る             |
-| `vehicle-sil-gui-client-<バージョン>.tgz` | `<ツール>/client/vehicle-sil-gui-client-<バージョン>.tgz` | `npm run pack:client` が `build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` を作る |
+| ファイル                               | ビルド済みのツール                                    | リポジトリでビルドする（`gui/web` で実行）                                              |
+| -------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` が `build/gui-client/vehicle-sil-gui-client.mjs` を作る          |
+| `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` が `build/gui-client/vehicle-sil-gui-client-<version>.tgz` を作る |
 
 同じ `.tgz` は、リリースのページにもあります。`build/` はリポジトリの直下のもので、Git では追跡しません。
 

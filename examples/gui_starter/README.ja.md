@@ -19,7 +19,7 @@ GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面の、�
 
 | 使うもの | ライブラリのファイル | 起動するコマンド |
 |---|---|---|
-| ビルド済みのツール | `<ツール>/gui_starter/` に最初から入っています。 | `vehicle-sil-gui --web <ツール>/gui_starter simulation.yaml` |
+| ビルド済みのツール | `<tools>/gui_starter/` に最初から入っています。 | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
 | リポジトリ | Git で管理していないので、下のコマンドでビルドしてコピーします。 | 下のコマンドの 3 行目 |
 
 リポジトリでは、ルートで次を実行します。
@@ -69,20 +69,20 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 | 使うもの | コピーするコマンド | 起動するときの引数 |
 |---|---|---|
-| ビルド済みのツール | `cp -r <ツール>/gui_starter my-screen` | `--web my-screen` |
+| ビルド済みのツール | `cp -r <tools>/gui_starter my-screen` | `--web my-screen` |
 | リポジトリ | `cp -r examples/gui_starter my-screen` | `--web my-screen` |
 
 `--web` に渡すのは、ビルドした画面の置き場所（`index.html` のあるディレクトリ）です。配信のルール（配信するファイル、CSP、トークン）は [docs/gui.md](../../docs/ja/gui.md) の「自分の画面のリファレンス」にあります。
 
 ## TypeScript とフレームワークで作る
 
-ライブラリは、型つきの npm のパッケージ（`.tgz`）にもなっています。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（依存はありません）。
+ライブラリは、型つきの npm のパッケージ（`.tgz`）にもなっています。自分のプロジェクトで `npm install <that .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（依存はありません）。
 
 | 入手先 | 場所 |
 |---|---|
-| ビルド済みのツール | `<ツール>/client/vehicle-sil-gui-client-<バージョン>.tgz` |
+| ビルド済みのツール | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` |
 | リリースのページ | 同じファイル |
-| リポジトリ | `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` ができます。 |
+| リポジトリ | `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます。 |
 
 ```ts
 import { WriteError, createClient, takeToken } from '@vehicle-sil/gui-client';

@@ -2,7 +2,7 @@
 
 [日本語](ja/j1939-codec.md)
 
-This page shows how to define the signals of a PG in YAML, generate C++ types from the definition and read and write signals as values. It also lists the keys of a definition and the API of the generated types. The API may still change.
+This page shows how to define the signals of a PG in YAML, generate C++ types from the definition, and read and write signals as values. It also lists the keys of a definition and the API of the generated types. The API may still change.
 
 When you define messages in YAML, the build generates C++ types from them. The application reads and writes signals as values, without writing bit positions or scaling. Nodes and protocol parts (`PeriodicSender`, `Monitor` and others) still send and receive the messages; the Codec only converts between the types and bytes.
 
@@ -54,10 +54,10 @@ target_link_libraries(my_ecu PRIVATE engine_messages)
 | Regeneration | Changing a definition or the generator regenerates the header. |
 | Includes of the generated header | `vehicle_sil/j1939/codec.hpp` only. |
 
-Generating needs Python 3.11 or later and PyYAML (only if you call this function). The Python is chosen in this order (see [Dependencies](dependencies.md)):
+If you call this function, generating needs Python 3.11 or later and PyYAML. The Python interpreter is chosen in this order (see [Dependencies](dependencies.md)):
 
 1. When you build vehicle-sil as the top-level project, the repository's `.venv` that `uv sync` created
-2. Otherwise, the Python that `find_package(Python3)` finds
+2. If there is none, the Python that `find_package(Python3)` finds
 
 You can also run the generator directly:
 
@@ -159,7 +159,7 @@ Signals and messages cannot use the names that the generated types use.
 | Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `special_values` | Not allowed | Allowed |
 | The message's own name | Not allowed | — |
 
-The generated code qualifies `std` and `vehicle_sil` from `::`, so you can use any other name, including `std`, `data` and `size_t`.
+The generated code fully qualifies `std` and `vehicle_sil` (with a leading `::`), so you can use any other name, including `std`, `data` and `size_t`.
 
 ### How YAML values are read
 
@@ -205,9 +205,9 @@ The value sent is the value that `set_special(name)` writes. For `not_available`
 | A range | The first value of the range |
 | `{range: [first, last], send: v}` | `v` |
 
-The built-in `j1939` profile's `not_available` sends all bits 1, through `send`. To send all bits 1 for a `not_available` that you write as a range, write `send` as well.
+The built-in `j1939` profile's `not_available` uses `send` to send all bits set to 1. To send all bits set to 1 for a `not_available` that you write as a range, write `send` as well.
 
-The valid range (`raw_min`–`raw_max`) narrows by the special values at its ends. So setting a physical value never produces a special value. A special value inside the valid range is an error; exclude it with `min` and `max`.
+The valid range (`raw_min`–`raw_max`) is narrowed to exclude the special values at its ends. So setting a physical value never produces a special value. A special value inside the valid range is an error; exclude it with `min` and `max`.
 
 In an enum signal, every value that is neither a special value nor an enumerator is `Undefined` (an enumeration has no range, so it is never `OutOfRange`).
 
@@ -289,7 +289,7 @@ The values in the table follow widely used practice and have not been checked ag
 | Standard PGs | Write one line, `indicators: j1939`, at the top level. For SPNs with a defined range or meaning, override with the signal's `min`, `max` and `special_values`. |
 | Proprietary B only, with no custom special values | Write nothing (every bit pattern is a value). |
 | Proprietary B only, with manufacturer-specific special values | Define one profile and select it with the `indicators` of the file or the message. Write `indicators` or `special_values` only on the signals that are exceptions. |
-| Both in one file | Set the file's `indicators` to the one you use more, and write `indicators` on the messages of the other kind. |
+| Both in one file | Set the file's `indicators` to the kind you use more, and write `indicators` on the messages of the other kind. |
 
 A signal's `special_values` replaces the inherited profile entirely (it does not add to it). Even to change one value of a standard signal, write the values you want to keep along with it.
 
@@ -348,7 +348,7 @@ If you include `<windows.h>` without `NOMINMAX`, the `min` and `max` macros brea
 
 ## Generated types
 
-The first definition in "Writing definitions" generates a type of the form below. It shows only the main points and does not compile as is (`...` marks omitted parts; the real code writes names from `::std::` and `::vehicle_sil::`).
+The first definition in "Writing definitions" generates a type of the form below. It shows only the main points and does not compile as is (`...` marks omitted parts; the real code fully qualifies names with `::std::` and `::vehicle_sil::`).
 
 ```cpp
 struct EngineStatus
@@ -393,10 +393,10 @@ struct EngineStatus
 | `raw()` | Raw value (signed for a signed signal). The received raw value is kept as is, even for special, out-of-range and undefined values |
 | `set_raw(raw)` | Sets any value that fits in the signal's bits, without the restrictions of special values; `std::out_of_range` if it does not fit |
 | `bits()` | The signal's bits in the message (unsigned) |
-| `set_special(name)` | Sets the special value with that name (writes its value sent); `std::invalid_argument` if there is no special value with that name |
-| `set_not_available()`, `set_error()` | `set_special("not_available")`, `set_special("error")` (write their values sent). A compile error for a signal without that special value |
+| `set_special(name)` | Sets the special value with that name (writes the value sent for it); `std::invalid_argument` if there is no special value with that name |
+| `set_not_available()`, `set_error()` | `set_special("not_available")`, `set_special("error")` (write the values sent for them). A compile error for a signal without that special value |
 | `has_special(name)`, `specials` | Whether there is a special value with that name (constexpr); the array of special value definitions (`SpecialValue`: `name`, `first`, `last`, `send`) |
-| `min()`, `max()`, `resolution()`, `to_physical(raw)` | Valid range of the physical value, physical value per raw 1, raw to physical (`Signal` only; `resolution()` is constexpr) |
+| `min()`, `max()`, `resolution()`, `to_physical(raw)` | Valid range of the physical value, physical value per raw step of 1, raw to physical (`Signal` only; `resolution()` is constexpr) |
 | `raw_min`, `raw_max`, `lowest_raw()`, `highest_raw()` | Valid range of raw values (for `EnumSignal`, the lowest and highest enumerators), and the range of raw values that fit in the bits |
 | `layout`, `name`, `unit`, `spn` | The definition (constexpr) |
 
@@ -415,7 +415,7 @@ struct EngineStatus
 | For a 64-bit signal, a value that equals an end once converted to `double` | That end | `true` |
 | NaN | Not Available (a signal without Not Available is unchanged) | `false` |
 
-Read a received value by its state. For special and out-of-range values too, `raw()` returns the received value as is (for a special value defined as a range, it tells you which value in the range arrived).
+Read a received value according to its state. For special and out-of-range values too, `raw()` returns the received value as is (for a special value defined as a range, it tells you which value in the range arrived).
 
 A fragment (`m` is a received typed message; `use`, `log` and `detail` are yours). For a working example that reads the names of special values, see [examples/typed_messages/main.cpp](../examples/typed_messages/main.cpp).
 
@@ -494,7 +494,7 @@ You can write a type of the same form in C++ without the generator. The type mus
 
 ## Limitations
 
-- Multiplexing (signals whose layout changes with the selector value), variable-length data (strings, fields delimited by `*`) and arrays and repetitions (such as the DTCs of DM1) are not supported.
+- Multiplexing (signals whose layout changes with the selector value), variable-length data (strings, fields delimited by `*`), and arrays and repetitions (such as the DTCs of DM1) are not supported.
 - The SAE J1939 PGN and SPN definitions (J1939DA) are not included. To use standard PGs, write the YAML from definitions that you have obtained yourself.
 
 ## Conformance to the standard
@@ -504,10 +504,10 @@ Nothing has been verified against the text of the standard yet. The built-in `j1
 - The ranges for 8, 16 and 32 bits, and the distinction between `parameter_specific` (0xFB…) and `reserved` (0xFC–0xFD…).
 - The 2-bit ranges (2 is Error, 3 is Not Available), and whether command signals use the same ones.
 - Special values for the lengths that have no rule (1 bit, 3–7 bits, 24 bits, 64 bits) and for signed signals.
-- The values sent: the first value of the range for Error (0xFE00 and so on), all bits 1 for Not Available.
+- The values sent: the first value of the range for Error (0xFE00 and so on), all bits set to 1 for Not Available.
 - The default fill value for unused bits and bytes (0xFF).
 
-If the verified values turn out to differ, redefine the `j1939` profile in your file; you do not have to wait for an update of the Codec. Do not forget to write a `send` that sends all bits 1 for a `not_available` written as a range.
+If the verified values turn out to differ, redefine the `j1939` profile in your file; you do not have to wait for an update of the Codec. Remember to write a `send` that sends all bits set to 1 for a `not_available` written as a range.
 
 ## See also
 

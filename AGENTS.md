@@ -81,7 +81,7 @@ Do not rewrite existing commit history. Ignore settings alone do not untrack a t
 
 | Script | What it does |
 |---|---|
-| `scripts/doctor.py` | Prints one line per requirement, telling whether this computer has what the build and the tests need (read-only; for anything missing, prints how to install it) |
+| `scripts/doctor.py` | Checks whether this computer has what the build and the tests need, and prints one line per requirement (read-only; for anything missing, prints how to install it) |
 | `scripts/verify.py` | Configures, builds and tests each preset, and summarizes the result (failed tests with the start of their output, and the log locations) |
 | `scripts/check-commits.py` | Checks the format of commit messages, and that no file that must not be committed is included |
 | `scripts/check-docs.py` | Checks the relative links in the tracked Markdown files, and the section names quoted after a link in the form `の「…」`. Also checks that each English page (`docs/`, `README.md`) and its Japanese page (`docs/ja/`, `README.ja.md`) agree in the sequence of heading levels, the code blocks and the link targets (a page without its English edition is only counted; with `--require-english` it is an error) |
@@ -92,8 +92,8 @@ Do not rewrite existing commit history. Ignore settings alone do not untrack a t
 | `scripts/package.py` | Creates the prebuilt tools archive (`tools`), checks it by following the steps a user takes (`verify`), creates the template archive (`template`), and checks that the version numbers agree (`version`) |
 | `scripts/run-gui.py` | Starts the browser GUI from the repository (for anything missing, it names the command that builds it; it builds nothing itself) |
 
-- Run the GUI tests through `verify-web.py` and `verify-gui.py`; do not call pytest, ng or Playwright directly. Before their timing-sensitive tests, these 2 scripts wait while a build, a test run or a Windows VM is running on this computer, because running them at the same time makes timing conditions fail (`--wait-limit`).
-- On a slow or loaded computer, raise the limits that tests wait for with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` is fixed by the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map.md](docs/code-map.md#timeouts-and-the-scale-factor).
+- Run the GUI tests through `verify-web.py` and `verify-gui.py`; do not call pytest, ng or Playwright directly. Before their timing-sensitive tests, these 2 scripts wait while a build, a test run or a Windows VM is running on this computer, because tests that run at the same time fail their timing conditions (`--wait-limit`).
+- On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map.md](docs/code-map.md#timeouts-and-the-scale-factor).
 
 ```sh
 scripts/doctor.py                                    # first: is everything in place?

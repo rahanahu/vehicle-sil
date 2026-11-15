@@ -84,7 +84,7 @@ A port event reports, after the fact, what happened at the port: what became of 
 - Frames with the same identifier are told apart by `send_time`.
 - `ReceiveOverflow` is not emitted for each dropped frame. The frames dropped until the port next releases events are counted in one event.
 - `ReceiveOverflow` does not take a slot in the event queue, so it is released even when the queue is full and never pushes out transmit events.
-- A backend does not emit kinds it cannot know (it reports nothing).
+- A backend does not emit a kind it cannot know about; it reports nothing for it.
 - More kinds may be added. A `Steppable` ignores kinds it does not know.
 
 ### Events by backend
@@ -186,7 +186,7 @@ Before `begin()` of the first step, the host passes the step size it received wi
 - Work posted during a step runs in the next step.
 - An exception from `fn` fails the host, as an exception from the application does. Work posted to a failed host does not run.
 
-`post()` also works in virtual time, but the step in which the work runs depends on when `post()` was called. Receive data that you want to handle deterministically through `StepInbox` and process it inside the step.
+`post()` also works in virtual time, but the step in which the work runs depends on when `post()` was called. Data that you want to handle deterministically should be received through `StepInbox` and processed inside the step.
 
 ### Time domain of the host
 
@@ -212,7 +212,7 @@ The host's `next_deadline()` is the minimum of the `next_deadline()` of all its 
 
 ### Threads
 
-The driver has one thread per participant. The protocol stack has no locks; only this thread accesses it. The application takes part through the host's `post()` and the application's processing in the step.
+The driver has one thread per participant. The protocol stack has no locks; only this thread accesses it. The application takes part through the host's `post()` and through its own processing in each step.
 
 If a step throws, the thread stops, and `failed()` and `error()` give the reason (the host is in the failed state too).
 
@@ -262,7 +262,7 @@ If you call `stop()` from inside a step, it only tells the thread to end. A late
 | Without timing (default) | A frame sent at time t is received by every other port at time t (no arbitration and no transmission time). |
 | With timing (`VirtualCanBusOptions::timing`) | Frames go on the bus by the rules in "Bus timing" below. The other ports receive the frame at the end of its transmission, and the sending port receives a `TransmitCompleted` with the same time. |
 
-With timing, `send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default 64) is full. The queue counts frames that were sent and had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
+With timing, `send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default 64) is full. The queue counts frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
 
 A bus with timing is resolved lazily. When any port takes frames or events before `now`, the bus resolves every transmission that starts before `now`.
 
@@ -287,7 +287,7 @@ With `Endpoint::set_fault_injector(f)`, `f` returns a `FaultAction` for each fra
 | `QueueFull`, `Failed` | Returns that result and does not deliver the frame. | — |
 | `FaultAction::transmit_failed()` | Returns `Accepted`, delivers the frame nowhere and gives the sender a `TransmitFailed` at the send time (an asynchronous transmit failure). | Does not use the bus. |
 
-- Even with `Drop`, the local loopback inside the sender's Network delivers the frame, because the result is `Accepted`.
+- Even with `Drop`, the local loopback inside the sender's `Network` delivers the frame, because the result is `Accepted`.
 - Frames sent later overtake a `Delay` frame, so `Delay` also produces reordering.
 - The delay of `Delay` must be greater than 0.
 
@@ -303,7 +303,7 @@ With `Endpoint::set_fault_injector(f)`, `f` returns a `FaultAction` for each fra
 | `Send` | Frames whose send time falls in the interval are delivered nowhere, and the sender gets `TransmitFailed`. | `outage_lost()` |
 | `Both` | Both. | Both |
 
-With `Send`, the fault injection function is not called, and even with timing the frame does not use the bus. A send is judged by its send time, so with timing, a frame sent before the outage that is waiting for the bus still goes out during the outage.
+With `Send`, the fault injection function is not called, and even with timing the frame does not use the bus. Whether a send falls in the outage is decided by its send time, so with timing, a frame sent before the outage that is waiting for the bus still goes out during the outage.
 
 ## Observing raw frames (`TapPort`)
 
@@ -391,7 +391,7 @@ The port counts transmit acknowledgements and puts them in the event queue as `P
 
 The SIL Kit handlers do not call the protocol processing (in the trivial simulation, the transmit acknowledgement comes back inside `SendFrame()`, so calling it would re-enter). The time of a transmit acknowledgement is the time of the sending step in the trivial simulation, and the end of the transmission with a network simulator.
 
-If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. This keeps a lost transmit acknowledgement from permanently using up a `transmit_queue_capacity` slot.
+If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. This keeps transmit acknowledgements from being lost, because a lost one would use up a `transmit_queue_capacity` slot.
 
 ### Bit rate (`SilKitCanPortOptions::bitrate`)
 

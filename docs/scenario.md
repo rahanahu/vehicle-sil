@@ -20,13 +20,13 @@ This is the reference for the scenario file format and for the rules that apply 
 | Options you cannot combine, and what scenarios cannot do | [Incompatible options and limitations](#incompatible-options-and-limitations) |
 | Which features a launcher has | [Launcher feature names (`features`)](#launcher-feature-names-features) |
 
-A scenario is a file that sets ECU variables in a fixed sequence of steps and checks the results. `vehicle_sil_launch run <config> --scenario <scenario>` starts the simulation, runs the scenario to its end, stops, and reports the result in its exit code. A scenario is an automated test as it stands.
+A scenario is a file that sets ECU variables in a fixed sequence of steps and checks the results. `vehicle_sil_launch run <config> --scenario <scenario>` starts the simulation, runs the scenario to its end, stops, and reports the result in its exit code. A scenario is an automated test in itself.
 
 With the same configuration file and the same scenario, the result is always the same: which steps passed or failed, at which virtual time and with which values. It does not depend on the speed of the computer, on whether the run is as fast as possible or at real-time speed (`speed`), or on how much work the ECUs do. Every decision uses virtual time only; there are no real-time waits or timeouts.
 
 A scenario can use the variables that an ECU built with `ecu_main` declares, and `ecu.connected`, which every ECU has (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). `participants[].variables` in the output of `vehicle_sil_launch check --json` lists their names. Scenarios do not use gRPC, so they also work in a build without the Control Server.
 
-On this page, a "step" is one item of the scenario's `steps`. The unit by which an ECU or the controller advances virtual time once is an "ECU step" or a "controller step" (together, simulation steps).
+On this page, a "step" is one item of the scenario's `steps`. One advance of virtual time by an ECU or by the controller is an "ECU step" or a "controller step" (together, "simulation steps").
 
 ## Example
 
@@ -110,7 +110,7 @@ steps:
 
 ## File format
 
-A scenario is YAML (JSON if it starts with `{`). Keep it in a file of its own, separate from the configuration file. The format may still change.
+A scenario is written in YAML (or in JSON, if the file starts with `{`). Keep it in a file of its own, separate from the configuration file. The format may still change.
 
 ### Top-level keys
 
@@ -219,13 +219,13 @@ The time T of a step is `at_ms`, or the end of the previous step plus `after_ms`
 | `ramp` | T + the longest `over_ms` | Yes. |
 | `wave` | T + the duration of the longest waveform | Yes. |
 | `expect` with `hold_for_ms` | T + `hold_for_ms` | Yes. |
-| `wait_until`, `expect` with `within_ms` (wait steps) | One time step after P, the first controller step after the time t of the sample on which the condition held (P + time step) | Not until the run. |
+| `wait_until`, `expect` with `within_ms` (wait steps) | P + time step, where P is the first controller step after the time t of the sample in which the condition held | Not until the run. |
 
 The duration of a waveform is `for_ms`. For `pulse` it is `width_ms`, for `points` the time of the last point, and for `chatter` with `bounces` it is 2 × `bounces` × `interval_ms`.
 
 A step whose end is known before the run runs at the time written, whatever the result of the previous step.
 
-A wait step ends at P + time step for this reason: the launcher is sure to have the sample of time t at the next controller step P. The first time at which a write of the next step can still be applied is P + time step, so the wait step ends there. In the example, the sample in which the engine speed reached 1700 is at 330 ms, P is 335 ms and the step ends at 340 ms.
+A wait step ends at P + time step because the launcher is sure to have the sample of time t at the next controller step, P. The earliest time at which a write of the next step can still be applied is P + time step, so the wait step ends there. In the example, the sample in which the engine speed reached 1700 is at 330 ms, P is 335 ms and the step ends at 340 ms.
 
 For this reason, a step after a wait step cannot have `at_ms` (write `after_ms`). An `at_ms` that goes back in time is also an error.
 
@@ -260,7 +260,7 @@ To check that a value was applied, use `expect` with `within_ms`; it holds on th
 
 ### Participants with a variable map (`variables`)
 
-If a participant in the configuration file has `variables` (a variable map), the scenario uses the names and values after mapping (see [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables)). The configuration file absorbs the differences in names and units between executables, so one scenario is enough. A variable converted with a linear expression becomes a real, and the value read back can differ from the value written by the rounding. Compare such values with `near` and `tolerance`.
+If a participant in the configuration file has `variables` (a variable map), the scenario uses the names and values after mapping (see [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables)). The configuration file absorbs the differences in names and units between executables, so one scenario is enough. A variable converted with a linear expression becomes a real, and rounding can make the value read back differ from the value written. Compare such values with `near` and `tolerance`.
 
 ## Writes
 
@@ -329,7 +329,7 @@ For each variable, write one waveform, and beside it the duration (`for_ms`) and
 | `lag` | `to` | Yes | The value it approaches. |
 | | `tau_ms` | Yes | The time constant. |
 | | `from` | No | The start value. Without it, the waveform starts from the current value. |
-| | `settle: true` | No | Makes the value after the waveform `to`. |
+| | `settle: true` | No | Sets the value after the waveform ends to `to`. |
 | `chatter` | `to` | Yes | The value it settles at. |
 | | `interval_ms` | Yes | The interval between changes. |
 | | `bounces` | This or `for_ms` beside the waveform | How many times the value returns to the original value. |
@@ -346,7 +346,7 @@ The frequency rules of `chirp` depend on `sweep`:
 | `linear` | Either may be 0 Hz, so the chirp can start or end at 0 Hz (both 0 is an error). |
 | `log` | Both must be greater than 0. |
 
-Three keys go beside the waveform, at the same level:
+These 3 keys go beside the waveform, at the same level:
 
 | Key | Meaning | Waveforms |
 |---|---|---|
@@ -382,7 +382,7 @@ Three keys go beside the waveform, at the same level:
 | `chatter` | Stays at `to`. |
 | `lag` | Stays at the value reached at `for_ms` (`to` with `settle: true`). |
 
-A `wave` without `around` or a `ramp` without `from` that follows starts from this value.
+A following `wave` without `around` or `ramp` without `from` starts from this value.
 
 ### How values are computed
 
@@ -447,7 +447,7 @@ A short `pulse` is invisible because its start and end writes are applied in the
 
 For `hold` `points`, the check warns when the value of a point never reaches the ECU. That happens in 2 cases:
 
-- None of the writes made every step size from the start of the step falls in that point's interval. This cannot happen if you place the points at multiples of the step size.
+- None of the writes, made once per step size from the start of the step, falls in that point's interval. This cannot happen if you place the points at multiples of the step size.
 - The write of the second-to-last point is applied in the same ECU step as the end write (the same rule as for a short `pulse`).
 
 Anything that cannot run at all is an error, not a warning: a period or width of 0 or less, `noise` without `seed`, `points` whose times are not in ascending order, a waveform that does not fit the type (`sine` on a bool, for example), and values out of range.
@@ -475,7 +475,7 @@ U is E if E falls on an ECU step, and the next ECU step if E falls between 2 ECU
 |---|---|
 | The step passes when | All writes are applied and the condition holds until U. |
 | `at` of the result, and the end from which the next step counts | Stays E. Adding `expect` changes neither the step's time nor its end. |
-| Order in which results are decided | While a write or the condition is still open, this step's result is not decided, even if the result of a later step is decided first. |
+| Order in which results are decided | While a write or the condition is still pending, this step's result is not decided, even if the result of a later step is decided first. |
 | A variable with no sample in the interval | Counts as not checked, and the step fails at U (`no sample of <variable> in that time`). |
 | `within_ms`, `hold_for_ms` | Not allowed (error). |
 | The condition did not hold | The step fails at the time of that sample (`scenario-failed`). |
@@ -560,7 +560,7 @@ Steps that use the following variables are skipped in the run. The check reports
 | A variable marked `absent: true` in the variable map of the configuration file (declared as missing from that executable) | Steps that use it are skipped. |
 | A variable of a participant that the selected variant disables (`enabled: false` in the variant) | Steps that use it are skipped as well. That participant is not checked, so the variable name is not verified. |
 | A variable of a participant disabled for another reason (`enabled: false` in the common part, `--disable`) | A check error (`scenario-variable`). |
-| A variable of a participant that the variant disables and `--enable` takes back in | Checked like the variables of any other participant. |
+| A variable of a participant that the variant disables and `--enable` enables again | Checked like the variables of any other participant. |
 | A variable that has neither a mapping nor `absent` and is missing from the executable | A check error (`scenario-variable`). It is never skipped silently. |
 
 For a participant that the variant disables, the reason reads `participant 'Door' is not in the variant medium (enabled: false in that variant)`.
@@ -585,7 +585,7 @@ A skipped step still uses up the duration that its contents give, and `after_ms`
 | `expect` with `hold_for_ms` | That duration |
 | Wait steps (`wait_until`, `expect` with `within_ms`) | 0 (the step counts as ended at its time) |
 
-Wait steps are the one exception: when they end is not known until the run, so they count as 0. A later step with `after_ms` then starts earlier than on variants that do not skip the wait step. If a step needs the time after the wait, either make it use the same variable as the wait step, so that both are skipped together, or split the scenario and add `only`.
+Wait steps are the exception: their end is not known until the run, so they count as 0. A later step with `after_ms` then starts earlier than on variants that do not skip the wait step. If a step needs the time after the wait, either make it use the same variable as the wait step, so that both are skipped together, or split the scenario and add `only`.
 
 | Topic | Rule |
 |---|---|
@@ -931,7 +931,7 @@ A rejected call:
 | Role (see "Authentication" in [control-api.md](control-api.md#authentication)) | The call is rejected whatever the role. |
 | Record | The call reaches neither the Hub nor the time gate and does not become a `command` event. The audit log still gets a line. |
 
-The result of the scenario is the same with or without clients. Read calls and subscriptions do not hold up the simulation. They do contend briefly for the same lock, so many reading clients can slow the run slightly in real time. The `timing` of a run at real-time speed can change by that much, but the result of the scenario does not. For a client that does not read, subscriptions keep a bounded backlog, and drop and count what overflows (for values, the latest one per peer is kept).
+The result of the scenario is the same with or without clients. Read calls and subscriptions do not hold up the simulation. They do contend briefly for the same lock, so many reading clients can slow the run slightly in real time. The `timing` of a run at real-time speed can change by that much, but the result of the scenario does not. Subscriptions keep a bounded backlog for a client that does not read; what overflows is dropped and counted (for values, the latest one per peer is kept).
 
 What a client sees:
 
@@ -952,7 +952,7 @@ The stdin commands (`--stdin-commands`: `stop`, pause, step, speed) work the sam
 
 ## Launcher feature names (`features`)
 
-When you use a `vehicle_sil_launch` of another version, check `features` in the output of `vehicle_sil_launch version --json` for the following names to see which scenario features it supports.
+When you use another version of `vehicle_sil_launch`, check `features` in the output of `vehicle_sil_launch version --json` for the following names to see which scenario features it supports.
 
 | `features` name | Feature | Without it |
 |---|---|---|

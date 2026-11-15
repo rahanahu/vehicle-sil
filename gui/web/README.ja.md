@@ -54,7 +54,7 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 - `npm start` は、`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送します（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）。
 - `npm run build:client` の出力は `../../build/gui-client/vehicle-sil-gui-client.mjs` です。esbuild は、Angular のビルドのツールが持っているものを使います。
-- `npm run pack:client` の出力は `../../build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` です。作った後に、インストールして確認します（`../client/pack.mjs`）。
+- `npm run pack:client` の出力は `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz` です。作った後に、インストールして確認します（`../client/pack.mjs`）。
 - `npm run lint` は、`../client` も、その `eslint.config.js` で検査します。
 - `npm run e2e` と `npm run e2e:real` の前に、`npm run build` が必要です。
 - `npm run e2e:real` は、ランチャーを環境変数 `VEHICLE_SIL_GUI_LAUNCHER` で受け取ります。
@@ -68,11 +68,11 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 e2e を直している間は、次の引数で絞れます。
 
-| 引数                      | 内容                                             |
-| ------------------------- | ------------------------------------------------ |
-| `--skip-checks`           | 書式、lint、単体テスト、翻訳ファイルの比較を省く |
-| `--e2e-grep <名前の一部>` | 名前の合う e2e のテストだけを実行する            |
-| `--e2e-repeat <回数>`     | e2e を繰り返す                                   |
+| 引数                          | 内容                                             |
+| ----------------------------- | ------------------------------------------------ |
+| `--skip-checks`               | 書式、lint、単体テスト、翻訳ファイルの比較を省く |
+| `--e2e-grep <part of a name>` | 名前の合う e2e のテストだけを実行する            |
+| `--e2e-repeat <count>`        | e2e を繰り返す                                   |
 
 ### 開発サーバーで動かす
 
@@ -111,22 +111,22 @@ e2e のテストは、GUI サーバーを自分で起動し、終わったら止
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                     |
-| ---------------------------------------- | ------------------------------------------------------------------------ |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                         |
-| `src/app/app.routes.ts`、`navigation.ts` | ルートと、ナビゲーションの項目                                           |
-| `src/app/core/`                          | 画面をまたいで使うもの（下の「`core/`」）                                |
-| `src/app/core/session/`                  | クライアントのライブラリの Angular のラッパー（下の「`core/session/`」） |
-| `src/app/run/`                           | 実行の画面（`''`）（下の「`run/`」）                                     |
-| `src/app/widgets/`                       | 変数のコンポーネントとダッシュボード（下の「`widgets/`」）               |
-| `src/app/variables/`                     | 変数の画面（`variables`）。自動のダッシュボードと絞り込み                |
-| `src/app/not-found/`                     | 見つからないルートの画面                                                 |
-| `src/app/testing/`                       | テスト用の画面（`/_test/layout`）                                        |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）  |
-| `src/main.ts`、`src/start.ts`            | 起動                                                                     |
-| `src/locale/`                            | 翻訳ファイル（`messages.<言語>.json`）。ビルドで `locale/` に置かれる    |
-| `public/`                                | そのまま配信するファイル（アイコン）                                     |
-| `e2e/`                                   | Playwright のテスト（下の「`e2e/`」）                                    |
+| パス                                     | 内容                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                          |
+| `src/app/app.routes.ts`、`navigation.ts` | ルートと、ナビゲーションの項目                                            |
+| `src/app/core/`                          | 画面をまたいで使うもの（下の「`core/`」）                                 |
+| `src/app/core/session/`                  | クライアントのライブラリの Angular のラッパー（下の「`core/session/`」）  |
+| `src/app/run/`                           | 実行の画面（`''`）（下の「`run/`」）                                      |
+| `src/app/widgets/`                       | 変数のコンポーネントとダッシュボード（下の「`widgets/`」）                |
+| `src/app/variables/`                     | 変数の画面（`variables`）。自動のダッシュボードと絞り込み                 |
+| `src/app/not-found/`                     | 見つからないルートの画面                                                  |
+| `src/app/testing/`                       | テスト用の画面（`/_test/layout`）                                         |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）   |
+| `src/main.ts`、`src/start.ts`            | 起動                                                                      |
+| `src/locale/`                            | 翻訳ファイル（`messages.<language>.json`）。ビルドで `locale/` に置かれる |
+| `public/`                                | そのまま配信するファイル（アイコン）                                      |
+| `e2e/`                                   | Playwright のテスト（下の「`e2e/`」）                                     |
 
 - `src/main.ts` が言語を決めて翻訳を読み込み、それから `src/start.ts`（アプリ）を読み込みます。
 - `src/app/testing/` の画面は、レイアウトの e2e が使います。ナビゲーションには表示しません。単体テスト用のヘルパー（偽の WebSocket と HTTP、`gui/protocol/examples/` を読む関数）は、`@vehicle-sil/gui-client/testing` にあります。
@@ -209,7 +209,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 ### ファイルの配置と命名
 
 - ファイル名と型の名前は `ng generate` の既定に合わせる（`ng g service telemetry` → `telemetry.ts` の `Telemetry`、`ng g component not-found` → `not-found/not-found.ts` の `NotFound`、`ng g pipe measure` → `measure-pipe.ts` の `MeasurePipe`）。
-- 画面ごとにディレクトリを作る（`src/app/<画面>/`）。画面をまたいで使うものは `src/app/core/` に置く。
+- 画面ごとにディレクトリを作る（`src/app/<screen>/`）。画面をまたいで使うものは `src/app/core/` に置く。
 - テストで探す要素には、役割（`getByRole`）で探せないときだけ `data-testid` を付ける。
 
 ### Angular の書き方（lint で強制）
@@ -341,8 +341,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 #### 文言の書き方
 
-- テンプレートの文言には `i18n`（属性には `i18n-<属性>`）、TypeScript の文言には `$localize` を付ける。印のない文言は lint で止まる。id は抽出のときに作られるもの（元の文から決まる）を使う。
-- 文を連結して作らない（語順は言語で違う）。値は 1 つの文の中にプレースホルダー（テンプレートの `{{ }}`、`$localize` の `${値}:名前:`）として入れる。
+- テンプレートの文言には `i18n`（属性には `i18n-<attribute>`）、TypeScript の文言には `$localize` を付ける。印のない文言は lint で止まる。id は抽出のときに作られるもの（元の文から決まる）を使う。
+- 文を連結して作らない（語順は言語で違う）。値は 1 つの文の中にプレースホルダー（テンプレートの `{{ }}`、`$localize` の `${value}:name:`）として入れる。
 - 数で語の形が変わる文（「N 行」）は、テンプレートでは ICU の `plural` で書く（日本語は `other` だけ。英語の訳が `one` を追加する）。TypeScript では、数に左右されない書き方にする（「誤り: N」）。
 - 計測値は `measure` パイプ（`core/format/measure-pipe.ts`）で表示する。桁区切りを入れず、小数の桁を決める。どの言語でも同じ書式で、locale の数値の書式に任せない。
 - ECU やランチャーが出す英語の文（指摘、ログ）は訳さず、そのまま表示する（`lang="en"` を付ける）。
@@ -351,7 +351,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 #### 翻訳ファイル
 
-翻訳ファイル `src/locale/messages.<言語>.json` は、抽出した文ごとに元の文と訳を並べた JSON です（読み比べやすく、差分で見やすい）。`target` が `null` の文は「まだ訳していない」印です。`note` は、そのファイルについての説明です。
+翻訳ファイル `src/locale/messages.<language>.json` は、抽出した文ごとに元の文と訳を並べた JSON です（読み比べやすく、差分で見やすい）。`target` が `null` の文は「まだ訳していない」印です。`note` は、そのファイルについての説明です。
 
 ```json
 {
@@ -374,7 +374,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 | 翻訳ファイルにない文                                         | 失敗                           |
 | 元の文が抽出と違うもの                                       | 失敗                           |
 | 空の訳                                                       | 失敗                           |
-| プレースホルダー（`{$名前}`）や ICU の形が元の文と合わない訳 | 失敗                           |
+| プレースホルダー（`{$name}`）や ICU の形が元の文と合わない訳 | 失敗                           |
 | `target` が `null` の文（まだ訳していないと印を付けた文）    | 失敗                           |
 | もう抽出されない古い文                                       | 一覧に表示する（失敗にしない） |
 
@@ -390,8 +390,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 #### 言語を追加する
 
 1. `core/i18n/language.ts` の `LANGUAGES` に、コードとその言語自身の文字の名前を追加する。
-2. `src/locale/messages.<コード>.json` を `{"locale": "<コード>", "note": "…", "translations": {}}` で作り、`scripts/verify-web.py --i18n-update` で文を入れて訳す。
-3. `en` 以外の言語なら、その locale のデータ（日付、複数形の規則）を `@angular/common/locales/<コード>` から `registerLocaleData` で登録する（日本語はビルドが、英語は Angular が持っている）。
+2. `src/locale/messages.<code>.json` を `{"locale": "<code>", "note": "…", "translations": {}}` で作り、`scripts/verify-web.py --i18n-update` で文を入れて訳す。
+3. `en` 以外の言語なら、その locale のデータ（日付、複数形の規則）を `@angular/common/locales/<code>` から `registerLocaleData` で登録する（日本語はビルドが、英語は Angular が持っている）。
 4. `e2e/i18n.spec.ts` のように、その言語で画面を確認する。
 
 ### サーバーとの間の型

@@ -2,9 +2,9 @@
 
 [日本語](../ja/howto/design-choices.md)
 
-Some choices are best made before anyone starts writing ECUs: by the ECU authors, and by the integrator (the person who puts the ECUs together in a configuration file). This page lists those choices and how to make them when you are unsure. It has no procedures; each section links to the page that shows how.
+This page lists what the ECU authors and the integrator (the person who puts the ECUs together in a configuration file) should decide before anyone starts writing ECUs, and how to choose when you are unsure. It has no procedures; each section links to the page that shows how.
 
-These are recommendations, not rules. The `check` command only tests whether the ECUs agree with each other on what you chose.
+These are recommendations, not rules. The `check` command only checks whether the ECUs agree with each other on what you chose.
 
 | Decision | Recommendation |
 |---|---|
@@ -21,7 +21,7 @@ These are recommendations, not rules. The `check` command only tests whether the
 Make one executable per ECU of the real vehicle. One ECU is then also one author, one build and one unit that you can swap.
 
 - The integrator can disable ECUs one at a time, or replace one with another version (see "Run with an ECU disabled (`enabled`, `--disable`)" in [Integrate and run several ECUs](integrate-ecus.md#run-with-an-ecu-disabled-enabled---disable)).
-- If the other ECU does not exist yet, write a small ECU that stands in for it and run the two together. In the example, the dashboard ECU is also a stand-in for the receiver that the engine ECU sends to.
+- If an ECU that yours talks to does not exist yet, write a small ECU yourself that stands in for it, and run them together. In the example, the dashboard ECU is also a stand-in for the receiver that the engine ECU sends to.
 
 ## What goes on the bus and what becomes a variable
 
@@ -34,7 +34,7 @@ Variables and the bus are separate things. A variable is a member variable of th
 | Internal state that you want to check in tests | An output variable | A state number, a fault flag, an integrated value |
 | A value sent on the bus that you also want to see at the sender | Both the bus and an output variable | `engine.speed` |
 
-Avoid making a value that arrives over the bus from another ECU an input variable of the receiver as well. A write from outside would put the value in without going through the bus, and the test would no longer show that the communication works. To see a received value, make it an output variable (`dashboard.engine_speed` in the example).
+Avoid also declaring a value that arrives over the bus from another ECU as an input variable of the receiver. A write from outside would set the value without going through the bus, and the test would no longer show that the communication works. To see a received value, make it an output variable (`dashboard.engine_speed` in the example).
 
 For how to write these, see [Create your first ECU](first-ecu.md).
 
@@ -57,7 +57,7 @@ One name is one bus. ECUs that use the same name connect to the same bus. ECUs w
 - If there are 2 buses (for example, 2 CAN buses with different bit rates), decide on 2 names. An ECU on both buses opens 2 networks in its code.
 - The name is a value in the ECU's code. The configuration file cannot change it. Decide on the names before work starts and share them with everyone (see "Step 1: Agree on names and share them" in [Integrate and run several ECUs](integrate-ecus.md#step-1-agree-on-names-and-share-them)).
 - Do not scatter the name across an ECU's sources as string literals. Define it once, as a constant, in a header that the ECUs share. A change then touches one place, and the compiler catches typos.
-- The bit rate is separate from the name. A normal run does not use it: a frame arrives in the step after the step in which it was sent. Only runs with a CAN network simulator and bridges to real hardware use the bit rate (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
+- The bit rate is separate from the name. A normal run does not use it: a frame arrives in the step after the step in which it was sent. Only 2 things use the bit rate: runs that include a CAN network simulator, and bridges to real hardware (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
 
 ## Addresses and NAMEs
 

@@ -8,7 +8,7 @@ In this guide you copy the screen template (`gui_starter`), rewrite it into a sc
 
 | Requirement | Details |
 |---|---|
-| Template project | You have done step 1 of [Create your first ECU](first-ecu.md): the ECUs are built and the tools' `bin` is in `PATH`. |
+| Template project | You have done step 1 of [Create your first ECU](first-ecu.md): the ECUs are built and the tools' `bin` directory is in `PATH`. |
 | Python | 3.11 or later. If you have [uv](https://docs.astral.sh/uv/), uv installs Python and the packages. |
 | A browser or `curl` | Use a browser on the same computer as the GUI server. |
 | Node.js | 22 or later. Needed only to verify the value in step 4 without a browser. |
@@ -65,7 +65,7 @@ http://127.0.0.1:36917/#token=<a token that changes at every start>
 vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ```
 
-Without a browser, read the part of the printed URL before `#` with `curl` from another terminal. The port changes at every start, so take it from the printed URL (for a fixed port, use `--port`). The screen files can be read without the token.
+To verify without a browser, fetch the part of the printed URL before `#` with `curl` from another terminal. The port changes at every start, so take it from the printed URL (for a fixed port, use `--port`). The server serves the screen files without the token.
 
 ```sh
 URL='<the URL that the server printed>'
@@ -95,7 +95,7 @@ A variable is identified by a participant name and a variable name. Find the nam
 |---|---|
 | `participants[].variables[]` in the output of `vehicle_sil_launch check --json <configuration file>` | Looking up the variables of all ECUs in the configuration file before a run |
 | `variables[]` in the `--describe` output of the ECU executable (`bin/engine_ecu --describe`) | Looking up one ECU |
-| `session.variables.peers[].variables[]` of `GET api/session` during a run | Including the monitoring variables that are added during the run |
+| `session.variables.peers[].variables[]` of `GET api/session` during a run | Looking up variables including the monitoring variables that are added during the run |
 
 This guide uses the first method to list the variables that the ECUs declare (those with `builtin` false):
 
@@ -126,7 +126,7 @@ This guide shows `engine.speed` (the engine speed) of `Engine`. `output` variabl
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` is not found | The tools' `bin` is not in `PATH`. | Run the `export PATH=...` line that `get_tools.py` printed. |
+| `vehicle_sil_launch` is not found | The tools' `bin` directory is not in `PATH`. | Run the `export PATH=...` line that `get_tools.py` printed. |
 
 ## Step 3: Rewrite the screen to show one variable
 
@@ -196,10 +196,10 @@ The screen no longer uses `style.css` and `README.md`, so you can delete them. W
 | `createClient({ baseUrl, token })` | Creates the client. `baseUrl` is the root of the server. |
 | `client.variables.bind(ref, options)` | Combines the value and the condition of one variable into one `state`. |
 | `state.subscribe(fn)`, `state.get()` | `subscribe` calls `fn` on every change; `get()` returns the current state. |
-| `client.run.start(...)`, `client.run.stop()` | Start and stop a run. |
-| `client.loadApp()`, `client.connect()` | Load the launcher's features, then connect over WebSocket. |
+| `client.run.start(...)`, `client.run.stop()` | Starts and stops a run. |
+| `client.loadApp()`, `client.connect()` | Loads the launcher's features, then connects over WebSocket. |
 
-`condition.kind` is the condition of the value. Your code compares this string.
+`condition.kind` is the condition of the value. Compare this string in your code.
 
 | `condition.kind` | Meaning |
 |---|---|
@@ -207,7 +207,7 @@ The screen no longer uses `style.css` and `README.md`, so you can delete them. W
 | `missing` | The variable is not part of this run |
 | `waiting` | No value yet |
 | `live` | A value from a running simulation |
-| `paused` | The value at the time the simulation is paused at |
+| `paused` | The value at the time at which the simulation is paused |
 | `stale` | An old value (with a reason) |
 | `ended` | The last value of an ended run |
 
@@ -241,7 +241,7 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/main.js"
 200 text/javascript; charset=utf-8
 ```
 
-To verify the value itself, call the API. The API needs the token, and a `POST` also needs `Origin`. A token in a command argument is visible to other users of the same computer in the process list, so put the header in a file and pass the file.
+To verify the value itself, call the API. The API needs the token, and a `POST` also needs the `Origin` header. A token in a command argument is visible to other users of the same computer in the process list, so put the header in a file and pass the file.
 
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)

@@ -2,7 +2,7 @@
 
 [日本語](ja/j1939-guide.md)
 
-This page shows in C++ how to create ECU nodes with the J1939 stack of vehicle-sil, send and receive messages and run and test the ECUs in a simulation. For the details of the API's guarantees and rules, see [internals/j1939.md](internals/j1939.md). The API may still change.
+This page shows, in C++, how to use the J1939 stack of vehicle-sil to create ECU nodes, send and receive messages, and run and test the ECUs in a simulation. For the API's guarantees and rules in detail, see [internals/j1939.md](internals/j1939.md). The API may still change.
 
 | Goal | Use | Section |
 |---|---|---|
@@ -23,7 +23,7 @@ This page shows in C++ how to create ECU nodes with the J1939 stack of vehicle-s
 | Test an ECU | `Simulation::local()`, `vehicle_sil::testkit` | [Test an ECU](#test-an-ecu) |
 | Disconnect an ECU from the bus | The variable `ecu.connected` | [Disconnect an ECU from the bus (`ecu.connected`)](#disconnect-an-ecu-from-the-bus-ecuconnected) |
 | Receive bus traffic without sending anything | `Network::set_observer`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
-| Read and write the values of an ECU from outside | `Ecu::input`, `Ecu::output` | [Read and write signals from outside (UI, tests)](#read-and-write-signals-from-outside-ui-tests) |
+| Read and write an ECU's values from a UI or a test | `Ecu::input`, `Ecu::output` | [Read and write signals from outside (UI, tests)](#read-and-write-signals-from-outside-ui-tests) |
 | Work with signals without writing bit positions | Typed messages | [Data layout (Codec)](#data-layout-codec) |
 
 To run something first, use [examples/getting_started](../examples/getting_started). The complete example is [examples/j1939/ecu_pair](../examples/j1939/ecu_pair). It builds 2 ECUs, an engine and a cab, from protocol parts only, and runs them with `Simulation`, either on the virtual bus or as 2 SIL Kit participants. The tests use the same code.
@@ -55,7 +55,7 @@ namespace codec = vehicle_sil::j1939::codec;
 
 You create nodes on a `j1939::Network`. A `Network` is the connection to one CAN network (channel), and `Ecu::j1939(network)` creates it.
 
-`vehicle_sil::Ecu` is the interface for building an ECU application. A SIL Kit participant (`Peer`) implements it, and so does an ECU on the in-process virtual bus (`LocalBench::add_ecu()`). So if you write the ECU as a function or class that takes an `Ecu&`, the same code runs on either.
+`vehicle_sil::Ecu` is the interface for building an ECU application. A SIL Kit participant (`Peer`) implements it, and so does an ECU on the in-process virtual bus (`LocalBench::add_ecu()`). If you write the ECU as a function or class that takes an `Ecu&`, the same code runs on either.
 
 Here is `install_engine()` from [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp):
 
@@ -102,12 +102,12 @@ Nodes and the objects an ECU owns follow these rules:
 
 Within one step, the ECU does the following, in this order:
 
-1. Network reception and processing
-2. Applying the variable writes whose time has come
-3. `on_step`, `every`, `at` (in the order they were added)
-4. LIN node processing (in the order the nodes were added)
+1. Receiving and processing on the networks
+2. Applying the variable writes that are due
+3. Calling `on_step`, `every` and `at` (in the order they were added)
+4. Processing the LIN nodes (in the order they were added)
 5. Recording variables
-6. Network transmission
+6. Transmitting on the networks
 
 These calls have limits:
 
@@ -150,7 +150,7 @@ For code that uses `ecu.can()`, see `Engine` and `Dashboard` in `tests/simulatio
 | Transmission time | Frames are sent at the end of the step, with the step's time. |
 | Order of frames received from different ECUs at the same time | Not defined on SIL Kit. Do not write processing that depends on it. |
 
-One ECU may have both `j1939()` and `can()` with the same network name. They are separate controllers, so each receives the other's frames (the J1939 network ignores 11-bit frames).
+One ECU can call both `j1939()` and `can()` with the same network name. They are separate controllers, so each receives the other's frames (the J1939 network ignores 11-bit frames).
 
 The exception is a `Peer` whose J1939 network runs on a user port (`j1939(name, port)`, such as Vector XL). The two are then on different buses and do not receive each other's frames, because raw CAN always runs on SIL Kit.
 
@@ -194,7 +194,7 @@ Write the ECU's scripted one-time actions (send a request, start a subscription,
 
 | Item | Rule |
 |---|---|
-| Step in which `fn` is called | Called once, in the first step whose start time is at or after `time` (this works even if the step size does not divide the time). |
+| Step in which `fn` is called | Called once, in the first step whose start time is at or after `time` (also when the step size does not divide `time`). |
 | The run does not reach `time` | Not called. |
 | When you can register it | Only before the first run. |
 
@@ -217,7 +217,7 @@ Here is the constructor of `Tool` from [examples/pid_stream/main.cpp](../example
 
 ### Send periodically (`PeriodicSender`)
 
-A fragment (`node` is the node; `fill`, `encoder` and `bytes` are yours). For the complete `codec::attach_sender`, see `install_engine()` above. `tests/j1939/test_j1939_periodic_sender.cpp` tests changes of the period and the destination and stopping transmission.
+A fragment (`node` is the node; `fill`, `encoder` and `bytes` are yours). For the complete `codec::attach_sender`, see `install_engine()` above. `tests/j1939/test_j1939_periodic_sender.cpp` tests changing the period and the destination, and stopping transmission.
 
 ```cpp
 codec::attach_sender<EngineStatus>(node, 20ms, fill);                                   // fills a new EngineStatus with fill for each transmission
@@ -237,7 +237,7 @@ There are 3 ways to build the data:
 | `Encoder` (a function that takes a span) | Writes into the part's buffer (`max_length` bytes, default 8) and returns the length written. |
 | `PeriodicSender::VectorEncoder` (a function that appends to a `std::vector<std::uint8_t>&`) | Builds messages whose length changes from one transmission to the next. |
 
-Messages of 9 bytes or more (raise `max_length`) are sent with the transport protocol. To send a PDU1 PG to one address, use `PeriodicSenderOptions{.destination = address}`.
+Messages of 9 bytes or more (raise `max_length` for them) are sent with the transport protocol. To send a PDU1 PG to one address, use `PeriodicSenderOptions{.destination = address}`.
 
 `VectorEncoder` follows these rules:
 
@@ -245,7 +245,7 @@ Messages of 9 bytes or more (raise `max_length`) are sent with the transport pro
 |---|---|
 | The vector passed in | Empty. Its size becomes the message length. |
 | Memory allocation | The part reuses the vector, so if you only append, nothing is allocated per transmission. |
-| Parameter type | Write it out (`std::vector<std::uint8_t>&` or `auto&`). |
+| Parameter type | Write it explicitly (`std::vector<std::uint8_t>&` or `auto&`). |
 | A function that takes a span | Treated as an `Encoder` that returns the length. |
 | Exceeding `max_length` | The `Network` fails, as with the span form. |
 
@@ -270,16 +270,16 @@ You can change the period, the destination and the priority later:
 - To answer a new request from the same peer, change the period instead of re-creating the part (`examples/pid_stream`).
 - To send in the step of the call, use `node.send()` instead of `trigger()`.
 
-The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (also during the 250 ms wait after the Address Claim). When the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
+The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (this includes the 250 ms wait after the Address Claim). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
 
 While broadcasts are stopped by DM13 (another node's DM13, or the node's own `BroadcastSuppression::suspend()`), the behavior depends on the destination:
 
 | Transmission | While stopped by DM13 |
 |---|---|
 | Broadcast to the global address | Not sent. |
-| To one address | Not stopped by default (its treatment in the standard has not been verified). |
+| To one address | Not stopped by default, because its treatment in the standard has not been verified. |
 
-By default, the current destination decides whether a transmission stops (`set_destination()` decides again). To change a sender created for one address to the global address, attach `BroadcastSuppression::of(node)` during setup; without it, the change throws `std::logic_error`. For either kind of transmission, you can fix the behavior with `PeriodicSenderOptions::suppressible` (true or false).
+By default, the current destination decides whether a transmission stops (calling `set_destination()` decides again). To change a sender created for one address to the global address, attach `BroadcastSuppression::of(node)` during setup; without it, the change throws `std::logic_error`. For either kind of transmission, you can fix the behavior with `PeriodicSenderOptions::suppressible` (true or false).
 
 ## Respond to a Request
 
@@ -311,10 +311,10 @@ Here is part of `install_cab()` from [examples/j1939/ecu_pair/ecu_pair.hpp](../e
 
 | `RequestOutcome` | Meaning |
 |---|---|
-| `Response` | The requested PG arrived (`data`, `source`). A long PG is reassembled by the transport protocol |
-| `Acknowledged` | The peer returned an Acknowledgement (`ack`: positive, negative, access denied or cannot respond) |
-| `Timeout` | No response, even after the retries (for a global request, the end of the waiting time) |
-| `NotSent` | The request could not be sent (`send_status`; `NoAddress` if the node cannot claim an address) |
+| `Response` | The requested PG arrived (`data`, `source`). The transport protocol reassembles a long PG. |
+| `Acknowledged` | The peer returned an Acknowledgement (`ack`: positive, negative, access denied or cannot respond). |
+| `Timeout` | No response arrived, even after the retries (for a global request: the waiting time ended). |
+| `NotSent` | The request could not be sent (`send_status`; `NoAddress` if the node cannot claim an address). |
 
 | Item | Rule |
 |---|---|
@@ -367,7 +367,7 @@ node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
 });
 ```
 
-`parse_dtc_list()` (`j1939/diagnostics.hpp`, CMake target `vehicle_sil::j1939_diagnostics`) reads the form that the `Diagnostics` part sends, in reverse: 2 lamp bytes, followed by 4 bytes per DTC (diagnostic trouble code: SPN, FMI, occurrence count). It reads bytes of any length safely.
+`parse_dtc_list()` (`j1939/diagnostics.hpp`, CMake target `vehicle_sil::j1939_diagnostics`) is the inverse of the `Diagnostics` part's encoding: it reads 2 lamp bytes, followed by 4 bytes per DTC (diagnostic trouble code: SPN, FMI, occurrence count). It reads bytes of any length safely.
 
 | Bytes passed | How they are read |
 |---|---|
@@ -387,7 +387,7 @@ node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
 | `ReadDtc::occurrences` | The low 7 bits of byte 4. |
 | `ReadDtc::byte4_high_bit` | The most significant bit of byte 4, as is, without interpretation. |
 
-The meaning of the most significant bit of byte 4 has not been verified against the standard, so the user decides it. `Diagnostics` sends it as 0.
+The meaning of the most significant bit of byte 4 has not been verified against the standard, so you decide how to interpret it. `Diagnostics` sends it as 0.
 
 ## Change another node's address
 
@@ -417,7 +417,7 @@ The period of `Ecu::every` need not be a multiple of the step size. With a step 
 
 Write the model's period and the messages' periods separately. Advance the model with `every`, and build each PG to send from the model's current values, in the `Encoder` of a `PeriodicSender`.
 
-If the step size is at most the shortest message period, the number of transmissions does not depend on the step size. If it is longer, the deadlines that fall within one step are merged into one transmission.
+Keep the step size at or below the shortest message period; the number of transmissions then does not depend on the step size. If the step size is longer, the deadlines that fall within one step are merged into one transmission.
 
 ### Pass data in from outside a step
 
@@ -434,7 +434,7 @@ Put items into a `StepInbox` with a time. In each step, the items with times bef
 | Choose a tie-break that tells the sources apart | Otherwise, the order of items from different sources with the same time is not defined. |
 | Size the capacity for the worst case, and treat overflow as an error | Overflow near the limit is not deterministic. |
 
-Put data that must be deterministic into a `StepInbox`, not through `Host::post`.
+Pass data that must be deterministic through a `StepInbox`, not through `Host::post`.
 
 ## Handle errors
 
@@ -456,7 +456,7 @@ Put data that must be deterministic into a `StepInbox`, not through `Host::post`
 
 If a handler creates a protocol part (`PeriodicSender`, `Timer` and others) for each request it receives, check the free slots first. Compare `node.network().timers_free()` (the number of free slots) with the `kTimers` of the part (such as `PeriodicSender::kTimers`), and refuse the request if there are not enough.
 
-A `std::length_error` inside a handler makes the `Network` fail. So without this check, anyone can stop that ECU's communication by sending requests from many addresses. For code that does the check, see `PidStreamer` in [examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp).
+A `std::length_error` inside a handler makes the `Network` fail. So without this check, requests sent from many addresses are enough to stop that ECU's communication. For code that does the check, see `PidStreamer` in [examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp).
 
 ## Implement your own protocol
 
@@ -488,7 +488,7 @@ Handle variable-length data (such as the contents of a block) as bytes, with `no
 
 ### The requesting side (`Exchange`)
 
-`j1939::Exchange` sends a command to one peer and waits for the response (target `vehicle_sil::j1939_exchange`).
+`j1939::Exchange` sends a command to one peer and waits for the response (CMake target `vehicle_sil::j1939_exchange`).
 
 Here are `ParamClient::run()` and `answer_to()` from [examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp), shortened to reads only. The repository does not contain the code in this exact form.
 
@@ -518,37 +518,37 @@ exchange.start(kPgn, read.bytes(), kEngineName,          // the peer by NAME (an
 
 | `ExchangeOutcome` | Meaning |
 |---|---|
-| `Reply` | `match` returned `Final` (`reply`) |
-| `Timeout` | No response, even after the retries (after a `Pending`, there are no retries, and `timeout` counts from the last `Pending`) |
-| `NotSent` | The command did not reach the peer (table below) |
-| `Interrupted` | The command was sent, but the response can no longer be received (table below). Whether the peer executed it is unknown |
-| `PeerLost` | The peer is gone (table below) |
+| `Reply` | `match` returned `Final` (`reply`). |
+| `Timeout` | No response arrived, even after the retries (after a `Pending`, there are no retries, and `timeout` counts from the last `Pending`). |
+| `NotSent` | The command did not reach the peer (table below). |
+| `Interrupted` | The command was sent, but the response can no longer be received (table below). Whether the peer executed it is unknown. |
+| `PeerLost` | The peer is gone (table below). |
 
 | `ExchangeOutcome` | When |
 |---|---|
-| `NotSent` | The command could never be sent (`send_status`; `NoAddress` if the node can no longer claim an address) |
-| `NotSent` | The transfer of a long command ended before the last packet, or the peer aborted it (`transfer`, `reason`) |
-| `Interrupted` | The node's own address changed or was lost |
-| `Interrupted` | After the last packet of a long command, this node aborted the transfer on a timeout |
-| `Interrupted` | A retry could not be sent |
-| `PeerLost` | The peer lost its address, moved, or had its address taken by another NAME |
-| `PeerLost` | A peer given by NAME did not claim an address within `timeout` |
+| `NotSent` | The command could never be sent (`send_status`; `NoAddress` if the node can no longer claim an address). |
+| `NotSent` | The transfer of a long command ended before the last packet, or the peer aborted it (`transfer`, `reason`). |
+| `Interrupted` | The node's own address changed or was lost. |
+| `Interrupted` | After the last packet of a long command, this node aborted the transfer on a timeout. |
+| `Interrupted` | A retry could not be sent. |
+| `PeerLost` | The peer lost its address, moved, or had its address taken by another NAME. |
+| `PeerLost` | A peer given by NAME did not claim an address within `timeout`. |
 
 #### Match responses (`match`)
 
 `match` receives every message from the peer's address, whatever its PGN (messages to this node and to the global address, including the peer's periodic broadcasts). `M::decode(data)` looks only at the bytes, so use `j1939::codec::decode<M>(message)`, which also checks the PGN.
 
-Tell whether a message is the response to your command by the operation byte, the session and the item the command refers to (such as the parameter number).
+To tell whether a message is the response to your command, look at the operation byte, the session and the item the command refers to (such as the parameter number).
 
 When `match` returns `Pending` (an interim response), the waiting time restarts and retries stop.
 
-Late responses to earlier commands (to the original of a retried command, or to a command you cancelled with `cancel()`) also reach `match`. In a protocol whose responses carry no item or number, such a response is mistaken for the response of the next exchange. If responses can arrive late, give commands and responses an item or a sequence number, and match on it.
+Late responses to earlier commands (to the original of a retried command, or to a command you cancelled with `cancel()`) also reach `match`. In a protocol whose responses carry no item or number, such a response is mistaken for the response to the next exchange. If responses can arrive late, give commands and responses an item or a sequence number, and match on it.
 
 `cancel()` does not take back a command already sent (its response still arrives).
 
 #### Per-command options (`CommandOptions`)
 
-`CommandOptions` is the last argument of `start()`. Items you leave out take the settings of the whole `Exchange` (`ExchangeOptions`).
+`CommandOptions` is the last argument of `start()`. Items you leave out take the values set for the whole `Exchange` (`ExchangeOptions`).
 
 | Item | Meaning |
 |---|---|
@@ -576,7 +576,7 @@ There are 2 kinds of retry, configured separately.
 
 For writes and erases, leave `on_address_change` at its default. When you receive `Interrupted`, let your procedure decide what to do, for example by reading the value back.
 
-A retry with `SendAgain` comes from a different source address, as the peer sees it. So in a protocol where the peer keeps a session, the peer may respond "no session" (in the `param_service` example, the tool then reopens the session).
+To the peer, a retry with `SendAgain` comes from a different source address. So in a protocol where the peer keeps a session, the peer may respond "no session" (in the `param_service` example, the tool then reopens the session).
 
 #### Long commands and long responses
 
@@ -588,7 +588,7 @@ A retry with `SendAgain` comes from a different source address, as the peer sees
 
 Use `long_answer` especially for BAM responses (packets at least 50 ms apart). It covers only transfers of that PGN that the peer sends to this node or to the global address (an unrelated broadcast does not hold the timeout).
 
-The timeout can be held for at most `ExchangeOptions::answer_transfer_limit` per attempt (default 60 seconds). So the wait always ends, even for a transfer that never finishes or keeps starting again.
+The timeout can be held for at most `ExchangeOptions::answer_transfer_limit` per attempt (default 60 s). So the wait always ends, even for a transfer that never finishes or keeps starting again.
 
 #### The peer's address and NAME
 
@@ -612,7 +612,7 @@ After the peer has moved, the next exchange goes to its new address.
 | Exchanges running at the same time | `capacity` (default 4) |
 | Timers | 2 per `Exchange` |
 
-From inside the callbacks and `match`, you can `start()` the next command, `cancel()` and destroy the `Exchange`. After the `Exchange` is destroyed, the callbacks of its remaining exchanges are not called.
+From inside the callbacks and `match`, you can start the next command with `start()`, call `cancel()` and destroy the `Exchange`. After the `Exchange` is destroyed, the callbacks of its remaining exchanges are not called.
 
 ### Write a sequence (several messages)
 
@@ -684,11 +684,11 @@ Detect the loss of the peer as follows (this also covers Cannot Claim, and the a
 
 You may destroy a part that the application owns (in a `std::unique_ptr` or similar) inside a handler or a timer callback, for example to stop when the peer's Stop arrives. The handlers of a destroyed part are not called, even in the rest of the same delivery, and its timers do not fire.
 
-You may also destroy a part inside the functions that it calls (the Encoder of `PeriodicSender`, the callbacks of `Monitor` and `Exchange`). The exceptions are the callback of `AddressCommander` and `on_clear` of `Diagnostics`.
+You may also destroy a part inside the functions that it calls (the `Encoder` of `PeriodicSender`, the callbacks of `Monitor` and `Exchange`). The exceptions are the callback of `AddressCommander` and `on_clear` of `Diagnostics`.
 
 ### Test your protocol
 
-Besides the normal cases, the example's test (`tests/testkit/test_param_service.cpp`) checks the following. All of it runs in virtual time, and the same input sends the same frames.
+Besides the normal cases, the example's test (`tests/testkit/test_param_service.cpp`) checks the following. All of it runs in virtual time, and the same input produces the same frames.
 
 | To cause | How |
 |---|---|
@@ -702,9 +702,9 @@ To read the time inside a callback, use the network's `now()` (the time of the s
 
 ## Run in a simulation
 
-`vehicle_sil::Simulation` (target `vehicle_sil::simulation`) runs the ECUs. You choose where they run in the constructor; the ECU code stays the same. To choose at run time, pass a `std::optional<SilKitOptions>` (empty means the in-process virtual bus).
+`vehicle_sil::Simulation` (CMake target `vehicle_sil::simulation`) runs the ECUs. The constructor decides where they run; the ECU code stays the same. To choose at run time, pass a `std::optional<SilKitOptions>` (empty means the in-process virtual bus).
 
-Here is `main()` from [examples/j1939/ecu_pair/main.cpp](../examples/j1939/ecu_pair/main.cpp), shortened by removing the argument handling and the output. For an example that builds the layers yourself, see [examples/low_level](../examples/low_level).
+Here is `main()` from [examples/j1939/ecu_pair/main.cpp](../examples/j1939/ecu_pair/main.cpp), shortened by removing the argument handling and the output. For an example that builds the layers by hand, see [examples/low_level](../examples/low_level).
 
 ```cpp
 vehicle_sil::Simulation sim;                                   // in-process virtual bus
@@ -728,15 +728,15 @@ sim.run_for(3s);                                               // 3 s of virtual
 
 `run_for(d)` runs only the steps that start before the end time (on the virtual bus, the current time plus `d`).
 
-On SIL Kit, it runs only once because the step at the stop time may still be running, and reading the model from the main thread would then race with it. To stop and inspect along the way, use the virtual bus.
+On SIL Kit, `run_for()` runs only once: the step at the stop time may still be running, and reading the model from the main thread would race with it. To stop, inspect and continue, use the virtual bus.
 
-An exception in a step is thrown from `run_for()` as a `SimulationError`. Its `what()` is `<ECU name>: <reason>`. On SIL Kit, a failed participant does not end the simulation; virtual time only stops. So when `run_for()` finds a failure, it ends the simulation, then throws.
+An exception in a step is thrown from `run_for()` as a `SimulationError`. Its `what()` is `<ECU name>: <reason>`. On SIL Kit, a failed participant does not end the simulation; it only stops virtual time. So when `run_for()` finds a failure, it ends the simulation, then throws.
 
 | Item | Rule |
 |---|---|
 | Threads on SIL Kit | Steps run on SIL Kit threads, so read the values that steps write only after `run_for()` returns. |
 | `Simulation` functions | Call them from one thread. |
-| Destruction order | ECUs are destroyed latest-added first, together with what they own (`emplace`), then the controller, and last the in-process registry. |
+| Destruction order | ECUs are destroyed in reverse order of addition, together with what they own (`emplace`), then the controller, and last the in-process registry. |
 | LIN master and slave | Create them with `Ecu::lin_master(network, schedule)` and `Ecu::lin_slave(network)` (the result is the same on the virtual bus and on SIL Kit; see [internals/lin.md](internals/lin.md)). |
 
 ### SIL Kit options (`SilKitOptions`)
@@ -748,7 +748,7 @@ With `SilKitOptions`, you can use an existing registry (`registry_uri`) or run t
 | `registry_uri` | Registry to connect to. If empty, a registry runs in the process (`registry_uri()` tells you where) |
 | `controller` | Whether this process starts and ends the simulation (default `true`). If `false`, an outside controller (`vehicle_sil_sim_controller`, the Control Server) decides, and `run()` waits until the end |
 | `other_participants` | Coordinated participants in other processes that must be present before the start (only when `controller` is `true`) |
-| `start_timeout` | Time allowed until the start (default 30 seconds) |
+| `start_timeout` | Time allowed until the start (default 30 s) |
 
 `run()` waits until the simulation ends, whoever ends it (SIL Kit only). What counts as a failure depends on `controller`:
 
@@ -812,14 +812,14 @@ The recording and fault injection tools (`testkit::J1939Events`, `FrameLog`, `fa
 
 `LocalBench::add_ecu(name, step)` returns an `Ecu&`. `add_j1939(name, step)` is shorthand for an ECU with one network.
 
-The forms that take a bus name and the forms that leave it out differ as follows. Whichever order you write them in, they refer to the same bus.
+The forms that take a bus name and the forms that leave it out differ as follows. Whichever order you call them in, they refer to the same bus.
 
 | Form | Functions | Behavior |
 |---|---|---|
 | Name left out | `add_j1939()`, `bus()`, `injector()`, `inject(time, frame)` | Use the only bus, and create it if it does not exist yet. |
-| Name given | `bus(network)`, `injector(network)`, `inject(network, time, frame)` | Only look the bus up by name; they do not name a bus (`std::out_of_range` if there is no bus with that name). |
+| Name given | `bus(network)`, `injector(network)`, `inject(network, time, frame)` | Only look up the bus by name; they do not give a bus its name (`std::out_of_range` if there is no bus with that name). |
 
-A bus created by a form without a name takes the name of the `Ecu::j1939(network)` or `Ecu::can(network)` that comes later.
+A bus created by a form without a name takes the name of the `Ecu::j1939(network)` or `Ecu::can(network)` that is called later.
 
 | Usage | Result |
 |---|---|

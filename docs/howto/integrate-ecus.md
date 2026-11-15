@@ -4,7 +4,7 @@
 
 This guide shows how to list ECU executables built by different people in one configuration file and run them as one simulation. You find mismatches between the configuration file and the ECUs with `check`, ask the ECU authors to fix what the configuration file cannot, run the simulation with `run`, and verify that the ECUs communicate. You do not read the ECU source code.
 
-The example has 2 ECUs. The engine ECU sends the engine speed over J1939, and the dashboard ECU receives it. The dashboard ECU as first delivered calls the shared bus by a different name than the engine ECU does. Steps 1–5 find and fix this mismatch. [examples/integrate_ecus](../../examples/integrate_ecus) contains the example files.
+The example has 2 ECUs. The engine ECU sends the engine speed over J1939, and the dashboard ECU receives it. As first delivered, the dashboard ECU names the shared bus differently from the engine ECU. Steps 1–5 find and fix this mismatch. [examples/integrate_ecus](../../examples/integrate_ecus) contains the example files.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ The example has 2 ECUs. The engine ECU sends the engine speed over J1939, and th
 | Build | You have built the repository as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
 | ECU executables | Built with `ecu_main()`. To build one, see [Create your first ECU](first-ecu.md). |
 
-Run every command in the directory below. In the repository root, run these 2 lines. `linux-gcc-control` is the preset from the README; if you built another preset, use its name instead.
+In the repository root, run these 2 lines, then run every later command in the directory they change to. `linux-gcc-control` is the preset from the README; if you built another preset, use its name instead.
 
 ```sh
 export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # where vehicle_sil_launch is
@@ -56,7 +56,7 @@ Do steps 1–5 in order. "Step 1" to "Step 5" are the parts of this guide; anywh
 | Run without an ECU you have not received yet | `--disable` | [Run with an ECU disabled](#run-with-an-ecu-disabled-enabled---disable) |
 | Stop a run partway, or limit a run that does not end | Ctrl+C, `--timeout-ms` | [Stop the simulation](#stop-the-simulation) |
 | Read the result from a script or CI | `--json`, `--events` | [Use from scripts](#use-from-scripts---json---events) |
-| Run in step with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
+| Run in sync with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
 | Run 2 instances of the same ECU | Arguments in `command` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
 | Start tools not built with `ecu_main()` together with the ECUs | `describe: false` | [Add tools not built with `ecu_main()`](#add-tools-not-built-with-ecu_main) |
 
@@ -87,7 +87,7 @@ Besides the names, ask the ECU authors for the following:
 | Build `main()` with `ecu_main()`. | `check` cannot check that ECU. |
 | Use the agreed names, and verify them with `--describe` before delivering the executable (step 2). | The check reports the findings of step 3. |
 | Build with the same vehicle-sil version as the integrator. | The check reports the note `version-mismatch`. If the format version for reading and writing variables differs, it reports the warning `control-link-version`, and you cannot read or write that ECU's variables. |
-| End the processes that the ECU started itself when the ECU exits. | `run` reports the warning `left-processes`. |
+| End the processes that the ECU started when the ECU exits. | `run` reports the warning `left-processes`. |
 | Write stdout and stderr in UTF-8. | Bytes that are not UTF-8 appear as `?`. |
 
 The participant name (the ECU's name in the simulation) appears only in the configuration file, so you do not need to agree on it with the ECU authors. `vehicle_sil_launch` passes the name from the configuration file to the ECU as `--name`.
@@ -124,7 +124,7 @@ participants:
 | `participants[].command` | The path of the executable. A relative path is relative to the directory of the configuration file. |
 | `participants[].step_ms` | The step size the ECU author gave you in step 1. If you write it, the check compares it with the ECU's value. You can leave it out. |
 
-Do not write `--name` or `--registry-uri` in `command`; `vehicle_sil_launch` adds them. On Windows, the executable is found without `.exe`. For the keys and their defaults, see "The configuration file" in [simulation-config.md](../simulation-config.md#the-configuration-file).
+Do not write `--name` or `--registry-uri` in `command`; `vehicle_sil_launch` adds them. On Windows, the executable is found even if you leave out `.exe`. For the keys and their defaults, see "The configuration file" in [simulation-config.md](../simulation-config.md#the-configuration-file).
 
 ### Find the names an ECU uses
 
@@ -268,7 +268,7 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[executable]` | There is no executable at the path in `command`. | Correct the path in the configuration file, or put the executable there. |
 | `[launcher-argument]` | `command` contains an argument that `vehicle_sil_launch` adds, such as `--name`. | Remove that argument from `command` in the configuration file. |
 | `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU differs, go to step 4. |
-| `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If this is because you disabled an ECU, leave it. If different names cause it, go to step 4. |
+| `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, go to step 4. |
 | `[step-mismatch]` | `step_ms` differs from the ECU's step size. | If the configuration file differs from the value you were given, fix the configuration file. If the ECU differs, go to step 4. |
 | `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
@@ -285,7 +285,7 @@ The values below are built into the ECU, and the configuration file cannot chang
 | A network kind differs | The author of the ECU whose kind differs from the agreed one | Connect to a bus of the agreed kind. |
 | J1939 addresses or NAMEs overlap | The author of the ECU that differs from the list of step 1 | Change the node's address or NAME to the value in the list. |
 | The step size differs from the value you were given | The author of that ECU | Confirm which value is correct, and fix the ECU if it is wrong. |
-| `--describe` fails | The author of that ECU | Investigate the cause, using the end of stderr that the finding includes. |
+| `--describe` fails | The author of that ECU | Investigate the cause from the end of stderr that the finding includes (send it with the request). |
 
 If you did not agree on the names beforehand, `check` cannot tell which ECU is right. Agree on the names now and share them with everyone, then ask the author of the ECU that differs.
 
@@ -407,7 +407,7 @@ With `--log-dir logs`, `run` also saves the output of each ECU to `logs/<partici
 
 ### Verify with a scenario
 
-A scenario is a YAML file of steps that set ECU variables and check their values. If an `expect` step does not hold, `run` ends with exit code 1, so you can verify communication in CI too. The example `scenarios/engine_speed.yaml` sets the engine throttle to 50 % and checks that the dashboard ECU's engine speed reaches 1700 rpm or more within 600 ms. The 1200 rpm in the `run` output above is the value at the initial throttle of 20 %; at 50 %, the speed rises to 1800 rpm.
+A scenario is a YAML file of steps that set ECU variables and check their values. If an `expect` step fails, `run` ends with exit code 1, so you can verify communication in CI too. The example `scenarios/engine_speed.yaml` sets the engine throttle to 50 % and checks that the dashboard ECU's engine speed reaches 1700 rpm or more within 600 ms. The 1200 rpm in the `run` output above is the value at the initial throttle of 20 %; at 50 %, the speed rises to 1800 rpm.
 
 <!-- examples/integrate_ecus/scenarios/engine_speed.yaml -->
 ```yaml
@@ -479,7 +479,7 @@ For the finding codes of a run, see "Output" in [simulation-run.md](../simulatio
 
 ## Run with an ECU disabled (`enabled`, `--disable`)
 
-To leave out an ECU that you have not received yet, or one you want to rule out while you look for a cause, check and run with the remaining ECUs. Pass the participant name to `--disable`.
+To check and run without an ECU that you have not received yet, or without one that you want to rule out while you look for a cause, pass its participant name to `--disable`.
 
 ```sh
 vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard
@@ -537,7 +537,7 @@ From CI scripts or your own tools, use the exit code and the machine-readable ou
 
 | Goal | Command | Output |
 |---|---|---|
-| Know only whether the run passed or failed | The exit code of `check` or `run` | 0 is pass, 1 is fail and 130 is interrupted. |
+| Know only whether it passed or failed | The exit code of `check` or `run` | 0 is pass, 1 is fail and 130 is interrupted. |
 | Read the findings in a program | `vehicle_sil_launch check --json simulation.yaml` | Writes the result to stdout as one JSON document. |
 | Follow the progress of a run | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | Writes what happens, in order, as one JSON object per line. |
 | Find out which features are available | `vehicle_sil_launch version --json` | `features` lists the feature names. |
@@ -588,7 +588,7 @@ From Python, the `Launch` class starts `vehicle_sil_launch` this way (see "Pytho
 
 ## Run at real-time speed (`--speed`) and read the lateness
 
-By default, the simulation runs as fast as the computer can calculate. To run together with devices that work in real time, or to operate the simulation while you watch a screen, set the speed with `--speed`. `1` is real-time speed.
+By default, the simulation runs as fast as the computer can compute. To run together with devices that work in real time, or to operate the simulation while you watch a screen, set the speed with `--speed`. `1` is real-time speed.
 
 ```sh
 vehicle_sil_launch run simulation.fixed.yaml --speed 1

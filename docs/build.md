@@ -18,16 +18,16 @@ This page explains how to build vehicle-sil itself and how to include vehicle-si
 | Compiler | Every build | GCC (default) or Clang with C++20 support | MinGW-w64 GCC of MSYS2 UCRT64 |
 | CMake 3.21 or later, Ninja | Every build | Distribution packages | MSYS2 packages |
 | Git | Cloning, and applying the patches to SIL Kit | Distribution package | MSYS2 package |
-| Python 3.11 or later with PyYAML | Building the tests and examples, generating typed messages | Install with [uv](https://docs.astral.sh/uv/) (recommended). | MSYS2 packages |
-| Python 3.11 or later with grpcio, grpcio-tools and protobuf | The Python client of the Control API | Install with uv (recommended). | MSYS2 packages |
+| Python 3.11 or later with PyYAML | Building the tests and examples, generating typed messages | Install with [uv](https://docs.astral.sh/uv/) (recommended) | MSYS2 packages |
+| Python 3.11 or later with grpcio, grpcio-tools and protobuf | The Python client of the Control API | Install with uv (recommended) | MSYS2 packages |
 
 To build the Control Server and pull in gRPC with FetchContent, you need CMake 3.28 or later (see "gRPC and Protocol Buffers (Control Server, optional)" in [dependencies.md](dependencies.md#grpc-and-protocol-buffers-control-server-optional)). You do not need Visual Studio or MSVC.
 
-After you clone, run `scripts/doctor.py` to see whether everything is in place. The script only reads; for anything missing, it prints how to install it.
+After you clone, run `scripts/doctor.py` to see whether everything is in place. The script changes nothing; for anything missing, it prints how to install it.
 
 ### Python (uv)
 
-The repository root pins the Python version and the Python packages in `pyproject.toml`, `.python-version` and `uv.lock`. With [uv](https://docs.astral.sh/uv/), the commands below install the development Python and all packages into `.venv`. If the computer does not have the Python version in `.python-version`, uv downloads it.
+`pyproject.toml`, `.python-version` and `uv.lock` at the repository root pin the Python version and the Python packages. With [uv](https://docs.astral.sh/uv/), the commands below install the development Python and all packages into `.venv`. If the computer does not have the Python version in `.python-version`, uv downloads it.
 
 ```sh
 uv sync                        # everything (the default dev group)
@@ -48,7 +48,7 @@ Which Python CMake uses depends on how you build (see "How Python is found" in [
 
 When you change the Python packages, update `uv.lock` with `uv lock` and commit both `pyproject.toml` and `uv.lock`. `uv sync --locked` fails if `uv.lock` does not match `pyproject.toml`.
 
-To check the Python code with the oldest supported version (3.11) and with the version in `.python-version`, run `scripts/verify-python.py` (no C++ build needed). The script also checks, on 3.11, the exact lower bounds of the packages written in `pyproject.toml`. The lower bounds are therefore versions that the tests have run on.
+To check the Python code with the oldest supported version (3.11) and with the version in `.python-version`, run `scripts/verify-python.py` (no C++ build needed). On 3.11, it also runs with exactly the lower bounds of the packages in `pyproject.toml`, so the lower bounds are versions that the tests have run on.
 
 Without uv, you can install the packages listed in `[dependency-groups]` of `pyproject.toml` with pip. On Windows (MSYS2 UCRT64), you can skip uv and keep the Python from the pacman packages below.
 
@@ -68,7 +68,7 @@ cmake --build --preset linux-gcc-debug
 ctest --preset linux-gcc-debug
 ```
 
-In the 3 commands, you can replace `linux-gcc-debug` with any preset below. "[Build from the repository](../README.md#build-from-the-repository)" in the README uses `linux-gcc-control`.
+In the 3 commands that name `linux-gcc-debug`, you can replace it with any preset below. "[Build from the repository](../README.md#build-from-the-repository)" in the README uses `linux-gcc-control`.
 
 | Preset | Contents | Additional requirements |
 |---|---|---|
@@ -83,7 +83,7 @@ In the 3 commands, you can replace `linux-gcc-debug` with any preset below. "[Bu
 
 `scripts/verify.py --linux` does not include `linux-gcc-static`, `windows-mingw-static` or `linux-gcc-control`. Run them by name.
 
-The tests of the ThreadSanitizer presets suppress only reports known to be false positives, in `cmake/tsan-suppressions.txt` (each entry gives its reason).
+The tests of the ThreadSanitizer presets suppress only reports known to be false positives. The suppressions are in `cmake/tsan-suppressions.txt`, each with its reason.
 
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` turns warnings in vehicle-sil's own targets into errors.
 
@@ -93,7 +93,7 @@ Before you commit, you can check with `scripts/verify.py --linux` (see "Verifica
 
 Build with the GCC of MSYS2 (MinGW-w64, UCRT variant). Work in the MSYS2 "UCRT64" shell: a bash with this GCC, CMake and the other tools in `PATH`.
 
-First, in PowerShell or the Command Prompt, install MSYS2 and enter the UCRT64 shell:
+First, in PowerShell or the Command Prompt, install MSYS2 and open the UCRT64 shell:
 
 ```powershell
 winget install MSYS2.MSYS2
@@ -231,7 +231,7 @@ int main() {
 }
 ```
 
-For receiving, Request and response, monitoring of reception and writing tests, see [j1939-guide.md](j1939-guide.md).
+For receiving, Request and response, reception monitoring and writing tests, see [j1939-guide.md](j1939-guide.md).
 
 To define signals in YAML and turn them into typed messages, call `vehicle_sil_add_j1939_codec(<target> <definition.yaml>)` and link `<target>`. This needs Python 3.11 or later with PyYAML ([j1939-codec.md](j1939-codec.md)).
 
@@ -268,7 +268,7 @@ An executable linked with `VEHICLE_SIL_STATIC=ON` contains SIL Kit, the code tha
 | libstdc++, libgcc (Linux, Windows) | Nothing | The GCC Runtime Library Exception requires no notice for programs compiled with GCC. |
 | winpthreads, mingw-w64 C runtime (MinGW on Windows) | The files that MSYS2 installs in `/ucrt64/share/licenses/winpthreads/` and `/ucrt64/share/licenses/crt/` | The C runtime and the startup code are in every MinGW executable, with or without `VEHICLE_SIL_STATIC`. |
 
-The prebuilt tools archive contains the same files. You can copy them as they are and ship them.
+The prebuilt tools archive contains the same files. You can ship them as they are.
 
 | Directory in the archive | Contents |
 |---|---|

@@ -60,7 +60,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `file` | The configuration file (as given in the arguments; `null` if unknown) |
 | `arguments` | Array of the arguments received |
 
-`phase` of `phase`:
+Values of `phase` in the `phase` event:
 
 | Value | Phase |
 |---|---|
@@ -125,12 +125,12 @@ For the keys of `scenario_step`, see "Output" in [scenario.md](scenario.md#outpu
 
 - `actual_speed` is `null` when the simulation has run only for a short time, and while it is paused.
 - `late_steps`, `max_late_ms` and `slipped_ms` have the same meaning as in the result's `timing`. They are the values the result would have if the run ended now.
-- While the simulation stands still (virtual time does not advance and `late_ms` grows beyond the tolerance), `time` is still written, at most once every 100 ms.
+- While the simulation is stalled (virtual time does not advance and `late_ms` grows beyond the tolerance), `time` is still written, at most once every 100 ms.
 
 An event with `paused: true` is normally written after the simulation has paused. The first `time` of `--start-paused` is also written after the simulation has paused at time 0, so the result's `paused_ms` counts from before this event. There are 2 exceptions. In both, `true` is written while the simulation has reached the time at which it is to pause but has not paused yet, and `paused_ms` counts from when it actually pauses:
 
 - The simulation has not paused at time 0 within 2 seconds after the start (the launcher stops waiting and writes the event).
-- A `pause` or `run_until` with a time points at or before the current time, and the simulation pauses at the next time step.
+- A `pause` or `run_until` names a time at or before the current time, and the simulation pauses at the next time step.
 
 `command`:
 
@@ -237,7 +237,7 @@ For a participant that failed during the simulation, `participant-failed` includ
 
 | Case | Events | `result` of `result` | Exit code |
 |---|---|---|---|
-| Usage error (unknown option, no configuration file given, combined with `--json`, and so on) | `hello`, `result` | `"usage"` | 4 |
+| Usage error (unknown option, no configuration file given, `--events` together with `--json`, and so on) | `hello`, `result` | `"usage"` | 4 |
 | Usage error found by reading the configuration file | `hello`, `phase` (`checking`), `check`, `phase` (`ended`), `result` | `"usage"` | 4 |
 | The configuration file cannot be read | The same 5 | `"unreadable"` | 3 |
 | The check found errors | The same 5 | `"check_failed"` | 1 |
@@ -373,7 +373,7 @@ All lines of a short run. `--disable Dashboard` leaves only Engine, so the outpu
 {"event":"result","seq":22,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"manual":false,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"connected","variables":18,"version":null,"late_messages":0}},{"name":"Dashboard","required":true,"enabled":false,"manual":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"none","variables":null,"version":null,"late_messages":0}}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"control":{"transport":"silkit","wire_version":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
 ```
 
-The CTest test `launch_run.events` compares this example with the real output byte for byte. Before the comparison, it removes the `heartbeat` lines and every `time` line other than the first and the last from the real output (renumbering `seq`), and makes the replacements above. On a slow computer, the launcher also writes `time` events for intermediate times.
+The CTest test `launch_run.events` compares this example with the real output byte for byte. Before the comparison, it removes the `heartbeat` lines and every `time` line other than the first and the last from the real output (renumbering `seq`), and makes the replacements above. It removes those `time` lines because on a slow computer the launcher also writes `time` events for intermediate times.
 
 ## Stdin commands (`run --stdin-commands`)
 
@@ -407,7 +407,7 @@ Other keys of the object are ignored. Commands are accepted and carried out even
 
 ### When time commands are accepted
 
-For a time command (`pause`, `resume`, `step`, `speed`), the thread that reads stdin decides whether to accept it, writes the `command` event, and then hands the command to the controller. None of them waits (neither the thread that drives the run nor the reader of the events waits). The controller applies the command at the next time step boundary.
+For a time command (`pause`, `resume`, `step`, `speed`), the thread that reads stdin decides whether to accept it, writes the `command` event, and then hands the command to the controller. None of this blocks: neither the thread that drives the run nor the reader of the events waits. The controller applies the command at the next time step boundary.
 
 | Case | Handling |
 |---|---|
@@ -508,7 +508,7 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `manual-participants` | Participants that you start yourself |
 | `scenario` | `check --scenario` and `run --scenario` (see [scenario.md](scenario.md)) |
 | `scenario-wave` | The scenario step `wave` (see "Waveforms (`wave`)" in [scenario.md](scenario.md#waveforms-wave)) |
-| `scenario-motion-expect` | An `expect` written next to a scenario's `ramp` and `wave` (see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
+| `scenario-motion-expect` | An `expect` beside a scenario's `ramp` or `wave` (see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 

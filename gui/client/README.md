@@ -4,7 +4,7 @@
 
 Reference for the client library of the GUI server (`vehicle-sil-gui`), written in TypeScript and published as `@vehicle-sil/gui-client`. It covers how to get and import the library, the public API, basic usage, reading and writing ECU variables, and the lifecycle.
 
-The library handles the connection (token, reconnection), the session copy (a copy of the run state, built from the server's summary and events), run and time control, ECU variables (list, watching values, writes and their results), and the types and parsers of the server API. It depends on neither Angular nor RxJS, nor on any other package. The sample screens (`gui/web`) use only this library, through a thin Angular wrapper (`gui/web/src/app/core/session/`).
+The library handles the connection (token, reconnection), the session copy (a copy of the run state, built from the server's summary and events), run and time control, ECU variables (list, watching values, writes and their results), and the types and parsers of the server API. It depends on no other package, not even Angular or RxJS. The sample screens (`gui/web`) use only this library, through a thin Angular wrapper (`gui/web/src/app/core/session/`).
 
 | To find                                                            | See                                                      |
 | ------------------------------------------------------------------ | -------------------------------------------------------- |
@@ -49,7 +49,7 @@ The releases page has the same `.tgz`. `build/` is the one at the top of the rep
 - `testing` contains a fake WebSocket (`FakeWebSockets`), a fake HTTP (`FakeHttp`), loaders for `gui/protocol/examples/`, and `sessionViewFrom`, which builds a `SessionView` from a summary.
 - `internal` contains the internal classes, the functions that apply a summary, and the parsers. They are public for tests only, and change or disappear without notice.
 
-The public API starts narrow: adding to it keeps compatibility, removing from it breaks compatibility. If the public entry point lacks something you need, do not reach into `internal`; decide whether to add it.
+The public API is kept small, because adding to it keeps compatibility and removing from it breaks compatibility. If the public entry point lacks something you need, do not reach into `internal`; decide whether to add it to the public API.
 
 ## Public API
 
@@ -207,7 +207,7 @@ Every state is a `Readable` (a read-only value).
 - If a subscriber changes the same value, every subscriber receives the new value, and the old value does not arrive afterward.
 - A framework wrapper takes the first value with `get()` and converts later values into its own state with `subscribe()` (Angular uses `readableSignal`).
 - If a subscriber (a function passed to `subscribe`, `onBatch`, `onMessages` or `onUnreadable`) throws, the other subscribers are still notified and the library carries on (disconnecting when rejected, rebuilding and so on). The thrown value goes to `onError` (default `console.error`).
-- `client.session.ready` tells whether the session copy is complete (connected, and `hello` and the replay have arrived). Each feature has its own.
+- `client.session.ready` tells whether the session copy is complete (connected, and `hello` and the replay have arrived). Other features (values, for example) have their own ready state.
 
 ### Rejections and timeouts
 
@@ -279,7 +279,7 @@ watch.close();
 
 **Subscriptions**:
 
-- However many watches look at a variable, the server has one subscription per variable. A variable joins the subscription with the shortest period requested (periods are rounded to the steps 20, 50, 100, 200, 500 ms …).
+- However many watches look at a variable, the server has one subscription per variable. A variable joins the subscription with the shortest period requested (periods are rounded to one of 20, 50, 100, 200, 500 ms …).
 - `close()` also ends the server subscription if no other watch looks at the variable.
 - After a reconnection, the library subscribes again automatically.
 - A watch continues across runs; the values and history of the previous run are discarded.
@@ -512,7 +512,7 @@ If you create it with `{ history: 600 }`, `history()` returns the points, oldest
 
 - Import nothing outside this library's own files (`eslint.config.js` blocks it; it also blocks dynamic `import()` except in the test helpers; `rootDir` in `tsconfig.json` blocks anything outside `src/`).
 - Do not use anything that exists only in the browser (`window`, `document`, `localStorage` and so on). Take what you need through the options (`ClientOptions`).
-- Text meant for people (such as `TimeFailure.message`) is in English. Turning it into the screen's language is the wrapper's job (built from machine-readable fields such as `kind`).
+- Human-readable text (such as `TimeFailure.message`) is in English. Turning it into the screen's language is the wrapper's job (built from machine-readable fields such as `kind`).
 - When you add to the public API, add it to `src/index.ts` and to the "Public API" tables above, and update [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) to match.
 
 ## Tests

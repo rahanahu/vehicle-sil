@@ -2,14 +2,14 @@
 
 [日本語](README.ja.md)
 
-A set of tools for simulating vehicle ECUs (electronic control units) in software: you connect several ECUs, run them together on a computer and test them. You write each ECU in C++20. [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) carries the communication between the ECUs and keeps their time in sync. All ECUs run on one shared simulation time (virtual time) instead of the wall clock, so repeated runs give the same result. The tools run on Linux and on Windows (MinGW).
+A set of tools for simulating vehicle ECUs (electronic control units) in software. You connect several ECUs, run them together on a computer and test them. You write each ECU in C++20. [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) carries the communication between the ECUs and keeps their time in sync. All ECUs follow one shared simulation time (virtual time) instead of the wall clock, so repeated runs give the same result. The tools run on Linux and on Windows (MinGW).
 
 > [!NOTE]
-> While the version is 0.x, the public API can change in ways that break compatibility.
+> While the version is 0.x, the public API can change incompatibly.
 
 ## What you can do
 
-| Goal | What you use | Documentation |
+| Goal | Use | Documentation |
 |---|---|---|
 | Build your own ECU | One C++ class plus a one-line call to `ecu_main()` gives you an ECU executable. | [Create your first ECU](docs/howto/first-ecu.md) |
 | Make ECUs communicate | ECUs send and receive J1939 (CAN), LIN and raw Ethernet frames. | [j1939-guide.md](docs/j1939-guide.md), [lin-guide.md](docs/lin-guide.md), [examples/ethernet](examples/ethernet) |
@@ -105,7 +105,7 @@ sed 's/name: J1939_CAN/name: Vehicle_CAN/' simulation.yaml > mistake.yaml
 vehicle_sil_launch check mistake.yaml
 ```
 
-The check reports 3 findings and exits with code 1. Here is one of the findings and the last line. The line number is from the full file, comments included.
+The check reports 3 findings and exits with code 1. Here is one of the findings, followed by the last line. The line number counts the full file, comments included.
 
 ```text
 error: mistake.yaml:11: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), which is not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its code [unknown-network]
@@ -133,7 +133,7 @@ In the browser GUI, moving the throttle slider changes the engine speed.
 | [uv](https://docs.astral.sh/uv/) | Any | Installing the Python (3.11 or later) and the packages that the build and the GUI use |
 | Node.js, npm | 24.15 or later, 11.12 or later | Building the web front end of the GUI |
 
-The commands below build the repository, run the example above and start the GUI. The first configure and build download and compile SIL Kit, and gRPC if your computer does not have it. They need a network connection and take from a few minutes to more than ten minutes. The commands are for Linux. For Windows, other presets and running the tests, see [docs/build.md](docs/build.md).
+The commands below build the repository, run the example above and start the GUI. The first configure and build download and compile SIL Kit (and gRPC, if your computer does not have it). This needs a network connection and takes from a few minutes to more than 10 minutes. The commands are for Linux. For Windows, other presets and running the tests, see [docs/build.md](docs/build.md).
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
@@ -156,11 +156,11 @@ npm --prefix gui/web run build
 scripts/run-gui.py                   # if something is missing, prints the command that builds it
 ```
 
-The `scripts/run-gui.py` script starts the GUI server with `examples/ecu_main/simulation.live.yaml` from the build and opens a browser. To start without a browser, add `--no-browser`; the terminal shows the URL. To stop the GUI, press Ctrl+C in that terminal, or send `kill <PID>` (SIGTERM) from another terminal. This also stops a running simulation.
+The `scripts/run-gui.py` script starts the GUI server with `examples/ecu_main/simulation.live.yaml` from the build and opens a browser. To start it without a browser, add `--no-browser`; the terminal prints the URL. To stop the GUI, press Ctrl+C in that terminal, or run `kill <PID>` (SIGTERM) from another terminal. Either way, a running simulation stops too.
 
 ### Use the template and the prebuilt tools
 
-This way you do not build the repository. The [releases page](https://github.com/rahanahu/vehicle-sil/releases) provides 2 release assets:
+With this approach you do not build the repository. The [releases page](https://github.com/rahanahu/vehicle-sil/releases) provides 2 release assets:
 
 | Release asset | Contents |
 |---|---|
@@ -240,13 +240,13 @@ You can also run several ECUs in one process. This runs without SIL Kit, which m
 | LIN | A slave that runs on SIL Kit needs a step size shorter than the slot length of the frames it responds to. | Set the step size with `step_ms` in the configuration file. |
 | LIN | A slave receives only the frames that the master sends. | On the virtual LIN bus, a slave cannot receive the responses of other slaves. On SIL Kit, it receives them for the IDs it subscribes to, but the step and the time at which it receives them are not deterministic. |
 | Ethernet | Raw frames only; there is no TCP/IP stack. | Connect to external networks with the bridge described in [ethernet-bridge.md](docs/ethernet-bridge.md). |
-| Time and control | No operation restarts a simulation from the beginning (reset). | Stop the simulation and run `run` again. |
+| Time and control | There is no operation that restarts a simulation from the beginning (reset). | Stop the simulation and run `run` again. |
 | Time and control | `vehicle_sil_sim_controller` cannot pause virtual time or step it. | The C++ API (the time gate of `SimulationController`), the stdin commands of `vehicle_sil_launch run` and the Control API (`--control`) can. |
 | Time and control | The Control API, the configuration file and the GUI cannot select CAN or LIN channels or devices. | Give the channel of the Vector XL CAN Bridge as an argument when you start the bridge. |
 | Time and control | If the DLL of an existing ECU uses real time internally (sleeping, reading the clock), vehicle-sil cannot replace it with virtual time. | — |
-| Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | For recording, observe the virtual LIN bus. For disconnecting a single ECU, use `ecu.connected`. |
+| Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | To record, observe the virtual LIN bus. To disconnect a single ECU, use `ecu.connected`. |
 | Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`) and `vehicle_sil::testkit` are not stable. | — |
-| Tools and build | No support for `install()` or packaging (`find_package`). | Include vehicle-sil with FetchContent or `add_subdirectory` (see "Use from another project (FetchContent)" in [docs/build.md](docs/build.md#use-from-another-project-fetchcontent)). |
+| Tools and build | `install()` and packaging (`find_package`) are not supported. | Include vehicle-sil with FetchContent or `add_subdirectory` (see "Use from another project (FetchContent)" in [docs/build.md](docs/build.md#use-from-another-project-fetchcontent)). |
 | OS and hardware | Windows 10 is not verified. | Verified on Windows 11 with MSYS2 UCRT64. |
 | OS and hardware | The Vector XL CAN Bridge handles classic CAN only. | For how to use it and how it behaves, see [bridges.md](docs/bridges.md). |
 | OS and hardware | The Vector XL CAN Bridge is not verified with other physical CAN setups or devices. | Verified with Vector Virtual CAN and with a physical loopback on a VN5620. |

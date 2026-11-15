@@ -166,7 +166,7 @@ How the time spent stopped relates to timeouts:
 - If `--timeout-ms` passes after the advance, the message also gives how long the simulation was stopped before the first step.
 - If a required participant goes away during the wait (its process ends, for example), the launcher stops waiting at once and ends the run as one that did not start (`ended-before-start`).
 
-`--start-paused` without `--control` (with `--stdin-commands` only) runs the step at time 0 and then stops at 0. In that case, and when you write after a pause, set `at` later than the time at which the simulation is stopped (see "[Rules for writes](#rules-for-writes)" below).
+`--start-paused` without `--control` (with `--stdin-commands` only) runs the step at time 0 and then stops at 0. In that case, and when you write after a pause, set `at` later than the time at which the simulation is stopped (see [Rules for writes](#rules-for-writes) below).
 
 ### Stdin commands and client commands
 
@@ -251,7 +251,7 @@ The roles that calls require (for each call, see [List of calls](#list-of-calls)
 
 With `--control-audit-log <file>`, the launcher appends who changed what to the file. If the file can no longer be written, the run goes on and those lines are lost.
 
-There is no authentication between the ECUs and the launcher (SIL Kit). Anyone who can join the registry can write to the ECUs. Use it on a closed network.
+There is no authentication between the ECUs and the launcher (SIL Kit). Anyone who can join the registry can write to the ECUs. Run the simulation on a closed network.
 
 ## ECU variables
 
@@ -317,7 +317,7 @@ Writes are not compared with the current value. Each write is applied, even with
 | A scenario's `set`, the Control API's `Write`, `agent().submit()` | As many as you write. |
 | A GUI widget (`client.variables.bind`) | Fewer, when writes come in quick succession (see [gui.md](gui.md)). |
 
-A GUI widget merges the values that arrive before the server has received its previous write into the last one.
+If values arrive before the server has received a widget's previous write, the widget merges them into the last one.
 
 ### How the connection is made
 
@@ -404,7 +404,7 @@ If you start the launcher yourself, `control_address(lines)` returns `address` o
 
 ### Connect, read and write (`Control`)
 
-You connect the same way from another computer to a launcher with TLS and tokens (see [Authentication](#authentication) above). For how to make the certificates and what the messages mean when a connection fails, see [howto/multi-pc.md](howto/multi-pc.md).
+To connect from another computer to a launcher that uses TLS and tokens, do the same (see [Authentication](#authentication) above). For how to make the certificates and what the messages mean when a connection fails, see [howto/multi-pc.md](howto/multi-pc.md).
 
 ```python
 from vehicle_sil_control import Control, ms
@@ -445,7 +445,7 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 
 | Goal | Use |
 |---|---|
-| Wait until the simulation stops | `c.sim.wait_paused()`. Read the state at which it stopped from this response. |
+| Wait until the simulation stops | `c.sim.wait_paused()`. Its response gives the state in which the simulation stopped. |
 | Read the time and the values of several peers as of the same instant | `c.snapshot(peers=())` (see [Read time and values together](#read-time-and-values-together-snapshot) below). |
 | Subscribe to the time state | `watch(time=True)`. It gives the latest state about every 100 ms, so a short pause may not appear. |
 
@@ -517,7 +517,7 @@ The guarantees apply to peers that run on the simulation's time, while the serve
 | True | Time is stopped at `time.now` (`time.paused`), and no value comes from a step after `time.now`. |
 | False | The simulation is running, has ended, or advanced during the call so that a value from a later step got in. Values and time are present even when it is false. |
 
-- The values can be newer than the time, by however far the simulation advanced during the read.
+- The values can be newer than the time, by as much as the simulation advanced during the read.
 - When `consistent` is true, the values are those of the time at which the simulation is stopped: from every step before `time.now`, and from none after it.
 - If you call `snapshot()` after waiting for the stop (`sim.wait_paused()`), and nobody advances the simulation in between, `consistent` is true.
 - Whether the values of a step that starts exactly at `time.now` are included is not defined, because they are received while the simulation is stopped. `Values.time` tells you which.
@@ -600,7 +600,7 @@ Writes and time control during a scenario have the `reason` `scenario-running`.
 | Lateness at a set speed | If the simulation falls behind real time, it does not try to catch up later. |
 | Operations that do not exist | Reset, starting and restarting participants, and selecting CAN or LIN channels. |
 | Runs the server covers | One run of that launcher only. The server closes when the run ends. |
-| `status` of a peer (`Peer.failed` and `error` in Python, `FAILED` in the CLI) | Always empty. ECU agents do not send it. |
+| `status` of a peer (`Peer.failed` and `error` in Python, `FAILED` in the CLI) | Always empty. ECU Agents do not send it. |
 | Value subscriptions | Latest value only. A newer value that arrives before the client reads replaces the older one. |
 
 - When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).

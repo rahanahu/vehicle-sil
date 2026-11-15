@@ -2,28 +2,28 @@
 
 [日本語](../ja/howto/operate-signals.md)
 
-In this guide you read and write the variables of the ECUs in a running simulation from Python or from the command line, and you pause virtual time and advance it a little at a time. You connect over gRPC to the Control Server that `vehicle_sil_launch run` starts when you add `--control`.
+In this guide you read and write the variables of the ECUs in a running simulation from Python or from the command line, and you pause virtual time and advance it in small steps. You connect over gRPC to the Control Server that `vehicle_sil_launch run` starts when you add `--control`.
 
 ## Choose a method
 
 There are 4 ways to read and write variables from outside the simulation. This guide covers the second and the third.
 
-| Goal | Use | How to start | Read |
+| Goal | Use | How to start | See |
 |---|---|---|---|
 | Set values in a fixed sequence, check them and get the result as an exit code | Scenario (YAML) | `vehicle_sil_launch run simulation.yaml --scenario <scenario>` | [Write tests with scenarios](scenario-tests.md) |
 | Look at values and decide in a program what to write next | Python client (`vehicle_sil_control`) | `Launch(...)` in the script starts `vehicle_sil_launch run --control` | This guide, from "[Run the first script](#run-the-first-script)" on |
 | Read, write and advance one command at a time, without writing Python | CLI (`python -m vehicle_sil_control`) | You start `vehicle_sil_launch run --control 8510 simulation.yaml` yourself | "[Run commands one at a time](#run-commands-one-at-a-time)" in this guide |
 | Watch values in a browser and write them with sliders and switches | GUI (`vehicle-sil-gui`) | `scripts/run-gui.py` (with the prebuilt tools, `vehicle-sil-gui simulation.live.yaml`) | "ECU variables" in [gui.md](../gui.md#ecu-variables) |
 
-A scenario always gives the same result with the same configuration file and the same scenario. With Python and the CLI, the result can change with the order in which the writes are received and with the times you give. To keep what you did as a test, write the same steps in a scenario.
+A scenario always gives the same result with the same configuration file and the same scenario. With Python and the CLI, the result can depend on the order in which the writes arrive and on the times you give. To keep what you did as a test, write the same steps in a scenario.
 
-To only pause and resume virtual time, you can also use the stdin of `vehicle_sil_launch run` (see "[Control time from stdin](#control-time-from-stdin)").
+If you only need to pause and resume virtual time, you can also use the stdin of `vehicle_sil_launch run` (see "[Control time from stdin](#control-time-from-stdin)").
 
 ## Prerequisites
 
 | Requirement | Details |
 |---|---|
-| vehicle-sil build | You have built with the preset `linux-gcc-control`, as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| vehicle-sil build | You have built with the `linux-gcc-control` preset, as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
 | [uv](https://docs.astral.sh/uv/) | Runs the Python client and the CLI. |
 
 Run every command in the root of the repository (the directory that contains `README.md`). The guide uses these 3 paths:
@@ -57,13 +57,13 @@ uv run python -m vehicle_sil_control.generate    # generates the stubs in python
 
 ### Verify the setup
 
-`generate` prints where it generated the stubs, on one line:
+`generate` prints one line with the directory it wrote the stubs to:
 
 ```text
 generated into <repository root>/python/vehicle_sil_control/_generated
 ```
 
-To confirm that `vehicle_sil_launch` has the Control Server, run the command below. If it prints `control-server`, the Control Server is there.
+To confirm that `vehicle_sil_launch` has the Control Server, run the command below. If it prints `control-server`, the Control Server is built in.
 
 ```sh
 build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep control-server
@@ -77,7 +77,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep co
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `grep` prints nothing | This `vehicle_sil_launch` was built without the Control Server. | Build with the preset `linux-gcc-control` (with another preset, add `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` to the configure step). |
+| `grep` prints nothing | This `vehicle_sil_launch` was built without the Control Server. | Build with the `linux-gcc-control` preset (with another preset, add `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` to the configure step). |
 | `No module named vehicle_sil_control` | `PYTHONPATH` is not set. | Run `export PYTHONPATH="$PWD/python"` in the root of the repository. |
 | `No module named 'grpc_tools'` | The packages are not in `.venv`. | Run `uv sync`. |
 
@@ -85,7 +85,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep co
 
 The example configuration file runs the engine ECU (participant name `Engine`) and the dashboard ECU (`Dashboard`). The guide reads and writes these 3 variables:
 
-| participant | Variable | Input or output | Type and unit | Description |
+| Participant | Variable | Input or output | Type and unit | Description |
 |---|---|---|---|---|
 | `Engine` | `engine.throttle` | Input (writable from outside) | real, %, 0–100 | The throttle. If you do not write it, it is 20. |
 | `Engine` | `engine.speed` | Output (read only) | integer, rpm | The engine speed. It starts at 0 and, in each 10 ms ECU step, moves 50 rpm toward 800 + 20 × throttle (rpm). |
@@ -93,11 +93,11 @@ The example configuration file runs the engine ECU (participant name `Engine`) a
 
 With the throttle at 20 %, the engine speed settles at 1200 rpm; at 50 %, at 1800 rpm; at 0 %, at 800 rpm.
 
-To find the names, types and ranges of your own ECU's variables, use `show` (see "Run commands one at a time") or the `--describe` option of the ECU executable (the `variables` array). You add nothing to the ECU code: the variables that an ECU built with `ecu_main()` declares with `ecu.input()` and `ecu.output()` can be read and written from outside as they are.
+To find the names, types and ranges of your own ECU's variables, use `show` (see "Run commands one at a time") or the `--describe` option of the ECU executable (the `variables` array). You do not add anything to the ECU code: any variable that an ECU built with `ecu_main()` declares with `ecu.input()` or `ecu.output()` can be read and written from outside as it is.
 
 ## Run the first script
 
-Start the simulation paused at time 0, write 50 % to the throttle, advance 500 ms, then read the engine speed. This is the full text of [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py), without line 1 (`# SPDX-License-Identifier: MIT`).
+This script starts the simulation paused at time 0, writes 50 % to the throttle, advances 500 ms, then reads the engine speed. Here is the full text of [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py), except line 1 (`# SPDX-License-Identifier: MIT`).
 
 <!-- examples/launch_control/write_and_read.py -->
 ```python
@@ -159,7 +159,7 @@ When the script leaves the outer `with` block, it stops the simulation and ends.
 | `ImportError: the Control API stubs are missing in ...` | The stubs have not been generated. | Run the `generate` line in "Setup". |
 | `LaunchError: ... --control needs a vehicle_sil_launch built with the control server` | You passed a `vehicle_sil_launch` that was built without the Control Server. | Pass the one under `build/linux-gcc-control/`. |
 | `LaunchError: ... the executable engine/vehicle_sil_engine_ecu does not exist` | You passed `examples/ecu_main/simulation.yaml` (the one in the source tree). | Pass `build/linux-gcc-control/examples/ecu_main/simulation.yaml`. |
-| `AttributeError: 'NoneType' object has no attribute 'values'` | Until the simulation has advanced at least one step, there are no values, and `c.values()` returns `None`. | Advance with `c.sim.step()` before you read. |
+| `AttributeError: 'NoneType' object has no attribute 'values'` | There are no values until the simulation has advanced at least one step, so `c.values()` returns `None`. | Advance with `c.sim.step()` before you read. |
 
 ## Run commands one at a time
 
@@ -172,7 +172,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
-When these 2 lines appear, you can connect. Between them, lines about starting the registry and the ECUs appear.
+When these 2 lines appear, you can connect. Lines about starting the registry and the ECUs appear between them.
 
 ```text
 [vehicle_sil_launch] control server at 127.0.0.1:8510
@@ -181,7 +181,7 @@ When these 2 lines appear, you can connect. Between them, lines about starting t
 
 With only one terminal (in a script or in CI), add `> launch.log 2>&1 &` to the end of the terminal 1 command to start it in the background. When the 2 lines above appear in `launch.log`, run the terminal 2 commands in the same terminal. To stop partway, use the CLI command `stop` or `kill <PID>` (SIGTERM). The simulation and the ECUs stop (result `interrupted`, exit code 130).
 
-In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`. If the simulation stays paused at time 0 for more than 50 seconds, the simulation in terminal 1 ends with an error, so get as far as `step` before then. After `step`, the simulation can stay paused.
+In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`. If the simulation stays paused at time 0 for more than 50 seconds, the simulation in terminal 1 ends with an error, so run `step` before then. After `step`, the simulation can stay paused.
 
 | What you do | Command |
 |---|---|
@@ -263,8 +263,8 @@ With `--control 0`, the launcher picks a free port. In that case, pass the addre
 |---|---|---|
 | Terminal 1 prints `--control needs a vehicle_sil_launch built with the control server` and exits with code 4 | This `vehicle_sil_launch` was built without the Control Server. | Use the one under `build/linux-gcc-control/`. |
 | Terminal 1 starts nothing and exits with code 3 | Another process uses port 8510. | Start with `--control 0`, and pass the printed address to the `--server` option of the CLI. |
-| Terminal 1 prints `the simulation did not start: ... did not reach Running within 50000 ms` and exits with code 1 | The simulation stayed paused at time 0 for more than 50 seconds. | Restart terminal 1, and run the first `step` or `resume` within 50 seconds. |
-| Terminal 2 shows `error: UNAVAILABLE: ... Connection refused` | The simulation in terminal 1 has ended, or the port is wrong. | Restart terminal 1, and check the address on the `control server at` line. |
+| Terminal 1 prints `the simulation did not start: ... did not reach Running within 50000 ms` and exits with code 1 | The simulation stayed paused at time 0 for more than 50 seconds. | Run the command in terminal 1 again, and run the first `step` or `resume` within 50 seconds. |
+| Terminal 2 shows `error: UNAVAILABLE: ... Connection refused` | The simulation in terminal 1 has ended, or the port is wrong. | Run the command in terminal 1 again, and check the address on the `control server at` line. |
 | `step` fails with `FAILED_PRECONDITION` | The simulation is not paused. | Run `pause --wait` first. |
 | `watch --count` does not end | While the simulation is paused, no new values are sent. | Advance with `resume` or `step`, or stop it with Ctrl+C. |
 
@@ -288,7 +288,7 @@ uv run python examples/launch_control/pause_and_step.py \
 
 ### Verify the Python examples
 
-The output of `write_before_start.py`. The port number changes with every run.
+`write_before_start.py` prints the following. The port number changes with every run.
 
 <!-- examples/launch_control/write_before_start.py: the output -->
 ```text
@@ -304,7 +304,7 @@ ok   the run passed (passed, reached_stop_at)
 all as expected
 ```
 
-The output of `pause_and_step.py`. The script pauses a run that follows real time, so the times and the engine speeds can differ from run to run.
+`pause_and_step.py` prints the following. It pauses a run that follows real time, so the times and the engine speeds can differ from run to run.
 
 <!-- examples/launch_control/pause_and_step.py: the output -->
 ```text
@@ -327,7 +327,7 @@ In the excerpts below, `expect(condition, text)` is a function that the examples
 | Call | Returns | Use it to |
 |---|---|---|
 | `c.values("Engine")` | The values that the ECU sent last (`.values` is a dict, `.time` the time of those values) | Read the current values of one ECU |
-| `c.snapshot(["Engine", "Dashboard"])` | The time and the values of several ECUs, read by the server in one call | Read the time and the values as of the same instant |
+| `c.snapshot(["Engine", "Dashboard"])` | The time and the values of several ECUs, read by the Control Server in one call | Read the time and the values as of the same instant |
 | `c.watch(peers=["Engine"])` | An iterator that returns updates, such as values, in the order they are received | Wait for a value to change (see "[Wait for a value to change](#wait-for-a-value-to-change)") |
 | `c.peers()` | The participants, with the names, types and ranges of their variables | Look up variable names |
 
@@ -347,7 +347,7 @@ The output line `ok   the snapshot is of 290 ms (consistent: True)` is the resul
 
 - An ECU sends its values every 10 ms (the default `sample_period`), so you cannot see changes faster than that.
 - If you call `c.sim.time()` and `c.values()` separately, the simulation can advance between the calls. To read a time and values that belong together, use `snapshot()`.
-- If you wait until the simulation is paused before you call `snapshot()`, and `consistent` is true, the values are those at the time where the simulation is paused.
+- If you call `snapshot()` after the simulation has paused and `consistent` is true, the values are those at the time at which the simulation is paused.
 - Besides the variables you declared, the dict contains the variables that vehicle-sil adds automatically (`ecu.connected`, and names that start with `peer.` and `j1939.`).
 
 For what `snapshot()` guarantees and its limits, see "Read time and values together (`snapshot()`)" in [control-api.md](../control-api.md#read-time-and-values-together-snapshot).
@@ -356,14 +356,14 @@ For what `snapshot()` guarantees and its limits, see "Read time and values toget
 
 Pass `c.write()` the variable names and values for each participant. One call can write to several participants. It returns the operation's sequence number, which you use to wait for the result (see "[Wait for the result of a write](#wait-for-the-result-of-a-write)").
 
-When you write decides the ECU step in which the value is applied:
+The time at which you write decides the ECU step in which the value is applied:
 
 | When you write | How | Step in which the value is applied |
 |---|---|---|
 | Before the first step (started with `start_paused=True`, while paused) | `c.write({...})` | The step at time 0. |
-| While the simulation runs | Pause first, then call `c.write({...}, at=...)` with an `at` later than the time where the simulation is paused | The first step of that ECU that starts at or after `at`. |
+| While the simulation runs | Pause first, then call `c.write({...}, at=...)` with an `at` later than the time at which the simulation is paused | The first step of that ECU that starts at or after `at`. |
 
-The code that writes before the first step is in "Run the first script". The code that writes while the simulation runs is this part of `pause_and_step.py`. `paused_at` is the time where the simulation is paused.
+The code that writes before the first step is in "Run the first script". The code that writes while the simulation runs is this part of `pause_and_step.py`. `paused_at` is the time at which the simulation is paused.
 
 <!-- examples/launch_control/pause_and_step.py: an excerpt -->
 ```python
@@ -379,10 +379,10 @@ The simulation paused at 190 ms, so `at` is 191 ms. The engine ECU steps every 1
 5 rules apply when you write:
 
 - In both cases, wait with `c.wait(seq, until="queued")` until the ECU has received the write, then advance time.
-- While the simulation runs, if you give no `at`, or give the time where the simulation is paused, the result can be `late`, or the step in which the value is applied can differ from run to run.
+- While the simulation runs, if you give no `at`, or give the time at which the simulation is paused, the result can be `late`, or the step in which the value is applied can differ from run to run.
 - A value out of range and a write to an output variable do not raise an exception. The result is `invalid`.
 - A parameter can be written only before the first step.
-- If several clients write the same variable with the same time, the value that remains depends on the order in which the server received the writes.
+- If several clients write the same variable with the same time, the value that remains depends on the order in which the Control Server received the writes.
 
 Disconnecting an ECU from the bus is also a write to a variable: write `False` to `ecu.connected`, which every ECU has. For how this looks on J1939, see "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected).
 
@@ -463,7 +463,7 @@ The time operations are in `c.sim`.
 | Read the current time state | `c.sim.time()` | `time` |
 | Pause | `c.sim.pause()` | `pause` |
 | Resume | `c.sim.resume()` | `resume` |
-| Advance by a given length and pause | `c.sim.step(ms(100))` | `step 100` |
+| Advance by a given amount and pause | `c.sim.step(ms(100))` | `step 100` |
 | Advance to a given time and pause | `c.sim.run_until(ms(700))` | `run-until 700` |
 | Wait until the simulation is paused | `c.sim.wait_paused()` | `pause --wait` |
 | Change the speed | `c.sim.set_speed(1.0)`; as fast as possible, `c.sim.set_speed(None)` | `speed 1`, `speed max` |
@@ -482,7 +482,7 @@ c.sim.resume()
 
 - After `step()` and `run_until()`, wait with `c.sim.wait_paused()` until the simulation is paused, then read values.
 - `step()` works only while the simulation is paused.
-- The time at which `pause()` pauses and the length that `step()` advances are rounded up to a multiple of the time step of `vehicle_sil_launch` (10 ms by default). So read the time where the simulation paused from the `now` that `wait_paused()` returns.
+- The time at which `pause()` pauses and the length that `step()` advances are rounded up to a multiple of the time step of `vehicle_sil_launch` (10 ms by default). Because of this, read the time at which the simulation paused from the `now` that `wait_paused()` returns.
 - If you change the speed while the simulation is paused, it stays paused.
 - An operation that is not possible at the moment raises `ControlError` (with `code` `FAILED_PRECONDITION`); an argument error gives `INVALID_ARGUMENT`.
 - Only ECUs that run in virtual time pause.
@@ -552,11 +552,11 @@ For the full line format and the cases where a command is not accepted, see "Std
 
 ## Connect from another computer
 
-The steps so far connect from the computer that runs `vehicle_sil_launch`. To connect from another computer, you need a TLS certificate and a token. For how, see "Use the Control API from another computer" in [Run on several computers](multi-pc.md#use-the-control-api-from-another-computer).
+The steps so far connect from the computer that runs `vehicle_sil_launch`. To connect from another computer, you need a TLS certificate and a token. For the steps, see "Use the Control API from another computer" in [Run on several computers](multi-pc.md#use-the-control-api-from-another-computer).
 
 ## Read J1939 signals as variables
 
-The Control API handles only time and the variables that ECUs declare. It does not handle J1939 frames. To read a received signal from outside, the ECU puts the received value in an output variable. A value that is decided from outside goes in an input variable, and the ECU uses it in what it sends.
+The Control API handles only time and the variables that ECUs declare. It does not handle J1939 frames. To make a received signal readable from outside, the ECU copies the received value into an output variable. A value that is set from outside goes into an input variable, and the ECU uses it in what it sends.
 
 In the example, the dashboard ECU puts the engine speed it receives in the output variable `dashboard.engine_speed`. Here is part of the constructor of `Dashboard` in [examples/ecu_main/dashboard/main.cpp](../../examples/ecu_main/dashboard/main.cpp):
 
@@ -574,11 +574,11 @@ Adding variables is the ECU author's work. If you need a signal, ask the author 
 
 ## Notes
 
-- You can also connect with `--control` to a scenario run (`--scenario`), but only to read, wait and stop. Writes from outside would make the scenario no longer give the same result every time. For details, see "Watching variables during a run (`--control`)" in [scenario.md](../scenario.md#watching-variables-during-a-run---control).
+- You can also connect with `--control` to a scenario run (`--scenario`), but only to read, wait and stop. Writes from outside would stop the scenario from giving the same result every time. For details, see "Watching variables during a run (`--control`)" in [scenario.md](../scenario.md#watching-variables-during-a-run---control).
 - The GUI also uses the Control Server of `vehicle_sil_launch` internally, so the rules for when a write is applied and for the result of a write are the same as in Python.
 - `--timeout-ms` also counts the time during which the simulation is paused.
 - If you receive the time state with `c.watch(time=True)`, the updates are thinned out, so a short pause may not appear. To wait for a pause, use `c.sim.wait_paused()`.
-- To read from a program the address of a `vehicle_sil_launch` that you started yourself, use the `address` of the event `control_server` of `run --events`.
+- To read from a program the address of a `vehicle_sil_launch` that you started yourself, use the `address` of the `control_server` event of `run --events`.
 
 ## What to read next
 

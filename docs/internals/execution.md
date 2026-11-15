@@ -113,7 +113,7 @@ A transport that uses the Agent from outside the ECU (`control_silkit::AgentTran
 - Objects created with `emplace()` are destroyed after the Agent, so do not `emplace()` a transport into the ECU.
 - If a `TransportLease` remains when the ECU destroys the Agent, the ECU prints its name and the fix to stderr and calls `std::terminate()`.
 
-It calls `std::terminate()` so that nothing can use the destroyed Agent. This happens in a destructor, so it is not an exception.
+The ECU calls `std::terminate()` so that nothing can use the destroyed Agent. Because this happens in a destructor, it does not throw an exception.
 
 ### When variable writes are applied
 
@@ -158,7 +158,7 @@ The order of frames received at the same time from different senders depends on 
 
 `j1939()`, `can()`, `lin_master()`, `lin_slave()` and `ethernet()` are non-virtual functions that check for empty names. The work is done in private virtual functions (`add_j1939`, `add_can`, `add_lin_master`, `add_lin_slave`, `add_ethernet`).
 
-`Peer` has a separate `j1939(name, ...)` that takes `J1939ChannelOptions`. This declaration hides the base class's functions of the same name, so the only `j1939` you can call through a `Peer&` is the `Peer`'s own. Use `j1939(network, NetworkOptions)`, which takes `NetworkOptions`, through an `Ecu&`.
+`Peer` has a separate `j1939(name, ...)` that takes `J1939ChannelOptions`. This declaration hides the base class's functions of the same name, so the only `j1939` you can call through a `Peer&` is the `Peer`'s own. Call `j1939(network, NetworkOptions)`, which takes `NetworkOptions`, through an `Ecu&`.
 
 ### LIN nodes
 
@@ -270,7 +270,7 @@ It does not close declarations and can be called at any time. The content is the
 
 ### Threads
 
-Set up from one thread. Steps run on the implementation's thread, and functions, handlers and protocol parts are called there.
+Do the setup from one thread. Steps run on the implementation's thread, and functions, handlers and protocol parts are called there.
 
 ## `Simulation` (`vehicle_sil::Simulation`)
 
@@ -297,7 +297,7 @@ Set up from one thread. Steps run on the implementation's thread, and functions,
 
 ### Steps that `run_for()` runs
 
-`run_for(d)` (d > 0) runs only the steps that start before the end time. On the virtual buses, the end time is the current time plus `d`. On SIL Kit, other participants may run steps at or after stop_at until they receive the controller's stop. So each ECU gets the same limit, and the record is the same as on the virtual buses.
+`run_for(d)` (d > 0) runs only the steps that start before the end time. On the virtual buses, the end time is the current time plus `d`. On SIL Kit, other participants may run steps at or after stop_at until they receive the controller's stop. So the same limit is set on each ECU, which keeps the record the same as on the virtual buses.
 
 A SIL Kit `Simulation` can run only once because, even when every participant is stopped at a time boundary, the step at the boundary may still be running. Reading the model from the main thread would race, and the boundary step would be off by one from the virtual buses. Run tests that stop and check along the way on the virtual buses.
 
@@ -312,7 +312,7 @@ An exception in an ECU's step is reported as `SimulationError`. The same applies
 
 On SIL Kit, the watch is needed because SIL Kit does not end the simulation when a participant fails; virtual time just stops. There is no overall timeout.
 
-Exceptions at the start (the required participants are not all present, `start_timeout`) propagate as they are, after everything has been stopped. On SIL Kit, `run_for()` returns after every participant has stopped. What the steps wrote can be read from then on.
+Exceptions at the start (the required participants are not all present, `start_timeout`) propagate unchanged, after everything has been stopped. On SIL Kit, `run_for()` returns after every participant has stopped. What the steps wrote can be read from then on.
 
 ### What `run()` treats as failure
 

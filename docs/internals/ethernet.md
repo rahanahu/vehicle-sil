@@ -80,7 +80,7 @@ The kinds of event (`PortEvent`):
 
 ## Channel (`Channel`)
 
-The API through which an application sends and receives raw frames. A channel is a `step::Member`: added to a `step::Host`, it runs in the same step as the other members, in the order they were added. The member functions (`begin()`, `receive(now)`, `process()`, `flush()` and so on) are for the host and are private in `Channel`.
+`Channel` is the API through which an application sends and receives raw frames. A channel is a `step::Member`: added to a `step::Host`, it runs in the same step as the other members, in the order they were added. The member functions (`begin()`, `receive(now)`, `process()`, `flush()` and so on) are for the host and are private in `Channel`.
 
 ### What happens in one step
 
@@ -110,7 +110,7 @@ When you can call what:
 
 - `send()` and `receive()` can be called only inside the step (in a handler or the application). Calling them from outside is a `std::logic_error`.
 - A handler can send on another channel of the same host (a gateway). That frame is transmitted in the transmit phase of the same step.
-- `on_frame()` only before the host starts.
+- `on_frame()` can be called only before the host starts.
 
 ### Order of frames with the same time
 
@@ -203,7 +203,7 @@ The counters only increase.
 
 ## Virtual network (`VirtualEthernetBus`)
 
-In-process Ethernet. Like SIL Kit Ethernet without the Network Simulator, it behaves as a hub. It is not thread-safe; use it from one thread (the `StepDriver` loop).
+`VirtualEthernetBus` is in-process Ethernet. Like SIL Kit Ethernet without the Network Simulator, it behaves as a hub. It is not thread-safe; use it from one thread (the `StepDriver` loop).
 
 | Situation | Behavior |
 |---|---|
@@ -221,7 +221,7 @@ In-process Ethernet. Like SIL Kit Ethernet without the Network Simulator, it beh
 
 ## SIL Kit port (`SilKitEthPort`)
 
-A port on the Ethernet controller of a participant in time synchronization (`TimeDomain::Virtual`). There is no port for real time (without time synchronization) yet.
+`SilKitEthPort` is a port on the Ethernet controller of a participant in time synchronization (`TimeDomain::Virtual`). There is no port for real time (without time synchronization) yet.
 
 ### Start and close
 
@@ -314,7 +314,7 @@ The behavior when the SIL Kit Network Simulator simulates the Ethernet network (
 
 ## Unverified values
 
-The following values come from general sources and from knowledge of the SIL Kit sources. They have not been verified against the standard. Values that can be changed are left for the user to change.
+The following values come from general sources and from knowledge of the SIL Kit sources. They have not been verified against the standard. Where a value can be changed, the user can change it.
 
 | Value | Where it is used | How to change it |
 |---|---|---|

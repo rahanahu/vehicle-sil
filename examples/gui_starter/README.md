@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-The smallest form of a screen of your own that the GUI server (`vehicle-sil-gui`) serves. It uses only the client library ([gui/client](../../gui/client/README.md)) and is written in plain HTML and ES modules, with no build step. Copy it and rewrite it into your own screen. The guide [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) walks you through turning it into a screen that shows one variable.
+A minimal screen of your own for the GUI server (`vehicle-sil-gui`) to serve. It uses only the client library ([gui/client](../../gui/client/README.md)) and is written in plain HTML and ES modules, with no build step. Copy it and rewrite it into your own screen. The guide [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) walks you through turning it into a screen that shows one variable.
 
 | File | Contents |
 |---|---|
@@ -46,7 +46,7 @@ Variables appear in the list when the launcher has a Control Server. In the exam
 
 ## The slider and the lamp
 
-**Slider and lamp** shows how to build a widget.
+The **Slider and lamp** section of the screen shows how to build a widget.
 
 | Widget | Variable it uses |
 |---|---|
@@ -61,7 +61,7 @@ Both only draw the `state` that `client.variables.bind(ref, options)` returns. T
 | Why a write is blocked | No run, the ECU is disconnected |
 | Write status | Sent, accepted, applied, the reason it failed |
 
-If you keep moving the slider before the server has received the previous write, the library keeps only the last value and sends that. You can build your own widgets (switch, number input, select) the same way (see "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)).
+If you keep moving the slider before the server has received the previous write, the library keeps only the last value and sends that. You can build your own widgets (switch, number input, choice) the same way (see "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)).
 
 ## Make it your own screen
 

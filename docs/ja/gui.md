@@ -93,7 +93,7 @@ vehicle-sil-gui simulation.live.yaml
 端末に URL が 1 行表示され、ブラウザが開きます。
 
 ```text
-http://127.0.0.1:34457/#token=<起動のたびに変わるトークン>
+http://127.0.0.1:34457/#token=<token that changes on every start>
 vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ```
 
@@ -227,12 +227,12 @@ vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ## 起動の引数と終了コード
 
 ```sh
-vehicle-sil-gui [引数] [<設定ファイル>]
+vehicle-sil-gui [options] [<configuration file>]
 ```
 
 | 引数 | 意味 |
 |---|---|
-| `<設定ファイル>` | 最初に選んでおくファイル（`--root` の下） |
+| `<configuration file>` | 最初に選んでおくファイル（`--root` の下） |
 | `--root <dir>` | 画面で選べるファイルの範囲。既定は、渡した設定ファイルのディレクトリ、なければカレントディレクトリ |
 | `--port <n>` | 待ち受けるポート（127.0.0.1）。既定の 0 は空いているポート。80 は使えない（ブラウザが `Host` からポートを省くため） |
 | `--no-browser` | ブラウザを開かない |
@@ -240,9 +240,9 @@ vehicle-sil-gui [引数] [<設定ファイル>]
 | `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
 | `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
 | `--json` | URL の代わりに `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
-| `--stop-timeout <秒>` | 終了するとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
-| `--check-timeout <秒>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
-| `--silent-after <秒>` | 実行中のランチャーがこの時間より長く何も出力しなければ（ハートビートも来なければ）、画面に通知する（既定 5。1 以上） |
+| `--stop-timeout <seconds>` | 終了するとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
+| `--check-timeout <seconds>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
+| `--silent-after <seconds>` | 実行中のランチャーがこの時間より長く何も出力しなければ（ハートビートも来なければ）、画面に通知する（既定 5。1 以上） |
 | `--no-variables` | ランチャーの Control Server を起動しない（ECU の変数を読み書きしない） |
 
 | 終了コード | 意味 |
@@ -284,7 +284,7 @@ vehicle-sil-gui [引数] [<設定ファイル>]
 | Python を選ぶ | 固定したパッケージの wheel があるバージョン（3.11 から、テストしている `.python-version` のバージョンまで）を uv が選び、なければダウンロードします。 |
 
 - パッケージをソースからビルドはしません。
-- uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <ツール>/python/requirements.txt` でインストールし、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そのことを表示して終了コード 2 で終わります。
+- uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <tools>/python/requirements.txt` でインストールし、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そのことを表示して終了コード 2 で終わります。
 - GUI サーバーの Python は、カレントディレクトリのモジュールを読み込みません（`python -P`）。
 
 ### リポジトリから起動する
@@ -403,7 +403,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | `POST api/run` の `speed`、`start_paused` | ランチャーの `--speed`、`--start-paused` |
 | `POST api/time` `{"command": "pause"}`、`{"command": "resume"}` | 一時停止、再開 |
 | `POST api/time` `{"command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げる） |
-| `POST api/time` `{"command": "speed", "value": <数か "max">}` | 速度の変更（一時停止はそのまま） |
+| `POST api/time` `{"command": "speed", "value": <number or "max">}` | 速度の変更（一時停止はそのまま） |
 
 `api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。形とエラーの `code` は [gui/protocol/README.md](../../gui/protocol/README.ja.md) にあります。
 
@@ -424,11 +424,11 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送るので、Control Server がシナリオの実行中に拒否する時間の呼び出しとは別です。
 - ランチャーの `features` に `scenario-control` があれば、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。ないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
-- サーバーの API は `GET api/scenarios?file=<設定ファイル>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
+- サーバーの API は `GET api/scenarios?file=<configuration file>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
 
 ### 操作をシナリオとして保存する
 
-シナリオのない、変数を読み書きできる実行では、「操作をシナリオに」のカードに、この実行で反映された書き込みの数が表示されます。「この実行の操作をシナリオとして保存」を押すと、シナリオの YAML をブラウザで保存します（ファイル名は `<設定ファイルの名前>-run<実行の番号>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を開始するまで保存できます。
+シナリオのない、変数を読み書きできる実行では、「操作をシナリオに」のカードに、この実行で反映された書き込みの数が表示されます。「この実行の操作をシナリオとして保存」を押すと、シナリオの YAML をブラウザで保存します（ファイル名は `<configuration file name>-run<run number>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を開始するまで保存できます。
 
 ```yaml
 # Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
@@ -515,7 +515,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 | 時間を操作する | 速度を決めて開始する、止めた状態で始める、一時停止、再開、ステップ実行、速度の変更ができ、仮想時間、いまの速度、実際の速度、実時間への遅れを見られます（「[時間の操作](#時間の操作)」）。 |
 | Control Server との接続を見る | participant ごとに、変数を読み書きする接続の状態（ランチャーの `control-links`）を見ます。 |
 | ECU の変数を見る、書き込む | 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合ったコンポーネントで並び、名前で絞り込めます（「[変数の画面とコンポーネント](#変数の画面とコンポーネント)」）。 |
-| 変数の並べ方をファイルに書く | 設定ファイルの隣の `<名前>.dashboard.yaml` に書くと、「変数」の画面がそのとおりに並べます（「[ダッシュボードのファイル](#ダッシュボードのファイル)」）。 |
+| 変数の並べ方をファイルに書く | 設定ファイルの隣の `<name>.dashboard.yaml` に書くと、「変数」の画面がそのとおりに並べます（「[ダッシュボードのファイル](#ダッシュボードのファイル)」）。 |
 | 自分で書いたコンポーネントを置く | custom element を、ダッシュボードに置けます（「[カスタムパネル](#カスタムパネル)」）。 |
 | シナリオを選んで実行する | 設定ファイルの隣の `scenarios` の `.yaml` から選ぶと、照合でシナリオも確認し、実行では手順の表が進み、終わると合否を表示します（「[シナリオ](#シナリオ)」）。 |
 | 操作をシナリオとして保存する | GUI で書き込んで反映された値を、シナリオの YAML としてブラウザで保存します（「[操作をシナリオとして保存する](#操作をシナリオとして保存する)」）。 |
@@ -545,7 +545,7 @@ ECU の変数の読み書きは、サーバーの API とクライアントの�
 | 2 | 表示されたコマンドを実行する | 「参加した（自分で起動）」になります。 |
 
 - コマンドは選択してコピーでき、コピーのボタンもあります。シミュレーションは、participant が参加するまで待ちます。
-- registry がループバックのアドレスでない設定では、設定する環境変数（`VEHICLE_SIL_LISTEN_ON_NETWORK` と値 `1`）も、名前と値を分けてコマンドの上に表示します。設定の書き方はシェルや IDE によって違うので、変数ごとのボタンで `名前=値` をコピーし、それぞれの書き方で設定します（コマンドのボタンは変数をコピーしません）。
+- registry がループバックのアドレスでない設定では、設定する環境変数（`VEHICLE_SIL_LISTEN_ON_NETWORK` と値 `1`）も、名前と値を分けてコマンドの上に表示します。設定の書き方はシェルや IDE によって違うので、変数ごとのボタンで `name=value` をコピーし、それぞれの書き方で設定します（コマンドのボタンは変数をコピーしません）。
 - 設定ファイルに `manual: true` と書いた participant は、最初から「自分で起動する」になっています（画面からは戻せません）。
 - 参加しないまま止めると、シミュレーションは始まらず「参加しなかった」と表示します。
 - ランチャーは自分で起動した participant を終了させません。終わった後も残っているとランチャーが通知したら、そのことを表示します。
@@ -566,7 +566,7 @@ ECU の変数の読み書きは、サーバーの API とクライアントの�
 
 #### 監視用の変数
 
-ECU が宣言したのではない変数は、ECU ごとに、アプリの変数の後の畳んだセクション（「<ECU> の監視」）にまとめます。対象は、vehicle-sil が付ける変数と、ECU の実行ファイルが自分で追加する監視用の変数（`peer.steps` などの `peer.` と、J1939 の統計の `j1939.<ネットワーク>.`。[internals/control.md](internals/control.md) の「Control Agent」の「Peer の監視」）です。
+ECU が宣言したのではない変数は、ECU ごとに、アプリの変数の後の畳んだセクション（「<ECU> の監視」）にまとめます。対象は、vehicle-sil が付ける変数と、ECU の実行ファイルが自分で追加する監視用の変数（`peer.steps` などの `peer.` と、J1939 の統計の `j1939.<network>.`。[internals/control.md](internals/control.md) の「Control Agent」の「Peer の監視」）です。
 
 - 畳んでいる間はコンポーネントを作らず、値も受信しません。
 - 名前の絞り込みは畳んだセクションの中も探し、一致したコンポーネントを開いて表示します。
@@ -806,7 +806,7 @@ Angular で自分の画面を作るときは、サンプルのコンポーネン
 
 サンプルの画面の機能です（自分の画面には自動では付きません。ファイルの中身は `client.dashboard(file)` で読めるので、自分の画面で使うこともできます）。
 
-設定ファイルの隣に `<設定ファイルの名前（拡張子なし）>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../../examples/ecu_main/simulation.dashboard.yaml) です。
+設定ファイルの隣に `<configuration file name without extension>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../../examples/ecu_main/simulation.dashboard.yaml) です。
 
 ```yaml
 vehicle_sil_dashboard: 1
@@ -815,7 +815,7 @@ panels: [panels/rpm-bar.js]            # 任意: カスタムパネルのモジ�
 sections:
   - title: Engine
     items:
-      - variable: Engine.engine.throttle # <participant>.<変数名>
+      - variable: Engine.engine.throttle # <participant>.<variable name>
         widget: slider                   # 任意: 省くと既定のコンポーネント
         label: Throttle                  # 任意: 省くと変数の名前
         options: { step: 5 }             # 任意: コンポーネントごとの設定
@@ -835,7 +835,7 @@ sections:
 | `title` | 画面の上に表示する題（任意） |
 | `panels` | カスタムパネルを定義するモジュール。ファイルの隣の `panels/` の中の `.js` / `.mjs`（任意。16 個まで） |
 | `sections` | セクションの並び。セクションは `title`、`items`、`collapsed`（任意） |
-| `items` の `variable` | 変数をコンポーネントで表示する。値は `<participant>.<変数名>` |
+| `items` の `variable` | 変数をコンポーネントで表示する。値は `<participant>.<variable name>` |
 | `items` の `panel` | カスタムパネルを置く（「[カスタムパネル](#カスタムパネル)」） |
 | `items` の `auto` | その participant の変数のうち、ファイルのほかの所に書いていないものを、その場所に既定のコンポーネントで並べる |
 
@@ -844,18 +844,18 @@ sections:
 | 項目 | 一緒に書けるキー |
 |---|---|
 | `variable` | `widget`（「[コンポーネントの種類](#コンポーネントの種類)」の種類。省くと既定のコンポーネント）、`label`、`options`（「[ダッシュボードのデータ](#ダッシュボードのデータ)」の設定） |
-| `panel` | `label`、`variables`（`<participant>.<変数名>` の並び）、`options`（パネルが決める） |
+| `panel` | `label`、`variables`（`<participant>.<variable name>` の並び）、`options`（パネルが決める） |
 | `auto` | なし |
 
-- `<participant>.<変数名>` は、最初の `.` までが participant の名前です（シナリオと同じ書き方）。
+- `<participant>.<variable name>` は、最初の `.` までが participant の名前です（シナリオと同じ書き方）。
 - `auto` の「ファイルのほかの所」は、`variable` とパネルの `variables` です。全部の変数を書かなくて済むようにするためのキーです。監視用の変数は、そのセクションの後の畳んだセクションにします。いまの実行にない participant なら、その場所に理由を表示します。
 - **エラー**: GUI サーバーが読むときに、YAML のエラーと形のエラーを、ファイルの行と桁、データの中の場所、直し方とともに返します。画面はエラーの一覧を表示して、変数を自動で並べます。
 - **変数との照合**: 変数があるか、コンポーネントが変数に合うかは、画面がいまの変数の一覧で確認し、合わないコンポーネントの場所に理由を表示します（ほかは描きます）。いまの実行にない変数は「この実行にない変数です」と表示します。実行を開始する前でも、ファイルのとおりに並んだコンポーネントを見られます。
 - **読み直す**: 画面は、実行が替わるたびにファイルを読み直します。直した後すぐに見るには、画面の「読み直す」を押します。パネルのモジュールを直したときは、ページを読み込み直します（ブラウザは一度定義した custom element を差し替えられないため）。
-- **エディターの補完**: JSON Schema は [gui/protocol/dashboard.schema.json](../../gui/protocol/dashboard.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと補完と検査が効きます。
+- **エディターの補完**: JSON Schema は [gui/protocol/dashboard.schema.json](../../gui/protocol/dashboard.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<path to that file>` と書くと補完と検査が効きます。
 - **上限**: 256 KiB、入れ子 16 段、値 50000 個、セクション 200 個、項目は全部で 2000 個（多いときは `auto` を使います）、1 つの値は 1024 文字。YAML の別名（`&name` と `*name`）とタグ（`!!python/...` など）、2 つ目の文書（`---`）は使えません。
 - **保存**: 画面で並べ替えて保存することはできません（ファイルを書き換えます）。
-- サーバーの API は `GET api/dashboard?file=<設定ファイル>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ダッシュボードのファイル」）、ライブラリでは `client.dashboard(file)` です。
+- サーバーの API は `GET api/dashboard?file=<configuration file>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ダッシュボードのファイル」）、ライブラリでは `client.dashboard(file)` です。
 
 ### カスタムパネル
 
@@ -909,14 +909,14 @@ sections:
 | 形 | ビルド済みのツールでの場所 | リポジトリで作るコマンド（`gui/web` で実行） |
 |---|---|---|
 | 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` と `gui_starter/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
-| npm のパッケージ（`vehicle-sil-gui-client-<バージョン>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` ができます） |
+| npm のパッケージ（`vehicle-sil-gui-client-<version>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<version>.tgz` ができます） |
 
 - **1 つにまとめたファイル**: 画面のディレクトリに置いて、相対パスで import します（ブラウザでも Node 22 以上でも読み込めます）。
-- **パッケージ**: 自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <その URL>` でもインストールできます）。npm のレジストリには公開していません。
+- **パッケージ**: 自分のプロジェクトで `npm install <that .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <its URL>` でもインストールできます）。npm のレジストリには公開していません。
   - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
   - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、画面のテンプレートの README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。
-  - `--out <dir>` で置き場所を、`--version <バージョン>` でバージョンを変えられます（`node gui/client/pack.mjs --help`）。
+  - `--out <dir>` で置き場所を、`--version <version>` でバージョンを変えられます（`node gui/client/pack.mjs --help`）。
 - 公開している API は [gui/client/README.md](../../gui/client/README.ja.md) の「公開 API」の一覧です。
 
 ### `--web` で配信するファイル
@@ -985,7 +985,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 
 | 段階 | 起きること |
 |---|---|
-| サーバーの起動 | 起動のたびに作るトークンを、表示する URL（`http://127.0.0.1:<port>/#token=<トークン>`）の `#` の後ろに付けます。 |
+| サーバーの起動 | 起動のたびに作るトークンを、表示する URL（`http://127.0.0.1:<port>/#token=<token>`）の `#` の後ろに付けます。 |
 | 画面の最初の処理 | `takeToken(window)` を呼ぶと、URL の `#token=` を読み、すぐに URL から消し、タブの sessionStorage（キーは `TOKEN_STORAGE_KEY`）に置いて返します。 |
 | 再読み込み | `takeToken(window)` は、sessionStorage のトークンを返します。 |
 | クライアントの作成 | トークンを `createClient({ token })` に渡せば、ライブラリが API には `Authorization: Bearer`、WebSocket には最初のメッセージで送ります。 |
@@ -1081,7 +1081,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - URL は環境変数で渡します（引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
   ```
 
 - ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
@@ -1125,7 +1125,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 - `client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。
 - participant が接続していない間の値も古いものです。
 
-**監視用の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<ネットワーク>.`）は、照合の結果の `participants[].variables[].builtin` で判定します。`builtin` がない（実行中に追加される監視用の変数、古いランチャー）ときは、名前の接頭辞（`ecu.`、`peer.`、`j1939.`）で分けます。
+**監視用の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<network>.`）は、照合の結果の `participants[].variables[].builtin` で判定します。`builtin` がない（実行中に追加される監視用の変数、古いランチャー）ときは、名前の接頭辞（`ecu.`、`peer.`、`j1939.`）で分けます。
 
 **ハンドシェイクで拒否された理由**: WebSocket のハンドシェイクが拒否されると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP のレスポンス（エラーの文）で理由がわかります。
 
@@ -1172,7 +1172,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 | パッケージ | `verify-web.py` の `package` の手順 |
 | 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
 
-サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(秒)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
+サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
 
 ### 記録を再生するランチャー
 
@@ -1222,7 +1222,7 @@ python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/laun
 ランチャーが変わったら、`--compare` が示す場面を記録し直します。
 
 ```sh
-python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <場面>...
+python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <case>...
 ```
 
 - 場面を書かなければ全部を記録します。手元のパス、利用者の名前、ホスト名、トークンは決まった印に置き換え、残っていれば書きません。

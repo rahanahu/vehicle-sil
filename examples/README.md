@@ -23,7 +23,7 @@ The further down the list, the lower the layer an example uses.
 | Write scenario tests | [scenario_tests](scenario_tests) | `my_tests/*.yaml`, `simulation.variants.yaml` |
 | Send and receive raw Ethernet frames | [ethernet](ethernet) | `vehicle_sil_ethernet_example`, `vehicle_sil_eth_sensor_ecu`, `vehicle_sil_eth_display_ecu` |
 | Connect to the launcher's Control Server from Python | [launch_control](launch_control) | `write_before_start.py` |
-| Write a value from Python, advance time and read (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
+| Write a value from Python, advance time and read a value (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
 | Pause a running simulation and write at a specified time | [launch_control](launch_control) | `pause_and_step.py` |
 | Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
 | Build your own screen for the browser GUI | [gui_starter](gui_starter) | Plain HTML and JavaScript (no build) |
@@ -51,9 +51,9 @@ Read this to handle signals without writing bit positions. It uses scaling, sign
 
 ### pid_stream
 
-The first model for writing a protocol part yourself. It shows a protocol part that receives requests and replies periodically to the requester, and how to use it. The byte format can be replaced.
+The first example to follow when you write a protocol part yourself. It shows a protocol part that receives requests and replies periodically to the requester, and how to use it. You can replace the byte format.
 
-For a new request from the same requester, it changes the period (`set_period()`) instead of recreating the sending protocol part. It builds replies of varying length by appending to a vector. It creates the protocol part for a new requester inside the handler, after it checks the limit (`max_streams`) and the free timer slots (`timers_free()`), and destroys it inside the handler or the timer on Stop or expiry. The tool's operations are written at given times with `Ecu::at()`.
+For a new request from the same requester, it changes the period (`set_period()`) instead of recreating the sending protocol part. It builds replies of varying length by appending to a vector. It creates the protocol part for a new requester inside the handler, after it checks the limit (`max_streams`) and the free timer slots (`timers_free()`), and destroys it inside the handler or the timer on Stop or expiry. The tool's operations are scheduled at given times with `Ecu::at()`.
 
 ### j1939/param_service
 
@@ -92,7 +92,7 @@ Read this to run the example of the guide [Integrate and run several ECUs](../do
 
 ### first_ecu
 
-Read this to see the finished files of the guide [Create your first ECU](../docs/howto/first-ecu.md). It adds to the 2 ECUs of [template/](../template) an ECU with variables only (`Cooler`), the 4 lines added to CMake, a `simulation.yaml` with 3 ECUs and a script that reads and writes variables from Python.
+Read this to see the finished files of the guide [Create your first ECU](../docs/howto/first-ecu.md). It contains an ECU with variables only (`Cooler`) added to the 2 ECUs of [template/](../template), the 4 lines added to CMake, a `simulation.yaml` with 3 ECUs and a script that reads and writes variables from Python.
 
 It is not built on its own. The test build creates `cooler_ecu` next to the 2 ECUs of the template (`build/<preset>/tests/template/project/bin/`). The CTest test `template.first_ecu` compares the files and the output with the guide (`control_server.example_first_ecu` does this for the Python script).
 
@@ -104,7 +104,7 @@ There is nothing to build. Copy the files to `build/<preset>/examples/ecu_main/`
 
 ### ethernet
 
-Read this when the ECU builds Ethernet frames itself and sends and receives them (`Ecu::ethernet()`; vehicle-sil has no TCP/IP stack). The sensor sends a value every 100 ms, and the display receives it and replies with an acknowledgement.
+Read this to have an ECU build Ethernet frames itself and send and receive them (`Ecu::ethernet()`; vehicle-sil has no TCP/IP stack). The sensor sends a value every 100 ms, and the display receives it and replies with an acknowledgement.
 
 | Executable | Contents |
 |---|---|
@@ -115,7 +115,7 @@ The default EtherType (0x88B5) and the MAC addresses (locally administered addre
 
 ### launch_control
 
-Examples that operate, from Python, a simulation run with `vehicle_sil_launch run --control`.
+Python scripts that control a simulation run with `vehicle_sil_launch run --control`.
 
 | Script | Contents | CTest |
 |---|---|---|
@@ -129,7 +129,7 @@ To start an ECU yourself (to run it from a debugger, for example), make that par
 
 ### gui_client
 
-Read this to build your own tool on the same API as the GUI ([gui/protocol](../gui/protocol/README.md)). It checks, starts a run, reads events and waits for the end. Run it with `VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <configuration file>`.
+Read this to build your own tool on the same API as the GUI ([gui/protocol](../gui/protocol/README.md)). It runs the check, starts a run, reads events and waits for the end. Run it with `VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <configuration file>`.
 
 | File | Contents |
 |---|---|
@@ -141,7 +141,7 @@ It is not part of the CMake build (`scripts/verify-gui.py` runs it against a sta
 
 ### gui_starter
 
-Read this to build your own screen, served by the GUI server (`vehicle-sil-gui --web <dir>`), from scratch in the framework of your choice. It is the minimal form built only on the client library: connect, check, start and stop, watch and write one variable, and a slider and a lamp made with `client.variables.bind`. Its [README](gui_starter/README.md) also explains how to use the library package (`.tgz`) with TypeScript and the framework of your choice.
+Read this to build your own screen, served by the GUI server (`vehicle-sil-gui --web <dir>`), from scratch in the framework of your choice. It is a minimal screen built only on the client library: connect, check, start and stop, watch and write one variable, and a slider and a lamp made with `client.variables.bind`. Its [README](gui_starter/README.md) also explains how to use the library package (`.tgz`) with TypeScript and the framework of your choice.
 
 It is not part of the CMake build (`scripts/verify-gui.py` serves it with `--web` against a stand-in launcher that replays the output of the real one, and checks it in a browser). For how to use it, see "Build your own screen" in [docs/gui.md](../docs/gui.md#build-your-own-screen).
 

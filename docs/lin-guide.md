@@ -4,7 +4,7 @@
 
 This page shows how to give an ECU a LIN master or slave, and how to run the LIN example as separate processes. For the rules and constraints of the schedule, frame transmission and reception, diagnostic frames (0x3C, 0x3D) and Sleep/Wakeup, see [internals/lin.md](internals/lin.md).
 
-`vehicle_sil::lin` is a LIN master and slave that run in virtual time. It depends on neither SIL Kit nor J1939.
+`vehicle_sil::lin` provides a LIN master and slave that run in virtual time. It depends on neither SIL Kit nor J1939.
 
 | Goal | Use | Section |
 |---|---|---|
@@ -60,7 +60,7 @@ public:
 | Master | `LinPublisher::Master` and `LinPublisher::Slave` in the schedule | The master sends `kCommand`, and the slave responds to `kDoorStatus`. |
 | Master | `on_result` | Receives the result at the end of each slot. |
 | Master | `set_frame_data` inside `ecu.on_step` | The application runs before the LIN processing, so the data takes effect from the header of this step. |
-| Master | `request_sleep()`, `request_wakeup()` | Puts the cluster to sleep and wakes it up, when you need to. |
+| Master | `request_sleep()`, `request_wakeup()` | Puts the cluster to sleep and wakes it up when you need to. |
 | Slave | `ecu.lin_slave(network, {.subscriptions = {...}})` | Receives the frames with the given IDs. |
 | Slave | `on_frame` | Receives each frame with the time of its header. The application reads it in the next step. |
 | Slave | `set_response(now, id, data)` | Responds to the headers after `now`. |
@@ -77,7 +77,7 @@ To build the nodes without `Peer`, create a `vehicle_sil::lin::SilKitLinPort` (`
 | `vehicle_sil_lin_slave --role echo` | `LinEcho` | 2 ms |
 | `vehicle_sil_lin_slave --role status` | `LinStatus` | 4 ms (`--step-us 4000`) |
 
-Build with the `linux-gcc-release` preset, then run these commands in the repository root. The master puts the cluster to sleep at 200 ms and wakes it up at 400 ms.
+Build with the `linux-gcc-release` preset, then run these commands from the repository root. The master puts the cluster to sleep at 200 ms and wakes it up at 400 ms.
 
 ```sh
 B=build/linux-gcc-release
@@ -100,7 +100,7 @@ On success, the 3 peers and `vehicle_sil_sim_controller` end with exit code 0, a
 [sim-controller] result sim_ms=1000 wall_us=... speed=...
 ```
 
-`sil-kit-registry` keeps running. Stop it with `kill %1` when you are done.
+The registry (`sil-kit-registry`) keeps running. Stop it with `kill %1` when you are done.
 
 ## See also
 

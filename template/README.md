@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-This is a project template for building ECUs with [vehicle-sil](https://github.com/rahanahu/vehicle-sil). Follow the steps in this README to build 2 ECUs, run them as one simulation and operate their values in the browser GUI. Then rewrite the ECUs into your own.
+This is a project template for building ECUs with [vehicle-sil](https://github.com/rahanahu/vehicle-sil). Follow the steps in this README to build 2 ECUs, run them as one simulation, and read and write their values in the browser GUI. Then rewrite the ECUs into your own.
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
 
 `VERSION` and `URL` in `get_tools.py` set the version and the download URL. It never downloads the latest version on its own.
 
-Run the command printed last (on Linux, `export PATH="…/bin:$PATH"`). Run this command in every new shell.
+Run the command that it prints last (on Linux, `export PATH="…/bin:$PATH"`). Run it again in every new shell.
 
 ### Verify the tools
 
@@ -68,7 +68,7 @@ If `vehicle_sil_launch version` prints the version, the tools are in `PATH`. The
 | Symptom | Cause | Fix |
 |---|---|---|
 | Prints `may not be published yet` and stops | The version of this README is not released yet. | Clone and build the vehicle-sil repository ("Build from the repository" in the vehicle-sil README) and use the `vehicle_sil_launch` of that build. |
-| The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. The SHA-256 check is the same. |
+| The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. It still checks the SHA-256. |
 | Prints `this copy of the template has no SHA-256` and stops | You copied `template/` from the repository, so it has no SHA-256. | Pass the value from `SHA256SUMS` on the releases page with `--sha256`. |
 
 To extract the tools by hand instead of with `get_tools.py`, check the archive against `SHA256SUMS` on the releases page before you extract it, then add its `bin` to `PATH`.
@@ -86,7 +86,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 | Command | What it does |
 |---|---|
 | `cmake --preset` | Downloads vehicle-sil and SIL Kit. |
-| `cmake --build` | Builds the 2 ECUs into `bin/`. The first time only, compiling SIL Kit takes a few minutes. |
+| `cmake --build` | Builds the 2 ECUs into `bin/`. The first build also compiles SIL Kit, which takes a few minutes. |
 | `check` | Starts each ECU with `--describe` and checks the configuration file against that output. |
 | `run` | Starts the registry and each ECU, and runs until `stop_at_ms`. |
 | `run --scenario` | Sets and checks values as the steps of the scenario say. |

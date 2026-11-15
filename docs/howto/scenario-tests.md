@@ -2,11 +2,11 @@
 
 [日本語](../ja/howto/scenario-tests.md)
 
-In this guide you write tests in a YAML file, called a scenario, that set ECU variables and check the results, and you run them. `vehicle_sil_launch` starts the simulation, runs the scenario to the end and returns the result as its exit code, so you can use it in CI as is.
+In this guide you write tests as scenarios and run them. A scenario is a YAML file that sets ECU variables and checks the results. `vehicle_sil_launch` starts the simulation, runs the scenario to the end and returns the result as its exit code, so you can use it in CI as is.
 
-A scenario judges by virtual time only. With the same configuration file and the same scenario, the time and value at which each step passes are the same in every run, however fast the computer is.
+A scenario judges results by virtual time only. With the same configuration file and the same scenario, the time and value at which each step passes are the same in every run, however fast the computer is.
 
-Each entry in the `steps` of a scenario is a scenario step; in this guide, "step" on its own means a scenario step. "Step 1" to "Step 8" are the numbered parts of this guide. The unit by which an ECU advances virtual time is an "ECU step".
+Each entry in a scenario's `steps` is a scenario step; in this guide, "step" on its own means a scenario step. "Step 1" to "Step 8" are the numbered parts of this guide. The unit by which an ECU advances virtual time is an "ECU step".
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # where vehicle_
 cd build/linux-gcc-control/examples/ecu_main
 ```
 
-In other environments, these things differ:
+Some things differ in other environments:
 
 | Environment | What differs |
 |---|---|
@@ -90,7 +90,7 @@ passed: 0 errors, 0 warnings, 0 notes
 | Part of the output | How to read it |
 |---|---|
 | The first 2 tables | The result of checking the configuration file against each ECU. |
-| The `run:` line | The simulation stops at 705 ms, when the scenario ended. |
+| The `run:` line | The simulation stopped at 705 ms, when the scenario ended. |
 | The `line` column | The line number in the scenario file. |
 | The `at` column | The virtual time at which the step's result was decided. |
 
@@ -137,7 +137,7 @@ The steps run from top to bottom. Each step has one action (`set`, `wait_until`,
 
 ## Step 2: List the available variables
 
-A scenario reads and writes the variables that the ECUs declare. Their names and types are in `participants[].variables` in the output of `check --json`.
+A scenario reads and writes the variables that the ECUs declare. The output of `check --json` lists their names and types in `participants[].variables`.
 
 ```sh
 vehicle_sil_launch check simulation.yaml --json
@@ -207,11 +207,11 @@ steps:
 | `expect` and `within_ms` | Checks that the condition holds at least once within that time. As soon as it holds, the scenario moves on to the next step. |
 | `expect` and `hold_for_ms` | Checks that the condition holds for the whole time. |
 
-A condition is a value (equal to it), or `ge`, `le`, `gt`, `lt`, `eq`, `ne`, or `near` with `tolerance`. For all keys and conditions, see "File format" in [scenario.md](../scenario.md#file-format).
+A condition is either a plain value (the variable must equal it) or one of `ge`, `le`, `gt`, `lt`, `eq`, `ne`, and `near` with `tolerance`. For all keys and conditions, see "File format" in [scenario.md](../scenario.md#file-format).
 
 `wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed.
 
-Before you run the scenario, check it with `check --scenario`. This finds errors in variable names, types, value ranges and the order of times without starting the simulation.
+Before you run the scenario, check it with `check --scenario`. It finds errors in variable names, types, value ranges and the order of times without starting the simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml --scenario my_tests/throttle_up.yaml
@@ -229,7 +229,7 @@ scenario my_tests/throttle_up.yaml (throttle up): 3 steps
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-From the `run:` line on, the `run` output is as follows. The exit code is 0.
+The exit code of `run` is 0, and its output from the `run:` line on is:
 
 <!-- scenario guide: run simulation.yaml --scenario my_tests/throttle_up.yaml, from the line run: -->
 ```text
@@ -272,7 +272,7 @@ failed: 1 error, 0 warnings, 0 notes
 | `scenario-variable` | The participant has no variable with that name. | Use a name from the output of Step 2. |
 | `scenario-not-writable` | The step writes to an output variable. | Write to an input variable. |
 | `scenario-value` | The value does not fit the variable's type or range (`min`, `max`). | Use a value within the range. |
-| `scenario-time` | An `at_ms` comes after a wait step (`wait_until`, or `expect` with `within_ms`). | When a wait step ends is not known until the run, so use `after_ms`. |
+| `scenario-time` | An `at_ms` comes after a wait step (`wait_until`, or `expect` with `within_ms`). | Use `after_ms` instead. The time at which a wait step ends is known only when the scenario runs. |
 
 For all finding codes, see "Check (`check --scenario`, start of `run --scenario`)" in [scenario.md](../scenario.md#check-check---scenario-start-of-run---scenario).
 
@@ -352,14 +352,14 @@ line  step                                                result  at
 
 ### Troubleshoot failures
 
-These 4 failures show up only when you run the scenario:
+These 4 finding codes appear only when the scenario runs:
 
 | Code | Cause | Fix |
 |---|---|---|
 | `scenario-failed` | The condition of an `expect` did not hold. | Look at the value and the time on the `error:` line, then fix the ECU or the scenario. |
 | `scenario-timeout` | The condition of a `wait_until` did not hold within `timeout_ms`. | Find out why the precondition is not met, or increase `timeout_ms`. |
 | `scenario-out-of-time` | The run reached `stop_at_ms` of the configuration file before the scenario ended. | Increase `stop_at_ms`, or remove it. The simulation also stops when the scenario ends. |
-| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, or the run was ended by Ctrl+C or `--timeout-ms`. | Fix the error shown with it first. |
+| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, or the run was ended by Ctrl+C or `--timeout-ms`. | Fix the error reported with it first. |
 
 For the rules of the result, see "Results" in [scenario.md](../scenario.md#results).
 
@@ -416,7 +416,7 @@ line  step                                                                      
 |---|---|---|
 | The step fails with `not true during the ramp (from ... to ...): at 430 ms ...` | The condition did not hold in one of the samples during the movement. | Look at the time and the value shown, then fix the ECU or the condition. |
 | `within_ms` or `hold_for_ms` on the `expect` beside `ramp` gives a check error | The interval that an `expect` beside `ramp` checks is fixed: it is the time during which the value moves. | To check over another interval, put the `expect` in the next step. |
-| A `wave` gets the check warning `scenario-wave-undersampled` | The waveform changes faster than the ECU steps. | Make the period longer. If this is intended, write `undersampled: ok` in that step. |
+| The check reports the warning `scenario-wave-undersampled` for a `wave` | The waveform changes faster than the ECU steps. | Make the period longer. If this is intended, write `undersampled: ok` in that step. |
 | `0x1F` in quotes gives a check error | `"0x1F"` is a string. | Remove the quotes. |
 
 For reference:
@@ -429,7 +429,7 @@ For reference:
 
 ## Step 6: Use parameters and variants
 
-Turn values in a scenario into parameters, and you can run the same scenario with different values. With a configuration file that has variants (`variants`), `only` limits the variants that a scenario runs in.
+Turn values in a scenario into parameters to run the same scenario with different values. With a configuration file that has variants (`variants`), `only` limits the variants that a scenario runs in.
 
 First, create a configuration file with variants. Copy `simulation.yaml` and add 2 variants at the end. `full` uses both ECUs as they are; `engine_only` disables Dashboard.
 
@@ -513,11 +513,11 @@ error: my_tests/dashboard_speed.yaml:3: the scenario is only for the variant ful
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `the file defines variants ...: give --variant <name>` (exit code 4) | The configuration file has variants, and you did not give `--variant`. | Pass one of the variant names shown to `--variant`. |
+| `the file defines variants ...: give --variant <name>` (exit code 4) | The configuration file has variants, and you did not give `--variant`. | Give `--variant` one of the variant names in the message. |
 | `--param x=1: the scenario has no parameter x` (exit code 4) | You passed a parameter whose name is not in the scenario. | Correct the name. |
 | A scenario with `only` gives an error when you run it with `simulation.yaml` | A configuration file without variants cannot run a scenario that has `only`. | Run it with a configuration file that has variants. |
 
-You can also write parameter values in `params` of the configuration file and in the `params` of each variant. For reference, including how to write scenarios for variants whose executables or variable names differ:
+You can also set parameter values in the `params` of the configuration file and in the `params` of each variant. These sections cover them, and how to write scenarios for variants whose executables or variable names differ:
 
 | To find | See |
 |---|---|
@@ -535,7 +535,7 @@ vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/
 
 ### Verify the test run
 
-Stdout is as follows, and the exit code is 0.
+The exit code is 0 and stdout is:
 
 <!-- scenario guide: test simulation.variants.yaml --scenarios my_tests/ -->
 ```text
@@ -594,7 +594,7 @@ For the rules of `test`, see "Running several scenarios (`vehicle_sil_launch tes
 
 ## Step 8: Run in CI
 
-The exit code gives the result. This is the same for `check`, `run` and `test`.
+The exit code gives the result, for `check`, `run` and `test` alike.
 
 | Exit code | Meaning |
 |---|---|
@@ -634,16 +634,16 @@ The exit code is 1. `result.json` starts with the overall result, and `runs` lis
 }
 ```
 
-The `run` of each run holds the same JSON that `run --json` prints for that run. Its `scenario.steps[]` has the `line`, `status`, `code` and `message` of each step.
+The `run` key of each entry in `runs` holds the JSON that `run --json` prints for that run. Its `scenario.steps[]` has the `line`, `status`, `code` and `message` of each step.
 
 In CI, these options are also useful:
 
 | Option | Used for |
 |---|---|
-| `--timeout-ms <ms>` | Sets a limit in real time. An ECU that hangs inside an ECU step stops virtual time, and the run never ends. In `test`, the limit applies to each run. |
+| `--timeout-ms <ms>` | Sets a limit in wall-clock time. If an ECU hangs inside an ECU step, virtual time stops advancing and the run never ends. In `test`, the limit applies to each run. |
 | `--strict` | Treats warnings as failures. |
 | `--log-dir <dir>` | With `run`, keeps the output of each ECU in files. |
-| `--events` | With `run`, gives the progress as one JSON object per line. The event `scenario_step` is written when a step starts and when its result is decided. |
+| `--events` | With `run`, writes the progress as one JSON object per line. The `scenario_step` event is emitted when a step starts and when its result is decided. |
 
 | To find | See |
 |---|---|
@@ -690,7 +690,7 @@ line  step                                                             result  a
 14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      610 ms
 ```
 
-`line` is the line number in the file with its comments.
+The `line` column counts lines in the file including its comments.
 
 The code of the Dashboard ECU does the detection; the scenario only reads its output. The Dashboard in this example sets `engine_lost` to true when it has not received the engine speed for 300 ms. Choose `within_ms` to match how long you allow the detection to take.
 
@@ -701,14 +701,14 @@ The code of the Dashboard ECU does the detection; the scenario only reads its ou
 
 ## Pitfalls
 
-The values that a scenario sees are the samples that each ECU sends every `sample_period` (10 ms of virtual time by default). The first 2 rows of this table come from that.
+The values that a scenario sees are the samples that each ECU sends every `sample_period` (10 ms of virtual time by default). The first 2 rows of this table follow from that.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| An `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. The check cannot detect this. | Check that the value was applied with an `expect` that has `within_ms`. |
+| An `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. The check cannot detect this. | Use an `expect` with `within_ms` to check that the value was applied. |
 | A short pulse is not seen, with either `within_ms` or `hold_for_ms` | A value that changes and changes back between 2 samples does not appear in the condition. | Make the ECU's `sample_period` smaller (`set_agent_options()` in "ECU variables" in [control-api.md](../control-api.md#ecu-variables)). |
-| An `after_ms` after a wait step is off from the time counted from `at` in the table | A wait step ends a little after the time of the sample in which the condition held (`at`). | Leave a margin in the times. For how the time is decided, see "Timing" in [scenario.md](../scenario.md#timing). |
-| `--scenario cannot be used with --start-paused` (exit code 4) | A scenario writes the values at time 0 itself when it runs. | Remove `--start-paused`. |
+| An `after_ms` after a wait step does not match the time counted from the `at` in the table | A wait step ends a little after the time of the sample in which the condition held (`at`). | Leave a margin in the times. For how the time is decided, see "Timing" in [scenario.md](../scenario.md#timing). |
+| `--scenario cannot be used with --start-paused` (exit code 4) | A scenario itself writes the values at time 0 when it runs. | Remove `--start-paused`. |
 | A client connected with `--control` cannot write values while a scenario runs | While a scenario runs, a client can only read, wait and stop. | To check values while you change them, use the methods in [Read and write signals from outside](operate-signals.md). |
 | The variables of a participant cannot be used in a scenario | The variables of a disabled participant, a participant with `describe: false` and a participant that runs in real time cannot be used. | See "Incompatible options and limitations" in [scenario.md](../scenario.md#incompatible-options-and-limitations). |
 
@@ -716,7 +716,7 @@ For the rules of samples, see "Values that conditions see" in [scenario.md](../s
 
 ## Notes
 
-If you use a `vehicle_sil_launch` of a different version, the `features` in the output of `vehicle_sil_launch version --json` tell you what it supports.
+If you use a different version of `vehicle_sil_launch`, the `features` in the output of `vehicle_sil_launch version --json` tell you what it supports.
 
 | `features` value | Feature |
 |---|---|

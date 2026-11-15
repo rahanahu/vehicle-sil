@@ -2,7 +2,7 @@
 
 [日本語](ja/simulation-run.md)
 
-This reference describes what `vehicle_sil_launch run <file>` does and in which order, when it aborts and what it outputs. It also covers `vehicle_sil_launch test`, which runs several scenarios in one go. For the list of arguments, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes).
+This reference describes what `vehicle_sil_launch run <file>` does and in which order, when it aborts and what it writes. It also covers `vehicle_sil_launch test`, which runs several scenarios in one command. For the list of arguments, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes).
 
 | To find | See |
 |---|---|
@@ -28,9 +28,9 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | 5 | Starts the simulation once all required participants have joined. |
 | 6 | When the simulation ends, ends all participants and writes the result. |
 
-Stage 1: If the check finds errors (with `--strict`, also warnings), `run` starts nothing, writes the check result and exits with code 1. For a configuration file with variants (`variants`), `run` checks the variant you select with `--variant <name>` and runs with that variant's executables, variable map and participants (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)). Without `--variant`, it is a usage error and nothing starts.
+Stage 1: If the check finds errors (with `--strict`, also warnings), `run` starts nothing, writes the check result and exits with code 1. For a configuration file with variants (`variants`), `run` checks the variant you select with `--variant <name>` and runs with that variant's executables, variable map and participants (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)). If you omit `--variant`, `run` reports a usage error and starts nothing.
 
-Stage 2: The registry address is `registry_uri`; if that is not set, a free port on 127.0.0.1. The first line on stderr is that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
+Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set. The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
 
 Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
@@ -42,7 +42,7 @@ Stage 6: For the order in which the participants are ended, see [Stopping a run]
 
 ### Runs with a scenario (`--scenario`)
 
-With `--scenario <file>`, the check also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
+With `--scenario <file>`, `run` also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
 
 | Item | With `--scenario` |
 |---|---|
@@ -63,7 +63,7 @@ A skipped step has `at_ms` null. If every checking step is skipped, the check re
 | A required participant does not join within `start_timeout_ms` | Lists every participant that did not join and abandons the start. | `not-joined` |
 | After all have joined, the process of a required participant ends while the run waits for the start | Abandons the start at once. | `ended-before-start` |
 | After all have joined, a connection drops while the run waits for the start, with the process still running | Abandons the start at once. | `simulation-start` |
-| After all have joined, the limit for reaching the first step passes | Abandons the start; the message lists the participants that have not reached the first step and their states. | `simulation-start` |
+| After all have joined, the time limit for reaching the first step expires | Abandons the start; the message lists the participants that have not reached the first step and their states. | `simulation-start` |
 
 "Waits for the start" covers the wait for the ECUs that expose variables, and the pause before the step at time 0 with `--control` and `--start-paused`.
 
@@ -79,7 +79,7 @@ A skipped step has `at_ms` null. If every checking step is skipped, the check re
 | Virtual time does not advance for 10 seconds although the simulation is not paused | Writes one line to stderr and keeps waiting. | None |
 | A participant stops the simulation before `stop_at_ms` | The run ends as it is. | `ended-before-stop-at` (note; not a failure, even with `--strict`) |
 
-Whether a participant has left the simulation is judged from the controller's view. The abort rules are the same as in `vehicle_sil_sim_controller` and `vehicle_sil::Simulation`. When the simulation is aborted, the other ECUs still end on their own (exit code 0). The start does not wait for participants with `required: false` either.
+Whether a participant has left the simulation is decided from the controller's view. The abort rules are the same as in `vehicle_sil_sim_controller` and `vehicle_sil::Simulation`. When the simulation is aborted, the other ECUs still end on their own (exit code 0). The start does not wait for participants with `required: false` either.
 
 While the simulation is paused, participant failures, stop requests and `--timeout-ms` are handled the same way.
 
@@ -110,7 +110,7 @@ With `--timeout-ms <ms>`, if the simulation has not ended `<ms>` of real time af
 | `--control` and `--start-paused` | From when the run pauses before the step at time 0 (the time spent paused counts too). |
 | A run with a required manual participant | From when `run` starts waiting for the participants (see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
 
-If the limit passes while the run is still paused by `--control` and `--start-paused`, `run` executes the step at time 0 and then aborts; the `timeout` message says that the run was paused before the first step. If the limit passes after the run has advanced, the message says how many ms of that time the run was paused.
+If the limit expires while the run is still paused by `--control` and `--start-paused`, `run` executes the step at time 0 and then aborts; the `timeout` message says that the run was paused before the first step. If the limit expires after the run has advanced, the message says how many ms of that time the run was paused.
 
 ### Message when virtual time stops advancing
 
@@ -120,25 +120,25 @@ If virtual time does not advance for 10 seconds during a run that is not paused,
 [vehicle_sil_launch] virtual time has not advanced for 10 s (at t=<ms> ms, not paused): ...
 ```
 
-The line lists the possible causes (a participant on another computer lost its network, a debugger holds a process, a process hangs inside a step) and `--timeout-ms`. If the state continues, the line is written once more at 60 seconds and once at 10 minutes. When virtual time advances again, `run` writes `virtual time advances again: it stood still for <s> s at t=<ms> ms`.
+The line lists the possible causes (a participant on another computer lost its network, a debugger holds a process, a process hangs inside a step) and mentions `--timeout-ms`. If virtual time still does not advance, the line is written again at 60 seconds and at 10 minutes. When virtual time advances again, `run` writes `virtual time advances again: it stood still for <s> s at t=<ms> ms`.
 
 `run` does not abort; it keeps waiting. The line is not a finding (with `--events`, it is a `log` event). With a set speed, the time counts from the deadline of the time step; time spent waiting for the deadline at a slow speed does not count.
 
-When a network goes down, SIL Kit takes a long time to notice that the connection has dropped (more than ten minutes on Linux).
+When a network goes down, SIL Kit takes a long time to notice that the connection has dropped (more than 10 minutes on Linux).
 
 ## Connection to ECU variables (`control_link`)
 
-On top of the controller participant, `vehicle_sil_launch run` hosts the side that reads and writes ECU variables (`vehicle_sil::control::Hub` and `vehicle_sil::control_silkit::HubTransport`). An ECU built with `ecu_main` connects to it on its own, through SIL Kit publish/subscribe (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). Every ECU has `ecu.connected`, so an ECU that declares no variables connects too. You write nothing for this in the configuration file. gRPC is not used. For how it works and what it guarantees, see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit).
+On top of the controller participant, `vehicle_sil_launch run` hosts the side that reads and writes ECU variables (`vehicle_sil::control::Hub` and `vehicle_sil::control_silkit::HubTransport`). An ECU built with `ecu_main` connects to it on its own, through SIL Kit publish/subscribe (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). Every ECU has `ecu.connected`, so an ECU that declares no variables connects too. The configuration file needs nothing for this, and gRPC is not used. For how it works and what it guarantees, see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit).
 
 The Hub inside `vehicle_sil_launch` uses this connection. With `run --control <address>` (only in builds with the Control Server), the Hub is exposed to clients (Python, CLI, GUI) as the gRPC Control API. For its use, see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher).
 
-Whether an ECU exposes variables shows in the `--describe` output of its executable (`control`: the transport and the version of the message format; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). So the check already finds ECUs that do not expose variables and ECUs with a different version.
+Whether an ECU exposes variables shows in the `--describe` output of its executable (`control`: the transport and the version of the message format; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). This lets the check find ECUs that do not expose variables and ECUs with a different version before the run.
 
 If the configuration file has `participants[].variables` (a variable map), that participant's variables are read and written with the names and values after mapping (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)). Scenarios and Control API clients see only the mapped names and values.
 
 ### Connection state (`state`)
 
-Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started; later changes are not written back.
+Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started and is not updated when the state changes later.
 
 | `state` | Meaning | Reading and writing variables | Finding |
 |---|---|---|---|
@@ -167,7 +167,7 @@ Because of the order in which SIL Kit connects participants, hello has normally 
 
 When time is paused (`--start-paused`, `pause`, after a `step`), `run` has received the values and write results of every ECU step that started before the paused virtual time P. Those of the steps that start exactly at P arrive while the simulation is paused. If a message arrives later than this guarantee allows, `run` reports the warning `control-link-late-values`. This does not happen with ECUs built with `ecu_main`. The count is in `control_link.late_messages` of the result.
 
-A participant that joins after the start (`required: false`, a real-time `Peer` that you started yourself, a restart under the same name) can be written to once `run` has received its hello and then its reply "can take commands" (normally an instant later). Writes before that are not sent; they complete as Invalid at once. The same applies to writes to a participant that has started to leave the simulation (its lifecycle has started to stop, or it failed).
+A participant that joins after the start (`required: false`, a real-time `Peer` that you started yourself, a restart under the same name) accepts writes once `run` has received its hello and then its reply "can take commands" (normally an instant later). Writes before that are not sent; they complete as Invalid at once. The same applies to writes to a participant that has started to leave the simulation (its lifecycle has started to stop, or it failed).
 
 ### Traffic and authentication
 
@@ -179,7 +179,7 @@ There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who
 
 With `speed` (configuration file) or `run --speed`, the controller paces virtual time to real time at every time step (`time_step_ms`). With `speed: 1`, 1000 ms of virtual time takes at least 1000 ms of real time. Use a set speed to run together with devices that work in real time, or when a person operates the simulation while watching a screen.
 
-Pacing only adds waits, so the simulation never runs faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
+Pacing only adds waits, so it never makes the simulation faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
 
 Real-time devices do not wait for the simulation. When the simulation falls behind real time, the devices see different results. That is why `run` measures lateness with the definitions below and reports it.
 
@@ -187,7 +187,7 @@ Real-time devices do not wait for the simulation. When the simulation falls behi
 
 | Term | Meaning |
 |---|---|
-| Deadline | The real time at which a time step (the controller step that starts at virtual time T) may start |
+| Deadline | The real time at which a time step (the controller step that starts at virtual time T) may start at the earliest |
 | Lateness | The real time at which the time step actually started, minus its deadline (0 if negative) |
 | Late time step | A time step whose lateness exceeds `late_tolerance_ms` (default: 10 ms of real time) |
 | Slip | The lateness of a late time step (the total is `slipped_ms`) |
@@ -196,18 +196,18 @@ The deadline is "base real time + (T − base virtual time) ÷ speed". The base 
 
 A time step starts when the controller has released the previous time step and knows that every participant step that starts before this time step has finished. Lateness includes any delay in the controller itself waking up, because devices cannot tell the difference.
 
-After a late time step, the simulation does not try to catch up. That time step becomes the new base, and the simulation proceeds at the set speed from there. All later virtual time stays shifted back by the lateness. Lateness within the tolerance does not change the base, so the next time step makes it up naturally.
+After a late time step, the simulation does not try to catch up. That time step becomes the new base, and the simulation proceeds at the set speed from there. All later virtual time stays shifted later by that lateness. Lateness within the tolerance does not change the base, so the next time step makes it up naturally.
 
 Counting runs from the time step after the base was taken to the last time step (including the time step of `stop_at_ms`).
 
 | Case | How it is counted |
 |---|---|
 | A time step that is past its deadline but has not started yet | Counted with its lateness so far. |
-| The run ends by timeout, failure or stop while a participant stands still | That lateness stays in the result. |
+| The run ends by timeout, failure or stop while a participant is stuck | That lateness stays in the result. |
 | Time spent paused | Not counted. |
 | While at maximum speed (`max`) | No time step is late. |
 | A time step that was already past its deadline when the speed was set to maximum | It keeps the lateness it had, and is counted once, when it starts (real time spent at maximum speed is not added to its lateness). |
-| The speed returns to a number before that time step starts | The deadline of that time step is "the time of the change − the kept lateness". |
+| The speed is set back to a number before that time step starts | The deadline of that time step is "the time of the change − the kept lateness". |
 
 ### What real-time devices see when the run falls behind
 
@@ -215,13 +215,13 @@ If a time step is 490 ms late, every later message comes out 490 ms late. The pe
 
 The number of late time steps is the number of times lateness occurred. One slow step, however long, is 1 late time step. A simulation whose ECU steps never keep up with real time keeps slipping. `slipped_ms` and `actual_speed` show how far behind the whole run fell (the real time taken is never shorter than virtual time ÷ speed + `slipped_ms`).
 
-The lateness of a single time step (`max_late_ms`) can come out larger than it is. When a participant finishes a step and immediately enters the next one, the controller learns that the step finished only after the next step. The controller learns it late by that amount (at most the real time that participant takes for 1 step). The value never comes out smaller.
+The lateness of a single time step (`max_late_ms`) can be reported larger than it really was. When a participant finishes a step and immediately enters the next one, the controller learns that the step finished only after the next step. The controller learns it late by that amount (at most the real time that participant takes for 1 step). The value is never reported smaller than the real lateness.
 
 So, for an ECU whose step computation repeatedly exceeds the real time available for a step (step size ÷ speed), the effective tolerance shrinks by the computation time of the next step. When the overestimated lateness exceeds the tolerance, the time step becomes late and the base is taken again, so from then on the run really is shifted by that amount. With such ECUs, set `late_tolerance_ms` to roughly "the time the devices can wait + the computation time of 1 ECU step".
 
 ### Time steps and ECU steps
 
-Pacing happens only at time step boundaries. An ECU step that starts at virtual time T runs at the deadline of the first time step at or after T. Steps that start between time steps run together at the deadline of the next time step. They run later than the real time that corresponds to T, never earlier.
+Pacing happens only at time step boundaries. An ECU step that starts at virtual time T runs at the deadline of the first time step at or after T. Steps that start between time steps run together at the deadline of the next time step. They run later than the real time that corresponds to T, and never earlier.
 
 This delay is at most "time step − (greatest common divisor of the time step and the ECU step size)". It is not counted as lateness. It is in `step_delay_ms` of `timing` in the result.
 
@@ -245,8 +245,8 @@ If you set `time_step_ms`, that value is used. With a set speed, if ECU steps do
 
 | Case | When `coarse-time-step` is reported |
 |---|---|
-| `speed` is also in the configuration file | At `check` (`run` reports only that one) |
-| `run --speed` changed the speed | `run` decides with the changed speed. |
+| `speed` is also in the configuration file | At the check (in `run`, only that finding is reported) |
+| `run --speed` changed the speed | At `run`, with the changed speed |
 | The run started at maximum speed and received a `speed` command | At that moment (the time step is set at the start and does not change during the run) |
 
 A finer time step means more time synchronizations. That is why the default at maximum speed stays 10 ms.
@@ -322,7 +322,7 @@ On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the 
 
 On Ctrl+Z, the participants keep running because they are in other process groups; only the registry and the controller stop. When the console is closed on Windows, the job objects end the participants, but the result may not be written.
 
-When a program drives `vehicle_sil_launch`, pass `--stdin-commands`, then write `{"command":"stop"}` to stdin or close stdin. The run then stops in order, as on Ctrl+C (see [Programmatic use](simulation-events.md)). This also stops in order a `vehicle_sil_launch` on Windows without a console, which can receive neither signals nor Ctrl+Break. When the simulation stops, ecu_main executables end on their own. A participant that does not end on its own is killed at once instead of item 2 of "Stopping a run", because Ctrl+Break cannot be sent.
+When a program drives `vehicle_sil_launch`, pass `--stdin-commands`, then write `{"command":"stop"}` to stdin or close stdin. The run then stops in order, as on Ctrl+C (see [Programmatic use](simulation-events.md)). This also stops in order a `vehicle_sil_launch` on Windows that has no console and so can receive neither signals nor Ctrl+Break. When the simulation stops, ecu_main executables end on their own. A participant that does not end on its own is killed at once instead of item 2 of "Stopping a run", because Ctrl+Break cannot be sent.
 
 ## Leaving no participant behind
 
@@ -446,7 +446,7 @@ Each line of a participant's stdout and stderr goes to the stderr of `vehicle_si
 
 Participants must write UTF-8. The Windows console also shows the output as UTF-8, so characters in other code pages come out garbled.
 
-If the reader of stderr stops (a pipe that nobody reads), `vehicle_sil_launch` also stops where it writes.
+If the reader of stderr stops (a pipe that nobody reads), `vehicle_sil_launch` also blocks where it writes to stderr.
 
 ### Log files (`--log-dir`)
 
@@ -689,7 +689,7 @@ Keys of `participants[].control_link` (see [Connection to ECU variables](#connec
 |---|---|
 | `state` | `"connected"`, `"no_hello"`, `"version_mismatch"`, `"not_offered"`, `"none"` (`"none"` for a participant that was not started) |
 | `variables` | For `connected`, the number of variables the ECU exposes (otherwise `null`) |
-| `version` | For `version_mismatch`, the format version of the other side (otherwise `null`) |
+| `version` | For `version_mismatch`, the ECU's format version (otherwise `null`) |
 | `late_messages` | Number of messages received later than the guarantee allows (normally 0) |
 
 `variables` includes outputs such as `peer.` that are added when the ECU runs, so it can be larger than the count in `--describe`.
@@ -982,7 +982,7 @@ The CTest test `launch_run.docs` also compares the examples of this section with
 
 ## Running several scenarios (`vehicle_sil_launch test`)
 
-`vehicle_sil_launch test <file> --scenarios <directory or files>...` runs the listed scenarios one at a time for each variant of the configuration file, and puts all the results in one table. It is meant for CI: one command and its exit code tell whether every scenario passes on every variant.
+`vehicle_sil_launch test <file> --scenarios <directory or files>...` runs the listed scenarios one at a time for each variant of the configuration file, and puts all the results in one table. It is meant for CI: one command, and its exit code tells you whether every scenario passes on every variant.
 
 ```sh
 vehicle_sil_launch test simulation.yaml --scenarios scenarios/                      # every variant × the scenarios in the directory
@@ -1097,7 +1097,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `interrupted` | The run was interrupted midway | The signal or key that interrupted it |
 | `not run` | Not run (interruption, `--fail-fast`, or the launcher's SIL Kit connection did not close after an earlier run) | The reason |
 
-- The "`expect`s not checked" of `passed` are the `expect`s next to `ramp` and `wave` (`1 expect was not checked`).
+- The "`expect`s not checked" of `passed` are `expect`s beside `ramp` and `wave` (`1 expect was not checked`).
 - To see what the warnings of a `passed` run are, run it alone or read `runs[].run` in `--json`.
 - For a `FAILED` run that has only warnings under `--strict`, the right column shows the first warning.
 - A configuration file without variants gives no `variant` column.
