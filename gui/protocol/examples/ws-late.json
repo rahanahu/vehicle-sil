@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -897,7 +897,7 @@
         "event": "time",
         "seq": 21,
         "t_ms": 210,
-        "sim_ms": 200,
+        "sim_ms": 205,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -914,7 +914,7 @@
         "event": "time",
         "seq": 22,
         "t_ms": 220,
-        "sim_ms": 300,
+        "sim_ms": 305,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -931,7 +931,7 @@
         "event": "time",
         "seq": 23,
         "t_ms": 230,
-        "sim_ms": 400,
+        "sim_ms": 405,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -959,7 +959,7 @@
         "event": "time",
         "seq": 25,
         "t_ms": 250,
-        "sim_ms": 500,
+        "sim_ms": 510,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -976,7 +976,7 @@
         "event": "time",
         "seq": 26,
         "t_ms": 260,
-        "sim_ms": 605,
+        "sim_ms": 610,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -993,7 +993,7 @@
         "event": "time",
         "seq": 27,
         "t_ms": 270,
-        "sim_ms": 705,
+        "sim_ms": 710,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1010,7 +1010,7 @@
         "event": "time",
         "seq": 28,
         "t_ms": 280,
-        "sim_ms": 805,
+        "sim_ms": 810,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1027,7 +1027,7 @@
         "event": "time",
         "seq": 29,
         "t_ms": 290,
-        "sim_ms": 905,
+        "sim_ms": 915,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1055,7 +1055,7 @@
         "event": "time",
         "seq": 31,
         "t_ms": 310,
-        "sim_ms": 1005,
+        "sim_ms": 1015,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1072,7 +1072,7 @@
         "event": "time",
         "seq": 32,
         "t_ms": 320,
-        "sim_ms": 1105,
+        "sim_ms": 1115,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1089,7 +1089,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 1205,
+        "sim_ms": 1215,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1119,7 +1119,7 @@
         "event": "time",
         "seq": 35,
         "t_ms": 350,
-        "sim_ms": 1225,
+        "sim_ms": 1235,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1153,7 +1153,7 @@
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -1265,10 +1265,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1225,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 245,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1311,6 +1311,41 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1235,
+            "unplaced": [],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 1230,
+                    "frames_sent": 14,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 1230,
+                    "frames_sent": 0,
+                    "frames_received": 14
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [
             {
               "severity": "warning",
@@ -1319,7 +1354,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1584,7 +1619,7 @@
           "event": "time",
           "seq": 35,
           "t_ms": 350,
-          "sim_ms": 1225,
+          "sim_ms": 1235,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1871,7 +1906,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -1909,10 +1944,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1225,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 245,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1955,6 +1990,41 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1235,
+            "unplaced": [],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 1230,
+                    "frames_sent": 14,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 1230,
+                    "frames_sent": 0,
+                    "frames_received": 14
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [
             {
               "severity": "warning",
@@ -1963,7 +2033,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",

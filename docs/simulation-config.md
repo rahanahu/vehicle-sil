@@ -471,6 +471,12 @@ participant  required  ended
 Engine       yes       started by you (manual)
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine         11         0
+J1939_CAN  Dashboard       0        11
+
 passed: 0 errors, 0 warnings, 1 note
 ```
 

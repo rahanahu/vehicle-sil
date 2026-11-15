@@ -14,6 +14,7 @@
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "starting Logger: <root>/logger/can_logger silkit://127.0.0.1:8500"}}
 {"out": {"event": "participant", "name": "Logger", "state": "started", "pid": "<pid>", "command": ["<root>/logger/can_logger", "silkit://127.0.0.1:8500"], "log": null}}
 {"out": {"event": "phase", "phase": "waiting"}}
+{"gap_ms": 100}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=0 ms engine speed 0 rpm (0 messages)"}}
@@ -24,7 +25,6 @@
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "simulation running"}}
 {"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=500 ms engine speed 1200 rpm (5 messages)"}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=1000 ms engine speed 1200 rpm (10 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=1500 ms engine speed 1200 rpm (15 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=2000 ms engine speed 1200 rpm (20 messages)"}}
@@ -55,9 +55,7 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=14500 ms engine speed 1200 rpm (145 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=15000 ms engine speed 1200 rpm (150 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=15500 ms engine speed 1200 rpm (155 messages)"}}
-{"out": {"event": "time", "sim_ms": 15930, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=16000 ms engine speed 1200 rpm (160 messages)"}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=16500 ms engine speed 1200 rpm (165 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=17000 ms engine speed 1200 rpm (170 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=17500 ms engine speed 1200 rpm (175 messages)"}}
@@ -70,10 +68,12 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=21000 ms engine speed 1200 rpm (210 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=21500 ms engine speed 1200 rpm (215 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=22000 ms engine speed 1200 rpm (220 messages)"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=22500 ms engine speed 1200 rpm (225 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=23000 ms engine speed 1200 rpm (230 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=23500 ms engine speed 1200 rpm (235 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=24000 ms engine speed 1200 rpm (240 messages)"}}
+{"out": {"event": "time", "sim_ms": 24420, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=24500 ms engine speed 1200 rpm (245 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=25000 ms engine speed 1200 rpm (250 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=25500 ms engine speed 1200 rpm (255 messages)"}}
@@ -89,8 +89,6 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=30500 ms engine speed 1200 rpm (305 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=31000 ms engine speed 1200 rpm (310 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=31500 ms engine speed 1200 rpm (315 messages)"}}
-{"out": {"event": "time", "sim_ms": 31650, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=32000 ms engine speed 1200 rpm (320 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=32500 ms engine speed 1200 rpm (325 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=33000 ms engine speed 1200 rpm (330 messages)"}}
@@ -124,10 +122,12 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=47000 ms engine speed 1200 rpm (470 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=47500 ms engine speed 1200 rpm (475 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=48000 ms engine speed 1200 rpm (480 messages)"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=48500 ms engine speed 1200 rpm (485 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=49000 ms engine speed 1200 rpm (490 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=49500 ms engine speed 1200 rpm (495 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=50000 ms engine speed 1200 rpm (500 messages)"}}
+{"out": {"event": "time", "sim_ms": 50430, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=50500 ms engine speed 1200 rpm (505 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=51000 ms engine speed 1200 rpm (510 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=51500 ms engine speed 1200 rpm (515 messages)"}}
@@ -141,9 +141,7 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=55500 ms engine speed 1200 rpm (555 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=56000 ms engine speed 1200 rpm (560 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=56500 ms engine speed 1200 rpm (565 messages)"}}
-{"out": {"event": "time", "sim_ms": 56900, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=57000 ms engine speed 1200 rpm (570 messages)"}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=57500 ms engine speed 1200 rpm (575 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=58000 ms engine speed 1200 rpm (580 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=58500 ms engine speed 1200 rpm (585 messages)"}}
@@ -178,11 +176,13 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=73000 ms engine speed 1200 rpm (730 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=73500 ms engine speed 1200 rpm (735 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=74000 ms engine speed 1200 rpm (740 messages)"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=74500 ms engine speed 1200 rpm (745 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=75000 ms engine speed 1200 rpm (750 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=75500 ms engine speed 1200 rpm (755 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=76000 ms engine speed 1200 rpm (760 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=76500 ms engine speed 1200 rpm (765 messages)"}}
+{"out": {"event": "time", "sim_ms": 76710, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=77000 ms engine speed 1200 rpm (770 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=77500 ms engine speed 1200 rpm (775 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=78000 ms engine speed 1200 rpm (780 messages)"}}
@@ -196,11 +196,6 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=82000 ms engine speed 1200 rpm (820 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=82500 ms engine speed 1200 rpm (825 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=83000 ms engine speed 1200 rpm (830 messages)"}}
-{"out": {"event": "time", "sim_ms": 83300, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
-{"send": "{\"command\":\"stop\"}"}
-{"send": "{\"command\":\"stop\"}"}
-{"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}
-{"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=83500 ms engine speed 1200 rpm (835 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=84000 ms engine speed 1200 rpm (840 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=84500 ms engine speed 1200 rpm (845 messages)"}}
@@ -212,7 +207,52 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=87500 ms engine speed 1200 rpm (875 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=88000 ms engine speed 1200 rpm (880 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=88500 ms engine speed 1200 rpm (885 messages)"}}
-{"out": {"event": "time", "sim_ms": 88520, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=89000 ms engine speed 1200 rpm (890 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=89500 ms engine speed 1200 rpm (895 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=90000 ms engine speed 1200 rpm (900 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=90500 ms engine speed 1200 rpm (905 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=91000 ms engine speed 1200 rpm (910 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=91500 ms engine speed 1200 rpm (915 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=92000 ms engine speed 1200 rpm (920 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=92500 ms engine speed 1200 rpm (925 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=93000 ms engine speed 1200 rpm (930 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=93500 ms engine speed 1200 rpm (935 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=94000 ms engine speed 1200 rpm (940 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=94500 ms engine speed 1200 rpm (945 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=95000 ms engine speed 1200 rpm (950 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=95500 ms engine speed 1200 rpm (955 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=96000 ms engine speed 1200 rpm (960 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=96500 ms engine speed 1200 rpm (965 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=97000 ms engine speed 1200 rpm (970 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=97500 ms engine speed 1200 rpm (975 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=98000 ms engine speed 1200 rpm (980 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=98500 ms engine speed 1200 rpm (985 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=99000 ms engine speed 1200 rpm (990 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=99500 ms engine speed 1200 rpm (995 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=100000 ms engine speed 1200 rpm (1000 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=100500 ms engine speed 1200 rpm (1005 messages)"}}
+{"gap_ms": 100}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=101000 ms engine speed 1200 rpm (1010 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=101500 ms engine speed 1200 rpm (1015 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=102000 ms engine speed 1200 rpm (1020 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=102500 ms engine speed 1200 rpm (1025 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=103000 ms engine speed 1200 rpm (1030 messages)"}}
+{"out": {"event": "time", "sim_ms": 103090, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"send": "{\"command\":\"stop\"}"}
+{"send": "{\"command\":\"stop\"}"}
+{"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}
+{"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=103500 ms engine speed 1200 rpm (1035 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=104000 ms engine speed 1200 rpm (1040 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=104500 ms engine speed 1200 rpm (1045 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=105000 ms engine speed 1200 rpm (1050 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=105500 ms engine speed 1200 rpm (1055 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=106000 ms engine speed 1200 rpm (1060 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=106500 ms engine speed 1200 rpm (1065 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=107000 ms engine speed 1200 rpm (1070 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=107500 ms engine speed 1200 rpm (1075 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=108000 ms engine speed 1200 rpm (1080 messages)"}}
+{"out": {"event": "time", "sim_ms": 108300, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "interrupted (stop command): the simulation was stopped"}}
 {"out": {"event": "finding", "severity": "note", "code": "interrupted", "file": "<file>", "line": null, "participant": null, "network": null, "message": "interrupted (stop command): the launcher stopped the simulation and the participants", "detail": null}}
 {"out": {"event": "phase", "phase": "stopping"}}
@@ -225,5 +265,5 @@
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "ending Logger (it did not stop)"}}
 {"out": {"event": "participant", "name": "Logger", "state": "killed"}}
 {"out": {"event": "phase", "phase": "ended"}}
-{"out": {"event": "result", "result": {"vehicle_sil_run": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "interrupted", "strict": false, "errors": 0, "warnings": 0, "notes": 2, "simulation": "interrupted", "interrupted_by": "stop command", "timing": {"speed": "max", "time_step_ms": 10, "ecu_step_ms": null, "step_delay_ms": null, "late_tolerance_ms": 10, "sim_ms": 88520, "wall_ms": 1000, "actual_speed": 1.5, "paced_steps": 0, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0, "paused_ms": 0}, "participants": [{"name": "Engine", "required": true, "enabled": true, "manual": false, "ended": "exited", "exit_code": 0, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "connected", "variables": 18, "version": null, "late_messages": 0}}, {"name": "Dashboard", "required": true, "enabled": true, "manual": false, "ended": "exited", "exit_code": 0, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "connected", "variables": 18, "version": null, "late_messages": 0}}, {"name": "Logger", "required": false, "enabled": true, "manual": false, "ended": "killed", "exit_code": null, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "none", "variables": null, "version": null, "late_messages": 0}}], "findings": [{"severity": "note", "code": "interrupted", "file": "<file>", "line": null, "participant": null, "network": null, "message": "interrupted (stop command): the launcher stopped the simulation and the participants", "detail": null}], "check": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "passed", "strict": false, "errors": 0, "warnings": 0, "notes": 1, "stop_at_ms": null, "start_timeout_ms": 30000, "stop_timeout_ms": 10000, "registry_uri": null, "participants": [{"name": "Engine", "line": 9, "command": ["engine/vehicle_sil_engine_ecu"], "describe": true, "required": true, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "described", "reported": {"vehicle_sil": "0.1.0", "name": "Engine", "step_ns": 10000000, "networks": [{"name": "J1939_CAN", "kind": "can", "use": "j1939", "nodes": [{"address": 0, "j1939_name": "0x00000000FE000001", "arbitrary_address_capable": false}], "mac": null}]}, "variables": [{"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": null, "max": null, "step": null, "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on", "items": [], "builtin": true}, {"name": "engine.throttle", "type": "real", "causality": "input", "unit": "%", "min": 0, "max": 100, "step": null, "description": "accelerator pedal position", "items": [], "builtin": false}, {"name": "engine.speed", "type": "integer", "causality": "output", "unit": "rpm", "min": null, "max": null, "step": null, "description": "", "items": [], "builtin": false}], "control": {"transport": "silkit", "wire_version": 1}}, {"name": "Dashboard", "line": 11, "command": ["dashboard/vehicle_sil_dashboard_ecu"], "describe": true, "required": true, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "described", "reported": {"vehicle_sil": "0.1.0", "name": "Dashboard", "step_ns": 5000000, "networks": [{"name": "J1939_CAN", "kind": "can", "use": "j1939", "nodes": [{"address": 40, "j1939_name": null, "arbitrary_address_capable": false}], "mac": null}]}, "variables": [{"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": null, "max": null, "step": null, "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on", "items": [], "builtin": true}, {"name": "dashboard.engine_speed", "type": "integer", "causality": "output", "unit": "rpm", "min": null, "max": null, "step": null, "description": "the speed shown", "items": [], "builtin": false}, {"name": "dashboard.engine_lost", "type": "bool", "causality": "output", "unit": "", "min": null, "max": null, "step": null, "description": "no engine speed for more than 300 ms (it comes every 100 ms)", "items": [], "builtin": false}], "control": {"transport": "silkit", "wire_version": 1}}, {"name": "Logger", "line": 13, "command": ["logger/can_logger", "{registry_uri}"], "describe": false, "required": false, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "not_checked", "reported": null, "variables": null, "control": null}], "networks": [{"name": "J1939_CAN", "kind": "can", "line": 6, "participants": ["Engine", "Dashboard"]}], "findings": [{"severity": "note", "code": "not-checked", "file": "<file>", "line": 13, "participant": "Logger", "network": null, "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file", "detail": null}]}}}}
+{"out": {"event": "result", "result": {"vehicle_sil_run": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "interrupted", "strict": false, "errors": 0, "warnings": 0, "notes": 2, "simulation": "interrupted", "interrupted_by": "stop command", "timing": {"speed": "max", "time_step_ms": 10, "ecu_step_ms": null, "step_delay_ms": null, "late_tolerance_ms": 10, "sim_ms": 108300, "wall_ms": 1000, "actual_speed": 1.5, "paced_steps": 0, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0, "paused_ms": 0}, "participants": [{"name": "Engine", "required": true, "enabled": true, "manual": false, "ended": "exited", "exit_code": 0, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "connected", "variables": 18, "version": null, "late_messages": 0}}, {"name": "Dashboard", "required": true, "enabled": true, "manual": false, "ended": "exited", "exit_code": 0, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "connected", "variables": 18, "version": null, "late_messages": 0}}, {"name": "Logger", "required": false, "enabled": true, "manual": false, "ended": "killed", "exit_code": null, "signal": null, "left_processes": false, "log": null, "control_link": {"state": "none", "variables": null, "version": null, "late_messages": 0}}], "traffic": {"before_ms": 108300, "unplaced": [{"participant": "Logger", "reason": "no-control-link"}], "networks": [{"name": "J1939_CAN", "kind": "can", "counted": 2, "senders": 1, "receivers": 1, "delivered": true, "unplaced": [{"participant": "Logger", "reason": "no-control-link"}], "participants": [{"name": "Engine", "counted": true, "not_counted": null, "virtual_time": true, "at_ms": 108290, "frames_sent": 1084, "frames_received": 0}, {"name": "Dashboard", "counted": true, "not_counted": null, "virtual_time": true, "at_ms": 108290, "frames_sent": 0, "frames_received": 1084}]}]}, "findings": [{"severity": "note", "code": "interrupted", "file": "<file>", "line": null, "participant": null, "network": null, "message": "interrupted (stop command): the launcher stopped the simulation and the participants", "detail": null}], "check": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "passed", "strict": false, "errors": 0, "warnings": 0, "notes": 1, "stop_at_ms": null, "start_timeout_ms": 30000, "stop_timeout_ms": 10000, "registry_uri": null, "participants": [{"name": "Engine", "line": 9, "command": ["engine/vehicle_sil_engine_ecu"], "describe": true, "required": true, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "described", "reported": {"vehicle_sil": "0.1.0", "name": "Engine", "step_ns": 10000000, "networks": [{"name": "J1939_CAN", "kind": "can", "use": "j1939", "nodes": [{"address": 0, "j1939_name": "0x00000000FE000001", "arbitrary_address_capable": false}], "mac": null}]}, "variables": [{"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": null, "max": null, "step": null, "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on", "items": [], "builtin": true}, {"name": "engine.throttle", "type": "real", "causality": "input", "unit": "%", "min": 0, "max": 100, "step": null, "description": "accelerator pedal position", "items": [], "builtin": false}, {"name": "engine.speed", "type": "integer", "causality": "output", "unit": "rpm", "min": null, "max": null, "step": null, "description": "", "items": [], "builtin": false}], "control": {"transport": "silkit", "wire_version": 1}}, {"name": "Dashboard", "line": 11, "command": ["dashboard/vehicle_sil_dashboard_ecu"], "describe": true, "required": true, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "described", "reported": {"vehicle_sil": "0.1.0", "name": "Dashboard", "step_ns": 5000000, "networks": [{"name": "J1939_CAN", "kind": "can", "use": "j1939", "nodes": [{"address": 40, "j1939_name": null, "arbitrary_address_capable": false}], "mac": null}]}, "variables": [{"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": null, "max": null, "step": null, "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on", "items": [], "builtin": true}, {"name": "dashboard.engine_speed", "type": "integer", "causality": "output", "unit": "rpm", "min": null, "max": null, "step": null, "description": "the speed shown", "items": [], "builtin": false}, {"name": "dashboard.engine_lost", "type": "bool", "causality": "output", "unit": "", "min": null, "max": null, "step": null, "description": "no engine speed for more than 300 ms (it comes every 100 ms)", "items": [], "builtin": false}], "control": {"transport": "silkit", "wire_version": 1}}, {"name": "Logger", "line": 13, "command": ["logger/can_logger", "{registry_uri}"], "describe": false, "required": false, "enabled": true, "manual": false, "role": "ecu", "step_ms": null, "status": "not_checked", "reported": null, "variables": null, "control": null}], "networks": [{"name": "J1939_CAN", "kind": "can", "line": 6, "participants": ["Engine", "Dashboard"]}], "findings": [{"severity": "note", "code": "not-checked", "file": "<file>", "line": 13, "participant": "Logger", "network": null, "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file", "detail": null}]}}}}
 {"exit": 130}

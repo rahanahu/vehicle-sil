@@ -444,6 +444,51 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1000,
+            "unplaced": [
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 11,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 0,
+                    "frames_received": 11
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
@@ -712,7 +757,7 @@
         "scenario": null,
         "variables": {
           "state": "off",
-          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
           "peers": [],
           "peers_omitted": 0,
           "variables_omitted": 0,
@@ -785,10 +830,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 16,
-        "t_ms": 160,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "seq": 20,
+        "t_ms": 200,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
@@ -796,10 +841,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 21,
-        "t_ms": 210,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
+        "seq": 22,
+        "t_ms": 220,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {

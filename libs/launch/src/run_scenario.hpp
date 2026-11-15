@@ -7,6 +7,7 @@
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "run_output.hpp"
+#include "run_samples.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
@@ -20,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -33,24 +35,27 @@ namespace vehicle_sil::launch::detail {
 /// The threads. The start window's thread begins the scenario (begin(): the writes for 0) while
 /// every participant waits before its first step. Then the scenario's thread (loop()) handles
 /// each step of the controller in turn, while the time gate's guard holds that step: it gives the
-/// engine the samples that have arrived and lets it judge and write (ScenarioEngine::tick()), then
-/// moves the guard on. The hub's tap (the controller's SIL Kit thread) only puts each sample into
-/// samples_. The main thread watches the simulation as always; it stops it when the scenario is
-/// over (over()), and finishes the scenario (finish()) after the scenario's thread has ended.
+/// engine the samples that have arrived (it takes them from the run's samples, RunSamples, whose
+/// sink for the scenario is sample()) and lets it judge and write (ScenarioEngine::tick()), then
+/// moves the guard on. The main thread watches the simulation as always; it stops it when the
+/// scenario is over (over()), and finishes the scenario (finish()) after the scenario's thread
+/// has ended.
 ///
 /// The state, who touches it, and under which lock:
-/// - samples_ (its mutex): the hub's tap appends; begin() sets whose samples count; drain() takes
-///   them (the scenario's thread; the main thread in finish(), after that thread has ended). The
-///   mutex is taken inside the hub's call of the tap, and nothing is taken while it is held.
-/// - port_, engine_: no lock; they go from thread to thread. begin() makes them on the start
-///   window's thread. The main thread calls start() only after SimulationController::start() has
-///   returned, and then the window's function does not run any more; from start() until the
-///   thread is joined they are the scenario's thread's; after the join (finish(), end()) the main
-///   thread's.
+/// - The samples: RunSamples keeps them (run_samples.hpp: the hub's tap, its queue for the
+///   scenario, its lock). The scenario gets those the hub takes after begin() has said so
+///   (RunSamples::scenario_begins()), of the control agents that were there then; drain() takes
+///   them (the scenario's thread; the main thread in finish(), after that thread has ended).
+///   finish() and end() end that (RunSamples::scenario_ends()).
+/// - port_, engine_: no lock; they go from thread to thread. begin() makes them on
+///   the start window's thread. The main thread calls start() only after
+///   SimulationController::start() has returned, and then the window's function does not run any
+///   more; from start() until the thread is joined they are the scenario's thread's; after the
+///   join (finish(), end()) the main thread's.
 /// - quit_, over_: atomics (main says "end"; the scenario's thread says "the scenario is over").
 /// - thread_error_ (error_mutex_): the scenario's thread writes it, finish() reads it. Nothing is
 ///   taken while the mutex is held.
-/// - step_, tapped_, thread_: the main thread only (step_ is set by tap() before the controller
+/// - step_, thread_: the main thread only (step_ is set by prepare() before the controller
 ///   starts, so the window's thread only reads it).
 /// The engine's callback for a step (note_step()) writes through the RunOutput, on the window's
 /// thread (in begin()) and the scenario's thread: it takes the output's lock, with none of the
@@ -60,12 +65,12 @@ namespace vehicle_sil::launch::detail {
 class RunScenario
 {
 public:
-    RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control);
+    RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples);
     ~RunScenario();
 
-    /// The tap on the hub: every sample of a scenario participant, in the order taken. `step`:
-    /// the step of the launcher's controller. Main thread, in the setup (no controller thread yet).
-    void tap(std::chrono::milliseconds step);
+    /// `step`: the step of the launcher's controller. Main thread, in the setup (no controller
+    /// thread yet).
+    void prepare(std::chrono::milliseconds step) { step_ = step; }
 
     /// In the start window (its thread): who is there, then the writes for 0. `cancelled` ends
     /// the wait of a write while the window lasts.
@@ -80,8 +85,8 @@ public:
     /// The simulation is over (main thread): ends the scenario's thread and decides what is left.
     void finish(SimulationController& controller, const WatchResult& watched, bool for_scenario, RunOutcome& outcome);
 
-    /// Whatever happened: no thread and no tap of the scenario is left. Main thread; before the
-    /// controller and the hub's transport go.
+    /// Whatever happened: no thread of the scenario is left, and no sample goes to it. Main
+    /// thread; before the controller and the hub's transport go.
     void end();
 
 private:
@@ -95,15 +100,11 @@ private:
     const RunContext& ctx_;
     RunOutput& out_;
     RunControl& control_;
-    std::chrono::milliseconds step_{}; ///< the controller's step (tap())
-    struct ScenarioSamples
-    {
-        std::mutex mutex;
-        std::vector<std::string> incarnations; ///< per scenario participant: the agent whose samples count
-        std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
-    };
-    ScenarioSamples samples_;
-    bool tapped_ = false;
+    RunSamples& samples_;
+    std::chrono::milliseconds step_{}; ///< the controller's step (prepare())
+    /// Per participant of the configuration: its place among the scenario's participants (none:
+    /// the scenario does not use it). Never written after the constructor.
+    std::vector<std::optional<std::size_t>> places_;
     std::unique_ptr<HubPort> port_;
     /// run --timeline: what the engine notes (made in begin(), before the engine). Touched as
     /// engine_ is: the engine fills it; finish() gives it to the outcome.

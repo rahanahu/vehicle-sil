@@ -1418,7 +1418,7 @@ These tests read the sources' `#include` lines and similar, and check the bounda
 | `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
 | `peer.controllers_are_made_on_the_simulation_name` | In `libs/`, only `libs/peer/src/peer.cpp` creates SIL Kit bus controllers, and every call creates one on a network whose name went through `simulation_name()` (`cmake/VehicleSilCheckControllerNetworks.cmake`) |
 | `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |
-| `launch.described_networks_are_read_in_one_place` | In `libs/launch`, only `src/check_networks.cpp` (`seen_networks()`, which applies the map, and the code that writes `reported` in the JSON) and `src/describe_read.cpp` read the reported networks (`description.networks`) (`cmake/VehicleSilCheckDescribedNetworks.cmake`; `config.networks` of the configuration is not counted) |
+| `launch.described_networks_are_read_in_one_place` | In `libs/launch` and `tools/launch`, only `src/check_networks.cpp` (`seen_networks()`, which applies the map, and the code that writes `reported` in the JSON) and `src/describe_read.cpp` read the reported networks (`description.networks`, also through a pointer to member `::networks`) (`cmake/VehicleSilCheckDescribedNetworks.cmake`; `config.networks` of the configuration is not counted) |
 | `j1939_codec.independent_of_the_engine` | The only vehicle-sil header that `codec.hpp` includes is `j1939/types.hpp` (the value types); it does not include `Network` or `Node` |
 | `eth_link.boundary` | `libs/eth_link` includes no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
 
@@ -1441,6 +1441,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | `run --scenario`, `check --scenario`, waveforms | [Scenarios](#scenarios) |
 | Launcher | `run --scenario --timeline` | [Timeline files](#timeline-files) |
 | Launcher | `vehicle_sil_launch test` | [Running several scenarios](#running-several-scenarios) |
+| Launcher | `traffic` in the run result | [Run traffic](#run-traffic-traffic) |
 | Launcher | `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` | [Launcher limits](#launcher-limits) |
 | ECU | The `--describe` JSON | [The `--describe` JSON](#the---describe-json) |
 | ECU | Where SIL Kit controllers are created, `--map-network` | [Network name mapping](#network-name-mapping) |
@@ -1585,7 +1586,7 @@ Where to change:
 
 Rules:
 
-- The check rules, the tables and `networks` in the JSON read the reported networks only through `seen_networks()` (`libs/launch/src/check_networks.cpp`, the only function that applies the map). A rule that reads `description.networks` itself sees a renamed network under the executable's name. `launch.described_networks_are_read_in_one_place` (`cmake/VehicleSilCheckDescribedNetworks.cmake`) reads the lines with `.networks` in `libs/launch` to confirm this. When you add a rule or an output, add the case of a renamed network to `tests/launch/test_check.cpp`.
+- The check rules, the tables and `networks` in the JSON read the reported networks only through `seen_networks()` (`libs/launch/src/check_networks.cpp`, the only function that applies the map). A rule that reads `description.networks` itself sees a renamed network under the executable's name. `launch.described_networks_are_read_in_one_place` (`cmake/VehicleSilCheckDescribedNetworks.cmake`) reads the lines with `.networks`, `->networks` and `::networks` in `libs/launch` and `tools/launch` to confirm this. Only `config.networks` of the configuration is not counted, so a member named `networks` in another struct makes the test fail: give it another name. When you add a rule or an output, add the case of a renamed network to `tests/launch/test_check.cpp`.
 - `detail::participant_arguments()` (`libs/launch/src/run_participants.cpp`) is the one place that builds the arguments of `run`. The start, the command of `manual` and the `participant` event use the same list (`--map-network` comes last; with `describe: false`, after the placeholders are replaced).
 
 Documentation to update:
@@ -1745,6 +1746,7 @@ Where to change:
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
+| The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/launch/src/run_samples.cpp` |
 | Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
 | The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario.cpp` |
 | The writes of a dither in the engine | In `scenario_run.cpp`: `submit()` (one write per ECU step while no motion runs; it belongs to no step, and writes for the same time are combined into one request), `place()` (places the dither on the line), `fail_grid()` (when such a write is refused, fails the first step not yet decided). The contract is "Dithers" in the comment of `ScenarioEngine` |
@@ -1878,6 +1880,47 @@ Tests:
 
 - `launch.the_scenarios_of_a_directory_*`, `launch.a_test_*`, `launch.the_report_of_a_test_*`, `launch.the_command_of_one_run_alone_*` (`tests/launch/test_batch.cpp`; they start no processes)
 - `launch_run.test_command`, `launch_run.test_interrupt`
+
+### Run traffic (`traffic`)
+
+`traffic` in the run result: the J1939 frames sent and received on each network, and `delivered`.
+
+Where to change:
+
+| What | Location |
+|---|---|
+| The tap and the scenario's queue | `RunSamples` in `libs/launch/src/run_samples.cpp` |
+| The latest few counts kept for each participant | `TrafficLatest` in `libs/launch/src/run_traffic.cpp` |
+| Building the result | `count_traffic()` |
+| `senders`, `receivers` and `delivered` of a network | The functions of `TrafficNetwork` |
+| The network names and the positions of the counters, from the schema of the hello | `traffic_schema()` |
+| Who is on which network | `traffic_plan()` (from `seen_networks()`) |
+| Reading at the end | `RunWatch::watch()` in `run_watch.cpp` (`RunSamples::finish()`) |
+| The text and the JSON | `traffic_text()` and `write_run_json()` in `run_format.cpp` |
+
+Documentation to update:
+
+- "[Network traffic (`traffic:`)](simulation-run.md#network-traffic-traffic)" in [simulation-run.md](simulation-run.md) (how to read the line, how the counts are taken, what `sent` means, the table of reasons for not counting, the cases that differ from run to run), and the `traffic` table in "JSON"
+- The `run` output examples in `simulation-run.md`, `scenario.md`, `simulation-config.md`, `simulation-events.md`, `howto/first-ecu.md` and `howto/scenario-tests.md` (the blocks that `launch_run.docs`, `launch_run.scenario` and others compare)
+- `run-traffic` in `features`
+- "[Samples the launcher receives (`RunSamples`)](internals/control.md#samples-the-launcher-receives-runsamples)" in [internals/control.md](internals/control.md)
+- The GUI's recordings (`gui/server/tests/recordings/`) and `gui/protocol/examples/`
+
+Rules:
+
+- Inside the tap, only replace a participant's sets of counts and push onto the scenario's queue (no waiting, no call to the Hub).
+- Keep no queue for `traffic`: no state that overflows while nobody takes anything out.
+- The counts are the values of "the last step that started before the end time", so that the output does not depend on whether later samples arrived.
+- Find the counters by the names that the Agent reported (`PeerInfo::sources`), and do not count those that a map applies to.
+- Do not state the line as ratios (a participant that only receives is normal). `delivered` is `false` only when the counts alone settle it: every participant of the run that may be on the network is counted. A participant without `--describe` may be on every network for which it has no counters (`TrafficNetwork::unplaced`; the counters say where it is, not where it is not), so it makes `delivered` of those networks `null`, and the line then gives numbers, not `nothing sent`. `RunTraffic::unplaced` lists those that are known on no network. Each entry has one of two reasons: no hello by the end of the run (which may differ from run to run), or no counters (which does not).
+- Do not change the samples passed to the scenario (everything that the tap received after the scenario started, from the Agents of that moment; no limit; `RunSamples::scenario_begins()`).
+
+Tests:
+
+- `launch.the_numbers_are_those_of_the_last_step_*`, `launch.when_the_samples_come_*`, `launch.only_a_few_samples_are_kept_*`, `launch.a_flood_while_nobody_looks_*`, `launch.a_network_says_whether_*`, `launch.every_network_of_the_file_*`, `launch.a_participant_that_is_not_counted_says_why` (`tests/launch/test_traffic.cpp`)
+- `launch.the_text_for_people`, `launch.the_json_report`
+- `launch_run.traffic`: the same output in every run with the 2 ECUs of the example, buses split and joined with `network_names`, an ECU that declares no variables, participants that are not counted, a network on which nobody is known to be
+- `^launch_run\.scenario`, `control_server.launcher`
 
 ### Launcher limits
 
@@ -2142,7 +2185,7 @@ Like `control-server`, `scenario-control` is printed only by builds that have it
 Rules:
 
 - Calls are rejected in one place, before the body of the RPC.
-- Do not add a path from client calls that operates the scenario's tap, writes or guard.
+- Do not add a path by which a client call operates the run's tap (`RunSamples`), the writes or the guard.
 - Do not add anything that waits to the Hub's subscriptions or tap.
 
 Tests:

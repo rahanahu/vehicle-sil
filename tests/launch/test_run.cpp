@@ -682,6 +682,12 @@ TEST_CASE(the_text_for_people)
     o.participants.push_back(logger);
     o.participants.push_back(deaf);
     o.participants.push_back(tool);
+    o.traffic = RunTraffic{
+        1000,
+        {TrafficNetwork{"J1939_CAN",
+                        "can",
+                        {TrafficParticipant{"Engine", TrafficNotCounted::None, true, SimTime{} + std::chrono::milliseconds(990), 10, 1},
+                         TrafficParticipant{"Logger", TrafficNotCounted::RealTime, false}}}}};
     const std::string text = format_run_text(report_of(o));
     check_text(text,
                "sim.yaml: 1 participant, 0 networks\n"
@@ -698,6 +704,12 @@ TEST_CASE(the_text_for_people)
                "Deaf         no        killed\n"
                "Tool         no        not started\n"
                "\n"
+               "traffic: J1939_CAN: 1 participant sent, 1 received (1 counted, 1 not counted) (steps before 1000 ms)\n"
+               "\n"
+               "network    participant  sent  received\n"
+               "J1939_CAN  Engine         10         1\n"
+               "J1939_CAN  Logger          -         -  not counted: real time\n"
+               "\n"
                "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
                "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote [participant-failed]\n"
                "warning: sim.yaml:13: participant 'Tool': cannot start t: check the command in the configuration file [start]\n"
@@ -709,6 +721,12 @@ TEST_CASE(the_text_for_people)
         const auto at = t.find("run: ");
         return t.substr(at, t.find('\n', at) - at);
     };
+    // A run that started and has nobody on a network says so; one that did not start says nothing of it.
+    RunOutcome quiet = passed_run();
+    CHECK(format_run_text(report_of(quiet)).find("traffic:") == std::string::npos);
+    quiet.traffic = RunTraffic{1000, {}};
+    CHECK(format_run_text(report_of(quiet)).find("Brake        yes       exit code 0\n\ntraffic: no network in use\n\npassed: ") !=
+          std::string::npos);
     RunOutcome s = passed_run();
     check_text(state_line(s), "run: the simulation ran to stop_at_ms (1000 ms) and ended");
     s.simulation = SimulationEnd::Ended;
@@ -780,6 +798,13 @@ TEST_CASE(the_json_report)
     killed.ending = Ending::Killed;
     killed.left_processes = true;
     o.participants[1] = killed;
+    o.timing.sim_ms = 1000;
+    o.traffic = RunTraffic{
+        1000,
+        {TrafficNetwork{"J1939_CAN",
+                        "can",
+                        {TrafficParticipant{"Engine", TrafficNotCounted::None, true, SimTime{} + std::chrono::microseconds(992'500), 10, 0},
+                         TrafficParticipant{"Brake", TrafficNotCounted::NoControlLink}}}}};
     const std::string json = format_run_json(report_of(o));
     const std::string v(version());
     check_text(json.substr(0, json.find("  \"check\": {")),
@@ -844,6 +869,41 @@ TEST_CASE(the_json_report)
                "      }\n"
                "    }\n"
                "  ],\n"
+               "  \"traffic\": {\n"
+               "    \"before_ms\": 1000,\n"
+               "    \"unplaced\": [],\n"
+               "    \"networks\": [\n"
+               "      {\n"
+               "        \"name\": \"J1939_CAN\",\n"
+               "        \"kind\": \"can\",\n"
+               "        \"counted\": 1,\n"
+               "        \"senders\": 1,\n"
+               "        \"receivers\": 0,\n"
+               "        \"delivered\": null,\n"
+               "        \"unplaced\": [],\n"
+               "        \"participants\": [\n"
+               "          {\n"
+               "            \"name\": \"Engine\",\n"
+               "            \"counted\": true,\n"
+               "            \"not_counted\": null,\n"
+               "            \"virtual_time\": true,\n"
+               "            \"at_ms\": 992.5,\n"
+               "            \"frames_sent\": 10,\n"
+               "            \"frames_received\": 0\n"
+               "          },\n"
+               "          {\n"
+               "            \"name\": \"Brake\",\n"
+               "            \"counted\": false,\n"
+               "            \"not_counted\": \"no-control-link\",\n"
+               "            \"virtual_time\": null,\n"
+               "            \"at_ms\": null,\n"
+               "            \"frames_sent\": null,\n"
+               "            \"frames_received\": null\n"
+               "          }\n"
+               "        ]\n"
+               "      }\n"
+               "    ]\n"
+               "  },\n"
                "  \"findings\": [\n"
                "    {\n"
                "      \"severity\": \"warning\",\n"
@@ -885,7 +945,54 @@ TEST_CASE(the_json_report)
     const std::string empty = format_run_json(none);
     CHECK(empty.find("  \"result\": \"check_failed\",\n") != std::string::npos);
     CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"timing\": null,\n  \"participants\": [],\n"
-                     "  \"findings\": [],\n") != std::string::npos);
+                     "  \"traffic\": null,\n  \"findings\": [],\n") != std::string::npos);
+    // A run that did not get to its simulation, and one with nobody on a network; every name of "not_counted".
+    CHECK(format_run_json(report_of(passed_run())).find("  ],\n  \"traffic\": null,\n  \"findings\": [") != std::string::npos);
+    RunOutcome quiet = passed_run();
+    quiet.traffic = RunTraffic{990, {}};
+    CHECK(format_run_json(report_of(quiet)).find("  \"traffic\": {\n    \"before_ms\": 990,\n    \"unplaced\": [],\n"
+                                                "    \"networks\": []\n  },\n") != std::string::npos);
+    check_text(std::string(traffic_not_counted_name(TrafficNotCounted::None)) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::NoControlLink) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::Restarted) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::RealTime) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::NoCounters) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::Mapped) + "," +
+                   traffic_not_counted_name(TrafficNotCounted::NoSample),
+               ",no-control-link,restarted,real-time,no-counters,mapped,no-sample");
+    // What a machine reads of a network: true, false, and "cannot be said".
+    RunOutcome heard = passed_run();
+    const auto counted = [](const char* name, std::int64_t sent, std::int64_t received) {
+        return TrafficParticipant{name, TrafficNotCounted::None, true, SimTime{} + std::chrono::milliseconds(990), sent, received};
+    };
+    heard.traffic = RunTraffic{1000,
+                               {TrafficNetwork{"A", "can", {counted("Engine", 5, 0), counted("Brake", 0, 5)}},
+                                TrafficNetwork{"B", "can", {counted("Engine", 5, 0)}}, TrafficNetwork{"C", "lin", {}}}};
+    const std::string networks = format_run_json(report_of(heard));
+    CHECK(networks.find("        \"counted\": 2,\n        \"senders\": 1,\n        \"receivers\": 1,\n        \"delivered\": true,\n") !=
+          std::string::npos);
+    CHECK(networks.find("        \"counted\": 1,\n        \"senders\": 1,\n        \"receivers\": 0,\n        \"delivered\": false,\n") !=
+          std::string::npos);
+    CHECK(networks.find("        \"name\": \"C\",\n        \"kind\": \"lin\",\n        \"counted\": 0,\n        \"senders\": 0,\n"
+                        "        \"receivers\": 0,\n        \"delivered\": null,\n        \"unplaced\": [],\n        \"participants\": []\n") !=
+          std::string::npos);
+    // The participants of the run that the launcher knows on no network, and per network those
+    // that may be on it, each with the reason.
+    const TrafficUnplaced bridge{"Bridge", TrafficUnplacedReason::NoControlLink};
+    const TrafficUnplaced tool{"Tool", TrafficUnplacedReason::NoCounters};
+    heard.traffic->unplaced = {bridge, tool};
+    heard.traffic->per_network.at(2).unplaced = {bridge, tool, {"Gateway", TrafficUnplacedReason::NoCounters}};
+    const std::string unplaced = format_run_json(report_of(heard));
+    const auto entry = [](const std::string& indent, const std::string& name, const std::string& reason) {
+        return indent + "{\n" + indent + "  \"participant\": \"" + name + "\",\n" + indent + "  \"reason\": \"" + reason +
+               "\"\n" + indent + "}";
+    };
+    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no-control-link") + ",\n" +
+                        entry("      ", "Tool", "no-counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
+    CHECK(unplaced.find("        \"delivered\": null,\n        \"unplaced\": [\n" +
+                        entry("          ", "Bridge", "no-control-link") + ",\n" + entry("          ", "Tool", "no-counters") +
+                        ",\n" + entry("          ", "Gateway", "no-counters") + "\n        ],\n        \"participants\": []\n") !=
+          std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));
     CHECK(late.find("  \"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 10,\n    \"ecu_step_ms\": 10,\n"

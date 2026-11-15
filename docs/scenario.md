@@ -86,6 +86,12 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 705 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine          8         0
+J1939_CAN  Dashboard       0         8
+
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
@@ -762,6 +768,12 @@ line  step                                                             result   
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
+
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 205 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine          3         0
+J1939_CAN  Dashboard       0         3
 
 error: throttle_response.yaml:6: expect Engine.engine.speed ge 1700 (within 200 ms): not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms) [scenario-failed]
 

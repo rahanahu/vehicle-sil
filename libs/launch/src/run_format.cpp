@@ -210,6 +210,10 @@ std::string format_run_text(const RunReport& report)
         }
         out += detail::table_text(rows) + "\n";
     }
+    if (run.traffic)
+    {
+        out += detail::traffic_text(*run.traffic) + "\n";
+    }
     out += detail::findings_text(report.check.file, report.findings);
     switch (result)
     {
@@ -245,6 +249,97 @@ const char* step_result_text(StepStatus status)
 }
 
 } // namespace
+
+std::string detail::traffic_text(const RunTraffic& traffic)
+{
+    if (traffic.per_network.empty())
+    {
+        return "traffic: no network in use\n";
+    }
+    const auto why = [](TrafficNotCounted reason) -> std::string {
+        switch (reason)
+        {
+        case TrafficNotCounted::None: return {};
+        case TrafficNotCounted::NoControlLink: return "not counted: no control link";
+        case TrafficNotCounted::Restarted: return "not counted: restarted";
+        case TrafficNotCounted::RealTime: return "not counted: real time";
+        case TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
+        case TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
+        case TrafficNotCounted::NoSample: return "not counted: no sample before the end";
+        }
+        return {};
+    };
+    const auto unplaced = [](const TrafficUnplaced& p) -> std::string {
+        switch (p.reason)
+        {
+        case TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
+        case TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
+        }
+        return {};
+    };
+    const auto participants = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " participant" : " participants"); };
+    std::string line;
+    std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
+    for (const TrafficNetwork& network : traffic.per_network)
+    {
+        const std::size_t counted = network.counted();
+        const std::size_t others = network.participants.size() - counted;
+        const std::string may_be =
+            network.unplaced.empty() ? std::string{} : ", " + std::to_string(network.unplaced.size()) + " unplaced";
+        const std::string in_all = " (" + std::to_string(counted) + " counted" +
+                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) + may_be + ")";
+        // "nothing sent" only when everyone who may be on it is counted and nobody received.
+        const bool silent = network.senders() == 0 && others == 0 && network.unplaced.empty() && network.receivers() == 0;
+        // Who sent and who received, not a share: a participant that only listens is as it should be.
+        line += (line.empty() ? "" : "; ") + network.name + ": " +
+                (network.participants.empty() ? "not counted (no participant known to be on it" + may_be + ")"
+                 : counted == 0               ? "not counted (" + participants(others) + ")"
+                 : silent                     ? "nothing sent" + in_all
+                                              : participants(network.senders()) + " sent, " +
+                                                    std::to_string(network.receivers()) + " received" + in_all);
+        for (const TrafficParticipant& p : network.participants)
+        {
+            std::vector<std::string> row{network.name, p.name, p.frames_sent ? std::to_string(*p.frames_sent) : "-",
+                                         p.frames_received ? std::to_string(*p.frames_received) : "-"};
+            if (!p.counted())
+            {
+                row.push_back(why(p.not_counted));
+            }
+            rows.push_back(std::move(row));
+        }
+        if (network.participants.empty())
+        {
+            rows.push_back({network.name, "-", "-", "-", "no participant known to be on it"});
+        }
+        // One that its counters place on another network gets a row here; one that is known on
+        // no network gets one row after the networks.
+        for (const TrafficUnplaced& p : network.unplaced)
+        {
+            if (std::find(traffic.unplaced.begin(), traffic.unplaced.end(), p) == traffic.unplaced.end())
+            {
+                rows.push_back({network.name, p.name, "-", "-", unplaced(p)});
+            }
+        }
+    }
+    for (const TrafficUnplaced& p : traffic.unplaced)
+    {
+        rows.push_back({"-", p.name, "-", "-", unplaced(p)});
+    }
+    // The numbers to the right.
+    for (const std::size_t column : {std::size_t{2}, std::size_t{3}})
+    {
+        std::size_t width = 0;
+        for (const auto& row : rows)
+        {
+            width = std::max(width, row[column].size());
+        }
+        for (std::size_t i = 1; i < rows.size(); ++i)
+        {
+            rows[i][column].insert(0, width - rows[i][column].size(), ' ');
+        }
+    }
+    return "traffic: " + line + " (steps before " + std::to_string(traffic.before_ms) + " ms)\n\n" + detail::table_text(rows);
+}
 
 std::string detail::scenario_step_text(const ScenarioStepRun& step)
 {
@@ -433,6 +528,89 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
         }
     }
     w.end_array();
+    if (report.run && report.run->traffic)
+    {
+        const RunTraffic& traffic = *report.run->traffic;
+        w.begin_object("traffic");
+        w.integer("before_ms", traffic.before_ms);
+        const auto unplaced = [&w](const std::vector<TrafficUnplaced>& all) {
+            w.begin_array("unplaced");
+            for (const TrafficUnplaced& p : all)
+            {
+                w.begin_object();
+                w.string("participant", p.name);
+                w.string("reason", traffic_unplaced_reason_name(p.reason));
+                w.end_object();
+            }
+            w.end_array();
+        };
+        unplaced(traffic.unplaced);
+        w.begin_array("networks");
+        for (const TrafficNetwork& network : traffic.per_network)
+        {
+            w.begin_object();
+            w.string("name", network.name);
+            w.string("kind", network.kind);
+            w.integer("counted", static_cast<std::int64_t>(network.counted()));
+            w.integer("senders", static_cast<std::int64_t>(network.senders()));
+            w.integer("receivers", static_cast<std::int64_t>(network.receivers()));
+            if (const std::optional<bool> delivered = network.delivered())
+            {
+                w.boolean("delivered", *delivered);
+            }
+            else
+            {
+                w.null("delivered");
+            }
+            unplaced(network.unplaced);
+            w.begin_array("participants");
+            for (const TrafficParticipant& p : network.participants)
+            {
+                const auto number = [&w](std::string_view member, const std::optional<std::int64_t>& value) {
+                    if (value)
+                    {
+                        w.integer(member, *value);
+                    }
+                    else
+                    {
+                        w.null(member);
+                    }
+                };
+                w.begin_object();
+                w.string("name", p.name);
+                w.boolean("counted", p.counted());
+                if (p.counted())
+                {
+                    w.null("not_counted");
+                }
+                else
+                {
+                    w.string("not_counted", traffic_not_counted_name(p.not_counted));
+                }
+                if (p.virtual_time)
+                {
+                    w.boolean("virtual_time", *p.virtual_time);
+                }
+                else
+                {
+                    w.null("virtual_time");
+                }
+                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(kNanosPerMilli))
+                                     : std::nullopt);
+                number("frames_sent", p.frames_sent);
+                number("frames_received", p.frames_received);
+                w.end_object();
+            }
+            w.end_array();
+            w.end_object();
+        }
+        w.end_array();
+        w.end_object();
+    }
+    else
+    {
+        w.null("traffic");
+    }
     detail::write_findings_json(w, report.check.file, report.findings);
     detail::write_check_json(w, "check", report.check);
     if (report.run && report.run->scenario)

@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -534,11 +534,12 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 16,
         "t_ms": 160,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "name": "Engine",
+        "state": "connected",
+        "variables": 4
       }
     },
     {
@@ -548,7 +549,7 @@
         "event": "control_link",
         "seq": 17,
         "t_ms": 170,
-        "name": "Engine",
+        "name": "Dashboard",
         "state": "connected",
         "variables": 4
       }
@@ -560,18 +561,6 @@
         "event": "control_link",
         "seq": 18,
         "t_ms": 180,
-        "name": "Dashboard",
-        "state": "connected",
-        "variables": 4
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 19,
-        "t_ms": 190,
         "name": "Logger",
         "state": "none"
       }
@@ -581,8 +570,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 19,
+        "t_ms": 190,
         "phase": "running"
       }
     },
@@ -591,8 +580,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 20,
+        "t_ms": 200,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -602,8 +591,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 21,
+        "t_ms": 210,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -633,8 +622,8 @@
       "session": 1,
       "event": {
         "event": "mystery",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 22,
+        "t_ms": 220,
         "detail": "an event this reader does not know"
       }
     },
@@ -642,10 +631,22 @@
       "type": "error",
       "session": 1,
       "code": "seq-gap",
-      "message": "events are missing: seq 24 never came from the launcher",
+      "message": "events are missing: seq 23 never came from the launcher",
       "detail": {
-        "expected": 24,
-        "got": 25
+        "expected": 23,
+        "got": 24
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 24,
+        "t_ms": 240,
+        "source": "Engine",
+        "line": "after a gap",
+        "colour": "blue"
       }
     },
     {
@@ -655,9 +656,8 @@
         "event": "log",
         "seq": 25,
         "t_ms": 250,
-        "source": "Engine",
-        "line": "after a gap",
-        "colour": "blue"
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -889,6 +889,51 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1000,
+            "unplaced": [
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 11,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 0,
+                    "frames_received": 11
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
@@ -1578,6 +1623,51 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1000,
+            "unplaced": [
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 11,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 0,
+                    "frames_received": 11
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
@@ -1858,10 +1948,10 @@
           },
           {
             "code": "seq-gap",
-            "message": "events are missing: seq 24 never came from the launcher",
+            "message": "events are missing: seq 23 never came from the launcher",
             "detail": {
-              "expected": 24,
-              "got": 25
+              "expected": 23,
+              "got": 24
             }
           }
         ],

@@ -208,6 +208,9 @@ int RunWatch::watch(SimulationController& controller)
     }
     scenario_.finish(controller, watched, forScenario, outcome_);
     note_timing(controller);
+    // The run's end is known: what the participants' steps before it said of the networks. The
+    // hub's tap goes with it.
+    outcome_.traffic = samples_.finish(outcome_.timing.sim_ms);
     notes_.note_time(controller, TimeNote::Last, outcome_);
     // No time command from here on: the simulation is over.
     ctx_.commands.detach();

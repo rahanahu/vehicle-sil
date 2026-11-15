@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -534,12 +534,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 16,
         "t_ms": 160,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -549,7 +548,7 @@
         "event": "control_link",
         "seq": 17,
         "t_ms": 170,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -561,6 +560,18 @@
         "event": "control_link",
         "seq": 18,
         "t_ms": 180,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 19,
+        "t_ms": 190,
         "name": "Logger",
         "state": "none"
       }
@@ -570,8 +581,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 20,
+        "t_ms": 200,
         "phase": "running"
       }
     },
@@ -580,8 +591,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -591,8 +602,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -601,17 +612,6 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 22,
-        "t_ms": 220,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -666,8 +666,8 @@
         "last_t_ms": 230,
         "time": {
           "event": "time",
-          "seq": 21,
-          "t_ms": 210,
+          "seq": 22,
+          "t_ms": 220,
           "sim_ms": 0,
           "speed": "max",
           "paused": false,

@@ -14,6 +14,7 @@ Control API の Control Agent、Hub、SIL Kit の上のトランスポート、C
 | [SIL Kit の上のトランスポート](#sil-kit-の上のトランスポートvehicle_silcontrol_silkit) | メッセージ、スレッド、受信の順序の保証、最初のステップの前で待つ区間、接続の終わり |
 | [Control Server と通信の層](#control-server-と通信の層vehicle_silcontrol_grpc) | gRPC のサービス、シミュレーションの監視、`GetSnapshot`、`Watch`、認証、上限 |
 | [ランチャーの Control Server](#ランチャーの-control-servervehicle_sil_launch-run---control) | 時間の操作の経路、`--start-paused`、開始の期限、終わり方 |
+| [ランチャーが受け取るサンプル](#ランチャーが受け取るサンプルrunsamples) | 実行の tap、`traffic` の数、シナリオの列、ロック |
 | [シナリオ](#シナリオvehicle_sil_launch-run---scenario) | ガード、全サンプル、進め方、結果が決まる根拠、制限 |
 
 ## 全体の構成
@@ -876,6 +877,26 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 - ランチャーは、ループバックでないアドレスに TLS と認証情報がなければ、引数のエラーにします（`allow_insecure` は出しません）。
 - トークンは、ファイルでだけ受け取ります（引数はイベントの `hello` に出るため）。
 
+## ランチャーが受け取るサンプル（`RunSamples`）
+
+`vehicle_sil_launch run` は、どの実行でも Hub の tap を 1 つ付けます（`libs/launch/src/run_samples.hpp` の `RunSamples`）。使うのは、シナリオ（次の節）と、結果の `traffic`（[simulation-run.md](../simulation-run.md) の「ネットワークの送受信（`traffic:`）」）です。
+
+```mermaid
+flowchart LR
+    hub["Hub"] -- "tap（Hub のロックの中）" --> latest["participant ごとの最新の数組（TrafficLatest）"]
+    hub -- "tap（シナリオの participant だけ）" --> queue["シナリオの列"]
+    queue -- "take()" --> engine["ScenarioEngine"]
+    latest -- "finish(E)" --> result["結果の traffic"]
+```
+
+- **`traffic` のために列は持ちません。** 数は積み上げなので、要るのは participant ごとの「実行の終わりの時刻 E より前に始まった最後のステップ」の 1 組だけです。tap は、サンプルを participant ごとの「最新の数組」（`libs/launch/src/run_traffic.hpp` の `TrafficLatest`）に入れます。実行の間は誰も取り出さず、終わりに主スレッドが 1 回読みます（`finish(E)`）。あふれることがないので、一時停止の間や始まる前の待ちの間に実時間の `Peer` がサンプルを送り続けても、何も失いません。
+- **どの組を残すか**: E は controller のステップの始まりで、tap が呼ばれた時点の controller の時刻 N（`ParticipantRuntime::now()`。原子的に読めます）も同じです（N ≤ E）。N のステップが始まった時点で、N より前のステップのサンプルは全部届いているので（上の「[受信の順序の保証](#受信の順序の保証)」）、その中で残すのは最後の 1 組です。N 以後のサンプルは、controller のタイムステップごとに、そのタイムステップの中で始まった最後の 1 組を残します（E がどのタイムステップになっても、数に使う組はその中にあります）。仮想時間で動く participant は controller より 1 タイムステップほどしか先に進まないので、残るのは 2、3 組です。残る組は、N 以後のサンプルがいつ届いたかにも、誰も見ていなかった時間の長さにもよりません。
+- **新しい上限が 1 つあります**: サンプルの時刻が controller より 64 タイムステップ（`TrafficLatest::kMaxAhead`）より先に進んだ participant は、実行の時刻に沿っていないとみなして、それ以後は何も残さず、数えません（`real-time`）。シミュレーションが止まっている間も進み続ける実時間の `Peer` がこうなります。仮想時間で動く participant は届きません。
+- **シナリオの列**: シナリオが始まってから終わるまで、シナリオが始まったときにつながっていた Agent のサンプルだけを列に積みます。上限はありません（集計を追加する前と同じです。シナリオのスレッドは controller のステップを保留したまま取り出すので、ふつうは 1 タイムステップ分です。一時停止の間は、仮想時間の ECU はサンプルを送りません）。シナリオが使わない participant のサンプルは、この列に入りません。
+- **数えない participant**: 仮想時間で動かないもの、起動し直されたもの（tap が 2 つ以上のプロセスのサンプルを見た。または、終わりの Hub の hello が、tap の見たプロセスのものでない）、そのネットワークの数の出力を持たないもの、数の出力に設定の `variables` の対応が当たっているもの（Hub が、tap に渡す前に値を書き換えるため）は、数えません。理由は結果の `not_counted` に出ます。
+- **スキーマ**: どの変数が数かは、Agent の hello のスキーマで決まります。tap の中では Hub を呼べないので、終わりに `Hub::peers()` で引きます。
+- ロック: `RunSamples` のミューテックスは 1 つです。順は Hub のロック → このミューテックス（tap）だけで、このミューテックスの下では、何も取らず、Hub も呼びません。
+
 ## シナリオ（`vehicle_sil_launch run --scenario`）
 
 シナリオ（[scenario.md](../scenario.md)）は、ランチャーの中で、Hub と時間ゲートを直接使って進めます。gRPC は使いません。保証のリファレンスは、`libs/launch/include/vehicle_sil/launch/scenario_run.hpp` の `ScenarioEngine` のコメントです。
@@ -885,7 +906,8 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 ```mermaid
 flowchart LR
     ecu["ECU の Agent"] -- "サンプル、結果" --> hub["Hub"]
-    hub -- "全サンプル（tap）" --> engine["ScenarioEngine"]
+    hub -- "全サンプル（tap）" --> samples["RunSamples（列）"]
+    samples -- "取り出した並び" --> engine["ScenarioEngine"]
     engine -- "時刻つきの書き込み" --> hub
     hub -- "コマンド" --> ecu
     gate["時間ゲートのガード"] -- "保留したステップ P" --> engine
@@ -907,6 +929,7 @@ flowchart LR
 - `control::Hub::set_values_tap()` は、Hub が受信したサンプルを、受信した順に 1 つずつ渡します。
 - 購読は Peer ごとに最新の 1 つしか持たないので、条件の判定には使いません。
 - tap はトランスポートのスレッド（ランチャーでは controller の SIL Kit のスレッド）で、Hub のロックの中から呼ばれるので、積むだけにします。
+- tap は Hub に 1 つで、ランチャーではシナリオのものではなく実行のものです（上の「[ランチャーが受け取るサンプル](#ランチャーが受け取るサンプルrunsamples)」）。シナリオには、シナリオが始まった後に tap が受け取った、始まったときにつながっていた Agent のサンプルだけが渡ります。
 
 ### 進め方
 

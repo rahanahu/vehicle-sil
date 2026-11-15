@@ -391,10 +391,16 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine         11         0
+J1939_CAN  Dashboard       0        11
+
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-Exit code 0 tells you only that every ECU started, ran until `stop_at_ms` and exited with exit code 0. It does not tell you whether the ECUs received any messages. Run `simulation.two-buses.yaml` from step 3: the 2 ECUs are on separate buses, yet `run` prints the same table and ends with exit code 0.
+Exit code 0 tells you only that every ECU started, ran until `stop_at_ms` and exited with exit code 0. Whether messages arrived shows in the `traffic:` line: in the result above, Engine sent on `J1939_CAN` and Dashboard received. Run `simulation.two-buses.yaml` from step 3: the 2 ECUs are on separate buses, and `run` still ends with exit code 0, but the `traffic:` line shows that nobody received on `J1939_CAN` and nothing was sent on `VehicleCAN`.
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml
@@ -408,6 +414,12 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 0 received (1 counted); VehicleCAN: nothing sent (1 counted) (steps before 1000 ms)
+
+network     participant  sent  received
+J1939_CAN   Engine         11         0
+VehicleCAN  Dashboard       0         0
+
 passed: 0 errors, 2 warnings, 0 notes
 ```
 
@@ -415,11 +427,12 @@ Verify communication with one of these methods:
 
 | Method | What to look at | Requires |
 |---|---|---|
+| The `traffic:` line of the result | Whether a participant received J1939 frames on each network | The ECU uses J1939 (`j1939()`); raw CAN, LIN and Ethernet are not counted. |
 | The ECU's own output | Lines on stderr that start with `[<participant name>]` | The ECU prints the values it receives. |
 | A scenario with `expect` | The result and exit code of `run --scenario` | The ECU declares the received values as variables. |
 | The GUI or the Control API | Variable values during the run | The ECU declares the received values as variables. |
 
-If an ECU neither prints nor declares the values it receives, you cannot verify reception from outside. If you need to, ask the ECU author to declare the received values as variables (see "Add J1939 communication" in [Create your first ECU](first-ecu.md#add-j1939-communication)).
+If an ECU neither prints nor declares the values it receives, you can verify from outside only that J1939 frames arrived (the `traffic:` line), not the values. If you need to, ask the ECU author to declare the received values as variables (see "Add J1939 communication" in [Create your first ECU](first-ecu.md#add-j1939-communication)).
 
 ### Verify with the ECU output
 
@@ -492,6 +505,12 @@ line  step                                                             result  a
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
+
+traffic: J1939_CAN: 1 participant sent, 0 received (1 counted); VehicleCAN: nothing sent (1 counted) (steps before 605 ms)
+
+network     participant  sent  received
+J1939_CAN   Engine          7         0
+VehicleCAN  Dashboard       0         0
 
 error: scenarios/engine_speed.yaml:8: expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms): not true at any time within 600 ms (from 0 ms to 600 ms): at the end Dashboard.dashboard.engine_speed ge 1700, but it was 0 (its sample of 600 ms) [scenario-failed]
 

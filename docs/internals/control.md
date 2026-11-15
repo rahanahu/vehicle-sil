@@ -14,6 +14,7 @@ This page states the guarantees and limits of the Control API: when writes are a
 | [Transport over SIL Kit](#transport-over-sil-kit-vehicle_silcontrol_silkit) | Messages, threads, receive order guarantees, the start window before the first step, the end of a connection |
 | [Control Server and communication layer](#control-server-and-communication-layer-vehicle_silcontrol_grpc) | The gRPC service, simulation monitoring, `GetSnapshot`, `Watch`, authentication, limits |
 | [The launcher's Control Server](#the-launchers-control-server-vehicle_sil_launch-run---control) | The time control path, `--start-paused`, the start deadline, how it ends |
+| [Samples the launcher receives](#samples-the-launcher-receives-runsamples) | The one tap of a run, the counts for `traffic`, the scenario's queue, locks |
 | [Scenarios](#scenarios-vehicle_sil_launch-run---scenario) | The guard, every sample, how the scenario advances, why the result is fixed, limitations |
 
 ## Overview
@@ -876,6 +877,26 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 - If a non-loopback address has no TLS and credentials, the launcher reports an argument error (it does not offer `allow_insecure`).
 - The launcher accepts tokens only in a file (arguments appear in the `hello` event).
 
+## Samples the launcher receives (`RunSamples`)
+
+`vehicle_sil_launch run` sets one tap on the Hub in every run (`RunSamples` in `libs/launch/src/run_samples.hpp`). The scenario (next section) and `traffic` in the result (see "Network traffic (`traffic:`)" in [simulation-run.md](../simulation-run.md#network-traffic-traffic)) use it.
+
+```mermaid
+flowchart LR
+    hub["Hub"] -- "tap (inside the Hub's lock)" --> latest["the latest few counts of each participant (TrafficLatest)"]
+    hub -- "tap (participants of the scenario only)" --> queue["the scenario's queue"]
+    queue -- "take()" --> engine["ScenarioEngine"]
+    latest -- "finish(E)" --> result["traffic in the result"]
+```
+
+- **No queue for `traffic`.** The counts are running totals, so each participant needs only one set: that of its last step that started before E, the virtual time at which the run ends. The tap puts each sample into the participant's latest few counts (`TrafficLatest` in `libs/launch/src/run_traffic.hpp`). Nobody takes them out during the run; at the end, the main thread reads them once (`finish(E)`). Nothing overflows, so nothing is lost even when a real-time `Peer` keeps sending samples during a pause or while the launcher waits for the start.
+- **Which sets are kept**: E is the start of a controller step, and so is N, the controller's time when the tap is called (`ParticipantRuntime::now()`, read atomically; N ≤ E). When the step at N starts, every sample of the steps before N has arrived (see "[Receive order guarantees](#receive-order-guarantees)" above), so of those the tap keeps the last set. Of the samples at or after N, it keeps, for each controller time step, the last set that started within that time step (whichever time step E falls into, the set that the count uses is among them). A participant that runs in virtual time is at most about one time step ahead of the controller, so 2 or 3 sets remain. Which sets remain depends neither on when the samples at or after N arrived nor on how long nobody looked.
+- **One new limit**: a participant whose samples run more than 64 controller time steps (`TrafficLatest::kMaxAhead`) ahead of the controller is taken as not following the run's time. From then on, nothing of it is kept, and it is not counted (`real-time`). A real-time `Peer`, which keeps going while the simulation is stopped, ends up here. A participant that runs in virtual time never gets that far.
+- **The scenario's queue**: from the start to the end of the scenario, only the samples of the Agents that were connected when the scenario started go into the queue. It has no limit, as before the counts were added: the scenario thread takes them out while it holds the controller's step, so there is usually one time step's worth, and during a pause ECUs in virtual time send no samples. Samples of participants that the scenario does not use do not go into this queue.
+- **Participants that are not counted**: a participant that does not run in virtual time; one that was started again (the tap saw samples of 2 or more processes, or the Hub's hello at the end is not from the process the tap saw); one without counters for the network; and one whose counters the configuration's `variables` maps (the Hub rewrites the values before it passes them to the tap). The reason is in `not_counted` of the result.
+- **Schema**: which variables are counters follows from the schema in the Agent's hello. The tap cannot call the Hub, so the launcher looks it up with `Hub::peers()` at the end.
+- Locks: `RunSamples` has one mutex. The only order is the Hub's lock, then this mutex (the tap). Under this mutex, nothing else is taken and the Hub is not called.
+
 ## Scenarios (`vehicle_sil_launch run --scenario`)
 
 A scenario ([scenario.md](../scenario.md)) runs inside the launcher and uses the Hub and the time gate directly. It does not use gRPC. The reference for the guarantees is the comment of `ScenarioEngine` in `libs/launch/include/vehicle_sil/launch/scenario_run.hpp`.
@@ -885,7 +906,8 @@ The data flow. Each arrow is labeled with what it passes:
 ```mermaid
 flowchart LR
     ecu["ECU Agent"] -- "samples, results" --> hub["Hub"]
-    hub -- "every sample (tap)" --> engine["ScenarioEngine"]
+    hub -- "every sample (tap)" --> samples["RunSamples (queue)"]
+    samples -- "what it took out" --> engine["ScenarioEngine"]
     engine -- "timed writes" --> hub
     hub -- "commands" --> ecu
     gate["time gate guard"] -- "held step P" --> engine
@@ -907,6 +929,7 @@ flowchart LR
 - `control::Hub::set_values_tap()` passes each sample that the Hub receives, one at a time, in order of reception.
 - A subscription keeps only the latest sample per peer, so subscriptions are not used to evaluate conditions.
 - The tap is called on the transport thread (in the launcher, the controller's SIL Kit thread) inside the Hub's lock, so it only queues the samples.
+- The Hub has one tap, and in the launcher it belongs to the run, not to the scenario (see "[Samples the launcher receives](#samples-the-launcher-receives-runsamples)" above). The scenario gets only the samples that the tap received after the scenario started, from the Agents that were connected when it started.
 
 ### How the scenario advances
 

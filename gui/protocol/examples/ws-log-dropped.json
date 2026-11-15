@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -857,6 +857,51 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1000,
+            "unplaced": [
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 11,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 0,
+                    "frames_received": 11
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
@@ -1546,6 +1591,51 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 1000,
+            "unplaced": [
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 11,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 990,
+                    "frames_sent": 0,
+                    "frames_received": 11
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,

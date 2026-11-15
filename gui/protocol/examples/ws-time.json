@@ -65,7 +65,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -1182,7 +1182,7 @@
         "seq": 36,
         "t_ms": 360,
         "source": "vehicle_sil_launch",
-        "line": "Dashboard exited with code 0"
+        "line": "Engine exited with code 0"
       }
     },
     {
@@ -1192,7 +1192,7 @@
         "event": "participant",
         "seq": 37,
         "t_ms": 370,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "ended",
         "exit_code": 0,
         "signal": null
@@ -1206,7 +1206,7 @@
         "seq": 38,
         "t_ms": 380,
         "source": "vehicle_sil_launch",
-        "line": "Engine exited with code 0"
+        "line": "Dashboard exited with code 0"
       }
     },
     {
@@ -1216,7 +1216,7 @@
         "event": "participant",
         "seq": 39,
         "t_ms": 390,
-        "name": "Engine",
+        "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
         "signal": null
@@ -1319,6 +1319,41 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 50,
+            "unplaced": [],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 40,
+                    "frames_sent": 2,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 40,
+                    "frames_sent": 0,
+                    "frames_received": 2
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [
             {
               "severity": "warning",
@@ -2046,6 +2081,41 @@
               }
             }
           ],
+          "traffic": {
+            "before_ms": 50,
+            "unplaced": [],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "counted": 2,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
+                "unplaced": [],
+                "participants": [
+                  {
+                    "name": "Engine",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 40,
+                    "frames_sent": 2,
+                    "frames_received": 0
+                  },
+                  {
+                    "name": "Dashboard",
+                    "counted": true,
+                    "not_counted": null,
+                    "virtual_time": true,
+                    "at_ms": 40,
+                    "frames_sent": 0,
+                    "frames_received": 2
+                  }
+                ]
+              }
+            ]
+          },
           "findings": [
             {
               "severity": "warning",
