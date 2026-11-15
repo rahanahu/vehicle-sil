@@ -552,6 +552,7 @@ Each entry gives, in this order, a table of the main classes and functions (head
 | `RealTimeClock`, `ManualRealTimeClock` | `step/real_time_clock.hpp` |
 | `TimeDomain`, `Wakeup` | `step/time_domain.hpp` |
 | `SinkRef` | `step/sink_ref.hpp` |
+| `OverflowCollector` (each bus names its instance: `can::OverflowCollector`, `eth::OverflowCollector`) | `step/overflow_collector.hpp` |
 
 - Tests: `tests/step`
 - `ctest -R`: `^step\.`
