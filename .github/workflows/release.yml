@@ -199,8 +199,16 @@ jobs:
             --json status,conclusion --jq 'if length == 0 then "no run" elif all(.[]; .conclusion == "success")
             then "success" else (map(.status + "/" + (.conclusion // "")) | join(", ")) end')
           if [ "$state" != success ]; then
-            echo "::error::ci.yml has not passed on $GITHUB_SHA ($state): push the commit to main and wait for ci.yml" \
-                 "to pass (or fix it), then re-run this job"
+            case "$state" in
+              # Merges that followed each other: only the newest one's run of main is kept (ci.yml, concurrency).
+              *cancelled*)
+                echo "::error::ci.yml's run on $GITHUB_SHA was cancelled while it waited ($state), because a newer" \
+                     "merge followed. Run it again (Actions > ci > the cancelled run of this commit > Re-run all" \
+                     "jobs, or gh run rerun <id>), wait for it to pass, then re-run this job" ;;
+              *)
+                echo "::error::ci.yml has not passed on $GITHUB_SHA ($state): push the commit to main and wait for" \
+                     "ci.yml to pass (or fix it), then re-run this job" ;;
+            esac
             exit 1
           fi
       - name: Template archive and SHA256SUMS
