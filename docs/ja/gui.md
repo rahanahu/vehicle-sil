@@ -229,6 +229,7 @@ GUI に自分のコードを足す道は 3 つあります。サンプルの画�
 | ECU の変数の読み書き | Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python の gRPC（`grpcio`、`protobuf`。`uv sync` がインストールします） |
 | 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
 | 画面 | サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`） |
+| ブラウザー | デスクトップのブラウザー。新しい版の Chromium 系（Chrome、Edge。試験はこれで回します）。Firefox でも動くはずです。画面と時間の軸が使う機能には、Chrome か Edge の 123 以降（`light-dark()`）、Firefox の 121 以降（`:has()`）が要ります |
 
 - ビルド済みのツール（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。
 - 変数の読み書きに必要なもののどちらかがなくても、ほかの機能はそのまま使えます。変数だけが「使えない」になり、理由を表示します。
@@ -1004,6 +1005,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | そのほか | なし | WebAssembly、`blob:` の URL の Worker、フォームの送信、frame、Service Worker |
 
 - テンプレートを実行時に組み立てる作り方（Vue のテンプレートを実行時にコンパイルするビルドなど）は使えないので、ビルドの時点でコンパイルします。
+- `<form>` は、`submit` の処理で `preventDefault()` を呼べば使えます（どこにも送りません）。欄を Enter で送るときは、これがいちばん簡単です。日本語入力の変換を確定する Enter では、ブラウザーは送信しません（Enter の `keydown` で送る作りは、`isComposing` を見ないと、確定の Enter でも送ります）。
 - CDN から読み込んでいたものは、npm でインストールしてビルドに含めます。
 - ビルドがフォントを CSS に埋め込むときは、ファイルに出力する設定にします。
 - 画面を frame に入れることはできません（ほかのページの中にも、自分の画面の `<iframe>` の中にも。どのレスポンスにも `X-Frame-Options: DENY` と `frame-ancestors 'none'` が付きます）。
