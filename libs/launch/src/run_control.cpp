@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_control.hpp"
 
+#include "seen_ecu.hpp"
+
 #include "vehicle_sil/control/wire.hpp"
 
 #include <algorithm>
@@ -33,11 +35,16 @@ control::Hub& RunControl::hub()
 ControlLink RunControl::described_link(std::size_t i) const
 {
     const auto& ecu = ctx_.check.participants[i].ecu;
-    if (!ctx_.config.participants[i].describe || !ecu || ecu->description.variables.empty())
+    if (!ctx_.config.participants[i].describe || !ecu)
     {
         return ControlLink::None;
     }
-    const auto& offer = ecu->description.control;
+    const SeenEcu seen(ctx_.config.participants[i], *ecu);
+    if (!seen.has_variables())
+    {
+        return ControlLink::None;
+    }
+    const auto& offer = seen.control();
     if (!offer)
     {
         return ControlLink::NotOffered;
@@ -50,11 +57,16 @@ ControlLink RunControl::described_link(std::size_t i) const
 bool RunControl::offers_control(std::size_t i) const
 {
     const auto& ecu = ctx_.check.participants[i].ecu;
-    if (!ctx_.config.participants[i].describe || !ecu || !ecu->description.control)
+    if (!ctx_.config.participants[i].describe || !ecu)
     {
         return false;
     }
-    const auto& offer = *ecu->description.control;
+    const SeenEcu seen(ctx_.config.participants[i], *ecu);
+    if (!seen.control())
+    {
+        return false;
+    }
+    const auto& offer = *seen.control();
     return offer.transport == "silkit" && offer.wire_version == static_cast<int>(control::wire::kVersion);
 }
 
@@ -159,7 +171,7 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
         else if (described == ControlLink::VersionMismatch)
         {
             run.control = ControlLink::VersionMismatch;
-            run.control_version = ctx_.check.participants[i].ecu->description.control->wire_version;
+            run.control_version = SeenEcu(ctx_.config.participants[i], *ctx_.check.participants[i].ecu).control()->wire_version;
             run.control_version_described = true;
         }
         else if (described == ControlLink::NotOffered)

@@ -844,6 +844,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | 照合の全体の流れ | `src/check.cpp` |
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
+| シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `src/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
@@ -1628,7 +1629,7 @@ flowchart TD
 
 守ること:
 
-- 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/launch/src/check_networks.cpp`。対応を当てるただ 1 つの関数）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
+- 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/launch/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/launch/src/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
 - `run` の引数は `detail::participant_arguments()`（`libs/launch/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
 
 合わせて直すドキュメント:
@@ -2177,7 +2178,7 @@ flowchart TD
 | ルールと変換 | `libs/control/src/variable_map.cpp` の `MappedSchema` |
 | 変換を適用する所 | `control::Hub`（`set_variable_map()`） |
 | Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::hub()` |
-| 照合 | `check_rules.cpp` の `seen_variables()` と `variable_map_code()` |
+| 照合 | `seen_ecu.cpp` の `seen_variables()`（`SeenEcu::variables()`）、`check_rules.cpp` の `variable_map_code()` |
 
 合わせて直すドキュメント:
 

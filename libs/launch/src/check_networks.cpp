@@ -3,9 +3,9 @@
 // The networks of a participant as the simulation sees them: what its executable described, under
 // the names its entry gives them (network_names), with the values its entry gives its J1939 nodes
 // (j1939_nodes). The rules and the outputs of the check read the networks of a description only
-// through seen_networks(), so that a renamed network is under the simulation's name and a changed
-// node has its new values in every one of them; write_reported_networks() writes what the
-// executable said, as it said it. tests/launch has a check
+// through seen_networks() (SeenEcu::seen_networks(), seen_ecu.hpp), so that a renamed network is
+// under the simulation's name and a changed node has its new values in every one of them;
+// write_reported_networks() writes what the executable said, as it said it. tests/launch has a check
 // (launch.described_networks_are_read_in_one_place) that no other source of the launcher reads them.
 #include "vehicle_sil/launch/check.hpp"
 
