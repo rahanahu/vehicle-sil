@@ -15,7 +15,7 @@ describe('Connection', () => {
     return new Connection({ url: 'ws://127.0.0.1:1/ws', socket: fake.factory, greeting });
   }
 
-  /** まとまりを受け取る。 */
+  /** Receives a batch. */
   function batches(c: Connection): unknown[][] {
     const got: unknown[][] = [];
     c.onBatch((batch) => got.push([...batch]));
@@ -62,12 +62,12 @@ describe('Connection', () => {
     expect(unreadable).toEqual(['{not json']);
     expect(fake.last().closedByClient).toBe(true);
     expect(c.state.get()).toBe('closed');
-    // 読めないものの前にまとめていた分も捨てる（hello から受け直す）
+    // What was batched before the unreadable message is dropped too (received again from hello)
     vi.advanceTimersByTime(BATCH_MS);
     expect(got).toEqual([]);
     vi.advanceTimersByTime(backoffMs(1) - BATCH_MS);
     expect(fake.sockets).toHaveLength(2);
-    // 読めないものしか送らない相手には、待ち時間を延ばしていく
+    // With a peer that sends only unreadable messages, the delay keeps growing
     fake.last().open();
     fake.last().sendText('still not json');
     vi.advanceTimersByTime(backoffMs(2) - 1);
@@ -94,7 +94,7 @@ describe('Connection', () => {
     vi.advanceTimersByTime(1);
     expect(fake.sockets).toHaveLength(3);
 
-    // 通知が届けば、次の待ち時間は最初に戻る
+    // Once a notification arrives, the next delay starts over
     fake.last().open();
     fake.last().send(7);
     fake.last().fail();
@@ -113,7 +113,7 @@ describe('Connection', () => {
     expect(c.failures.get()).toBe(1);
     expect(c.lastClose.get()).toEqual({ code: 1013, reason: 'too-many-connections' });
     expect(c.tryAgainReason.get()).toBe('too-many-connections');
-    // まだ通知が届いていないので、待ち時間は延びている
+    // No notification has arrived yet, so the delay has grown
     vi.advanceTimersByTime(backoffMs(2));
     expect(fake.sockets).toHaveLength(3);
     fake.last().open();
@@ -146,7 +146,7 @@ describe('Connection', () => {
     c.close();
     expect(fake.last().closedByClient).toBe(true);
     expect(c.state.get()).toBe('closed');
-    // 閉じた接続の出来事は、もう数えない
+    // Events of a closed connection are no longer counted
     fake.last().close(4401, 'unauthorized');
     vi.advanceTimersByTime(backoffMs(5) * 2);
     expect(fake.sockets).toHaveLength(1);
@@ -180,7 +180,7 @@ describe('Connection', () => {
     c.connect();
     fake.last().open();
     fake.last().send(1);
-    c.close(); // まとめている途中で切る
+    c.close(); // Disconnect while batching
     c.connect();
     expect(fake.sockets).toHaveLength(2);
     fake.last().open();
@@ -223,7 +223,7 @@ describe('Connection', () => {
     vi.advanceTimersByTime(BATCH_MS);
     expect(got).toEqual([[1]]);
     fake.last().sendText('not json');
-    // 投げても、作り直しまで進む
+    // Even if it throws, the restart still goes ahead
     expect(fake.last().closedByClient).toBe(true);
     expect(errors.map(String)).toEqual([
       'Error: a broken listener',
@@ -276,7 +276,7 @@ describe('Connection', () => {
       vi.advanceTimersByTime(1);
       expect(fake.sockets).toHaveLength(socketsAfter);
     }
-    // しばらくつながり続けたら、最初に戻る
+    // After staying connected for a while, it starts over
     fake.last().open();
     vi.advanceTimersByTime(STEADY_MS);
     fake.last().sendText('garbage');
@@ -284,8 +284,8 @@ describe('Connection', () => {
     expect(fake.sockets).toHaveLength(5);
   });
 
-  // 前の作り（RxJS の共有の流れ）にあった「購読の数でつなぎ、最後の購読が去ったら切る」は、この作りにはない
-  // （connect() と close() で決める）ので、その試験もない。
+  // The earlier design (a shared RxJS stream) connected on the first subscription and disconnected when the last one
+  // left. This design has no such behavior (connect() and close() decide), so there is no test for it.
 
   it('caps the delay', () => {
     expect([1, 2, 3, 4, 5].map((attempt) => backoffMs(attempt))).toEqual([
@@ -294,7 +294,7 @@ describe('Connection', () => {
   });
 
   describe('webSocketFactory', () => {
-    /** 偽の globalThis.WebSocket。作ったときの引数を覚える。 */
+    /** Fake globalThis.WebSocket. Remembers the arguments it was created with. */
     class Recorder {
       static made: unknown[][] = [];
       onopen: (() => void) | null = null;
@@ -304,10 +304,10 @@ describe('Connection', () => {
         Recorder.made.push(args);
       }
       send(): void {
-        // 送らない
+        // Sends nothing
       }
       close(): void {
-        // 閉じる相手はない
+        // Nothing to close
       }
     }
 

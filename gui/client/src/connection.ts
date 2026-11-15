@@ -1,53 +1,54 @@
 import { ErrorSink, Readable, Writable, callEach, derived, rethrowLater } from './values';
 
-/** closed: つながっていない（再接続を待っている間も）、connecting: つなぎに行っている、open: つながっている。 */
+/** closed: not connected (also while waiting to reconnect), connecting: connecting, open: connected. */
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 
-/** 接続が閉じたときの、閉じるコードと理由の文。 */
+/** Close code and reason text of a closed connection. */
 export interface CloseInfo {
   code: number;
   reason: string;
 }
 
-/** サーバーが「後でもう一度」で閉じたときの閉じるコード。つなぎ直す（トークンを断ったのではない）。 */
+/** Close code the server uses for "try again later". The client reconnects (the token was not refused). */
 export const TRY_AGAIN_LATER = 1013;
 
 /**
- * 届いた通知をまとめて渡す間隔（ミリ秒）。ログが速く流れても、利用者への知らせは毎秒この回数まで。
- * 断られたこと（unauthorized）に気づくのも、まとめて渡すとき。サーバーが閉じた後のつなぎ直し（最初は 500 ms）より
- * 短いので、断られたトークンでつなぎ直すことはない（長くすると、1 回つなぎ直してから止まる）。
+ * Interval at which received notifications are passed on in batches (ms). However fast the log flows, subscribers are
+ * notified at most this many times a second. A refusal (unauthorized) is also noticed when a batch is passed on. This
+ * is shorter than the reconnect delay after the server closes (500 ms at first), so the client never reconnects with a
+ * refused token (if it were longer, the client would reconnect once and then stop).
  */
 export const BATCH_MS = 100;
 
-/** WebSocket の出来事を受ける関数。SocketFactory に渡す。 */
+/** Receives WebSocket events. Passed to SocketFactory. */
 export interface SocketHandlers {
   open(): void;
-  /** 届いたテキストのメッセージ。 */
+  /** A text message received. */
   message(text: string): void;
-  /** 閉じた（開く前に閉じた、つながらなかった、も含む）。1 回だけ。 */
+  /** Closed (including closed before opening, and could not connect). Called once. */
   close(code: number, reason: string): void;
 }
 
-/** 開いた WebSocket の、ライブラリが使う部分。 */
+/** The part of an open WebSocket that the library uses. */
 export interface SocketLike {
   send(text: string): void;
   close(): void;
 }
 
-/** WebSocket を開く関数。既定は webSocketFactory()。試験では偽物（testing の FakeWebSockets）に差し替える。 */
+/** Opens a WebSocket. Default webSocketFactory(). Tests replace it with a fake (FakeWebSockets of testing). */
 export type SocketFactory = (url: string, handlers: SocketHandlers) => SocketLike;
 
-/** JSON でない通知で作り直した回数を数え直すまで、つながり続けている時間（ミリ秒）。 */
+/** How long the connection must stay up before the count of restarts caused by non-JSON notifications is reset (ms). */
 export const STEADY_MS = 30_000;
 
-/** 開けなかったときの閉じるコード（握手まで届かなかった）。 */
+/** Close code when the socket could not be opened (the handshake was never reached). */
 const NOT_OPENED = 1006;
 
 /**
- * 標準の WebSocket（ブラウザ、Web Worker、Node 22 以上の globalThis.WebSocket）で開く SocketFactory。
- * origin を渡すと、握手に Origin を付ける（Node で使うとき。Node の WebSocket の拡張の `{headers}` を使う。ブラウザと
- * Worker の WebSocket は 2 つ目の引数をサブプロトコルと読むので、そこでは渡さない）。開けなければ（URL が違う、など）
- * 閉じたことにして、理由を閉じた理由の文（`lastClose.reason`）に入れる。
+ * SocketFactory that opens the standard WebSocket (browsers, Web Workers, globalThis.WebSocket of Node 22 or later).
+ * With origin, the handshake carries Origin (for Node; uses the `{headers}` extension of Node's WebSocket; browser and
+ * Worker WebSockets read a second argument as subprotocols, so it is not passed there). If the socket cannot be opened
+ * (a wrong URL and so on), this counts as closed, with the cause in the close reason text (`lastClose.reason`).
  */
 export function webSocketFactory(options: { origin?: string } = {}): SocketFactory {
   return (url, on) => {
@@ -73,68 +74,72 @@ export function webSocketFactory(options: { origin?: string } = {}): SocketFacto
   };
 }
 
-/** 再接続の待ち時間。0.5 秒から倍にして、上限で頭打ち。attempt は 1 から。 */
+/** Reconnect delay: 0.5 s, doubled each attempt, capped at the limit. attempt starts at 1. */
 export function backoffMs(attempt: number, maxMs = 5000): number {
   return Math.min(500 * 2 ** (attempt - 1), maxMs);
 }
 
-/** Connection の設定。 */
+/** Options of Connection. */
 export interface ConnectionOptions {
-  /** WebSocket の URL（`ws://127.0.0.1:<port>/ws`）。 */
+  /** WebSocket URL (`ws://127.0.0.1:<port>/ws`). */
   url: string;
-  /** WebSocket を開く関数。 */
+  /** Opens the WebSocket. */
   socket: SocketFactory;
-  /** つなぐたびに（再接続でも）、開いた直後に送るメッセージ（JSON にして送る）。つなぐときに呼ぶ。 */
+  /** Message sent right after each open, reconnects included (sent as JSON). Called when connecting. */
   greeting: () => readonly unknown[];
   /**
-   * greeting の後に続けて送るメッセージ（変数の購読など、認証の後に送るもの）。開いたときに呼ぶ（つなぎに行って
-   * から開くまでの間に増えた分も入る）。
+   * Messages sent right after greeting (those that follow authentication, such as variable subscriptions). Called on
+   * open (includes those added between connecting and opening).
    */
   afterGreeting?: () => readonly unknown[];
-  /** 再接続の待ち時間の上限。 */
+  /** Upper limit of the reconnect delay. */
   maxBackoffMs?: number;
-  /** 届いた通知をまとめる間隔。 */
+  /** Interval for batching received notifications. */
   batchMs?: number;
-  /** 購読者が投げた例外を受ける。 */
+  /** Receives what subscribers threw. */
   onError?: ErrorSink;
 }
 
-/** 接続の、読むための口（GuiClient.connection）。つなぐ、切るは GuiClient の connect() と close()。 */
+/**
+ * Read side of the connection (GuiClient.connection). Connect and disconnect with GuiClient's connect() and close().
+ */
 export interface ClientConnection {
-  /** 接続の状態。 */
+  /** Connection state. */
   readonly state: Readable<ConnectionState>;
   /**
-   * 開く前に閉じた（握手で断られたか、届かなかった）回数。ブラウザからは理由が見えないので、増えたら HTTP
-   * （`GET api/app`）で理由を確かめる。
+   * Number of times the socket closed before opening (refused at the handshake, or never reached the server). The
+   * browser does not show why, so when this grows, ask over HTTP (`GET api/app`).
    */
   readonly failures: Readable<number>;
-  /** 最後に閉じたときのコードと理由。閉じた後に通知が届いたら null に戻る（つながり直した）。 */
+  /** Code and reason of the last close. Back to null when a notification arrives after the close (reconnected). */
   readonly lastClose: Readable<CloseInfo | null>;
   /**
-   * サーバーが接続を「後でもう一度」（1013）で閉じた理由の文（`too-many-connections`、`too-many-unauthenticated`）。
-   * 間を置いてつなぎ直していて、つながり直したら null。
+   * Reason text with which the server closed the connection as "try again later" (1013): `too-many-connections`,
+   * `too-many-unauthenticated`. The client reconnects after a delay; null once reconnected.
    */
   readonly tryAgainReason: Readable<string | null>;
   /**
-   * 届いた通知（JSON を読んだもの。中身は確かめない。知らない type も入る）を、まとまりごとに受ける。返す関数で
-   * 購読をやめる。
+   * Receives the notifications that arrived (parsed JSON, contents unchecked, unknown types included), one batch at a
+   * time. Call the returned function to unsubscribe.
    */
   onBatch(listener: (batch: readonly unknown[]) => void): () => void;
-  /** JSON として読めないメッセージ（テキスト）を受ける。そのとき接続は、間を置いてつなぎ直す。 */
+  /** Receives messages (text) that cannot be parsed as JSON. The connection then reconnects after a delay. */
   onUnreadable(listener: (text: string) => void): () => void;
 }
 
 /**
- * GUI サーバーとの WebSocket の接続（1 本）。枠組みに依らない。
+ * One WebSocket connection to the GUI server. No framework needed.
  *
- * - connect() でつなぎ、close() で切る（つなぎ直さない）。close() の後に connect() すると、またつなぐ。
- *   つながっている間（つなぎ直しを待っている間も）の connect() は何もしない。
- * - 切れたら（エラーでも、サーバーが閉じても）backoffMs の間を置いてつなぎ直す。続けて切れるたびに待ち時間を延ばし
- *   （サーバーが 1013「後でもう一度」で閉じ続けても、詰めてつなぎ直さない）、読める通知が届いたら最初に戻す。
- * - つなぐたびに、開いた直後に greeting を送る（認証と、どこから再送してほしいか）。
- * - 届いた通知（JSON を読んだもの。中身は確かめない）を batchMs ごとにまとめて、onBatch の購読者へ渡す。
- *   中身を読むのは機能ごとの読み手（セッションの写し、など）。JSON として読めないものが届いたら、onUnreadable に
- *   知らせて、間を置いてつなぎ直す（hello から受け直す。迷ったら要約から作り直す）。
+ * - connect() connects and close() disconnects (no reconnect). connect() after close() connects again. connect() while
+ *   connected (also while waiting to reconnect) does nothing.
+ * - When the connection drops (an error or the server closing it), reconnects after backoffMs. Each consecutive drop
+ *   lengthens the delay (so a server that keeps closing with 1013 "try again later" is not hammered with reconnects);
+ *   a readable notification resets it.
+ * - Sends greeting right after each open (authentication, and where to resend from).
+ * - Batches the received notifications (parsed JSON, contents unchecked) every batchMs and passes them to the onBatch
+ *   subscribers. Each feature's reader (the session copy and so on) reads the contents. When something arrives that
+ *   cannot be parsed as JSON, notifies onUnreadable and reconnects after a delay (receiving again from hello; when in
+ *   doubt, readers rebuild from the summary).
  */
 export class Connection implements ClientConnection {
   private readonly onError: ErrorSink;
@@ -145,12 +150,12 @@ export class Connection implements ClientConnection {
   private readonly unreadableListeners = new Set<(text: string) => void>();
   private socket: SocketLike | null = null;
   private wanted = false;
-  /** 読める通知が届かないまま続けて切れた回数。 */
+  /** Consecutive drops without a readable notification. */
   private attempts = 0;
-  /** 続けて作り直した回数（restart）。 */
+  /** Consecutive restarts (restart). */
   private restarts = 0;
   private restartAsked = false;
-  /** 続けて JSON でない通知で作り直した回数。STEADY_MS の間つながり続けたら 0 に戻す。 */
+  /** Consecutive restarts caused by non-JSON notifications. Reset to 0 after staying connected for STEADY_MS. */
   private garbled = 0;
   private steadyTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -181,14 +186,14 @@ export class Connection implements ClientConnection {
     );
   }
 
-  /** つなぐ（つながっているか、つなぎ直しを待っているなら何もしない）。 */
+  /** Connects (does nothing if connected or waiting to reconnect). */
   connect(): void {
     if (this.wanted) return;
     this.wanted = true;
     this.open();
   }
 
-  /** 切る。つなぎ直さない。まとめている途中の通知は捨てる。 */
+  /** Disconnects, without reconnecting. Drops notifications still being batched. */
   close(): void {
     this.wanted = false;
     this.restarts = 0;
@@ -204,8 +209,8 @@ export class Connection implements ClientConnection {
   }
 
   /**
-   * いまの接続をやめて、間を置いてつなぎ直す（読み手が、通知から状態を作り直せなかったとき）。待ち時間は、続けて
-   * つなぎ直すたびに延びる。
+   * Drops the current connection and reconnects after a delay (when a reader could not rebuild its state from the
+   * notifications). The delay grows with each consecutive restart.
    */
   restart(): void {
     this.restartAfter(backoffMs(++this.restarts, this.options.maxBackoffMs));
@@ -224,8 +229,8 @@ export class Connection implements ClientConnection {
   }
 
   /**
-   * サーバーへ通知を送る（認証の後のもの。変数の購読など）。開いているときだけ送り、送ったかを返す。開いていない
-   * ときの分は、開いたときの afterGreeting で送る。
+   * Sends a notification to the server (one that follows authentication, such as a variable subscription). Sends only
+   * while open and returns whether it sent. What could not be sent goes out with afterGreeting on the next open.
    */
   send(message: unknown): boolean {
     if (this.socket === null || this.stateValue.get() !== 'open') return false;
@@ -252,7 +257,7 @@ export class Connection implements ClientConnection {
     };
   }
 
-  /** まとめている通知を、待たずに渡す。 */
+  /** Passes on the batched notifications without waiting. */
   flush(): void {
     clearTimeout(this.batchTimer);
     this.batchTimer = undefined;
@@ -261,7 +266,7 @@ export class Connection implements ClientConnection {
     if (batch.length === 0) return;
     this.restartAsked = false;
     callEach(this.batchListeners, [batch], this.onError);
-    // 読み手が作り直しを頼まずに受け終えた: 次の作り直しの待ち時間は最初から
+    // The readers took the batch without asking for a restart: the next restart's delay starts over
     if (!this.restartAsked) this.restarts = 0;
   }
 
@@ -275,8 +280,8 @@ export class Connection implements ClientConnection {
     try {
       this.openSocket();
     } catch (error) {
-      // 設定で渡した関数（認証のメッセージ、トークン、SocketFactory）が投げた: 知らせて、閉じたことにして、間を置いて
-      // つなぎ直す（黙って止まらない）
+      // A function from the options (the authentication message, the token, SocketFactory) threw: report it, treat the
+      // connection as closed and reconnect after a delay (never stop silently)
       this.onError(error);
       this.socket = null;
       this.lastCloseValue.set({
@@ -316,8 +321,9 @@ export class Connection implements ClientConnection {
         try {
           message = JSON.parse(text);
         } catch {
-          // 何が抜けたかわからない: 知らせて、hello から受け直す。待ち時間は、読めないものが来るたびに延び、
-          // STEADY_MS の間つながり続けるまで戻さない（読める通知と読めない通知を交互に送る相手にも、詰めてつながない）
+          // Unknown what was lost: report it and receive again from hello. The delay grows with each unreadable message
+          // and is not reset until the connection stays up for STEADY_MS (so a peer that alternates readable and
+          // unreadable notifications is not hammered with reconnects either)
           callEach(this.unreadableListeners, [text], this.onError);
           this.restartAfter(backoffMs(++this.garbled, this.options.maxBackoffMs));
           return;

@@ -65,7 +65,21 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --example-config ${PROJECT_SOURCE_DIR}/examples/ecu_main/simulation.yaml
-         --docs ${PROJECT_SOURCE_DIR}/docs)
+         --docs ${VEHICLE_SIL_TESTED_DOCS})
+endif()
+
+# The example of the guide docs/howto/integrate-ecus.md (examples/integrate_ecus: two ECUs that name one
+# bus differently, and the same two after one was built again): the files, --describe and the
+# launcher's outputs must be what the guide shows.
+if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_dashboard_v1_ecu)
+  add_test(NAME launch_docs.integrate_ecus
+           COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                   -DDASHBOARD_V1=$<TARGET_FILE:vehicle_sil_dashboard_v1_ecu>
+                   -DDIR=$<TARGET_FILE_DIR:vehicle_sil_dashboard_v1_ecu>/..
+                   -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/integrate_ecus
+                   -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/integrate-ecus.md
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/integrate_ecus.cmake)
+  set_tests_properties(launch_docs.integrate_ecus PROPERTIES LABELS "integration;launch" TIMEOUT 300)
 endif()
 
 # vehicle_sil_launch run as a process: the example of examples/ecu_main and docs/simulation-*.md,
@@ -171,7 +185,20 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
-         --docs ${PROJECT_SOURCE_DIR}/docs)
+         --docs ${VEHICLE_SIL_TESTED_DOCS})
+  # The guide docs/howto/scenario-tests.md: what its reader does with the two ECUs of examples/ecu_main
+  # (the scenarios that come with them, the ones of examples/scenario_tests the guide has the reader
+  # write, check, run and test), in the guide's order; the files, the outputs and the exit codes must
+  # be what the guide shows.
+  add_test(NAME launch_run.scenario_guide
+           COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                   -DECU_MAIN=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
+                   -DECU_MAIN_SOURCE=${PROJECT_SOURCE_DIR}/examples/ecu_main
+                   -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/scenario_tests
+                   -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/scenario-tests.md
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}/scenario_guide
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/scenario_guide.cmake)
+  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300)
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
@@ -182,7 +209,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
-         --docs ${PROJECT_SOURCE_DIR}/docs
+         --docs ${VEHICLE_SIL_TESTED_DOCS}
     MACHINE_LOCK port-8500)
   # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
   # which is a bound on real time (the other scenarios have bounds on one side only).
@@ -194,7 +221,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
-         --docs ${PROJECT_SOURCE_DIR}/docs
+         --docs ${VEHICLE_SIL_TESTED_DOCS}
     RUN_SERIAL)
 endif()
 

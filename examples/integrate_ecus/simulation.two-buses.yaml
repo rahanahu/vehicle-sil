@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../schema/simulation.schema.json
+# simulation.yaml with the dashboard's name for the bus added to networks: the check passes, and the
+# two ECUs are on two buses (the guide docs/howto/integrate-ecus.md).
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+  - name: VehicleCAN
+    kind: can
+participants:
+  - name: Engine
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+  - name: Dashboard
+    command: [dashboard_v1/vehicle_sil_dashboard_v1_ecu]
+    step_ms: 5

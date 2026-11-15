@@ -4,35 +4,38 @@ import { CommandView, SessionView, TimeView } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater, shallowEqual } from './values';
 import { VariablesState } from './variables';
 
-/** ランチャーの features のうち、時刻にかかわるもの。 */
+/** The launcher features that concern time. */
 export const FEATURE_SPEED = 'speed';
 export const FEATURE_START_PAUSED = 'start-paused';
 export const FEATURE_TIME_COMMANDS = 'time-commands';
 
 /**
- * 送った命令へのランチャーの答え（command の事象）を待つ時間（ミリ秒）。過ぎたら待つのをやめて、操作を押せるように
- * 戻し、答えが来ないことを誤りとして出す（入力を読まないランチャー）。
+ * How long to wait for the launcher's answer (the command event) to a command sent (ms). After that, the client stops
+ * waiting, enables the controls again and reports the missing answer as an error (a launcher that does not read its
+ * input).
  */
 export const ANSWER_TIMEOUT_MS = 5000;
 
-/** 送らなかった理由: 実行がない、前の命令の答えを待っている。 */
+/** Why nothing was sent: no run, or waiting for the answer to the previous command. */
 export type NotSentReason = 'no-session' | 'waiting';
 
-/** send() などの結果: 送ったか。送らなかったなら、その理由。 */
+/** Result of send() and the like: whether it was sent and, if not, why. */
 export type SendResult = { sent: true } | { sent: false; reason: NotSentReason };
 
-/** 時刻の命令がうまくいかなかったこと。 */
+/** A time command that went wrong. */
 export interface TimeFailure {
-  /** server: サーバーが断った（message はサーバーの英語の文）、no-answer: ランチャーが答えなかった。 */
+  /** server: the server refused (message is the server's English text); no-answer: the launcher did not answer. */
   kind: 'server' | 'no-answer';
-  /** 人に見せる英語の文。画面の言葉にするときは kind と command、answerTimeoutMs から作る。 */
+  /**
+   * English text to show a person. To put it in the screen's language, build it from kind, command and answerTimeoutMs.
+   */
   message: string;
   command: TimeCommandName;
-  /** 送った実行の番号。 */
+  /** Number of the run it was sent to. */
   session: number | null;
 }
 
-/** 遅れの数（等速などで速さを合わせているときだけ意味がある）。 */
+/** Lateness figures (meaningful only while the speed is paced, such as at real-time speed). */
 export interface Lateness {
   lateSteps: number;
   maxLateMs: number;
@@ -40,86 +43,94 @@ export interface Lateness {
   lateMs: number;
 }
 
-/** 時刻の状態と、いま押してよい命令。値はどれも、セッションの写しとサーバーの情報から作る。 */
+/**
+ * Time state and the commands that may be used now. All values come from the session copy and the server information.
+ */
 export interface TimeState {
-  /** ランチャーが時刻の命令（pause、resume、step、speed）を持つか。持たなければ操作を出さない。 */
+  /** Whether the launcher has time commands (pause, resume, step, speed). If not, no controls are shown. */
   supported: boolean;
-  /** いまのセッションの時刻（time の事象が来るまでは null）。 */
+  /** Time of the current session (null until a time event arrives). */
   time: TimeView | null;
-  /** 速さを合わせている（数の速さ）。最速では遅れを数えない。 */
+  /** The speed is paced (a numeric speed). Lateness is not counted when running as fast as possible. */
   paced: boolean;
-  /** 遅れの数（ランチャーが書かないときは null）。 */
+  /** Lateness figures (null when the launcher does not write them). */
   lateness: Lateness | null;
   /**
-   * 実時間に遅れたか（許容を超えて遅れた刻みがある）。許容の内の小さな late_ms は、刻みの同期のたびに出たり消えたり
-   * するので、ここには入れない。最速に変えた後も、それまでの遅れは残る。
+   * Whether the run fell behind real time (some time steps were later than the tolerance). Small late_ms within the
+   * tolerance come and go with every step synchronization, so they are not counted here. Lateness so far is kept after
+   * switching to as fast as possible.
    */
   behind: boolean;
-  /** 最後に届いた command の事象（stop も含む）。 */
+  /** The last command event received (stop included). */
   lastCommand: CommandView | null;
   /**
-   * 時刻の命令を送れるか: ランチャーが対応し、セッションの写しが揃っていて、段階が running で、time の事象が来ていて、
-   * 結果がまだで、止めるよう頼んでいない。段階が stopping に進んだら、ランチャーはもう受け付けない。beforeStart の
-   * 間も送れる。
+   * Whether time commands can be sent: the launcher supports them, the session copy is in sync, the phase is running,
+   * a time event has arrived, there is no result yet and no stop has been requested. Once the phase moves on to
+   * stopping, the launcher no longer accepts them. Commands can also be sent during beforeStart.
    */
   controllable: boolean;
   /**
-   * 最初のステップの前（始まる前）で、再開かステップ送りを待っている実行か: 止めて始めた（start_paused）実行で、
-   * ランチャーが Control Server を持ち（変数の状態が off でない）、まだ動き出していない。この間、ランチャーは time の
-   * 事象を書かないが、再開とステップ送りを受け付け（一時停止は受け付けても進まない）、書いた変数は時刻 0 のステップで
-   * 反映される。
+   * Whether the run is before its first step (not started yet), waiting for a resume or a step: a run started paused
+   * (start_paused) whose launcher has a Control Server (the variable status is not off) and that has not started
+   * moving. Meanwhile the launcher writes no time events but accepts resume and step (it accepts pause too, which
+   * changes nothing), and variables written are applied in the step at time 0.
    */
   beforeStart: boolean;
   /**
-   * 送って、まだ答えを見ていない命令（HTTP の応答か、ランチャーの command の事象を待っている）。その間は、次の命令を
-   * 送らない（ダブルクリックや Enter の繰り返しで、ステップ送りが 2 回にならないように）。
+   * A command sent whose answer has not been seen yet (waiting for the HTTP answer or the launcher's command event).
+   * Meanwhile no further command is sent (so a double click or a repeated Enter does not step twice).
    */
   sending: TimeCommandName | null;
-  /** ステップ送りの途中（ランチャーは、その間も一時停止の扱いで、再開とステップ送りを受け付ける）。 */
+  /** A step is in progress (meanwhile the launcher counts as paused and accepts resume and step). */
   stepping: boolean;
-  /** 一時停止を押せるか（動いているとき。ステップ送りの途中も）。 */
+  /** Whether Pause can be used (while running, also during a step). */
   canPause: boolean;
-  /** 再開を押せるか（一時停止しているとき、またはステップ送りの途中）。 */
+  /** Whether Resume can be used (while paused, or during a step). */
   canResume: boolean;
-  /** ステップ送りを押せるか（canResume と同じ。ランチャーの決まり）。 */
+  /** Whether Step can be used (the same as canResume; the launcher's rule). */
   canStep: boolean;
-  /** 最後の命令がうまくいかなかったこと。実行が変わったら null。 */
+  /** The last command that went wrong. null once the run changes. */
   failure: TimeFailure | null;
 }
 
-/** 送って、ランチャーの答え（command の事象）をまだ見ていない命令。 */
+/** A command sent whose launcher answer (command event) has not been seen yet. */
 interface Pending {
   command: TimeCommandName;
   session: number;
-  /** 送ったときの最後の command の事象の seq。これより後の command の事象が答え。 */
+  /** seq of the last command event when it was sent. The next command event after it is the answer. */
   afterSeq: number;
 }
 
-/** 時刻の、読むための口と命令（GuiClient.time）。 */
+/** Read side and commands of time (GuiClient.time). */
 export interface ClientTime {
-  /** 時刻の状態と、いま押してよい命令。 */
+  /** Time state and the commands that may be used now. */
   readonly state: Readable<TimeState>;
-  /** 命令の答えを待つ時間（ミリ秒）。 */
+  /** How long to wait for the answer to a command (ms). */
   readonly answerTimeoutMs: number;
   pause(): SendResult;
   resume(): SendResult;
-  /** 一時停止しているとき、仮想時間を ms 進めて、また止める（ランチャーが刻みの倍数に切り上げる）。 */
+  /**
+   * While paused, advances virtual time by ms and pauses again (the launcher rounds up to a multiple of the time step).
+   */
   step(ms: number): SendResult;
-  /** 速さを変える（一時停止はそのまま）。 */
+  /** Changes the speed (a pause stays in effect). */
   setSpeed(value: number | 'max'): SendResult;
   /**
-   * 命令を送る。結果は、ランチャーの command と time の事象で届く。実行がないとき、前の命令の答えを待っている間は
-   * 送らず、`{sent: false, reason}` を返す。押せるかは、送る前に state の canPause などで確かめる。
+   * Sends a command. The result arrives as the launcher's command and time events. With no run, or while waiting for
+   * the answer to the previous command, nothing is sent and `{sent: false, reason}` is returned. Check whether a
+   * command can be used (canPause in state and so on) before sending.
    */
   send(command: TimeCommand): SendResult;
 }
 
 /**
- * シミュレーションの時刻: 状態（TimeState）を読める値で出し、時刻の命令（一時停止、再開、ステップ送り、速さの変更）
- * を GUI サーバーへ送る（`POST api/time`）。
+ * Simulation time: exposes the state (TimeState) as a readable value and sends time commands (pause, resume, step,
+ * speed change) to the GUI server (`POST api/time`).
  *
- * - 状態はセッションの写し（要約とランチャーの事象。要約が正）から作る。途中からつないでも、要約で同じ状態が出る。
- * - 命令はサーバーがランチャーに渡して、すぐ返る。受け付けたかは lastCommand、効いたことは time に出る。
+ * - The state is built from the session copy (summary and launcher events; the summary is authoritative). A client
+ *   that connects midway gets the same state from the summary.
+ * - The server passes commands to the launcher and returns at once. lastCommand shows whether the launcher accepted a
+ *   command, time shows that it took effect.
  */
 export class TimeControl implements ClientTime {
   private readonly inFlight: Writable<number>;
@@ -128,7 +139,7 @@ export class TimeControl implements ClientTime {
   private answerTimer: ReturnType<typeof setTimeout> | undefined;
   private lastLateness: Lateness | null = null;
 
-  /** 時刻の状態と、いま押してよい命令。 */
+  /** Time state and the commands that may be used now. */
   readonly state: Readable<TimeState>;
 
   constructor(
@@ -136,10 +147,10 @@ export class TimeControl implements ClientTime {
     ready: Readable<boolean>,
     app: Readable<AppInfo | null>,
     private readonly transport: HttpTransport,
-    /** 答えを待つ時間（ミリ秒）。 */
+    /** How long to wait for an answer (ms). */
     readonly answerTimeoutMs = ANSWER_TIMEOUT_MS,
     onError: ErrorSink = rethrowLater,
-    /** 変数の状態（beforeStart を決めるのに使う。なければ、いつも偽）。 */
+    /** Variable state (used to decide beforeStart; if absent, always false). */
     private readonly variables: Readable<VariablesState> | null = null,
   ) {
     this.inFlight = new Writable<number>(0, Object.is, onError);
@@ -169,20 +180,23 @@ export class TimeControl implements ClientTime {
     return this.send({ command: 'resume' });
   }
 
-  /** 一時停止しているとき、仮想時間を ms 進めて、また止める（ランチャーが刻みの倍数に切り上げる）。 */
+  /**
+   * While paused, advances virtual time by ms and pauses again (the launcher rounds up to a multiple of the time step).
+   */
   step(ms: number): SendResult {
     return this.send({ command: 'step', ms });
   }
 
-  /** 速さを変える（一時停止はそのまま）。 */
+  /** Changes the speed (a pause stays in effect). */
   setSpeed(value: number | 'max'): SendResult {
     return this.send({ command: 'speed', value });
   }
 
   /**
-   * 命令を送る。結果は、ランチャーの command と time の事象で届く（応答の中身は使わない）。実行がないとき、前の命令の
-   * 答えを待っている間（sending）は送らず、`{sent: false, reason}` を返す。答えが answerTimeoutMs の間に来なければ、
-   * 待つのをやめて failure に出す。押せるかは、送る前に canPause などで確かめる。
+   * Sends a command. The result arrives as the launcher's command and time events (the content of the HTTP answer is
+   * not used). With no run, or while waiting for the answer to the previous command (sending), nothing is sent and
+   * `{sent: false, reason}` is returned. If no answer comes within answerTimeoutMs, stops waiting and reports it in
+   * failure. Check whether a command can be used (canPause and so on) before sending.
    */
   send(command: TimeCommand): SendResult {
     const session = this.session.get();
@@ -202,7 +216,7 @@ export class TimeControl implements ClientTime {
       this.inFlight.update((n) => n - 1);
       if (outcome.ok || this.pending.get() !== pending) return;
       clearTimeout(this.answerTimer);
-      this.pending.set(null); // 送れなかった: ランチャーの答えは来ない
+      this.pending.set(null); // Not sent: no launcher answer will come
       this.failureValue.set({
         kind: 'server',
         message: errorMessage(outcome.error),
@@ -213,13 +227,13 @@ export class TimeControl implements ClientTime {
     return { sent: true };
   }
 
-  /** 待ちの時計を止め、答えを待つのをやめる（クライアントを閉じるとき）。 */
+  /** Stops the wait timer and stops waiting for the answer (when the client closes). */
   dispose(): void {
     clearTimeout(this.answerTimer);
     this.pending.set(null);
   }
 
-  /** 答えを待つ時間が過ぎた: まだ答えが来ていなければ、待つのをやめて、そう言う。 */
+  /** The answer timed out: if no answer has come yet, stop waiting and say so. */
   private giveUp(pending: Pending): void {
     if (this.pending.get() !== pending || this.state.get().sending === null) return;
     this.pending.set(null);
@@ -245,7 +259,8 @@ export class TimeControl implements ClientTime {
             slippedMs: time.slippedMs ?? 0,
             lateMs: time.lateMs ?? 0,
           };
-    // 同じ数なら前のものを使う（ほかの欄だけが変わったときに、遅れが変わったと知らせない）
+    // Keep the previous object if the figures are the same (so a change in other fields alone does not report changed
+    // lateness)
     if (lateness && this.lastLateness && shallowEqual(lateness, this.lastLateness)) {
       lateness = this.lastLateness;
     }

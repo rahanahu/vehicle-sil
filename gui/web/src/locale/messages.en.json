@@ -1,6 +1,6 @@
 {
   "locale": "en",
-  "note": "First pass of the English translation, not yet reviewed by a native speaker. target null: not translated yet (the screen shows the Japanese source).",
+  "note": "English for the screen's Japanese source text, reviewed for use as UI copy. Style: sentence case; buttons are verbs, states are adjectives or nouns, messages are plain statements; no contractions; one word for one thing, as the launcher and the manual say it (configuration file, check, finding, participant, step, stderr). target null: not translated yet (the screen shows the Japanese source).",
   "translations": {
     "7760318231941318064": {
       "source": "vehicle-sil",
@@ -24,7 +24,7 @@
     },
     "8601103906724514798": {
       "source": "見つからない - vehicle-sil",
-      "target": "Not found - vehicle-sil"
+      "target": "Page not found - vehicle-sil"
     },
     "4014900750292963975": {
       "source": "ナビゲーションを開く",
@@ -40,7 +40,7 @@
     },
     "2831722713291175641": {
       "source": "ランチャーが命令（{$command}）に {$seconds} 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。",
-      "target": "The launcher has not answered the command ({$command}) for {$seconds} s: it may not read its input. You can send again."
+      "target": "The launcher has not answered the {$command} command in {$seconds} s. It may not be reading its input. You can send the command again."
     },
     "8542080435534198197": {
       "source": "実行",
@@ -56,11 +56,11 @@
     },
     "4961816437981243176": {
       "source": "このアドレスの画面はありません。リンクが古いか、打ち間違いかもしれません。",
-      "target": "There is no page at this address. The link may be old or mistyped."
+      "target": "Nothing is at this address. The link may be out of date or mistyped."
     },
     "4390535284457798540": {
       "source": "最初の画面へ",
-      "target": "Go to the first page"
+      "target": "Go to the start screen"
     },
     "5987842789541229177": {
       "source": "照合: {$INTERPOLATION}（誤り {$INTERPOLATION_1}、警告 {$INTERPOLATION_2}、注記 {$INTERPOLATION_3}）",
@@ -72,7 +72,7 @@
     },
     "6601304880850067743": {
       "source": "使う",
-      "target": "Use"
+      "target": "Enabled"
     },
     "4905520956161692593": {
       "source": "自分で起動する",
@@ -84,7 +84,7 @@
     },
     "3262925686581915009": {
       "source": "待つか:",
-      "target": "Joining:"
+      "target": "Participation:"
     },
     "4656317926122790575": {
       "source": "必須",
@@ -104,15 +104,15 @@
     },
     "3525856972279023725": {
       "source": "構成ファイルで外してあります（enabled: false）。",
-      "target": "Disabled in the config file (enabled: false)."
+      "target": "Disabled in the configuration file (enabled: false)."
     },
     "6368315094090140399": {
       "source": " ランチャーは起動しません。始めると、起動するコマンドが「participant の状態」に出ます。そのコマンドを（デバッガーなどから）実行すると参加し、シミュレーションはそれまで待ちます。 ",
-      "target": " The launcher does not start it. When you start the run, the command to start it appears in Participant status. Run that command (from a debugger, for example) and it joins; the simulation waits until then. "
+      "target": " The launcher does not start this participant. When the run starts, the command to start it appears under Participant status. Run that command (from a debugger, for example); the simulation waits until the participant joins. "
     },
     "2475584079216036275": {
       "source": "構成ファイルで自分で起動すると指定してあります（manual: true）。",
-      "target": "The config file says you start it yourself (manual: true)."
+      "target": "Set in the configuration file to be started by you (manual: true)."
     },
     "1231569490753108814": {
       "source": "participant がありません。",
@@ -124,7 +124,7 @@
     },
     "6358845893914240906": {
       "source": "{$name} を使う",
-      "target": "Use {$name}"
+      "target": "Enable {$name}"
     },
     "277134845098732758": {
       "source": "{$name} を自分で起動する",
@@ -140,7 +140,7 @@
     },
     "8072528740842311599": {
       "source": " participant の終わりを待たずに、ランチャーに強制終了を頼みます。participant が書き終えていない結果やログは失われることがあります。 ",
-      "target": " The launcher is asked to kill the participants without waiting for them to end. Results and logs they have not finished writing may be lost. "
+      "target": " This asks the launcher to kill the participants without waiting for them to exit. Results and logs they have not finished writing may be lost. "
     },
     "5368637977289654342": {
       "source": " やめる ",
@@ -172,15 +172,15 @@
     },
     "6986580671790460179": {
       "source": "参加を待つ",
-      "target": "Waiting to join"
+      "target": "Join"
     },
     "1325193399605761038": {
       "source": "停止中",
-      "target": "Stopping"
+      "target": "Stop"
     },
     "3446453269909162427": {
       "source": "終了",
-      "target": "Ended"
+      "target": "End"
     },
     "6510556546876197055": {
       "source": "照合した",
@@ -192,7 +192,7 @@
     },
     "708845366436870643": {
       "source": "照合できない",
-      "target": "Check failed"
+      "target": "Could not check"
     },
     "4264594946253376882": {
       "source": "飛ばした",
@@ -208,7 +208,7 @@
     },
     "70671245526033097": {
       "source": "自分で起動する: 参加を待っています",
-      "target": "To be started by you: waiting for it to join"
+      "target": "Waiting for you to start it"
     },
     "2029821123243853476": {
       "source": "参加した",
@@ -244,15 +244,15 @@
     },
     "7150011854091514567": {
       "source": "誤りがある",
-      "target": "Has errors"
+      "target": "Failed"
     },
     "8130600690008587170": {
       "source": "構成ファイルを読めない",
-      "target": "Cannot read the config file"
+      "target": "Cannot read the configuration file"
     },
     "7595249859235127369": {
       "source": "引数の誤り",
-      "target": "Wrong arguments"
+      "target": "Usage error"
     },
     "5561109810048431292": {
       "source": "成功",
@@ -264,7 +264,7 @@
     },
     "73246474307767438": {
       "source": "照合の誤りで起動しなかった",
-      "target": "Not started: the check found errors"
+      "target": "Not started (the check failed)"
     },
     "7256754669943930147": {
       "source": "準備に失敗した",
@@ -272,11 +272,11 @@
     },
     "5640466719174617982": {
       "source": "結果の名前を読めません",
-      "target": "Cannot read the result name"
+      "target": "Unknown result"
     },
     "7825180317461266234": {
       "source": "stop_at_ms まで動いた",
-      "target": "Ran until stop_at_ms"
+      "target": "Reached stop_at_ms"
     },
     "1220425914004385212": {
       "source": "participant が止めた",
@@ -308,7 +308,7 @@
     },
     "5807458646117155630": {
       "source": "シナリオは終わる前に止まりました",
-      "target": "The scenario stopped before its end"
+      "target": "The scenario stopped before it finished"
     },
     "6377323770012009288": {
       "source": "シナリオは動きませんでした",
@@ -320,11 +320,11 @@
     },
     "4740247778648809579": {
       "source": "途中で終わった",
-      "target": "Ended partway"
+      "target": "Unfinished"
     },
     "5644006703414350153": {
       "source": "動かなかった",
-      "target": "Did not run"
+      "target": "Not run"
     },
     "5178359797605568054": {
       "source": "シミュレーションを去った",
@@ -332,23 +332,23 @@
     },
     "5537494390038076078": {
       "source": "プロセスが失敗で終わった",
-      "target": "The process ended with a failure"
+      "target": "The process exited with a failure"
     },
     "3369891108883893361": {
       "source": "始まる前に終わった",
-      "target": "Ended before the start"
+      "target": "Exited before the simulation started"
     },
     "35670291445944221": {
       "source": "停止の命令（画面の「停止」）",
-      "target": "The stop command (Stop on the screen)"
+      "target": "Stop command (the Stop button)"
     },
     "8741061450773619028": {
       "source": "標準入力の終わり（GUI サーバーが終わった）",
-      "target": "End of input (the GUI server ended)"
+      "target": "End of stdin (the GUI server exited)"
     },
     "4614367135449924014": {
       "source": "事象を読む側がいなくなった",
-      "target": "Nothing reads the events any more"
+      "target": "Event output closed (nothing reads it)"
     },
     "2816314616218041925": {
       "source": "最速",
@@ -364,7 +364,7 @@
     },
     "1908210406916551300": {
       "source": "実時間に遅れました: 遅れた刻み {$steps} 回、最大の遅れ {$max} ms、ずれの合計 {$slipped} ms。",
-      "target": "Fell behind real time: {$steps} late steps, the latest by {$max} ms, {$slipped} ms behind in all."
+      "target": "Fell behind real time: {$steps} late steps, max lateness {$max} ms, total slip {$slipped} ms."
     },
     "5820938043696799093": {
       "source": "実時間に遅れました。",
@@ -372,7 +372,7 @@
     },
     "9205666988521086765": {
       "source": "送った命令へのランチャーの答えを待っています。",
-      "target": "Waiting for the launcher to answer the command sent."
+      "target": "Waiting for the launcher to answer the command."
     },
     "7779081102281014893": {
       "source": "変数: つながった",
@@ -384,19 +384,19 @@
     },
     "924182004814858054": {
       "source": "変数: hello が来なかった（読み書きできない）",
-      "target": "Variables: no hello came (cannot be read or written)"
+      "target": "Variables: no hello received (cannot read or write)"
     },
     "3166090015486688334": {
       "source": "変数: 形式の版が違う（読み書きできない）",
-      "target": "Variables: another message version (cannot be read or written)"
+      "target": "Variables: different format version (cannot read or write)"
     },
     "9142096827559408509": {
       "source": "変数: 形式の版 {$version} が違う（読み書きできない）",
-      "target": "Variables: message version {$version} differs (cannot be read or written)"
+      "target": "Variables: different format version {$version} (cannot read or write)"
     },
     "2648994986082843508": {
       "source": "変数: あるが、この ECU は読み書きの口を出していない",
-      "target": "Variables: has some, but this ECU does not offer them to be read or written"
+      "target": "Variables: declared, but this ECU does not expose them"
     },
     "1727434890989314966": {
       "source": "変数: なし",
@@ -416,7 +416,7 @@
     },
     "3051548222537298898": {
       "source": "末尾に追従",
-      "target": "Follow the end"
+      "target": "Follow new lines"
     },
     "6952070187813782386": {
       "source": "{VAR_PLURAL, plural, other {{INTERPOLATION} 行}}",
@@ -428,19 +428,19 @@
     },
     "8495269387096078460": {
       "source": "古い行を落としました:",
-      "target": "Old lines dropped:"
+      "target": "Older lines discarded:"
     },
     "7804724824750282316": {
       "source": "{$INTERPOLATION} {$ICU}",
-      "target": "{$INTERPOLATION}: {$ICU}"
+      "target": "{$INTERPOLATION} ({$ICU})"
     },
     "711176558503009631": {
       "source": "{VAR_PLURAL, plural, other {読んでいる間に {INTERPOLATION} 行が届きました。}}",
-      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} new line came in while you were reading.} other {{INTERPOLATION} new lines came in while you were reading.}}"
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} new line arrived while you were reading.} other {{INTERPOLATION} new lines arrived while you were reading.}}"
     },
     "5933475576422501221": {
       "source": "末尾へ",
-      "target": "Go to the end"
+      "target": "Scroll to the end"
     },
     "8982094913917671380": {
       "source": "ログ",
@@ -460,7 +460,7 @@
     },
     "9054170585872214007": {
       "source": " ランチャーが先に終わったので、終わりを知らせてこなかった participant がどうなったかはわかりません。 ",
-      "target": " The launcher ended first, so it is not known what happened to the participants that did not report their end. "
+      "target": " The launcher exited first. What happened to the participants that did not report their end is unknown. "
     },
     "8256279921376192658": {
       "source": "participant の状態",
@@ -500,7 +500,7 @@
     },
     "4836877782316867966": {
       "source": "ディレクトリ",
-      "target": "In the directory"
+      "target": "In the folder"
     },
     "655693724784412941": {
       "source": "で、次のコマンドを実行します:",
@@ -516,11 +516,11 @@
     },
     "4704410634574974411": {
       "source": " シミュレーションが終わっても残っています。ランチャーは終わらせないので、自分で終わらせてください。 ",
-      "target": " It is still running after the simulation ended. The launcher does not end it, so end it yourself. "
+      "target": " Still running after the simulation ended. The launcher does not stop it; stop it yourself. "
     },
     "6093372099174534144": {
       "source": "大きすぎて省いた欄: {$INTERPOLATION}",
-      "target": "Fields left out (too large): {$INTERPOLATION}"
+      "target": "Fields omitted (too large): {$INTERPOLATION}"
     },
     "4249960518295599261": {
       "source": "まだ participant の知らせがありません。",
@@ -532,7 +532,7 @@
     },
     "5245842725194486240": {
       "source": "参加しなかった（自分で起動）",
-      "target": "Did not join (you start this one yourself)"
+      "target": "Did not join (start it yourself)"
     },
     "8521098696683045571": {
       "source": "参加した（自分で起動）",
@@ -548,19 +548,19 @@
     },
     "5510708034680427086": {
       "source": " この実行で反映された書き込み {$INTERPOLATION} 件を、{$INTERPOLATION_1} 個の手順（set）にして保存します。この GUI サーバーを通したすべての書き込みです（ほかの画面や、api/write を使う道具のものも入ります）。 ",
-      "target": " Saves the {$INTERPOLATION} writes applied in this run as {$INTERPOLATION_1} steps (set). These are all the writes through this GUI server (also those from other screens and from tools that use api/write). "
+      "target": " Saves the {$INTERPOLATION} writes applied in this run as {$INTERPOLATION_1} set steps. This includes every write through this GUI server, also those from other tabs and from tools that use api/write. "
     },
     "1466892935012351634": {
       "source": " {$INTERPOLATION} 件の書き込みは入りません。理由は、保存したファイルの先頭のコメントにあります。 ",
-      "target": " Writes left out: {$INTERPOLATION}. The comments at the top of the saved file say why. "
+      "target": " Writes left out: {$INTERPOLATION}. The comments at the top of the saved file explain why. "
     },
     "6916844428088730521": {
       "source": " この実行の操作をシナリオとして保存 ",
-      "target": " Save the writes of this run as a scenario "
+      "target": " Save this run's writes as a scenario "
     },
     "1942270044819791758": {
       "source": " 保存したファイルを構成ファイルの隣の scenarios に置くと、「シナリオ」で選んで回せます。シナリオは最後の手順の時刻で止まるので、その後も走らせたいときや、確かめる手順（expect、wait_until）は、エディターで足してください（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。 ",
-      "target": " Put the saved file in scenarios next to the config file, and you can choose it under Scenario and run it. A scenario stops at the time of its last step: to run on after it, or to add steps that check (expect, wait_until), edit the file (the comments at its top have examples). Pausing and stepping are not saved. "
+      "target": " Put the saved file in scenarios next to the configuration file, and you can choose it under Scenario and run it. A scenario stops at the time of its last step. To keep running after that, or to add steps that check values (expect, wait_until), edit the file; the comments at its top have examples. Pauses and steps are not saved. "
     },
     "1907072433345070030": {
       "source": "まだ保存するものがありません。変数を書いて、反映されると数えます。",
@@ -568,15 +568,15 @@
     },
     "3337553899292010384": {
       "source": "この実行の操作は、シナリオとして保存できません:",
-      "target": "The writes of this run cannot be saved as a scenario:"
+      "target": "This run's writes cannot be saved as a scenario:"
     },
     "5486695330168130127": {
       "source": "保存するものを読めませんでした:",
-      "target": "Could not get what to save:"
+      "target": "Could not get the writes to save:"
     },
     "3371286846145497426": {
       "source": " 保存のためにブラウザへ渡しました: {$INTERPOLATION} ",
-      "target": " Handed to the browser to save: {$INTERPOLATION} "
+      "target": " Sent to the browser to save: {$INTERPOLATION} "
     },
     "7021650277600365342": {
       "source": "終わり方",
@@ -632,7 +632,7 @@
     },
     "6610436969984243417": {
       "source": "最大の遅れ",
-      "target": "Latest by"
+      "target": "Max lateness"
     },
     "7181536990766699085": {
       "source": "{$INTERPOLATION} ms",
@@ -640,27 +640,27 @@
     },
     "8848804709372536148": {
       "source": "ずれの合計",
-      "target": "Behind in all"
+      "target": "Total slip"
     },
     "3979514638476809444": {
       "source": "終わったときの遅れ",
-      "target": "Late at the end"
+      "target": "Lateness at the end"
     },
     "7091115058470204677": {
       "source": "プロセスが残った participant: {$INTERPOLATION}",
-      "target": "Participants whose process was left running: {$INTERPOLATION}"
+      "target": "Participants still running: {$INTERPOLATION}"
     },
     "7152190322515477762": {
       "source": "実行の所見",
-      "target": "Findings of the run"
+      "target": "Run findings"
     },
     "5897589235032745351": {
       "source": " この画面は、GUI サーバーが起動したときに表示した URL（{$START_TAG_CODE}#token={$CLOSE_TAG_CODE} の付いたもの）から開いてください。 ",
-      "target": " Open this screen from the URL that the GUI server printed when it started (the one with {$START_TAG_CODE}#token={$CLOSE_TAG_CODE}). "
+      "target": " Open the GUI from the URL that the GUI server printed when it started (the one with {$START_TAG_CODE}#token={$CLOSE_TAG_CODE}). "
     },
     "9009873899296566776": {
       "source": " サーバーがこの画面の鍵（トークン）を受け付けませんでした。サーバーを起動し直したときは、新しく表示された URL から開き直してください。 ",
-      "target": " The server did not accept this screen's token. If you restarted the server, open the new URL that it printed. "
+      "target": " The server rejected the token in this URL. If you restarted the server, open the new URL that it printed. "
     },
     "2886405734274820456": {
       "source": "サーバーにつなげません:",
@@ -668,11 +668,11 @@
     },
     "6351257757762243858": {
       "source": "この画面と GUI サーバーの版が合わないので、つなぎません。同じ版の画面とサーバーを使ってください:",
-      "target": "This screen and the GUI server are of different versions, so it does not connect. Use a screen and a server of the same version:"
+      "target": "This page and the GUI server are from different versions, so the page does not connect. Use a page and server of the same version:"
     },
     "1695680494711456940": {
       "source": "ランチャーをまだ使えません。",
-      "target": "The launcher cannot be used yet."
+      "target": "The launcher is not available yet."
     },
     "4866298044892904743": {
       "source": "サーバーの情報を取得できませんでした:",
@@ -692,27 +692,27 @@
     },
     "6386120766786105326": {
       "source": "構成ファイル",
-      "target": "Config file"
+      "target": "Configuration file"
     },
     "4783322918523851928": {
       "source": "選べる構成ファイル（.yaml、.yml）がありません。",
-      "target": "There are no config files (.yaml, .yml) to choose from."
+      "target": "No configuration files (.yaml, .yml) to choose from."
     },
     "8752660157361370778": {
       "source": "多すぎるので、一覧を途中で打ち切りました。",
-      "target": "Too many files: the list is cut short."
+      "target": "Too many files: the list is truncated."
     },
     "987394291298224651": {
       "source": "構成ファイルの一覧を取得できませんでした。",
-      "target": "Could not get the list of config files."
+      "target": "Could not get the list of configuration files."
     },
     "6324604665730725815": {
       "source": "一覧を取得しています。",
-      "target": "Getting the list."
+      "target": "Loading the list…"
     },
     "6649189367386432573": {
       "source": "選べる範囲:",
-      "target": "Files under:"
+      "target": "Folder:"
     },
     "5586305627400735839": {
       "source": "シナリオ:",
@@ -728,15 +728,15 @@
     },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
-      "target": "None (you operate it yourself)"
+      "target": "None (control the run yourself)"
     },
     "4765976640976275428": {
       "source": " シナリオはありません。構成ファイルの隣の {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} に .yaml を置くと選べます。 ",
-      "target": " There are no scenarios. Put .yaml files in {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} next to the config file to choose them. "
+      "target": " No scenarios. Put .yaml files in {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} next to the configuration file to choose them here. "
     },
     "5936000937981361991": {
       "source": " シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。 ",
-      "target": " When the scenario gets to its end, the launcher stops the run and says whether it passed. While a scenario runs, variables cannot be written. "
+      "target": " When the scenario reaches its end, the launcher stops the run and reports whether it passed. While a scenario runs, you cannot write variables. "
     },
     "5747926325982518217": {
       "source": "シナリオの一覧を取得できませんでした:",
@@ -744,7 +744,7 @@
     },
     "6198959273292437434": {
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
-      "target": "Start paused (stand still at virtual time 0 until resumed or stepped)"
+      "target": "Start paused (hold at virtual time 0 until you resume or step)"
     },
     "3547482668738318262": {
       "source": " シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} も照合しました（{$INTERPOLATION_1} 手順）。 ",
@@ -752,11 +752,11 @@
     },
     "5988127550695008293": {
       "source": "この実行の照合の結果はありません。",
-      "target": "This run has no check result."
+      "target": "No check result for this run."
     },
     "7479271004379569664": {
       "source": "照合しています。",
-      "target": "Checking."
+      "target": "Checking…"
     },
     "4443246497430797772": {
       "source": "照合できませんでした。",
@@ -764,7 +764,7 @@
     },
     "347102029828925097": {
       "source": "構成ファイルを選ぶと照合します。",
-      "target": "Choose a config file to check it."
+      "target": "Choose a configuration file to check it."
     },
     "143689126225118142": {
       "source": " 照合し直す ",
@@ -776,19 +776,19 @@
     },
     "8605946730764086024": {
       "source": " 結果は出ましたが、ランチャーはまだ終わっていません。終わらないときは、上の「停止」で止めてください。 ",
-      "target": " The result is in, but the launcher has not ended yet. If it does not end, stop it with Stop above. "
+      "target": " The result is in, but the launcher has not exited yet. If it does not exit, stop it with Stop above. "
     },
     "1607626622383920310": {
       "source": "異常終了: ランチャーが結果を出さずに終わりました（終了コード {$INTERPOLATION}）。",
-      "target": "Abnormal end: the launcher ended without a result (exit code {$INTERPOLATION})."
+      "target": "Ended abnormally: the launcher exited without a result (exit code {$INTERPOLATION})."
     },
     "3810788762919406712": {
       "source": "異常終了: ランチャーが結果を出さずに終わりました（シグナル {$INTERPOLATION}）。",
-      "target": "Abnormal end: the launcher ended without a result (signal {$INTERPOLATION})."
+      "target": "Ended abnormally: the launcher exited without a result (signal {$INTERPOLATION})."
     },
     "6772893999169966692": {
       "source": "異常終了: ランチャーが結果を出さずに終わりました。",
-      "target": "Abnormal end: the launcher ended without a result."
+      "target": "Ended abnormally: the launcher exited without a result."
     },
     "5523934394086438569": {
       "source": "理由は、次のどれかに出ていることがあります。",
@@ -796,23 +796,23 @@
     },
     "627393138018896366": {
       "source": " 標準エラーを見る ",
-      "target": " See the standard error "
+      "target": " Show stderr "
     },
     "8671099972485963414": {
       "source": " ランチャーのログを見る ",
-      "target": " See the launcher log "
+      "target": " Show the launcher log "
     },
     "1344615807426591546": {
       "source": " サーバーの知らせを見る ",
-      "target": " See the server messages "
+      "target": " Show server messages "
     },
     "3846480251725526630": {
       "source": "操作をシナリオに",
-      "target": "Writes as a scenario"
+      "target": "Save as a scenario"
     },
     "2325964529765656107": {
       "source": "ランチャーの標準エラー",
-      "target": "Launcher standard error"
+      "target": "Launcher stderr"
     },
     "8856905278208146821": {
       "source": " {$ICU} ",
@@ -840,7 +840,7 @@
     },
     "5398683463011856962": {
       "source": "{VAR_PLURAL, plural, other {詳細（画面に説明のある知らせ {INTERPOLATION} 件）}}",
-      "target": "{VAR_PLURAL, plural, one {Details ({INTERPOLATION} message explained on the screen)} other {Details ({INTERPOLATION} messages explained on the screen)}}"
+      "target": "{VAR_PLURAL, plural, one {Details ({INTERPOLATION} message already explained on this screen)} other {Details ({INTERPOLATION} messages already explained on this screen)}}"
     },
     "1199270782051102786": {
       "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 件あります（出していません）。}}",
@@ -852,15 +852,15 @@
     },
     "8297317269179257969": {
       "source": " まだ実行していません。始めると、participant の状態とログがここに出ます。 ",
-      "target": " Nothing has run yet. When you start, the participant status and the log appear here. "
+      "target": " Nothing has run yet. When you start a run, participant status and the log appear here. "
     },
     "6710731690961911262": {
       "source": "ランチャーがこの画面に対応していません。",
-      "target": "The launcher does not support this screen."
+      "target": "The launcher does not support this GUI."
     },
     "4802514740729461545": {
       "source": "構成ファイルを選んでください。",
-      "target": "Choose a config file."
+      "target": "Choose a configuration file."
     },
     "2311313022214449144": {
       "source": "速度の倍率が範囲の外です。",
@@ -868,15 +868,15 @@
     },
     "5040638888676210622": {
       "source": "シナリオの一覧を読めないので、選んだシナリオで始められません。",
-      "target": "Cannot start with the chosen scenario: the list of scenarios cannot be read."
+      "target": "Cannot start with the selected scenario: the scenario list could not be read."
     },
     "3858816202891928322": {
       "source": "シナリオの一覧を読んでいます。",
-      "target": "Reading the list of scenarios."
+      "target": "Loading the scenario list…"
     },
     "1311482530912087155": {
       "source": "選んだシナリオ {$file} が一覧にありません。選び直してください。",
-      "target": "The chosen scenario {$file} is not in the list. Choose again."
+      "target": "The selected scenario {$file} is not in the list. Choose another."
     },
     "4267031745399035688": {
       "source": "照合できませんでした: {$reason}",
@@ -884,7 +884,7 @@
     },
     "8622944444543432409": {
       "source": "照合の結果を待っています。",
-      "target": "Waiting for the check result."
+      "target": "Waiting for the check result…"
     },
     "4245265438145013993": {
       "source": "照合で誤りが見つかりました（誤り {$count} 件）。直してから始めてください。",
@@ -892,11 +892,11 @@
     },
     "2173710819374882307": {
       "source": "この GUI サーバーにつないでいる画面が多すぎます。使わないタブを閉じてください。間を置いてつなぎ直しています…",
-      "target": "Too many screens are connected to this GUI server. Close the tabs you do not use. Reconnecting after a pause…"
+      "target": "Too many tabs are connected to this GUI server. Close the tabs you are not using. Reconnecting shortly…"
     },
     "2297728902928991276": {
       "source": "サーバーが混んでいて、接続を後回しにしました。間を置いてつなぎ直しています…",
-      "target": "The server is busy and put the connection off. Reconnecting after a pause…"
+      "target": "The server is busy and deferred the connection. Reconnecting shortly…"
     },
     "1147974496596730377": {
       "source": "サーバーにつないでいます…",
@@ -904,7 +904,7 @@
     },
     "6177498606047703018": {
       "source": "サーバーとの接続が切れました。つなぎ直しています…",
-      "target": "Lost the connection to the server. Reconnecting…"
+      "target": "Connection to the server lost. Reconnecting…"
     },
     "478554458320405936": {
       "source": "選べる範囲のパスをコピー",
@@ -916,7 +916,7 @@
     },
     "8652260267629391995": {
       "source": "ランチャーから {$INTERPOLATION} 秒以上、何も届いていません（止まっているかもしれません）。",
-      "target": "Nothing has come from the launcher for {$INTERPOLATION} s or more (it may be stuck)."
+      "target": "No output from the launcher for {$INTERPOLATION} s or more. It may be stuck."
     },
     "2164633585506386661": {
       "source": "一部を表示できません:",
@@ -936,19 +936,19 @@
     },
     "3546224380235485503": {
       "source": "実行中は開始できません。",
-      "target": "Cannot start while a run is going."
+      "target": "Cannot start while a run is in progress."
     },
     "1267568114596218673": {
       "source": "開始の応答を待っています。",
-      "target": "Waiting for the answer to Start."
+      "target": "Waiting for a response to Start."
     },
     "7351220620640842749": {
       "source": "停止の応答を待っています。",
-      "target": "Waiting for the answer to Stop."
+      "target": "Waiting for a response to Stop."
     },
     "8919550949935609324": {
       "source": "サーバーと揃うまで、開始できません。",
-      "target": "Cannot start until the screen is in sync with the server."
+      "target": "Cannot start until the page is in sync with the server."
     },
     "7946498218330436713": {
       "source": "止める実行はありません。",
@@ -960,19 +960,19 @@
     },
     "1831517223422252813": {
       "source": "サーバーに届かないので、止めるよう頼めません。",
-      "target": "The server cannot be reached, so a stop cannot be requested."
+      "target": "Cannot request a stop: the server is unreachable."
     },
     "428710078700780985": {
       "source": "最新の状態は見えていませんが、止めるよう頼むことはできます。",
-      "target": "The latest state is not visible, but you can still request a stop."
+      "target": "The latest state is unknown, but you can still request a stop."
     },
     "4811031685765687032": {
       "source": "仮想時刻の事象の欄 {$fields} は、大きすぎてサーバーが省きました",
-      "target": "The server left out the virtual time fields {$fields} (too large)"
+      "target": "The server omitted the virtual-time event fields {$fields} (too large)"
     },
     "3179337564161813972": {
       "source": "開始をやめます（ランチャーが起動したところで止めます）",
-      "target": "Cancelling the start (the launcher is stopped as soon as it has started)"
+      "target": "Cancelling the start (the launcher is stopped as soon as it starts)"
     },
     "4307373006762478454": {
       "source": "始めています…",
@@ -992,7 +992,7 @@
     },
     "1310325384570851397": {
       "source": "participant が終わるのを待っています",
-      "target": "Waiting for the participants to end"
+      "target": "Waiting for the participants to exit"
     },
     "4347575089504127812": {
       "source": "残っている participant を強制終了するのを待っています",
@@ -1000,7 +1000,7 @@
     },
     "1524206275876348327": {
       "source": "{$outcome}（ランチャーが終わるのを待っています）",
-      "target": "{$outcome} (waiting for the launcher to end)"
+      "target": "{$outcome} (waiting for the launcher to exit)"
     },
     "5414409293770176426": {
       "source": "前の実行: {$outcome}",
@@ -1016,11 +1016,11 @@
     },
     "1207451067391522452": {
       "source": "終わり方は不明",
-      "target": "how it ended is unknown"
+      "target": "cause unknown"
     },
     "5034331345302203445": {
       "source": "異常終了（{$how}）",
-      "target": "Abnormal end ({$how})"
+      "target": "Ended abnormally ({$how})"
     },
     "6996685723143967056": {
       "source": "{$phase}（中断）",
@@ -1052,7 +1052,7 @@
     },
     "9084130244021564389": {
       "source": "状態",
-      "target": "State"
+      "target": "Status"
     },
     "3762578014232077049": {
       "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 個の手順があります（まだ始まっていません）。}}",
@@ -1060,7 +1060,7 @@
     },
     "2299711158826910935": {
       "source": "{VAR_PLURAL, plural, other {多すぎるので、{INTERPOLATION} 個の手順を出していません。}}",
-      "target": "{VAR_PLURAL, plural, one {Too many: {INTERPOLATION} step is not shown.} other {Too many: {INTERPOLATION} steps are not shown.}}"
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} step not shown (too many).} other {{INTERPOLATION} steps not shown (too many).}}"
     },
     "4812059856413496987": {
       "source": "シナリオの手順",
@@ -1068,11 +1068,11 @@
     },
     "8616408880928320737": {
       "source": "シナリオを進めています（{$done} / {$total} 手順）",
-      "target": "Running the scenario ({$done} / {$total} steps)"
+      "target": "Scenario running ({$done} of {$total} steps)"
     },
     "2450769932135438028": {
       "source": "シナリオの結果はありません（{$done} / {$total} 手順）",
-      "target": "No scenario result ({$done} / {$total} steps)"
+      "target": "No scenario result ({$done} of {$total} steps)"
     },
     "6980809203121972625": {
       "source": "{$ms} ms から",
@@ -1100,11 +1100,11 @@
     },
     "3774189797169423796": {
       "source": "いまの遅れ",
-      "target": "Late now"
+      "target": "Lateness now"
     },
     "6354291750492542849": {
       "source": "ステップ送りの量（ms）",
-      "target": "Step (ms)"
+      "target": "Step by (ms)"
     },
     "5735916835728028289": {
       "source": " ステップ送り ",
@@ -1116,7 +1116,7 @@
     },
     "7722760895092270928": {
       "source": "命令を受け付けられませんでした:",
-      "target": "The command was not accepted:"
+      "target": "The command was refused:"
     },
     "4351321709489989090": {
       "source": "新しい速度",
@@ -1128,19 +1128,19 @@
     },
     "3521573166656724286": {
       "source": "ステップ送りの量は 1 から {$max} までの整数（ミリ秒）にしてください。",
-      "target": "Make the step a whole number of milliseconds from 1 to {$max}."
+      "target": "Enter a whole number of milliseconds from 1 to {$max}."
     },
     "1241904257650615775": {
       "source": "前のステップ送りで進む量: {$ms} ms（ランチャーが刻みの倍数に切り上げます）。",
-      "target": "The last step goes {$ms} ms (the launcher rounds a step up to whole time steps)."
+      "target": "The last step advanced {$ms} ms (the launcher rounds a step up to whole time steps)."
     },
     "5201109295240183808": {
       "source": "時刻の操作は、実行が動いている間だけできます。",
-      "target": "The time controls work only while a run is going."
+      "target": "Time controls are available only while a run is in progress."
     },
     "3234026008411750840": {
       "source": "ステップ送りは、一時停止している間だけできます。",
-      "target": "Stepping works only while paused."
+      "target": "Stepping is available only while paused."
     },
     "6850339870794295920": {
       "source": "レイアウトの試験",
@@ -1168,19 +1168,19 @@
     },
     "3041715862489313310": {
       "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} のとおりに並べています。",
-      "target": "Laid out as the dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} says."
+      "target": "Laid out from the dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}."
     },
     "6360246307357765998": {
       "source": "読み込んだパネルのモジュール:",
-      "target": "Panel modules loaded:"
+      "target": " Loaded panel modules:"
     },
     "7156814396060841952": {
       "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} がないので、変数を自動で並べています。",
-      "target": "There is no dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}, so the variables are laid out automatically."
+      "target": "No dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}, so the variables are laid out automatically."
     },
     "8525791967739710094": {
       "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} に誤りがあるので、変数を自動で並べています。直したら「読み直す」を押してください。",
-      "target": "The dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} has errors, so the variables are laid out automatically. Fix it, then press Reload."
+      "target": "The dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} has errors, so the variables are laid out automatically. Fix it, then click Reload."
     },
     "5446922134435453814": {
       "source": "ダッシュボードのファイルを読めないので、変数を自動で並べています:",
@@ -1212,59 +1212,59 @@
     },
     "4986131820968401668": {
       "source": "名前に合う変数はありません。",
-      "target": "No variable matches the name."
+      "target": "No variables match the name."
     },
     "1253442305765584765": {
       "source": " この実行の ECU は、変数を宣言していません。 ",
-      "target": " The ECUs of this run declare no variables. "
+      "target": " The ECUs in this run declare no variables. "
     },
     "7536389574407035612": {
       "source": "{$START_LINK}「実行」の画面{$CLOSE_LINK}で実行を始めると、ECU の変数がここに並びます。 ",
-      "target": "Start a run on the {$START_LINK}Run page{$CLOSE_LINK}, and the variables of the ECUs appear here. "
+      "target": "Start a run on the {$START_LINK}Run screen{$CLOSE_LINK} to see the ECUs' variables here. "
     },
     "1786186159333010746": {
       "source": "サーバーとの接続が切れています。値は古いかもしれず、書けません。",
-      "target": "The connection to the server is lost. The values may be old, and cannot be written."
+      "target": "Connection to the server lost. Values may be out of date and cannot be written."
     },
     "403373071631315232": {
       "source": "シナリオの実行中は、変数を見られません:",
-      "target": "While a scenario runs, the variables cannot be seen:"
+      "target": "Variables are not available while a scenario runs:"
     },
     "1708163471579535631": {
       "source": "値を読めていません。出している値は最後に読めたもので、古いかもしれません:",
-      "target": "Cannot read the values. The values shown are the last ones read, and may be old:"
+      "target": "Cannot read the values. The values shown are the last ones read and may be out of date:"
     },
     "8929531448881994828": {
       "source": "シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。",
-      "target": "A scenario is running. You can see the values but not write them (so as not to change the result of the scenario)."
+      "target": "A scenario is running. You can see the values but not write them, so the scenario result is not affected."
     },
     "554589511785725809": {
       "source": "最初のステップの前で止まっています。ここで書いた値（パラメーターを含む）は、時刻 0 のステップで反映されます。再開は「実行」の画面で行います。",
-      "target": "Standing still before the first step. Values written now (parameters too) are applied in the step at time 0. Resume on the Run page."
+      "target": "Paused before the first step. Values you write now (parameters included) are applied in the step at time 0. Resume on the Run screen."
     },
     "1469715543654532890": {
       "source": "一時停止しています。値は止まっている時刻のものです。",
-      "target": "Paused. The values are those of the paused time."
+      "target": "Paused. Values are as of the paused time."
     },
     "3148904264671010136": {
       "source": "実行は終わりました。最後に読めた値を出しています。書くことはできません。",
-      "target": "The run has ended. The last values read are shown. They cannot be written."
+      "target": "The run has ended. Showing the last values read; they cannot be written."
     },
     "2116464812288355748": {
       "source": "ランチャーにつないでいます。",
-      "target": "Connecting to the launcher."
+      "target": "Connecting to the launcher…"
     },
     "6079158957856682268": {
       "source": "ランチャーにつながらないので、変数を読み書きできません:",
-      "target": "Cannot connect to the launcher, so the variables cannot be read or written:"
+      "target": "Cannot connect to the launcher, so variables cannot be read or written:"
     },
     "5371106956488523846": {
       "source": "このランチャーか GUI サーバーでは、ECU の変数を読み書きできません:",
-      "target": "This launcher or GUI server cannot read or write the variables of the ECUs:"
+      "target": "This launcher or GUI server cannot read or write ECU variables:"
     },
     "5741968327750002915": {
       "source": "この実行では、ECU の変数を読み書きできません:",
-      "target": "In this run, the variables of the ECUs cannot be read or written:"
+      "target": "ECU variables cannot be read or written in this run:"
     },
     "3815797889768714758": {
       "source": " バスにつなぐ ",
@@ -1272,7 +1272,7 @@
     },
     "8065725015868127689": {
       "source": "この ECU はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。",
-      "target": "This ECU is off the bus (it neither sends nor receives on CAN, LIN and Ethernet; its steps go on)."
+      "target": "This ECU is disconnected from the bus (it does not send or receive on CAN, LIN or Ethernet; its steps keep running)."
     },
     "8398221335614319038": {
       "source": "（{$INTERPOLATION} 個）",
@@ -1324,7 +1324,7 @@
     },
     "2208292689456413166": {
       "source": "ランチャーにつないでいます",
-      "target": "Connecting to the launcher"
+      "target": "Connecting to the launcher…"
     },
     "2763018723384339439": {
       "source": "ランチャーにつながりません",
@@ -1352,19 +1352,19 @@
     },
     "8702594900547111098": {
       "source": "古い値: 画面とサーバーの接続が切れています",
-      "target": "Old value: the screen has lost the connection to the server"
+      "target": "Stale value: connection to the server lost"
     },
     "401667723701492750": {
       "source": "古い値: ランチャーにつなぎ直しています",
-      "target": "Old value: reconnecting to the launcher"
+      "target": "Stale value: reconnecting to the launcher"
     },
     "3817472311034696539": {
       "source": "古い値: ECU がつながっていません",
-      "target": "Old value: the ECU is not connected"
+      "target": "Stale value: the ECU is not connected"
     },
     "8070348216591545448": {
       "source": "古い値: 値を読めていません",
-      "target": "Old value: cannot read the values"
+      "target": "Stale value: cannot read values"
     },
     "750290022131476560": {
       "source": "終わった実行の最後の値",
@@ -1396,11 +1396,11 @@
     },
     "9099861318126985288": {
       "source": "範囲（最小と最大）のない変数なので、スライダーは使えません（数値の入力を使ってください）",
-      "target": "The slider cannot be used: the variable has no range (minimum and maximum). Use the number input"
+      "target": "No slider: the variable has no range (minimum and maximum). Use a number input"
     },
     "4313104709881227241": {
       "source": "値がまだないので動かせません（値が届くと動かせます）",
-      "target": "Cannot be moved until a value comes"
+      "target": "Cannot move until a value arrives"
     },
     "1084278348519390864": {
       "source": "パラメーターは、止めて始めた実行の最初のステップの前だけ書けます",
@@ -1408,15 +1408,15 @@
     },
     "345950103004168810": {
       "source": "シナリオの実行中は書けません（見るだけです）",
-      "target": "Cannot write while a scenario runs (you can only watch)"
+      "target": "Cannot write while a scenario runs (view only)"
     },
     "8973894855810621678": {
       "source": "送っています",
-      "target": "Sending"
+      "target": "Sending…"
     },
     "8855098957632147964": {
       "source": "受け付けました。ECU のステップで反映されるのを待っています",
-      "target": "Accepted. Waiting for the step of the ECU to apply it"
+      "target": "Accepted. Waiting for the ECU to apply it in a step"
     },
     "4320841632567125759": {
       "source": "反映しました",
@@ -1428,7 +1428,7 @@
     },
     "7005292058197659693": {
       "source": "サーバーが断りました:",
-      "target": "The server refused it:"
+      "target": "Rejected by the server:"
     },
     "3661994736773855664": {
       "source": "反映されませんでした:",
@@ -1436,15 +1436,15 @@
     },
     "858880430888134023": {
       "source": "答えが来ませんでした。反映されたかわかりません（送り直していません）。値を確かめてから書き直してください:",
-      "target": "No answer came, so it is not known whether it was applied (it was not sent again). Check the value, then write again:"
+      "target": "No response, so it is unknown whether the write was applied (it was not resent). Check the value and write again:"
     },
     "2149991866108578873": {
       "source": "接続を閉じたので、反映されたかわかりません",
-      "target": "The connection was closed, so it is not known whether it was applied"
+      "target": "The connection closed, so it is unknown whether the write was applied"
     },
     "2779228442533056820": {
       "source": "書けなくなったので、待たせていた値は送っていません。値を確かめてから書き直してください",
-      "target": "Writing is no longer possible, so the waiting value was not sent. Check the value, then write again"
+      "target": "Writing is no longer possible, so the pending value was not sent. Check the value and write again"
     },
     "4990348354152895618": {
       "source": "数を入れてください",
@@ -1492,15 +1492,15 @@
     },
     "7068372677715812439": {
       "source": "部品の種類「{$widget}」はありません。{$kinds} のどれかにしてください",
-      "target": "There is no widget kind \"{$widget}\": use one of {$kinds}"
+      "target": "Unknown widget kind \"{$widget}\": use one of {$kinds}"
     },
     "3746765129456107550": {
       "source": "{$widget} は {$type} の変数に使えません（使える型: {$types}）",
-      "target": "{$widget} cannot be used for a variable of type {$type} (the types it takes: {$types})"
+      "target": "{$widget} cannot be used for a variable of type {$type} (supported types: {$types})"
     },
     "5851042374488197206": {
       "source": "{$widget} は書く部品なので、読むだけの変数に使えません（値の表示かグラフにしてください）",
-      "target": "{$widget} writes, so it cannot be used for a read-only variable (use a value display or a chart)"
+      "target": "{$widget} writes values, so it cannot be used for a read-only variable (use a value display or a chart)"
     },
     "718320321846221163": {
       "source": "スライダーは、範囲（最小と最大）のない変数に使えません（数値の入力にしてください）",
@@ -1516,11 +1516,11 @@
     },
     "9035643778217041569": {
       "source": "{$widget} の設定「{$key}」の値が合いません",
-      "target": "The value of the setting \"{$key}\" of {$widget} does not fit"
+      "target": "{$widget}: invalid value for the setting \"{$key}\""
     },
     "8428488875257497120": {
       "source": "auto: の participant「{$peer}」は、この実行にありません。名前を確かめてください（実行の画面の participant の表にある名前）",
-      "target": "The participant \"{$peer}\" of auto: is not in this run. Check the name (the names in the participant table of the Run page)"
+      "target": "auto: names the participant \"{$peer}\", which is not in this run. Check the name against the participant table on the Run screen"
     },
     "1046241773156658797": {
       "source": "{$peer} の監視",
@@ -1532,15 +1532,15 @@
     },
     "8976420207740708241": {
       "source": "読み込めなかったモジュールがあります。パネル <{$name}> は、この画面で前に読み込んだ定義で描いています（別の構成ファイルの、同じ名前のパネルかもしれません。ページを読み直すと、このファイルのモジュールで描きます）: {$failures}",
-      "target": "Some modules could not be loaded. The panel <{$name}> is drawn with the definition this screen loaded before (it may be a panel of the same name from another config file; reload the page to draw it with the modules of this file): {$failures}"
+      "target": "Some modules could not be loaded. The panel <{$name}> is drawn with a definition this page loaded earlier (possibly a panel of the same name from another configuration file; reload the page to draw it with this file's modules): {$failures}"
     },
     "3684398816252439102": {
       "source": "パネル <{$name}> のモジュールを読み込めませんでした（ブラウザの開発者ツールのコンソールに詳細があります）: {$failures}",
-      "target": "Could not load the modules of the panel <{$name}> (the console of the browser's developer tools has the details): {$failures}"
+      "target": "Could not load the modules of the panel <{$name}> (details are in the console of the browser's developer tools): {$failures}"
     },
     "5037751368631078529": {
       "source": "パネル <{$name}> を定義したモジュールがありません。ダッシュボードのファイルの panels: に挙げたモジュールで、この名前の custom element を定義してください（customElements.define）",
-      "target": "No module defines the panel <{$name}>. Define a custom element of this name (customElements.define) in a module that panels: of the dashboard file lists"
+      "target": "No module defines the panel <{$name}>. Define a custom element with this name (customElements.define) in a module listed under panels: in the dashboard file"
     },
     "1691053984771303038": {
       "source": "{$peer} をバスにつなぐ",
