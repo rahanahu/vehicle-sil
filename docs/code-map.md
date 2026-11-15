@@ -1170,13 +1170,12 @@ No test compares the following. Keep them in sync by hand.
 
 ## Dependency direction
 
-In every diagram, an arrow means "links" (`target_link_libraries`), except the thick arrow (see the table). Do not create dependencies in the opposite direction.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
 
 | In the diagrams | Meaning |
 |---|---|
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
-| Thick arrow | No link of its own: the public headers include the other target's headers, and the link comes through another target's public link |
 | Node name | Target name (without `vehicle_sil::`) |
 
 ### Layers
@@ -1330,11 +1329,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1345,7 +1344,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `control`: the public headers of `launch` include headers of `control` (`hub.hpp`, `agent.hpp`, `variable_map.hpp`). `launch` gets `control` through the public link of `ecu`.
 - `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
 
 ### Vector XL CAN Bridge

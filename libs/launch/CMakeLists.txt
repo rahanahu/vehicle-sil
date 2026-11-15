@@ -43,6 +43,8 @@ target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMA
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
 # The simulation time (run.hpp: TimeCommands::wait_paused()); no SIL Kit.
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
+# The public headers include control's (hub.hpp, agent.hpp, variable_map.hpp).
+target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::control)
 # The shapes of a scenario's wave steps (scenario_shapes.cpp); header only.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::signal)
 # The registry and the controller of vehicle_sil_launch run.
