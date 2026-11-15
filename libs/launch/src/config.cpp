@@ -11,6 +11,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <numeric>
@@ -39,7 +40,12 @@ constexpr const char* kVariantsForm =
 constexpr const char* kSpeedMeaning =
     "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
     "fast), or max (as fast as possible)";
-const std::vector<std::string> kNetworkKeys = {"name", "kind"};
+const std::vector<std::string> kNetworkKeys = {"name", "kind", "external"};
+/// The keys of a network's "external", for each kind of network that can be connected outside.
+const std::vector<std::string> kExternalCanKeys = {"bitrate"};
+const std::vector<std::string> kExternalEthernetKeys = {"ethertypes", "all_frames"};
+/// The highest bit rate of a CAN network that is connected outside (bit/s).
+constexpr std::uint32_t kMaxCanBitrate = 1'000'000;
 const std::vector<std::string> kParticipantKeys = {"name",    "command", "step_ms", "describe", "required",
                                                    "enabled", "manual",  "role",    "variables",
                                                    "network_names", "j1939_nodes"};
@@ -596,6 +602,7 @@ private:
             const std::string prefix = name ? "network '" + *name + "': " : at + ": ";
             bool kindRead = false;
             bool hasKind = false;
+            ryml::id_type externalNode = ryml::NONE;
             std::map<std::string, std::size_t> seen;
             for (auto child = tree_.first_child(item); child != ryml::NONE; child = tree_.next_sibling(child))
             {
@@ -613,10 +620,30 @@ private:
                     }
                     hasKind = true;
                 }
+                else if (key == "external")
+                {
+                    externalNode = child; // read below: its keys depend on the kind, which may come after it
+                }
+                else if (key == "connect")
+                {
+                    connect_in_file(child, prefix + "unknown key 'connect'", kNetworkKeys, name.value_or(""));
+                }
+                else if (is_external_key(key))
+                {
+                    error("unknown-key", doc_.line(child),
+                          prefix + "unknown key '" + key + "': move it into external (external: { " + key +
+                              ": ... }), which says how the network behaves when it is connected outside (the keys "
+                              "here: " + join(kNetworkKeys) + ")",
+                          "", name.value_or(""));
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kNetworkKeys);
                 }
+            }
+            if (externalNode != ryml::NONE && kindRead)
+            {
+                network.external = read_external(externalNode, prefix, network.kind, name.value_or(""));
             }
             if (nameNode == ryml::NONE)
             {
@@ -660,6 +687,183 @@ private:
                   (network_kind_named(low) ? low + " (lower case)" : kinds_text() + " (the kinds of network there are)"),
               "", network);
         return std::nullopt;
+    }
+
+    /// A network's "external" (NetworkExternal), read after its kind; empty (with an error) if it is
+    /// wrong.
+    std::optional<NetworkExternal> read_external(ryml::id_type node, const std::string& prefix, NetworkKind kind,
+                                                 const std::string& network)
+    {
+        if (kind != NetworkKind::Can && kind != NetworkKind::Ethernet)
+        {
+            error("value", doc_.line(node),
+                  prefix + "external is for a network that can be connected outside (can, ethernet); there is no bridge "
+                           "for a " + to_string(kind) + " network, so it runs on SIL Kit only: remove external",
+                  "", network);
+            return std::nullopt;
+        }
+        const bool can = kind == NetworkKind::Can;
+        const std::vector<std::string>& keys = can ? kExternalCanKeys : kExternalEthernetKeys;
+        const std::vector<std::string>& otherKeys = can ? kExternalEthernetKeys : kExternalCanKeys;
+        const std::string example = can ? "external: { bitrate: 500000 }" : "external: { ethertypes: [0x88b5] }";
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "external must be a mapping (the keys of " + (can ? "a can" : "an ethernet") +
+                      " network: " + join(keys) + "), e.g. " + example + ", not " + shown_value(node),
+                  "", network);
+            return std::nullopt;
+        }
+        const std::string at = prefix + "external.";
+        NetworkExternal external;
+        external.line = doc_.line(node);
+        bool ok = true;
+        ryml::id_type allFramesNode = ryml::NONE;
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string key = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, key, child, prefix + "external: "))
+            {
+                ok = false;
+                continue;
+            }
+            if (key == "connect")
+            {
+                connect_in_file(child, at + "connect", keys, network);
+                ok = false;
+            }
+            else if (std::find(keys.begin(), keys.end(), key) == keys.end())
+            {
+                if (std::find(otherKeys.begin(), otherKeys.end(), key) != otherKeys.end())
+                {
+                    error("unknown-key", doc_.line(child),
+                          prefix + "external: unknown key '" + key + "': it is for " + (can ? "an ethernet" : "a can") +
+                              " network, and this one is " + to_string(kind) + " (the keys here: " + join(keys) + ")",
+                          "", network);
+                }
+                else
+                {
+                    unknown_key(child, key, prefix + "external: ", keys);
+                }
+                ok = false;
+            }
+            else if (key == "bitrate")
+            {
+                const auto value = whole_number(child, kMaxCanBitrate);
+                if (!value || *value == 0)
+                {
+                    error("value", doc_.line(child),
+                          at + "bitrate must be the bit rate in bit/s, a whole number from 1 to " +
+                              std::to_string(kMaxCanBitrate) + " (e.g. 500000), not " + shown_value(child),
+                          "", network);
+                    ok = false;
+                    continue;
+                }
+                external.bitrate = *value;
+            }
+            else if (key == "ethertypes")
+            {
+                ok = read_ethertypes(child, at, network, external.ethertypes) && ok;
+            }
+            else // all_frames
+            {
+                const auto value = boolean(child, at, key, "");
+                if (!value)
+                {
+                    ok = false;
+                    continue;
+                }
+                external.all_frames = *value;
+                allFramesNode = child;
+            }
+        }
+        if (external.all_frames && !external.ethertypes.empty())
+        {
+            error("value", doc_.line(allFramesNode),
+                  at + "all_frames: true passes every frame, so it cannot go with ethertypes: keep one or the other",
+                  "", network);
+            ok = false;
+        }
+        return ok ? std::optional(std::move(external)) : std::nullopt;
+    }
+
+    /// The error of a "connect" key in a network or in its external: where a network is connected is not in the file.
+    void connect_in_file(ryml::id_type node, const std::string& what, const std::vector<std::string>& keys,
+                         const std::string& network)
+    {
+        error("unknown-key", doc_.line(node),
+              what + ": where a network is connected is not written in the file, since it differs from PC to PC: "
+                     "remove connect (the keys here: " + join(keys) + ")",
+              "", network);
+    }
+
+    static bool is_external_key(const std::string& key)
+    {
+        return std::find(kExternalCanKeys.begin(), kExternalCanKeys.end(), key) != kExternalCanKeys.end() ||
+               std::find(kExternalEthernetKeys.begin(), kExternalEthernetKeys.end(), key) != kExternalEthernetKeys.end();
+    }
+
+    /// The EtherTypes of a network's external.ethertypes into `out`; false (with an error) if they are wrong.
+    bool read_ethertypes(ryml::id_type node, const std::string& at, const std::string& network,
+                         std::vector<std::uint16_t>& out)
+    {
+        constexpr const char* kForms = "0x88b5, 34997, or \"0x88b5\" in quotes";
+        if (!tree_.is_seq(node))
+        {
+            error("value", doc_.line(node),
+                  at + "ethertypes must be a list of EtherTypes (" + kForms + "), e.g. ethertypes: [0x88b5, 0x0800], not " +
+                      shown_value(node),
+                  "", network);
+            return false;
+        }
+        if (tree_.first_child(node) == ryml::NONE)
+        {
+            error("value", doc_.line(node),
+                  at + "ethertypes is empty: list the EtherTypes to pass, e.g. ethertypes: [0x88b5], or remove ethertypes",
+                  "", network);
+            return false;
+        }
+        bool ok = true;
+        std::size_t index = 0;
+        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+        {
+            const auto value = ethertype(item);
+            if (!value)
+            {
+                error("value", doc_.line(item),
+                      at + "ethertypes[" + std::to_string(index) + "] must be an EtherType from 0 to 0xFFFF (" + kForms +
+                          "), not " + shown_value(item),
+                      "", network);
+                ok = false;
+                continue;
+            }
+            if (std::find(out.begin(), out.end(), *value) != out.end())
+            {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04x", static_cast<unsigned>(*value));
+                error("value", doc_.line(item), at + "ethertypes lists " + text + " twice: keep one", "", network);
+                ok = false;
+                continue;
+            }
+            out.push_back(*value);
+        }
+        return ok;
+    }
+
+    /// An EtherType: an unquoted whole number (whole_number()), or a text "0x" with 1 to 4 hexadecimal
+    /// digits (JSON cannot write a hexadecimal number); empty if it is neither.
+    std::optional<std::uint16_t> ethertype(ryml::id_type node) const
+    {
+        if (is_scalar(node) && tree_.is_val_quoted(node))
+        {
+            const std::string text = detail::to_string(tree_.val(node));
+            const Hex hex = read_hex(text);
+            return hex.kind == Hex::Kind::Read && text.size() <= 6 ? std::optional(static_cast<std::uint16_t>(hex.magnitude))
+                                                                   : std::nullopt;
+        }
+        const auto value = whole_number(node, 0xFFFF);
+        return value ? std::optional(static_cast<std::uint16_t>(*value)) : std::nullopt;
     }
 
     std::optional<ParticipantRole> read_role(ryml::id_type node, const std::string& prefix, const std::string& participant)
@@ -1277,13 +1481,13 @@ private:
         }
     }
 
-    // --- a participant's J1939 nodes ---
+    // --- whole numbers ---
 
     /// An unquoted whole number from 0 to `max`, written as YAML 1.2 (the core schema, as the schema's
     /// editors read it) writes an integer: decimal with an optional sign (010 is ten), 0o.. in octal,
     /// 0x.. in hexadecimal (a lower case x and o: 0X10 is a text there, as are 1_0 and 0b11); empty
     /// if the value is not one.
-    std::optional<std::uint32_t> j1939_number(ryml::id_type node, std::uint32_t max) const
+    std::optional<std::uint32_t> whole_number(ryml::id_type node, std::uint32_t max) const
     {
         if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
         {
@@ -1323,6 +1527,8 @@ private:
         }
         return std::nullopt;
     }
+
+    // --- a participant's J1939 nodes ---
 
     /// Reads a "j1939_nodes" into `entries`: the entries of the right form, as written. false if one
     /// is not (an error says which).
@@ -1415,7 +1621,7 @@ private:
                                       : key == "identity_number"        ? 2097151
                                       : key == "function_instance"      ? 31
                                                                         : 7;
-            const auto value = j1939_number(child, max);
+            const auto value = whole_number(child, max);
             if (!value)
             {
                 const std::string meaning =

@@ -64,8 +64,27 @@
           "kind": {
             "enum": ["can", "lin", "ethernet"],
             "description": "The kind of network (lower case)."
+          },
+          "external": {
+            "type": "object",
+            "description": "How the network behaves when it is connected outside (to a real bus): used only when it is connected. It holds what is the same on every PC; where the network is connected is not written in the file. A can network takes bitrate, an ethernet network ethertypes or all_frames; a lin network cannot be connected outside.",
+            "examples": [{ "bitrate": 250000 }, { "ethertypes": [34997] }]
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "can" } }, "required": ["kind"] },
+            "then": { "properties": { "external": { "$ref": "#/definitions/external_can" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "ethernet" } }, "required": ["kind"] },
+            "then": { "properties": { "external": { "$ref": "#/definitions/external_ethernet" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "lin" } }, "required": ["kind"] },
+            "then": { "not": { "required": ["external"] } }
+          }
+        ]
       }
     },
     "participants": {
@@ -145,6 +164,49 @@
     }
   },
   "definitions": {
+    "external_can": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How a can network behaves when it is connected outside.",
+      "properties": {
+        "bitrate": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "The bit rate (bit/s) to set on the channel the network is connected to. Without it, the channel's setting is kept. The tool that connects the network may take a narrower range.",
+          "examples": [250000, 500000]
+        }
+      }
+    },
+    "external_ethernet": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How an ethernet network behaves when it is connected outside. Without ethertypes and all_frames, only the frames of the MAC addresses that the participants on the network report pass.",
+      "properties": {
+        "ethertypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0, "maximum": 65535 },
+              { "type": "string", "pattern": "^0[xX][0-9A-Fa-f]{1,4}$" }
+            ]
+          },
+          "description": "The EtherTypes of the frames that pass between the network and the outside: numbers (0x88b5 or 34997), or \"0x88b5\" in quotes (JSON has no hexadecimal numbers).",
+          "examples": [[34997, 2048], ["0x88b5", "0x0800"]]
+        },
+        "all_frames": {
+          "type": "boolean",
+          "description": "true: every frame passes. Not together with ethertypes.",
+          "default": false
+        }
+      },
+      "not": {
+        "properties": { "all_frames": { "const": true } },
+        "required": ["all_frames", "ethertypes"]
+      }
+    },
     "millis": {
       "type": "integer",
       "minimum": 1,

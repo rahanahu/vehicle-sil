@@ -155,6 +155,8 @@ def simulation_mappings() -> dict[str, dict]:
         "variant": variant,
         "variant participant": variant["properties"]["participants"]["additionalProperties"],
         "j1939 node": definitions["j1939_nodes"]["items"],
+        "can external": definitions["external_can"],
+        "ethernet external": definitions["external_ethernet"],
     }
 
 
@@ -387,6 +389,39 @@ CONFIG_SAMPLES = [
      "      - { network: Body, from: 254, address: 0, identity_number: 0, function_instance: 31, ecu_instance: 7 }\n"
      "      - { network: Body, from: 0x1f, function_instance: 0, ecu_instance: 0 }\n"
      "      - { network: Body, from: 0x21 }\n", "valid"),
+    ("external of each kind that can be connected, EtherTypes in each form, the ends of the ranges",
+     "vehicle_sil_simulation: 1\nnetworks:\n  - { name: C, kind: can, external: { bitrate: 1000000 } }\n"
+     "  - { name: D, kind: can, external: { bitrate: 1 } }\n  - { name: E, external: {}, kind: can }\n"
+     "  - name: F\n    kind: ethernet\n    external: { ethertypes: [0x88b5, 2048, \"0x86DD\", 0, 0xFFFF, \"0x1\"] }\n"
+     "  - { name: G, kind: ethernet, external: { all_frames: true } }\n"
+     "  - { name: H, kind: ethernet, external: { all_frames: false, ethertypes: [0x0800] } }\n" + P, "valid"),
+    ("external in JSON, with an EtherType in hexadecimal as a text",
+     '{"vehicle_sil_simulation": 1, "networks": [{"name": "E", "kind": "ethernet", "external": {"ethertypes": '
+     '["0x88b5", 2048]}}], "participants": [{"name": "Tool", "command": "@EXE@", "describe": false}]}', "valid"),
+    ("external of a lin network", "vehicle_sil_simulation: 1\nnetworks:\n  - { name: L, kind: lin, external: {} }\n" + P,
+     "invalid"),
+    ("an EtherType of a can network", CONFIG_HEAD.replace("can }", "can, external: { ethertypes: [0x88b5] } }") + P,
+     "invalid"),
+    ("a bit rate of an ethernet network", CONFIG_HEAD.replace("can }", "ethernet, external: { bitrate: 500000 } }") + P,
+     "invalid"),
+    ("where a network is connected, in the file",
+     CONFIG_HEAD.replace("can }", "ethernet, external: { connect: eth0 } }") + P, "invalid"),
+    ("a bit rate of 0", CONFIG_HEAD.replace("can }", "can, external: { bitrate: 0 } }") + P, "invalid"),
+    ("a bit rate above the fastest CAN", CONFIG_HEAD.replace("can }", "can, external: { bitrate: 1000001 } }") + P,
+     "invalid"),
+    ("a bit rate in quotes", CONFIG_HEAD.replace("can }", "can, external: { bitrate: \"500000\" } }") + P, "invalid"),
+    ("no EtherTypes", CONFIG_HEAD.replace("can }", "ethernet, external: { ethertypes: [] } }") + P, "invalid"),
+    ("an EtherType above 0xFFFF", CONFIG_HEAD.replace("can }", "ethernet, external: { ethertypes: [0x10000] } }") + P,
+     "invalid"),
+    ("an EtherType in quotes above 0xFFFF",
+     CONFIG_HEAD.replace("can }", "ethernet, external: { ethertypes: [\"0x10000\"] } }") + P, "invalid"),
+    ("a decimal EtherType in quotes", CONFIG_HEAD.replace("can }", "ethernet, external: { ethertypes: [\"2048\"] } }") + P,
+     "invalid"),
+    ("an EtherType twice", CONFIG_HEAD.replace("can }", "ethernet, external: { ethertypes: [0x0800, 2048] } }") + P,
+     "invalid"),
+    ("all frames and EtherTypes",
+     CONFIG_HEAD.replace("can }", "ethernet, external: { all_frames: true, ethertypes: [0x0800] } }") + P, "invalid"),
+    ("external that is not a mapping", CONFIG_HEAD.replace("can }", "can, external: 500000 }") + P, "invalid"),
     ("j1939 nodes of a variant",
      CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { j1939_nodes: [{ network: Body, address: 1 }] } } } }\n",
      "valid"),
@@ -854,6 +889,8 @@ class SchemaFiles(unittest.TestCase):
                 self.assertIn(key, words, f"{doc} does not name the key {key} of a variable mapping")
             for key in keys_of(mappings["j1939 node"]):
                 self.assertIn(key, words, f"{doc} does not name the key {key} of an entry of j1939_nodes")
+            for key in keys_of(mappings["can external"]) | keys_of(mappings["ethernet external"]):
+                self.assertIn(key, words, f"{doc} does not name the key {key} of a network's external")
 
         for path in scenario_pages:
             doc = path.relative_to(ROOT).as_posix()
@@ -1084,6 +1121,8 @@ class SchemaAndLauncher(unittest.TestCase):
             "variant": CONFIG_HEAD + P + "variants: { small: { zz_probe: 1 } }\n",
             "variant participant": CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { zz_probe: 1 } } } }\n",
             "j1939 node": CONFIG_HEAD + P + "    j1939_nodes: [{ network: Body, zz_probe: 1 }]\n",
+            "can external": CONFIG_HEAD.replace("can }", "can, external: { zz_probe: 1 } }") + P,
+            "ethernet external": CONFIG_HEAD.replace("can }", "ethernet, external: { zz_probe: 1 } }") + P,
         }
         mappings = simulation_mappings()
         self.assertEqual(set(probes), set(mappings))
