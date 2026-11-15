@@ -326,7 +326,7 @@ private:
                     if (name == "level" && std::get<std::int64_t>(value) == 13)
                     {
                         r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "a setter threw: 13 is not a level"};
+                                                  "level: a setter threw: 13 is not a level"};
                         break;
                     }
                     if (name == "level")
@@ -812,7 +812,7 @@ TEST_CASE(scenario_failures_say_the_time_and_the_values)
     check_text(run("  - at_ms: 50\n    set: { Body.level: 13 }\n  - expect: { Body.level: 13 }\n"),
                "failed over=60\n"
                "3 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not applied by participant 'Body': the ECU "
-               "rejected it (a setter threw: 13 is not a level)\n"
+               "rejected it (level: a setter threw: 13 is not a level)\n"
                "5 not_run start=- at=- end=-\n");
     // A participant without a link: the first step that uses it says so, before anything runs.
     check_text(run("  - at_ms: 50\n    set: { Body.level: 1 }\n  - expect: { Door.lamp: false }\n",
@@ -2451,7 +2451,7 @@ TEST_CASE(scenario_expect_beside_a_motion_decides_the_step_with_its_writes)
                           [](World& w) { w.ecus[1].step = 30ms; }),
                "failed over=130\n"
                "3 failed start=0 at=100 end=100 scenario-write: the write for 100 ms was not applied by participant 'Door': "
-               "the ECU rejected it (a setter threw: 13 is not a level)\n");
+               "the ECU rejected it (level: a setter threw: 13 is not a level)\n");
 }
 
 TEST_CASE(scenario_expect_beside_a_wave_fails_with_what_the_launcher_learns_first)
@@ -2766,7 +2766,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
                       "        [0, 50],\n        [10, 100]\n      ]") != std::string::npos);
     CHECK(failed.find("      \"failed\": {\n        \"at_ms\": 15,\n        \"code\": \"scenario-failed\",\n        \"conditions\": [\n"
                       "          {\n            \"condition\": 0,\n            \"value\": 100,\n            \"sample_ms\": 10\n          }\n"
-                      "        ],\n        \"write\": null\n      }") != std::string::npos);
+                      "        ],\n        \"writes\": [],\n        \"write\": null\n      }") != std::string::npos);
 }
 
 std::string file_text(const std::filesystem::path& path)
@@ -2988,7 +2988,7 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
     loose[0].variables[0].max.reset();
     const auto refused = [&loose](const std::string& text, SimDuration tick) {
         const std::string timeline = timeline_of(text, tick, {}, loose);
-        return part(timeline, "  \"scenario\": {", "  \"variables\"") + part(timeline, "        \"write\": {", "      }\n") +
+        return part(timeline, "  \"scenario\": {", "  \"variables\"") + part(timeline, "        \"writes\": [", "\n      }\n") +
                part(timeline, "  \"series\": [", "  \"lines\"");
     };
     // Refused at once by the agent (out of range), between two steps of the controller: over at
@@ -3005,12 +3005,17 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "    \"over_at_ms\": 30,\n"
                "    \"recorded_to_ms\": 40\n"
                "  },\n"
-               "        \"write\": {\n"
-               "          \"variable\": \"Body.level\",\n"
-               "          \"at_ms\": 40,\n"
-               "          \"value\": 105,\n"
-               "          \"point\": 3\n"
-               "    \"series\": [\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 40,\n"
+               "            \"value\": 105,\n"
+               "            \"point\": 3,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0"
+               "  \"series\": [\n"
                "    {\n"
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
@@ -3034,12 +3039,17 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "    \"over_at_ms\": 0,\n"
                "    \"recorded_to_ms\": 0\n"
                "  },\n"
-               "        \"write\": {\n"
-               "          \"variable\": \"Body.level\",\n"
-               "          \"at_ms\": 0,\n"
-               "          \"value\": 102,\n"
-               "          \"point\": 0\n"
-               "    \"series\": [\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 0,\n"
+               "            \"value\": 102,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0"
+               "  \"series\": [\n"
                "    {\n"
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
@@ -3050,6 +3060,266 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "      ]\n"
                "    }\n"
                "  ],\n");
+}
+
+TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
+{
+    // An ECU applies the writes of one command one after the other and stops at the one whose
+    // setter throws: the writes before it are applied. The file says so per write, marks only the
+    // points that were not applied, and names the write that is the reason.
+    const auto failed = [](const std::string& text, const ScenarioCatalog& described = catalog()) {
+        const std::string timeline = timeline_of(text, 10ms, {}, described);
+        return part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n") +
+               part(timeline, "  \"series\": [", "  \"lines\"");
+    };
+    // The setter of the second of three writes throws (level 13); a write of another
+    // participant in the same set is applied. The sample of 20 ms has the mode that was applied.
+    check_text(failed(kHead + "  - set: { Body.level: 5, Body.lamp: false }\n"
+                              "  - at_ms: 20\n"
+                              "    set: { Body.mode: 2, Body.level: 13, Body.lamp: true, Door.level: 4 }\n"
+                              "  - at_ms: 60\n"
+                              "    expect: { Body.mode: auto }\n"),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write before it in that command (Body.mode = auto (2)), and it stays applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": true\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.lamp\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": true,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Door.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 4,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": true\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, 5],\n"
+               "        [20, 13]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.lamp\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, false],\n"
+               "        [20, true]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"sampled\",\n"
+               "      \"encoding\": \"changes\",\n"
+               "      \"samples\": 3,\n"
+               "      \"first_ms\": 0,\n"
+               "      \"last_ms\": 20,\n"
+               "      \"points\": [\n"
+               "        [0, 0],\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Door.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [20, 4]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // The first write of the command: nothing of it was applied.
+    check_text(failed(kHead + "  - at_ms: 20\n"
+                              "    set: { Body.level: 13, Body.mode: 2 }\n"),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); none of the 2 writes of that command was applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 13]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // A result that does not name a write (here: a parameter after the first step): which of
+    // the writes were applied is not known, and no write is named as the reason.
+    // (Described as an input, so that the check lets it through: as with an ECU that says less
+    // than its agent checks.)
+    ScenarioCatalog unnamed = catalog();
+    unnamed[0].variables[1].causality = control::Causality::Input;
+    check_text(failed(kHead + "  - set: { Body.level: 5 }\n"
+                              "  - at_ms: 20\n"
+                              "    set: { Body.mode: 2, Body.gain: 3 }\n",
+                      unnamed),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a parameter is writable only before the first step); which of the 2 writes of that command the ECU applied is not known\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.gain\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 3,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": null  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [0, 5]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.gain\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 3]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // Refused by the agent's check when it got the command: none of its writes was applied, and
+    // the reason names the write.
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const std::string timeline = timeline_of(kHead + "  - at_ms: 20\n"
+                                                     "    set: { Body.mode: 2, Body.level: 102 }\n",
+                                             10ms, {}, loose);
+    check_text(part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n"),
+               "      \"message\": \"the write for 20 ms was not taken by participant 'Body': the ECU's agent refused it (level: out of range); none of the 2 writes of that command was applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 102,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1");
+}
+
+TEST_CASE(timeline_marks_the_point_of_the_failed_write_among_points_of_one_time)
+{
+    // Two steps write the same variable for the same time, as two commands. The first is the
+    // one the ECU rejects: its point is marked, not the last point of that time.
+    const std::string timeline = timeline_of(kHead + "  - set: { Body.level: 5 }\n"
+                                                     "  - at_ms: 20\n"
+                                                     "    set: { Body.level: 13 }\n"
+                                                     "  - at_ms: 20\n"
+                                                     "    set: { Body.level: 8 }\n",
+                                             10ms);
+    check_text(part(timeline, "        \"writes\": [", "\n      }\n") + part(timeline, "  \"series\": [", "  \"lines\""),
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, 5],\n"
+               "        [20, 13],\n"
+               "        [20, 8]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
 }
 
 TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_them)
@@ -3675,10 +3945,10 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
                                             "5 passed start=0 at=0 end=0\n"
                                             "6 failed start=30 at=50 end=30 " + message);
     }
-    // Refused by the ECU in its step (the setter of Body.level throws at 13): known when the
-    // result is judged. The dithers of one time for one participant are one command, and a result
-    // does not say which write it is about: the message is about the participant's command, with
-    // every input and value in it (not about the first of them, which here is not the reason).
+    // Rejected by the ECU in its step (the setter of Body.level throws at 13): known when the
+    // result is judged. The dithers of one time for one participant are one command, which the
+    // ECU applies one write after the other until a setter throws: the message is about the
+    // input the reason names, and says that the input before it in the command was written.
     const Scenario rejected = read(kDitherHead + "inputs:\n"
                                                  "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
                                                  "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
@@ -3690,34 +3960,56 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
     World world;
     check_text(text_of(world.run(rejected)), "failed over=30\n"
                                              "7 passed start=0 at=0 end=0\n"
-                                             "8 failed start=100 at=20 end=100 scenario-write: the dithers of participant 'Body' wrote Body.ratio "
-                                             "0.6 and Body.level 13 at 20 ms as one command, and the participant did not apply it: the ECU rejected "
-                                             "it (a setter threw: 13 is not a level) (which of the inputs it was about is not known; the reason "
-                                             "may say)\n");
+                                             "8 failed start=100 at=20 end=100 scenario-write: the dither of Body.level (line 4) wrote 13 at 20 ms, "
+                                             "and participant 'Body' did not apply the write: the ECU rejected it (level: a setter threw: 13 is not "
+                                             "a level); the dither of 1 other input of that participant was in the same command; the ECU had "
+                                             "already applied the write before it in that command (Body.ratio = 0.6), and it stays applied\n");
+    // The model ECU has the ratio of that command (as a real one has: Agent::apply()), and not the level.
+    check_text(written_to(world, "Body.ratio", 20ms), "0.6@0>0 0.4@10>10 0.6@20>20 ");
+    check_text(written_to(world, "Body.level", 20ms), "11@0>0 11@10>10 ");
     check_text(written_to(world, "Door.level", 20ms), "6@0>0 6@10>10 4@20>20 ");
-    // In the timeline every point of that command is one that was not applied, and the failed
-    // step has all of them (writes) and no single write.
+    // The timeline says the same: of the command's writes the one before the rejected one was
+    // applied and has no mark; the rejected one is the reason and is marked. The write of the
+    // other participant, sent for the same time, was applied.
     const std::string file = timeline_of(kDitherHead + "inputs:\n"
                                                        "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
                                                        "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
+                                                       "  Door.level: { dither: { square: { amplitude: 1, period_ms: 40 } } }\n"
                                                        "steps:\n"
-                                                       "  - set: { Body.level: 12, Body.ratio: 0.5 }\n"
+                                                       "  - set: { Body.level: 12, Body.ratio: 0.5, Door.level: 5 }\n"
                                                        "  - at_ms: 100\n"
                                                        "    expect: { Body.level: 11 }\n",
                                          10ms);
-    CHECK(file.find("        \"write\": null,\n        \"writes\": [\n          {\n            \"variable\": \"Body.ratio\",\n"
-                    "            \"at_ms\": 20,\n            \"value\": 0.6,\n            \"point\": 2\n          },\n          {\n"
-                    "            \"variable\": \"Body.level\",\n            \"at_ms\": 20,\n            \"value\": 13,\n"
-                    "            \"point\": 2\n          }\n        ]\n") != std::string::npos);
-    const auto count = [&file](const std::string& what) {
-        std::size_t n = 0;
-        for (auto at = file.find(what); at != std::string::npos; at = file.find(what, at + 1))
-        {
-            ++n;
-        }
-        return n;
+    check_text(part(file, "        \"writes\": [", "\n      }\n"), "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.ratio\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 0.6,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": true\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Door.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 4,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": true\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1");
+    const auto series = [&file](const std::string& variable) {
+        return part(file, "      \"variable\": \"" + variable + "\",\n      \"source\": \"written\",\n", "      \"points\"");
     };
-    CHECK(count("      \"not_applied_from\": 2,\n") == 2);
+    CHECK(series("Body.ratio").find("not_applied_from") == std::string::npos);
+    CHECK(series("Door.level").find("not_applied_from") == std::string::npos);
+    CHECK(series("Body.level").find("      \"not_applied_from\": 2,\n") != std::string::npos);
 }
 
 TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_known_and_its_range_only_if_that_is_the_reason)
@@ -3776,7 +4068,7 @@ TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_kno
         const ScenarioRun run = world.run(read(head + "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n" + steps));
         check_text(failure(run), "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100 (level: out of "
                                  "range): lower its amplitude, or keep the value further from the end of the range; the dither of 1 other "
-                                 "input of that participant was in the same command, and not written either\n");
+                                 "input of that participant was in the same command; none of the 2 writes of that command was applied\n");
     }
 }
 
@@ -4010,7 +4302,9 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
     CHECK(refused.find("      \"not_applied_from\": 2,\n") != std::string::npos);
     check_text(part(refused, "      \"points\": [\n", "      ]\n"), "      \"points\": [\n        [20, 97, 99],\n        [30, 97, 99],\n        [40, 101, 99]\n");
     // The step that failed is the first that was not decided, with the dither's write as what failed.
-    CHECK(refused.find("\"write\": {\n") != std::string::npos);
+    CHECK(refused.find("        \"writes\": [\n          {\n            \"variable\": \"Body.level\",\n            \"at_ms\": 40,\n"
+                       "            \"value\": 101,\n            \"point\": 2,\n            \"applied\": false\n          }\n        ],\n"
+                       "        \"write\": 0\n") != std::string::npos);
 }
 
 TEST_CASE(timeline_line_has_the_base_as_the_step_names_it_and_the_shape_with_the_parameters_put_in)

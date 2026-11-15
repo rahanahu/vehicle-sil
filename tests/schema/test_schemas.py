@@ -895,7 +895,11 @@ class TimelineSchema(unittest.TestCase):
             "writes that are no positions": lambda d: d["steps"][0].update(writes=["0"]),
             "columns that are no names": lambda d: d["series"][0].update(columns=[0, 1, 2]),
             "writes of a failed step without their variable": lambda d: failed_step(d)["failed"].update(
-                writes=[{"at_ms": 20, "value": 13, "point": 2}]),
+                writes=[{"at_ms": 20, "value": 13, "point": 2, "applied": False}]),
+            "writes of a failed step that do not say whether they were applied": lambda d: failed_step(d)["failed"].update(
+                writes=[{"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2}]),
+            "a failed step without its writes": lambda d: failed_step(d)["failed"].pop("writes"),
+            "a failed write that is not an index": lambda d: failed_step(d)["failed"].update(write={"variable": "Body.level"}),
             "a line whose end is a text": lambda d: d["lines"][0].update(to_ms="never"),
         }
         for what, change in mistakes.items():
@@ -913,9 +917,10 @@ class TimelineSchema(unittest.TestCase):
             "a line of no step that has no end": lambda d: d["lines"][0].update(kind="dither", step=None, to_ms=None, base=None,
                                                                               base_source=None),
             "the columns of a series": lambda d: d["series"][0].update(columns=["t_ms", "value", "base"]),
-            # A command of several writes that was refused: all of them, and no single write.
+            # Writes that failed without one of them known as the reason, and whether one was applied not known.
             "the writes of a failed step": lambda d: failed_step(d)["failed"].update(
-                write=None, writes=[{"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2}]),
+                write=None, writes=[{"variable": "Body.ratio", "at_ms": 20, "value": 0.6, "point": 2, "applied": None},
+                                    {"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2, "applied": False}]),
         }
         for what, change in additions.items():
             self.assertEqual(changed(change), [], f"the schema refuses a timeline with {what}")

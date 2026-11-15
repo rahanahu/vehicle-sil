@@ -382,6 +382,7 @@
               "at_ms",
               "code",
               "conditions",
+              "writes",
               "write"
             ],
             "properties": {
@@ -430,55 +431,17 @@
                   }
                 }
               },
-              "write": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "description": "The write that was not made or not applied; null if the step did not fail of a write, or if it failed of a command of several writes and which of them is the reason is not known (writes has them). Of a set of several variables: the first one for the participant that refused.",
-                "required": [
-                  "variable",
-                  "at_ms",
-                  "value",
-                  "point"
-                ],
-                "properties": {
-                  "variable": {
-                    "type": "string",
-                    "description": "The variable that was to be written."
-                  },
-                  "at_ms": {
-                    "type": "number",
-                    "description": "The time the write was for."
-                  },
-                  "value": {
-                    "type": [
-                      "boolean",
-                      "number",
-                      "null"
-                    ],
-                    "description": "The value; null if it was never worked out."
-                  },
-                  "point": {
-                    "type": [
-                      "integer",
-                      "null"
-                    ],
-                    "minimum": 0,
-                    "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent (value is null)."
-                  }
-                }
-              },
               "writes": {
                 "type": "array",
-                "description": "Only where a command of several writes was refused as a whole (the dithers of one time for one participant go out as one command, and a result does not say which write it is about): every write of the command, each a point that was not applied. write is then the one that is the reason if that is known (the agent named it), else null.",
+                "description": "A step that failed of a write: every write of the request that failed, in the order sent (what the step sent together for one time, for all its participants; of a dither's write that is no step's: what the dithers wrote for that time). Empty if the step did not fail of a write. An ECU takes its part of a request one write after the other and stops at the write it rejects, so the writes before that one are applied: applied says so for each. A step that failed before it sent anything (a variable that cannot be written, a ramp or a wave without a value to start from): the one write it could not make, with point null.",
                 "items": {
                   "type": "object",
                   "required": [
                     "variable",
                     "at_ms",
                     "value",
-                    "point"
+                    "point",
+                    "applied"
                   ],
                   "properties": {
                     "variable": {
@@ -503,10 +466,25 @@
                         "null"
                       ],
                       "minimum": 0,
-                      "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent (value is null)."
+                      "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent, or if the point went at a limit (limits.dropped)."
+                    },
+                    "applied": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ],
+                      "description": "Whether the ECU applied this write. true: applied (the value is in the ECU, although the step failed). false: not applied (refused, rejected, behind the write that was rejected, or not sent). null: not known (no result came, or the ECU's result does not say which writes of its command took effect). A write with false or null that has a point is at or after not_applied_from of its series."
                     }
                   }
                 }
+              },
+              "write": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "description": "The index in writes, from 0, of the write that is the reason: the one the ECU or its agent named when it refused, or the only write of the participant that refused. null if no write is known to be the reason (the participant refused several writes as a whole without naming one, or no result came), and if the step did not fail of a write (writes is empty)."
               }
             }
           }
@@ -559,7 +537,7 @@
           "not_applied_from": {
             "type": "integer",
             "minimum": 0,
-            "description": "written, only if there are such points: the index in points from which on the points were sent and not applied by the ECU. They are the write that was refused (failed.write.point of the failed step) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
+            "description": "written, only if there are such points: the index in points from which on the points were sent and are not known to have been applied by the ECU. They are the first write of a failed request that was not applied or has no result (failed.writes[].applied of the failed step is false or null; its point is this index or after it) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
           },
           "columns": {
             "type": "array",
@@ -646,7 +624,7 @@
               "number",
               "null"
             ],
-            "description": "Of a set its value. Of a ramp or a wave what it starts from or swings around, written as a point of a series is (a number the step names is written as it is); null if the shape has its values itself, or if no base was known (the step then failed with a write)."
+            "description": "Of a set its value. Of a ramp or a wave what it starts from or swings around, written as a point of a series is (a number the step names is written as it is); null if the shape has its values itself."
           },
           "base_source": {
             "type": [

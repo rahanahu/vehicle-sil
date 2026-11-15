@@ -457,23 +457,30 @@ void Agent::apply(Pending& command, SimTime now, bool late)
         push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, "a parameter is writable only before the first step"});
         return;
     }
+    // The setters are called one after the other, and one that throws ends the command there:
+    // the writes before it stay applied (a setter cannot be undone), it and the ones after it
+    // are not. The reason begins with its variable's name, as a refusal of submit() does, so
+    // that the writer can tell which writes took effect.
+    std::size_t at = 0;
+    const auto rejected = [&](const std::string& why) {
+        stats_.rejected.fetch_add(1, std::memory_order_relaxed);
+        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, infos_[command.writes[at].first].name + ": " + why});
+    };
     try
     {
-        for (auto& [index, value] : command.writes)
+        for (; at < command.writes.size(); ++at)
         {
-            variables_[index].set(value);
+            variables_[command.writes[at].first].set(command.writes[at].second);
         }
     }
     catch (const std::exception& e)
     {
-        stats_.rejected.fetch_add(1, std::memory_order_relaxed);
-        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, std::string("a setter threw: ") + e.what()});
+        rejected(std::string("a setter threw: ") + e.what());
         return;
     }
     catch (...)
     {
-        stats_.rejected.fetch_add(1, std::memory_order_relaxed);
-        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, "a setter threw"});
+        rejected("a setter threw");
         return;
     }
     stats_.applied.fetch_add(1, std::memory_order_relaxed);

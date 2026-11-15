@@ -1047,13 +1047,55 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
       "sample_ms": 1340
     }
   ],
+  "writes": [],
   "write": null
 }
 ```
 
 - `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件と、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。
-- `write` は、適用されなかった書き込み（`variable`、`at_ms`、`value`、`point`）です。書き込みの失敗でなければ `null` です。`point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点が、断られた書き込みです。値を計算する前に失敗したとき（送っていない）は、`value` と `point` が `null` です。1 つの `set` がいくつもの変数を書くときは、断った participant への最初の変数です。
-- `writes` は、いくつもの書き込みをまとめた 1 つのコマンドが断られたときだけあります（`dither` が動きのない間に出す書き込みは、同じ時刻・同じ participant の分が 1 つのコマンドです。結果は participant ごとで、どの書き込みのせいかは言いません）。そのコマンドの書き込みの全部で、形は `write` と同じです。どれも入っていない点なので、それぞれの系列に `not_applied_from` が付きます。このとき `write` は、原因の入力がわかれば（エージェントが理由に変数の名前を言ったとき。範囲の外など）その書き込み、わからなければ `null` です。
+- `writes[]` と `write` は、失敗した書き込みです（下）。書き込みの失敗でない手順では、`writes[]` は空で、`write` は `null` です。
+
+書き込みで失敗した手順では、`writes[]` に、シナリオがその時刻に一緒に送った書き込みが全部入ります。次の例では、1 つの `set` が participant `Body` の 2 つの変数を書き、2 つ目を ECU の setter が断りました。
+
+```json
+"failed": {
+  "at_ms": 20,
+  "code": "scenario-write",
+  "conditions": [],
+  "writes": [
+    {
+      "variable": "Body.mode",
+      "at_ms": 20,
+      "value": 2,
+      "point": 0,
+      "applied": true
+    },
+    {
+      "variable": "Body.level",
+      "at_ms": 20,
+      "value": 13,
+      "point": 1,
+      "applied": false
+    }
+  ],
+  "write": 1
+}
+```
+
+- `writes[]` は、失敗した要求の書き込みを、送った順に並べたものです。`set` ならその変数の全部（participant をまたいで全部）、`ramp` と `wave` なら 1 つ、`dither` ならその時刻に `dither` が出した書き込みです。書き込みの失敗でなければ空です。
+- 動きのない間に `dither` が出す書き込みは、手順のものではありません。同じ時刻・同じ participant の分は、1 つの `set` の変数と同じように、まとめて ECU に届きます。そのため、`applied` の決まりも同じで、断られた入力より前の入力は、もう書き込まれています。
+- `applied` は、その書き込みが ECU に入ったかどうかです。
+
+  | `applied` | 意味 |
+  |---|---|
+  | `true` | ECU に入りました。手順は失敗しましたが、値は ECU に入っています。 |
+  | `false` | ECU に入っていません。ECU かそのエージェントが断った、同じ `set` の中で断られた書き込みより後ろにある、送っていない、のどれかです。 |
+  | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。 |
+
+  ECU は、1 つの `set` の書き込みを順に適用し、setter が断った書き込みで止まります。そのため、断られた書き込みより前のものはもう入っていて（`true`）、断られたものとその後ろは入っていません（`false`）。ECU のエージェントが受け取った時点で断ったとき（名前、型、範囲の誤り）は、その `set` のその participant への書き込みは、どれも入っていません。
+- `point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点がこの書き込みです。何も送っていなければ `null` です。`applied` が `false` か `null` の点は、その系列の `not_applied_from` か、それより後ろにあります。
+- `write` は、失敗の原因になった書き込みの、`writes[]` の添字（0 から）です。ECU かそのエージェントが断るときに名指しした書き込みか、断った participant への書き込みが 1 つだけならその書き込みです。原因が 1 つに決まらないとき（participant がいくつもの書き込みを、名指しせずにまとめて断った、結果が来なかった）と、書き込みの失敗でない手順では `null` です。
+- 何も送る前に失敗した手順（変数に書けない、`ramp` や `wave` に始まりの値がない）では、`writes[]` はその 1 つの書き込みで、`point` は `null`、`applied` は `false` です。値を計算する前なら、`value` も `null` です。
 
 ### 値の列（`series[]`）
 
@@ -1096,10 +1138,10 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - 値は、bool が `true` と `false`、enum が項目の値（名前は `variables[].items`）、数にならない real が `null` です。
 - サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。
 - `changes` の「変わった」は、書いた文字が違うことです（`0` と `-0` は別、`null` が続けば同じ）。
-- `written` の系列に `not_applied_from` があれば、その添字（0 から）の点から後ろは、送ったが ECU に入っていません。値が変わったように描かないでください。入っていない点は、次の 2 つです。
-  - 断られた書き込みの点（失敗した手順の `failed.write.point` と同じ点。まとめたコマンドが断られたときは、`failed.writes` の全部の点）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。
+- `written` の系列に `not_applied_from` があれば、その添字（0 から）の点から後ろは、送ったが、ECU に入ったことがわかっていません。値が変わったように描かないでください。次の 2 つです。
+  - 失敗した手順の書き込みのうち、`applied` が `false` か `null` のものの点（`failed.writes[]` のその要素の `point`）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。同じ `set`（または同じ時刻の `dither` の書き込み）の中で ECU に入った書き込み（`applied: true`）には付きません。
   - 時刻が `scenario.over_at_ms` より後の点（どの ECU もその時刻まで進まなかった）。
-- 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確認する前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。
+- 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確認する前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。例外は 1 つで、最後の手順と同じ時刻の `dither` の書き込みは、結果がまだ来ていないことがあります（最後の手順が通った時点で、シナリオが終わるためです）。
 
 ### 入力の線（`lines[]`）
 
@@ -1129,7 +1171,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `variable` | 変数 |
 | `kind`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`。`dither` は下）、シナリオのファイルの行、手順の `index` |
 | `from_ms`、`to_ms` | 手順の時刻と、動きの終わり（文面のとおり: `from_ms` + 長さ）。`set` は同じ値。実行が先に終わったとき、点があるのは `recorded_to_ms` まで |
-| `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）と、始まりの値が見つからずに失敗した動きでは `null` |
+| `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）では `null` |
 | `base_source` | `base` の出どころ（下の表）。`base` が `null` なら `null` |
 | `shape` | `ramp` と `wave` の形: `type`（`ramp`、または波形の名前）と、手順に書いたキーと値（パラメーターを当てた後）。`set` は `null` |
 | `text` | 人向けの 1 行（手順の `text` の、この変数の分） |
