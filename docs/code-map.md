@@ -1842,6 +1842,7 @@ Where to change:
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
 | The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
+| The page's words (English and Japanese) | `gui/timeline/messages.js`: every text the page shows, by key, in both languages (the unit tests check the keys; the page's lint refuses a string of words in `viewer.js`) |
 | The GUI server: `--timeline` for a scenario run, the files it keeps, the page and the file it serves | `gui/server/src/vehicle_sil_gui/timelines.py`, and `_start()`, `_keep_timeline()`, `get_timeline()` and `get_timeline_page()` in `server.py` |
 | A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.html`, and `KNOWN` for a value the page should draw instead of naming |
 

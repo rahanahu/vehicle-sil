@@ -608,7 +608,7 @@ participant ごとの `state` は次のとおりです。
 - 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約の `scenario.timeline_url` が `api/timeline/<session の id>` になります。
 - `GET api/timeline/<session の id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオの名前>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（シナリオがない、`timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
 - サーバーは、ファイルを書いた最後の 4 つの実行のファイルを残します。5 つ目を残すときに、いちばん古いものを消します。サーバーが止まるときに、全部を消します。
-- ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/viewer.js`）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<session の id>` です。
+- ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/viewer.js`、`timeline/messages.js`）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<session の id>` です。
 
 ## 操作の記録（`api/recording`）
 

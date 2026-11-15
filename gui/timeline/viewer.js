@@ -12,13 +12,52 @@
 //   2. ?src=<url> on the page's own origin (a server that serves the page and the file). Served by the GUI server
 //      (vehicle-sil-gui), the request carries the server's token, as every screen of the server sends it;
 //   3. a file dropped on the page or chosen with "Open a file" (works when the page is opened as a file).
+// Every text the page shows comes from messages.js (English and Japanese), loaded before this script; the language
+// is ?lang= (en or ja), else the browser's, else English.
 // Everything above "The page" needs no DOM: tests/viewer.test.js runs it in Node.
 (function (global) {
   'use strict';
 
   const FORMAT = 1;
-  const HOW_TO_WRITE =
-    'Open the file that "vehicle_sil_launch run <configuration> --scenario <scenario> --timeline <file>" wrote.';
+  const MESSAGES =
+    typeof module === 'object' && module.exports
+      ? require('./messages.js')
+      : global.VehicleSilTimelineMessages;
+  const LANGUAGES = ['en', 'ja'];
+  let language = 'en';
+
+  /**
+   * The language of the page: ?lang= in `search` when the page has it, else the first of the browser's languages
+   * (`preferred`, as navigator.languages) that it has, else English.
+   */
+  function pickLanguage(search, preferred) {
+    const asked = new URLSearchParams(search || '').get('lang');
+    for (const tag of [asked, ...(preferred || [])]) {
+      const base = typeof tag === 'string' ? tag.toLowerCase().split('-')[0] : '';
+      if (LANGUAGES.includes(base)) return base;
+    }
+    return 'en';
+  }
+
+  function setLanguage(lang) {
+    language = LANGUAGES.includes(lang) ? lang : 'en';
+  }
+
+  /** A text of messages.js in the page's language: a function value is called with args. */
+  function t(key, args) {
+    const own = MESSAGES && MESSAGES[language] && MESSAGES[language][key];
+    const value = own !== undefined ? own : MESSAGES && MESSAGES.en[key];
+    if (typeof value === 'function') return value(args || {});
+    return value === undefined ? key : value;
+  }
+
+  /** A step's or the scenario's status in the page's language (an unknown one as the file writes it). */
+  function statusWord(status) {
+    const key = `status.${status}`;
+    return MESSAGES && Object.prototype.hasOwnProperty.call(MESSAGES.en, key)
+      ? t(key)
+      : String(status);
+  }
 
   /** The values this page knows. Anything else is shown by name and text, and not drawn (the format only adds). */
   const KNOWN = {
@@ -44,60 +83,44 @@
    * Returns { timeline } or { error } (a sentence that says what is wrong and what to do).
    */
   function readTimeline(input, name) {
-    const label = name ? `"${name}"` : 'The file';
+    const label = name ? t('file.named', { name }) : t('file.this');
+    const how = t('file.howToWrite');
     let data = input;
     if (typeof input === 'string') {
       try {
         data = JSON.parse(input);
       } catch (e) {
-        return { error: `${label} is not JSON (${e.message}). ${HOW_TO_WRITE}` };
+        return { error: t('read.notJson', { label, error: e.message, how }) };
       }
     }
     if (!isObject(data) || !('vehicle_sil_timeline' in data)) {
-      return {
-        error: `${label} is not a timeline file: it has no "vehicle_sil_timeline" key. ${HOW_TO_WRITE}`,
-      };
+      return { error: t('read.notTimeline', { label, how }) };
     }
     if (data.vehicle_sil_timeline !== FORMAT) {
       const by =
         typeof data.vehicle_sil === 'string'
-          ? ` (it was written by vehicle-sil ${data.vehicle_sil})`
+          ? t('read.writtenBy', { version: data.vehicle_sil })
           : '';
-      return {
-        error:
-          `${label} is timeline format ${JSON.stringify(data.vehicle_sil_timeline)}${by}, and this page reads ` +
-          `format ${FORMAT} only. Open it with the timeline page of the vehicle-sil version that wrote it.`,
-      };
+      const format = JSON.stringify(data.vehicle_sil_timeline);
+      return { error: t('read.otherFormat', { label, format, by, known: FORMAT }) };
     }
     if (data.stage !== 'run') {
-      return {
-        error:
-          `${label} has stage ${JSON.stringify(data.stage)}, and this page draws only "run" (the record of a run). ` +
-          'Open it with the timeline page of the vehicle-sil version that wrote it.',
-      };
+      return { error: t('read.otherStage', { label, stage: JSON.stringify(data.stage) }) };
     }
     if (!isObject(data.scenario)) {
-      return {
-        error: `${label} has no "scenario" object, so it is not a whole timeline file. ${HOW_TO_WRITE}`,
-      };
+      return { error: t('read.noScenario', { label, how }) };
     }
     for (const key of ['variables', 'steps', 'series']) {
       if (!Array.isArray(data[key])) {
-        return {
-          error: `${label} has no "${key}" array, so it is not a whole timeline file. ${HOW_TO_WRITE}`,
-        };
+        return { error: t('read.noArray', { label, key, how }) };
       }
       const bad = data[key].findIndex((item) => !isObject(item));
       if (bad >= 0) {
-        return {
-          error: `${label}: ${key}[${bad}] is not an object, so the file cannot be read. ${HOW_TO_WRITE}`,
-        };
+        return { error: t('read.notObject', { label, key, index: bad, how }) };
       }
     }
     if (data.variables.some((v) => typeof v.name !== 'string')) {
-      return {
-        error: `${label}: a variable has no "name", so the file cannot be read. ${HOW_TO_WRITE}`,
-      };
+      return { error: t('read.noName', { label, how }) };
     }
     return { timeline: data };
   }
@@ -137,23 +160,15 @@
           c.op === 'near' && c.tolerance !== undefined ? ` ± ${fmtNum(c.tolerance, true)}` : '';
         return `${c.op} ${fmtValue(c.value, info, true)}${tol}`;
       })
-      .join(' and ');
+      .join(t('compare.and'));
   }
 
   // ---------------------------------------------------------------------------------------------------------------
   // The model: what the page draws, worked out once per file
 
-  /** What a value of each type is, for the note on values that are not of their variable's type. */
-  const TYPE_WORDS = {
-    real: 'a number',
-    integer: 'an integer',
-    bool: 'true or false',
-    enum: 'the value of an item (an integer)',
-  };
-
   /** Whether a value fits its variable's type. null fits all (a real that is no number); a type not known takes all. */
   function fitsType(value, type) {
-    if (value === null || !Object.prototype.hasOwnProperty.call(TYPE_WORDS, type)) return true;
+    if (value === null || !knows(KNOWN.type, type)) return true;
     if (type === 'bool') return typeof value === 'boolean';
     if (type === 'real') return isNum(value);
     return Number.isInteger(value);
@@ -164,17 +179,14 @@
    * page cannot draw it. A value that is not of the type becomes undefined (not drawn) and is named in the notes.
    */
   function readSeries(s, type) {
-    const what = `the ${s.source} series`;
+    const what = t('series.what', { source: s.source });
     if (!Object.prototype.hasOwnProperty.call(KNOWN.encoding, s.source)) {
-      return { note: `${what} is not drawn: this page does not know the source "${s.source}".` };
+      return { note: t('series.unknownSource', { what, source: s.source }) };
     }
     if (s.encoding !== KNOWN.encoding[s.source]) {
-      return {
-        note: `${what} is not drawn: this page does not know the encoding "${s.encoding}".`,
-      };
+      return { note: t('series.unknownEncoding', { what, encoding: s.encoding }) };
     }
-    if (!Array.isArray(s.points))
-      return { note: `${what} is not drawn: it has no "points" array.` };
+    if (!Array.isArray(s.points)) return { note: t('series.noPoints', { what }) };
     let ti = 0;
     let vi = 1;
     let bi = -1;
@@ -183,19 +195,19 @@
       vi = s.columns.indexOf('value');
       bi = s.columns.indexOf('base');
       if (ti < 0 || vi < 0) {
-        return { note: `${what} is not drawn: its "columns" have no "t_ms" or "value".` };
+        return { note: t('series.noColumns', { what }) };
       }
     }
-    const t = [];
+    const times = [];
     const v = [];
     const base = bi >= 0 ? [] : null;
     const wrong = [];
     let rounded = 0;
     for (const p of s.points) {
       if (!Array.isArray(p) || !isNum(p[ti])) {
-        return { note: `${what} is not drawn: a point is not [time, value].` };
+        return { note: t('series.badPoint', { what }) };
       }
-      t.push(p[ti]);
+      times.push(p[ti]);
       const value = p[vi] === undefined ? null : p[vi];
       if (!fitsType(value, type)) {
         wrong.push([p[ti], value]);
@@ -210,22 +222,24 @@
     if (wrong.length) {
       const [at, value] = wrong[0];
       notes.push(
-        `${wrong.length} value${wrong.length === 1 ? '' : 's'} of ${what} ${wrong.length === 1 ? 'is' : 'are'} not ` +
-          `${TYPE_WORDS[type]}, as its type ${type} says, so ${wrong.length === 1 ? 'it is' : 'they are'} not drawn ` +
-          `(the first: ${JSON.stringify(value)} at ${fmtMs(at)}).`,
+        t('series.wrongType', {
+          count: wrong.length,
+          what,
+          words: t(`type.${type}`),
+          type,
+          value: JSON.stringify(value),
+          at: fmtMs(at),
+        }),
       );
     }
     if (rounded) {
-      notes.push(
-        `${rounded} value${rounded === 1 ? '' : 's'} of ${what} ${rounded === 1 ? 'is' : 'are'} beyond ` +
-          `±${Number.MAX_SAFE_INTEGER}, which this page cannot hold exactly: shown rounded.`,
-      );
+      notes.push(t('series.rounded', { count: rounded, what, max: Number.MAX_SAFE_INTEGER }));
     }
     return {
       notes,
       series: {
         source: s.source,
-        t,
+        t: times,
         v,
         base,
         /** For points of the failed step's writes: point index -> applied (true, false, or null: not known). */
@@ -276,17 +290,13 @@
     w.conditions.forEach((c, index) => {
       if (!isObject(c) || c.variable !== variable) return;
       if (!knows(KNOWN.mode, w.mode)) {
-        notes.push(
-          `the condition of step ${step.index} is not drawn: this page does not know the mode "${w.mode}".`,
-        );
+        notes.push(t('band.unknownMode', { step: step.index, mode: w.mode }));
         return;
       }
       const compare = Array.isArray(c.compare) ? c.compare.filter(isObject) : [];
       const unknownOp = compare.find((x) => !knows(KNOWN.op, x.op));
       if (unknownOp) {
-        notes.push(
-          `the condition of step ${step.index} is not drawn: this page does not know "${unknownOp.op}".`,
-        );
+        notes.push(t('band.unknownOp', { step: step.index, op: unknownOp.op }));
         return;
       }
       const from = w.from_ms;
@@ -355,7 +365,7 @@
         value: w.value,
         valueText:
           w.value === null || w.value === undefined
-            ? 'not computed'
+            ? t('write.notComputed')
             : fmtValue(w.value, info && info.info, true),
         point,
         applied: w.applied === true ? true : w.applied === false ? false : null,
@@ -462,9 +472,7 @@
     }
     for (const v of vars) {
       if (!knows(KNOWN.type, v.info.type) && (v.written || v.sampled)) {
-        v.notes.push(
-          `its type "${v.info.type}" is not known to this page; the values are drawn as numbers.`,
-        );
+        v.notes.push(t('variable.unknownType', { type: v.info.type }));
       }
     }
 
@@ -793,25 +801,23 @@
     return { value: series.v[lo] };
   }
 
-  /** The words of the cursor's read-out for one series ("sent" or "seen") at a time: see valueAt(). */
-  function readoutText(word, at, info) {
-    if (at.missing) return `${word}: values dropped at the file's limits`;
-    if (at.value === undefined) return `${word}: a value that is not of the type (see the note)`;
-    const value = `${word} ${fmtValue(at.value, info)}`;
-    if (at.state === 'not-known') return `${value} (not known whether the ECU applied it)`;
+  /** The words of the cursor's read-out for one series ('sent' or 'seen') at a time: see valueAt(). */
+  function readoutText(source, at, info) {
+    const word = t(`word.${source}`);
+    if (at.missing) return t('readout.missing', { word });
+    if (at.value === undefined) return t('readout.wrongType', { word });
+    const value = t('readout.value', { word, value: fmtValue(at.value, info) });
+    if (at.state === 'not-known') return t('readout.notKnown', { value });
     if (at.state !== 'not-applied') return value;
     if (at.kept !== null && 'lastSent' in at.kept)
-      return (
-        `${value} (not applied; the ECU keeps what it had: the last value sent before is ` +
-        `${fmtValue(at.kept.lastSent, info)}, and the file does not say whether it was applied)`
-      );
+      return t('readout.notAppliedLastSent', { value, last: fmtValue(at.kept.lastSent, info) });
     const has =
       at.kept === null
-        ? 'a value that is not known'
+        ? t('readout.hasUnknown')
         : at.kept.value === undefined
-          ? 'its earlier value'
+          ? t('readout.hasEarlier')
           : fmtValue(at.kept.value, info);
-    return `${value} (not applied; the ECU has ${has})`;
+    return t('readout.notApplied', { value, has });
   }
 
   /**
@@ -823,24 +829,22 @@
     const at = f.writes.length && f.writes[0].at !== null ? f.writes[0].at : f.at;
     const has = (applied) => f.writes.some((w) => w.applied === applied);
     const explain = [
-      has(true) ? 'Applied: in the ECU, although the step failed.' : null,
-      has(false)
-        ? 'Not applied: the ECU refused it, or it came after the refused write in the same command, or it was not sent.'
-        : null,
-      has(null) ? 'Not known: no result says whether the ECU applied it.' : null,
+      has(true) ? t('writes.explainApplied') : null,
+      has(false) ? t('writes.explainNotApplied') : null,
+      has(null) ? t('writes.explainNotKnown') : null,
     ]
       .filter(Boolean)
       .join(' ');
     const cause = (w) => {
       if (w.point === null && w.pointDropped) {
-        const dropped = "its point was dropped at the file's limits";
-        return w.cause ? `the cause of the failure; ${dropped}` : dropped;
+        const dropped = t('writes.pointDropped');
+        return w.cause ? t('writes.causeAnd', { what: dropped }) : dropped;
       }
       if (w.point === null && w.applied === false)
-        return w.cause ? 'not sent: the cause of the failure' : 'not sent';
-      return w.cause ? 'the cause of the failure' : '';
+        return w.cause ? t('writes.notSentCause') : t('writes.notSent');
+      return w.cause ? t('writes.cause') : '';
     };
-    return { heading: `Writes for ${fmtMs(at)}`, explain, cause };
+    return { heading: t('writes.heading', { at: fmtMs(at) }), explain, cause };
   }
 
   /** The value range of a numeric lane: the declared min and max, or (fit) the values with some room. */
@@ -921,6 +925,11 @@
   const api = {
     FORMAT,
     KNOWN,
+    MESSAGES,
+    pickLanguage,
+    setLanguage,
+    t,
+    statusWord,
     readTimeline,
     buildModel,
     makeScale,
@@ -1010,16 +1019,16 @@
   /** Says why a file cannot be shown. The page then shows no file, so that nothing on it is taken for this one. */
   function showError(message) {
     const box = $('error');
-    box.replaceChildren(h('strong', { text: 'This file cannot be shown. ' }), message);
+    box.replaceChildren(h('strong', { text: t('page.cannotShow') }), message);
     box.hidden = false;
     state.model = null;
     state.file = null;
     state.lanes = [];
     $('view').hidden = true;
     $('load').hidden = false;
-    $('title').textContent = 'Scenario timeline';
+    $('title').textContent = t('page.title');
     $('facts').replaceChildren();
-    document.title = 'Scenario timeline';
+    document.title = t('page.title');
   }
 
   function clearError() {
@@ -1040,7 +1049,7 @@
     state.hidden.clear();
     state.cursor = null;
     state.file = name || null;
-    document.title = `${model.name ?? 'Scenario'} - timeline`;
+    document.title = t('page.titleOf', { name: model.name ?? t('page.scenario') });
     $('load').hidden = true;
     $('view').hidden = false;
     renderAll();
@@ -1050,31 +1059,32 @@
 
   function renderHeader(m) {
     const tl = m.tl;
-    $('title').textContent = m.name ?? '(a scenario without a name)';
+    $('title').textContent = m.name ?? t('page.noName');
     const status = h('span', {
       class: `badge st-${statusClass(m.status)}`,
-      text: String(m.status),
+      title: String(m.status),
+      text: statusWord(m.status),
     });
     const facts = [
-      ['timeline file', state.file],
-      ['scenario', tl.scenario.file],
-      ['configuration', tl.file],
-      ['variant', tl.variant],
-      ['controller time step', m.tick !== null ? fmtMs(m.tick) : null],
-      ['recorded to', m.recordedTo !== null ? fmtMs(m.recordedTo) : 'nothing recorded'],
-      ['vehicle-sil', tl.vehicle_sil],
+      ['fact.file', state.file],
+      ['fact.scenario', tl.scenario.file],
+      ['fact.configuration', tl.file],
+      ['fact.variant', tl.variant],
+      ['fact.tick', m.tick !== null ? fmtMs(m.tick) : null],
+      ['fact.recordedTo', m.recordedTo !== null ? fmtMs(m.recordedTo) : t('fact.nothingRecorded')],
+      ['fact.version', tl.vehicle_sil],
     ].filter(([, v]) => v !== null && v !== undefined);
     const params = Array.isArray(tl.params) ? tl.params.filter(isObject) : [];
     $('facts').replaceChildren(
       status,
       ...facts.map(([k, v]) =>
-        h('span', { class: 'fact' }, h('span', { class: 'muted', text: `${k} ` }), String(v)),
+        h('span', { class: 'fact' }, h('span', { class: 'muted', text: `${t(k)} ` }), String(v)),
       ),
       ...params.map((p) =>
         h(
           'span',
           { class: 'fact' },
-          h('span', { class: 'muted', text: 'param ' }),
+          h('span', { class: 'muted', text: `${t('fact.param')} ` }),
           `${p.name} = ${fmtValue(p.value)}`,
           h('span', { class: 'muted', text: ` (${p.from})` }),
         ),
@@ -1092,14 +1102,18 @@
     const f = m.failure;
     if (f) {
       const step = f.step;
-      const where = [step.kind, `line ${step.line} of ${m.tl.scenario.file}`, f.code]
+      const where = [
+        step.kind,
+        t('failure.where', { line: step.line, file: m.tl.scenario.file }),
+        f.code,
+      ]
         .filter(Boolean)
         .join(' · ');
       parts.push(
         h(
           'div',
           { class: 'banner bad', 'data-testid': 'failure' },
-          h('h2', { text: `Step ${step.index} failed at ${fmtMs(f.at)}` }),
+          h('h2', { text: t('failure.heading', { step: step.index, at: fmtMs(f.at) }) }),
           h('p', { class: 'muted small', text: `${where} · ${step.text}` }),
           f.message
             ? h('p', { class: 'message', 'data-testid': 'failure-message', text: f.message })
@@ -1115,22 +1129,22 @@
         h(
           'div',
           { class: 'banner ok', 'data-testid': 'passed' },
-          h('h2', { text: `Passed: ${n} step${n === 1 ? '' : 's'}` }),
-          skipped ? h('p', { text: `${skipped} skipped (see the table of steps).` }) : null,
+          h('h2', { text: t('passed.heading', { count: n }) }),
+          skipped ? h('p', { text: t('passed.skipped', { count: skipped }) }) : null,
         ),
       );
     } else {
       const text =
         m.status === 'not_run'
-          ? 'The scenario did not run, so there is nothing to draw. The findings below say why.'
+          ? t('notDecided.notRun')
           : m.status === 'incomplete'
-            ? 'The scenario ended partway (incomplete): the run stopped before the scenario was decided. The findings below say why.'
-            : `The scenario ended with status "${m.status}", which this page does not know. The steps and findings below show what the file says.`;
+            ? t('notDecided.incomplete')
+            : t('notDecided.unknown', { status: m.status });
       parts.push(
         h(
           'div',
           { class: 'banner warn', 'data-testid': 'not-decided' },
-          h('h2', { text: `Scenario ${m.status}` }),
+          h('h2', { text: t('notDecided.heading', { status: statusWord(m.status) }) }),
           h('p', { text }),
           ...m.findings
             .filter((x) => x.severity === 'error' && typeof x.message === 'string')
@@ -1143,12 +1157,17 @@
         h(
           'div',
           { class: 'banner warn small' },
-          h('strong', { text: 'Points are missing. ' }),
-          'The launcher dropped older points at the limits of the file, so these values are missing (shown as a shaded box with a dashed border): ',
+          h('strong', { text: t('dropped.heading') }),
+          t('dropped.text'),
           m.dropped
-            .map(
-              (d) =>
-                `${d.variable} (${d.source}): ${d.dropped} points from ${fmtMs(d.dropped_from_ms)} to ${fmtMs(d.dropped_before_ms)}`,
+            .map((d) =>
+              t('dropped.item', {
+                variable: d.variable,
+                source: d.source,
+                count: d.dropped,
+                from: fmtMs(d.dropped_from_ms),
+                to: fmtMs(d.dropped_before_ms),
+              }),
             )
             .join('; '),
           '.',
@@ -1160,8 +1179,8 @@
         h(
           'div',
           { class: 'banner warn small' },
-          h('strong', { text: 'ECU values arrived late in this run ' }),
-          '(control-link-late-values). The value series of another run of the same scenario can differ.',
+          h('strong', { text: t('late.heading') }),
+          t('late.text'),
         ),
       );
     }
@@ -1172,7 +1191,7 @@
     return h(
       'div',
       {},
-      h('h3', { text: 'Not met' }),
+      h('h3', { text: t('conditions.heading') }),
       h(
         'ul',
         { 'data-testid': 'failed-conditions' },
@@ -1180,9 +1199,11 @@
           const what = `${c.variable ?? '?'} ${c.compare ?? ''}`.trim();
           let got;
           if (c.valueText !== null)
-            got = `it was ${c.valueText}${c.sampleMs !== null ? ` (sample of ${fmtMs(c.sampleMs)})` : ''}`;
-          else if (c.mode === 'during') got = 'no sample came in the interval';
-          else got = 'it had no value yet';
+            got =
+              t('conditions.was', { value: c.valueText }) +
+              (c.sampleMs !== null ? t('conditions.sampleOf', { at: fmtMs(c.sampleMs) }) : '');
+          else if (c.mode === 'during') got = t('conditions.noSample');
+          else got = t('conditions.noValue');
           return h('li', {}, h('code', { text: what }), `: ${got}`);
         }),
       ),
@@ -1192,7 +1213,11 @@
   function renderWrites(f) {
     const words = writeWords(f);
     const label = (w) =>
-      w.applied === true ? 'applied' : w.applied === false ? 'not applied' : 'not known';
+      w.applied === true
+        ? t('writes.applied')
+        : w.applied === false
+          ? t('writes.notApplied')
+          : t('writes.notKnown');
     return h(
       'div',
       {},
@@ -1207,8 +1232,8 @@
           h(
             'tr',
             {},
-            ...['Variable', 'Value', 'In the ECU', 'Cause'].map((x) =>
-              h('th', { scope: 'col', text: x }),
+            ...['writes.colVariable', 'writes.colValue', 'writes.colInEcu', 'writes.colCause'].map(
+              (x) => h('th', { scope: 'col', text: t(x) }),
             ),
           ),
         ),
@@ -1251,7 +1276,7 @@
       return;
     }
     box.replaceChildren(
-      h('span', { class: 'muted', text: 'Participants ' }),
+      h('span', { class: 'muted', text: `${t('participants.label')} ` }),
       ...names.map((p) =>
         h(
           'label',
@@ -1277,7 +1302,9 @@
     const stepRows = m.steps.map((st) => {
       const result =
         st.message ??
-        (typeof st.expect_skipped === 'string' ? `expect not checked: ${st.expect_skipped}` : '');
+        (typeof st.expect_skipped === 'string'
+          ? t('step.expectSkipped', { why: st.expect_skipped })
+          : '');
       const canShow = isNum(st.start_ms);
       return h(
         'tr',
@@ -1289,7 +1316,7 @@
             ? h('button', {
                 type: 'button',
                 class: 'link',
-                title: 'Show this step on the chart',
+                title: t('step.showOnChart'),
                 onclick: () => showStep(st),
                 text: `#${st.index}`,
               })
@@ -1300,7 +1327,11 @@
         h(
           'td',
           {},
-          h('span', { class: `badge st-${statusClass(st.status)}`, text: String(st.status) }),
+          h('span', {
+            class: `badge st-${statusClass(st.status)}`,
+            title: String(st.status),
+            text: statusWord(st.status),
+          }),
         ),
         h('td', { class: 'num', text: fmtMs(st.start_ms) }),
         h('td', { class: 'num', text: fmtMs(st.at_ms) }),
@@ -1316,7 +1347,9 @@
         h('td', { text: String(l.index) }),
         h('td', {}, h('code', { text: String(l.variable) })),
         h('td', { text: String(l.kind) }),
-        h('td', { text: l.step === null || l.step === undefined ? 'inputs' : `#${l.step}` }),
+        h('td', {
+          text: l.step === null || l.step === undefined ? t('line.inputs') : `#${l.step}`,
+        }),
         h('td', { class: 'num', text: fmtMs(l.from_ms) }),
         h('td', { class: 'num', text: fmtMs(l.to_ms) }),
         h('td', {
@@ -1335,14 +1368,14 @@
         h('td', { text: String(x.severity ?? '') }),
         h('td', {}, h('code', { text: String(x.code) })),
         h('td', { text: x.line === null || x.line === undefined ? '' : String(x.line) }),
-        h('td', { text: String(x.message ?? '(code only)') }),
+        h('td', { text: String(x.message ?? t('finding.codeOnly')) }),
       ),
     );
     const table = (caption, heads, rows, testid) =>
       h(
         'details',
         { open: true },
-        h('summary', { text: `${caption} (${rows.length})` }),
+        h('summary', { text: t('tables.count', { caption, count: rows.length }) }),
         rows.length
           ? h(
               'div',
@@ -1358,23 +1391,33 @@
                 h('tbody', {}, ...rows),
               ),
             )
-          : h('p', { class: 'muted', text: 'None.' }),
+          : h('p', { class: 'muted', text: t('tables.none') }),
       );
     $('tables').replaceChildren(
       table(
-        'Steps',
-        ['#', 'Line', 'Kind', 'Status', 'Start', 'Decided', 'End', 'Step', 'Result'],
+        t('tables.steps'),
+        cols('index', 'line', 'kind', 'status', 'start', 'decided', 'end', 'step', 'result'),
         stepRows,
         'steps-table',
       ),
       table(
-        'Input lines',
-        ['#', 'Variable', 'Kind', 'Step', 'From', 'To', 'Base', 'Text'],
+        t('tables.lines'),
+        cols('index', 'variable', 'kind', 'step', 'from', 'to', 'base', 'text'),
         lineRows,
         'lines-table',
       ),
-      table('Findings', ['Severity', 'Code', 'Line', 'Message'], findingRows, 'findings-table'),
+      table(
+        t('tables.findings'),
+        cols('severity', 'code', 'line', 'message'),
+        findingRows,
+        'findings-table',
+      ),
     );
+  }
+
+  /** The headings of a table's columns. */
+  function cols(...names) {
+    return names.map((name) => t(`col.${name}`));
   }
 
   function showStep(st) {
@@ -1429,18 +1472,20 @@
     const inputs = m.inputs.filter(visible);
     const others = m.others.filter(visible);
     if (inputs.length) {
-      children.push(h('div', { class: 'group', text: 'Inputs: what the scenario sent (and saw)' }));
+      children.push(h('div', { class: 'group', text: t('chart.inputs') }));
       children.push(...inputs.map((v) => variableLane(m, v, scale)));
     }
     if (others.length) {
-      children.push(
-        h('div', { class: 'group', text: 'Outputs and other variables: what the scenario saw' }),
-      );
+      children.push(h('div', { class: 'group', text: t('chart.others') }));
       children.push(...others.map((v) => variableLane(m, v, scale)));
     }
     chart.replaceChildren(...children);
-    $('range').textContent =
-      `Showing ${fmtMs(scale.t0)} to ${fmtMs(scale.t1)} of ${fmtMs(m.domain[0])} to ${fmtMs(m.domain[1])}`;
+    $('range').textContent = t('chart.showing', {
+      from: fmtMs(scale.t0),
+      to: fmtMs(scale.t1),
+      start: fmtMs(m.domain[0]),
+      end: fmtMs(m.domain[1]),
+    });
     $('show-failure').hidden = !m.failure;
     updateCursor();
   }
@@ -1490,7 +1535,7 @@
         class: 'muted small',
         id: 'cursor-time',
         'aria-live': 'polite',
-        text: 'Virtual time',
+        text: t('chart.virtualTime'),
       }),
       height,
       scale,
@@ -1538,7 +1583,7 @@
     const head = h(
       'div',
       {},
-      h('strong', { text: 'Steps' }),
+      h('strong', { text: t('chart.steps') }),
       h('div', { class: 'readout small', id: 'cursor-steps' }),
     );
     const { lane, svg, cursor } = laneShell(head, height, scale, 'steps');
@@ -1595,13 +1640,22 @@
         );
       }
       const lines = [
-        `Step ${it.st.index} (${it.st.kind}, line ${it.st.line}): ${it.st.status}`,
+        t('step.title', {
+          index: it.st.index,
+          kind: it.st.kind,
+          line: it.st.line,
+          status: statusWord(it.st.status),
+        }),
         String(it.st.text ?? ''),
-        `start ${fmtMs(it.st.start_ms)}, decided ${fmtMs(it.st.at_ms)}, end ${fmtMs(it.st.end_ms)}`,
+        t('step.times', {
+          start: fmtMs(it.st.start_ms),
+          decided: fmtMs(it.st.at_ms),
+          end: fmtMs(it.st.end_ms),
+        }),
       ];
       if (it.st.message) lines.push(it.st.message);
       if (typeof it.st.expect_skipped === 'string')
-        lines.push(`expect not checked: ${it.st.expect_skipped}`);
+        lines.push(t('step.expectSkipped', { why: it.st.expect_skipped }));
       tooltip(g, lines.join('\n'));
     });
     commonFront(svg, m, scale, height, cursor);
@@ -1617,13 +1671,15 @@
     const height = strip + plotH;
     const info = v.info;
     const range =
-      isNum(info.min) && isNum(info.max) ? `${fmtNum(info.min)} to ${fmtNum(info.max)}` : null;
+      isNum(info.min) && isNum(info.max)
+        ? t('lane.range', { min: fmtNum(info.min), max: fmtNum(info.max) })
+        : null;
     const meta = [
       info.causality ?? null,
       info.type,
       info.unit || null,
       range,
-      isNum(info.ecu_step_ms) ? `step ${fmtMs(info.ecu_step_ms)}` : null,
+      isNum(info.ecu_step_ms) ? t('lane.ecuStep', { ms: fmtMs(info.ecu_step_ms) }) : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -1648,38 +1704,48 @@
         'div',
         { class: 'legend small' },
         v.written
-          ? h('span', { class: 'key sent' }, both && kind !== 'number' ? 'sent (upper)' : 'sent')
+          ? h(
+              'span',
+              { class: 'key sent' },
+              t(both && kind !== 'number' ? 'legend.sentUpper' : 'legend.sent'),
+            )
           : null,
         v.sampled
-          ? h('span', { class: 'key seen' }, both && kind !== 'number' ? 'seen (lower)' : 'seen')
+          ? h(
+              'span',
+              { class: 'key seen' },
+              t(both && kind !== 'number' ? 'legend.seenLower' : 'legend.seen'),
+            )
           : null,
         writtenStates.has('not-applied')
-          ? h('span', { class: 'key not-applied' }, 'not applied')
+          ? h('span', { class: 'key not-applied' }, t('legend.notApplied'))
           : null,
-        writtenStates.has('not-known') ? h('span', { class: 'key not-known' }, 'not known') : null,
-        writtenStates.has('held') ? h('span', { class: 'key held' }, 'kept in the ECU') : null,
-        v.written && v.written.base ? h('span', { class: 'key base' }, 'base') : null,
+        writtenStates.has('not-known')
+          ? h('span', { class: 'key not-known' }, t('legend.notKnown'))
+          : null,
+        writtenStates.has('held') ? h('span', { class: 'key held' }, t('legend.held')) : null,
+        v.written && v.written.base ? h('span', { class: 'key base' }, t('legend.base')) : null,
         kind === 'number' && isNum(info.min) && isNum(info.max)
           ? h('button', {
               type: 'button',
               class: 'link',
               'aria-pressed': fit ? 'true' : 'false',
-              title: fit ? 'Scale to the declared range (min to max)' : 'Scale to the values',
+              title: fit ? t('fit.toDeclared') : t('fit.toValues'),
               onclick: () => {
                 if (state.fit.has(v.name)) state.fit.delete(v.name);
                 else state.fit.add(v.name);
                 renderChart();
               },
-              text: fit ? 'declared range' : 'fit values',
+              text: fit ? t('fit.declared') : t('fit.values'),
             })
           : null,
       ),
       readout,
-      ...v.notes.map((n) => h('div', { class: 'note small', text: `Note: ${n}` })),
+      ...v.notes.map((n) => h('div', { class: 'note small', text: t('lane.note', { text: n }) })),
     );
     const { lane, svg, cursor } = laneShell(head, height, scale, v.failing ? 'failing' : '');
     state.lanes[state.lanes.length - 1].readout = { el: readout, v };
-    svg.setAttribute('aria-label', `${v.name}: values over virtual time`);
+    svg.setAttribute('aria-label', t('lane.label', { name: v.name }));
     commonBack(svg, m, scale, height);
     if (strip) drawLines(svg, m, v, scale);
     const area = { y0: strip + 4, y1: height - 4 };
@@ -1699,7 +1765,12 @@
           },
           svg,
         ),
-        `${gap.dropped} points of the ${source} series were dropped at the file's limits: values are missing from ${fmtMs(gap.from)} to ${fmtMs(gap.before)}`,
+        t('lane.dropped', {
+          count: gap.dropped,
+          source,
+          from: fmtMs(gap.from),
+          to: fmtMs(gap.before),
+        }),
       );
     }
     const sampledEnd = v.sampled ? (v.sampled.lastMs ?? m.recordedTo) : null;
@@ -1753,7 +1824,7 @@
       drawMarks(svg, v, scale, () => area.y0 + (BAND_HEIGHT - 4) / 2, area);
     }
     if (!v.written && !v.sampled && !v.notes.length) {
-      s('text', { class: 'empty-label', x: 6, y: height / 2 + 4, text: 'no values recorded' }, svg);
+      s('text', { class: 'empty-label', x: 6, y: height / 2 + 4, text: t('lane.noValues') }, svg);
     }
     commonFront(svg, m, scale, height, cursor);
     return lane;
@@ -1764,7 +1835,14 @@
       if (!isNum(l.from_ms)) continue;
       const known = knows(KNOWN.lineKind, l.kind);
       const x0 = scale.x(l.from_ms);
-      const text = `${l.text ?? l.kind} (${l.step === null || l.step === undefined ? 'inputs' : `step ${l.step}`}, line ${l.line})`;
+      const text = t('line.title', {
+        text: l.text ?? l.kind,
+        where:
+          l.step === null || l.step === undefined
+            ? t('line.inputs')
+            : t('line.step', { step: l.step }),
+        line: l.line,
+      });
       const g = tooltip(
         s('g', { class: `line-mark line-${known ? l.kind : 'unknown'}` }, svg),
         text,
@@ -1799,10 +1877,11 @@
 
   /** The title of a segment of a series, by its state (the same words as the read-out and the writes table). */
   const STATE_TITLES = {
-    'not-applied': 'Sent, and the ECU did not apply it',
-    'not-known': 'Sent; not known whether the ECU applied it',
-    held: 'The value that stayed in the ECU: it was applied, and the writes after it were not',
+    'not-applied': 'state.notApplied',
+    'not-known': 'state.notKnown',
+    held: 'state.held',
   };
+  const stateTitle = (st) => t(STATE_TITLES[st]);
 
   function drawNumberSeries(svg, segs, scale, y, cls) {
     const shown = decimate(segs, scale);
@@ -1830,7 +1909,14 @@
           svg,
         );
         if (unapplied(seg.state))
-          tooltip(pt, `${STATE_TITLES[seg.state]}: ${fmtValue(seg.v)} at ${fmtMs(seg.from)}`);
+          tooltip(
+            pt,
+            t('state.at', {
+              title: stateTitle(seg.state),
+              value: fmtValue(seg.v),
+              at: fmtMs(seg.from),
+            }),
+          );
       }
     }
     if (groups.main.length) s('path', { class: `series ${cls}`, d: groups.main.join('') }, svg);
@@ -1838,7 +1924,7 @@
       if (groups[key].length)
         tooltip(
           s('path', { class: `series ${cls} ${key}`, d: groups[key].join('') }, svg),
-          STATE_TITLES[key],
+          stateTitle(key),
         );
     }
   }
@@ -1882,10 +1968,15 @@
       tooltip(
         r,
         seg.state === 'held'
-          ? `${STATE_TITLES.held}: ${value} from ${fmtMs(seg.from)} to ${fmtMs(seg.to)}`
+          ? t('state.fromTo', {
+              title: stateTitle('held'),
+              value,
+              from: fmtMs(seg.from),
+              to: fmtMs(seg.to),
+            })
           : unapplied(seg.state)
-            ? `${STATE_TITLES[seg.state]}: ${value} at ${fmtMs(seg.from)}`
-            : `${value} from ${fmtMs(seg.from)}`,
+            ? t('state.at', { title: stateTitle(seg.state), value, at: fmtMs(seg.from) })
+            : t('state.from', { value, from: fmtMs(seg.from) }),
       );
       if (seg.state === 'held' || (unapplied(seg.state) && marked.has(seg.from))) continue;
       const text = fill === 'mixed' ? '…' : value;
@@ -1893,7 +1984,10 @@
         kind === 'enum' && info && Array.isArray(info.items)
           ? ((info.items.find((i) => i && i.value === seg.v) || {}).name ?? text)
           : text;
-      const said = { 'not-applied': ' (not applied)', 'not-known': ' (not known)' }[seg.state];
+      const said = {
+        'not-applied': t('state.notAppliedSuffix'),
+        'not-known': t('state.notKnownSuffix'),
+      }[seg.state];
       const label = said && w > (name + said).length * 6.5 + 6 ? name + said : name;
       if (w > label.length * 6.5 + 6) {
         s(
@@ -1916,10 +2010,25 @@
   }
 
   function bandTitle(b, info) {
-    const range = b.mode === 'at' ? `at ${fmtMs(b.from)}` : `${fmtMs(b.from)} to ${fmtMs(b.until)}`;
-    const limit = b.limit !== null && b.limit !== b.to ? `, limit ${fmtMs(b.limit)}` : '';
-    const result = b.failed ? 'did not hold' : b.status === 'passed' ? 'held' : `step ${b.status}`;
-    return `Step ${b.step} (${b.mode}): ${compareText(b.compare, info)}, ${range}${limit}: ${result}`;
+    const range =
+      b.mode === 'at'
+        ? t('band.at', { at: fmtMs(b.from) })
+        : t('band.range', { from: fmtMs(b.from), to: fmtMs(b.until) });
+    const limit =
+      b.limit !== null && b.limit !== b.to ? t('band.limit', { limit: fmtMs(b.limit) }) : '';
+    const result = b.failed
+      ? t('band.didNotHold')
+      : b.status === 'passed'
+        ? t('band.held')
+        : t('band.stepStatus', { status: statusWord(b.status) });
+    return t('band.title', {
+      step: b.step,
+      mode: b.mode,
+      compare: compareText(b.compare, info),
+      range,
+      limit,
+      result,
+    });
   }
 
   function drawBandsNumber(svg, v, scale, y, area, lo, hi) {
@@ -1976,7 +2085,7 @@
         },
         g,
       );
-      const text = `expect ${compareText(b.compare, info)}`;
+      const text = t('band.expect', { compare: compareText(b.compare, info) });
       if (x1 - x0 > text.length * 6 + 4)
         s('text', { class: 'expect-label', x: x0 + 3, y: area.y1 - 1, text }, g);
     }
@@ -1991,11 +2100,11 @@
         const g = tooltip(
           s('g', { class: 'mark bad' }, svg),
           mk.text === null
-            ? `No value at ${fmtMs(mk.at)}`
-            : `It was ${mk.text} (sample of ${fmtMs(mk.at)}): the condition did not hold`,
+            ? t('mark.noValueAt', { at: fmtMs(mk.at) })
+            : t('mark.was', { value: mk.text, at: fmtMs(mk.at) }),
         );
         s('circle', { cx: x, cy, r: 5 }, g);
-        const label = mk.text === null ? 'no value' : mk.text;
+        const label = mk.text === null ? t('mark.noValue') : mk.text;
         const left = x + label.length * 6.5 + 10 > scale.width;
         s(
           'text',
@@ -2011,15 +2120,20 @@
         const cls = mk.applied === true ? 'ok' : mk.applied === false ? 'bad' : 'warn';
         const word =
           mk.applied === true
-            ? 'applied'
+            ? t('mark.applied')
             : mk.applied === false
               ? mk.sent === false
-                ? 'not sent'
-                : 'not applied'
-              : 'not known whether applied';
+                ? t('mark.notSent')
+                : t('mark.notApplied')
+              : t('mark.notKnownWhether');
         const g = tooltip(
           s('g', { class: `mark write ${cls}${mk.cause ? ' cause' : ''}` }, svg),
-          `Write of ${fmtValue(mk.value, v.info, true)} for ${fmtMs(mk.at)}: ${word}${mk.cause ? ' (the cause of the failure)' : ''}`,
+          t('mark.write', {
+            value: fmtValue(mk.value, v.info, true),
+            at: fmtMs(mk.at),
+            word,
+            cause: mk.cause ? t('mark.cause') : '',
+          }),
         );
         s('rect', { x: x - 5, y: cy - 5, width: 10, height: 10, rx: 2 }, g);
         s(
@@ -2033,7 +2147,10 @@
           },
           g,
         );
-        const label = `${fmtValue(mk.value, v.info)} ${mk.applied === null ? 'not known' : word}`;
+        const label = t('mark.label', {
+          value: fmtValue(mk.value, v.info),
+          word: mk.applied === null ? t('mark.notKnown') : word,
+        });
         const left = x + label.length * 6.5 + 10 > scale.width;
         s(
           'text',
@@ -2086,21 +2203,21 @@
 
   function updateCursor() {
     const m = state.model;
-    const t = state.cursor;
-    if (!m || t === null || t < state.view[0] || t > state.view[1]) {
+    const at = state.cursor;
+    if (!m || at === null || at < state.view[0] || at > state.view[1]) {
       for (const lane of state.lanes) {
         lane.cursor.setAttribute('x1', -10);
         lane.cursor.setAttribute('x2', -10);
         if (lane.readout) lane.readout.el.textContent = '';
       }
       const time = $('cursor-time');
-      if (time) time.textContent = 'Virtual time';
+      if (time) time.textContent = t('chart.virtualTime');
       const steps = $('cursor-steps');
       if (steps) steps.textContent = '';
       return;
     }
     const scale = makeScale(state.view[0], state.view[1], state.width);
-    const x = scale.x(t);
+    const x = scale.x(at);
     for (const lane of state.lanes) {
       lane.cursor.setAttribute('x1', x);
       lane.cursor.setAttribute('x2', x);
@@ -2108,22 +2225,22 @@
       const v = lane.readout.v;
       const parts = [];
       const end = m.recordedTo;
-      const w = valueAt(v.written, t, end, v.gaps.written);
-      const sv = valueAt(v.sampled, t, end, v.gaps.sampled);
+      const w = valueAt(v.written, at, end, v.gaps.written);
+      const sv = valueAt(v.sampled, at, end, v.gaps.sampled);
       if (w) parts.push(readoutText('sent', w, v.info));
       if (sv) parts.push(readoutText('seen', sv, v.info));
       // The time is in the head of the axis lane; each lane says only its values (all of them on hover).
       lane.readout.el.textContent = parts.join(' · ');
       lane.readout.el.title = lane.readout.el.textContent;
     }
-    $('cursor-time').textContent = `Cursor ${fmtMs(Number(t.toPrecision(6)))}`;
+    $('cursor-time').textContent = t('chart.cursor', { at: fmtMs(Number(at.toPrecision(6))) });
     const active = m.steps.filter((st) => {
       if (!isNum(st.start_ms)) return false;
       const e = [st.end_ms, st.at_ms].filter(isNum).reduce((a, b) => Math.max(a, b), st.start_ms);
-      return t >= st.start_ms && (t <= e || st.status === 'unfinished');
+      return at >= st.start_ms && (at <= e || st.status === 'unfinished');
     });
     $('cursor-steps').textContent = active.length
-      ? active.map((st) => `#${st.index} ${st.kind} (${st.status})`).join(', ')
+      ? active.map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`).join(', ')
       : '';
   }
 
@@ -2132,30 +2249,24 @@
   function readFile(file) {
     file.text().then(
       (text) => load(text, file.name),
-      (e) => showError(`"${file.name}" could not be read (${e.message}). Choose the file again.`),
+      (e) => showError(t('load.cannotRead', { name: file.name, error: e.message })),
     );
   }
 
   function fromSrc(src) {
     if (location.protocol === 'file:') {
-      showError(
-        `?src= works only when the page comes from a web server, and this page was opened as a file. Drop the timeline file on the page instead.`,
-      );
+      showError(t('load.fileProtocol'));
       return;
     }
     let url;
     try {
       url = new URL(src, location.href);
     } catch {
-      showError(
-        `?src=${src} is not an address. Name the timeline file on this server, or drop the file on the page.`,
-      );
+      showError(t('load.notAddress', { src }));
       return;
     }
     if (url.origin !== location.origin) {
-      showError(
-        `?src= must name a file on this page's own server (${location.origin}), and ${url.origin} is another one, so the file was not loaded. Download the file and drop it on the page instead.`,
-      );
+      showError(t('load.otherOrigin', { origin: location.origin, other: url.origin }));
       return;
     }
     const token = takeToken();
@@ -2167,13 +2278,10 @@
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((r) => {
-        if (r.status === 401)
-          throw new Error(
-            'HTTP 401: the GUI server did not accept this page\'s token. Open the timeline again with the GUI\'s "Timeline" link',
-          );
+        if (r.status === 401) throw new Error(t('load.unauthorized'));
         if (!r.ok) {
           return r.text().then((body) => {
-            throw new Error(`HTTP ${r.status}${serverMessage(body)}`);
+            throw new Error(t('load.http', { status: r.status, message: serverMessage(body) }));
           });
         }
         name = fileName(r.headers.get('Content-Disposition')) || name;
@@ -2181,10 +2289,7 @@
       })
       .then(
         (text) => load(text, name),
-        (e) =>
-          showError(
-            `${url.href} could not be loaded (${e.message}). Check the address, or drop the file on the page.`,
-          ),
+        (e) => showError(t('load.failed', { url: url.href, error: e.message })),
       );
   }
 
@@ -2225,11 +2330,11 @@
     }
   }
 
-  /** The message of a GUI server's error ({"error": {"message"}}), as ": <message>", or nothing. */
+  /** The message of a GUI server's error ({"error": {"message"}}; in English, as the server writes it), or ''. */
   function serverMessage(body) {
     try {
       const message = JSON.parse(body)?.error?.message;
-      return typeof message === 'string' ? `: ${message}` : '';
+      return typeof message === 'string' ? message : '';
     } catch {
       return '';
     }
@@ -2241,7 +2346,34 @@
     return match ? match[1] : null;
   }
 
+  /** A text of messages.js into an element: a string, or an array of strings and [tag, text] (never parsed). */
+  function fill(el, value) {
+    const parts = Array.isArray(value) ? value : [value];
+    el.replaceChildren(
+      ...parts.map((part) => (Array.isArray(part) ? h(part[0], { text: part[1] }) : part)),
+    );
+  }
+
+  /** The page's language, and its texts in the elements of timeline.html that name one (data-text, data-label). */
+  function translatePage() {
+    setLanguage(pickLanguage(location.search, navigator.languages ?? [navigator.language]));
+    document.documentElement.lang = language;
+    document.title = t('page.title');
+    for (const el of document.querySelectorAll('[data-text]')) fill(el, t(el.dataset.text));
+    for (const el of document.querySelectorAll('[data-label]'))
+      el.setAttribute('aria-label', t(el.dataset.label));
+  }
+
   function start() {
+    if (!MESSAGES) {
+      // The one text not in messages.js: it says that messages.js is missing (in both languages).
+      document.body.textContent =
+        // eslint-disable-next-line no-restricted-syntax
+        'messages.js is missing: put it next to timeline.html (it comes with the page). / ' +
+        'messages.js がありません。timeline.html の隣に置いてください（ページと一緒に配っています）。';
+      return;
+    }
+    translatePage();
     $('open').addEventListener('click', () => $('file').click());
     $('file').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];

@@ -24,6 +24,7 @@ PAGE_FILES = {
     "": ("timeline.html", "text/html; charset=utf-8"),
     "timeline.html": ("timeline.html", "text/html; charset=utf-8"),
     "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
+    "messages.js": ("messages.js", "text/javascript; charset=utf-8"),
 }
 MAX_PAGE_FILE_BYTES = 4 * 1024 * 1024
 

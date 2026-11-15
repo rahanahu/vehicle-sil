@@ -1842,6 +1842,7 @@ flowchart TD
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
 | ファイルを描くページ | `gui/timeline/viewer.js`（ページは `timeline.html`。「The page」より上は DOM なしで動き、単体テストが呼ぶ部分） |
+| ページの文言（英語と日本語） | `gui/timeline/messages.js`: ページが出す文言のすべてを、鍵ごとに両方の言語で（鍵は単体テストが確かめる。`viewer.js` の単語の並んだ文字列は、ページの lint が断る） |
 | GUI サーバー: シナリオの実行に付ける `--timeline`、残すファイル、配るページとファイル | `gui/server/src/vehicle_sil_gui/timelines.py`、`server.py` の `_start()`、`_keep_timeline()`、`get_timeline()`、`get_timeline_page()` |
 | 新しい種類の段、送った値の新しい状態 | `laneKind()` と `variableLane()` の分岐、状態は `pointState()` と `holdSegments()`、`timeline.html` の CSS のクラス。名前を出す代わりに描かせる値は `KNOWN` |
 

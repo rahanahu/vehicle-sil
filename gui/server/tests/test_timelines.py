@@ -98,7 +98,8 @@ def test_the_page_is_served_without_a_token_under_the_servers_checks(tmp_path: P
         async def talk(c: Client) -> None:
             for path, media, name in (("timeline/", "text/html", "timeline.html"),
                                       ("timeline/timeline.html", "text/html", "timeline.html"),
-                                      ("timeline/viewer.js", "text/javascript", "viewer.js")):
+                                      ("timeline/viewer.js", "text/javascript", "viewer.js"),
+                                      ("timeline/messages.js", "text/javascript", "messages.js")):
                 status, body, headers = await get_raw(c, path, token=None)
                 assert status == 200, (path, body[:200])
                 assert body == (page / name).read_bytes()
@@ -163,12 +164,12 @@ def test_the_files_of_the_last_runs_are_kept_and_the_rest_removed(tmp_path: Path
     assert not directory.exists() and timelines.ready == {}
 
 
-@pytest.mark.parametrize("name", ["timeline.html", "viewer.js"])
+@pytest.mark.parametrize("name", ["timeline.html", "viewer.js", "messages.js"])
 def test_the_page_dir_is_found_only_with_all_its_files(tmp_path: Path, monkeypatch, name: str) -> None:
     import vehicle_sil_gui.timelines as module
     fake = tmp_path / "vehicle_sil_gui"
     (fake / "timeline").mkdir(parents=True)
-    for other in ("timeline.html", "viewer.js"):
+    for other in ("timeline.html", "viewer.js", "messages.js"):
         if other != name:
             (fake / "timeline" / other).write_text("x")
     monkeypatch.setattr(module, "__file__", str(fake / "timelines.py"))

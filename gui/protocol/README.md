@@ -608,7 +608,7 @@ When the launcher has `timeline` in its `features`, the server adds `--timeline 
 - When the run has ended, the server keeps the file if the launcher wrote a whole one: the file is not empty and the result has no `timeline-write` finding. Then the summary's `scenario.timeline_url` is `api/timeline/<session id>`.
 - `GET api/timeline/<session id>` returns the file as `application/json`, with `Content-Disposition: inline; filename="<scenario name>.timeline.json"`. It needs the token, as every `api/` request does. A run that has no kept file (no scenario, a launcher without `timeline`, a run that is still running or wrote no whole file, an id the server never gave, a file removed) gets 404 `no-timeline`.
 - The server keeps the files of the last 4 runs that wrote one. When a fifth is kept, the oldest is removed. All of them are removed when the server stops.
-- The page that draws the file is served at `timeline/` without a token (`timeline/`, `timeline/timeline.html`, `timeline/viewer.js`), with the same `Host` check and headers as the screen's files. It reads the token as the screens do (`#token=` in its URL, else the tab's sessionStorage under the key of `takeToken`) and sends it with `Authorization: Bearer`. Open it as `timeline/?src=/api/timeline/<session id>`.
+- The page that draws the file is served at `timeline/` without a token (`timeline/`, `timeline/timeline.html`, `timeline/viewer.js`, `timeline/messages.js`), with the same `Host` check and headers as the screen's files. It reads the token as the screens do (`#token=` in its URL, else the tab's sessionStorage under the key of `takeToken`) and sends it with `Authorization: Bearer`. Open it as `timeline/?src=/api/timeline/<session id>`.
 
 ## Recording actions (`api/recording`)
 
