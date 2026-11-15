@@ -4305,6 +4305,13 @@ void scenario_wave(const Options& o)
     require(contains(lf(example.standard_output), "\nscenario scenarios/throttle_wave.yaml (throttle wave): passed, 7 of 7 steps passed\n") &&
                 contains(lf(example.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
             "the example with waves:\n" + lf(example.standard_output));
+
+    // The example with points from a CSV file (examples/ecu_main/scenarios/throttle_trace.yaml and .csv) passes, without a finding.
+    const Captured trace = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_trace.yaml"}, o.example_dir);
+    expect_code(trace, 0, "run --strict simulation.yaml --scenario scenarios/throttle_trace.yaml");
+    require(contains(lf(trace.standard_output), "\nscenario scenarios/throttle_trace.yaml (throttle trace): passed, 4 of 4 steps passed\n") &&
+                contains(lf(trace.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
+            "the example with points from a file:\n" + lf(trace.standard_output));
 }
 
 /// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no

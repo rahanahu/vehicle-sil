@@ -335,7 +335,7 @@ For each variable, write one waveform, and beside it the duration (`for_ms`) and
 | | `bounces` | This or `for_ms` beside the waveform | How many times the value returns to the original value. |
 | | `seed` | No | With it, each change shifts earlier or later by up to 1/4 of `interval_ms`. |
 | | `from` | No | The original value. Not for bool, where it is the opposite of `to`. |
-| `points` | `[[<ms>, <value>], ...]` | Yes | The table of times (ms from the start of the step, ascending) and values. |
+| `points` | `[[<ms>, <value>], ...]` or a CSV file (`{ file: <path>, value: <column> }`, see [Reading points from a CSV file](#reading-points-from-a-csv-file)) | Yes | The table of times (ms from the start of the step, ascending) and values. |
 
 A bool `square` takes neither `low` and `high` nor `amplitude`: its values are `false` and `true`.
 
@@ -404,6 +404,28 @@ The range (`min`, `max`) is checked at these points:
 `square` switches the value itself between high and low, for an ECU input that watches the edges of a pin. For a PWM input, where the ECU receives the duty cycle or the frequency as a numeric variable, use `set`, `ramp` or `sine` on that variable.
 
 `vehicle_sil::signal` ([`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)) has functions that do the same calculation. You can use them in your own C++ code.
+
+### Reading points from a CSV file
+
+Instead of a table, `points` can name a CSV file and one of its columns. Use this to play a recorded column of values into an input.
+The example below is line 15 of [examples/ecu_main/scenarios/throttle_trace.yaml](../examples/ecu_main/scenarios/throttle_trace.yaml). It plays the column `throttle` of `throttle_trace.csv`, in the same directory, at the times (ms) in the first column.
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+| Key | Required | Meaning |
+|---|---|---|
+| `file` | Yes | The CSV file, as a path from the directory of the scenario file, with `/` between directories. An absolute path, a path with `..` and a path with `\` are errors: a scenario reads only files in its own directory and below. |
+| `value` | Yes | The name of the value column. |
+| `time` | No | The name of the time column. Without it, the first column. |
+| `time_unit` | No | The unit of the times: `ms` (the default) or `s`. Either way, a time is counted from the start of the step and must come to a whole number of ms (`0.25` in `s` is 250 ms). |
+
+- The first row of the CSV file holds the column names, and each row below it is one point. Cells are separated by `,` and can be enclosed in `"` (a `"` inside is written `""`). The file is UTF-8; a leading BOM, CRLF line ends and empty lines are fine. Every row has as many cells as the first row.
+- The points go through the same checks as `[[<ms>, <value>], ...]` and give the same values: ascending times, values that fit the type and the range, `interpolate` beside `points`, and the warnings for points finer than the ECU step. A value cell is a number. For bool, write `true`, `false`, `1` or `0`; for enum, an item name or its value. Integer values can also be hexadecimal (`0x3C`).
+- Different columns of one file can feed different variables. The check reads each file once. A file can have up to 100000 value rows and up to 16 MiB.
+- `file`, `value`, `time` and `time_unit` can contain `${name}`, so one scenario can play different recordings.
+- Errors about the file, the path or the columns are `scenario-points-file`. An error in a cell is the same as in `[[<ms>, <value>], ...]`: `value` for a time and `scenario-value` for a value. The finding points at the `file` line of the scenario, and its message gives the row and the column in the CSV file (cells are cut at 20 characters). For each `points`, only the first cell error is reported.
 
 ### Waveforms finer than the ECU step
 
@@ -769,6 +791,7 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
 | `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). |
 | `scenario-wave-coarse`, `scenario-wave-not-checked` | Note | See the same section. |
+| `scenario-points-file` | Error | The CSV file of `points` (see [Reading points from a CSV file](#reading-points-from-a-csv-file)) is not under the scenario's directory, does not exist, cannot be read, is empty or is not UTF-8, a row has a different number of cells than there are columns, or there are too many rows. The `value` or `time` column does not exist or its name appears twice. |
 | `scenario-nothing-checked` | Warning | Every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, so the scenario checks nothing. |
 | `scenario-step-skipped` | Note | The step uses a variable with `absent: true` or a variable of a participant that the variant disables, so it is skipped in the run. If only the `expect` beside a `ramp` or `wave` uses it, only that `expect` is skipped. |
 
@@ -959,6 +982,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario` | `check --scenario` and `run --scenario` | Scenarios cannot be used. |
 | `scenario-wave` | The `wave` step | `wave` is an unknown-key error. |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` | An error that the step has 2 actions. |
+| `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |
 | `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.

@@ -335,7 +335,7 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 | | `bounces` | 横の `for_ms` とどちらか | 元の値に戻る回数です。 |
 | | `seed` | いいえ | 書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれます。 |
 | | `from` | いいえ | 元の値です（bool には書きません。`to` の反対です）。 |
-| `points` | `[[<ms>, <値>], ...]` | はい | 時刻（手順の始めからの ms、昇順）と値の表です。 |
+| `points` | `[[<ms>, <値>], ...]` か CSV ファイル（`{ file: <パス>, value: <列> }`。[点を CSV ファイルから読む](#点を-csv-ファイルから読む)） | はい | 時刻（手順の始めからの ms、昇順）と値の表です。 |
 
 bool の `square` には、`low`・`high` も `amplitude` も書きません（`false` と `true` です）。
 
@@ -404,6 +404,28 @@ integer は四捨五入します（ちょうど .5 は 0 から遠い側。計�
 `square` は、値そのものを高い側と低い側に切り替えます（ECU がピンのエッジを見る入力）。ECU がデューティーや周波数を数の変数として受ける PWM の入力には、その変数に `set` や `ramp`、`sine` を使います。
 
 `vehicle_sil::signal`（[`signal/waveform.hpp`](../../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
+
+### 点を CSV ファイルから読む
+
+`points` には、点の表の代わりに CSV ファイルとその列を書けます。記録した値の列を、そのまま入力に流すときに使います。
+次の例は、[examples/ecu_main/scenarios/throttle_trace.yaml](../../examples/ecu_main/scenarios/throttle_trace.yaml) の 15 行で、同じディレクトリの `throttle_trace.csv` の列 `throttle` を、最初の列の時刻（ms）で流します。
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+| キー | 必須 | 意味 |
+|---|---|---|
+| `file` | はい | CSV ファイルです。シナリオのファイルがあるディレクトリからのパスで、ディレクトリの区切りは `/` です。絶対パス、`..` を含むパス、`\` を含むパスはエラーです（シナリオは、自分のディレクトリとその下のファイルだけを読みます）。 |
+| `value` | はい | 値の列の名前です。 |
+| `time` | いいえ | 時刻の列の名前です。省くと最初の列です。 |
+| `time_unit` | いいえ | 時刻の単位で、`ms`（既定）か `s` です。どちらも手順の始めからの時刻で、整数の ms になる値を書きます（`s` の `0.25` は 250 ms）。 |
+
+- CSV の 1 行目は列の名前で、その下の 1 行が 1 点です。区切りは `,` で、セルを `"` で囲めます（中の `"` は `""`）。UTF-8 で、先頭の BOM、CRLF の改行、空行はかまいません。どの行も、1 行目と同じ数のセルを持ちます。
+- 読んだ点は、`[[<ms>, <値>], ...]` に書いたときと同じ決まりで照合し、同じ値を書きます（時刻は昇順、値は型と範囲、`interpolate` は横に書く、ECU のステップより細かい点の警告）。値のセルは数です。bool は `true`、`false`、`1`、`0`、enum は項目の名前か値です。integer の値には 16 進（`0x3C`）も書けます。
+- 1 つのファイルの別の列を、別の変数に使えます。ファイルは照合のときに 1 回だけ読みます。値の行は 100000 行まで、ファイルは 16 MiB までです。
+- `file`、`value`、`time`、`time_unit` には `${名前}` を書けます（同じシナリオに、別の記録を流す）。
+- ファイル、パス、列のエラーは `scenario-points-file` です。セルのエラーは、`[[<ms>, <値>], ...]` と同じ `value`（時刻）と `scenario-value`（値）です。指摘の行はシナリオの `file` の行で、メッセージが CSV の何行目のどの列かを言います（セルは 20 文字で切ります）。セルのエラーは、1 つの `points` につき最初の 1 つだけを言います。
 
 ### ECU のステップより細かい波形
 
@@ -769,6 +791,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-time` | エラー | `at_ms` が前の手順の終わりより前。待つ手順より後ろに `at_ms` がある。手順の時間を合計すると、時刻の上限（1000000000000 ms）を超える。 |
 | `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。 |
 | `scenario-wave-coarse`、`scenario-wave-not-checked` | 注記 | 同じ節にあります。 |
+| `scenario-points-file` | エラー | `points` の CSV ファイル（[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）のパスが、シナリオのディレクトリの下を指していない。ファイルがない、読めない、空、UTF-8 でない、行のセルの数が列の数と違う、行が多すぎる。`value` や `time` の列がない、名前が 2 つある。 |
 | `scenario-nothing-checked` | 警告 | 確認する手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部スキップするので、シナリオが何も確認しない。 |
 | `scenario-step-skipped` | 注記 | 手順が `absent: true` の変数か、機種が無効にした participant の変数を使うので、実行でスキップする。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけをスキップする。 |
 
@@ -959,6 +982,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario` | `check --scenario` と `run --scenario` | シナリオを使えません。 |
 | `scenario-wave` | 手順 `wave` | `wave` は、知らないキーのエラーです。 |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` | 手順が 2 つの動作をする、というエラーです。 |
+| `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |
 | `scenario-control` | `--scenario` と `--control` を一緒に使う | 一緒に使えません（Control Server を持つビルドだけにあります）。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。

@@ -12,6 +12,10 @@ configure_file(scenarios/throttle_step.yaml scenarios/throttle_step.yaml COPYONL
 configure_file(scenarios/engine_disconnect.yaml scenarios/engine_disconnect.yaml COPYONLY)
 # The throttle moved in shapes (--scenario scenarios/throttle_wave.yaml).
 configure_file(scenarios/throttle_wave.yaml scenarios/throttle_wave.yaml COPYONLY)
+# The throttle moved along a recorded trace, the points from a CSV file beside the scenario
+# (--scenario scenarios/throttle_trace.yaml).
+configure_file(scenarios/throttle_trace.csv scenarios/throttle_trace.csv COPYONLY)
+configure_file(scenarios/throttle_trace.yaml scenarios/throttle_trace.yaml COPYONLY)
 # The browser GUI's dashboard of simulation.yaml and the panel it loads (docs/gui.md).
 configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
 # The same two at the speed of a clock and without an end, to watch in the GUI (scripts/run-gui.py).

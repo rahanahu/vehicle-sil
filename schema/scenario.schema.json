@@ -280,22 +280,27 @@
           }
         },
         "points": {
-          "type": "array",
-          "minItems": 1,
-          "description": "A table: [milliseconds since the step began, value] in the order of the times. The wave ends at the last point, and the variable keeps its value. For any type; a bool and an enum keep each value until the next point.",
-          "items": {
-            "type": "array",
-            "minItems": 2,
-            "additionalItems": false,
-            "items": [
-              {
-                "description": "Milliseconds of virtual time since the step began.",
-                "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 1000000000000 }, { "$ref": "#/definitions/parameter" }]
-              },
-              { "$ref": "#/definitions/value" }
-            ]
-          },
-          "examples": [[[0, 0], [100, 50], [400, 20]]]
+          "description": "A table: [milliseconds since the step began, value] in the order of the times, or a CSV file and its column ({ file, value }). The wave ends at the last point, and the variable keeps its value. For any type; a bool and an enum keep each value until the next point.",
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "additionalItems": false,
+                "items": [
+                  {
+                    "description": "Milliseconds of virtual time since the step began.",
+                    "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 1000000000000 }, { "$ref": "#/definitions/parameter" }]
+                  },
+                  { "$ref": "#/definitions/value" }
+                ]
+              }
+            },
+            { "$ref": "#/definitions/points_file" }
+          ],
+          "examples": [[[0, 0], [100, 50], [400, 20]], { "file": "traces/drive.csv", "value": "throttle" }]
         },
         "around": {
           "$ref": "#/definitions/number",
@@ -356,6 +361,35 @@
         },
         { "if": { "required": ["interpolate"] }, "then": { "required": ["points"] } }
       ]
+    },
+    "points_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "value"],
+      "description": "Points from a CSV file: its first line names the columns, and each line below it is a point (a time and the values). Read with the same rules as points written in the scenario.",
+      "properties": {
+        "file": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!(.*/)?\\.\\.(/|$))",
+          "description": "The CSV file, from the directory of the scenario file, with / between directories: not an absolute path, and without .. (a scenario reads only files in its own directory and below it)."
+        },
+        "value": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "description": "The name of the column of the values, as the file's first line names it."
+        },
+        "time": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "description": "The name of the column of the times. Without it, the first column."
+        },
+        "time_unit": {
+          "anyOf": [{ "enum": ["ms", "s"] }, { "$ref": "#/definitions/parameter" }],
+          "description": "The unit of the times: ms (the default) or s. Each time must come to a whole number of milliseconds since the step began."
+        }
+      },
+      "examples": [{ "file": "traces/drive.csv", "value": "throttle" }, { "file": "drive.csv", "value": "throttle", "time": "t", "time_unit": "s" }]
     },
     "amplitude": {
       "description": "How far the value goes above and below the middle: 0 or more.",

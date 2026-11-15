@@ -473,7 +473,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "scenario",
     "manual-participants",
     "scenario-wave",
-    "scenario-motion-expect"
+    "scenario-motion-expect",
+    "scenario-points-file"
   ]
 }
 ```
@@ -509,6 +510,7 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `scenario` | `check --scenario` and `run --scenario` (see [scenario.md](scenario.md)) |
 | `scenario-wave` | The scenario step `wave` (see "Waveforms (`wave`)" in [scenario.md](scenario.md#waveforms-wave)) |
 | `scenario-motion-expect` | An `expect` beside a scenario's `ramp` or `wave` (see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
+| `scenario-points-file` | The `points` of a scenario's `wave` read from a CSV file (`points: { file, value, time, time_unit }`, see "Reading points from a CSV file" in [scenario.md](scenario.md#reading-points-from-a-csv-file)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
@@ -522,6 +524,7 @@ Each name indicates that the following are present:
 | `scenario` | `scenario` in the result and check JSON, the event `scenario_step`, the findings `scenario-*`, and a finding's `file` being the scenario file |
 | `scenario-wave` | `undersampled` of that step, the findings `scenario-wave-*`, and `"wave"` as the `kind` of a step in the result and in events |
 | `scenario-motion-expect` | `expect_skipped` of a step in the result and in events |
+| `scenario-points-file` | The finding `scenario-points-file` |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).

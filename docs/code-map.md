@@ -1678,6 +1678,7 @@ Where to change:
 | Reading and checking | `libs/launch/src/scenario.cpp` |
 | Advancing the steps | `libs/launch/src/scenario_run.cpp` |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
+| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
@@ -1697,6 +1698,7 @@ Example files:
 
 - The example file that is compared is `examples/ecu_main/scenarios/throttle_step.yaml`.
 - The `wave` example is `examples/ecu_main/scenarios/throttle_wave.yaml`, and `launch_run.scenario_wave` runs it.
+- The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
 - The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
 - For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
 
@@ -1706,6 +1708,8 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
 - Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
+- `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
+- Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
 - In controller step P, only the samples and results of steps that started before P are looked at. Those from P on are handled in the next step, even if they have already been received.
 - A write at time T is queued while the controller step before T is held (time 0 is the start window).
 - In a run with a scenario, the controller's time step does not depend on the speed (`fine` of `detail::plan_time_step()`).

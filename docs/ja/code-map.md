@@ -1678,6 +1678,7 @@ flowchart TD
 | 読み方と照合 | `libs/launch/src/scenario.cpp` |
 | 手順を進める処理 | `libs/launch/src/scenario_run.cpp` |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/launch/src/scenario_shapes.cpp` |
+| `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`、パスの検査とセルの意味は `scenario.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
@@ -1697,6 +1698,7 @@ flowchart TD
 
 - 照合する例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml` です。
 - `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、`launch_run.scenario_wave` が実行します。
+- CSV ファイルの `points` の例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv` で、`launch_run.scenario_wave` が実行します。
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
 
@@ -1706,6 +1708,8 @@ flowchart TD
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
 - ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario.cpp` の `seen_between()` のルール 1 つに従います。
+- `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
+- 点を足す口（文面と CSV ファイル）は `read_points()` の 1 つで、同じ照合を通ります。
 - controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見ます。P 以降のものは、受信していても次のステップで扱います。
 - 時刻 T の書き込みは、T より前の controller のステップを止めている間に積みます（時刻 0 は開始前の窓）。
 - シナリオのある実行の controller のタイムステップは、速度によりません（`detail::plan_time_step()` の `fine`）。

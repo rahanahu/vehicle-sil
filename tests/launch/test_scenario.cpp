@@ -9,10 +9,13 @@
 
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -2020,6 +2023,241 @@ TEST_CASE(scenario_times_are_the_same_whether_a_wave_is_skipped_or_not)
     CHECK(skipped.steps[4].start == at(200ms) && skipped.steps[4].end == at(260ms) && !skipped.steps[4].at);
     // Nothing of a skipped step is written, also not the wave of the variable that is there.
     check_text(applied(a, "Body.ratio"), "");
+}
+
+// --- points from a CSV file ---
+
+namespace {
+
+/// A ScenarioContext whose files are `files` (by the path the scenario writes); `reads` counts the
+/// reads of each.
+ScenarioContext with_files(std::map<std::string, std::string> files, std::shared_ptr<std::map<std::string, int>> reads = {})
+{
+    ScenarioContext context;
+    context.read_file = [files = std::move(files), reads](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (reads)
+        {
+            ++(*reads)[path];
+        }
+        const auto it = files.find(path);
+        if (it == files.end())
+        {
+            problem = "does not exist";
+            return std::nullopt;
+        }
+        return it->second;
+    };
+    return context;
+}
+
+} // namespace
+
+TEST_CASE(scenario_points_from_a_file_write_what_the_same_points_in_the_text_write)
+{
+    // The same points in the text and in two files: a byte order mark, CRLF, a blank line, a name
+    // in quotes, spaces around a cell, hexadecimal, an enum by name and by value, a bool as 0, the
+    // times in seconds in a column that is not the first, one file for two variables.
+    const std::string first = "  - set: { Body.ratio: 0, Door.lamp: false }\n";
+    const std::string text =
+        kHead + first +
+        "  - wave: { Body.level: { points: [[0, 0], [50, 25.5], [80, 0x3C], [400, 20]] }, Door.mode: { points: [[0, auto], [50, off], [80, 1], [400, on]] },\n"
+        "            Door.lamp: { points: [[10, true], [30, false]] },\n"
+        "            Body.ratio: { points: [[10, 0.25], [30, 1]] } }\n"
+        "  - expect: { Body.level: 20, Door.mode: on, Door.lamp: false, Body.ratio: 1 }\n";
+    const std::string fromFiles =
+        kHead + first +
+        "  - wave: { Body.level: { points: { file: traces/drive.csv, value: level } }, Door.mode: { points: { file: traces/drive.csv, value: mode, time: time_ms } },\n"
+        "            Door.lamp: { points: { file: lamp.csv, value: lamp, time: t, time_unit: s } },\n"
+        "            Body.ratio: { points: { file: lamp.csv, value: ratio, time: t, time_unit: s } } }\n"
+        "  - expect: { Body.level: 20, Door.mode: on, Door.lamp: false, Body.ratio: 1 }\n";
+    const auto reads = std::make_shared<std::map<std::string, int>>();
+    const ScenarioContext context = with_files({{"traces/drive.csv", "\xEF\xBB\xBF\"time_ms\", level ,mode\r\n0,0,auto\r\n\r\n50,25.5,off\r\n"
+                                                                     "80,0x3C,1\r\n400,20,\"on\"\r\n"},
+                                                {"lamp.csv", "lamp,t,ratio\ntrue,0.01,0.25\n0,0.03,1\n"}},
+                                               reads);
+    const ScenarioRead read = read_scenario(fromFiles, catalog(), context);
+    check_text(lines(read.findings), "");
+    CHECK(read.scenario.has_value());
+    check_text(read.scenario->steps[1].text + "\n",
+               "wave Body.level points from traces/drive.csv column level (4, linear) over 400 ms; Door.mode points from "
+               "traces/drive.csv column mode (4, hold) over 400 ms; Door.lamp points from lamp.csv column lamp (2, hold) over 30 ms; "
+               "Body.ratio points from lamp.csv column ratio (2, linear) over 30 ms\n");
+    // Each file is read once.
+    CHECK(*reads == (std::map<std::string, int>{{"lamp.csv", 1}, {"traces/drive.csv", 1}}));
+    World inText;
+    World inFiles;
+    const ScenarioRun a = inText.run(read_scenario(text, catalog()).scenario.value());
+    const ScenarioRun b = inFiles.run(*read.scenario);
+    CHECK(a.status == ScenarioStatus::Passed && b.status == ScenarioStatus::Passed);
+    check_text(text_of(b), text_of(a));
+    for (const char* variable : {"Body.level", "Door.mode", "Door.lamp", "Body.ratio"})
+    {
+        check_text(applied(inFiles, variable), applied(inText, variable));
+    }
+    // 25.5 at 50 ms, 60 at 80 ms, then 1.25 less every 10 ms to 20 at 400 ms (rounded for the integer).
+    check_text(applied(inFiles, "Body.level"), "0@0 5@10 10@20 15@30 20@40 26@50 37@60 49@70 60@80 59@90 58@100 56@110 55@120 "
+                                               "54@130 53@140 51@150 50@160 49@170 48@180 46@190 45@200 44@210 43@220 41@230 40@240 "
+                                               "39@250 38@260 36@270 35@280 34@290 33@300 31@310 30@320 29@330 28@340 26@350 25@360 "
+                                               "24@370 23@380 21@390 20@400 ");
+}
+
+TEST_CASE(scenario_points_file_errors_say_the_file_the_line_and_the_column)
+{
+    std::string big = "time,level\n";
+    for (int i = 0; i <= 100'000; ++i)
+    {
+        big += std::to_string(i) + ",1\n";
+    }
+    const ScenarioContext context =
+        with_files({{"ok.csv", "time,level\n0,1\n50,2\n"},
+                    {"twice.csv", "time,level,level\n0,1,2\n10,1,2\n"},
+                    {"cells.csv", "time,level\n0,1\n10,this-is-not-a-number-at-all\n"},
+                    {"times.csv", "time,level\n0,1\n12.5,2\n"},
+                    {"seconds.csv", "time,level\n0,1\nsoon,2\n"},
+                    {"negative.csv", "time,level\n-5,1\n10,2\n"},
+                    {"order.csv", "time,level\n0,1\n50,2\n50,3\n"},
+                    {"range.csv", "time,level\n0,1\n10,500\n"},
+                    {"empty.csv", "\xEF\xBB\xBF\r\n  \r\n"},
+                    {"header.csv", "time,level\r\n"},
+                    {"ragged.csv", "time,level\n0,1\n10\n"},
+                    {"quote.csv", "time,level\n0,\"1\n"},
+                    {"utf16.csv", std::string("\xFF\xFEt\0", 4)},
+                    {"door.csv", "time,lamp,mode\n0,yes,open\n10,1,1\n"},
+                    {"big.csv", big}});
+    const auto findings = [&](const std::string& steps, const ScenarioContext& c) { return lines(read_scenario(kHead + steps, catalog(), c).findings); };
+    // The path: from the scenario's directory, below it, with '/'.
+    check_text(findings("  - wave: { Body.level: { points: { file: /data/ok.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: 'C:/data/ok.csv', value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: traces/../../ok.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: 'traces\\ok.csv', value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: none.csv, value: level } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: the file '/data/ok.csv' is an absolute path: give the path from the "
+               "scenario file's directory (traces/drive.csv); a scenario reads only files in its own directory and below it\n"
+               "E 4 scenario-points-file: the points of Body.level: the file 'C:/data/ok.csv' is an absolute path: give the path from the "
+               "scenario file's directory (traces/drive.csv); a scenario reads only files in its own directory and below it\n"
+               "E 5 scenario-points-file: the points of Body.level: the file 'traces/../../ok.csv' goes up a directory (..): a scenario "
+               "reads only files in its own directory and below it; put the file there\n"
+               "E 6 scenario-points-file: the points of Body.level: the file 'traces\\ok.csv' has '\\': write '/' between directories "
+               "(traces/drive.csv), which every OS reads\n"
+               "E 7 scenario-points-file: the points of Body.level: none.csv does not exist\n");
+    // The keys.
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, unit: s } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, time_unit: min } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: [level] } } }\n"
+                        "  - wave: { Body.level: { points: 5 } }\n",
+                        context),
+               "E 3 missing-key: the points of Body.level from a file need value: the name of the column of the values (points: { file: "
+               "traces/drive.csv, value: throttle })\n"
+               "E 4 unknown-key: the points of Body.level: unknown key 'unit': remove it, or use one of the keys here (file, value, time, "
+               "time_unit)\n"
+               "E 5 value: time_unit of the points of Body.level must be ms or s, not 'min'\n"
+               "E 6 value: value of the points of Body.level must be the name of the column of the values, not a list\n"
+               "E 7 value: points of Body.level must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), "
+               "or a CSV file and its column (points: { file: traces/drive.csv, value: throttle }), not '5'\n");
+    // The columns.
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv, value: levl } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, time: when } } }\n"
+                        "  - wave: { Body.level: { points: { file: twice.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: time } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: ok.csv has no column 'levl' on its first line (line 1): did you mean "
+               "'level'?; its columns are 'time', 'level'\n"
+               "E 4 scenario-points-file: the points of Body.level: ok.csv has no column 'when' on its first line (line 1); its columns "
+               "are 'time', 'level'\n"
+               "E 5 scenario-points-file: the points of Body.level: twice.csv has 2 columns named 'level' (columns 2 and 3): give its "
+               "columns different names on its first line\n"
+               "E 6 scenario-points-file: the points of Body.level: value names the column of the times ('time', the first column): name "
+               "the column of the values, or the column of the times with time\n");
+    // The cells: the first wrong one, cut short.
+    check_text(findings("  - wave: { Body.level: { points: { file: cells.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: times.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: seconds.csv, value: level, time_unit: s } } }\n"
+                        "  - wave: { Body.level: { points: { file: negative.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: order.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: range.csv, value: level } } }\n"
+                        "  - wave: { Door.lamp: { points: { file: door.csv, value: lamp } } }\n"
+                        "  - wave: { Door.mode: { points: { file: door.csv, value: mode } } }\n",
+                        context),
+               "E 3 scenario-value: the value on line 3 of cells.csv (column 'level') for Body.level (integer) must be a number, not "
+               "'this-is-not-a-number...'\n"
+               "E 4 value: the time on line 3 of times.csv (column 'time') is 12.5 ms: the times of points are whole milliseconds; round "
+               "them in the file\n"
+               "E 5 value: the time on line 3 of seconds.csv (column 'time') must be a number of seconds since the step began, not 'soon'\n"
+               "E 6 value: the time on line 2 of negative.csv (column 'time') is -5 ms, but it must be from 0 to 1000000000000 "
+               "(milliseconds of virtual time since the step began)\n"
+               "E 7 value: the times of the points of Body.level must go up: line 4 of order.csv is at 50 ms, not after line 3 (50 ms); "
+               "for a value that jumps, write interpolate: hold beside the points (each value is then kept until the next point)\n"
+               "E 8 scenario-value: the value on line 3 of range.csv (column 'level') for Body.level (integer) is 500, outside its range "
+               "(from 0 to 100)\n"
+               "E 9 scenario-value: the value on line 2 of door.csv (column 'lamp') for Door.lamp (bool) must be true, false, 1 or 0, "
+               "not 'yes'\n"
+               "E 10 scenario-value: the value on line 2 of door.csv (column 'mode') for Door.mode (enum) must be one of its items, by "
+               "name or by value, not 'open': the items are off (0), on (1), auto (2)\n");
+    // The file as a whole.
+    check_text(findings("  - wave: { Body.level: { points: { file: empty.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: header.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: ragged.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: quote.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: utf16.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: big.csv, value: level } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: empty.csv is empty: its first line names the columns (time,throttle), "
+               "and each line below it gives a time and the values\n"
+               "E 4 scenario-points-file: the points of Body.level: header.csv has no lines of values below the names of its columns "
+               "(line 1): give one line for each point (0,50)\n"
+               "E 5 scenario-points-file: the points of Body.level: ragged.csv has 1 cell on line 3, and its first line names 2 columns: "
+               "give every line one cell for each column\n"
+               "E 6 scenario-points-file: the points of Body.level: quote.csv has a cell in quotes on line 2 whose closing quote is not on "
+               "the line: end a cell in quotes with a quote before the next ',' (write \"\" for a quote in it)\n"
+               "E 7 scenario-points-file: the points of Body.level: utf16.csv is not UTF-8 text (it looks like UTF-16, or has bytes that "
+               "are not UTF-8): save it as CSV in UTF-8\n"
+               "E 8 scenario-points-file: the points of Body.level: big.csv has more than 100000 lines of values (one point each): keep "
+               "fewer points, or split it into steps of their own\n");
+    // Without a way to read files (read_scenario() without ScenarioContext::read_file).
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv, value: level } } }\n", ScenarioContext{}),
+               "E 3 scenario-points-file: the points of Body.level: ok.csv is not read here: points from a file are read with the "
+               "scenario file (check --scenario, run --scenario)\n");
+    // A parameter may name the file and the column.
+    check_text(findings("  - wave: { Body.level: { points: { file: \"${trace}\", value: \"${column}\" } } }\n"
+                        "params: { trace: ok.csv, column: level }\n",
+                        context),
+               "");
+}
+
+TEST_CASE(scenario_points_file_of_a_skipped_wave_gives_its_length)
+{
+    // A skipped step lasts until the time on the last line of its file, as it would if it ran.
+    const std::string text = kHead + "  - wave: { Body.boost: { points: { file: boost.csv, value: b, time: t } } }\n"
+                                     "  - wave: { Body.boost: { points: { file: boost.csv, value: b, time: s, time_unit: s } } }\n"
+                                     "  - wave: { Body.boost: { points: { file: none.csv, value: b } } }\n";
+    const ScenarioRead absent =
+        read_scenario(text, catalog_without_boost(), with_files({{"boost.csv", "b,t,s\n1,0,0\n2,70,0.25\n"}}));
+    CHECK(absent.scenario.has_value());
+    CHECK_EQ(absent.skipped, std::size_t{3});
+    CHECK_EQ(absent.scenario->steps[0].skipped_ms, std::int64_t{70});
+    CHECK_EQ(absent.scenario->steps[1].skipped_ms, std::int64_t{250});
+    CHECK_EQ(absent.scenario->steps[2].skipped_ms, std::int64_t{0});
+}
+
+TEST_CASE(scenario_files_are_read_beside_the_scenario_file)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "points-files";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "traces");
+    // A name that is not ASCII: the path is UTF-8 on every OS.
+    const std::string name = "traces/\xE8\xB5\xB0\xE8\xA1\x8C.csv";
+    std::ofstream(dir / process::path_from_utf8(name), std::ios::binary) << "time,level\n0,1\n";
+    const auto read = files_beside(dir / "s.yaml");
+    std::string problem;
+    CHECK(read(name, problem) == std::optional<std::string>{"time,level\n0,1\n"});
+    CHECK(!read("traces", problem).has_value());
+    check_text(problem, "is not a regular file: name the CSV file");
+    CHECK(!read("none.csv", problem).has_value());
+    CHECK(problem.rfind("does not exist (looked for ", 0) == 0);
+    CHECK(problem.find("): the path is from the scenario file's directory; check it") != std::string::npos);
 }
 
 // --- an expect beside a ramp or a wave ---

@@ -411,6 +411,14 @@ line  step                                                                      
 
 `ramp` と `wave` は、動かし終わるまで次の手順に進みません。動かした後の結果を確認するときは、次の手順に `expect` を書きます。その例が、手順 1 の `throttle_step.yaml` の最後の 2 つの手順と、リポジトリの `scenarios/throttle_wave.yaml`（テンプレートにはありません）です。
 
+記録した値を入力に流すときは、CSV ファイルにして `points` から読みます。1 行目が列の名前、最初の列が時刻（ms）の CSV を、シナリオと同じディレクトリかその下に置き、ファイルと値の列（`value`）を書きます。
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+その例が、リポジトリの [examples/ecu_main/scenarios/throttle_trace.yaml](../../../examples/ecu_main/scenarios/throttle_trace.yaml) です（テンプレートにはありません）。決まりは、[scenario.md](../scenario.md#点を-csv-ファイルから読む) の「点を CSV ファイルから読む」にあります。
+
 ### うまくいかないとき
 
 | 症状 | 原因 | 直し方 |
@@ -724,6 +732,7 @@ line  step                                                             result  a
 | `scenario` | `--scenario` |
 | `scenario-wave` | 手順 `wave` |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` |
+| `scenario-points-file` | CSV ファイルの `points` |
 
 ## 次に読むもの
 
