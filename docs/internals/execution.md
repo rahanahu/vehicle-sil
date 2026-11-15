@@ -652,7 +652,7 @@ After that, the driver is destroyed, and last the Ethernet networks, the LIN bus
 
 ### The test kit
 
-`J1939Events` (an Observer) and `FrameLog` (a TapListener) keep copies of events and raw frames. Beyond their capacity (default 100000 entries), they keep nothing more and count what they did not keep (`dropped()`). Queries count or extract entries by kind (direction) and predicate (`count`, `of`, `first`, `last`).
+`J1939Events` (an Observer) and `FrameLog` (a TapListener) keep copies of events and raw frames. A network has one `J1939Events` and a tap one `FrameLog` (a second one is a `std::logic_error`). Beyond their capacity (default 100000 entries), they keep nothing more and count what they did not keep (`dropped()`). Queries count or extract entries by kind (direction) and predicate (`count`, `of`, `first`, `last`).
 
 `faults` is a set of small functions that build a `FaultInjector` for the virtual bus.
 

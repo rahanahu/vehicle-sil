@@ -52,6 +52,13 @@ struct EcuMainOptions
 ///                             executable takes it ("features": ["map-network"]). On Windows the value must
 ///                             be ASCII (exit code 4 otherwise: read from the wide command line,
 ///                             if argc and argv are main()'s)
+///     --j1939-node <n>=<s>    with --registry-uri, any number of times: other values than the code
+///                             gives for a J1939 node on the simulation's network <n> (from, address,
+///                             identity_number, function_instance, ecu_instance; SilKitOptions::
+///                             j1939_nodes for this ECU, read by ecu_executable::
+///                             parse_j1939_node_argument()). They apply in add_node(); --describe
+///                             keeps the code's values and says that the executable takes it
+///                             ("j1939-node" in "features"). On Windows the value must be ASCII
 ///     --local --run-for-ms <ms>  runs this ECU alone on the local virtual buses for <ms> of
 ///                             virtual time (a check of the ECU by itself)
 ///     --name <name>           the participant name instead of EcuMainOptions::name (ASCII or
@@ -65,9 +72,10 @@ struct EcuMainOptions
 /// failed (the application's constructor threw, EcuMainOptions is wrong, the registry could not be
 /// reached, the simulation did not start, stdout could not be written), 4 a bad command line (an
 /// unknown argument, a missing or bad value, an argument given twice (--map-network may be given
-/// for each network, but not twice for one name), two of the three modes); a --map-network for a
-/// network the ECU does not have, or with a --silkit-config that puts a controller on a network,
-/// is a failed set-up (3),
+/// for each network, but not twice for one name; --j1939-node for each node, but not twice for
+/// one), two of the three modes); a --map-network for a network the ECU does not have, a
+/// --j1939-node that no node of the ECU takes, or a --silkit-config that puts a controller on a
+/// network with --map-network, is a failed set-up (3),
 /// 130 stopped by a signal (below).
 /// With --registry-uri, SIGINT and SIGTERM (Windows: Ctrl+C, Ctrl+Break, closing the console)
 /// stop the participant once the simulation runs (which stops the coordinated simulation in

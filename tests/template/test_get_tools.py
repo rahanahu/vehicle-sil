@@ -307,6 +307,34 @@ def test_schemas(tmp: Path) -> None:
           f"{sorted(template - packaged)}): add it to the tools archive in scripts/package.py (tools and verify)")
 
 
+def package_module():
+    """scripts/package.py as a module."""
+    spec = importlib.util.spec_from_file_location("package", PACKAGE)
+    package = importlib.util.module_from_spec(spec)
+    # package.py imports the modules next to it (as a script, its directory is on the path).
+    sys.path.insert(0, str(PACKAGE.parent))
+    try:
+        spec.loader.exec_module(package)
+    finally:
+        sys.path.remove(str(PACKAGE.parent))
+    return package
+
+
+def test_timeline_page() -> None:
+    """The tools archive has the files of the timeline page that the packaged GUI server looks for."""
+    package = package_module()
+    spec = importlib.util.spec_from_file_location(
+        "timelines", ROOT / "gui" / "server" / "src" / "vehicle_sil_gui" / "timelines.py")
+    timelines = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(timelines)
+    served = {name for name, _ in timelines.PAGE_FILES.values()}
+    check(set(package.TIMELINE_PAGE) == served,
+          f"package.py's TIMELINE_PAGE {sorted(package.TIMELINE_PAGE)} is what the GUI server serves "
+          f"({sorted(served)}): add the page's files to TIMELINE_PAGE in scripts/package.py")
+    missing = [name for name in package.TIMELINE_PAGE if not (ROOT / "gui" / "timeline" / name).is_file()]
+    check(not missing, f"gui/timeline has every file of TIMELINE_PAGE (missing: {missing})")
+
+
 def test_version() -> None:
     p = subprocess.run([sys.executable, str(PACKAGE), "version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     check(p.returncode == 0 and p.stdout.strip() == VERSION,
@@ -317,14 +345,7 @@ def test_version() -> None:
 
 def test_changelog() -> None:
     """The CHANGELOG.md heading of a version (Keep a Changelog), and the release notes that release.yml cuts."""
-    spec = importlib.util.spec_from_file_location("package", PACKAGE)
-    package = importlib.util.module_from_spec(spec)
-    # package.py imports the modules next to it (as a script, its directory is on the path).
-    sys.path.insert(0, str(PACKAGE.parent))
-    try:
-        spec.loader.exec_module(package)
-    finally:
-        sys.path.remove(str(PACKAGE.parent))
+    package = package_module()
     head = "# Changelog\n\nIntro.\n\n"
     body = "The first version.\n\n### Added\n\n#### Launcher\n\n- a\n\n### Fixed\n\n- b\n"
     older = "\n## [0.0.9] - 2026-01-02\n\n### Added\n\n- old\n"
@@ -375,6 +396,7 @@ def main() -> int:
             test(d)
     test_not_published()
     test_version()
+    test_timeline_page()
     test_changelog()
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failures")
     return 1 if failures else 0

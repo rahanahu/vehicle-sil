@@ -30,7 +30,7 @@ namespace {
 }
 
 /// Only a single-address node with an address of 0..127 or 248..253 sends at once after its
-/// claim; every other node waits 250 ms.
+/// claim; every other node waits (ProtocolTiming::address_claim_wait).
 [[nodiscard]] bool waits_after_claim(const Name& name, Address address) noexcept
 {
     return name.arbitrary_address_capable() || (address >= 128 && address <= 247);
@@ -232,7 +232,7 @@ void Node::claim(Address address, SimTime since)
         release_held(); // sent before the first claim (added in the application stage)
     }
     // Counted from the step that sends the claim (it leaves at this step's flush).
-    claim_wait_ = network_.timers_.start(TimerKind::Scheduled, *network_.now_ + std::chrono::milliseconds(250), *this, kClaimWait);
+    claim_wait_ = network_.timers_.start(TimerKind::Scheduled, *network_.now_ + network_.options_.timing.address_claim_wait, *this, kClaimWait);
     notify_change(previousState, previousAddress, since);
 }
 

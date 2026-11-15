@@ -243,8 +243,8 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 | `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the `Peer` and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
 | A node is added after the schema is fixed | The node is not monitored |
 | Raw CAN and LIN | Not monitored |
-| An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
-| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
+| An ECU variable is declared with a name that starts with `peer.` or `j1939.` (`input()`, `output()` and so on) | These prefixes are reserved, as are `can.`, `lin.` and `eth.` for the other buses (`monitor_names::kReservedPrefixes` in `ecu/monitor_names.hpp`). The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
+| A variable registered directly on `agent()` clashes with a monitoring output | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
@@ -416,7 +416,17 @@ Messages flow in this order: the hello; the start window before the first step (
 
 The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-Every message starts with the format version (`kVersion`), and the decoder accepts only its own version. The version goes up when the layout of a message changes. Adding a kind that the other side can safely ignore does not change it: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way). In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of another version.
+Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
+
+- Version 1 is fixed. Its bytes are what ECUs built with vehicle-sil 0.1.0 send and expect.
+- Version 2 can get new fields without a new version:
+  - Each variable, write, result and event starts with its size in bytes.
+  - The last byte of the header is the revision of the writer (`kRevision`).
+  - A new field goes at the end of its element, or at the end of the message if it belongs to the message, and `kRevision` goes up by one.
+  - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
+  - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer looks at the other side's revision before it sends one.
+- Version 2 carries two fields that version 1 has no place for: how many writes of a command were applied (`CommandResult::applied_writes`), and which write a refusal is about (`SubmitResult::failed_write`). Decoded from version 1, both are empty.
+- Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
 - The decoder never throws and never reads outside the bytes it is given.
 - It returns a distinct error for each of: truncated input, wrong kind, wrong version, oversized input, out-of-range value.

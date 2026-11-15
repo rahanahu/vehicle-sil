@@ -81,23 +81,34 @@ private:
 
 } // namespace
 
-TransferSniffer::TransferSniffer(SnifferOptions options) : options_(options)
+TransferSniffer::TransferSniffer(SnifferOptions options, const ProtocolTiming& timing) : options_(options)
 {
+    if (!options_.timeout)
+    {
+        // The longest wait of either side of a connection: until then nobody has given up.
+        options_.timeout = std::max({timing.t1, timing.t2, timing.t3, timing.t4});
+    }
+    if (!options_.broadcast_timeout)
+    {
+        options_.broadcast_timeout = timing.t1;
+    }
     if (options_.sessions == 0)
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::sessions is 0. Give the number "
                                     "of transfers to follow at the same time (at least 1; the default is 32)");
     }
-    if (options_.timeout <= SimDuration::zero())
+    if (*options_.timeout <= SimDuration::zero())
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::timeout is " +
-                                    nanoseconds(options_.timeout) + ". It must be greater than 0 (the default is 1250 ms)");
+                                    nanoseconds(*options_.timeout) +
+                                    ". It must be greater than 0 (left empty it is the longest of T1..T4, 1250 ms "
+                                    "by default)");
     }
-    if (options_.broadcast_timeout <= SimDuration::zero())
+    if (*options_.broadcast_timeout <= SimDuration::zero())
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::broadcast_timeout is " +
-                                    nanoseconds(options_.broadcast_timeout) +
-                                    ". It must be greater than 0 (the default is 750 ms)");
+                                    nanoseconds(*options_.broadcast_timeout) +
+                                    ". It must be greater than 0 (left empty it is T1, 750 ms by default)");
     }
     if (options_.grace < SimDuration::zero())
     {
@@ -118,14 +129,14 @@ void TransferSniffer::check_not_in_handler(const char* what) const
     if (in_handler_)
     {
         throw std::logic_error(std::string("vehicle_sil::j1939::TransferSniffer: ") + what +
-                               " was called from the on_transfer handler. Copy what the handler needs and call it "
+                               " was called from the on_transfer_end handler. Copy what the handler needs and call it "
                                "after feed() or advance() has returned");
     }
 }
 
-void TransferSniffer::on_transfer(Handler handler)
+void TransferSniffer::on_transfer_end(Handler handler)
 {
-    check_not_in_handler("on_transfer()");
+    check_not_in_handler("on_transfer_end()");
     handler_ = std::move(handler);
 }
 
@@ -138,13 +149,13 @@ bool TransferSniffer::expired(const Session& session, SimTime time) const noexce
     // the grace is added: the ECU that gives up sends its abort after its own timeout, and that
     // abort is to end the transfer, not to find it gone. Decided by the frame times alone, so
     // the result does not depend on when advance() is called.
-    const SimDuration limit = session.broadcast ? options_.broadcast_timeout : options_.timeout + options_.grace;
+    const SimDuration limit = session.broadcast ? *options_.broadcast_timeout : *options_.timeout + options_.grace;
     return time - session.last > limit;
 }
 
 void TransferSniffer::time_out(Session& session)
 {
-    end(session, SniffEnd::TimedOut, session.last + (session.broadcast ? options_.broadcast_timeout : options_.timeout));
+    end(session, SniffResult::TimedOut, session.last + (session.broadcast ? *options_.broadcast_timeout : *options_.timeout));
 }
 
 void TransferSniffer::move_time(SimTime time)
@@ -166,7 +177,7 @@ void TransferSniffer::move_time(SimTime time)
             // time means they will not.
             if (time > s.acknowledged_at)
             {
-                end(s, SniffEnd::Incomplete, s.acknowledged_at);
+                end(s, SniffResult::Incomplete, s.acknowledged_at);
             }
             continue;
         }
@@ -202,7 +213,7 @@ std::size_t TransferSniffer::end_transfers_of(Address address, SimTime time)
         if (s.active && (s.source == address || s.destination == address))
         {
             // Not by the receiver: end() forgets the announcement that waited behind it.
-            end(s, SniffEnd::Lost, time);
+            end(s, SniffResult::Lost, time);
             ++ended;
         }
     }
@@ -261,7 +272,7 @@ void TransferSniffer::feed(const can::TimedFrame& frame)
     feed(SniffFrame{frame.time, id->pgn, id->priority, id->source, id->destination, frame.frame.payload()});
 }
 
-void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uint8_t reason)
+void TransferSniffer::end(Session& session, SniffResult how, SimTime time, AbortReason reason)
 {
     // Released first: the handler sees a sniffer without this transfer. The buffer stays as it
     // is until a later frame starts a transfer in it.
@@ -273,11 +284,11 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
     // If this transfer timed out, the receiver may have ended it without a frame long ago, and
     // its answer to the announcement may be on its way: the announcement is followed as one
     // without a running transfer is.
-    const bool byReceiver = how == SniffEnd::Completed || how == SniffEnd::Refused || how == SniffEnd::Incomplete ||
-                            how == SniffEnd::AbortedByReceiver;
+    const bool byReceiver = how == SniffResult::Completed || how == SniffResult::Refused || how == SniffResult::Incomplete ||
+                            how == SniffResult::AbortedByReceiver;
     const bool follow = session.unanswered != 0 &&
-                        (how == SniffEnd::TimedOut ||
-                         (byReceiver && time - session.waiting.time <= options_.timeout + options_.grace));
+                        (how == SniffResult::TimedOut ||
+                         (byReceiver && time - session.waiting.time <= *options_.timeout + options_.grace));
     const Announcement next = session.waiting;
     session.unanswered = 0;
     report(session, how, time, reason);
@@ -293,32 +304,32 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
     }
 }
 
-void TransferSniffer::report(const Session& session, SniffEnd how, SimTime time, std::uint8_t reason)
+void TransferSniffer::report(const Session& session, SniffResult how, SimTime time, AbortReason reason)
 {
     switch (how)
     {
-    case SniffEnd::Completed:
+    case SniffResult::Completed:
         ++statistics_.completed;
         break;
-    case SniffEnd::Incomplete:
+    case SniffResult::Incomplete:
         ++statistics_.incomplete;
         break;
-    case SniffEnd::AbortedBySender:
+    case SniffResult::AbortedBySender:
         ++statistics_.aborted_by_sender;
         break;
-    case SniffEnd::AbortedByReceiver:
+    case SniffResult::AbortedByReceiver:
         ++statistics_.aborted_by_receiver;
         break;
-    case SniffEnd::Replaced:
+    case SniffResult::Replaced:
         ++statistics_.replaced;
         break;
-    case SniffEnd::Lost:
+    case SniffResult::Lost:
         ++statistics_.lost;
         break;
-    case SniffEnd::TimedOut:
+    case SniffResult::TimedOut:
         ++statistics_.timed_out;
         break;
-    case SniffEnd::Refused:
+    case SniffResult::Refused:
         ++statistics_.refused;
         break;
     }
@@ -327,18 +338,18 @@ void TransferSniffer::report(const Session& session, SniffEnd how, SimTime time,
         return;
     }
     SniffedTransfer transfer;
-    transfer.end = how;
+    transfer.result = how;
     transfer.pgn = Pgn{session.raw_pgn};
     transfer.priority = session.priority;
     transfer.source = session.source;
     transfer.destination = session.destination;
-    transfer.size = session.length;
+    transfer.length = session.length;
     transfer.started = session.started;
     transfer.time = time;
     transfer.noticed = now_;
     transfer.reason = reason;
     transfer.conflicting_packets = session.conflicts;
-    if (how == SniffEnd::Completed)
+    if (how == SniffResult::Completed)
     {
         transfer.data = std::span<const std::uint8_t>(session.buffer.data(), session.length);
     }
@@ -361,7 +372,7 @@ void TransferSniffer::report(const Session& session, SniffEnd how, SimTime time,
 void TransferSniffer::complete(Session& session, SimTime time)
 {
     // The same decision as the engine's receiver makes before it hands the message on.
-    end(session, single_frame_only(Pgn{session.raw_pgn}) ? SniffEnd::Refused : SniffEnd::Completed, time);
+    end(session, single_frame_only(Pgn{session.raw_pgn}) ? SniffResult::Refused : SniffResult::Completed, time);
 }
 
 TransferSniffer::Announcement TransferSniffer::announcement(const SniffFrame& frame) noexcept
@@ -483,7 +494,7 @@ void TransferSniffer::on_rts(const SniffFrame& frame)
                 return;
             }
         }
-        end(*existing, SniffEnd::Replaced, frame.time);
+        end(*existing, SniffResult::Replaced, frame.time);
     }
     if (!wellFormed)
     {
@@ -507,7 +518,7 @@ void TransferSniffer::on_bam(const SniffFrame& frame)
     }
     if (Session* existing = find(frame.source, kGlobalAddress))
     {
-        end(*existing, SniffEnd::Replaced, frame.time);
+        end(*existing, SniffResult::Replaced, frame.time);
     }
     start(announcement(frame), true);
 }
@@ -526,11 +537,11 @@ void TransferSniffer::on_cts(const SniffFrame& frame)
         s->unanswered = 0;
         if (s->acknowledged)
         {
-            end(*s, SniffEnd::Incomplete, s->acknowledged_at);
+            end(*s, SniffResult::Incomplete, s->acknowledged_at);
         }
         else
         {
-            end(*s, SniffEnd::Replaced, next.time);
+            end(*s, SniffResult::Replaced, next.time);
         }
         start(next, false);
         s = find(frame.destination, frame.source);
@@ -593,12 +604,12 @@ void TransferSniffer::on_abort(const SniffFrame& frame)
     Session* toSender = find(frame.destination, frame.source);
     if (toSender != nullptr && toSender->raw_pgn == raw)
     {
-        end(*toSender, SniffEnd::AbortedByReceiver, frame.time, frame.data[1]);
+        end(*toSender, SniffResult::AbortedByReceiver, frame.time, static_cast<AbortReason>(frame.data[1]));
         return;
     }
     if (Session* fromSender = find(frame.source, frame.destination); fromSender != nullptr && fromSender->raw_pgn == raw)
     {
-        end(*fromSender, SniffEnd::AbortedBySender, frame.time, frame.data[1]);
+        end(*fromSender, SniffResult::AbortedBySender, frame.time, static_cast<AbortReason>(frame.data[1]));
         return;
     }
     if (toSender != nullptr && toSender->ignored)
@@ -641,7 +652,7 @@ void TransferSniffer::on_data(const SniffFrame& frame)
         if (sequence != s->next)
         {
             // A broadcast cannot ask for packets again.
-            end(*s, SniffEnd::Lost, frame.time);
+            end(*s, SniffResult::Lost, frame.time);
             return;
         }
     }

@@ -574,6 +574,7 @@ describe('applyEvents', () => {
       steps_omitted: 0,
       status: null,
       over_at_ms: null,
+      timeline_url: null,
     };
     // No scenario: its steps are not applied
     expect(
