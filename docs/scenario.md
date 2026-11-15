@@ -1,16 +1,36 @@
-# シナリオ（`vehicle_sil_launch run --scenario`）
+# Scenarios (`vehicle_sil_launch run --scenario`)
 
-まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）、[simulation-check.md](simulation-check.md)（照合）、[simulation-run.md](simulation-run.md)（実行）を読みます。 次に読む文書はありません（手順を追って試すなら、手引き「[シナリオで試験を書く](howto/scenario-tests.md)」）。
+[日本語](ja/scenario.md)
 
-シナリオは、決まった手順で ECU の変数に値を入れ、結果を確かめるファイルです。`vehicle_sil_launch run <構成ファイル> --scenario <シナリオ>` は、シミュレーションを起動し、シナリオを最後まで進めて止め、終了コードで合否を返します。そのまま自動試験になります。
+This is the reference for the scenario file format and for the rules that apply when a scenario runs: timing, the values that conditions see, results, finding codes and output. To try scenarios one step at a time, start with the guide [Write tests with scenarios](howto/scenario-tests.md).
 
-同じ構成と同じシナリオなら、結果（どの手順が、どの仮想時刻に、どの値で通ったか、落ちたか）はいつも同じです。機械の速さ、最速か等速か（`speed`）、ECU の処理の重さでは変わりません。判定には仮想時刻だけを使い、実時間の待ちや時間切れは使いません。
+| To find | See |
+|---|---|
+| Keys, and how to write values and conditions | [File format](#file-format) |
+| When a step starts and ends | [Timing](#timing) |
+| The values that conditions see | [Values that conditions see](#values-that-conditions-see) |
+| The ECU step in which a write is applied | [Writes](#writes) |
+| Waveform types and keys | [Waveforms (`wave`)](#waveforms-wave) |
+| `expect` beside `ramp` and `wave` | [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave) |
+| Parameters, variants and skipped steps | [Variants and parameters](#variants-and-parameters) |
+| How the result is decided, and the finding codes of a run | [Results](#results) |
+| The finding codes of the check | [Check (`check --scenario`, start of `run --scenario`)](#check-check---scenario-start-of-run---scenario) |
+| Human-readable output and JSON keys | [Output](#output) |
+| Using a scenario with `--control` | [Watching variables during a run (`--control`)](#watching-variables-during-a-run---control) |
+| Options you cannot combine, and what scenarios cannot do | [Incompatible options and limitations](#incompatible-options-and-limitations) |
+| Which features a launcher has | [Launcher feature names (`features`)](#launcher-feature-names-features) |
 
-変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を出す」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
+A scenario is a file that sets ECU variables in a fixed sequence of steps and checks the results. `vehicle_sil_launch run <config> --scenario <scenario>` starts the simulation, runs the scenario to its end, stops, and reports the result in its exit code. A scenario is an automated test in itself.
 
-## 例
+With the same configuration file and the same scenario, the result is always the same: which steps passed or failed, at which virtual time and with which values. It does not depend on the speed of the computer, on whether the run is as fast as possible or at real-time speed (`speed`), or on how much work the ECUs do. Every decision uses virtual time only; there are no real-time waits or timeouts.
 
-[examples/ecu_main/scenarios/throttle_step.yaml](../examples/ecu_main/scenarios/throttle_step.yaml) は、[examples/ecu_main](../examples/ecu_main) の Engine と Dashboard のシナリオです。
+A scenario can use the variables that an ECU built with `ecu_main` declares, and `ecu.connected`, which every ECU has (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). `participants[].variables` in the output of `vehicle_sil_launch check --json` lists their names. Scenarios do not use gRPC, so they also work in a build without the Control Server.
+
+On this page, a "step" is one item of the scenario's `steps`. One advance of virtual time by an ECU or by the controller is an "ECU step" or a "controller step" (together, "simulation steps").
+
+## Example
+
+[examples/ecu_main/scenarios/throttle_step.yaml](../examples/ecu_main/scenarios/throttle_step.yaml) is a scenario for the Engine and Dashboard ECUs of [examples/ecu_main](../examples/ecu_main).
 
 ```yaml
 vehicle_sil_scenario: 1
@@ -31,11 +51,11 @@ steps:
 ```
 
 ```sh
-vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_step.yaml   # 照合だけ
+vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_step.yaml   # check only
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
-実行の標準出力です（participant の行と、手順ごとの行 `[vehicle_sil_launch] scenario: line 10: ...: ok at 330 ms` は標準エラーに出ます）。
+The run prints this to stdout. The participants' own lines and one line per step (`[vehicle_sil_launch] scenario: line 10: ...: ok at 330 ms`) go to stderr.
 
 <!-- vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -->
 ```text
@@ -69,11 +89,13 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-`at` は、その手順を決めた仮想時刻です（下の「結果」）。構成ファイルの `stop_at_ms` は 1000 ms ですが、シナリオが終わった 705 ms で止まります。
+`at` is the virtual time at which the step's result was decided (see [Results](#results)). `stop_at_ms` in the configuration file is 1000 ms, but the run stops at 705 ms, when the scenario is over.
 
-### ECU をバスから外す
+### Disconnecting an ECU from the bus
 
-`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから外れます（送ったものは出ず、バスのものは届きません。`true` で戻ります。[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。ほかの ECU が、相手が落ちたことを正しく検出するかを試せます。[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を外し、Dashboard が回転数の途絶を検出し（`dashboard.engine_lost`。回転数が 300 ms 来なければ true）、Engine を戻すと回復することを確かめます。
+Writing `false` to `<participant>.ecu.connected` disconnects that ECU from every bus while it keeps running. The frames it sends do not reach the bus, and it receives no frames from the bus. Writing `true` reconnects it (see "Disconnecting from the bus (`ecu.connected`)" under "The `Ecu` class" in [internals/execution.md](internals/execution.md#disconnecting-from-the-bus-ecuconnected)). Use this to test that the other ECUs correctly detect that an ECU they talk to is gone.
+
+[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) disconnects Engine at 300 ms and checks that Dashboard detects the loss of the engine speed (`dashboard.engine_lost` is true when no engine speed has arrived for 300 ms). It then reconnects Engine and checks that Dashboard recovers.
 
 ```yaml
 steps:
@@ -86,240 +108,569 @@ steps:
     within_ms: 200
 ```
 
-## ファイルの形式
+## File format
 
-YAML です（`{` で始まれば JSON）。構成ファイルとは別のファイルにします。形式はまだ変わることがあります。
+A scenario is written in YAML (or in JSON, if the file starts with `{`). Keep it in a file of its own, separate from the configuration file. The format may still change.
 
-JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が効きます（[例のファイル](../examples/ecu_main/scenarios/throttle_step.yaml)の 1 行目。パスは、書いているファイルのディレクトリから数えます）。スキーマが見るのは、キーと値の形だけです。変数があるか、値が型と範囲に合うか、時刻の順は、`check --scenario` が確かめます（下の「照合」）。JSON で書いたシナリオをスキーマに結び付ける方法は、構成ファイルと同じです（[simulation-config.md](simulation-config.md) の「エディターの補完」）。ひな形には `schema/` に写しが入っていて、`get_tools.py` が、取ってきた道具の版のスキーマで上書きします。道具の圧縮ファイルでは `schema/` にあります。
+### Top-level keys
 
-| キー | 必須 | 意味 |
+| Key | Required | Meaning |
 |---|---|---|
-| `vehicle_sil_scenario` | はい | 形式の版。`1` |
-| `name` | いいえ | シナリオの名前（出力に出る） |
-| `only` | いいえ | このシナリオを回す機種の名前の並び（`only: [small, medium]`）。書かなければ、どの機種でも回す（[機種とパラメーター](#機種とパラメーター)） |
-| `params` | いいえ | パラメーターの既定の値（名前 → 値）。手順の値の位置に `${名前}` と書いて使う（[機種とパラメーター](#機種とパラメーター)） |
-| `steps` | はい | 手順の並び（1 つ以上）。上から順に進む |
+| `vehicle_sil_scenario` | Yes | The format version: `1`. |
+| `name` | No | The name of the scenario. The output shows it. |
+| `only` | No | The list of variants on which this scenario runs (`only: [small, medium]`). Without it, the scenario runs on every variant. See [Limiting a scenario to variants](#limiting-a-scenario-to-variants-only). |
+| `params` | No | Default values of parameters (name → value). Use a parameter by writing `${name}` where a step takes a value. See [Parameters](#parameters-params-name). |
+| `steps` | Yes | The list of steps (at least 1). They run in order from the top. |
 
-1 つの手順は、`set`、`ramp`、`wave`、`wait_until`、`expect` のどれか 1 つと、時刻を持ちます。`ramp` と `wave` の横にだけは、`expect` を並べて書けます（[動かしている間ずっと確かめる](#動かしている間ずっと確かめる)）。
+### Step keys
 
-| キー | 意味 |
+A step has one action and a time. Only `ramp` and `wave` can also have an `expect` (see [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave)).
+
+| Action | Syntax | What it does |
+|---|---|---|
+| `set` | `set: { <variable>: <value>, ... }` | Sets the values. |
+| `ramp` | `ramp: { <variable>: { to: <value>, over_ms: <ms>, from: <value> }, ... }` | Moves the value along a straight line over `over_ms`. `from` is optional. |
+| `wave` | `wave: { <variable>: { <waveform>: { ... }, around: <value>, for_ms: <ms> }, ... }` | Moves the value in a given waveform (`sine`, `square` and others). See [Waveforms](#waveforms-wave). |
+| `wait_until` | `wait_until: { <variable>: <condition>, ... }` | Waits until the condition holds. |
+| `expect` | `expect: { <variable>: <condition>, ... }` | Checks that the condition holds at the step's time. |
+
+| Key that goes with an action | Actions | Meaning |
+|---|---|---|
+| `at_ms` | Any | The time of the step (virtual time in milliseconds, 0 or more). |
+| `after_ms` | Any | The time of the step, in milliseconds (0 or more) after the end of the previous step. |
+| `timeout_ms: <ms>` | `wait_until` (required) | If the condition does not hold within this time, the step fails. |
+| `within_ms: <ms>` | `expect` | The step passes if the condition holds at least once within this time. The scenario moves to the next step as soon as it holds. |
+| `hold_for_ms: <ms>` | `expect` | Checks that the condition holds for the whole of this time. |
+| `expect: { <variable>: <condition>, ... }` | `ramp`, `wave` | Checks that the condition holds all the time the value moves (from the step's time to its end). |
+| `undersampled: ok` | `wave` | The check does not report the step's waveform even if it is finer than the ECU step. |
+
+A step with neither `at_ms` nor `after_ms` is the same as `after_ms: 0`.
+
+### Variables and values
+
+Write a variable as `<participant>.<variable name>`. The part up to the first `.` is the participant name; the rest is the name of the variable inside the ECU. A variable name may contain `.`: the variable `engine.speed` of participant `Engine` is `Engine.engine.speed`.
+
+Write each value to match the variable's type.
+
+| Variable type | Value |
 |---|---|
-| `at_ms` | 手順の時刻（仮想時刻、ミリ秒、0 以上） |
-| `after_ms` | 手順の時刻を、前の手順が終わった時刻からのミリ秒で書く（0 以上）。`at_ms` も `after_ms` もなければ `after_ms: 0` |
-| `set: { <変数>: <値>, ... }` | 値を入れる |
-| `ramp: { <変数>: { to: <値>, over_ms: <ms>, from: <値> }, ... }` | `over_ms` の間、直線で値を動かす。`from` は省ける |
-| `wave: { <変数>: { <波形>: { ... }, around: <値>, for_ms: <ms> }, ... }` | 決まった波形（`sine`、`square` など）で値を動かす（[波形で動かす](#波形で動かすwave)） |
-| `wave` と `undersampled: ok` | その手順の波形が ECU のステップより細かくても、照合で何も言わない |
-| `wait_until: { <変数>: <条件>, ... }` と `timeout_ms: <ms>` | 条件が成り立つまで待つ。`timeout_ms`（必須）の間に成り立たなければ失敗 |
-| `expect: { <変数>: <条件>, ... }` | 手順の時刻に、条件が成り立つことを確かめる |
-| `expect` と `within_ms: <ms>` | その間に 1 度でも成り立てばよい。成り立った時点で次へ進む |
-| `expect` と `hold_for_ms: <ms>` | その間ずっと成り立つ |
-| `ramp` か `wave` と `expect: { <変数>: <条件>, ... }` | 動かしている間ずっと（手順の時刻から終わりまで）、条件が成り立つことを確かめる |
+| bool | `true` or `false` |
+| integer | An integer (hexadecimal is allowed) |
+| real | A number (decimal only) |
+| enum | The name or the value of an item (the value may be hexadecimal) |
 
-- **変数**は `<participant>.<変数名>` です。最初の `.` までが participant の名前で、残りが ECU の中の変数名です（変数名に `.` があってよい。例: participant `Engine` の `engine.speed` は `Engine.engine.speed`）。
-- **値**は、変数の型に合わせて書きます。bool は `true` / `false`、integer は整数、real は数、enum は項目の名前か値です。
-- integer と enum の値は、16 進でも書けます（`0x1F`、`0X1F`）。`set`、`ramp` の `from`・`to`、`wave` の値、条件の値と、その位置に入るパラメーター（`params`、`--param`）です。引用符で囲まず（`"0x1F"` は文字列で、数の引用符と同じ誤り）、符号を付けません（負の値は 10 進で書きます）。real の値、時間、`amplitude`、`tolerance` は 10 進だけです。手順の文と結果は 10 進で出し（`0x1F` を `set` した手順は `= 31`）、範囲の外の誤りは両方を出します（`is 0x65 (101), outside its range`）。
-- **条件**は比較だけです。値をそのまま書けば「等しい」です。対応付けで `eq`、`ne`、`ge`、`le`、`gt`、`lt`、`near` と `tolerance`（差が `tolerance` 以下）を書けます。1 つの変数に複数書けば、すべてです（`{ ge: 1700, le: 1900 }`）。1 つの手順に複数の変数を書けば、すべての変数です。bool と enum に使えるのは `eq` と `ne` だけです。
-- 書けるのは、入力の変数です。Parameter は、時刻 0 の `set` でだけ書けます（最初のステップの前に入ります）。出力は読むだけです。`set`、`ramp`、`wave` の値は、変数の範囲（`min`、`max`）の中にします。`ramp` は integer と real だけです（integer は四捨五入）。`wave` は、波形ごとに使える型が決まっています。
+Rules for hexadecimal (`0x1F`, `0X1F`):
 
-## 時刻
-
-手順の時刻 T は、`at_ms` か、前の手順が終わった時刻 + `after_ms` です。最初の手順の前は 0 です。
-
-| 手順 | 終わる時刻 |
+| Topic | Rule |
 |---|---|
-| `set`、`expect`（その時点） | T |
-| `ramp` | T + 最も長い `over_ms` |
-| `wave` | T + 最も長い波形の長さ（`for_ms`。`pulse` は `width_ms`、`points` は最後の点の時刻、`bounces` を書いた `chatter` は 2 × `bounces` × `interval_ms`） |
-| `expect` と `hold_for_ms` | T + `hold_for_ms` |
-| `wait_until`、`expect` と `within_ms` | 成り立ったサンプルの時刻 t の、次の controller のステップ P の、さらに 1 刻み後（P + 刻み） |
+| Where it is allowed | Integer and enum values: the value of `set`, `from` and `to` of `ramp`, the values of `wave`, the value of a condition, and parameters (`params`, `--param`) used in those places. |
+| Where it is not allowed | Real values, times, `amplitude` and `tolerance` are decimal only. |
+| Quotes | Do not quote it. `"0x1F"` is a string and gives the same error as a quoted number. |
+| Sign | Do not add a sign. Write negative values in decimal. |
+| Output | Step texts and results show decimal: a step that sets `0x1F` shows `= 31`. |
+| Out-of-range errors | Show both hexadecimal and decimal (`is 0x65 (101), outside its range`). |
 
-- 上の 4 つは、実行の前に終わる時刻がわかります。これらの手順は、前の結果によらず、書いた時刻どおりに進みます。
-- `wait_until` と `within_ms` つきの `expect` は、終わる時刻が実行するまで決まりません。ランチャーは、時刻 t のサンプルを、その次の controller のステップ P で確かに持っています。次の手順の書き込みが間に合う最初の時刻が P + 刻みなので、そこを終わりとします。例では、回転数が 1700 になったサンプルが 330 ms、P が 335 ms、終わりが 340 ms です。
-- そのため、これらの手順より後ろには `at_ms` を書けません（`after_ms` で書きます）。時刻が戻る `at_ms` も誤りです。
-- controller の刻みは、構成ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まる刻み（結果の `timing.time_step_ms`。[simulation-run.md](simulation-run.md) の「等速で動かす」の、速さを決めたときの既定と同じ）です。シナリオのある実行では、速さによらずこの刻みです。
+The kind of declaration decides which variables a scenario can write.
 
-## 値の見え方
+| Kind of variable | Write | Read (conditions) |
+|---|---|---|
+| Input | Can be written with `set`, `ramp` and `wave`. | Yes. |
+| Parameter | Can be written only with a `set` at time 0 (applied before the first simulation step). | Yes. |
+| Output | Cannot be written. | Yes. |
 
-ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに、ステップの終わりの全変数の値を 1 組（サンプル）送ります。サンプルの時刻は、そのステップの始まりの時刻です。
+Values of `set`, `ramp` and `wave` must be within the variable's range (`min`, `max`). `ramp` works only on integer and real variables (integer values are rounded). Each waveform of `wave` works on certain types only.
 
-- 「時刻 T の値」は、変数ごとに、その ECU の、T 以前に始まったステップの最後のサンプルの値です。T に始まるステップで入った `set` の値は、そのステップがサンプルを取るときだけ、T のサンプルに入っています。サンプルを取るのは、`sample_period` の倍数の時刻以後の最初のステップです（既定では、10 ms の倍数の時刻に始まるステップ。ステップが 5 ms の ECU の 105 ms のステップは取りません）。その時刻なら、`at_ms: 100` の `set` の直後に `at_ms: 100` の `expect` を書けます。そうでない時刻の `expect` は、前のサンプル（`set` の前の値）を見て失敗します。値が入ったことを確かめるには、`within_ms` つきの `expect` を使います（次のサンプルで成り立ちます）。ランチャーは ECU の `sample_period` を知らないので、照合ではわかりません。
-- `wait_until` と `within_ms` は、T の値と、その後に届くサンプルを 1 つも飛ばさずに見ます。1 サンプルだけ成り立つ変化も見逃しません。`hold_for_ms` も同じで、1 サンプルでも外れれば、そのサンプルの時刻で失敗です。
-- `sample_period` より細かい変化は見えません。サンプルとサンプルの間に変わって戻った値は、条件に現れません。
-- まだサンプルが 1 つもない変数（最初のステップの前）は、どの条件も成り立ちません。
-- 構成ファイルの participant に `variables`（対応表）があれば、シナリオに書く変数の名前と値は、対応の後のものです（[simulation-config.md](simulation-config.md#変数の名前と値を合わせるvariables)）。実行ファイルごとの名前や単位の違いは構成ファイルが吸収するので、シナリオは 1 つで済みます。一次式で変えた変数は実数になり、書いた値と読んだ値が丸めの分だけ違うことがあるので、`near` と `tolerance` で比べます。
+### Conditions
 
-## 書き込み
+A condition is a comparison, nothing more. A bare value means "equal". A mapping (the form `{ ge: 1700 }`) takes these operators:
 
-- `set` は、時刻 T を付けた書き込みです。各 ECU の、T 以降に始まる最初のステップの先頭で入り、そのステップのアプリケーションが新しい値を見ます。T が ECU のステップの間なら、次のステップで入ります。
-- ランチャーは、時間のゲートで controller の各ステップを止め、次の刻みまでの書き込みを ECU に積み終えてから通します。時刻 0 の分は、全員が最初のステップの前で待っている間に積みます。書き込みが、書いた時刻のステップに間に合わないことはありません。
-- 1 つの `set` に同じ participant の変数を複数書くと、同じステップでまとめて入ります。
-- `ramp` は、変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）に、`from` から `to` への直線の上の値を書き、T + `over_ms` に `to` を書きます。`from` を省くと、シナリオがその変数に最後に書いた値から始めます。シナリオがまだ書いていなければ、最新のサンプルの値から始めます。どちらもなければ失敗です（`from` を書きます）。サンプルから始めるとき、どのサンプルになるか（1 つもないか）は controller の刻みによります（時刻 T の書き込みは、T より前の刻みで送るため。[simulation-run.md](simulation-run.md) の「記録の終わり（`recorded_to_ms`）」）。刻みによらない結果にするには、`from` を書きます。シナリオが書いた後にほかの書き手（ECU 自身など）が値を変えても、始まりは変わりません。
-- 書き込みの結果は、適用する ECU のステップの次の controller のステップで確かめます。適用されなかった書き込み（ECU の setter が拒んだ、相手がつながっていない、など）は、その手順の失敗です。
+| Operator | Holds when | Types |
+|---|---|---|
+| `eq` | Equal | Any |
+| `ne` | Not equal | Any |
+| `ge` | Greater than or equal | integer, real |
+| `le` | Less than or equal | integer, real |
+| `gt` | Greater than | integer, real |
+| `lt` | Less than | integer, real |
+| `near` and `tolerance` | The difference is at most `tolerance` | integer, real |
 
-## 波形で動かす（`wave`）
+- With several operators on one variable, all of them must hold (`{ ge: 1700, le: 1900 }`).
+- With several variables in one step, the conditions of all the variables must hold.
 
-`wave` は、変数を決まった波形で動かします。
-次の例は、スロットルを、いまの値を中心に ±5 %、1 秒に 10 回の正弦で 200 ms 動かします（[examples/ecu_main/scenarios/throttle_wave.yaml](../examples/ecu_main/scenarios/throttle_wave.yaml) の 15 行）。
+### Schema
+
+The JSON Schema is [schema/scenario.schema.json](../schema/scenario.schema.json). In an editor that uses the YAML language server, put `# yaml-language-server: $schema=<path to the schema>` at the top of the file to get key completion, descriptions and shape checks. Line 1 of [the example file](../examples/ecu_main/scenarios/throttle_step.yaml) does this. The path is relative to the directory of the file you are writing.
+
+| Topic | Details |
+|---|---|
+| What the schema checks | Only the shape of keys and values. |
+| What the schema does not check | Whether the variables exist, whether values fit their type and range, and the order of times. `check --scenario` checks these (see [Check](#check-check---scenario-start-of-run---scenario) below). |
+| Scenarios written in JSON | Bind them to the schema the same way as a configuration file (see "Editor completion" in [simulation-config.md](simulation-config.md#editor-completion)). |
+| Template | `schema/` contains a copy. `get_tools.py` overwrites it with the schema of the tools version it downloads. |
+| Tools archive | The schema is in `schema/`. |
+
+## Timing
+
+The time T of a step is `at_ms`, or the end of the previous step plus `after_ms`. Before the first step, the "end of the previous step" is 0.
+
+| Step | Ends at | Known before the run |
+|---|---|---|
+| `set`, `expect` (at one point) | T | Yes. |
+| `ramp` | T + the longest `over_ms` | Yes. |
+| `wave` | T + the duration of the longest waveform | Yes. |
+| `expect` with `hold_for_ms` | T + `hold_for_ms` | Yes. |
+| `wait_until`, `expect` with `within_ms` (wait steps) | P + time step, where P is the first controller step after the time t of the sample in which the condition held | Not until the run. |
+
+The duration of a waveform is `for_ms`. For `pulse` it is `width_ms`, for `points` the time of the last point, and for `chatter` with `bounces` it is 2 × `bounces` × `interval_ms`.
+
+A step whose end is known before the run runs at the time written, whatever the result of the previous step.
+
+A wait step ends at P + time step because the launcher is sure to have the sample of time t at the next controller step, P. The earliest time at which a write of the next step can still be applied is P + time step, so the wait step ends there. In the example, the sample in which the engine speed reached 1700 is at 330 ms, P is 335 ms and the step ends at 340 ms.
+
+For this reason, a step after a wait step cannot have `at_ms` (write `after_ms`). An `at_ms` that goes back in time is also an error.
+
+The controller's time step is `time_step_ms` in the configuration file. If it is not set, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes, so every ECU step starts on a controller step (`timing.time_step_ms` in the result; the same as the default when a speed is set, see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). In a run with a scenario, this time step applies whatever the speed.
+
+## Values that conditions see
+
+Every `sample_period` of its Agent (10 ms of virtual time by default), an ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
+
+| Condition | Samples it looks at |
+|---|---|
+| `expect` at one point (time T) | For each variable, the last sample of its ECU from an ECU step that started at or before T ("the value at time T"). |
+| `wait_until`, `within_ms` | The value at time T and every sample received after it. A change that holds for a single sample is not missed. |
+| `hold_for_ms` | The same samples. If any one of them does not satisfy the condition, the step fails at that sample's time. |
+| `expect` beside `ramp` and `wave` | See [Checking values during a ramp or wave](#checking-values-during-a-ramp-or-wave). |
+
+- Changes finer than `sample_period` are invisible. A value that changes and changes back between 2 samples never reaches the conditions.
+- No condition holds for a variable that has no sample yet (the finding says `it had no value yet (no sample of its ECU had arrived)`).
+- An `expect` at time 0 does not fail for lack of a sample: it looks at the sample of the ECU step that starts at 0 ms (`its sample of 0 ms`), which already shows the writes at time 0.
+- A missing sample fails a step at time 0 when a `ramp` without `from` or a `wave` without `around` moves a variable that the scenario has not written yet (`scenario-write`). Writes at time 0 are handed over before the first simulation step, so there is no sample yet to take the start value from (see [Writes](#writes)).
+
+### `expect` at the same time as `set`
+
+Whether the sample of time T contains the value of a `set` at time T depends on whether the ECU step that starts at T takes a sample. The ECU step that takes a sample is the first one at or after each multiple of `sample_period`. By default, that is an ECU step that starts at a multiple of 10 ms.
+
+| ECU step that starts at T | `expect` right after the `set`, at the same time |
+|---|---|
+| Takes a sample (example: `at_ms: 100`) | Sees the value after the `set`. |
+| Does not take a sample (example: the 105 ms step of an ECU with a 5 ms step size) | Sees the previous sample (the value before the `set`) and fails. |
+
+To check that a value was applied, use `expect` with `within_ms`; it holds on the next sample. The launcher does not know the ECU's `sample_period`, so the check cannot detect this failure.
+
+### Participants with a variable map (`variables`)
+
+If a participant in the configuration file has `variables` (a variable map), the scenario uses the names and values after mapping (see [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables)). The configuration file absorbs the differences in names and units between executables, so one scenario is enough. A variable converted with a linear expression becomes a real, and rounding can make the value read back differ from the value written. Compare such values with `near` and `tolerance`.
+
+## Writes
+
+A `set` is a write stamped with time T. Each ECU applies it at the start of its first ECU step that starts at or after T, and the application sees the new value in that step. If T falls between 2 ECU steps, the write is applied in the next one.
+
+| Topic | Rule |
+|---|---|
+| One `set` with several variables of the same participant | They are applied together in the same ECU step. |
+| When `ramp` writes | For each variable, at T, T + step, T + 2 steps, … (in steps of that ECU), it writes the value on the line from `from` to `to`. At T + `over_ms`, it writes `to`. |
+| Start value of `ramp` (without `from`) | The last value the scenario wrote to that variable. |
+| Start value of a variable the scenario has not written yet | The value of the latest sample. Which sample it is, and whether there is one yet, depends on the controller's time step, because a write at T is sent in a time step before T (see "End of the record (`recorded_to_ms`)" in [simulation-run.md](simulation-run.md#end-of-the-record-recorded_to_ms)). For a result that does not depend on the time step, write `from`. |
+| Neither a written value nor a sample | The step fails (write `from`). |
+| Another writer (such as the ECU itself) changed the value after the scenario wrote it | The start value does not change. |
+| When the result of a write is checked | At the controller step after the ECU step that applies it. |
+| A write that was not applied (the ECU's setter rejected it, the target is not connected, and so on) | The step fails. |
+
+A write is never too late for the ECU step at its time. The launcher holds each controller step with the time gate, and lets time advance only after it has handed the ECUs every write up to the next time step. It hands over the writes for time 0 while all participants wait before the first simulation step.
+
+## Waveforms (`wave`)
+
+`wave` moves a variable in a given waveform. The example below moves the throttle for 200 ms in a sine wave of ±5 % around its current value, at 10 cycles per second. It is a step of [examples/ecu_main/scenarios/throttle_wave.yaml](../examples/ecu_main/scenarios/throttle_wave.yaml).
 
 ```yaml
   - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }
 ```
 
-変数ごとに、波形を 1 つと、その横に長さ（`for_ms`）と中心（`around`）を書きます。
-1 つの手順に複数の変数を書けます（同じ変数は 1 回）。手順は、いちばん長い波形が終わると終わります。
+For each variable, write one waveform, and beside it the duration (`for_ms`) and the center (`around`). One step can have several variables (each variable once). The step ends when its longest waveform ends.
 
-| 波形 | 書くもの | 値 | 使える型 |
+### Waveform types
+
+| Waveform | How the value moves | Types |
+|---|---|---|
+| `sine` | A sine wave of center ± `amplitude`. It starts at the center and reaches its maximum after a quarter period. | integer, real |
+| `triangle` | A triangle wave with its peaks and troughs at the same places as `sine`. | integer, real |
+| `sawtooth` | A sawtooth wave. It is at its minimum at the start of each period, rises in a straight line to its maximum and drops back. | integer, real |
+| `square` | A square wave. It is high for `duty` % of each period, from the start of the period. | integer, real, bool |
+| `pulse` | The value is `value` for `width_ms` only. When the pulse ends, a number returns to the value it had when the step started, and a bool becomes the opposite of `value` (whatever its value at the start). | integer, real, bool |
+| `noise` | Random values. Each value is held for `hold_ms`. | integer, real |
+| `chirp` | A sine wave whose frequency changes from `from_hz` to `to_hz` over `for_ms`. | integer, real |
+| `lag` | Approaches `to` as a first-order lag (63 % at `tau_ms`, 99 % at 5 times that). | integer, real |
+| `chatter` | Switch bounce: `to`, the original value, `to`, the original value, … changing every `interval_ms` and ending at `to`. | integer, real, bool |
+| `points` | Follows a table of times and values. | Any |
+
+### Waveform keys
+
+| Waveform | Key | Required | Meaning |
 |---|---|---|---|
-| `sine` | `amplitude`、`period_ms` か `frequency_hz`、`phase_deg` | 中心 ± `amplitude` の正弦。始まりは中心で、1/4 周期で最大 | integer、real |
-| `triangle` | 同じ | 三角波。山と谷の位置は `sine` と同じ | integer、real |
-| `sawtooth` | 同じ、`falling: true` | のこぎり波。周期の始めが最小で、直線で最大まで上がって戻る。`falling: true` は逆 | integer、real |
-| `square` | `low` と `high`、または `amplitude`。`period_ms` か `frequency_hz`、`duty`（%、既定 50）、`phase_deg` | 矩形波。周期の始めから `duty` % の間が高い側。`low`・`high` はその 2 つの値、`amplitude` は中心 ± `amplitude`。bool はどちらも書かない（`false` と `true`） | integer、real、bool |
-| `pulse` | `value`、`width_ms` | `width_ms` の間だけ `value`、終わると、始まる時点の値に戻る（bool は `value` の反対）。bool は `value` を省ける（`true`） | integer、real、bool |
-| `noise` | `amplitude`、`hold_ms`、`seed`、`distribution` | 乱数。1 つの値を `hold_ms` の間保つ。`distribution: uniform`（既定）は中心 ± `amplitude` の一様、`gaussian` は標準偏差が `amplitude` の釣り鐘形（標準偏差の 6 倍を超えない） | integer、real |
-| `chirp` | `amplitude`、`from_hz`、`to_hz`、`sweep` | 周波数が `for_ms` の間に `from_hz` から `to_hz` へ変わる正弦。`sweep: linear`（既定）は毎秒同じ Hz ずつ、`log` は毎秒同じ倍率ずつ。周波数は 0 以上で、`linear` は 0 Hz から始めることも 0 Hz で終わることもできる（両方 0 は誤り）。`log` はどちらも 0 より大きい数 | integer、real |
-| `lag` | `to`、`tau_ms`、`from`、`settle: true` | 一次遅れの形で `to` に寄る（`tau_ms` で 63 %、その 5 倍で 99 %）。`from` を省くと、いまの値から | integer、real |
-| `chatter` | `to`、`interval_ms`、`bounces` か横の `for_ms`、`seed`、`from` | スイッチの跳ね。`to`、元の値、`to`、元の値、… と `interval_ms` ごとに変わり、最後は `to`。`bounces` は元の値に戻る回数。`seed` を書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれる。bool は `from` を書かない（`to` の反対） | integer、real、bool |
-| `points` | `[[<ms>, <値>], ...]` か CSV ファイル（`{ file: <パス>, value: <列> }`。[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ。値を飛ばす（段差）ときは `hold` で書く（`linear` では、同じ時刻の 2 点は誤り） | どの型でも |
+| `sine`, `triangle`, `sawtooth` | `amplitude` | Yes | The swing from the center. |
+| | `period_ms` or `frequency_hz` | One of them | The period (see "Period" below). |
+| | `phase_deg` | No | Where in the waveform to start. 90 starts a quarter period in. |
+| `sawtooth` | `falling: true` | No | Reverses the direction. |
+| `square` | `low` and `high` | These or `amplitude` | The low and the high value. |
+| | `amplitude` | This or `low` and `high` | Uses the 2 values center ± `amplitude`. |
+| | `period_ms` or `frequency_hz` | One of them | The period. |
+| | `duty` | No | The share of the period that is high (%). The default is 50. |
+| | `phase_deg` | No | Where in the waveform to start. |
+| `pulse` | `value` | Yes (optional for bool) | The value during the pulse. A bool without it is `true`. |
+| | `width_ms` | Yes | The length of the pulse. |
+| `noise` | `amplitude` | Yes | The spread of the random values (see the `distribution` row). |
+| | `hold_ms` | Yes | How long each value is held. |
+| | `seed` | Yes | The random seed (see "How values are computed" below). |
+| | `distribution` | No | `uniform` (the default) is a uniform distribution over center ± `amplitude`. `gaussian` is a normal distribution with a standard deviation of `amplitude` (it never goes beyond 6 standard deviations). |
+| `chirp` | `amplitude` | Yes | The swing from the center. |
+| | `from_hz`, `to_hz` | Yes | The start and end frequencies (0 or more). |
+| | `sweep` | No | `linear` (the default) changes by the same number of Hz every second; `log` changes by the same factor every second. |
+| `lag` | `to` | Yes | The value it approaches. |
+| | `tau_ms` | Yes | The time constant. |
+| | `from` | No | The start value. Without it, the waveform starts from the current value. |
+| | `settle: true` | No | Sets the value after the waveform ends to `to`. |
+| `chatter` | `to` | Yes | The value it settles at. |
+| | `interval_ms` | Yes | The interval between changes. |
+| | `bounces` | This or `for_ms` beside the waveform | How many times the value returns to the original value. |
+| | `seed` | No | With it, each change shifts earlier or later by up to 1/4 of `interval_ms`. |
+| | `from` | No | The original value. Not for bool, where it is the opposite of `to`. |
+| `points` | `[[<ms>, <value>], ...]` or a CSV file (`{ file: <path>, value: <column> }`, see [Reading points from a CSV file](#reading-points-from-a-csv-file)) | Yes | The table of times (ms from the start of the step, ascending) and values. |
 
-- **周期**は `period_ms`（1 以上の整数）か `frequency_hz`（0 より大きい数）のどちらかです。1 ms より短い周期は `frequency_hz` で書きます。`phase_deg` は波形を始める位置で、90 なら 1/4 周期の所から始めます。
-- **長さ**は `for_ms` です。周期の倍数でなくてもかまいません。`pulse` と `points` は自分で長さを持つので `for_ms` を書きません。`chatter` は `bounces` か `for_ms` のどちらかです。
-- **中心**は `around` です。省くと、手順が始まる時点のその変数の値です（`ramp` の `from` と同じ決まり: シナリオが最後に書いた値。まだ書いていなければ最新のサンプルの値。どちらもなければ失敗するので、`around` を書きます）。
-- **終わった後の値**: 中心（`around`、省いたときは始まる時点の値）に戻します。`low`・`high` を書いた `square` と bool の `square` は、低い側で終わります。行き先のある波形はそこに留まります: `points` は最後の点の値、`chatter` は `to`、`lag` は `for_ms` の時点で着いていた値（`settle: true` なら `to`）。続けて `around` のない `wave` や `from` のない `ramp` を書くと、この値から始まります。
-- `around` を書けるのは、中心のある波形（`sine`、`triangle`、`sawtooth`、`amplitude` の `square`、`noise`、`chirp`）だけです。`pulse` には書けません: 終わると、始まる時点の値に戻ります（別の値にするには、次の手順で `set` します。数の `pulse` は、始まる時点の値がなければ失敗するので、前の手順で `set` しておきます）。`lag` と `chatter` の始まりの値は `from`、`points` は最初の点で書きます。
-- `interpolate` は、`points` の中ではなく横に書きます（`{ points: [...], interpolate: hold }`）。点の与え方が増えても、書く場所はここです。
-- `points` の最初の点が 0 より後なら、そこまでは、いまの値から最初の点への直線（`hold` なら、いまの値のまま）です。
-- **値の決まり方**: 値は、手順が始まった仮想時刻からの経過と、書いた数だけで決まります。ECU のステップ幅、controller の刻み、実行の速さによりません。`noise` と `chatter` の乱数も、`seed`、変数の名前（`<participant>.<変数>`）、時刻だけから作るので、同じシナリオは、どの OS でも毎回同じ値になり、失敗した実行をそのまま再現できます。変数の名前が入るので、2 つの変数に同じ `seed` を書いても、同じ列にはなりません（別々の入力に、そろった乱れは入りません）。
-- **書く時刻**は `ramp` と同じです。変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）にその時刻の値を書き、終わりの時刻に終わった後の値を書きます。integer は四捨五入です（ちょうど .5 は 0 から遠い側。計算の最後の桁だけ .5 からずれた値も、.5 として丸めます）。それでも、丸めの境界のごく近くの値は、OS やコンパイラーによって 1 違うことがあります（`sine`、`chirp`、`lag` は C ライブラリの関数を使い、最後の桁が同じとは限りません）。integer の入力に掛けた波形の結果を確かめるときは、`ge` と `le` で幅を持たせて書きます。
-- **範囲**: `low`、`high`、`value`、`to`、`from`、`around`、`points` の値と、`around` を書いたときの `around` ± `amplitude` は、照合で範囲を確かめます。`around` を省いた波形と `gaussian` の `noise` は、実行しないと値がわからないので、範囲の外の値を書こうとした時点でその手順が失敗します（`scenario-write`。値を黙って丸めません）。
-- `${名前}` は、波形の中の数の位置にも書けます（`amplitude: "${amp}"`）。
-- **`square` と PWM**: `square` は、値そのものを高い側と低い側に切り替えます（ECU がピンのエッジを見る入力）。ECU がデューティーや周波数を数の変数として受ける入力には、その変数に `set` や `ramp`、`sine` を使います。
+A bool `square` takes neither `low` and `high` nor `amplitude`: its values are `false` and `true`.
 
-`vehicle_sil::signal`（[`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
+The frequency rules of `chirp` depend on `sweep`:
 
-### 点を CSV ファイルから読む
+| `sweep` | `from_hz` and `to_hz` |
+|---|---|
+| `linear` | Either may be 0 Hz, so the chirp can start or end at 0 Hz (both 0 is an error). |
+| `log` | Both must be greater than 0. |
 
-`points` には、点の表の代わりに CSV ファイルとその列を書けます。記録した値の列を、そのまま入力に流すときに使います。
-次の例は、[examples/ecu_main/scenarios/throttle_trace.yaml](../examples/ecu_main/scenarios/throttle_trace.yaml) の 15 行で、同じディレクトリの `throttle_trace.csv` の列 `throttle` を、最初の列の時刻（ms）で流します。
+These 3 keys go beside the waveform, at the same level:
+
+| Key | Meaning | Waveforms |
+|---|---|---|
+| `for_ms` | The duration. It need not be a multiple of the period. | Not for `pulse` and `points`, which have their own duration. `chatter` takes either `bounces` or `for_ms`. |
+| `around` | The center. | Only waveforms with a center (`sine`, `triangle`, `sawtooth`, `square` with `amplitude`, `noise`, `chirp`). |
+| `interpolate` | How the points of `points` are joined. | `points` only. |
+
+- **Period**: either `period_ms` (an integer, 1 or more) or `frequency_hz` (a number greater than 0). Write a period shorter than 1 ms with `frequency_hz`.
+- **Center** (`around`): without it, the center is the variable's value when the step starts, decided the same way as `from` of `ramp` (see [Writes](#writes)). If there is no value, the step fails, so write `around`.
+- **`pulse`** takes no `around`. When it ends, a number returns to the value at the start and a bool becomes the opposite of `value` (to set another value, `set` it in the next step). A numeric `pulse` fails if there is no value at the start, so `set` one in an earlier step.
+- **Start value**: write it as `from` for `lag` and `chatter`, and as the first point for `points`.
+- `${name}` can also go in a numeric position inside a waveform (`amplitude: "${amp}"`).
+
+`interpolate` for `points`:
+
+| `interpolate` | Between points | Types |
+|---|---|---|
+| `linear` (the default for numbers) | Joined by straight lines. | integer, real |
+| `hold` | The value is held until the next point. | Any (`hold` only for bool and enum) |
+
+- Write `interpolate` beside `points`, not inside it (`{ points: [...], interpolate: hold }`). It stays there even if more ways to give the points are added.
+- To make the value jump, use `hold` (with `linear`, 2 points at the same time are an error).
+- If the first point is after 0, the value moves in a straight line from the current value to the first point (with `hold`, it stays at the current value until then).
+
+### Value after the waveform ends
+
+| Waveform | Value after it ends |
+|---|---|
+| Waveforms with a center | Returns to the center (`around`, or the value at the start if `around` is omitted). |
+| `square` with `low` and `high`, bool `square` | Ends low. |
+| `pulse` | A number returns to the value at the start. A bool becomes the opposite of `value`. |
+| `points` | Stays at the value of the last point. |
+| `chatter` | Stays at `to`. |
+| `lag` | Stays at the value reached at `for_ms` (`to` with `settle: true`). |
+
+A following `wave` without `around` or `ramp` without `from` starts from this value.
+
+### How values are computed
+
+A value depends only on the virtual time elapsed since the step started and on the numbers you wrote. It does not depend on the ECU step size, the controller time step or the speed of the run.
+
+The random values of `noise` and `chatter` also come only from `seed`, the variable name (`<participant>.<variable>`) and the time. The same scenario gives the same values on every OS and every run, so you can reproduce a failed run exactly. Because the variable name is an input, 2 variables with the same `seed` do not get the same sequence; separate inputs never get correlated noise.
+
+The write times are the same as for `ramp`. For each variable, at T, T + step, T + 2 steps, … (in steps of that ECU), the scenario writes the value for that time. At the end time, it writes the value after the waveform.
+
+Integers are rounded to the nearest (exactly .5 rounds away from 0, and a value that differs from .5 only in the last digit of the calculation also rounds as .5). Even so, a value very close to a rounding boundary may differ by 1 between operating systems or compilers: `sine`, `chirp` and `lag` use C library functions whose last digit is not guaranteed to match. To check the result of a waveform on an integer input, allow a margin with `ge` and `le`.
+
+The range (`min`, `max`) is checked at these points:
+
+| Value | When it is checked |
+|---|---|
+| `low`, `high`, `value`, `to`, `from`, `around`, the values of `points`, and `around` ± `amplitude` when `around` is written | By the check. |
+| A waveform without `around`, `noise` with `gaussian` | During the run, because the values are not known until then. The step fails when it tries to write a value outside the range (`scenario-write`). Values are never clamped silently. |
+
+`square` switches the value itself between high and low, for an ECU input that watches the edges of a pin. For a PWM input, where the ECU receives the duty cycle or the frequency as a numeric variable, use `set`, `ramp` or `sine` on that variable.
+
+`vehicle_sil::signal` ([`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)) has functions that do the same calculation. You can use them in your own C++ code.
+
+### Reading points from a CSV file
+
+Instead of a table, `points` can name a CSV file and one of its columns. Use this to play a recorded column of values into an input.
+The example below is line 15 of [examples/ecu_main/scenarios/throttle_trace.yaml](../examples/ecu_main/scenarios/throttle_trace.yaml). It plays the column `throttle` of `throttle_trace.csv`, in the same directory, at the times (ms) in the first column.
 
 ```yaml
   - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
 ```
 
-| キー | 書くもの |
+| Key | Required | Meaning |
+|---|---|---|
+| `file` | Yes | The CSV file, as a path from the directory of the scenario file, with `/` between directories. An absolute path, a path with `..` and a path with `\` are errors: a scenario reads only files in its own directory and below. |
+| `value` | Yes | The name of the value column. |
+| `time` | No | The name of the time column. Without it, the first column. |
+| `time_unit` | No | The unit of the times: `ms` (the default) or `s`. Either way, a time is counted from the start of the step and must come to a whole number of ms (`0.25` in `s` is 250 ms). |
+
+- The first row of the CSV file holds the column names, and each row below it is one point. Cells are separated by `,` and can be enclosed in `"` (a `"` inside is written `""`). The file is UTF-8; a leading BOM, CRLF line ends and empty lines are fine. Every row has as many cells as the first row.
+- The points go through the same checks as `[[<ms>, <value>], ...]` and give the same values: ascending times, values that fit the type and the range, `interpolate` beside `points`, and the warnings for points finer than the ECU step. A value cell is a number. For bool, write `true`, `false`, `1` or `0`; for enum, an item name or its value. Integer values can also be hexadecimal (`0x3C`).
+- Different columns of one file can feed different variables. The check reads each file once. A file can have up to 100000 value rows and up to 16 MiB.
+- `file`, `value`, `time` and `time_unit` can contain `${name}`, so one scenario can play different recordings.
+- Errors about the file, the path or the columns are `scenario-points-file`. An error in a cell is the same as in `[[<ms>, <value>], ...]`: `value` for a time and `scenario-value` for a value. The finding points at the `file` line of the scenario, and its message gives the row and the column in the CSV file (cells are cut at 20 characters). For each `points`, only the first cell error is reported.
+
+### Waveforms finer than the ECU step
+
+An ECU takes its inputs once per ECU step. A waveform finer than that does not reach the ECU as written. The check (`check --scenario`, and the start of `run --scenario`) compares the waveform with the step size of the target ECU and reports, as a warning, what the ECU will actually see. Because it is a warning, the run can go ahead. With `--strict`, the check fails.
+
+| Code | Reported when |
 |---|---|
-| `file` | CSV ファイル。シナリオのファイルがあるディレクトリからのパスで、ディレクトリの区切りは `/` です。絶対パス、`..` を含むパス、`\` を含むパスは誤りです（シナリオは、自分のディレクトリとその下のファイルだけを読みます） |
-| `value` | 値の列の名前（必須） |
-| `time` | 時刻の列の名前。省くと最初の列 |
-| `time_unit` | 時刻の単位。`ms`（既定）か `s`。どちらも、手順の始めからの時刻で、整数の ms になる値を書きます（`s` の `0.25` は 250 ms） |
+| `scenario-wave-undersampled` (warning) | The period is shorter than twice the step size (`sine`, `triangle`, `sawtooth`, `square`; for `chirp`, the higher frequency). |
+| | A `sine` or `triangle` has the same value at every time at which the ECU takes a value (the period is twice the step size and the waveform starts at the center, so the ECU sees a constant). |
+| | `width_ms` of `pulse`, `hold_ms` of `noise`, the interval between the points of `linear` `points`, or `interval_ms` of `chatter` (half of it with `seed`) is shorter than the step size. |
+| | A `hold` `points` has a point that never reaches the ECU (the intervals between points are not checked). |
+| `scenario-wave-duty` (warning) | The high time of `square` (period × `duty`) is not a multiple of the step size. The finding gives the duty the ECU sees. |
+| | The period is not a multiple of the step size. |
+| `scenario-wave-coarse` (note) | One period of `sine`, `triangle`, `sawtooth` or `chirp` is shorter than 8 ECU steps, so peaks and troughs may be missed. |
+| `scenario-wave-not-checked` (note) | The step size of the target participant is unknown, so the waveform is not compared. |
 
-- CSV の 1 行目は列の名前で、その下の 1 行が 1 点です。区切りは `,` で、セルを `"` で囲めます（中の `"` は `""`）。UTF-8 で、先頭の BOM、CRLF の改行、空行はかまいません。どの行も、1 行目と同じ数のセルを持ちます。
-- 読んだ点は、`[[<ms>, <値>], ...]` に書いたときと同じ決まりで照合し、同じ値を書きます（時刻は昇順、値は型と範囲、`interpolate` は横に書く、ECU のステップより細かい点の警告）。値のセルは数です。bool は `true`、`false`、`1`、`0`、enum は項目の名前か値です。integer の値には 16 進（`0x3C`）も書けます。
-- 1 つのファイルの別の列を、別の変数に使えます。ファイルは照合のときに 1 回だけ読みます。値の行は 100000 行まで、ファイルは 16 MiB までです。
-- `file`、`value`、`time`、`time_unit` には `${名前}` を書けます（同じシナリオに、別の記録を流す）。
-- 誤りは、ファイルとパスと列のことが `scenario-points-file`、セルのことは `[[<ms>, <値>], ...]` と同じ `value`（時刻）と `scenario-value`（値）です。所見の行はシナリオの `file` の行で、文が CSV の何行目のどの列かを言います（セルは 20 文字で切ります）。セルの誤りは、1 つの `points` につき最初の 1 つだけを言います。
-
-### ECU のステップより細かい波形
-
-ECU は、ステップごとに 1 回だけ入力を受け取ります。
-それより細かい波形は、書いたとおりには ECU に見えません。
-照合（`check --scenario`、`run --scenario` の最初）は、相手の ECU のステップ幅と比べて、ECU に実際に見える形を警告で言います。
-警告なので、実行はできます。`--strict` では照合で落ちます。
-
-| 所見 | 出るとき |
-|---|---|
-| `scenario-wave-undersampled`（警告） | 周期がステップ幅の 2 倍より短い（`sine`、`triangle`、`sawtooth`、`square`。`chirp` は高い側の周波数）。`sine`、`triangle` が、ECU が値を受け取るどの時刻にも同じ値になる（周期がステップ幅の 2 倍で、中心から始まるとき。ECU には一定の値に見える）。`pulse` の `width_ms`、`noise` の `hold_ms`、`linear` の `points` の点の間隔、`chatter` の `interval_ms`（`seed` があればその半分）がステップ幅より短い。`hold` の `points` に、ECU に入らない点がある（点の間隔は見ない） |
-| `scenario-wave-duty`（警告） | `square` の高い側の長さ（周期 × `duty`）がステップ幅の倍数でない（ECU に見えるデューティーを言う）。周期がステップ幅の倍数でない |
-| `scenario-wave-coarse`（注記） | `sine`、`triangle`、`sawtooth`、`chirp` の 1 周期が 8 ステップより少ない（山と谷を取りこぼすことがある） |
-| `scenario-wave-not-checked`（注記） | 相手の participant のステップ幅がわからないので、比べていない |
-
-例です。ステップ幅 10 ms の ECU に、周期 30 ms、デューティー 25 % の矩形波を書いたとき:
+Here is the warning for a square wave with a 30 ms period and a 25 % duty, written for an ECU with a 10 ms step size:
 
 ```text
 warning: pwm.yaml:5: the square of Door.lamp is high for 7.5 ms of each period of 30 ms (duty 25 %), but participant 'Door' takes its inputs once per step of 10 ms: the ECU sees it high for 10 ms of each period (33.3 %). Make the high time (period x duty / 100) a multiple of 10 ms; to run it as it is without this message, add undersampled: ok to the step [scenario-wave-duty]
 ```
 
-- わかっていてそのまま流すときは、その手順に `undersampled: ok` を書きます。その手順の上の 4 つの所見が出なくなります。
+If the waveform is what you intend and you want to run it as it is, add `undersampled: ok` to the step. The 4 findings above are then not reported for that step.
 
-  ```yaml
-    - wave: { Door.lamp: { pulse: { width_ms: 3 } } }
-      undersampled: ok
-  ```
+```yaml
+  - wave: { Door.lamp: { pulse: { width_ms: 3 } } }
+    undersampled: ok
+```
 
-- なめらかな波形（`sine`、`triangle`、`sawtooth`）の警告は、形が見える周期（ステップ幅の 8 倍以上）を勧めます。ECU に見える値の並びは、手順がいつ始まるかによりません（書き込みは T、T + ステップ、… で、ECU は 1 つずつ別のステップで受け取ります）。
-- ステップ幅より短い `pulse` は、パルスの間（始まりの時刻を含み、終わりの時刻を含まない）に ECU のステップの時刻が 1 つあれば、1 ステップの間だけ見えます。なければ見えません（始まりと終わりの書き込みが同じステップに入り、後の方が残るためです）。ステップ幅 10 ms の ECU なら、107 ms に始まる 5 ms のパルスは 110 ms のステップで見え、101 ms に始まるものは見えません。手順の時刻が実行の前にわかるとき（`at_ms`、長さの決まった手順の後）は、どちらになるかを警告が言います。わからないとき（`wait_until` の後など）は、そう言います。
-- `hold` の `points` は、段差を書くためのものなので、点の間隔が短くても警告しません。警告するのは、値が ECU に 1 度も入らない点があるときです: 手順の始めからステップ幅ごとの書き込みが、その点の区間に 1 つもないとき（点をステップ幅の倍数の時刻に置けば起きません）と、最後の点の直前の点の書き込みが、終わりの書き込みと同じステップに入るとき（短い `pulse` と同じ決まり）です。
-- 動かしようのないものは誤りです: 周期や幅が 0 以下、`noise` に `seed` がない、`points` の時刻が昇順でない、型に合わない波形（bool に `sine` など）、範囲の外。
+Notes for each waveform:
 
-## 動かしている間ずっと確かめる
+| Waveform | Notes |
+|---|---|
+| Smooth waveforms (`sine`, `triangle`, `sawtooth`) | The warning recommends a period at which the shape is visible (8 times the step size or more). |
+| `pulse` shorter than the step size | If the pulse (including its start time, excluding its end time) contains the time of one ECU step, the ECU sees it for 1 ECU step. If not, the ECU does not see it. |
+| `hold` `points` | They are meant for writing jumps, so short intervals between points are not reported. |
 
-`ramp` と `wave` の横に `expect` を書くと、動かしている間ずっと、条件が成り立つことを確かめます。
+The sequence of values that the ECU sees does not depend on when the step starts: the writes are at T, T + step, …, and the ECU receives each one in a separate ECU step.
+
+A short `pulse` is invisible because its start and end writes are applied in the same ECU step, and the later one wins. For an ECU with a 10 ms step size, a 5 ms pulse that starts at 107 ms is visible in the 110 ms step; one that starts at 101 ms is not. When the step's time is known before the run (`at_ms`, or after steps of known length), the warning says which case applies. When it is not known (after `wait_until`, for example), the warning says that it is not known.
+
+For `hold` `points`, the check warns when the value of a point never reaches the ECU. That happens in 2 cases:
+
+- None of the writes, made once per step size from the start of the step, falls in that point's interval. This cannot happen if you place the points at multiples of the step size.
+- The write of the second-to-last point is applied in the same ECU step as the end write (the same rule as for a short `pulse`).
+
+Anything that cannot run at all is an error, not a warning: a period or width of 0 or less, `noise` without `seed`, `points` whose times are not in ascending order, a waveform that does not fit the type (`sine` on a bool, for example), and values out of range.
+
+## Checking values during a ramp or wave
+
+An `expect` beside `ramp` or `wave` checks that the condition holds all the time the value moves.
 
 ```yaml
   - ramp: { Engine.engine.throttle: { to: 80, over_ms: 1000 } }
     expect: { Engine.engine.speed: { le: 3000 } }
 ```
 
-- 見るのは、条件の変数ごとに、時刻が T から U までのサンプル全部です。T は手順の時刻、U は終わりの値（`to`、波形の終わった後の値）を書いた変数の ECU が、それを適用するステップの時刻です（終わり E が ECU のステップの上なら E、間なら次のステップ。変数が複数の ECU にあれば、いちばん遅いもの）。T より前のサンプル（動かす前の値）と U より後のサンプルは見ません。こうして、T と E が ECU のステップの上か間かで、合否が変わらないようにしています。ほかの ECU の変数も、同じ T から U までのサンプルを見ます。
-- 区間に 1 つもサンプルのない変数は、確かめなかったことになり、U で失敗です（`no sample of <変数> in that time`）。`hold_for_ms` の `expect` と違い、T より前のサンプルで判定しません（[値の見え方](#値の見え方)）。
-- `within_ms` と `hold_for_ms` は書けません（誤り）。ほかの区間で確かめるときは、`expect` を別の手順にして、`ramp` や `wave` の後に置きます。
-- 手順は、書き込みが全部適用され、かつ条件が U まで成り立ったときに通ります。結果の `at` と、次の手順が数える終わりは E のままです。どちらかが残っている間は、後ろの手順が先に決まっても、この手順は決まりません。
-- 条件が外れると、外れたサンプルの時刻で失敗です（`scenario-failed`）。文は `hold_for_ms` と同じ形で、区間と、見たサンプルを言います: `not true during the ramp (from 1000 ms to 2000 ms): at 1340 ms Engine.engine.speed le 3000, but it was 3050 (its sample of 1340 ms)`。U が E と違うときは、区間に `, where its end (2000 ms) takes effect` が付きます。書き込みが適用されなければ、`scenario-write` です。両方が起きたときの `code` は、ランチャーが先に知ったほうです（[結果](#結果)）。
-- 手順の時刻と終わりは、`expect` を書いても変わりません。
-- 構成で `expect` の変数がない（`absent: true`、機種が外した participant）ときは、`expect` だけを飛ばし、`ramp` や `wave` は書いたとおりに動かします。ある変数の条件も一緒に見ません（手順ごと飛ばすときと同じ考えです）。手順の文は `ramp ... over 100 ms, expect not checked: <条件>` になり、照合の注記 `scenario-step-skipped` は `the ramp runs; its expect is not checked (...)` の形です。数は、照合と実行の合否の行（`1 expect not checked`）、JSON の `unchecked_expects`、`vehicle_sil_launch test` の表（`1 expect was not checked`）に出ます。理由は、人向けは表の下の `line <行> expect not checked: <理由>`、JSON は手順の `expect_skipped` です。動かす変数がないときは、今までどおり手順の全体を飛ばします（[ない変数を使う手順は飛ばす](#ない変数を使う手順は飛ばす)）。
+For each variable in the condition, the check looks at every sample with a time from T to U.
 
-## 機種とパラメーター
+| Symbol | Meaning |
+|---|---|
+| T | The time of the step. |
+| E | The end time of the step. |
+| U | The time of the ECU step in which the ECU of a written variable applies its end value (`to`, or the value after the waveform). |
 
-構成ファイルに機種（`variants`）があるとき、同じシナリオをどの機種にも当てられるように、次の 3 つがあります。機種の違いは構成の側に書き、シナリオには、機種の名前で分かれる手順を書きません（構成の側の書き方は [simulation-config.md](simulation-config.md) の「機種」と「シナリオのパラメーター」）。
+U is E if E falls on an ECU step, and the next ECU step if E falls between 2 ECU steps. If the variables are on several ECUs, U is the latest of these. Samples before T (the values before the movement) and after U are not looked at. This keeps the result from depending on whether T and E fall on or between ECU steps. The variables of other ECUs are looked at in the same samples, from T to U.
+
+| Topic | Rule |
+|---|---|
+| The step passes when | All writes are applied and the condition holds until U. |
+| `at` of the result, and the end from which the next step counts | Stays E. Adding `expect` changes neither the step's time nor its end. |
+| Order in which results are decided | While a write or the condition is still pending, this step's result is not decided, even if the result of a later step is decided first. |
+| A variable with no sample in the interval | Counts as not checked, and the step fails at U (`no sample of <variable> in that time`). |
+| `within_ms`, `hold_for_ms` | Not allowed (error). |
+| The condition did not hold | The step fails at the time of that sample (`scenario-failed`). |
+| A write was not applied | `scenario-write`. |
+| Both happened | `code` is whichever the launcher learned of first (see [Results](#results)). |
+
+- A variable without samples is handled differently from an `expect` with `hold_for_ms`: a sample before T is never used (see [Values that conditions see](#values-that-conditions-see)).
+- To check over a different interval, put the `expect` in a step of its own after the `ramp` or `wave`.
+- The failure message has the same form as for `hold_for_ms`, and shows the interval and the sample it looked at: `not true during the ramp (from 1000 ms to 2000 ms): at 1340 ms Engine.engine.speed le 3000, but it was 3050 (its sample of 1340 ms)`. When U differs from E, the interval gets `, where its end (2000 ms) takes effect`.
+
+### When the `expect` variable is absent
+
+If a variable of the `expect` is absent in the configuration file (`absent: true`, or a participant that the variant disables), only the `expect` is skipped. The `ramp` or `wave` runs as written. The conditions on the variables that are present are not checked either, as when a whole step is skipped. If a variable that the step moves is absent, the whole step is skipped (see [Skipping steps that use an absent variable](#skipping-steps-that-use-an-absent-variable)).
+
+| Where it shows | Details |
+|---|---|
+| Step text | `ramp ... over 100 ms, expect not checked: <condition>` |
+| The check's note `scenario-step-skipped` | Has the form `the ramp runs; its expect is not checked (...)`. |
+| Counts | In the result lines of the check and the run (`1 expect not checked`), in `unchecked_expects` in JSON, and in the table of `vehicle_sil_launch test` (`1 expect was not checked`). |
+| Reason | In the human-readable output, `line <line> expect not checked: <reason>` below the table. In JSON, `expect_skipped` of the step. |
+
+## Variants and parameters
+
+When the configuration file has variants (`variants`), 3 mechanisms let one scenario serve every variant:
+
+| Mechanism | What it does |
+|---|---|
+| [Parameters](#parameters-params-name) | Changes the values in steps per variant or per argument. |
+| [Skipping steps](#skipping-steps-that-use-an-absent-variable) | Does not run the steps that use a variable the variant does not have. |
+| [`only`](#limiting-a-scenario-to-variants-only) | Limits the variants on which the scenario runs. |
+
+Write the differences between variants in the configuration file. Do not write steps that branch on variant names in the scenario. For the configuration side, see "Variants (`variants`, `--variant`)" and "Scenario parameters (`params`, `--param`)" in [simulation-config.md](simulation-config.md).
 
 ```yaml
 vehicle_sil_scenario: 1
 name: idle
-params: { idle_rpm: 800, settle_ms: 500 }      # 既定の値
+params: { idle_rpm: 800, settle_ms: 500 }      # default values
 steps:
   - set: { Engine.engine.throttle: 0 }
   - after_ms: ${settle_ms}
     expect: { Engine.engine.speed: { near: "${idle_rpm}", tolerance: 50 } }
-  - expect: { Engine.engine.turbo: { le: 0.1 } }    # turbo のない機種では飛ばす
+  - expect: { Engine.engine.turbo: { le: 0.1 } }    # skipped on variants without a turbo
 ```
 
-### パラメーター（`params`、`${名前}`）
+### Parameters (`params`, `${name}`)
 
-- `${名前}` は、手順の中の値の位置（`set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`wave` の数と長さ、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`）に、値の全体として書きます。その位置に、パラメーターの値を書いたのと同じに読みます（型と範囲の照合も同じで、誤りの文には、どのパラメーターのどこから来た値かが出ます）。
-- キー、変数名、値の一部（`"${a} rpm"`）には書けません。式（`${a+1}`）もありません（誤り `scenario-param`）。計算した値が要るときは、その値を別のパラメーターにします。
-- `{ ... }` や `[ ... ]` の中では、引用符で囲みます（`{ near: "${idle_rpm}" }`。YAML が、引用符のない `${` をそこでは読めないためです）。JSON でも文字列で書きます。引用符で囲んでも、値はパラメーターに書いたとおりに読みます（数は数です）。
-- 値は、後のものが前のものを置き換えます: シナリオの `params`、構成ファイルの `params`、選んだ機種の `params`、引数の `--param <名前>=<値>`。シナリオの `params` に書いていない名前も、ほかから値が来れば使えます。
-- どこからも値が来ない `${名前}` は、照合の誤りです（実行の前。`scenario-param`）。シナリオが使っても宣言してもいない名前の `--param` は、引数の誤りです（終了コード 4。シナリオのパラメーターの名前を並べます）。
-- パラメーターに誤りがある間は、手順の中身の照合をしません（まずパラメーターを直します）。
-- `params` の値は 1 つの値（数、`true`・`false`、文字列）で、ほかのパラメーターは使えません。名前は英数字と `_`（数字で始めない）です。
+Write `${name}` where a step takes a value, as the whole value. It reads as if the parameter's value were written there. The type and range checks are the same, and an error message shows which parameter the value came from and where it was set.
 
-### ない変数を使う手順は飛ばす
+| Topic | Rule |
+|---|---|
+| Where it is allowed | The value of `set`, the value and `tolerance` of a condition, `to`, `from` and `over_ms` of `ramp`, the numbers and durations of `wave`, `at_ms`, `after_ms`, `timeout_ms`, `within_ms` and `hold_for_ms`. |
+| Where it is not allowed | Keys, variable names and part of a value (`"${a} rpm"`). These give the error `scenario-param`. |
+| Expressions | None (`${a+1}` gives the error `scenario-param`). If you need a calculated value, make it another parameter. |
+| Inside `{ ... }` or `[ ... ]` | Quote it (`{ near: "${idle_rpm}" }`). YAML cannot read an unquoted `${` there. |
+| JSON | Write it as a string. |
+| Type when quoted | The value is read as written in the parameter (a number stays a number). |
+| Values in `params` | A single value (a number, `true` or `false`, or a string). A value cannot use other parameters. |
+| Names | Letters, digits and `_`, not starting with a digit. |
 
-- 構成の対応表で `absent: true` とした変数（その実行ファイルにはない、と書いた変数）を使う手順は、実行で飛ばします。照合では、手順ごとに注記 `scenario-step-skipped` が出ます（誤りではありません）。
-- 選んだ機種が外した participant（機種の `enabled: false`）の変数を使う手順も、同じに飛ばします。理由は `participant 'Door' is not in the variant medium (enabled: false in that variant)` の形です。その participant は照合していないので、変数の名前は確かめません。機種のほかの理由で外した participant（共通の部分の `enabled: false`、`--disable`）の変数を使う手順は、今までどおり照合の誤り（`scenario-variable`）です。機種が外した participant を `--enable` で戻したときは、ほかの participant と同じに照合します。
-- 飛ばすのは、その変数を使う手順だけです。1 つの手順に、ある変数とない変数の両方があれば、手順の全体を飛ばします（ある変数にも書きません）。ただし、`ramp` と `wave` の横の `expect` だけがない変数を使うときは、その `expect` だけを飛ばして動かします（[動かしている間ずっと確かめる](#動かしている間ずっと確かめる)）。飛ばした `set` に頼る後ろの手順は、飛ばさずに回ります。機種によって成り立たない手順は、ない変数を使う形にするか、シナリオを分けて `only` を書きます。
-- 飛ばした手順も、文面からわかる長さは使ったことにします: `ramp` はいちばん長い `over_ms`、`wave` はいちばん長い波形の長さ、`hold_for_ms` のある `expect` はその長さ、`set` と長さのない `expect` は 0 です。次の手順の `after_ms` は、その終わりから数えます。飛ばす機種と飛ばさない機種で、後ろの手順の時刻は同じです。ない変数の `ramp` も、`over_ms` だけは読みます（`to` と `from` は読みません）。ない変数の `wave` も、長さ（`for_ms`、`width_ms`、最後の点の時刻、`bounces` と `interval_ms`）だけは読みます。
-- 例外は、待つ手順（`wait_until`、`within_ms` のある `expect`）です。いつ終わるかは実行しないとわからないので、飛ばすと 0 です（手順の時刻で終わったことにします）。その後ろの `after_ms` の手順は、飛ばさない機種より早く始まります。待った後の時刻が要る手順は、待つ手順と同じ変数を使う形にする（一緒に飛ばす）か、シナリオを分けて `only` を書きます。
-- ファイルの読み方は機種で変わりません。`at_ms` が前の手順の終わりより前、という誤りは、手順を飛ばす機種でも同じに出ます。待つ手順を飛ばしても、その後ろに `at_ms` は書けません。
-- 飛ばした手順のうち最後のものの長さは、実行を延ばしません。シナリオは、飛ばさない手順が全部決まった所で終わります。
-- 結果では、手順の `status` が `skipped`（人向けは `skipped`）で、理由が付きます。シナリオの結果は、ほかの手順が全部通れば `passed` のままで、飛ばした数が出ます（人向けは `passed, 3 of 4 steps passed, 1 skipped`、JSON は `skipped_steps`）。
-- 確かめる手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部飛ばすと、シナリオは何も確かめずに `passed` になります。このとき、照合で警告 `scenario-nothing-checked` を 1 つ出します（確かめる手順の行と、次にすることを言います: その機種のシナリオでなければ `only` を書く、その機種のものなら対応表を足す）。既定では実行は通り、`--strict` では照合で落ちて何も起動しません。もとから確かめる手順のないシナリオ（`set`、`ramp`、`wave` だけ）には出しません。
-- 対応も `absent` も書いていない変数が実行ファイルになければ、今までどおり照合の誤り（`scenario-variable`）です。黙って飛ばしません。
+Values are applied in this order, and a later one replaces an earlier one. A name that is not in the scenario's `params` can still be used if a value comes from another place.
 
-### 機種を限る（`only`）
+| Order | Where the value is written |
+|---|---|
+| 1 | `params` of the scenario |
+| 2 | `params` of the configuration file |
+| 3 | `params` of the selected variant |
+| 4 | The argument `--param <name>=<value>` |
 
-- `only: [small, medium]` と書いたシナリオは、その機種のためのものです。ほかの機種（`--variant large`）で `check --scenario` か `run --scenario` に渡すと、誤り `scenario-variant` で、何も起動しません。そのとき、手順の中身は照合しません（その機種には合わないかもしれないため）。全部の機種を回す `vehicle_sil_launch test` は、その組を回さずに `skipped` にします（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。
-- `only` の名前は、構成ファイルの `variants` にある名前だけです。機種のない構成に `only` のあるシナリオを渡すと誤りです。
+| Error | Result |
+|---|---|
+| `${name}` with no value from anywhere | A check error, before the run (`scenario-param`). |
+| `--param` with a name the scenario neither uses nor declares | A usage error (exit code 4). The message lists the scenario's parameter names. |
 
-## 結果
+While a parameter has an error, the contents of the steps are not checked. Fix the parameters first.
 
-- 手順が 1 つ失敗すると、シナリオはそこで終わりです（ランチャーが最初に知った失敗）。ランチャーは、controller のステップ P ごとに、前の書き込みの結果、P より前のサンプル、次の刻みまでの書き込みの順に見ます。そのため、仮想時刻の順とは限りません: すぐに断られる書き込み（範囲の外など）は 1 刻み先の時刻のものを送るときに知るので、それより前の時刻のサンプルで外れる条件より先に報告されることがあり、刻みを変えると入れ替わります。ランチャーはシミュレーションを止め、実行は失敗します（終了コード 1）。始まっていた手順は `unfinished`、その後ろは `not_run` です。後ろの手順の書き込みのうち、次の刻みまでの分は、すでに ECU に渡っていることがあります。
-- 全部通ると、ランチャーはその controller のステップでシミュレーションを止め、実行は成功します（ほかに誤りがなければ終了コード 0）。構成ファイルに `stop_at_ms` がなくても回せます。
-- `stop_at_ms` に先に着くと、決められる所まで決めて、決まっていない最初の手順が失敗です（`scenario-out-of-time`。`stop_at_ms` を大きくするか、消します）。
-- 止める要求（Ctrl+C、`stop` の命令）、participant の失敗、`--timeout-ms` は、シナリオより優先です（[simulation-run.md](simulation-run.md) の規則のまま）。そのとき、シナリオは `incomplete` で、誤り `scenario-incomplete` が、どこまで進んだかを言います。落ちた ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
-- 手順ごとの `at`（JSON の `at_ms`）は、その手順を決めた仮想時刻です。`set` は値を適用した ECU のステップ、`ramp` と `wave` は終わり、その時点の `expect` は T、`wait_until` と `within_ms` は成り立ったサンプルの時刻、`hold_for_ms` は終わり（失敗なら外れたサンプルの時刻）、横に `expect` のある `ramp` と `wave` が外れたときは外れたサンプルの時刻、時間切れは切れた時刻です。
+### Skipping steps that use an absent variable
 
-失敗の所見は、シナリオのファイルと行、手順、時刻、そのときの値を言います。失敗する例です。スロットルを踏んでから 200 ms のうちに回転数が 1700 rpm に届くことを確かめますが、届くのは 330 ms です（上の例の `wait_until`）。
+Steps that use the following variables are skipped in the run. The check reports the note `scenario-step-skipped` for each such step; it is not an error.
+
+| Variable | Handling |
+|---|---|
+| A variable marked `absent: true` in the variable map of the configuration file (declared as missing from that executable) | Steps that use it are skipped. |
+| A variable of a participant that the selected variant disables (`enabled: false` in the variant) | Steps that use it are skipped as well. That participant is not checked, so the variable name is not verified. |
+| A variable of a participant disabled for another reason (`enabled: false` in the common part, `--disable`) | A check error (`scenario-variable`). |
+| A variable of a participant that the variant disables and `--enable` enables again | Checked like the variables of any other participant. |
+| A variable that has neither a mapping nor `absent` and is missing from the executable | A check error (`scenario-variable`). It is never skipped silently. |
+
+For a participant that the variant disables, the reason reads `participant 'Door' is not in the variant medium (enabled: false in that variant)`.
+
+Only the steps that use such a variable are skipped.
+
+| Case | What is skipped |
+|---|---|
+| One step uses both present and absent variables | The whole step. The present variables are not written either. |
+| Only the `expect` beside `ramp` or `wave` uses an absent variable | Only that `expect` (see [When the `expect` variable is absent](#when-the-expect-variable-is-absent)). |
+| A later step relies on a skipped `set` | The later step is not skipped; it runs. |
+
+For a step that does not hold on some variants, either make it use an absent variable, or split the scenario and add `only`.
+
+A skipped step still uses up the duration that its contents give, and `after_ms` of the next step counts from its end. This keeps the times of later steps the same on variants that skip the step and on variants that do not.
+
+| Skipped step | Duration it uses up |
+|---|---|
+| `set`, `expect` without a duration | 0 |
+| `ramp` | The longest `over_ms`. For an absent variable, `ramp` still reads `over_ms`, but not `to` and `from`. |
+| `wave` | The duration of the longest waveform. For an absent variable, `wave` still reads `for_ms`, `width_ms`, the time of the last point, `bounces` and `interval_ms`, and nothing else. |
+| `expect` with `hold_for_ms` | That duration |
+| Wait steps (`wait_until`, `expect` with `within_ms`) | 0 (the step counts as ended at its time) |
+
+Wait steps are the exception: their end is not known until the run, so they count as 0. A later step with `after_ms` then starts earlier than on variants that do not skip the wait step. If a step needs the time after the wait, either make it use the same variable as the wait step, so that both are skipped together, or split the scenario and add `only`.
+
+| Topic | Rule |
+|---|---|
+| Reading the file | Does not depend on the variant. The error that `at_ms` is before the end of the previous step is reported the same way on variants that skip steps. |
+| `at_ms` after a skipped wait step | Not allowed, the same as without skipping. |
+| Duration of the last skipped step | Does not extend the run. The scenario ends when the results of all steps that are not skipped are decided. |
+| Result of the step | `status` is `skipped` (also `skipped` in the human-readable output), with a reason. |
+| Result of the scenario | Stays `passed` if all other steps pass, and the number of skipped steps is shown (`passed, 3 of 4 steps passed, 1 skipped` in the human-readable output, `skipped_steps` in JSON). |
+
+If every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, the scenario passes without checking anything. The check then reports 1 warning, `scenario-nothing-checked`. The warning lists the lines of the checking steps and what to do next: add `only` if the scenario is not meant for that variant, or add a variable map if it is. By default the run passes. With `--strict`, the check fails and nothing starts. A scenario that has no checking steps in the first place (only `set`, `ramp` and `wave`) does not get this warning.
+
+### Limiting a scenario to variants (`only`)
+
+A scenario with `only: [small, medium]` is meant for those variants.
+
+| Case | Result |
+|---|---|
+| Passed to `check --scenario` or `run --scenario` with another variant (`--variant large`) | Error `scenario-variant`. Nothing starts. |
+| `vehicle_sil_launch test`, which runs every variant | Marks that run `skipped` without running it (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). |
+| `only` has a name that is not in `variants` of the configuration file | Error. |
+| A scenario with `only` is passed with a configuration file that has no variants | Error. |
+
+When the variant does not match, the contents of the steps are not checked, because they may not fit that variant.
+
+## Results
+
+The result of the scenario (`status` in JSON) is decided as follows:
+
+| What happened | Scenario | Run |
+|---|---|---|
+| All steps passed | `passed` | The launcher stops the simulation at that controller step, and the run passes (exit code 0 if there are no other errors). |
+| One step failed | `failed` | The launcher stops the simulation, and the run fails (exit code 1). |
+| `stop_at_ms` was reached first | `failed` | The first step whose result is not decided fails (`scenario-out-of-time`). |
+| A stop request (Ctrl+C, the `stop` command), a participant failure, `--timeout-ms` | `incomplete` | These take precedence over the scenario. The rules of [simulation-run.md](simulation-run.md) apply unchanged. |
+
+- The launcher stops the run when all steps pass, so the configuration file does not need `stop_at_ms`.
+- When `stop_at_ms` is reached first, the results are decided as far as possible. Increase `stop_at_ms` or remove it.
+- With `incomplete`, the error `scenario-incomplete` shows how far the scenario got.
+- If a write to an ECU that crashed fails first, the result of the run is still a participant failure, and the scenario is `incomplete`.
+
+### When a step fails
+
+When one step fails, the scenario ends there. Steps that had started become `unfinished`, and the steps after them `not_run`. The writes of later steps up to the next time step may already have been handed to the ECUs.
+
+The failure reported is the first one the launcher learned of, which is not always the first in virtual time. At each controller step P, the launcher looks first at the results of earlier writes, then at the samples before P, then at the writes up to the next time step. A write that is rejected at once (out of range, for example) is detected when the launcher sends the writes for one time step ahead. Such a write can be reported before a condition that fails on a sample of an earlier time, and changing the time step can swap the two.
+
+### The `at` of a step
+
+The `at` of each step (`at_ms` in JSON) is the virtual time at which the step's result was decided.
+
+| Step | `at` |
+|---|---|
+| `set` | The ECU step that applied the value |
+| `ramp`, `wave` | The end |
+| `expect` at one point | T |
+| `wait_until`, `within_ms` | The time of the sample on which the condition held |
+| `hold_for_ms` | The end (on failure, the time of the sample on which the condition did not hold) |
+| `ramp` and `wave` with an `expect` beside them, when the condition did not hold | The time of the sample on which the condition did not hold |
+| Timeout | The time of the timeout |
+
+### A failing example
+
+A failure finding shows the scenario file and line, the step, the time and the value at that time. The example below checks that the engine speed reaches 1700 rpm within 200 ms of setting the throttle, but the speed reaches it only at 330 ms (the `wait_until` of the example above).
 
 <!-- throttle_response.yaml -->
 ```yaml
@@ -365,25 +716,29 @@ error: throttle_response.yaml:6: expect Engine.engine.speed ge 1700 (within 200 
 failed: 1 error, 0 warnings, 0 notes
 ```
 
-終了コードは 1 です。失敗した手順の後ろは回りません（`not run`）。`wait_until` の時間切れは、次の形です。
+The exit code is 1. The steps after the failed step do not run (`not run`). A `wait_until` timeout looks like this:
 
 ```text
 error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): timed out at 100 ms (100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms) [scenario-timeout]
 ```
 
-| `code`（実行の所見、どれも誤り） | 意味 |
+### Run finding codes
+
+All of them are errors.
+
+| `code` | Meaning |
 |---|---|
-| `scenario-failed` | `expect`（`ramp` と `wave` の横の `expect` も）が成り立たなかった。または、読む変数の participant がこの実行でつながっていない |
-| `scenario-timeout` | `wait_until` が `timeout_ms` の間に成り立たなかった |
-| `scenario-write` | `set`、`ramp`、`wave` の書き込みが適用されなかった（`wave` が範囲の外の値を書こうとした、など）。または、`ramp` の始まりの値や `wave` の中心の値がない |
-| `scenario-out-of-time` | `stop_at_ms` で止まったとき、まだ決まっていなかった |
-| `scenario-incomplete` | シナリオが終わる前に、ほかの理由でシミュレーションが終わった |
+| `scenario-failed` | An `expect` (including one beside `ramp` or `wave`) did not hold, or the participant of a variable it reads is not connected in this run. |
+| `scenario-timeout` | A `wait_until` did not hold within `timeout_ms`. |
+| `scenario-write` | A write of `set`, `ramp` or `wave` was not applied (a `wave` tried to write a value out of range, for example), or there is no start value for a `ramp` or no center value for a `wave`. |
+| `scenario-out-of-time` | The run stopped at `stop_at_ms` before the result was decided. |
+| `scenario-incomplete` | The simulation ended for another reason before the scenario was over. |
 
-## 照合（`check --scenario`、`run --scenario` の最初）
+## Check (`check --scenario`, start of `run --scenario`)
 
-シナリオは、実行の前に全部照合します。`vehicle_sil_launch check <構成ファイル> --scenario <シナリオ>` は照合だけをします。誤りがあれば、`run` は何も起動しません。所見は、シナリオのファイル名と行を付けて、構成ファイルの所見と一緒に出ます（JSON では所見の `file`）。
+The whole scenario is checked before the run. `vehicle_sil_launch check <config> --scenario <scenario>` only checks. If there are errors, `run` starts nothing. Findings carry the file name and line of the scenario, and appear together with the findings for the configuration file (`file` of the finding in JSON).
 
-誤りのある例です。変数の名前を打ち間違え、出力に書き、範囲の外の値を入れ、待つ手順の後ろに `at_ms` を書き、`near` に `tolerance` を付けていません。
+An example with errors: it misspells a variable name, writes to an output, sets a value out of range, has `at_ms` after a wait step, and gives `near` no `tolerance`.
 
 <!-- throttle_mistakes.yaml -->
 ```yaml
@@ -422,39 +777,109 @@ error: throttle_mistakes.yaml:11: Engine.engine.speed: near needs tolerance (how
 failed: 5 errors, 0 warnings, 0 notes
 ```
 
-照合は誤りを全部挙げます（最初の 1 つで止まりません）。終了コードは 1 です。
+The check lists every error; it does not stop at the first one. The exit code is 1. It is also 1 when the scenario file is missing (`file`), unlike a missing configuration file, which gives 3.
 
-| `code` | 意味 |
+| `code` | Severity | Meaning |
+|---|---|---|
+| `file`, `encoding`, `syntax`, `not-a-scenario`, `format-version`, `unsupported-yaml` | Error | The file cannot be read, is not a scenario, has another format version, or contains an anchor or a second document. |
+| `unknown-key`, `duplicate-key`, `missing-key`, `value` | Error | An error in the shape of keys and values (2 actions in one step, `wait_until` without `timeout_ms`, `near` without `tolerance`, and so on). |
+| `scenario-variable` | Error | A variable is not of the form `<participant>.<variable name>`, the participant or the variable does not exist, or the participant cannot be used (it is disabled, has `describe: false`, runs in real time, or does not expose variables). |
+| `scenario-not-writable` | Error | The step writes to an output, or writes a Parameter other than with a `set` at time 0. |
+| `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. |
+| `scenario-param` | Error | `${name}` has no value, or `${...}` is in a key, in a variable name or in part of a value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
+| `scenario-variant` | Error | The scenario's `only` does not include the selected variant, or a name in `only` is not a variant of the configuration file. |
+| `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
+| `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). |
+| `scenario-wave-coarse`, `scenario-wave-not-checked` | Note | See the same section. |
+| `scenario-points-file` | Error | The CSV file of `points` (see [Reading points from a CSV file](#reading-points-from-a-csv-file)) is not under the scenario's directory, does not exist, cannot be read, is empty or is not UTF-8, a row has a different number of cells than there are columns, or there are too many rows. The `value` or `time` column does not exist or its name appears twice. |
+| `scenario-nothing-checked` | Warning | Every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, so the scenario checks nothing. |
+| `scenario-step-skipped` | Note | The step uses a variable with `absent: true` or a variable of a participant that the variant disables, so it is skipped in the run. If only the `expect` beside a `ramp` or `wave` uses it, only that `expect` is skipped. |
+
+## Output
+
+With `--timeline <file>`, `run --scenario` also writes the values that the scenario wrote and saw to a JSON file, in virtual-time order: the interval each step watched, the values at a failure, and the value series (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
+### Human-readable output
+
+| Part | Content |
 |---|---|
-| `file`、`encoding`、`syntax`、`not-a-scenario`、`format-version`、`unsupported-yaml` | ファイルが読めない、シナリオでない、版が違う、アンカーや 2 つ目の文書がある |
-| `unknown-key`、`duplicate-key`、`missing-key`、`value` | キーと値の形の誤り（1 つの手順に 2 つの動作、`wait_until` に `timeout_ms` がない、`near` に `tolerance` がない、など） |
-| `scenario-variable` | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（外している、`describe: false`、実時間で動く、変数を出していない） |
-| `scenario-not-writable` | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている |
-| `scenario-value` | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外 |
-| `scenario-wave-undersampled`、`scenario-wave-duty`（警告）、`scenario-wave-coarse`、`scenario-wave-not-checked`（注記） | `wave` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)） |
-| `scenario-points-file` | `wave` の `points` の CSV ファイル（[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）のパスが、シナリオのディレクトリの下を指していない。ファイルがない、読めない、空、UTF-8 でない、行のセルの数が列の数と違う、行が多すぎる。`value` や `time` の列がない、名前が 2 つある |
-| `scenario-param` | `${名前}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数の誤り `usage`） |
-| `scenario-variant` | シナリオの `only` に、選んだ機種がない。`only` の名前が構成の機種にない |
-| `scenario-step-skipped`（注記） | 手順が `absent: true` の変数か、機種が外した participant の変数を使うので、実行で飛ばす。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけを飛ばす |
-| `scenario-nothing-checked`（警告） | 確かめる手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部飛ばすので、シナリオが何も確かめない |
-| `scenario-time` | `at_ms` が前の手順の終わりより前。待つ手順より後ろに `at_ms` がある。手順の時間を足すと、時刻の上限（1000000000000 ms）を超える |
+| Check | The line `scenario <file> (<name>): <n> steps`. |
+| Check (with parameters) | The line `parameters: <name> = <value> (<source>), ...`. |
+| Run | One result line and the table of steps (line, step, result, and the virtual time at which the result was decided). |
+| Run (for each skipped step) | `line <line> skipped: <reason>`. |
+| Run (for each step whose `expect` beside it was skipped) | `line <line> expect not checked: <reason>`. |
+| During the run (stderr) | One line each time the result of a step is decided. |
 
-## 出力
+- If steps are skipped, the check line gets ` (<n> skipped)`. If `expect`s beside steps are not checked, it gets ` (<n> expect not checked)`. When both apply, they are joined with `, `.
+- If `expect`s beside steps are not checked, the result line ends with `, <n> expect not checked`.
+- A skipped step has `-` as its time in the table, and its line during the run has no ` at <time> ms`.
 
-- 人向け: 照合の部分に `scenario <ファイル> (<name>): <n> steps`（飛ばす手順があれば ` (<n> skipped)`、確かめない横の `expect` があれば ` (<n> expect not checked)`。両方なら `, ` でつなぐ）と、パラメーターがあれば `parameters: <名前> = <値> (<どこから>), ...` の行。実行の部分に、合否の 1 行（確かめない横の `expect` があれば、末尾に `, <n> expect not checked`）と手順の表（行、手順、結果、決めた仮想時刻。飛ばした手順は `-`）、飛ばした手順ごとに `line <行> skipped: <理由>`、横の `expect` を飛ばした手順ごとに `line <行> expect not checked: <理由>`。実行中は、手順が決まるたびに 1 行（標準エラー。飛ばした手順の行に ` at <時刻> ms` は付きません）。
-- `check --json` と `run --json` の `check`: `scenario` に `file`、`name`、`steps`（手順の数）。`--scenario` を付けたときだけあります。シナリオにあるときだけ、次のキーが続きます: `only`（機種の名前の配列）、`params`（シナリオが宣言したか使ったパラメーターごとに `name`、`value`（効いている値。`true`・`false`、数、文字列）、`from`（`scenario`、`configuration`、`variant`、`command_line`））、`skipped_steps`（飛ばす手順の数）、`unchecked_expects`（確かめない横の `expect` の数）。
-- `run --json`: 最上位に `scenario`（`--scenario` を付けたときだけ）。
+### `check --json` and the `check` of `run --json`
 
-| キー | 意味 |
+`scenario` is present only with `--scenario`.
+
+| `scenario` key | Present | Meaning |
+|---|---|---|
+| `file`, `name` | Always | The scenario's file and name |
+| `steps` | Always | The number of steps |
+| `only` | Only if set | An array of variant names |
+| `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from` |
+| `skipped_steps` | Only if any | The number of steps to be skipped |
+| `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
+
+`value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant` and `command_line`.
+
+### The `scenario` of `run --json`
+
+`scenario` is at the top level (only with `--scenario`).
+
+| Key | Meaning |
 |---|---|
-| `file`、`name` | シナリオのファイル（引数のとおり）と名前（なければ null） |
-| `status` | `passed`、`failed`、`incomplete`（ほかの理由で途中で終わった）、`not_run`（シミュレーションが始まらなかった） |
-| `over_at_ms` | シナリオが終わった controller のステップ（`passed` と `failed`。ほかは null） |
-| `skipped_steps` | 飛ばした手順の数。1 つ以上あるときだけ、このキーがあります |
-| `unchecked_expects` | 確かめなかった、`ramp` と `wave` の横の `expect` の数（手順は動いたので `skipped_steps` には入りません）。1 つ以上あるときだけ、このキーがあります |
-| `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`wave`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`、`skipped`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のときと、飛ばしたとき。飛ばした手順の `code` は `scenario-skipped`、`message` は理由）。飛ばした手順の `at_ms` は null です（実行の前に決まっていて、仮想時間のどこかで決めたのではないため）。`start_ms` と `end_ms` は、飛ばさなかったときの手順の時刻と終わり（`start_ms` に文面の長さを足したもの）で、シミュレーションがそこまで進んだことは意味しません。`expect_skipped` は、横の `expect` を飛ばして動かした `ramp` と `wave` にだけあり、飛ばした理由です |
+| `file`, `name` | The scenario file (as given in the argument) and the name (null if it has none). |
+| `status` | One of `passed`, `failed`, `incomplete` (ended early for another reason) and `not_run` (the simulation did not start). |
+| `over_at_ms` | The controller step at which the scenario ended (for `passed` and `failed`; null otherwise). |
+| `skipped_steps` | The number of skipped steps. The key is present only if there is at least 1. |
+| `unchecked_expects` | The number of `expect`s beside `ramp` and `wave` that were not checked. The key is present only if there is at least 1. |
+| `steps[]` | The result of each step (next table). |
 
-上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-run.md](simulation-run.md) の「JSON（`run --json`）」）。
+A step counted in `unchecked_expects` did run, so it is not counted in `skipped_steps`.
+
+| `steps[]` key | Meaning |
+|---|---|
+| `index` | The number of the step, from 1. |
+| `line` | The line in the scenario file. |
+| `kind` | One of `set`, `ramp`, `wave`, `expect` and `wait_until`. |
+| `text` | The text of the step. |
+| `status` | The result of the step (next table). |
+| `start_ms` | The time of the step. |
+| `at_ms` | The time at which the result was decided. |
+| `end_ms` | The end time. |
+| `code`, `message` | Present when the step failed or was skipped (null otherwise). |
+| `expect_skipped` | Present only on a `ramp` or `wave` that ran with the `expect` beside it skipped: the reason it was skipped. |
+
+| Step `status` | Meaning |
+|---|---|
+| `passed` | The step passed. |
+| `failed` | The step failed. |
+| `unfinished` | The step had started, but the scenario ended before its result was decided. |
+| `not_run` | The step did not start. |
+| `skipped` | The step was skipped (see [Skipping steps that use an absent variable](#skipping-steps-that-use-an-absent-variable)). |
+
+The keys of a skipped step:
+
+| Key | Value in a skipped step |
+|---|---|
+| `code` | `scenario-skipped` |
+| `message` | The reason |
+| `at_ms` | null (the result was decided before the run, not at a point in virtual time) |
+| `start_ms`, `end_ms` | The time and end the step would have had without skipping (`start_ms` plus the duration its contents give) |
+
+`start_ms` and `end_ms` of a skipped step do not mean that the simulation got that far.
+
+- Times are numbers of milliseconds. They can have a fraction when an ECU step is finer than 1 ms. An unknown time is null.
+- In a run that the launcher stopped because the scenario was over, `simulation` is `ended`.
+
+Here is the `scenario` that `run --json` gives for the failing example of [Results](#results) above (`throttle_response.yaml`). For the other keys, see "JSON (`run --json`)" in [simulation-run.md](simulation-run.md#json-run---json).
 
 <!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->
 ```json
@@ -504,31 +929,74 @@ failed: 5 errors, 0 warnings, 0 notes
   }
 ```
 
-- 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
-- シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
-- `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。飛ばす手順の `scenario_step`（`status` は `skipped`、`at_ms` は null）は 1 回で、その手順の時刻が決まったときに出ます（実行の前からわかっているので、仮想時間がそこへ進むより前に出ることがあります）。
-- `run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（手順の見張りの区間、失敗の値、値の列。[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。`features` に `timeline` があるランチャーで使えます。
-- `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。手順 `wave` は、`scenario-wave` があるランチャーで使えます（ないランチャーでは、`wave` は知らないキーの誤りです）。`ramp` と `wave` の横の `expect` は、`scenario-motion-expect` があるランチャーで使えます（ないランチャーでは、手順が 2 つのことをする誤りです）。CSV ファイルの `points` は、`scenario-points-file` があるランチャーで使えます（ないランチャーでは、`points` の形の誤りです）。
+### `run --events`
 
-## 実行中に変数を見る（`--control`）
+The event `scenario_step` (with the same keys as `steps[]`) is emitted when a step starts (`status` is `running`) and when its result is decided. The result event also has `scenario`.
 
-`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が立ちます（[control-api.md](control-api.md) の「ランチャーにつなぐ」。Control Server を持つビルドだけ）。クライアントは、見るだけです。
+For a step that is skipped, `scenario_step` (`status` `skipped`, `at_ms` null) is emitted once, when the time of the step is decided. Because that is known before the run, the event can come before virtual time reaches the step.
 
-| クライアントの呼び出し | シナリオの実行中 |
+## Watching variables during a run (`--control`)
+
+With both `--scenario` and `--control`, the Control Server also runs during a scenario (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher); only in builds with the Control Server). A client can only read, wait and stop.
+
+| Client call | During a scenario |
 |---|---|
-| 読む、待つ: `Ping`、`ListPeers`、`GetValues`、`GetSnapshot`、`Watch`、`GetTime`、`WaitPaused`、`GetOperation`、`WaitOperation` | いつもどおり |
-| 変数を書く、Peer を消す: `Write`、`ForgetPeer` | 断る |
-| 時刻を動かす: `Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed` | 断る |
-| 止める: `Stop` | 受け付ける。止める要求の 1 つで、シナリオは `incomplete`（`interrupted_by` は `"control server stop"`） |
+| Read and wait: `Ping`, `ListPeers`, `GetValues`, `GetSnapshot`, `Watch`, `GetTime`, `WaitPaused`, `GetOperation`, `WaitOperation` | Work as usual. |
+| Write variables, forget peers: `Write`, `ForgetPeer` | Rejected. |
+| Move time: `Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed` | Rejected. |
+| Stop: `Stop` | Accepted. It is one of the stop requests, and the scenario becomes `incomplete` (`interrupted_by` is `"control server stop"`). |
 
-- 断った呼び出しは `FAILED_PRECONDITION` で、trailing metadata の `vehicle-sil-reason` が `scenario-running` です（Python では `ControlError.reason`）。文言は、何を断ったか、なぜか、何ができるかを言います。役割（[control-api.md](control-api.md) の「認証」）によりません。断った呼び出しは、Hub にも時間のゲートにも届かず、事象 `command` にもなりません（監査の行は残ります）。
-- クライアントがいても、いなくても、シナリオの結果は同じです。読む呼び出しと購読は、シミュレーションの進みを待たせません（同じロックを短く取り合うので、読むクライアントが多いと、実時間では少し遅くなりえます。等速の実行の `timing` は、その分だけ変わりえます。シナリオの結果は変わりません）。購読は、読まないクライアントの分を上限つきで持ち、あふれた分を捨てて数えます（値は Peer ごとに最新の 1 つ）。
-- クライアントに見えるもの: シナリオの書き込みは、操作として見えます（`Watch` の操作、`client` は `scenario`）。シナリオが controller のステップを保留している間は、一時停止ではありません（`GetTime` の `paused` は偽、`GetSnapshot` の `consistent` も偽）。標準入力の `pause` で止めている間は、`paused` が真で、`consistent` もふつうの実行と同じです。
-- 標準入力の命令（`--stdin-commands`）は、Control Server があっても今までどおりです（`stop`、一時停止、ステップ送り、速さ）。
-- `vehicle_sil_launch version --json` の `features` に `scenario-control` があれば、この組み合わせを使えます。
+A rejected call:
 
-## 一緒に使えない引数と制限
+| Topic | Details |
+|---|---|
+| Status code | `FAILED_PRECONDITION` |
+| Reason | `vehicle-sil-reason` in the trailing metadata is `scenario-running` (`ControlError.reason` in Python) |
+| Message | Says what was rejected, why, and what the client can do instead. |
+| Role (see "Authentication" in [control-api.md](control-api.md#authentication)) | The call is rejected whatever the role. |
+| Record | The call reaches neither the Hub nor the time gate and does not become a `command` event. The audit log still gets a line. |
 
-- `--scenario` は `--start-paused` と一緒に使えません（引数の誤り。`--control` があっても）。シナリオは、時刻 0 の書き込みを最初のステップの前に済ませて、自分で進みます。`--stdin-commands` は使えます（`stop`、一時停止、ステップ送り、速さ。止めて進めても、シナリオの結果は変わりません）。
-- シナリオが使えるのは、構成ファイルにあって外していない、`ecu_main` で作った、仮想時間で動く ECU の変数だけです。
-- フレームを直に待つ条件、式、機種ごとの切り替え、変数の対応表はありません。
+The result of the scenario is the same with or without clients. Read calls and subscriptions do not hold up the simulation. They do contend briefly for the same lock, so many reading clients can slow the run slightly in real time. The `timing` of a run at real-time speed can change by that much, but the result of the scenario does not. Subscriptions keep a bounded backlog for a client that does not read; what overflows is dropped and counted (for values, the latest one per peer is kept).
+
+What a client sees:
+
+| Situation | What the client sees |
+|---|---|
+| Writes of the scenario | Operations (operations in `Watch`, with `client` `scenario`). |
+| While the scenario holds a controller step | Not a pause (`paused` of `GetTime` is false, and so is `consistent` of `GetSnapshot`). |
+| While paused with `pause` from stdin | `paused` is true, and `consistent` behaves as in a run without a scenario. |
+
+The stdin commands (`--stdin-commands`: `stop`, pause, step, speed) work the same with a Control Server.
+
+## Incompatible options and limitations
+
+- `--scenario` cannot be combined with `--start-paused` (a usage error, also with `--control`). A scenario completes its writes for time 0 before the first simulation step, and then advances on its own.
+- `--stdin-commands` can be used (`stop`, pause, step, speed). Pausing and stepping do not change the result of the scenario.
+- A scenario can use only variables of ECUs that are in the configuration file, are not disabled, are built with `ecu_main` and run in virtual time.
+- Scenarios have no conditions that wait for frames directly, no expressions, no per-variant branching and no variable maps.
+
+## Launcher feature names (`features`)
+
+When you use another version of `vehicle_sil_launch`, check `features` in the output of `vehicle_sil_launch version --json` for the following names to see which scenario features it supports.
+
+| `features` name | Feature | Without it |
+|---|---|---|
+| `scenario` | `check --scenario` and `run --scenario` | Scenarios cannot be used. |
+| `scenario-wave` | The `wave` step | `wave` is an unknown-key error. |
+| `scenario-motion-expect` | `expect` beside `ramp` and `wave` | An error that the step has 2 actions. |
+| `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |
+| `timeline` | `run --scenario --timeline <file>` | `--timeline` is a usage error. |
+| `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
+
+[simulation-events.md](simulation-events.md) lists every `features` name.
+
+## See also
+
+| To find | See |
+|---|---|
+| Write a scenario step by step | [Write tests with scenarios](howto/scenario-tests.md) |
+| Configuration file, variants, arguments and exit codes | [simulation-config.md](simulation-config.md) |
+| The check (`check`) | [simulation-check.md](simulation-check.md) |
+| The run (`run`), and `test`, which runs several scenarios | [simulation-run.md](simulation-run.md) |
+| Events (`run --events`) and stdin commands | [simulation-events.md](simulation-events.md) |
+| Reading values from outside during a run | [control-api.md](control-api.md) |

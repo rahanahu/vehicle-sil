@@ -16,7 +16,7 @@ import {
   readWriteResponse,
 } from './protocol';
 
-/** 要求のパスごとの、成功の応答を読む関数。 */
+/** Per request path, the function that reads the successful answer. */
 const READERS: Record<string, (value: unknown) => unknown> = {
   'GET api/app': readAppInfo,
   'GET api/configs': readConfigList,
@@ -71,7 +71,7 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(
       stderr.every((message) => message?.type === 'error' && message.skipped === undefined),
     ).toBe(true);
-    // 間で落とした行の知らせ（例にはない形: 標準エラーに 50 行より多く書くランチャー）
+    // Notice of lines dropped in between (a shape the examples lack: a launcher writing more than 50 lines to stderr)
     const gap = readServerMessage({
       type: 'error',
       session: 1,
@@ -134,7 +134,7 @@ describe('the readers accept every example of gui/protocol', () => {
         }
       }
       for (const message of example.client) {
-        // 画面が送るメッセージの欄: 最初のメッセージ（AuthMessage）と、変数の watch（WatchMessage）
+        // Fields of the messages the screen sends: the first message (AuthMessage) and variable watches (WatchMessage)
         const keys =
           (message as { type?: string }).type === 'auth'
             ? ['type', 'token', 'session', 'from_seq', 'session_without_check']
@@ -259,7 +259,7 @@ describe('the readers read summaries and events part by part', () => {
       'participants.signal',
       'result.vehicle_sil_run',
     ]);
-    // 芯（id、state、launcher、stop）が読めなければ、要約は読めない
+    // If the core (id, state, launcher, stop) cannot be read, the summary cannot be read
     expect(() => readSessionResponse({ session: { ...raw, launcher: null } })).toThrow(
       /response\.session\.launcher: expected an object/,
     );

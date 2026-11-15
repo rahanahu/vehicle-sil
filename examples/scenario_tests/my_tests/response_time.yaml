@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Of the guide docs/howto/scenario-tests.md: how soon the engine reaches its speed. The guide first
+# writes within_ms: 200, reads the failure, and then makes it the 400 here.
+vehicle_sil_scenario: 1
+name: response time
+steps:
+  - set: { Engine.engine.throttle: 50 }
+  - expect: { Engine.engine.speed: { ge: 1700 } }
+    within_ms: 400
+  - expect: { Engine.engine.speed: { le: 1800 } }
+    hold_for_ms: 100

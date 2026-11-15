@@ -15,7 +15,7 @@ import {
 const ENGINE = { peer: 'Engine', name: 'engine.demand' };
 const SPEED = { peer: 'Engine', name: 'engine.speed' };
 
-/** 偽の接続と偽の HTTP につないだクライアント。 */
+/** A client connected to a fake connection and fake HTTP. */
 function setup() {
   const sockets = new FakeWebSockets();
   const http = new FakeHttp();
@@ -30,12 +30,12 @@ function setup() {
   client.connect();
   const socket = () => sockets.sockets[sockets.sockets.length - 1];
   socket().open();
-  /** サーバーからの通知を届ける（まとめて渡すまで待つ）。 */
+  /** Delivers a notification from the server (waits until the batch is passed on). */
   const deliver = async (...messages: unknown[]) => {
     for (const message of messages) socket().send(message);
     await vi.advanceTimersByTimeAsync(BATCH_MS);
   };
-  /** クライアントが送った watch と unwatch（認証を除く）。 */
+  /** The watch and unwatch the client sent (authentication excluded). */
   const sent = (s: FakeSocket = socket()) =>
     s.sent.filter((m) => (m as { type: string }).type !== 'auth');
   return { client, sockets, socket, http, errors, deliver, sent };
@@ -84,7 +84,7 @@ const ready = (operations: unknown[] = [], more: object = {}) => ({
   operations,
   ...more,
 });
-/** 要約の operations の 1 件（operation の通知から type と session を除いたもの）。 */
+/** One entry of operations in a summary (an operation notification without type and session). */
 const listed = (seq: number, state: string, done: boolean) => {
   const sent = operation(seq, state, done);
   return { seq, state: sent.state, done: sent.done, peers: sent.peers };
@@ -148,10 +148,10 @@ describe('variables', () => {
       description: '',
       enum: null,
     });
-    // 同じ実行の session の通知には variables がない: いまのまま
+    // A session notification of the same run has no variables: keep the current state
     await deliver({ type: 'session', session: summary(1) });
     expect(client.variables.state.get()).toBe(state);
-    // 別の実行が始まった: その variables が届くまで unknown
+    // Another run started: unknown until its variables arrive
     await deliver({ type: 'session', session: summary(2) });
     expect(client.variables.state.get()).toMatchObject({
       session: 2,
@@ -228,16 +228,17 @@ describe('variables', () => {
     const a = client.variables.watch([ENGINE, SPEED], { periodMs: 500 });
     const b = client.variables.watch([ENGINE], { periodMs: 500 });
     await vi.advanceTimersByTimeAsync(0);
-    // 2 つの watch が同じ変数を見ても、購読は 1 つ（増減は、まとめて 1 回で送る）
+    // Two watches on the same variable make one subscription (additions and removals are sent once, together)
     expect(sent()).toEqual([{ type: 'watch', id: 1, variables: [ENGINE, SPEED], period_ms: 500 }]);
-    // もっと短い間隔で見る watch が来たら、その変数は短いほうの購読へ移る（頼まれた間隔は、段に丸める）
+    // When a watch with a shorter interval arrives, the variable moves to the shorter subscription (requested intervals
+    // are rounded to the tiers)
     const c = client.variables.watch([ENGINE], { periodMs: 60 });
     await vi.advanceTimersByTimeAsync(0);
     expect(sent().slice(1)).toEqual([
       { type: 'watch', id: 2, variables: [ENGINE], period_ms: 50 },
       { type: 'watch', id: 1, variables: [SPEED], period_ms: 500 },
     ]);
-    // 値は、見ている watch の全部に届く
+    // Values reach every watch that observes the variable
     await deliver(values(2, 120, false, engine(110, 40)));
     for (const watch of [a, b, c]) {
       expect(watch.values.get()).toEqual({
@@ -245,7 +246,7 @@ describe('variables', () => {
       });
     }
     expect(a.value(SPEED)).toBeUndefined();
-    // やめたら、残った watch に合わせる。最後の 1 つをやめたら、購読もやめる
+    // After a stop, the subscriptions follow the remaining watches. Stopping the last one drops the subscription
     c.close();
     c.close();
     await vi.advanceTimersByTimeAsync(0);
@@ -257,7 +258,7 @@ describe('variables', () => {
     b.close();
     await vi.advanceTimersByTimeAsync(0);
     expect(sent().slice(5)).toEqual([{ type: 'unwatch', id: 1 }]);
-    // やめた watch には、もう届かない
+    // A stopped watch receives nothing more
     await deliver(values(1, 300, false, engine(290, 50)));
     expect(a.values.get()['Engine']?.['engine.demand']?.value).toBe(40);
     expect(a.value(ENGINE)).toBeUndefined();
@@ -266,11 +267,11 @@ describe('variables', () => {
   it('asks for the periods the server takes, and for all when a watch wants all', async () => {
     const { client, sent, deliver } = setup();
     await deliver(hello(1, ready()));
-    client.variables.watch([ENGINE], { periodMs: 1 }); // サーバーの下限より短くは頼まない
-    client.variables.watch([SPEED]); // 既定は 100 ms
+    client.variables.watch([ENGINE], { periodMs: 1 }); // Never requests less than the server's lower limit
+    client.variables.watch([SPEED]); // Default 100 ms
     const all = client.variables.watch('all', { periodMs: 100 });
     await vi.advanceTimersByTimeAsync(0);
-    // 「全部」と同じ間隔の変数は、「全部」の購読で届くので、名前では頼まない
+    // A variable at the same interval as "all" arrives through the "all" subscription, so it is not requested by name
     expect(sent()).toEqual([
       { type: 'watch', id: 1, variables: 'all', period_ms: 100 },
       { type: 'watch', id: 2, variables: [ENGINE], period_ms: 20 },
@@ -301,12 +302,12 @@ describe('variables', () => {
     await vi.advanceTimersByTimeAsync(0);
     await deliver(values(1, 10, true, engine(0, 5)));
     first.fail();
-    client.variables.watch([SPEED], { periodMs: 20 }); // 切れている間に増えた分
+    client.variables.watch([SPEED], { periodMs: 20 }); // Added while disconnected
     await vi.advanceTimersByTimeAsync(500);
     expect(sockets.sockets.length).toBe(2);
-    client.variables.watch('all', { periodMs: 1000 }); // つなぎに行っている間に増えた分
+    client.variables.watch('all', { periodMs: 1000 }); // Added while connecting
     socket().open();
-    // 認証の後に、いまの購読を全部（同じ id で）
+    // After authentication, all current subscriptions (with the same ids)
     expect((socket().sent[0] as { type: string }).type).toBe('auth');
     expect(sent()).toEqual([
       { type: 'watch', id: 3, variables: 'all', period_ms: 1000 },
@@ -314,13 +315,13 @@ describe('variables', () => {
       { type: 'watch', id: 2, variables: [SPEED], period_ms: 20 },
     ]);
     await vi.advanceTimersByTimeAsync(0);
-    expect(sent().length).toBe(3); // 同じ内容を送り直さない
-    // 同じ実行に戻った: 値は残っている。別の実行なら捨てる
+    expect(sent().length).toBe(3); // The same content is not resent
+    // Back in the same run: the values are kept. For another run they are dropped
     await deliver(hello(1, ready()));
     expect(watch.value(ENGINE)?.value).toBe(5);
     await deliver(hello(2, ready()));
     expect(watch.values.get()).toEqual({});
-    // 前の実行の値が遅れて届いても、当てない
+    // A value of the previous run arriving late is not applied
     await deliver(values(1, 20, false, engine(10, 6), 1));
     expect(watch.values.get()).toEqual({});
   });
@@ -333,7 +334,7 @@ describe('variables', () => {
     const none = client.variables.watch([ENGINE]);
     for (let n = 1; n <= 7; n++)
       await deliver(values(1, n * 10, false, engine(n * 10, n, n % 2 === 0)));
-    // 同じステップの値がもう一度届いても（止まっている間など）、点は増えない
+    // A value of the same step arriving again (while paused and so on) adds no point
     await deliver(values(1, 70, true, engine(70, 7, false)));
     expect(short.history(ENGINE)).toEqual([
       { sampleMs: 50, value: 5 },
@@ -345,10 +346,10 @@ describe('variables', () => {
     expect(short.history(SPEED)).toEqual([]);
     expect(none.history(ENGINE)).toEqual([]);
     expect(short.value(ENGINE)).toEqual({ value: 7, sampleMs: 70, simMs: 70, paused: true });
-    // 有限でない値（null で届く）も 1 点
+    // A non-finite value (arriving as null) is one point too
     await deliver(values(1, 80, false, engine(80, null)));
     expect(short.history(ENGINE)[2]).toEqual({ sampleMs: 80, value: null });
-    // 実行が替わったら空に戻る
+    // Empty again once the run changes
     await deliver({ type: 'session', session: summary(2) });
     expect(long.history(ENGINE)).toEqual([]);
     await deliver(
@@ -356,7 +357,7 @@ describe('variables', () => {
       values(1, 5, false, engine(0, 9), 2),
     );
     expect(long.history(ENGINE)).toEqual([{ sampleMs: 0, value: 9 }]);
-    // やめた watch は履歴を返さない。だれも履歴を頼まなくなった変数の履歴は捨てる
+    // A stopped watch returns no history. The history of a variable nobody requests history for any more is dropped
     short.close();
     long.close();
     expect(short.history(ENGINE)).toEqual([]);
@@ -391,12 +392,12 @@ describe('variables', () => {
       done: true,
       peers: { Engine: { state: 'applied', appliedAtMs: 100, late: true, reason: null } },
     });
-    // 結果が、HTTP の答えより先に届いた
+    // The result arrived before the HTTP answer
     const second = client.variables.write({ Engine: { 'engine.demand': 41 } });
     await deliver(operation(8, 'applied', true, { applied_at_ms: 110 }));
     http.expectOne('api/write').flush({ session_id: 1, operation: 8 });
     await expect(second).resolves.toMatchObject({ seq: 8, state: 'applied' });
-    // 確定した操作は、遅れて届いた古い状態で戻らない
+    // A settled operation is not set back by an old state arriving late
     await deliver(operation(8, 'queued', false));
     expect(client.variables.operations.get().map((o) => [o.seq, o.state])).toEqual([
       [7, 'applied'],
@@ -417,7 +418,7 @@ describe('variables', () => {
     expect(accepted).toEqual([{ session: 1, seq: 7 }]);
     await deliver(operation(7, 'applied', true, { applied_at_ms: 100 }));
     await expect(taken).resolves.toMatchObject({ seq: 7 });
-    // 断られた書き込みでは呼ばない。呼んだ先が投げても、書き込みは進む
+    // Not called for a refused write. Even if the callback throws, the write goes ahead
     const refused = client.variables.write(
       { Engine: { 'engine.demand': 400 } },
       { onAccepted: (operation) => accepted.push(operation) },
@@ -470,7 +471,7 @@ describe('variables', () => {
       'the write (operation 3) was not applied: Engine: rejected (the setter failed)',
     );
 
-    // 答えが来なかった: 反映されたかどうかはわからない（わかっている最後の状態を添える）
+    // No answer came: unknown whether it was applied (with the last known state attached)
     const silent = client.variables.write({ Engine: { 'engine.demand': 2 } }, { timeoutMs: 3000 });
     http.expectOne('api/write').flush({ session_id: 1, operation: 4 });
     const waited = silent.catch((e: unknown) => e);
@@ -483,16 +484,16 @@ describe('variables', () => {
     expect(((await waited) as WriteError).message).toContain(
       'no result of the write (operation 4) came in 3 s',
     );
-    // 過ぎた後に届いた結果は、操作の一覧には入る
+    // A result arriving after the timeout still goes into the list of operations
     await deliver(operation(4, 'applied', true));
     expect(client.variables.operations.get().find((o) => o.seq === 4)?.state).toBe('applied');
 
-    // HTTP の答えがなかった: サーバーが受け取ったかどうかわからない
+    // No HTTP answer: unknown whether the server received it
     const lost = client.variables.write({ Engine: { 'engine.demand': 3 } });
     http.expectOne('api/write').fail(HttpError.noAnswer('POST', 'api/write', 30000));
     await expect(lost).rejects.toMatchObject({ kind: 'no-answer', code: null });
 
-    // 待っている間に実行が替わった、クライアントを閉じた
+    // The run changed while waiting, or the client was closed
     const old = client.variables.write({ Engine: { 'engine.demand': 4 } });
     http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
     const replaced = old.catch((e: unknown) => e);
@@ -512,10 +513,10 @@ describe('variables', () => {
     await deliver(hello(1, ready()));
     const write = client.variables.write({ Engine: { 'engine.demand': 40 } });
     http.expectOne('api/write').flush({ session_id: 1, operation: 9 });
-    socket().fail(); // 結果の通知を受け損ねた
+    socket().fail(); // The result notification was missed
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 要約の operations は、operation の通知から type と session を除いたもの
+    // operations of the summary are operation notifications without type and session
     const sent = operation(9, 'applied', true, { applied_at_ms: 0 });
     const kept = { seq: sent.seq, state: sent.state, done: sent.done, peers: sent.peers };
     await deliver(hello(1, ready([kept])));
@@ -524,7 +525,7 @@ describe('variables', () => {
 
   it('writes to the run it sees, and gives up a write whose answer comes after the run changed', async () => {
     const { client, http, deliver } = setup();
-    // 実行がまだわからない: 送らずに断る
+    // The run is not known yet: refused without sending
     await expect(client.variables.write({ Engine: { 'engine.demand': 1 } })).rejects.toMatchObject({
       kind: 'refused',
       code: 'not-running',
@@ -537,14 +538,14 @@ describe('variables', () => {
       .catch((e: unknown) => e);
     const request = http.expectOne('api/write');
     expect(request.request.body).toMatchObject({ session: 1 });
-    // 答えの前に、次の実行が始まった
+    // The next run started before the answer
     await deliver({ type: 'session', session: summary(2) });
     expect(await write).toMatchObject({ kind: 'no-answer' });
-    // 遅れて届いた前の実行の答え: 受け付けたことにしない
+    // A late answer for the previous run: not counted as accepted
     request.flush({ session_id: 1, operation: 3 });
     await vi.advanceTimersByTimeAsync(0);
     expect(accepted).toEqual([]);
-    // 次の書き込みは、新しい実行に向ける
+    // The next write is aimed at the new run
     const next = client.variables.write({ Engine: { 'engine.demand': 3 } }).catch(() => undefined);
     expect(http.expectOne('api/write').request.body).toMatchObject({ session: 2 });
     client.close();
@@ -561,11 +562,12 @@ describe('variables', () => {
     await deliver(operation(3, 'queued', false));
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
-    // つなぎ直す前に送った書き込みは、要約の操作より新しい番号を持つ
+    // A write sent before the reconnect has a higher number than the operations in the summary
     const newer = client.variables.write({ Engine: { 'engine.demand': 41 } });
     http.expectOne('api/write').flush({ session_id: 1, operation: 80 });
     socket().open();
-    // 間に 3 が確定し、サーバーが要約に入れる数より多くの操作が続いた: 3 は要約になく、境目（40）より古い
+    // Meanwhile 3 settled and more operations followed than the server puts in a summary: 3 is not in the summary and
+    // is older than the boundary (40)
     const kept = [];
     for (let seq = 40; seq < 72; seq++) kept.push(listed(seq, 'applied', true));
     await deliver(hello(1, ready(kept, { operations_from_seq: 40, operations_open_omitted: 0 })));
@@ -579,7 +581,7 @@ describe('variables', () => {
   it('keeps waiting for a write that is still open after a reconnection, however many came after it', async () => {
     const { client, http, socket, deliver } = setup();
     await deliver(hello(1, ready()));
-    // 止まっている間の書き込み: 進めるまで確定しない
+    // A write while paused: does not settle until time advances
     let outcome: unknown = 'waiting';
     const write = client.variables.write(
       { Engine: { 'engine.demand': 40 } },
@@ -594,13 +596,13 @@ describe('variables', () => {
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 間に 39 件の操作が続いた。要約は、未確定の 1 と、最後の 32 件（9 から 40）。境目は 9
+    // 39 operations followed meanwhile. The summary has the unsettled 1 and the last 32 (9 to 40). The boundary is 9
     const kept = [listed(1, 'queued', false)];
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     const again = ready(kept, { operations_from_seq: 9, operations_open_omitted: 0 });
     await deliver(hello(1, again));
     expect(outcome).toBe('waiting');
-    // api/session の要約（fetchSession）でも同じ
+    // The same with the api/session summary (fetchSession)
     client.fetchSession().catch(() => undefined);
     http.expectOne('api/session').flush({ session: summary(1, again) });
     await vi.advanceTimersByTimeAsync(0);
@@ -626,8 +628,8 @@ describe('variables', () => {
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 境目を言わない要約: 2 は一覧にないが、確定済みかどうかはわからないので待つ。3 は確定して一覧の先頭に
-    // あり、後ろに OPERATIONS_KEPT 件より多くの未確定の操作が続く（手元の一覧からは切られる）
+    // A summary without the boundary: 2 is not in the list, but whether it settled is unknown, so keep waiting. 3
+    // settled and heads the list, followed by more than OPERATIONS_KEPT unsettled operations (cut from the local list)
     const kept = [listed(3, 'applied', true)];
     for (let seq = 4; seq < 4 + OPERATIONS_KEPT + 5; seq++) kept.push(listed(seq, 'queued', false));
     await deliver(hello(1, ready(kept)));
@@ -671,7 +673,7 @@ describe('variables', () => {
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 答えの前につなぎ直した: 3 は確定して要約から外れ、4 は確定して要約にあり、5 は未確定
+    // Reconnected before the answer: 3 settled and left the summary, 4 settled and is in the summary, 5 is unsettled
     const kept = [listed(4, 'applied', true), listed(5, 'queued', false)];
     await deliver(hello(1, ready(kept, { operations_from_seq: 4, operations_open_omitted: 0 })));
     requests[0].flush({ session_id: 1, operation: 3 });
@@ -724,7 +726,7 @@ describe('variables', () => {
       canStep: true,
       canPause: false,
     });
-    // 変数のない実行（Control Server なし）は、時刻 0 のステップの後に止まり、time の事象で知らせる
+    // A run without variables (no Control Server) pauses after the step at time 0 and reports it with a time event
     await deliver({ type: 'variables', session: 1, variables: { state: 'off', reason: 'none' } });
     expect(client.time.state.get()).toMatchObject({ beforeStart: false, canResume: false });
   });
@@ -740,7 +742,7 @@ describe('variables: what the review found', () => {
     for (const [status, code] of [
       [504, 'write-timeout'],
       [502, 'write-failed'],
-      [500, 'internal'], // サーバーが途中で失敗した: ランチャーに渡した後かもしれない
+      [500, 'internal'], // The server failed midway: possibly after passing it to the launcher
     ] as const) {
       const write = client.variables
         .write({ Engine: { 'engine.demand': 1 } })
@@ -755,7 +757,7 @@ describe('variables: what the review found', () => {
       expect(error).toMatchObject({ kind: 'no-answer', code, operation: null });
       expect(error.message).toContain('may have been taken');
     }
-    // 送っていないとわかっているものだけが refused
+    // Only what is known not to have been sent is refused
     const busy = client.variables
       .write({ Engine: { 'engine.demand': 1 } })
       .catch((e: unknown) => e);
@@ -788,14 +790,14 @@ describe('variables: what the review found', () => {
     start('negative', -5);
     start('zero', 0);
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(outcomes).toEqual({}); // 大きい値も、数でない値も、すぐには時間切れにならない
+    expect(outcomes).toEqual({}); // Neither large values nor non-numbers time out at once
     await vi.advanceTimersByTimeAsync(1);
     expect(outcomes).toEqual({ nan: 'no-answer', negative: 'no-answer', zero: 'no-answer' });
     await vi.advanceTimersByTimeAsync(24 * 3600 * 1000);
     expect(Object.keys(outcomes).length).toBe(3);
     await deliver(operation(huge, 'applied', true), operation(forever, 'applied', true));
     expect(outcomes).toMatchObject({ forever: 'applied', huge: 'applied' });
-    // 時間で切らない書き込みも、close() で必ず片づく。HTTP の答えを待っている書き込みも同じ
+    // A write that never times out is still cleared by close(). So is a write waiting for the HTTP answer
     start('open', Infinity);
     const flying = client.variables
       .write({ Engine: { 'engine.demand': 2 } })
@@ -804,7 +806,7 @@ describe('variables: what the review found', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(outcomes['open']).toBe('closed');
     expect(await flying).toMatchObject({ kind: 'closed' });
-    http.expectOne('api/write').flush({ session_id: 1, operation: 999 }); // 後から来た答えは、もう使わない
+    http.expectOne('api/write').flush({ session_id: 1, operation: 999 }); // A late answer is no longer used
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -815,17 +817,17 @@ describe('variables: what the review found', () => {
     http.expectOne('api/write').flush({ session_id: 1, operation: 5 });
     await deliver(operation(5, 'applied', true), { type: 'session', session: summary(2) });
     await expect(write).resolves.toMatchObject({ seq: 5, state: 'applied' });
-    expect(client.variables.operations.get()).toEqual([]); // 新しい実行の操作は、空から
+    expect(client.variables.operations.get()).toEqual([]); // The new run's operations start empty
   });
 
   it('takes room for a history as points come, up to what was asked and to a total', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
-    // Node の、ArrayBuffer に取ってある大きさ（履歴は Float64Array で持つ）
+    // Size reserved in Node's ArrayBuffers (histories are kept in Float64Arrays)
     const node = globalThis as unknown as { process: { memoryUsage(): { arrayBuffers: number } } };
     const buffers = () => node.process.memoryUsage().arrayBuffers;
     const before = buffers();
-    // 上限いっぱいの履歴を全部の変数に頼んでも、値が届くまで場所を取らない
+    // Requesting full-size histories for every variable takes no memory until values arrive
     const all = client.variables.watch('all', { history: HISTORY_MAX });
     const named = client.variables.watch([ENGINE], { history: HISTORY_MAX });
     expect(buffers() - before).toBeLessThan(1024 * 1024);
@@ -837,7 +839,8 @@ describe('variables: what the review found', () => {
     expect(buffers() - before).toBeLessThan(2 * 1024 * 1024);
     expect(all.history({ peer: 'Engine', name: 'v7' })).toEqual([{ sampleMs: 0, value: 7 }]);
     expect(named.history(ENGINE)).toEqual([{ sampleMs: 0, value: 1 }]);
-    // 実行が替わると、前の実行の変数の履歴は場所ごとなくなる（名前が替わり続けても増えない）
+    // When the run changes, the histories of the previous run's variables go with their memory (no growth as names keep
+    // changing)
     await deliver(
       { type: 'session', session: summary(2) },
       { type: 'variables', session: 2, variables: ready() },
@@ -853,7 +856,7 @@ describe('variables: what the review found', () => {
   it('keeps fewer points than asked once the histories together are at their total', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
-    // 40 個の変数に上限いっぱいの履歴: 合わせて 400 万点を頼むが、取るのは全体の上限まで
+    // Full-size histories for 40 variables: 4 million points requested, but only up to the overall limit is taken
     const refs = Array.from({ length: 40 }, (_, n) => ({ peer: 'Engine', name: `v${n}` }));
     const watch = client.variables.watch(refs, { history: HISTORY_MAX });
     const steps = HISTORY_MAX + 10;
@@ -869,7 +872,7 @@ describe('variables: what the review found', () => {
     const sizes = refs.map((ref) => watch.history(ref).length);
     expect(sizes.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(HISTORY_TOTAL_MAX);
     expect(Math.max(...sizes)).toBeLessThanOrEqual(HISTORY_MAX);
-    expect(Math.min(...sizes)).toBeGreaterThan(1000); // どの変数も、新しい側の点は持っている
+    expect(Math.min(...sizes)).toBeGreaterThan(1000); // Every variable keeps its newest points
     for (const ref of refs.slice(0, 3)) {
       const points = watch.history(ref);
       expect(points[points.length - 1]?.sampleMs).toBe(steps - 1);
@@ -889,12 +892,12 @@ describe('variables: what the review found', () => {
     expect(small.history(ENGINE).map((p) => p.value)).toEqual([5, 6]);
     expect(none.history(ENGINE)).toEqual([]);
     expect(negative.history(ENGINE)).toEqual([]);
-    // 同じステップの値が、止まっている間に変わって届いた: 最後の点を置き換える（点は増えない）
+    // A value of the same step arrived changed while paused: replaces the last point (no point added)
     await deliver(values(1, 6, true, engine(6, 60)));
     expect(all.history(ENGINE).map((p) => p.value)).toEqual([2, 3, 4, 5, 60]);
     all.close();
     none.close();
-    // 履歴を頼む watch がなくなった変数の履歴は消える
+    // The history of a variable no watch requests history for any more is removed
     small.close();
     const again = client.variables.watch([ENGINE], { history: 5 });
     expect(again.history(ENGINE)).toEqual([]);
@@ -910,14 +913,14 @@ describe('variables: what the review found', () => {
     const watch = client.variables.watch(long, { periodMs: 100 });
     await vi.advanceTimersByTimeAsync(0);
     expect(sent()).toEqual([{ type: 'watch', id: 1, variables: 'all', period_ms: 100 }]);
-    // 届いた中から、見ている変数だけを持つ
+    // Of what arrives, only the watched variables are kept
     await deliver(
       values(1, 5, false, { Engine: { sample_ms: 0, values: { [long[3].name]: 3, other: 9 } } }),
     );
     expect(watch.values.get()).toEqual({
       Engine: { [long[3].name]: { value: 3, sampleMs: 0, simMs: 5, paused: false } },
     });
-    // 短い名前なら、名前で頼む
+    // Short names are requested by name
     const short = client.variables.watch([ENGINE], { periodMs: 20 });
     await vi.advanceTimersByTimeAsync(0);
     expect(sent()[1]).toEqual({ type: 'watch', id: 2, variables: [ENGINE], period_ms: 20 });
@@ -950,7 +953,7 @@ describe('variables: what the review found', () => {
       code: 'too-many-watches',
       message: 'a connection has at most 16 watches',
     });
-    // 購読を送り直すと消える
+    // Cleared once the subscriptions are sent again
     const other = client.variables.watch([SPEED], { periodMs: 20 });
     await vi.advanceTimersByTimeAsync(0);
     expect(client.variables.watchProblem.get()).toBeNull();

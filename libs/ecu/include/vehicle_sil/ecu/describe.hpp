@@ -45,7 +45,7 @@ enum class NetworkUse
 /// static_asserts below fail until it is in its list. Whatever reads or lists the kinds and uses
 /// (the check's messages, the readers of the configuration and of --describe, the refusals of a
 /// name of another kind) takes them from here. The steps to add a kind or a use, also where no
-/// build or test fails: docs/code-map.md, "ネットワークの種類か使い方を足す".
+/// build or test fails: "Add a network kind or use" in docs/code-map.md.
 inline constexpr std::array kNetworkKinds{NetworkKind::Can, NetworkKind::Lin, NetworkKind::Ethernet};
 inline constexpr std::array kNetworkUses{NetworkUse::Raw, NetworkUse::J1939, NetworkUse::LinMaster, NetworkUse::LinSlave,
                                         NetworkUse::Ethernet};

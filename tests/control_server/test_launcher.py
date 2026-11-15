@@ -12,7 +12,7 @@ examples/ecu_main as processes, driven from Python.
   participant fails (also in the hold); a stop from standard input in the hold.
 - TLS, credentials and roles (a viewer neither writes nor pauses, an operator does not stop), the
   audit log, the CLI with a token and the server's certificate, no agents over gRPC; the usage errors (an empty
-  credentials file too), a port in use; version --json.
+  credentials file too), a port in use (by any program, by another launcher); version --json.
 (The limits of the start around the hold, --timeout-ms and Ctrl+C in the hold, the commands before
 the window and a Stop after the end are tested in C++: launch_control.*, launch.*.)
 
@@ -723,6 +723,24 @@ class LauncherTest(unittest.TestCase):
         result = json.loads(out.stdout)
         self.assertEqual([f["code"] for f in result["findings"]], ["setup"])
         self.assertIn("the control server cannot be started", result["findings"][0]["message"])
+
+    def test_a_port_another_launcher_listens_on_is_a_setup_error(self):
+        # As a port any other program has: two control servers on one port would leave it open
+        # which of the two runs a client reaches.
+        with self.launch("first_of_two", stop_at_ms=600_000, start_paused=True) as launch:
+            port = launch.address.rsplit(":", 1)[1]
+            out = self.run_launcher("run", "--json", "--control", port, str(config("second_of_two", 1000)))
+            self.assertEqual(out.returncode, 3, out.stderr)
+            result = json.loads(out.stdout)
+            self.assertEqual([f["code"] for f in result["findings"]], ["setup"])
+            self.assertEqual(result["findings"][0]["message"],
+                             f"cannot set up the simulation: the control server cannot be started: vehicle_sil control server: "
+                             f"cannot listen on 127.0.0.1:{port}")
+            # The first one is still the one that answers there.
+            with Control(launch.address) as c:
+                self.assertEqual(c.sim.wait_paused(60).now, 0)
+                c.sim.stop("the test is done")
+            launch.wait()
 
     def test_version_lists_the_control_server(self):
         out = self.run_launcher("version", "--json")

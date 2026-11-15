@@ -30,7 +30,7 @@ export const WORDS = {
   en: {
     run: 'Run',
     title: 'Run - vehicle-sil',
-    configFile: 'Config file',
+    configFile: 'Configuration file',
     recheck: 'Check again',
     again: 'Run again',
     syncing: 'in sync with the server',

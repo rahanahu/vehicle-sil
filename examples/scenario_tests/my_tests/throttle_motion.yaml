@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Of the guide docs/howto/scenario-tests.md: a ramp and a wave, each with an expect beside it that
+# must hold for the whole motion; the second one's value is written in hexadecimal (0xA28 is 2600).
+vehicle_sil_scenario: 1
+name: throttle motion
+steps:
+  - set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: 1800 }
+    timeout_ms: 500
+  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 200 } }
+    expect: { Engine.engine.speed: { ge: 1800, le: 2400 } }
+  - wave: { Engine.engine.throttle: { sine: { amplitude: 10, period_ms: 100 }, for_ms: 200 } }
+    expect: { Engine.engine.speed: { le: 0xA28 } }
