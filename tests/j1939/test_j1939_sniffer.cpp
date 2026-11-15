@@ -624,8 +624,12 @@ TEST_CASE(sniffer_after_an_ignored_rts_only_an_acknowledgement_completes_the_tra
     CHECK(s.heard.empty());
     CHECK_EQ(s.stats().orphan_control, 1u);
     s.sniffer.advance(at(5s));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    // The announcement the receiver did not refuse is followed when the transfer times out,
+    // and is too old by then.
+    CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::TimedOut}));
     CHECK_EQ(s.heard[0].pgn, kPgn);
+    CHECK_EQ(s.heard[1].pgn, kOther);
+    CHECK(s.heard[1].time == at(30ms + 1250ms));
     // With the acknowledgement for its group it completes.
     Sniffer t(options);
     open(t, 30);
@@ -749,9 +753,151 @@ TEST_CASE(sniffer_does_not_follow_an_ignored_rts_that_waited_longer_than_an_answ
         s.feed(at(1000ms), cts(kB, kA, 0, 0xFF, kPgn)); // the receiver holds the connection
         s.feed(at(1530ms) + (late ? 1ns : 0ns), dts(kA, kB, message, 1, 5)); // the receiver has the message
         s.feed(at(1540ms), eoma(kB, kA, 30, kPgn));
-        CHECK(s.ends() == (EndList{SniffEnd::Completed}));
-        CHECK_EQ(s.sniffer.active(), late ? 0u : 1u);
+        if (late)
+        {
+            CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+        }
+        else
+        {
+            // Followed, but the acknowledgement came after the time in which the announcement
+            // is answered: it ends at once, and does not wait for a packet to revive it.
+            CHECK(s.ends() == (EndList{SniffEnd::Completed, SniffEnd::TimedOut}));
+            CHECK_EQ(s.heard[1].pgn, kOther);
+            CHECK(s.heard[1].time == at(30ms + 1250ms));
+        }
+        CHECK_EQ(s.sniffer.active(), 0u);
     }
+}
+
+TEST_CASE(sniffer_times_out_a_followed_announcement_whenever_advance_is_called)
+{
+    // The announcement is followed when the time moves past the acknowledgement of a transfer
+    // with missing packets. By then it can be too old already, and a packet must not revive it:
+    // the same frames give the same result with and without an advance() in between.
+    const Bytes message = payload(20);
+    for (const bool advances : {false, true})
+    {
+        Sniffer s;
+        s.feed(at(0ms), rts(kA, kB, 20, kPgn));
+        s.feed(at(1ms), cts(kB, kA, 3, 1, kPgn));
+        s.feed(at(10ms), dt(kA, kB, 1, message));
+        s.feed(at(20ms), rts(kA, kB, 20, kOther));
+        s.feed(at(30ms), eoma(kB, kA, 20, kPgn));
+        if (advances)
+        {
+            s.sniffer.advance(at(1000ms));
+            CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+            CHECK_EQ(s.sniffer.active(), 1u); // not too old yet
+        }
+        s.feed(at(2000ms), dt(kA, kB, 1, message));
+        CHECK(s.ends() == (EndList{SniffEnd::Incomplete, SniffEnd::TimedOut}));
+        CHECK_EQ(s.sniffer.active(), 0u);
+        s.sniffer.advance(at(10s));
+        CHECK_EQ(s.heard.size(), 2u);
+        CHECK(s.heard[0].time == at(30ms));
+        CHECK_EQ(s.heard[1].pgn, kOther);
+        CHECK(s.heard[1].started == at(20ms));
+        CHECK(s.heard[1].time == at(20ms + 1250ms));
+        CHECK_EQ(s.stats().started, 2u);
+        CHECK_EQ(s.stats().timed_out, 1u);
+        CHECK_EQ(s.stats().orphan_data, 1u);
+    }
+}
+
+TEST_CASE(sniffer_follows_an_ignored_rts_when_the_running_transfer_times_out)
+{
+    // The receiver ended the running transfer without a frame long ago. The next announcement
+    // comes just before the sniffer gives that transfer up, and the answer just after.
+    const Bytes second = payload(20, 100);
+    for (const std::chrono::milliseconds step : {0ms, 1ms, 100ms})
+    {
+        Sniffer s;
+        const auto feed = [&](SimTime time, const J1939Frame& f) {
+            if (step != 0ms)
+            {
+                for (SimTime t = at(0ms); t <= time; t += step)
+                {
+                    s.sniffer.advance(t); // an advance() before now is ignored
+                }
+            }
+            s.feed(time, f);
+        };
+        feed(at(0ms), rts(kA, kB, 20, kPgn));
+        feed(at(1ms), cts(kB, kA, 3, 1, kPgn));
+        feed(at(2ms), dt(kA, kB, 1, payload(20)));
+        feed(at(1499ms), rts(kA, kB, 20, kOther));
+        feed(at(1503ms), cts(kB, kA, 3, 1, kOther));
+        feed(at(1510ms), dt(kA, kB, 1, second));
+        feed(at(1511ms), dt(kA, kB, 2, second));
+        feed(at(1512ms), dt(kA, kB, 3, second));
+        feed(at(1513ms), eoma(kB, kA, 20, kOther));
+        CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::Completed}));
+        CHECK_EQ(s.heard[0].pgn, kPgn);
+        CHECK(s.heard[0].time == at(2ms + 1250ms));
+        CHECK_EQ(s.heard[1].pgn, kOther);
+        CHECK(s.heard[1].started == at(1499ms));
+        CHECK(s.heard[1].data == second);
+        CHECK_EQ(s.stats().started, 2u);
+        CHECK_EQ(s.stats().orphan_control, 0u);
+        CHECK_EQ(s.stats().orphan_data, 0u);
+        CHECK_EQ(s.sniffer.active(), 0u);
+    }
+    // Nobody answers the announcement: it times out as an announcement without a receiver
+    // does, whenever advance() is called.
+    for (const bool advances : {false, true})
+    {
+        Sniffer s;
+        open(s, 20);
+        s.feed(at(1499ms), rts(kA, kB, 20, kOther));
+        if (advances)
+        {
+            s.sniffer.advance(at(1511ms));
+            CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+            CHECK_EQ(s.sniffer.active(), 1u);
+        }
+        s.sniffer.advance(at(10s));
+        CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::TimedOut}));
+        CHECK_EQ(s.heard[1].pgn, kOther);
+        CHECK(s.heard[1].time == at(1499ms + 1250ms));
+        CHECK_EQ(s.stats().started, 2u);
+        CHECK_EQ(s.sniffer.active(), 0u);
+    }
+    // The receiver refused the announcement: nothing to follow.
+    {
+        Sniffer s;
+        open(s, 20);
+        s.feed(at(1499ms), rts(kA, kB, 20, kOther));
+        s.feed(at(1500ms), conn_abort(kB, kA, kBusyReason, kOther));
+        s.sniffer.advance(at(10s));
+        CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+        CHECK_EQ(s.stats().started, 1u);
+        CHECK_EQ(s.stats().orphan_control, 0u);
+    }
+}
+
+TEST_CASE(sniffer_forgets_a_refused_announcement_also_after_a_malformed_one_for_a_third_group)
+{
+    // A broken sender: a well-formed announcement, then a malformed one for a third group. The
+    // receiver refuses both, so nothing follows the running transfer.
+    const Bytes message = payload(20);
+    constexpr std::uint32_t kThird = 0xD400;
+    Sniffer s;
+    s.feed(at(0ms), rts(kA, kB, 20, kPgn));
+    s.feed(at(1ms), cts(kB, kA, 3, 1, kPgn));
+    s.feed(at(10ms), dt(kA, kB, 1, message));
+    s.feed(at(20ms), rts(kA, kB, 20, kOther));
+    s.feed(at(21ms), rts(kA, kB, 20, kThird, 0xFF, 9)); // more packets than the size needs
+    s.feed(at(22ms), conn_abort(kB, kA, kBusyReason, kOther));
+    s.feed(at(23ms), conn_abort(kB, kA, kBusyReason, kThird));
+    s.feed(at(30ms), dt(kA, kB, 2, message));
+    s.feed(at(31ms), dt(kA, kB, 3, message));
+    s.feed(at(32ms), eoma(kB, kA, 20, kPgn));
+    s.sniffer.advance(at(10s));
+    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK_EQ(s.stats().started, 1u);
+    CHECK_EQ(s.stats().announcements_ignored, 2u);
+    CHECK_EQ(s.stats().orphan_control, 0u);
+    CHECK_EQ(s.sniffer.active(), 0u);
 }
 
 TEST_CASE(sniffer_can_replace_the_transfer_on_an_rts_for_another_group)

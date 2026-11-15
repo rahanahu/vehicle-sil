@@ -270,16 +270,26 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
     // An announcement the receiver neither refused nor answered while this transfer ran: if it
     // is the receiver that says this transfer is over (it acknowledged or aborted), its next
     // answer is for that announcement. Not after the time in which an announcement is answered.
+    // If this transfer timed out, the receiver may have ended it without a frame long ago, and
+    // its answer to the announcement may be on its way: the announcement is followed as one
+    // without a running transfer is.
     const bool byReceiver = how == SniffEnd::Completed || how == SniffEnd::Refused || how == SniffEnd::Incomplete ||
                             how == SniffEnd::AbortedByReceiver;
-    const bool follow = byReceiver && session.unanswered != 0 &&
-                        time - session.waiting.time <= options_.timeout + options_.grace;
+    const bool follow = session.unanswered != 0 &&
+                        (how == SniffEnd::TimedOut ||
+                         (byReceiver && time - session.waiting.time <= options_.timeout + options_.grace));
     const Announcement next = session.waiting;
     session.unanswered = 0;
     report(session, how, time, reason);
     if (follow)
     {
-        start(next, false);
+        // The transfer counts its time from the announcement, which can be too long ago by now.
+        // It ends here then: the loop of move_time() may be past its place, and the next packet
+        // would revive it, so that the result would depend on when advance() was called.
+        if (Session* started = start(next, false); started != nullptr && expired(*started, now_))
+        {
+            time_out(*started);
+        }
     }
 }
 
@@ -365,13 +375,13 @@ TransferSniffer::Announcement TransferSniffer::announcement(const SniffFrame& fr
                         frame.time};
 }
 
-void TransferSniffer::start(const Announcement& a, bool broadcast)
+TransferSniffer::Session* TransferSniffer::start(const Announcement& a, bool broadcast)
 {
     const auto free = std::find_if(sessions_.begin(), sessions_.end(), [](const Session& s) { return !s.active; });
     if (free == sessions_.end())
     {
         ++statistics_.no_session;
-        return;
+        return nullptr;
     }
     Session& s = *free;
     s.active = true;
@@ -399,6 +409,7 @@ void TransferSniffer::start(const Announcement& a, bool broadcast)
     s.latest.reset();
     ++active_;
     ++statistics_.started;
+    return &s;
 }
 
 void TransferSniffer::on_control(const SniffFrame& frame)
@@ -590,13 +601,19 @@ void TransferSniffer::on_abort(const SniffFrame& frame)
         end(*fromSender, SniffEnd::AbortedBySender, frame.time, frame.data[1]);
         return;
     }
-    if (toSender != nullptr && toSender->ignored && toSender->ignored_pgn == raw)
+    if (toSender != nullptr && toSender->ignored)
     {
-        if (toSender->unanswered != 0 && toSender->waiting.raw_pgn == raw)
+        // The receiver refuses the announcement that was ignored here too. The one remembered
+        // is not always the last one ignored (a malformed one is not remembered).
+        const bool remembered = toSender->unanswered != 0 && toSender->waiting.raw_pgn == raw;
+        if (remembered)
         {
             --toSender->unanswered;
         }
-        return; // the receiver refuses the announcement that was ignored here too
+        if (remembered || toSender->ignored_pgn == raw)
+        {
+            return;
+        }
     }
     ++statistics_.orphan_control;
 }
