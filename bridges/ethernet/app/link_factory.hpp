@@ -13,7 +13,7 @@
 
 namespace vehicle_sil::ethernet_bridge {
 
-/// The link `options` ask for (--backend, --interface, --promiscuous, --tap-create), not
+/// The link `options` ask for (--backend, --interface, --promiscuous or --no-promiscuous, --tap-create), not
 /// started: nothing is opened yet. Throws std::runtime_error that says what is wrong and how to
 /// fix it if the backend cannot be used here.
 [[nodiscard]] std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& options);

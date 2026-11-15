@@ -75,7 +75,7 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ```sh
 sudo setcap cap_net_raw+ep ./vehicle_sil_ethernet_bridge
 vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend packet --interface enp3s0 \
-    --ethertype 0x88b5 --promiscuous
+    --ethertype 0x88b5
 ```
 
 ### ネットワークのアダプターに接続する（Windows）
@@ -85,7 +85,7 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ```bat
 vehicle_sil_ethernet_bridge --list-interfaces
 vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend npcap --interface "Ethernet 2" ^
-    --ethertype 0x88b5 --promiscuous
+    --ethertype 0x88b5
 ```
 
 ## 引数
@@ -111,7 +111,8 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--all-frames` | フィルターをかけません（`--ethertype`、`--src-mac` とは一緒に使えません）。 |
 | `--vlan-tpid <hex>,...` | VLAN タグを示す値です（既定 `0x8100,0x88a8`）。 |
 | `--max-frame-bytes <n>` | FCS を除いた最大長です（60〜65535、既定 1522）。 |
-| `--promiscuous` | 自分宛てでないフレームも受信します（`tap` では使えません）。 |
+| `--promiscuous` | どのアドレス宛てのフレームも受信します。インターフェースがプロミスキャスを受け付けなければ、起動に失敗します（`tap` では使えません）。 |
+| `--no-promiscuous` | インターフェース自身のアドレス宛てとグループのアドレス宛てのフレームだけを受信します（`tap` では使えません）。 |
 | `--tap-create` | TAP デバイスを、ブリッジが動く間だけ作ります（`tap` だけ）。 |
 | `--no-mac-guard` | MAC のルール（「[ループの防止](#ループの防止macsidetable)」）を使いません。 |
 | `--mac-table-size <n>` | MAC テーブルの大きさです（16〜65536、既定 1024）。 |
@@ -121,6 +122,7 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 引数ごとの補足です。
 
 - `--network` に既定の名前がないのは、別のネットワークに誤って接続しないためです。
+- `--promiscuous` も `--no-promiscuous` もなければ、インターフェースが受け付けるならプロミスキャスで、受け付けなければ警告を 1 つ出してプロミスキャスなしで動きます（「[プロミスキャス](#プロミスキャス)」）。
 - `--backend` の `tap` は PC の中の仮想のインターフェース、ほかは物理のアダプターにフレームが出うるものとして扱います。`tap`、`packet`、`pcap` は Linux、`npcap` は Windows で使えます。
 - `--max-frame-bytes` の下限が 60 なのは、SIL Kit が 60 バイトより短いフレームを渡さないためです。
 - `--list-interfaces` に `--backend npcap` か `--backend pcap` を付けると、pcap のライブラリが返す一覧を表示します。
@@ -144,7 +146,7 @@ participants:
     role: bridge
     required: false
     command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, npcap,
-              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01", --promiscuous]
+              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01"]
 ```
 
 Linux では `--backend packet`（か `pcap`）とネットワークインターフェースの名前を書きます。ネットワーク（`ETH_EXT`）は、`networks` に `kind: ethernet` で書きます。
@@ -223,13 +225,13 @@ Run 'vehicle_sil_ethernet_bridge --help' for the options.
 起動の 1 行は、何をどこに接続したか、何を通すか、プロミスキャスと MAC のルールの状態を示します。
 
 ```
-[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous off (only frames to the interface's own address and to group addresses arrive); MAC guard on; Ctrl+C to stop
+[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous on; MAC guard on; Ctrl+C to stop
 ```
 
 | 部分 | 表示 |
 |---|---|
 | 何を通すか | `every frame, both ways`、`EtherType 0x88b5,0x0800 only, both ways`、`SIL Kit MAC 02:00:00:00:00:01 only, both ways`、または後の 2 つを `and` で結んだもの |
-| プロミスキャス | `promiscuous on` か、上の例の `promiscuous off (...)`（`tap` では表示しません） |
+| 効いているプロミスキャス | `promiscuous on`。`--no-promiscuous` では `promiscuous off (only frames to the interface's own address and to group addresses arrive)`、インターフェースが受け付けなかったときは `promiscuous off (the interface does not accept it: only frames to its own address and to group addresses arrive)`（`tap` では表示しません） |
 
 ### 実行中の出力
 
@@ -251,13 +253,42 @@ Run 'vehicle_sil_ethernet_bridge --help' for the options.
 | 3 | 統計を出力します。 |
 | 4 | lifecycle を止めます。 |
 
+### プロミスキャス
+
+プロミスキャスなしのネットワークアダプターは、自分の MAC アドレス宛てとグループのアドレス宛てのフレームしか渡しません。SIL Kit 側の機器は自分のアドレスを持つので、それらへのユニキャストは、プロミスキャスのときだけ届きます。そのため、ブリッジは既定でプロミスキャスを使います（`packet`、`npcap`、`pcap`。TAP デバイスは、もともと全部のフレームを受け取ります）。
+
+| 引数 | プロミスキャス |
+|---|---|
+| どちらもなし（既定） | インターフェースが受け付けるなら on。受け付けなければ、プロミスキャスなしで動き、警告を 1 つ出します（下）。 |
+| `--promiscuous` | on。インターフェースが受け付けなければ、起動に失敗します（終了コード 3）。 |
+| `--no-promiscuous` | off。 |
+
+インターフェースがプロミスキャスを受け付けないときの警告です（括弧の中は OS かライブラリの文）。
+
+```
+interface 'Wi-Fi' does not accept promiscuous mode (result 2, not supported), so the bridge runs without it there: only frames to the interface's own address and to group addresses arrive, and frames to the devices of the SIL Kit side (they have addresses of their own) do not. If devices outside must reach them, use an adapter that accepts promiscuous mode (a wired one usually does).
+```
+
+どちらで動いているかは、起動の 1 行が示します（「[起動の 1 行](#起動の-1-行)」）。受け付けないことの現れ方は、バックエンドで違います。
+
+| バックエンド | ブリッジが分かる拒否 | 分からない拒否 |
+|---|---|---|
+| `packet` | カーネルがソケットの設定をエラーで拒む。 | 設定を受け取って無視するドライバー（無線のドライバーの一部）。ブリッジはプロミスキャスとみなします。 |
+| `pcap` | 対応していないという libpcap の警告（result 2）か、このユーザーには使えないというエラー（result -11）。 | `packet` と同じです。 |
+| `npcap` | プロミスキャスで開くと失敗し、なしで開くと開ける。 | プロミスキャスで開けて、何も言わずに無視するアダプター（Npcap の開き方は警告を伝えません）。 |
+
+分からないときの既定は、`--promiscuous` と同じに動きます。起動の 1 行は `promiscuous on` で、下のヒントは出ません。
+
 ### プロミスキャスなしのときのヒント
 
-プロミスキャスなし（`packet`、`npcap`、`pcap`）で、ブリッジが外部へフレームを送信してから 5 秒たっても、SIL Kit 側の MAC アドレス宛てのフレームを 1 つも受信しないとき、ブリッジはヒントを 1 回だけ警告します。SIL Kit 側の MAC アドレスとは、外部へ送信したフレームの送信元です。
+プロミスキャスなし（`packet`、`npcap`、`pcap` で、`--no-promiscuous` か、インターフェースが受け付けなかったとき）で、ブリッジが外部へフレームを送信してから 5 秒たっても、SIL Kit 側の MAC アドレス宛てのフレームを 1 つも受信しないとき、ブリッジはヒントを 1 回だけ警告します。SIL Kit 側の MAC アドレスとは、外部へ送信したフレームの送信元です。
 
 ```
-no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
+no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and promiscuous mode is off (--no-promiscuous): without promiscuous mode an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, leave out --no-promiscuous.
+no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and the interface runs without promiscuous mode (it does not accept it, see the warning at the start): without promiscuous mode an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, use an adapter that accepts promiscuous mode (a wired one usually does).
 ```
+
+1 つ目は `--no-promiscuous` のとき、2 つ目はインターフェースがプロミスキャスを受け付けなかったときの文です。プロミスキャスのときは、ヒントを出しません。
 
 警告するのは、プロミスキャスなしのインターフェースが、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。レスポンスを待たない使い方（外部へ流すだけ）でも出るので、文は条件つきです。
 
@@ -345,7 +376,7 @@ cannot open /dev/net/tun: No such file or directory. The kernel's TUN/TAP driver
 - 受信するのは、インターフェースが受信したフレームと、同じ PC の OS やほかのソフトがそのインターフェースに送信したフレームです。ブリッジ自身が送信したフレームは受信しません。
 - ブリッジが送信したフレームは、回線の先へ出るだけです。受信するのは、回線の先の機器と、同じインターフェースを packet ソケットや pcap で開いているソフトです。同じ PC の OS のネットワークスタック（普通のソケットを使うソフト）は受信しません。
 - 受信したフレームの外側の VLAN タグは、カーネルがフレームのバイト列から外して、別の情報として渡します。ブリッジはそれを元の位置に戻すので、タグつきのフレームはタグを保ったまま両方向に通ります。
-- `--promiscuous` は、ブリッジが動いている間だけ、自分宛てでないフレームも受信します（ソケットの設定で、止まると元に戻ります）。付けないと、物理 NIC は自分の MAC アドレス宛てとグループのアドレス宛てのフレームしか渡しません。SIL Kit の機器宛てのユニキャストを外部から受信するには、付けます。
+- プロミスキャス（「[プロミスキャス](#プロミスキャス)」）は、ブリッジが動いている間だけのソケットの設定で、止まると元に戻ります。
 - イーサネットでないインターフェース（`lo` など）は開きません。
 - OS がソケットへ渡す前に捨てたフレームは `ext_overruns` に数えます。
 - 受信のオフロード（GRO、LRO）が有効だと、最大長より長いフレームが見えることがあります。そのフレームは `oversize` として捨てます。困るときは、インターフェースのオフロードを無効にします（`sudo ethtool -K <名前> gro off lro off`）。
@@ -439,14 +470,7 @@ Windows での DLL の探し方は、次のとおりです。
 - ライブラリが捨てたフレーム（読むのが間に合わなかった分）は `ext_overruns` に数えます。
 - 無線のアダプター（ライブラリが `wireless` と返すもの）では、起動のときに 1 回警告します。
 
-`--promiscuous` は、ライブラリにプロミスキャスを要求します。
-
-| バックエンド | インターフェースが受け付けないとき |
-|---|---|
-| Linux の `pcap` | 1 回警告して続けます。 |
-| Windows の `npcap` | ライブラリが警告を伝えない開き方をするので、この警告は出ません。 |
-
-プロミスキャスを受け付けないアダプターが `npcap` で開けるのか、開けないエラーになるのかは、**未確認**です。`--promiscuous` を付けて開けなかったときのメッセージは、付けずに試すように示します（下のメッセージ）。
+ブリッジは、「[プロミスキャス](#プロミスキャス)」のとおりにライブラリにプロミスキャスを要求します。プロミスキャスを受け付けないアダプターを、本物の Npcap が開けないエラーにするのか、プロミスキャスなしで何も言わずに開くのかは、**未確認**です。
 
 **チェックサムが未完成のフレームは見分けられません。** pcap のライブラリは、そのフラグを渡さないからです。同じ PC の OS が送信したフレーム（「[同じ PC の OS のネットワークスタックと通信する](#同じ-pc-の-os-のネットワークスタックと通信する)」）は、チェックサムのフィールドが正しくないまま SIL Kit へ渡り、`ext_checksum_incomplete` は 0 のままで、警告も出ません。Linux でこれを知りたいときは `packet` を使います。
 
@@ -482,7 +506,7 @@ VLAN タグ: ドライバーが、既定の設定では、VLAN タグつきの�
 
 ```
 interface 'Wi-Fi' is a wireless adapter: wireless adapters and access points often pass only frames from and to the adapter's own MAC address, and the devices of the SIL Kit side have other addresses. If frames do not pass, use a wired adapter.
-interface 'va' cannot be put into promiscuous mode (result 2, not supported): only frames to its own address and to group addresses arrive, as without --promiscuous.
+interface 'va' does not accept promiscuous mode (result 2, not supported), so the bridge runs without it there: only frames to the interface's own address and to group addresses arrive, and frames to the devices of the SIL Kit side (they have addresses of their own) do not. If devices outside must reach them, use an adapter that accepts promiscuous mode (a wired one usually does).
 interface 'va' was opened with a warning (result 1).
 Npcap does not tell when frames arrive on interface 'Ethernet 2': the bridge finds them by looking every 100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, install the current Npcap, or try another adapter.
 libpcap does not tell when frames arrive on interface 'va': the bridge finds them by looking every 100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, update libpcap, or use --backend packet.
@@ -509,13 +533,15 @@ cannot open 'enp3s0' with libpcap (pcap_activate: result -8, socket: Operation n
 cannot open 'va' with libpcap (pcap_activate: result -9, va: That device is not up). The interface is down: bring it up with 'sudo ip link set va up'.
 cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter.
 cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter. The adapter may not accept promiscuous mode: try without --promiscuous.
+interface 'va' does not accept promiscuous mode (result 2, not supported), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says so), or use an adapter that accepts promiscuous mode (a wired one usually does).
+this user may not open 'va' in promiscuous mode with libpcap (result -11, the reason the library gives), and --promiscuous asks for it: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once or run as root, or leave out --promiscuous to let the bridge run without it (it then says so).
 ```
 
 - 括弧の中の `result` はライブラリの関数の結果で、その後ろはライブラリの文です。
 - Npcap の開き方（`pcap_open()`）は結果の番号を返さないので、`npcap` のメッセージにあるのはライブラリの文だけです。上の例の `pcap_open:` の後ろは、ライブラリの文が入る場所を示す仮の文です。
 - `npcap` の「ない」のエラーには、無効のアダプターが一覧に出ないことを必ず追加します。
 - 一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ、または空）ときは、「管理者だけ」のインストールのことも追加します（2 つ目の例）。
-- `npcap` の「開けない」のエラーには、`--promiscuous` を付けて開いたときだけ、付けずに試すことを追加します（最後の例）。
+- `npcap` の「開けない」のエラーには、`--promiscuous` を付けて開いたときだけ、付けずに試すことを追加します。最後の 2 つは、インターフェースがプロミスキャスを受け付けないときの、`--promiscuous` を付けた `pcap` のエラーです。
 
 #### Windows で PC の中だけで接続する
 
@@ -780,6 +806,8 @@ a frame like the one the bridge had just sent out (the same length and first byt
 | packet ソケット | `vehicle_sil/eth_link/os_links.hpp` | `make_packet_link()` | Linux |
 | pcap のライブラリ | `vehicle_sil/eth_link/pcap_link.hpp` | `make_pcap_link()` | Windows、Linux |
 
+packet ソケットと pcap のライブラリは、オプションに `promiscuous`（`eth_link::Promiscuous`: `Off`、`On`、`Auto`）を取ります。ライブラリの既定は `Off` で、何も指定しないプログラムの動きは変わりません。実行ファイルは、`--promiscuous` も `--no-promiscuous` もなければ `Auto` を渡します。`ExternalLink::promiscuous()` は、リンクが始まった後に効いているモードを返し（TAP デバイスのようにモードのないリンクは `nullopt`）、`Auto` は拒否を `Warning` のイベント 1 つで伝えます（`promiscuous_refused_warning()`）。
+
 `os_links.hpp` の外部リンク:
 
 - Linux 以外の OS では `has_os_links()` が `false` で、作る関数は `LinkError` を投げます。
@@ -849,7 +877,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 - タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。
 - 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。
 - ブリッジが送信したフレームがブリッジに戻らない。
-- `--promiscuous` がインターフェースの promiscuity を、動いている間だけ上げる。
+- プロミスキャス（`--promiscuous` と既定）が、インターフェースの promiscuity を、動いている間だけ上げる。
 - リンクの up と down の監視の行。
 - OS のスタックが送信した UDP（veth の向こうの端からと、ブリッジのインターフェース自身から）を、SIL Kit 側の相手がそのまま受信し、`ext_checksum_incomplete` に数えられ、警告が 1 回だけ出る。
 - 警告のとおりに `ethtool -K <名前> tx off` をすると、数も警告も出ない。
@@ -891,7 +919,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 - `wpcap.dll` を `System32\Npcap` から読み込める（`Packet.dll` も見つかる）。ブリッジが使う関数があり、構造体の形が合う（一覧、フレームの長さと中身、捨てた数）。
 - 受信を待つイベントで、空回りせず、取りこぼしなく受信する。
 - 接続の名前が一覧に出て、`--interface` と一致する（ASCII と日本語の名前、英語の Windows、コンソールでもファイルでも）。アダプターの識別子（小文字、波かっこなし）と pcap の名前でも開ける。大文字と小文字だけが違う名前は一致しない。
-- SIL Kit 側の相手と、アダプターの先の機器との往復。`--promiscuous` なしでは、SIL Kit の機器宛てのユニキャストを受信せず、ヒントの警告が出る。
+- SIL Kit 側の相手と、アダプターの先の機器との往復。プロミスキャスなし（いまの `--no-promiscuous`。当時は既定が off）では、SIL Kit の機器宛てのユニキャストを受信せず、ヒントの警告が出る。
 - 同じアダプターを Npcap で開いたほかのソフトと、両方向に通る（仮想 NIC でも、KM-TEST Loopback Adapter でも）。
 - Npcap は、ハンドルが送信したフレームをそのハンドルに戻す。`PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルは、自分の送信を受信せず、ほかのハンドルの送信は受信する。
 - ブリッジが今の開き方（`pcap_open()` と自分の送信を受信しない指定）で開いたアダプターで、ブリッジの送信がブリッジに戻らない（`--no-mac-guard` でも）。同じアダプターの 2 つのブリッジは、どちらを先に開始しても、警告を出して転送を止める。受信は遅れず、何もないときに CPU を使わない。
@@ -902,7 +930,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 - KM-TEST Loopback Adapter で、OS が送信したフレームはブリッジに届き、ブリッジが送信したフレームは OS の普通のソケットを使うソフトに届かない（「[Windows で PC の中だけで接続する](#windows-で-pc-の中だけで接続する)」）。
 - 止める要求（Ctrl+C、Ctrl+Break）で、統計を出力して終了コード 0。動いている間にアダプターを無効にすると、`FAIL` と終了コード 1。無効のアダプターは一覧に出ない。
 - 制限なしでインストールした Npcap は、管理者でない利用者でも使える。「管理者だけ」でインストールした Npcap を管理者でない利用者が使うと、昇格を求める画面で止まる。
-- 物理 NIC: USB のイーサネットのアダプター 1 つ（ASIX AX88772、100 Mbit/s、Windows に付属のドライバー）を仮想マシンに渡し、LAN につないで、ホストの PC のネットワークスタック（別の NIC）を相手に確認した（ARP）。一覧と `--interface` でアダプターが見つかる。`--promiscuous` なしでは、要求は出て、ユニキャストの応答は受信せず、ヒントの警告が出る。`--promiscuous` ありでは、アダプターがプロミスキャスを受け付け、応答が SIL Kit 側に届く。ブリッジの送信はブリッジに戻らず、ループの警告も出ない。OS がそのアダプターに送信したフレームがブリッジに届く。動いている間にアダプターを無効にすると、`FAIL` と終了コード 1。Ctrl+C で、統計を出力して終了コード 0。
+- 物理 NIC: USB のイーサネットのアダプター 1 つ（ASIX AX88772、100 Mbit/s、Windows に付属のドライバー）を仮想マシンに渡し、LAN につないで、ホストの PC のネットワークスタック（別の NIC）を相手に確認した（ARP）。一覧と `--interface` でアダプターが見つかる。プロミスキャスなし（いまの `--no-promiscuous`。当時は既定が off）では、要求は出て、ユニキャストの応答は受信せず、ヒントの警告が出る。`--promiscuous` ありでは、アダプターがプロミスキャスを受け付け、応答が SIL Kit 側に届く。ブリッジの送信はブリッジに戻らず、ループの警告も出ない。OS がそのアダプターに送信したフレームがブリッジに届く。動いている間にアダプターを無効にすると、`FAIL` と終了コード 1。Ctrl+C で、統計を出力して終了コード 0。
 
 ### 確認していないこと
 
@@ -912,7 +940,7 @@ Windows:
 - 物理 NIC での大量のトラフィックと、VLAN タグ。
 - 日本語の Windows（そのコンソールでの日本語の接続の名前の見え方）。
 - Npcap を WinPcap 互換ありでインストールした PC。
-- プロミスキャスを受け付けないアダプターを `--promiscuous` で開いたときに、開けるのか、開けないエラーになるのか（エラーになるときのライブラリの文も）。
+- プロミスキャスを受け付けないアダプター。プロミスキャスで開けないエラーになる（ブリッジはなしで開き直して警告する）のか、なしで何も言わずに開く（ブリッジは分からない）のか。開き直しは、フェイクのライブラリでだけ確かめています。
 - 戻さない指定を受け付けて、それでも自分の送信を戻す Npcap やアダプターがあるか。
 - 「管理者だけ」の Npcap で、デスクトップのある Windows が表示する確認の画面。
 - 本物の Npcap で、送信の詰まりが `ext_queue_full` に数えられることがあるか（確認では詰まりが起きなかった）。
@@ -921,7 +949,7 @@ Linux:
 
 - libpcap で、送信のキューが詰まったことを見分けられるか（`ext_queue_full`）。ライブラリは失敗を 1 種類でしか返さないので、OS のエラーの番号が残っていれば見分けます。フェイクのライブラリでだけ確認しています。
 - 物理 NIC と、その先の実機や別の PC との往復。
-- `--promiscuous` のありなしでの、フレームの受信のしかた。veth は、プロミスキャスでなくても全部のフレームをソケットに渡すので、名前空間では違いが出ません。プロミスキャスのヒントの警告は、時計を差し替えたテストでだけ確認しています。
+- プロミスキャスのありなしでの、フレームの受信のしかたと、プロミスキャスを受け付けないインターフェース。veth は、プロミスキャスでなくても全部のフレームをソケットに渡すので、名前空間では違いが出ず、プロミスキャスも受け付けます。プロミスキャスのヒントの警告は、時計を差し替えたテストでだけ確認しています。
 - `setcap cap_net_raw+ep` した実行ファイルが、共有ライブラリの SIL Kit を見つけられるか。権限を付与した実行ファイルでは、ライブラリを探す環境変数が効かないことがあります。
 - ほかの人が所有する TAP デバイスに接続しようとしたときのメッセージ。文言はテストで確認していますが、カーネルがそのエラーを返す場面は作れていません。
 - 受信のオフロードで長いフレームが見える場面、無線のアダプター。
@@ -981,7 +1009,8 @@ Linux:
 - `ethernet_bridge.integration.pcap-*` は、インストールする実行ファイルと同じ中身で、ライブラリを読み込む場所だけをフェイクのライブラリに変えたもの（`vehicle_sil_ethernet_bridge_on_fake_pcap`）を使います。
 - `ethernet_bridge.integration.pcap-*` が確認するのは、往復と統計、一覧、ライブラリがない・古いときのメッセージ（3。SIL Kit に接続する前）、ないデバイス（3）、読み取りの失敗（1）です。
 - `pcap-describe` は、ライブラリがなくても `--describe` が答えることを確かめます。
-- `pcap-launcher` は、ブリッジ（`role: bridge`、`required: false`、`--promiscuous`）と、そのネットワークの ECU（`eth_bridge_it_ecu.cpp`）を書いた設定ファイルを、`registry_uri` のポート 0 で作ります。`check` が所見なしで通り、ブリッジをそのネットワークに挙げること、ECU のフレームがブリッジを通って外に出て、デバイスの応答が ECU に戻ること（シナリオで確かめる）、実行が終わるとブリッジが終了コード 0 で終わることを確かめます。
+- `pcap-promiscuous` は、プロミスキャスを受け付けるデバイスと受け付けないデバイスでの既定（警告と起動の 1 行）、`--no-promiscuous`、受け付けないデバイスでの `--promiscuous`（終了コード 3）、両方を付けたとき（終了コード 4）を確かめます。
+- `pcap-launcher` は、ブリッジ（`role: bridge`、`required: false`）と、そのネットワークの ECU（`eth_bridge_it_ecu.cpp`）を書いた設定ファイルを、`registry_uri` のポート 0 で作ります。`check` が所見なしで通り、ブリッジをそのネットワークに挙げること、ECU のフレームがブリッジを通って外に出て、デバイスの応答が ECU に戻ること（シナリオで確かめる）、実行が終わるとブリッジが終了コード 0 で終わることを確かめます。
 
 ### `ethernet_bridge.netns.*`
 

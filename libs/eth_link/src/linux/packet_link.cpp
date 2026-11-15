@@ -14,7 +14,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
+#include <optional>
 #include <cstring>
 #include <utility>
 
@@ -34,6 +36,11 @@ public:
     ~PacketLink() override { stop(); }
 
     [[nodiscard]] std::string describe() const override { return "packet '" + name() + "' (network interface)"; }
+    [[nodiscard]] std::optional<bool> promiscuous() const noexcept override
+    {
+        const int now = promiscuous_.load();
+        return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
+    }
 
 protected:
     Fd open() override
@@ -70,17 +77,25 @@ protected:
         {
             throw packet_open_failed(name(), errno, "bind", {});
         }
-        if (options_.promiscuous)
+        bool promiscuous = false;
+        if (options_.promiscuous != Promiscuous::Off)
         {
             // The socket's own membership: the kernel takes it back when the socket closes.
             packet_mreq membership{};
             membership.mr_ifindex = static_cast<int>(index);
             membership.mr_type = PACKET_MR_PROMISC;
-            if (::setsockopt(fd.get(), SOL_PACKET, PACKET_ADD_MEMBERSHIP, &membership, sizeof(membership)) != 0)
+            promiscuous = ::setsockopt(fd.get(), SOL_PACKET, PACKET_ADD_MEMBERSHIP, &membership, sizeof(membership)) == 0;
+            if (!promiscuous)
             {
-                throw packet_open_failed(name(), errno, "promiscuous mode", {});
+                const int error = errno;
+                if (options_.promiscuous == Promiscuous::On)
+                {
+                    throw packet_open_failed(name(), error, "promiscuous mode", {});
+                }
+                add_start_warning(promiscuous_refused_warning(name(), error_text(error)));
             }
         }
+        promiscuous_.store(promiscuous ? 1 : 0);
         return fd;
     }
 
@@ -168,6 +183,8 @@ protected:
 
 private:
     const PacketLinkOptions options_;
+    /// What open() set up: 1 promiscuous, 0 not, -1 not opened yet.
+    std::atomic<int> promiscuous_{-1};
 };
 
 } // namespace

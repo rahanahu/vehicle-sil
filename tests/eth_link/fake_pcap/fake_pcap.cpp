@@ -17,7 +17,8 @@
 //   fake-wifi        marked as wireless
 //   fake-down        cannot be opened: the interface is down
 //   fake-denied      cannot be opened: no permission
-//   fake-nopromisc   opens with the warning that promiscuous mode is not supported
+//   fake-nopromisc   opens with the warning that promiscuous mode is not supported (libpcap's way;
+//                    pcap_open() opens it without a word)
 //   fake-raw         not Ethernet (link type 12)
 //   fake-sendfail    sending fails (with libpcap's text on Linux, or Npcap's after fake_pcap_set "npcap_text")
 //   fake-sendfull    sending fails with the error number of a full queue
@@ -25,6 +26,8 @@
 //   fake-drops       counts 3 dropped frames for every frame sent
 //   fake-quiet       never tells that packets are there (its event is never set, its descriptor
 //                    never gets readable); the frames are there for whoever reads
+//   fake-refuses     cannot be opened in promiscuous mode: pcap_activate() fails with -11 (this
+//                    user may not), pcap_open() fails with the same text; without it, it opens
 //
 // On every device, a frame one capture sends arrives at the other captures open on the device.
 //
@@ -141,6 +144,7 @@ struct Device
     bool echoes = false;
     bool send_fails = false;
     bool npcap_text = false; ///< a failed send has the text Npcap gives
+    bool refuses_promisc = false; ///< opening in promiscuous mode fails (an error, not a warning)
     bool send_full = false;
     bool read_fails = false;
     bool quiet = false;
@@ -194,6 +198,7 @@ std::vector<Device>& devices()
         add("fake-fault", "Fake Ethernet adapter that cannot be read").read_fails = true;
         add("fake-drops", "Fake Ethernet adapter that drops frames").drops_per_send = 3;
         add("fake-quiet", "Fake Ethernet adapter that does not tell when frames arrive").quiet = true;
+        add("fake-refuses", "Fake Ethernet adapter that cannot be opened in promiscuous mode").refuses_promisc = true;
         return made;
     }();
     return list;
@@ -267,6 +272,13 @@ int activate(PcapHandle& handle)
     {
         copy_text(handle.error, sizeof(handle.error), "No such device exists");
         return -5;
+    }
+    if (device->refuses_promisc && handle.promisc != 0)
+    {
+        // libpcap's PCAP_ERROR_PROMISC_PERM_DENIED; pcap_open() has only the text.
+        copy_text(handle.error, sizeof(handle.error),
+                  std::string(device->name) + ": You don't have permission to capture in promiscuous mode on that device");
+        return -11;
     }
     copy_text(handle.error, sizeof(handle.error), device->activate_text);
     if (device->activate_result < 0)
@@ -626,7 +638,9 @@ FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
 }
 
 /// "read_fails" (1: reading fails from now on), "drops" (adds to the count of dropped frames),
-/// "npcap_text" (1: a failed send has the text that Npcap gives, 0: libpcap's).
+/// "npcap_text" (1: a failed send has the text that Npcap gives, 0: libpcap's), "refuse_promisc"
+/// (1: opening in promiscuous mode fails, as an adapter that refuses it with an error: pcap_activate()
+/// returns -11, pcap_open() fails with the text; 0: as the device is).
 /// Returns 0, or -2 for anything else.
 FAKE_PCAP_EXPORT int fake_pcap_set(const char* device, const char* what, long value)
 {
@@ -654,6 +668,11 @@ FAKE_PCAP_EXPORT int fake_pcap_set(const char* device, const char* what, long va
     if (key == "npcap_text")
     {
         found->npcap_text = value != 0;
+        return 0;
+    }
+    if (key == "refuse_promisc")
+    {
+        found->refuses_promisc = value != 0;
         return 0;
     }
     return -2;

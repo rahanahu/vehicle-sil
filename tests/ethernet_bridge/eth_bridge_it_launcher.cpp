@@ -36,6 +36,11 @@
 //   pcap-old-library   the library lacks a function the bridge needs: exit 3, the same.
 //   pcap-no-interface  a device the library does not have: exit 3 with the devices it has.
 //   pcap-fault         reading fails while the bridge runs: FAIL, the statistics, exit 1.
+//   pcap-promiscuous   the promiscuous mode on fake0 (accepts it) and fake-refuses (cannot be
+//                      opened in it): by default on where accepted, else off with one warning that
+//                      says so (the start line says which); --no-promiscuous off without a
+//                      warning; --promiscuous on fake-refuses fails at the start (exit 3);
+//                      --promiscuous with --no-promiscuous is exit 4.
 //   pcap-describe      --describe writes the JSON of an ecu_main executable and exits 0, also
 //                      where the pcap library is not there (it is not loaded); a wrong argument
 //                      is still exit 4.
@@ -220,8 +225,7 @@ int run_echo(const Options& options, const fs::path& bridgeExecutable, const std
     const std::string bridgeText = read_text(bridgeLog);
     bool ok = expect(peerCode == 0, "peer exit code " + exit_code_text(peerCode) + ", expected 0");
     const std::string startLine = "[eth-bridge] bridging SIL Kit network 'ETH_IT' (participant 'EthernetBridge', " + registry.uri() +
-                                  ") <-> " + link + ": EtherType 0x88b5 only, both ways; promiscuous off (only frames "
-                                  "to the interface's own address and to group addresses arrive); MAC guard on; Ctrl+C to stop";
+                                  ") <-> " + link + ": EtherType 0x88b5 only, both ways; promiscuous on; MAC guard on; Ctrl+C to stop";
     ok = expect(bridgeText.find(startLine) != std::string::npos, "bridge printed '" + startLine + "'") && ok;
     ok = expect(bridgeText.find("warning:") == std::string::npos, "bridge printed no warning") && ok;
 #ifdef _WIN32
@@ -445,6 +449,73 @@ int run_stop_request(const Options& options)
     return ok ? 0 : 1;
 }
 
+/// Starts `executable` with `args`, waits until it has printed its start line and, if `until` is
+/// not empty, a line with `until`, then ends it. What it printed.
+std::string run_until_ready(const Options& options, const fs::path& executable, const std::vector<std::string>& args,
+                            const std::string& until = {})
+{
+    StoppableBridge bridge(executable, args);
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    for (;;)
+    {
+        const std::string text = bridge.lines();
+        if (text.find("Ctrl+C to stop") != std::string::npos && (until.empty() || text.find(until) != std::string::npos))
+        {
+            break;
+        }
+        if (bridge.process().poll() || std::chrono::steady_clock::now() >= deadline)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    bridge.process().kill_tree();
+    return bridge.all_lines();
+}
+
+int run_promiscuous(const Options& options)
+{
+    use_fake_pcap(options, "vehicle_sil_fake_pcap");
+    RegistryProcess registry(options.registry, options.workDir);
+    const auto args = [&](const std::string& device, std::vector<std::string> more) {
+        more.insert(more.begin(), "--all-frames");
+        return bridge_args(registry.uri(), device, more, kPcapBackend);
+    };
+    const std::string offText = "; promiscuous off (only frames to the interface's own address and to group addresses arrive);";
+    const std::string refusedText =
+        "; promiscuous off (the interface does not accept it: only frames to its own address and to group addresses arrive);";
+    const std::string warning = "[eth-bridge] warning: interface 'fake-refuses' does not accept promiscuous mode (";
+    const std::string meaning = "), so the bridge runs without it there: only frames to the interface's own address and to "
+                                "group addresses arrive, and frames to the devices of the SIL Kit side (they have addresses "
+                                "of their own) do not. If devices outside must reach them, use an adapter that accepts "
+                                "promiscuous mode (a wired one usually does).\n";
+    bool ok = true;
+
+    const std::string accepted = run_until_ready(options, options.pcapBridge, args("fake0", {}));
+    ok = expect(accepted.find("; promiscuous on;") != std::string::npos && accepted.find("warning:") == std::string::npos,
+                "by default, fake0 is in promiscuous mode, without a warning") && ok;
+    log("bridge output (fake0, default):\n" + accepted);
+
+    const std::string refused = run_until_ready(options, options.pcapBridge, args("fake-refuses", {}), "warning:");
+    ok = expect(refused.find(refusedText) != std::string::npos, "by default, fake-refuses runs without promiscuous mode, and the "
+                                                                "start line says the interface does not accept it") && ok;
+    ok = expect(count(refused, "warning:") == 1 && refused.find(warning) != std::string::npos &&
+                    refused.find(meaning) != std::string::npos,
+                "one warning says that fake-refuses runs without promiscuous mode, and what that means") && ok;
+    log("bridge output (fake-refuses, default):\n" + refused);
+
+    const std::string off = run_until_ready(options, options.pcapBridge, args("fake-refuses", {"--no-promiscuous"}));
+    ok = expect(off.find(offText) != std::string::npos && off.find("warning:") == std::string::npos,
+                "--no-promiscuous: off, without a warning") && ok;
+    log("bridge output (fake-refuses, --no-promiscuous):\n" + off);
+
+    ok = run_single(options, options.pcapBridge, args("fake-refuses", {"--promiscuous"}), cli::kExitSetupFailed,
+                    {"[eth-bridge] FAIL setup: "}, {"Ctrl+C to stop"}) == 0 && ok;
+    ok = run_single(options, options.pcapBridge, args("fake0", {"--promiscuous", "--no-promiscuous"}), cli::kExitUsage,
+                    {"error: --promiscuous and --no-promiscuous contradict each other"}) == 0 && ok;
+    return ok ? 0 : 1;
+}
+
 /// `path` for a YAML file: with '/' and in single quotes (no escapes there; a quote is doubled).
 std::string yaml_path(const fs::path& path)
 {
@@ -480,7 +551,7 @@ int run_launcher(const Options& options)
                "    required: false\n"
                "    command: [" << yaml_path(options.pcapBridge) << ", --network, ETH_EXT, --backend, " << kPcapBackend
             << ",\n"
-               "              --interface, fake0, --src-mac, \"02:00:00:00:00:01\", --promiscuous]\n";
+               "              --interface, fake0, --src-mac, \"02:00:00:00:00:01\"]\n";
     }
     {
         // The bridge joins in real time, outside the coordinated start: the answers come once it runs.
@@ -518,10 +589,10 @@ int run_launcher(const Options& options)
     std::smatch match;
     ok = expect(std::regex_search(text, match, started) && match[1].str() != "0",
                 "run starts the bridge with --name, the registry's real port and --start-timeout-ms") && ok;
-    ok = expect(text.find("--interface fake0 --src-mac 02:00:00:00:00:01 --promiscuous") != std::string::npos,
+    ok = expect(text.find("--interface fake0 --src-mac 02:00:00:00:00:01 --name EthBridge") != std::string::npos,
                 "run passes the bridge's own arguments as written") && ok;
     ok = expect(text.find("promiscuous on;") != std::string::npos && text.find("Ctrl+C to stop") != std::string::npos,
-                "the bridge started bridging, in promiscuous mode") && ok;
+                "the bridge started bridging, in promiscuous mode (the default where the interface accepts it)") && ok;
     for (const char* key : {"silkit_to_ext", "ext_to_silkit"})
     {
         const auto value = stat(text, key);
@@ -676,6 +747,10 @@ int main(int argc, char** argv)
                                 bridge_args(registry.uri(), "fake-fault", {"--ethertype", "0x88b5"}, kPcapBackend), cli::kExitFailed,
                                 {"[eth-bridge] FAIL: reading from 'fake-fault' failed: The interface disappeared (fake)",
                                  "stats silkit_to_ext=", "stopped"});
+        }
+        else if (options.scenario == "pcap-promiscuous")
+        {
+            result = run_promiscuous(options);
         }
         else if (options.scenario == "pcap-describe")
         {

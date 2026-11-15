@@ -177,9 +177,10 @@ TEST_CASE(pcap_warnings)
                "interface 'Wi-Fi' is a wireless adapter: wireless adapters and access points often pass only frames from and to "
                "the adapter's own MAC address, and the devices of the SIL Kit side have other addresses. If frames do not pass, "
                "use a wired adapter.");
-    CHECK_TEXT(pcap_activate_warning("va", kPcapWarningPromiscuousNotSupported, "not supported"),
-               "interface 'va' cannot be put into promiscuous mode (result 2, not supported): only frames to its own address and "
-               "to group addresses arrive, as without --promiscuous.");
+    CHECK_TEXT(pcap_promiscuous_refused("va", kPcapWarningPromiscuousNotSupported, "not supported", "").what(),
+               "interface 'va' does not accept promiscuous mode (result 2, not supported), and --promiscuous asks for it: leave "
+               "out --promiscuous to let the bridge run without it (it then says so), or use an adapter that accepts "
+               "promiscuous mode (a wired one usually does).");
     CHECK_TEXT(pcap_activate_warning("va", 1, ""), "interface 'va' was opened with a warning (result 1).");
     CHECK_TEXT(pcap_no_wake_warning(PcapFlavor::Npcap, "Ethernet 2", std::chrono::milliseconds(100)),
                "Npcap does not tell when frames arrive on interface 'Ethernet 2': the bridge finds them by looking every "

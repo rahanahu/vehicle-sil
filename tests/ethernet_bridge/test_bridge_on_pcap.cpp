@@ -76,7 +76,7 @@ struct NpcapFake
                  1);
     }
     [[nodiscard]] long sent() const { return control<long(const char*, const char*)>("fake_pcap_get")(kAdapter, "sent"); }
-    [[nodiscard]] std::unique_ptr<ExternalLink> link() const { return detail::make_pcap_link(library, {kAdapter, false, kFake}); }
+    [[nodiscard]] std::unique_ptr<ExternalLink> link() const { return detail::make_pcap_link(library, {kAdapter, Promiscuous::Off, kFake}); }
 };
 
 /// Two bridges between the same SIL Kit network (the controllers are wired to each other) and
@@ -195,7 +195,7 @@ TEST_CASE(bridge_on_an_npcap_adapter_that_cannot_send_says_once_that_it_failed)
     // The last error is the link's reason with Npcap's own text and number in it, and "failed" once.
     const NpcapFake fake;
     CHECK_EQ(fake.control<int(const char*, const char*, long)>("fake_pcap_set")("fake-sendfail", "npcap_text", 1), 0);
-    const auto link = detail::make_pcap_link(fake.library, {"fake-sendfail", false, kFake});
+    const auto link = detail::make_pcap_link(fake.library, {"fake-sendfail", Promiscuous::Off, kFake});
     FakeEthernetController silkit;
     EthernetBridge bridge(silkit, *link, EthernetBridgeOptions{});
     bridge.start();

@@ -75,7 +75,7 @@ To connect to a network interface, the bridge needs `CAP_NET_RAW`, and you must 
 ```sh
 sudo setcap cap_net_raw+ep ./vehicle_sil_ethernet_bridge
 vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend packet --interface enp3s0 \
-    --ethertype 0x88b5 --promiscuous
+    --ethertype 0x88b5
 ```
 
 ### Connect to a network adapter (Windows)
@@ -85,7 +85,7 @@ Install Npcap first (see "[`npcap` and `pcap`](#npcap-and-pcap)"). Write the `--
 ```bat
 vehicle_sil_ethernet_bridge --list-interfaces
 vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend npcap --interface "Ethernet 2" ^
-    --ethertype 0x88b5 --promiscuous
+    --ethertype 0x88b5
 ```
 
 ## Arguments
@@ -111,7 +111,8 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 | `--all-frames` | No filtering (cannot be combined with `--ethertype` or `--src-mac`). |
 | `--vlan-tpid <hex>,...` | Values that mark a VLAN tag (default `0x8100,0x88a8`). |
 | `--max-frame-bytes <n>` | Maximum length without FCS (60–65535, default 1522). |
-| `--promiscuous` | Also receives frames not addressed to the interface (not available with `tap`). |
+| `--promiscuous` | Receives frames to every address, and fails to start if the interface refuses promiscuous mode (not available with `tap`). |
+| `--no-promiscuous` | Receives only frames to the interface's own address and to group addresses (not available with `tap`). |
 | `--tap-create` | Creates the TAP device for as long as the bridge runs (`tap` only). |
 | `--no-mac-guard` | Does not use the MAC rules (see "[Loop prevention](#loop-prevention-macsidetable)"). |
 | `--mac-table-size <n>` | Size of the MAC table (16–65536, default 1024). |
@@ -121,6 +122,7 @@ vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --in
 Notes on the arguments:
 
 - `--network` has no default name so that the bridge never connects to the wrong network by mistake.
+- Without `--promiscuous` and `--no-promiscuous`, the bridge uses promiscuous mode where the interface accepts it, and runs without it, with one warning, where it refuses (see "[Promiscuous mode](#promiscuous-mode)").
 - The `tap` backend is treated as a virtual interface inside the computer; the others are treated as able to put frames on a physical adapter. `tap`, `packet` and `pcap` are available on Linux, `npcap` on Windows.
 - The minimum of `--max-frame-bytes` is 60 because SIL Kit does not pass on frames shorter than 60 bytes.
 - `--list-interfaces` with `--backend npcap` or `--backend pcap` prints the list that the pcap library returns.
@@ -144,7 +146,7 @@ participants:
     role: bridge
     required: false
     command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, npcap,
-              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01", --promiscuous]
+              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01"]
 ```
 
 On Linux, write `--backend packet` (or `pcap`) and the name of the network interface. The network (`ETH_EXT`) must be in `networks` with `kind: ethernet`.
@@ -223,13 +225,13 @@ If the address is not a loopback address of this computer (`localhost`, `127.x.y
 The startup line shows what is connected to what, what may pass, and the state of promiscuous mode and of the MAC rules.
 
 ```
-[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous off (only frames to the interface's own address and to group addresses arrive); MAC guard on; Ctrl+C to stop
+[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous on; MAC guard on; Ctrl+C to stop
 ```
 
 | Part | Text |
 |---|---|
 | What may pass | `every frame, both ways`, `EtherType 0x88b5,0x0800 only, both ways`, `SIL Kit MAC 02:00:00:00:00:01 only, both ways`, or the last 2 joined with `and` |
-| Promiscuous mode | `promiscuous on`, or `promiscuous off (...)` as in the example above (not shown for `tap`) |
+| Promiscuous mode in effect | `promiscuous on`; with `--no-promiscuous`, `promiscuous off (only frames to the interface's own address and to group addresses arrive)`; when the interface refused it, `promiscuous off (the interface does not accept it: only frames to its own address and to group addresses arrive)` (not shown for `tap`) |
 
 ### Output while running
 
@@ -251,13 +253,42 @@ The stop sequence:
 | 3 | The statistics are printed. |
 | 4 | The lifecycle is stopped. |
 
+### Promiscuous mode
+
+Without promiscuous mode, a network adapter passes on only frames to its own MAC address and to group addresses. The devices on the SIL Kit side have addresses of their own, so unicast frames to them arrive only in promiscuous mode. The bridge therefore uses it by default (`packet`, `npcap`, `pcap`; a TAP device gets every frame anyway).
+
+| Arguments | Promiscuous mode |
+|---|---|
+| Neither (default) | On where the interface accepts it. Where it refuses, the bridge runs without it and prints one warning (below). |
+| `--promiscuous` | On. Where the interface refuses it, the bridge fails to start (exit code 3). |
+| `--no-promiscuous` | Off. |
+
+The warning when the interface refuses promiscuous mode (the text in parentheses is the OS's or the library's):
+
+```
+interface 'Wi-Fi' does not accept promiscuous mode (result 2, not supported), so the bridge runs without it there: only frames to the interface's own address and to group addresses arrive, and frames to the devices of the SIL Kit side (they have addresses of their own) do not. If devices outside must reach them, use an adapter that accepts promiscuous mode (a wired one usually does).
+```
+
+The startup line says which mode is in effect (see "[The startup line](#the-startup-line)"). How a refusal shows, by backend:
+
+| Backend | Refusal the bridge can tell | Refusal it cannot tell |
+|---|---|---|
+| `packet` | The kernel refuses the socket setting with an error. | A driver that accepts the setting and ignores it (some wireless drivers): the bridge takes the interface for promiscuous. |
+| `pcap` | libpcap's warning that the interface does not support it (result 2), or its error that this user may not use it (result -11). | As with `packet`. |
+| `npcap` | Opening with promiscuous mode fails and opening without it works. | An adapter that opens with promiscuous mode and ignores it, without a word (Npcap's way of opening passes no warning on). |
+
+Where the bridge cannot tell, the default behaves like `--promiscuous`: the startup line says `promiscuous on`, and the hint below does not appear.
+
 ### Hint when promiscuous mode is off
 
-With promiscuous mode off (`packet`, `npcap`, `pcap`), if no frame addressed to a MAC address of the SIL Kit side has been received 5 seconds after the bridge sent its first frame out, the bridge prints a hint as a warning, once. Here, a MAC address of the SIL Kit side means the source address of a frame that the bridge sent out.
+With promiscuous mode off (`packet`, `npcap`, `pcap`: `--no-promiscuous`, or an interface that refused it), if no frame addressed to a MAC address of the SIL Kit side has been received 5 seconds after the bridge sent its first frame out, the bridge prints a hint as a warning, once. Here, a MAC address of the SIL Kit side means the source address of a frame that the bridge sent out.
 
 ```
-no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
+no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and promiscuous mode is off (--no-promiscuous): without promiscuous mode an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, leave out --no-promiscuous.
+no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and the interface runs without promiscuous mode (it does not accept it, see the warning at the start): without promiscuous mode an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, use an adapter that accepts promiscuous mode (a wired one usually does).
 ```
+
+The first is for `--no-promiscuous`, the second for an interface that refused promiscuous mode. In promiscuous mode there is no hint.
 
 The reason for the warning: without promiscuous mode, an interface passes on only frames to its own address and to group addresses, and the SIL Kit devices have addresses other than the interface's. The warning also appears when you do not expect responses (when you only send frames out), so the text is conditional.
 
@@ -345,7 +376,7 @@ The bridge sends and receives frames unchanged through a packet socket bound to 
 - The bridge receives the frames that the interface receives, and the frames that the OS or other programs on the same computer send on that interface. It does not receive the frames it sends itself.
 - Frames that the bridge sends only go out over the wire. They are received by the devices beyond the wire and by programs that have the same interface open with a packet socket or pcap. The network stack of the same computer's OS (programs that use ordinary sockets) does not receive them.
 - The kernel removes the outer VLAN tag from the bytes of a received frame and passes it separately. The bridge puts it back in its original position, so tagged frames pass in both directions with their tags.
-- `--promiscuous` makes the bridge also receive frames not addressed to the interface, for as long as it runs (a socket setting; it is undone when the bridge stops). Without it, a physical NIC passes on only frames to its own MAC address and to group addresses. Give it to receive unicast frames that outside devices send to SIL Kit devices.
+- Promiscuous mode (see "[Promiscuous mode](#promiscuous-mode)") is a socket setting for as long as the bridge runs; it is undone when the bridge stops.
 - The bridge does not open interfaces that are not Ethernet (`lo`, for example).
 - Frames that the OS drops before handing them to the socket are counted in `ext_overruns`.
 - With receive offload (GRO, LRO) enabled, frames longer than the maximum length can appear. The bridge drops them as `oversize`. If this is a problem, turn off the offload on the interface (`sudo ethtool -K <name> gro off lro off`).
@@ -439,14 +470,7 @@ The tests load a fake library, but the means to do so exists only in a separate 
 - Frames that the library drops (because they were not read in time) are counted in `ext_overruns`.
 - For a wireless adapter (one that the library reports as `wireless`), the bridge warns once at startup.
 
-`--promiscuous` asks the library for promiscuous mode.
-
-| Backend | If the interface does not accept it |
-|---|---|
-| `pcap` on Linux | The bridge warns once and continues. |
-| `npcap` on Windows | There is no such warning: with the way the bridge opens the adapter, the library does not pass warnings on. |
-
-Whether `npcap` can open an adapter that does not accept promiscuous mode, or fails to open it, is **not verified**. If opening with `--promiscuous` fails, the message tells you to try without it (see the messages below).
+The bridge asks the library for promiscuous mode as "[Promiscuous mode](#promiscuous-mode)" says. Whether `npcap` fails to open an adapter that does not accept promiscuous mode, or opens it without the mode and says nothing, is **not verified** with the real Npcap.
 
 **Frames with incomplete checksums cannot be told apart.** The pcap library does not pass that flag on. Frames sent by the OS of the same computer (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)") reach SIL Kit with an incorrect checksum field, `ext_checksum_incomplete` stays 0, and no warning appears. On Linux, use `packet` if you need to know.
 
@@ -482,7 +506,7 @@ The warning texts:
 
 ```
 interface 'Wi-Fi' is a wireless adapter: wireless adapters and access points often pass only frames from and to the adapter's own MAC address, and the devices of the SIL Kit side have other addresses. If frames do not pass, use a wired adapter.
-interface 'va' cannot be put into promiscuous mode (result 2, not supported): only frames to its own address and to group addresses arrive, as without --promiscuous.
+interface 'va' does not accept promiscuous mode (result 2, not supported), so the bridge runs without it there: only frames to the interface's own address and to group addresses arrive, and frames to the devices of the SIL Kit side (they have addresses of their own) do not. If devices outside must reach them, use an adapter that accepts promiscuous mode (a wired one usually does).
 interface 'va' was opened with a warning (result 1).
 Npcap does not tell when frames arrive on interface 'Ethernet 2': the bridge finds them by looking every 100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, install the current Npcap, or try another adapter.
 libpcap does not tell when frames arrive on interface 'va': the bridge finds them by looking every 100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, update libpcap, or use --backend packet.
@@ -509,13 +533,15 @@ cannot open 'enp3s0' with libpcap (pcap_activate: result -8, socket: Operation n
 cannot open 'va' with libpcap (pcap_activate: result -9, va: That device is not up). The interface is down: bring it up with 'sudo ip link set va up'.
 cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter.
 cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter. The adapter may not accept promiscuous mode: try without --promiscuous.
+interface 'va' does not accept promiscuous mode (result 2, not supported), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says so), or use an adapter that accepts promiscuous mode (a wired one usually does).
+this user may not open 'va' in promiscuous mode with libpcap (result -11, the reason the library gives), and --promiscuous asks for it: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once or run as root, or leave out --promiscuous to let the bridge run without it (it then says so).
 ```
 
 - In parentheses, `result` is the result of the library function, and the text after it comes from the library.
 - The Npcap way of opening (`pcap_open()`) returns no result number, so an `npcap` message contains only the library's text. In the example above, the text after `pcap_open:` is a placeholder for the library's text.
 - The `npcap` "no interface" error always adds that disabled adapters are not in the list.
 - If the list contains no network adapter (only `\Device\NPF_Loopback`, or nothing), the error also mentions an installation for administrators only (the second example).
-- The `npcap` "cannot open" error adds the advice to try without `--promiscuous` only when the adapter was opened with `--promiscuous` (the last example).
+- The `npcap` "cannot open" error adds the advice to try without `--promiscuous` only when the adapter was opened with `--promiscuous`. The last 2 examples are the `pcap` errors with `--promiscuous` when the interface refuses promiscuous mode.
 
 #### Connecting within one computer on Windows
 
@@ -780,6 +806,8 @@ The kinds of `LinkError` (`kind()`) are `NoSuchInterface`, `PermissionDenied`, `
 | packet socket | `vehicle_sil/eth_link/os_links.hpp` | `make_packet_link()` | Linux |
 | pcap library | `vehicle_sil/eth_link/pcap_link.hpp` | `make_pcap_link()` | Windows, Linux |
 
+The packet socket and the pcap library take `promiscuous` (`eth_link::Promiscuous`: `Off`, `On`, `Auto`) in their options. `Off` is the default of the library, so that a program that set nothing keeps its behavior; the executable gives `Auto` unless `--promiscuous` or `--no-promiscuous` says otherwise. `ExternalLink::promiscuous()` tells the mode in effect once the link has started (`nullopt` for a link without the mode, such as a TAP device), and `Auto` reports a refusal as one `Warning` event (`promiscuous_refused_warning()`).
+
 The external links of `os_links.hpp`:
 
 - On an OS other than Linux, `has_os_links()` is `false` and the create functions throw `LinkError`.
@@ -849,7 +877,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 - Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
 - A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
 - Frames that the bridge sends do not come back to the bridge.
-- `--promiscuous` raises the promiscuity of the interface only while the bridge runs.
+- Promiscuous mode (`--promiscuous`, and the default) raises the promiscuity of the interface only while the bridge runs.
 - Health lines for the link going up and down.
 - UDP sent by the OS stack (from the other end of the veth pair and from the bridge's own interface) is received unchanged by a peer on the SIL Kit side, counted in `ext_checksum_incomplete`, and warned about once only.
 - After `ethtool -K <name> tx off` as the warning says, there is neither a count nor a warning.
@@ -891,7 +919,7 @@ Verified by hand against the real Npcap, on the virtual NIC of a virtual machine
 - `wpcap.dll` loads from `System32\Npcap` (and `Packet.dll` is found). The functions the bridge uses are there, and the structures have the expected shape (the list, frame length and content, the dropped count).
 - With the receive event, the bridge receives without busy-waiting and without losing frames.
 - Connection names appear in the list and match `--interface`, in ASCII and in Japanese (English Windows), in a console and in a file. The adapter identifier (lower case, without braces) and the pcap name open the adapter too. A name that differs only in upper and lower case does not match.
-- Round trips between a peer on the SIL Kit side and a device beyond the adapter. Without `--promiscuous`, unicast frames to SIL Kit devices are not received and the hint warning appears.
+- Round trips between a peer on the SIL Kit side and a device beyond the adapter. Without promiscuous mode (`--no-promiscuous` today; the default was off then), unicast frames to SIL Kit devices are not received and the hint warning appears.
 - Frames pass in both directions with other programs that open the same adapter with Npcap (on the virtual NIC and on the KM-TEST Loopback Adapter).
 - Npcap gives a handle back the frames that handle sent. A handle opened with `PCAP_OPENFLAG_NOCAPTURE_LOCAL` does not receive its own transmissions but receives those of other handles.
 - On an adapter that the bridge opens the current way (`pcap_open()` with the option not to receive its own transmissions), the bridge's transmissions do not come back to it (also with `--no-mac-guard`). 2 bridges on the same adapter warn and stop forwarding, whichever starts first. Receiving is not delayed, and the bridge uses no CPU when idle.
@@ -902,7 +930,7 @@ Verified by hand against the real Npcap, on the virtual NIC of a virtual machine
 - On the KM-TEST Loopback Adapter, frames that the OS sends reach the bridge, and frames that the bridge sends do not reach programs that use ordinary OS sockets (see "[Connecting within one computer on Windows](#connecting-within-one-computer-on-windows)").
 - On a stop request (Ctrl+C, Ctrl+Break), the bridge prints the statistics and exits with code 0. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Disabled adapters are not in the list.
 - Npcap installed without the limit can be used by users who are not administrators. If Npcap was installed for administrators only and a user who is not an administrator uses it, the bridge stops at the elevation prompt.
-- Physical NIC: one USB Ethernet adapter (ASIX AX88772, 100 Mbit/s, the driver that comes with Windows), passed through to the virtual machine, on a LAN with the network stack of the host computer (on its own NIC) as the peer (ARP). The list and `--interface` find the adapter. Without `--promiscuous`, the request goes out, the unicast reply is not received, and the hint warning appears. With `--promiscuous`, the adapter accepts promiscuous mode and the reply reaches the SIL Kit side. The bridge's transmissions do not come back to it, and no loop warning appears. Frames that the OS sends on the adapter reach the bridge. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Ctrl+C prints the statistics and exits with code 0.
+- Physical NIC: one USB Ethernet adapter (ASIX AX88772, 100 Mbit/s, the driver that comes with Windows), passed through to the virtual machine, on a LAN with the network stack of the host computer (on its own NIC) as the peer (ARP). The list and `--interface` find the adapter. Without promiscuous mode (`--no-promiscuous` today; the default was off then), the request goes out, the unicast reply is not received, and the hint warning appears. With `--promiscuous`, the adapter accepts promiscuous mode and the reply reaches the SIL Kit side. The bridge's transmissions do not come back to it, and no loop warning appears. Frames that the OS sends on the adapter reach the bridge. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Ctrl+C prints the statistics and exits with code 0.
 
 ### Not verified
 
@@ -912,7 +940,7 @@ Windows:
 - High traffic on a physical NIC, and VLAN tags on a physical NIC.
 - Windows in Japanese (how its console shows connection names in Japanese).
 - Computers with Npcap installed in WinPcap compatible mode.
-- Whether an adapter that does not accept promiscuous mode can be opened with `--promiscuous`, or fails to open (and the library's text if it fails).
+- An adapter that refuses promiscuous mode: whether it fails to open with promiscuous mode (the bridge then opens it again without, and warns) or opens without it and says nothing (the bridge then cannot tell). The fallback is tested with the fake library only.
 - Whether there is an Npcap or adapter that accepts the option against echoes but still echoes the bridge's own transmissions.
 - The confirmation prompt that Windows with a desktop shows for Npcap installed for administrators only.
 - Whether transmit congestion is ever counted in `ext_queue_full` with the real Npcap (it did not occur in the checks).
@@ -921,7 +949,7 @@ Linux:
 
 - Whether libpcap can tell that the transmit queue is congested (`ext_queue_full`). The library reports failures as a single kind, so the bridge tells them apart if the OS error number is still there. Verified with the fake library only.
 - Physical NICs, and round trips with real hardware or another computer beyond them.
-- How frames are received with and without `--promiscuous`. A veth passes every frame to the socket even without promiscuous mode, so there is no difference in a namespace. The promiscuous mode hint warning is verified only in tests with a replaced clock.
+- How frames are received with and without promiscuous mode, and an interface that refuses it. A veth passes every frame to the socket even without promiscuous mode, so there is no difference in a namespace, and it accepts the mode. The promiscuous mode hint warning is verified only in tests with a replaced clock.
 - Whether an executable with `setcap cap_net_raw+ep` can find SIL Kit as a shared library. In an executable granted privileges, the environment variables for finding libraries may have no effect.
 - The message when connecting to a TAP device owned by another user. The tests check the wording, but no test could create a situation in which the kernel returns that error.
 - Situations in which receive offload makes long frames appear; wireless adapters.
@@ -981,7 +1009,8 @@ These tests run, as processes, the executable linked with a fake external link (
 - `ethernet_bridge.integration.pcap-*` uses an executable with the same content as the installed one, except that the library location is changed to the fake library (`vehicle_sil_ethernet_bridge_on_fake_pcap`).
 - `ethernet_bridge.integration.pcap-*` checks round trips and statistics, the list, the messages when the library is missing or old (3, before connecting to SIL Kit), a missing device (3) and a read failure (1).
 - `pcap-describe` checks that `--describe` answers without the library.
-- `pcap-launcher` writes a configuration file with the bridge (`role: bridge`, `required: false`, `--promiscuous`) and an ECU on its network (`eth_bridge_it_ecu.cpp`), with `registry_uri` on port 0. It checks that `check` passes without a finding and lists the bridge on the network, that the ECU's frames go out through the bridge and the device's answers come back to the ECU (a scenario expects them), and that the bridge ends with exit code 0 when the run ends.
+- `pcap-promiscuous` checks the default on a device that accepts promiscuous mode and on one that refuses it (the warning and the startup line), `--no-promiscuous`, `--promiscuous` on the one that refuses it (exit code 3), and both options together (exit code 4).
+- `pcap-launcher` writes a configuration file with the bridge (`role: bridge`, `required: false`) and an ECU on its network (`eth_bridge_it_ecu.cpp`), with `registry_uri` on port 0. It checks that `check` passes without a finding and lists the bridge on the network, that the ECU's frames go out through the bridge and the device's answers come back to the ECU (a scenario expects them), and that the bridge ends with exit code 0 when the run ends.
 
 ### `ethernet_bridge.netns.*`
 

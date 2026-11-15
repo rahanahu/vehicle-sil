@@ -21,8 +21,13 @@ struct PcapLinkOptions
     /// The interface: its pcap name, or on Windows also the name of the network connection
     /// ("Ethernet 2") or the adapter's identifier ("{4D36E972-...}", with or without braces).
     std::string name;
-    /// Receive frames to every address while the link is started.
-    bool promiscuous = false;
+    /// Receive frames to every address while the link is started. A refusal shows as libpcap's
+    /// warning that the interface does not support it or its error that this user may not use it,
+    /// and as a failure of Npcap's pcap_open() that does not come without promiscuous mode
+    /// (On: start() fails; Auto: the link opens without it and warns). An adapter that opens
+    /// without promiscuous mode and says nothing cannot be told. Off by default, as before there
+    /// was a choice; vehicle_sil_ethernet_bridge gives Auto.
+    Promiscuous promiscuous = Promiscuous::Off;
     /// Empty: the installed library. On Windows that is wpcap.dll in the Npcap directory of the
     /// system directory, loaded by its full path and looked for nowhere else; on Linux
     /// libpcap.so.1, then libpcap.so.0.8, as the system's loader finds them.

@@ -85,6 +85,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
     pcap-no-interface
     pcap-no-library
     pcap-old-library
+    pcap-promiscuous
     pcap-roundtrip
     stop-request
   ARGS --registry $<TARGET_FILE:sil-kit-registry>

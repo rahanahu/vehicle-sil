@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -26,6 +27,29 @@ enum class LinkEventKind
     /// Something the user should know that does not stop the link; `detail` tells what.
     Warning,
 };
+
+/// Whether a link on a network adapter receives the frames to every address (promiscuous mode),
+/// or only those to the adapter's own address and to group addresses. Devices behind a bridge
+/// have addresses of their own, so frames to them arrive only in promiscuous mode. The links that
+/// take it: the packet socket and the pcap link (a TAP device gets every frame anyway).
+enum class Promiscuous
+{
+    Off,  ///< only frames to the adapter's own address and to group addresses
+    /// Every frame; start() fails (LinkError) where the adapter refuses promiscuous mode and the
+    /// link can tell (the link's description says where it can).
+    On,
+    /// Every frame where the adapter accepts promiscuous mode; where it refuses (and the link can
+    /// tell), the link runs without it and says so in one Warning at the start.
+    Auto,
+};
+
+/// "off", "on", "auto".
+[[nodiscard]] std::string_view to_string(Promiscuous mode) noexcept;
+
+/// The Warning of a link that runs without promiscuous mode because the adapter `name` refused it
+/// (Promiscuous::Auto): what happened (`why`, the OS's or the library's text), what it means and
+/// what to do.
+[[nodiscard]] std::string promiscuous_refused_warning(std::string_view name, std::string_view why);
 
 /// Whether the interface's link is up, as far as the link can tell.
 enum class LinkState
@@ -130,6 +154,10 @@ public:
     /// (e.g. "tap 'vsil0' (TAP device in this computer)").
     [[nodiscard]] virtual std::string describe() const = 0;
     [[nodiscard]] virtual std::string last_error() const = 0;
+    /// Whether the link receives frames to every address (true) or only those to the adapter's
+    /// own address and to group addresses (false), as start() set it up. nullopt: the link has no
+    /// such setting (a TAP device, a fake), or start() has not opened the interface yet.
+    [[nodiscard]] virtual std::optional<bool> promiscuous() const noexcept { return std::nullopt; }
 };
 
 } // namespace vehicle_sil::eth_link

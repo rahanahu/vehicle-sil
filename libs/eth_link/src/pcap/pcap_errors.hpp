@@ -61,12 +61,20 @@ inline constexpr int kPcapWarningPromiscuousNotSupported = 2;
 /// an adapter may refuse.
 [[nodiscard]] LinkError pcap_open_refused(std::string_view name, std::string_view why, bool promiscuous);
 
+/// libpcap: the device `name` refused promiscuous mode, which Promiscuous::On asks for: `status`
+/// is the warning that it does not support it, or the error that this user may not use it;
+/// `why` the library's text (may be empty). `executable`: this program's path, or empty.
+[[nodiscard]] LinkError pcap_promiscuous_refused(std::string_view name, int status, std::string_view why,
+                                                 std::string_view executable);
+
 /// The Warning for a device the library marks as wireless.
 [[nodiscard]] std::string pcap_wireless_warning(std::string_view name);
 /// The library's "packets are there" sign has never come up, and frames were found by the look
 /// the link takes every `period` anyway.
 [[nodiscard]] std::string pcap_no_wake_warning(PcapFlavor flavor, std::string_view name, std::chrono::milliseconds period);
-/// The Warning for a device that was opened with a warning of the library (`status` > 0).
+/// The Warning for a device that was opened with a warning of the library (`status` > 0) other
+/// than a refused promiscuous mode (that one is promiscuous_refused_warning() or
+/// pcap_promiscuous_refused()).
 [[nodiscard]] std::string pcap_activate_warning(std::string_view name, int status, std::string_view why);
 
 } // namespace vehicle_sil::eth_link::detail

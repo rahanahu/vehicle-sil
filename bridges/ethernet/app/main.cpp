@@ -53,7 +53,7 @@ constexpr auto kSilKitShutdownTimeout = std::chrono::milliseconds(2000);
 class EthernetBridgeHooks final : public bridge_runtime::BridgeHooks
 {
 public:
-    /// `hint`: null when the link is in promiscuous mode or has no such mode.
+    /// `hint`: null when the link has no promiscuous mode (tap).
     EthernetBridgeHooks(EthernetBridge& bridge, PromiscuousHint* hint, std::string interface_name) :
       bridge_(bridge),
       hint_(hint),
@@ -146,9 +146,10 @@ int run(const BridgeOptions& options)
     // is touched.
     const std::unique_ptr<eth_link::ExternalLink> link = make_external_link(options);
     std::unique_ptr<PromiscuousHint> hint;
-    if (reaches_real_adapters(*options.backend) && !options.promiscuous)
+    if (reaches_real_adapters(*options.backend))
     {
-        hint = std::make_unique<PromiscuousHint>(*link);
+        // It stays quiet while the link is in promiscuous mode (known once it has started).
+        hint = std::make_unique<PromiscuousHint>(*link, options.promiscuous);
     }
     eth_link::ExternalLink& external = hint ? static_cast<eth_link::ExternalLink&>(*hint) : *link;
 
@@ -181,7 +182,7 @@ int run(const BridgeOptions& options)
 
     bridge_runtime::RunBridgeOptions runOptions;
     runOptions.tag = kTag;
-    runOptions.ready_line = format_start_line(options, external.describe());
+    runOptions.ready_line = format_start_line(options, external.describe(), external.promiscuous());
     EthernetBridgeHooks hooks(bridge, hint.get(), options.interface_name);
     return bridge_runtime::run_bridge(runtime, hooks, runOptions);
 }

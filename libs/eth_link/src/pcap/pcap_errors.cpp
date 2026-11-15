@@ -160,6 +160,23 @@ LinkError pcap_open_refused(std::string_view name, std::string_view why, bool pr
     return {LinkErrorKind::Other, what};
 }
 
+LinkError pcap_promiscuous_refused(std::string_view name, int status, std::string_view why, std::string_view executable)
+{
+    const std::string detail = "result " + std::to_string(status) + (why.empty() ? "" : ", " + std::string(why));
+    if (status == kPcapErrorPromiscuousPermissionDenied)
+    {
+        return {LinkErrorKind::PermissionDenied,
+                "this user may not open " + quoted(name) + " in promiscuous mode with libpcap (" + detail +
+                    "), and --promiscuous asks for it: run 'sudo setcap cap_net_raw+ep " +
+                    (executable.empty() ? std::string("<this executable>") : std::string(executable)) +
+                    "' once or run as root, or leave out --promiscuous to let the bridge run without it (it then says so)."};
+    }
+    return {LinkErrorKind::Other,
+            "interface " + quoted(name) + " does not accept promiscuous mode (" + detail +
+                "), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says "
+                "so), or use an adapter that accepts promiscuous mode (a wired one usually does)."};
+}
+
 std::string pcap_wireless_warning(std::string_view name)
 {
     return "interface " + quoted(name) +
@@ -180,11 +197,6 @@ std::string pcap_no_wake_warning(PcapFlavor flavor, std::string_view name, std::
 std::string pcap_activate_warning(std::string_view name, int status, std::string_view why)
 {
     const std::string detail = "result " + std::to_string(status) + (why.empty() ? "" : ", " + std::string(why));
-    if (status == kPcapWarningPromiscuousNotSupported)
-    {
-        return "interface " + quoted(name) + " cannot be put into promiscuous mode (" + detail +
-               "): only frames to its own address and to group addresses arrive, as without --promiscuous.";
-    }
     return "interface " + quoted(name) + " was opened with a warning (" + detail + ").";
 }
 

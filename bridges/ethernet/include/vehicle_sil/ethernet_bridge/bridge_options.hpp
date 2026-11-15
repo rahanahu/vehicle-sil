@@ -61,7 +61,9 @@ struct BridgeOptions
     std::string interface_name;
     /// --all-frames: no EtherType or MAC restriction, also on a real adapter.
     bool all_frames = false;
-    bool promiscuous = false;
+    /// --promiscuous: On, --no-promiscuous: Off, neither: Auto (promiscuous mode where the
+    /// adapter accepts it). Only for the backends that reach real adapters.
+    eth_link::Promiscuous promiscuous = eth_link::Promiscuous::Auto;
     /// Create the TAP device for the bridge's lifetime (tap only).
     bool tap_create = false;
 

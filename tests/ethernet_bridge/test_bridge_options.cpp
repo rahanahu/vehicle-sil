@@ -62,7 +62,7 @@ TEST_CASE(options_minimal_tap_bridge_passes_every_frame)
     CHECK(o.bridge.filter.silkit_macs.empty());
     CHECK_EQ(o.bridge.filter.max_frame_bytes, std::size_t{1522});
     CHECK(o.bridge.filter.vlan_tpids == (std::vector<std::uint16_t>{0x8100, 0x88A8}));
-    CHECK(!o.promiscuous);
+    CHECK(o.promiscuous == vehicle_sil::eth_link::Promiscuous::Auto);
     CHECK(!o.tap_create);
 }
 
@@ -82,7 +82,7 @@ TEST_CASE(options_every_option)
     CHECK_EQ(o.bridge.filter.max_frame_bytes, std::size_t{9018});
     CHECK_EQ(o.bridge.mac_table_size, std::size_t{4096});
     CHECK(!o.bridge.mac_guard);
-    CHECK(o.promiscuous);
+    CHECK(o.promiscuous == vehicle_sil::eth_link::Promiscuous::On);
 
     const auto all = parse(with({"--all-frames"}, "npcap"));
     CHECK(all.all_frames);
@@ -170,6 +170,9 @@ TEST_CASE(options_combinations_that_do_not_apply)
     CHECK_TEXT(usage_error(with({"--promiscuous"})),
                "--promiscuous needs --backend packet, npcap or pcap: a TAP device gets every frame the OS sends to it "
                "anyway");
+    CHECK_TEXT(usage_error(with({"--no-promiscuous"})),
+               "--no-promiscuous needs --backend packet, npcap or pcap: a TAP device gets every frame the OS sends to it "
+               "anyway");
 }
 
 TEST_CASE(options_unknown_and_unexpected_arguments)
@@ -216,4 +219,23 @@ TEST_CASE(options_describe_needs_no_registry_and_checks_the_rest_as_a_run_does)
                "--backend packet sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.");
     CHECK_TEXT(usage_error({"--describe", "--list-interfaces"}),
                "--describe and --list-interfaces exclude each other: give one of them");
+}
+
+TEST_CASE(options_promiscuous_mode_is_auto_unless_one_option_says_otherwise)
+{
+    using vehicle_sil::eth_link::Promiscuous;
+    CHECK(parse(with({"--all-frames"}, "packet")).promiscuous == Promiscuous::Auto);
+    CHECK(parse(with({"--all-frames", "--promiscuous"}, "packet")).promiscuous == Promiscuous::On);
+    CHECK(parse(with({"--all-frames", "--no-promiscuous"}, "npcap")).promiscuous == Promiscuous::Off);
+    CHECK(parse(with({"--all-frames", "--promiscuous", "--promiscuous"}, "pcap")).promiscuous == Promiscuous::On);
+    for (const Args& both : {Args{"--promiscuous", "--no-promiscuous"}, Args{"--no-promiscuous", "--promiscuous"}})
+    {
+        Args args = both;
+        args.push_back("--all-frames");
+        CHECK_TEXT(usage_error(with(args, "packet")),
+                   "--promiscuous and --no-promiscuous contradict each other: give one of them, or neither (the bridge "
+                   "then uses promiscuous mode where the interface accepts it)");
+    }
+    // A TAP device: neither option, and the default does nothing.
+    CHECK(parse(with({})).backend == Backend::Tap);
 }

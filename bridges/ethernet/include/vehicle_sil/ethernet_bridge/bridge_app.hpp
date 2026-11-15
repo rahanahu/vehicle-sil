@@ -41,13 +41,21 @@ enum class HostOs
 ///    packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous off
 ///    (only frames to the interface's own address and to group addresses arrive); MAC guard on;
 ///    Ctrl+C to stop"
-/// `link`: eth_link::ExternalLink::describe(). The promiscuous part is left out for tap.
-[[nodiscard]] std::string format_start_line(const BridgeOptions& options, std::string_view link);
+/// `link`: eth_link::ExternalLink::describe(). `promiscuous`: ExternalLink::promiscuous() of the
+/// started link, the mode in effect; where the link does not tell (nullopt), the mode asked for
+/// (Auto counts as on). The promiscuous part is left out for tap. When the interface refused the
+/// mode asked for, it says so: "promiscuous off (the interface does not accept it: only frames
+/// ...)".
+[[nodiscard]] std::string format_start_line(const BridgeOptions& options, std::string_view link,
+                                            std::optional<bool> promiscuous = std::nullopt);
 
-/// Wraps a link that is not in promiscuous mode and notices the usual sign of that being the
-/// mistake: the bridge sent frames out, and no frame to a MAC address of the SIL Kit side came
-/// in for a while. (Without promiscuous mode an adapter passes on only frames to its own
-/// address and to group addresses; the SIL Kit devices have other addresses.)
+/// Wraps the link of a backend that reaches real adapters and, while the link is not in
+/// promiscuous mode, notices the usual sign of that being the trouble: the bridge sent frames
+/// out, and no frame to a MAC address of the SIL Kit side came in for a while. (Without
+/// promiscuous mode an adapter passes on only frames to its own address and to group addresses;
+/// the SIL Kit devices have other addresses.) Whether the link is in promiscuous mode is its
+/// promiscuous(), or where it does not tell, the mode asked for (`requested`; Auto counts as on).
+/// The warning says why the mode is off: --no-promiscuous, or the interface refused it.
 ///
 /// A frame that came in before the bridge sent from its destination counts too: the addresses
 /// frames came in for are remembered until the SIL Kit side is known, up to kMaxAddresses of
@@ -69,11 +77,13 @@ public:
 
     /// `link` must outlive this object. `after`: how long after the first frame sent the warning
     /// is due. `clock`: the time (tests give their own).
-    explicit PromiscuousHint(eth_link::ExternalLink& link, std::chrono::milliseconds after = std::chrono::seconds(5),
+    explicit PromiscuousHint(eth_link::ExternalLink& link, eth_link::Promiscuous requested = eth_link::Promiscuous::Off,
+                             std::chrono::milliseconds after = std::chrono::seconds(5),
                              Clock clock = [] { return std::chrono::steady_clock::now(); });
 
-    /// The warning, once, when it is due: a frame was sent `after` or longer ago and no frame to
-    /// an address of the SIL Kit side has come in, before or after. Call it from one thread.
+    /// The warning, once, when it is due: the link is not in promiscuous mode, a frame was sent
+    /// `after` or longer ago and no frame to an address of the SIL Kit side has come in, before or
+    /// after. Call it from one thread.
     [[nodiscard]] std::optional<std::string> take_warning();
 
     void start(EventHandler handler) override;
@@ -82,6 +92,7 @@ public:
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return link_.echoes_own_transmissions(); }
     [[nodiscard]] std::string describe() const override { return link_.describe(); }
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
+    [[nodiscard]] std::optional<bool> promiscuous() const noexcept override { return link_.promiscuous(); }
 
 private:
     using Addresses = std::array<std::atomic<std::uint64_t>, kMaxAddresses>;
@@ -93,6 +104,7 @@ private:
     [[nodiscard]] bool answered_before_sending() const noexcept;
 
     eth_link::ExternalLink& link_;
+    const eth_link::Promiscuous requested_;
     const std::chrono::milliseconds after_;
     const Clock clock_;
 

@@ -9,6 +9,7 @@
 #include <climits>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -155,13 +156,27 @@ public:
         const std::lock_guard lock(text_mutex_);
         return last_error_;
     }
+    [[nodiscard]] std::optional<bool> promiscuous() const noexcept override
+    {
+        const int now = promiscuous_.load();
+        return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
+    }
 
 private:
-    /// Opens `device` for sending and receiving without blocking. Throws LinkError.
+    /// Opens `device` for sending and receiving without blocking, in promiscuous mode as
+    /// options_.promiscuous says and the adapter allows (sets promiscuous_). Throws LinkError.
     PcapHandle* open(const PcapDevice& device, std::vector<std::string>& warnings);
-    /// The two ways to an activated capture; open() goes on from there.
-    PcapHandle* open_created(const PcapDevice& device, std::vector<std::string>& warnings);
-    PcapHandle* open_without_own_transmissions(const PcapDevice& device);
+    /// The two ways to an activated capture; open() goes on from there. Each returns whether the
+    /// capture is in promiscuous mode in `promiscuous`.
+    PcapHandle* open_created(const PcapDevice& device, std::vector<std::string>& warnings, bool& promiscuous);
+    PcapHandle* open_without_own_transmissions(const PcapDevice& device, std::vector<std::string>& warnings,
+                                               bool& promiscuous);
+    /// pcap_create() to pcap_activate() with promiscuous mode or without. A failure of the
+    /// activation is returned in `activated` (with the capture closed and nullptr), not thrown.
+    PcapHandle* create_and_activate(const PcapDevice& device, bool promiscuous, int& activated, std::string& why);
+    /// Npcap's pcap_open() with promiscuous mode or without: nullptr and the library's text in
+    /// `why` if it fails.
+    PcapHandle* try_open(const PcapDevice& device, bool promiscuous, std::string& why);
     void run();
     void fault(const std::string& detail);
     void warn(const std::string& detail);
@@ -193,6 +208,8 @@ private:
     std::unique_ptr<PcapWaiter> waiter_;
     std::unique_ptr<PcapInterfaceWatch> watch_;     // receive thread only; may be null
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
+    /// What open() set up: 1 promiscuous, 0 not, -1 not opened yet.
+    std::atomic<int> promiscuous_{-1};
     std::atomic<bool> faulted_{false};
     EventHandler handler_;
     std::thread thread_;
@@ -204,25 +221,51 @@ private:
     std::string described_;
 };
 
-PcapHandle* PcapLink::open_without_own_transmissions(const PcapDevice& device)
+PcapHandle* PcapLink::try_open(const PcapDevice& device, bool promiscuous, std::string& why)
 {
     // Npcap gives a capture the frames the capture itself sent, and only pcap_open() takes the
     // flag against it: a capture made by pcap_create() cannot be told. Without the flag the
     // bridge could not tell its own frames from those of a second bridge on the same adapter.
-    // The other settings are the ones open_created() makes, as arguments: the same snapshot
-    // length and read timeout, frames at once, promiscuous mode if asked for. pcap_open() tells
-    // a failure as a text only, and no warning of the activation.
-    const int flags = kPcapOpenNoCaptureLocal | kPcapOpenMaxResponsiveness | (options_.promiscuous ? kPcapOpenPromiscuous : 0);
+    // The other settings are the ones create_and_activate() makes, as arguments: the same
+    // snapshot length and read timeout, frames at once, promiscuous mode if asked for.
+    // pcap_open() tells a failure as a text only, and no warning of the activation.
+    const int flags = kPcapOpenNoCaptureLocal | kPcapOpenMaxResponsiveness | (promiscuous ? kPcapOpenPromiscuous : 0);
     char error[kPcapErrorTextBytes] = {};
     PcapHandle* const handle = api_.open(device.name.c_str(), kSnapshotBytes, flags, kReadTimeoutMs, nullptr, error);
     if (handle == nullptr)
     {
-        throw pcap_open_refused(display_name(device), trimmed(pcap_text(error)), options_.promiscuous);
+        why = trimmed(pcap_text(error));
     }
     return handle;
 }
 
-PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::string>& warnings)
+PcapHandle* PcapLink::open_without_own_transmissions(const PcapDevice& device, std::vector<std::string>& warnings,
+                                                     bool& promiscuous)
+{
+    promiscuous = options_.promiscuous != Promiscuous::Off;
+    std::string why;
+    if (PcapHandle* const handle = try_open(device, promiscuous, why))
+    {
+        return handle;
+    }
+    if (options_.promiscuous == Promiscuous::Auto)
+    {
+        // pcap_open() says no more than a text: a capture that opens without promiscuous mode
+        // shows that the adapter refused that mode.
+        std::string again;
+        if (PcapHandle* const handle = try_open(device, false, again))
+        {
+            promiscuous = false;
+            warnings.push_back(
+                promiscuous_refused_warning(display_name(device), why.empty() ? "pcap_open gave no reason" : "pcap_open: " + why));
+            return handle;
+        }
+        throw pcap_open_refused(display_name(device), again, false);
+    }
+    throw pcap_open_refused(display_name(device), why, promiscuous);
+}
+
+PcapHandle* PcapLink::create_and_activate(const PcapDevice& device, bool promiscuous, int& activated, std::string& why)
 {
     const std::string& shown = display_name(device);
     const std::string executable = library_->executable_path();
@@ -240,27 +283,65 @@ PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::st
         }
     };
     must(api_.set_snaplen(handle, kSnapshotBytes), "pcap_set_snaplen");
-    must(api_.set_promisc(handle, options_.promiscuous ? 1 : 0), "pcap_set_promisc");
+    must(api_.set_promisc(handle, promiscuous ? 1 : 0), "pcap_set_promisc");
     must(api_.set_timeout(handle, kReadTimeoutMs), "pcap_set_timeout");
     // Without it the library hands frames over in batches, up to the read timeout late.
     must(api_.set_immediate_mode(handle, 1), "pcap_set_immediate_mode");
-    const int activated = api_.activate(handle);
-    if (activated < 0)
+    activated = api_.activate(handle);
+    why = activated != 0 ? trimmed(pcap_text(api_.geterr(handle))) : std::string{};
+    return activated < 0 ? nullptr : guard.release();
+}
+
+PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::string>& warnings, bool& promiscuous)
+{
+    const std::string& shown = display_name(device);
+    promiscuous = options_.promiscuous != Promiscuous::Off;
+    int activated = 0;
+    std::string why;
+    PcapHandle* handle = create_and_activate(device, promiscuous, activated, why);
+    // The adapter refused promiscuous mode: libpcap opened it without (a warning), or this user
+    // may capture but not in promiscuous mode (an error).
+    const bool refused = promiscuous && (activated == kPcapWarningPromiscuousNotSupported ||
+                                         activated == kPcapErrorPromiscuousPermissionDenied);
+    if (refused && options_.promiscuous == Promiscuous::On)
     {
-        must(activated, "pcap_activate");
+        if (handle != nullptr)
+        {
+            api_.close(handle);
+        }
+        throw pcap_promiscuous_refused(shown, activated, why, library_->executable_path());
+    }
+    if (refused)
+    {
+        promiscuous = false;
+        warnings.push_back(promiscuous_refused_warning(shown, "result " + std::to_string(activated) +
+                                                                  (why.empty() ? std::string{} : ", " + why)));
+        if (handle == nullptr)
+        {
+            handle = create_and_activate(device, false, activated, why);
+        }
+        else
+        {
+            activated = 0; // opened without it: the warning is said
+        }
+    }
+    if (handle == nullptr)
+    {
+        throw pcap_open_failed(flavor_, shown, "pcap_activate", activated, why, library_->executable_path());
     }
     if (activated > 0)
     {
-        warnings.push_back(pcap_activate_warning(shown, activated, trimmed(pcap_text(api_.geterr(handle)))));
+        warnings.push_back(pcap_activate_warning(shown, activated, why));
     }
-    return guard.release();
+    return handle;
 }
 
 PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& warnings)
 {
     const std::string& shown = display_name(device);
-    PcapHandle* const handle =
-        flavor_ == PcapFlavor::Npcap ? open_without_own_transmissions(device) : open_created(device, warnings);
+    bool promiscuous = false;
+    PcapHandle* const handle = flavor_ == PcapFlavor::Npcap ? open_without_own_transmissions(device, warnings, promiscuous)
+                                                            : open_created(device, warnings, promiscuous);
     OpenGuard guard(api_, handle);
     char error[kPcapErrorTextBytes] = {};
     if (const int type = api_.datalink(handle); type != kPcapLinkTypeEthernet)
@@ -271,6 +352,7 @@ PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& w
     {
         throw pcap_open_failed(flavor_, shown, "pcap_setnonblock", -1, trimmed(pcap_text(error)), library_->executable_path());
     }
+    promiscuous_.store(promiscuous ? 1 : 0);
     return guard.release();
 }
 
