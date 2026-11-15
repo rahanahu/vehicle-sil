@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 239,
-      "last_t_ms": 2390,
+      "last_seq": 249,
+      "last_t_ms": 2490,
       "time": {
         "event": "time",
-        "seq": 225,
-        "t_ms": 2250,
-        "sim_ms": 99210,
+        "seq": 235,
+        "t_ms": 2350,
+        "sim_ms": 104010,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -373,7 +373,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 235,
+        "seq": 245,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -397,7 +397,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 99210,
+          "sim_ms": 104010,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -461,7 +461,7 @@
           }
         ],
         "traffic": {
-          "before_ms": 99210,
+          "before_ms": 104010,
           "unplaced": [
             {
               "participant": "Logger",
@@ -488,8 +488,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 99200,
-                  "frames_sent": 993,
+                  "at_ms": 104000,
+                  "frames_sent": 1041,
                   "frames_received": 0
                 },
                 {
@@ -497,9 +497,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 99200,
+                  "at_ms": 104000,
                   "frames_sent": 0,
-                  "frames_received": 993
+                  "frames_received": 1041
                 }
               ]
             }
@@ -781,7 +781,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 199,
+          "kept": 209,
           "dropped": 0
         }
       },

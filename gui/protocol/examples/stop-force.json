@@ -28,8 +28,8 @@
       },
       "stop": "forced",
       "phase": "running",
-      "last_seq": 21,
-      "last_t_ms": 210,
+      "last_seq": 23,
+      "last_t_ms": 230,
       "time": {
         "event": "time",
         "seq": 21,
@@ -367,7 +367,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 1,
+          "kept": 3,
           "dropped": 0
         }
       },
