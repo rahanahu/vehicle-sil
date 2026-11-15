@@ -216,8 +216,8 @@ struct ScenarioStep
 /// is what a run did) mean the same here: variable, kind, line, step, from_ms, to_ms, shape, text.
 struct ScenarioLineText
 {
-    /// What is known of its times before the run.
-    enum class Timing
+    /// Where its times come from, as far as the check knows them before the run.
+    enum class TimeSource
     {
         Text,       ///< from_ms (and to_ms, if it has an end) are as the text says
         AfterWait,  ///< not known: its step comes after one that waits (`after_wait`)
@@ -228,12 +228,12 @@ struct ScenarioLineText
     std::size_t line = 0; ///< the step's; of a dither that "inputs" declares its entry's
     /// The step's index, from 1; empty for a dither that "inputs" declares.
     std::optional<std::size_t> step{};
-    /// The step's time; empty if `timing` is not Text.
+    /// The step's time; empty if `time_source` is not Text.
     std::optional<std::int64_t> from_ms{};
-    /// Where it ends by the text (a set: its time); empty if `timing` is not Text, and for a
+    /// Where it ends by the text (a set: its time); empty if `time_source` is not Text, and for a
     /// dither, which has no end (as in a timeline file).
     std::optional<std::int64_t> to_ms{};
-    Timing timing = Timing::Text;
+    TimeSource time_source = TimeSource::Text;
     std::size_t after_wait = 0; ///< AfterWait: the line of the step that waits
     /// What it is, as the step's text has it for this variable: "Body.level = 50",
     /// "Body.level to 80 over 1000 ms", "Body.level triangle amplitude 2 period 40 ms", "Body.level none".
@@ -242,7 +242,7 @@ struct ScenarioLineText
     std::optional<ScenarioShapeText> shape{};
 };
 /// "text", "after_wait", "first_write".
-[[nodiscard]] const char* line_timing_name(ScenarioLineText::Timing timing);
+[[nodiscard]] const char* line_time_source_name(ScenarioLineText::TimeSource source);
 
 /// A scenario that was read and checked against the participants: it can run as it is.
 struct Scenario
@@ -363,7 +363,7 @@ struct ScenarioRead
                                          const ScenarioContext& context = {});
 
 /// The dithers that the scenario's "inputs" declare, as lines of the list (kind "dither", no
-/// step, Timing::FirstWrite, no end).
+/// step, TimeSource::FirstWrite, no end).
 [[nodiscard]] std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario);
 
 /// A value as the messages show it: true, 42, 1.5, or an enum's item ("on (1)").

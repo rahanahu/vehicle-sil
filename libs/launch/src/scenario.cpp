@@ -1242,7 +1242,7 @@ private:
             {
                 line.to_ms = *time + *length;
             }
-            line.timing = time ? ScenarioLineText::Timing::Text : ScenarioLineText::Timing::AfterWait;
+            line.time_source = time ? ScenarioLineText::TimeSource::Text : ScenarioLineText::TimeSource::AfterWait;
             line.after_wait = time ? 0 : wait_line_;
             line.text = text;
             if (shape != nullptr && !shape->type.empty())
@@ -3826,13 +3826,13 @@ const char* step_kind_name(StepKind kind)
     return "set";
 }
 
-const char* line_timing_name(ScenarioLineText::Timing timing)
+const char* line_time_source_name(ScenarioLineText::TimeSource source)
 {
-    switch (timing)
+    switch (source)
     {
-    case ScenarioLineText::Timing::Text: break;
-    case ScenarioLineText::Timing::AfterWait: return "after_wait";
-    case ScenarioLineText::Timing::FirstWrite: return "first_write";
+    case ScenarioLineText::TimeSource::Text: break;
+    case ScenarioLineText::TimeSource::AfterWait: return "after_wait";
+    case ScenarioLineText::TimeSource::FirstWrite: return "first_write";
     }
     return "text";
 }
@@ -3846,7 +3846,7 @@ std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario)
         line.variable = scenario.variables[input.variable].text;
         line.kind = "dither";
         line.line = input.line;
-        line.timing = ScenarioLineText::Timing::FirstWrite;
+        line.time_source = ScenarioLineText::TimeSource::FirstWrite;
         line.text = input.text;
         line.shape = input.described;
         out.push_back(std::move(line));

@@ -4654,26 +4654,26 @@ void scenario_dither(const Options& o)
     const std::string shape = "\"shape\": {\n          \"type\": \"triangle\",\n          \"amplitude\": 2,\n          \"period_ms\": 80\n"
                               "        },\n";
     // (What a line of the timeline file has too is written as there: the text with the variable,
-    // the shape, the step; what the text does not say is null, and timing says why.)
+    // the shape, the step; what the text does not say is null, and time_source says why.)
     const std::string lists = "    \"inputs\": [\n      {\n        \"variable\": \"Engine.engine.throttle\",\n        \"line\": 10,\n"
                               "        \"dither\": {\n          \"shape\": {\n            \"type\": \"triangle\",\n            \"amplitude\": 2,\n"
                               "            \"period_ms\": 80\n          },\n"
                               "          \"text\": \"Engine.engine.throttle triangle amplitude 2 period 80 ms\"\n        }\n      }\n    ],\n"
                               "    \"lines\": [\n      {\n        \"variable\": \"Engine.engine.throttle\",\n        \"kind\": \"dither\",\n"
                               "        \"line\": 10,\n        \"step\": null,\n        \"from_ms\": null,\n        \"to_ms\": null,\n"
-                              "        \"timing\": \"first_write\",\n        \"after_line\": null,\n        " + shape +
+                              "        \"time_source\": \"first_write\",\n        \"after_line\": null,\n        " + shape +
                               "        \"text\": \"Engine.engine.throttle triangle amplitude 2 period 80 ms\"\n      },\n";
     const Captured checkedJson = launch(o, {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
     expect_code(checkedJson, 0, "check --json --scenario scenarios/throttle_dither.yaml");
     require(contains(lf(checkedJson.standard_output), "    \"steps\": 8,\n" + lists) &&
                 contains(lf(checkedJson.standard_output),
                          "        \"kind\": \"ramp\",\n        \"line\": 21,\n        \"step\": 4,\n        \"from_ms\": null,\n"
-                         "        \"to_ms\": null,\n        \"timing\": \"after_wait\",\n        \"after_line\": 16,\n        \"shape\": {\n"
+                         "        \"to_ms\": null,\n        \"time_source\": \"after_wait\",\n        \"after_line\": 16,\n        \"shape\": {\n"
                          "          \"type\": \"ramp\",\n          \"to\": 80,\n          \"over_ms\": 300\n        },\n"
                          "        \"text\": \"Engine.engine.throttle to 80 over 300 ms\"\n") &&
                 contains(lf(checkedJson.standard_output),
                          "        \"kind\": \"set\",\n        \"line\": 14,\n        \"step\": 1,\n        \"from_ms\": 0,\n        \"to_ms\": 0,\n"
-                         "        \"timing\": \"text\",\n        \"after_line\": null,\n        \"shape\": null,\n"
+                         "        \"time_source\": \"text\",\n        \"after_line\": null,\n        \"shape\": null,\n"
                          "        \"text\": \"Engine.engine.throttle = 50\"\n"),
             "the inputs and the lines in check --json:\n" + lf(checkedJson.standard_output));
     const Captured ranJson = launch(o, {"run", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);

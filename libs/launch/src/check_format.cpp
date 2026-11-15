@@ -299,8 +299,8 @@ void detail::write_scenario_lines_json(vehicle_sil::detail::JsonWriter& w, const
         number("step", line.step ? std::optional<std::int64_t>(static_cast<std::int64_t>(*line.step)) : std::nullopt);
         number("from_ms", line.from_ms);
         number("to_ms", line.to_ms);
-        w.string("timing", line_timing_name(line.timing));
-        number("after_line", line.timing == ScenarioLineText::Timing::AfterWait
+        w.string("time_source", line_time_source_name(line.time_source));
+        number("after_line", line.time_source == ScenarioLineText::TimeSource::AfterWait
                                  ? std::optional<std::int64_t>(static_cast<std::int64_t>(line.after_wait))
                                  : std::nullopt);
         shape(line.shape);
@@ -321,10 +321,10 @@ std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lin
         const bool dither = line.kind == "dither";
         // (The text without the variable, which has its own column.)
         const std::string what = line.text.rfind(line.variable + " ", 0) == 0 ? line.text.substr(line.variable.size() + 1) : line.text;
-        rows.push_back({line.variable, line.timing == ScenarioLineText::Timing::FirstWrite ? "first write" : ms(line.from_ms),
+        rows.push_back({line.variable, line.time_source == ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
                         dither ? "-" : ms(line.to_ms),
                         line.kind + " " + what +
-                            (line.timing == ScenarioLineText::Timing::AfterWait
+                            (line.time_source == ScenarioLineText::TimeSource::AfterWait
                                  ? " (after the wait of line " + std::to_string(line.after_wait) + ")"
                                  : ""),
                         std::to_string(line.line)});

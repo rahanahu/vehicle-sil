@@ -908,8 +908,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | キー | 意味 |
 |---|---|
 | `inputs[]` | `inputs` に宣言した入力ごとに `variable`、`line`（その入力の行）、`dither`（`shape` と `text`。下の `lines[]` の同じキーと同じ書き方）です。その機種で使わない宣言は入りません。 |
-| `lines[]` | 文面が入力に置くものの一覧です（上の人向けの表と同じ並び。`dither` を置くか外す入力だけ）。`--timeline` のファイルの `lines[]`（[simulation-run.md](simulation-run.md) の「入力の線」。実行で起きたこと）と同じ名前のキーは、同じ意味、同じ書き方です: `variable`、`kind`（`dither`、`set`、`ramp`、`wave`）、`line`、`step`（手順の `index`。`inputs` の宣言は null）、`from_ms`、`to_ms`、`shape`（`set` と `none` は null）、`text`（変数を含む文）。`base` と `base_source` は、実行しないと決まらないのでありません。照合だけのキーは `timing` と `after_line` です。 |
-| `lines[].timing` | `from_ms` と `to_ms` が文面でわかるかです。`text`: 文面の時刻（`to_ms` が null なのは、終わりのない `dither` だけ。タイムラインと同じ）。`after_wait`: 待つ手順の後ろなので、実行の前にはわからない（両方 null で、`after_line` がその待つ手順の行）。`first_write`: `inputs` に宣言した揺れで、その入力への最初の書き込みから乗る（`from_ms` は null）。 |
+| `lines[]` | 文面が入力に置くものの一覧です（上の人向けの表と同じ並び。`dither` を置くか外す入力だけ）。`--timeline` のファイルの `lines[]`（[simulation-run.md](simulation-run.md) の「入力の線」。実行で起きたこと）と同じ名前のキーは、同じ意味、同じ書き方です: `variable`、`kind`（`dither`、`set`、`ramp`、`wave`）、`line`、`step`（手順の `index`。`inputs` の宣言は null）、`from_ms`、`to_ms`、`shape`（`set` と `none` は null）、`text`（変数を含む文）。`base` と `base_source` は、実行しないと決まらないのでありません。照合だけのキーは `time_source` と `after_line` です。 |
+| `lines[].time_source` | `from_ms` と `to_ms` がどこから決まるか、文面でわかるかです。`text`: 文面の時刻（`to_ms` が null なのは、終わりのない `dither` だけ。タイムラインと同じ）。`after_wait`: 待つ手順の後ろなので、実行の前にはわからない（両方 null で、`after_line` がその待つ手順の行）。`first_write`: `inputs` に宣言した揺れで、その入力への最初の書き込みから乗る（`from_ms` は null）。 |
 
 ### `run --json` の `scenario`
 

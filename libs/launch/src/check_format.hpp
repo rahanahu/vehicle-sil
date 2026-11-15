@@ -49,9 +49,9 @@ void write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view ke
                          const std::string& timeline = {});
 /// The members "inputs" (the dithers the scenario's "inputs" declare: variable, line, dither with
 /// its shape and text) and "lines" (what the text puts on the inputs that have a dither: variable,
-/// kind, line, step, from_ms, to_ms, timing, after_line, shape, text), into the object `w` is in.
+/// kind, line, step, from_ms, to_ms, time_source, after_line, shape, text), into the object `w` is in.
 /// What a line of a timeline file has too has the same name and meaning; a time that is not known
-/// before the run is null ("timing" says why), and so is the end of a dither, which has none.
+/// before the run is null ("time_source" says why), and so is the end of a dither, which has none.
 /// Of a scenario with a dither (Scenario::has_dither); the check's and the run's are the same.
 void write_scenario_lines_json(vehicle_sil::detail::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
                                const std::vector<ScenarioLineText>& lines);

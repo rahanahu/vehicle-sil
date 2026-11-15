@@ -4477,7 +4477,7 @@ TEST_CASE(scenario_with_a_dither_lists_what_its_text_puts_on_the_inputs)
         {
             out += line.variable + " " + line.kind + " step " + (line.step ? std::to_string(*line.step) : "-") + " " +
                    (line.from_ms ? std::to_string(*line.from_ms) : "?") + "-" + (line.to_ms ? std::to_string(*line.to_ms) : "?") + " " +
-                   line_timing_name(line.timing) + " line " + std::to_string(line.line) +
+                   line_time_source_name(line.time_source) + " line " + std::to_string(line.line) +
                    (line.after_wait > 0 ? " after " + std::to_string(line.after_wait) : "") + (line.shape ? " [" + line.shape->type + "]" : "") +
                    ": " + line.text + "\n";
         }
