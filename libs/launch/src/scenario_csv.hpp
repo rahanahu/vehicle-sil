@@ -2,7 +2,7 @@
 //
 // The CSV file of a wave's points (`points: { file: <path>, value: <column> }`): its text read
 // into lines of cells. What a cell means (a time, a value of the variable) is decided by the
-// scenario's reader (scenario.cpp); this only splits the text. Internal.
+// scenario's reader (scenario_waves.cpp); this only splits the text. Internal.
 #pragma once
 
 #include <cstddef>
