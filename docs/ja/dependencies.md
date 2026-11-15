@@ -468,6 +468,8 @@ required でない coordinated の participant が、この順になります。
 
 **対応**: パッチ [0006](#0006-開始の待ちが終わったときに-lifecycle-が-error-を離れない) で直しています。2 つのコールバックは、participant が待ちを始めた状態のままのときだけ次へ進めます。Error になった participant は、止められるまで Error のままです。`ParticipantRuntime::start()` は例外を投げ、ecu_main の実行ファイルは、開始に失敗したときの終了コードで終わって、シミュレーションから抜けます。試験 `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` が、この順を作って確かめます。パッチがなければ落ちます。
 
+開始がまだ返事を待っている間に停止が来る順は、パッチでは直りません。SIL Kit は participant を Shutdown にしますが、終わりの状態を設定するはずの返事の待ちを捨てます。この待ちを 1 つずつしか行わないためです（`ParticipantReplies::CallAfterAllParticipantsReplied()`）。そのため `ParticipantRuntime::stop()` は、このように開始に失敗した後は、`shutdown_timeout` を待たずに、lifecycle が Shutdown になったときに待ちを終えます。試験 `core.participant_stop_after_a_failed_start_returns_once_the_lifecycle_is_in_shutdown` が、返事を遅らせてこの順を作ります。
+
 `ParticipantRuntime` には、パッチのない SIL Kit（利用側の `SilKit::SilKit`）への備えもあります。自分の participant が走り始める前に SIL Kit が出した Error を覚え、そのとき `start()` は、状態がその後どう変わっていても、Error で終わった開始と同じように例外を投げます。ステップのハンドラーも呼びません（[internals/core.md](internals/core.md#start-が戻るときの状態) の「`start()` が戻るときの状態」）。この備えは SIL Kit を Error に戻さないので、パッチがないと次の 2 つが残ります。
 
 - 開始に失敗した participant の停止を、SIL Kit が受け付けないことがあります。その participant は `shutdown_timeout` が過ぎるまで残り、時刻同期があると、その間は全 participant の仮想時間が進みません。

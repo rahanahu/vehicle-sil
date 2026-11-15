@@ -107,6 +107,8 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 
 `stop()` の待ちは、Error と Shutdown を合わせて `shutdown_timeout` までです。過ぎれば、Error の前でも停止を渡します。
 
+`stop()` は、ふつうは終わりの状態の future を待ちます。SIL Kit は、Shutdown になり、ほかの participant がそろって返事をしてから、これを設定します。走り始める前の Error で開始に失敗した後は、lifecycle が Shutdown になったときにも待ちを終えます。SIL Kit は返事の待ちを 1 つずつしか行わず、開始がまだ返事を待っている間に停止が来ると、停止の側の待ちが捨てられて、future が設定されないためです。
+
 次の場合は、Error を経ないか、Stopping の後で Error になります。
 
 - 失敗より前の `request_stop()`（失敗するステップのハンドラーが始まる前、`report_failure()` の前）は、ふつうの停止です。

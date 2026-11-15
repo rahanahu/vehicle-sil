@@ -589,3 +589,102 @@ TEST_CASE(participant_start_fails_for_a_participant_that_is_not_required_and_it_
     CHECK(memberError.empty());
     CHECK(memberState == orch::ParticipantState::Running);
 }
+
+TEST_CASE(participant_stop_after_a_failed_start_returns_once_the_lifecycle_is_in_shutdown)
+{
+    // The same stranger as above, with one more participant that replies late: its SIL Kit thread
+    // is held from before the required names are sent until the stranger's stop() has returned.
+    // So the stranger's start still waits for the replies when its Error comes and when its stop
+    // goes out. SIL Kit takes one wait for replies at a time and drops the one of the shutdown:
+    // the lifecycle gets to Shutdown, but the final state is never set. stop() must end at
+    // Shutdown and not wait for shutdown_timeout.
+    InProcessRegistry registry;
+    std::mutex holdMutex;
+    std::condition_variable holdChanged;
+    bool held = false;
+    bool released = false;
+    auto laggard = SilKit::CreateParticipant(
+        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)),
+        "Laggard", registry.uri);
+    laggard->CreateSystemMonitor()->AddParticipantStatusHandler([&](const orch::ParticipantStatus& status) {
+        if (status.participantName != "Stranger" || status.state != orch::ParticipantState::ServicesCreated)
+        {
+            return;
+        }
+        std::unique_lock lock(holdMutex);
+        held = true;
+        holdChanged.notify_all();
+        holdChanged.wait_for(lock, unit::scaled_timeout(60s), [&] { return released; });
+    });
+    const auto release = [&] {
+        const std::lock_guard lock(holdMutex);
+        released = true;
+        holdChanged.notify_all();
+    };
+
+    ParticipantRuntimeOptions memberOptions{"Member", registry.uri};
+    memberOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    ParticipantRuntime member(memberOptions);
+    ParticipantRuntimeOptions strangerOptions{"Stranger", registry.uri};
+    strangerOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    strangerOptions.virtual_time = VirtualTimeOptions{};
+    const auto shutdownTimeout = unit::scaled_timeout(15s);
+    strangerOptions.shutdown_timeout = shutdownTimeout;
+    ParticipantRuntime stranger(strangerOptions);
+    stranger.set_step_handler([](SimTime, SimDuration) {});
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+
+    std::thread memberStart([&] {
+        try
+        {
+            member.start(unit::scaled_timeout(60s));
+        }
+        catch (const std::exception&)
+        {
+        }
+    });
+    std::string strangerError;
+    std::thread strangerStart([&] {
+        try
+        {
+            stranger.start(unit::scaled_timeout(20s));
+        }
+        catch (const std::exception& e)
+        {
+            strangerError = e.what();
+        }
+    });
+    const auto created = [](const PeerStatus& status) { return status.state == orch::ParticipantState::ServicesCreated; };
+    const bool ready = stranger.wait_for_peer("Member", created, unit::scaled_timeout(20s))
+                       && unit::eventually(
+                           [&] {
+                               const std::lock_guard lock(holdMutex);
+                               return held;
+                           },
+                           unit::scaled_timeout(20s));
+    controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Member"}});
+    strangerStart.join();
+    const auto before = std::chrono::steady_clock::now();
+    stranger.stop("test");
+    const auto took = std::chrono::steady_clock::now() - before;
+    const auto strangerEnd = stranger.state();
+    const auto finalState = stranger.wait_until_finished(0ms);
+    release();
+    memberStart.join();
+    member.stop("test");
+
+    CHECK(ready);
+    CHECK(strangerError.find("failed to start, state: Error") != std::string::npos);
+    CHECK(strangerEnd == orch::ParticipantState::Shutdown);
+    CHECK(finalState == orch::ParticipantState::Shutdown);
+    const auto bound = unit::scaled_timeout(3s);
+    if (took >= bound)
+    {
+        throw vehicle_sil::unit::Failure(
+            "stop() after a start that SIL Kit failed took "
+            + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms (shutdown_timeout "
+            + std::to_string(shutdownTimeout.count()) + " ms), expected under " + std::to_string(bound.count())
+            + " ms: it has to end once the lifecycle is in Shutdown, as SIL Kit may never set the final state then");
+    }
+}
