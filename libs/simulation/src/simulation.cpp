@@ -167,7 +167,7 @@ struct Simulation::SilKitRun
     }
 
     /// Before a run, while nothing is started: std::invalid_argument for a name of
-    /// SilKitOptions::j1939_nodes that is not an ECU here.
+    /// SilKitOptions::j1939_nodes that is not an ECU here, and for entries that no node took.
     void require_j1939_nodes() const;
     void run(std::optional<SimDuration> stop_at);
 
@@ -199,7 +199,13 @@ void Simulation::SilKitRun::require_j1939_nodes() const
                                         (ecus.empty() ? "none" : ecus) + ")");
         }
     }
-    // The entries that no node took are refused by start_together(), before it starts any peer.
+    // start_together() refuses the entries that no node took as well, before it starts a peer.
+    // By then the run has its controller and counts as run: here nothing is started yet, and
+    // the caller can add the node and run.
+    for (const auto& peer : peers)
+    {
+        detail::require_j1939_nodes_taken(*peer);
+    }
 }
 
 void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)

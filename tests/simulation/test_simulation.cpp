@@ -1140,6 +1140,25 @@ TEST_CASE(simulation_refuses_j1939_nodes_for_no_ecu_and_for_no_node_before_it_st
                   "(VehicleCAN=from:0x10,address:0x01: no node at 0x10 in the code there; its nodes there: 0x00): correct "
                   "or remove them; nodes added after start() keep the values in their code");
     }
+    // An entry that no node took is refused before anything is started as well: the same
+    // refusal again, and once a node takes the entry, the simulation runs.
+    {
+        SilKitOptions options;
+        options.j1939_nodes = {{"Engine2", {node_entry("VehicleCAN", 0x10, 0x11)}}};
+        Simulation sim(options);
+        add_engine(sim.add_ecu("Engine1", 10ms));
+        Ecu& engine2 = sim.add_ecu("Engine2", 10ms);
+        const j1939::Name name = j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0).set_function(0x82);
+        auto& channel = engine2.j1939("VehicleCAN");
+        channel.add_node({0x20, j1939::Name{name}.set_identity_number(0x2346)});
+        const std::string expected = "PeerOptions::j1939_nodes has entries that no node took";
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run_for(100ms); }, expected));
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run_for(100ms); }, expected));
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run(); }, expected));
+        j1939::Node& taken = channel.add_node({0x10, name});
+        CHECK_EQ(taken.address(), 0x11);
+        sim.run_for(100ms);
+    }
     // What the entries of one ECU cannot be is refused when the ECU is added.
     {
         SilKitOptions options;
