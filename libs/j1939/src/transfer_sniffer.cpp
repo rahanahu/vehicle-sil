@@ -188,6 +188,28 @@ void TransferSniffer::advance(SimTime now)
     pass_on_what_the_handler_threw();
 }
 
+std::size_t TransferSniffer::end_transfers_of(Address address, SimTime time)
+{
+    check_not_in_handler("end_transfers_of()");
+    if (!started_ || time >= now_)
+    {
+        // What timed out before `time` ended then, whether or not advance() was called between.
+        move_time(time);
+    }
+    std::size_t ended = 0;
+    for (Session& s : sessions_)
+    {
+        if (s.active && (s.source == address || s.destination == address))
+        {
+            // Not by the receiver: end() forgets the announcement that waited behind it.
+            end(s, SniffEnd::Lost, time);
+            ++ended;
+        }
+    }
+    pass_on_what_the_handler_threw();
+    return ended;
+}
+
 void TransferSniffer::pass_on_what_the_handler_threw()
 {
     if (thrown_)

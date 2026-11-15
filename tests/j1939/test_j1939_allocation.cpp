@@ -18,6 +18,7 @@
 #include "vehicle_sil/j1939/diagnostics.hpp"
 #include "vehicle_sil/j1939/address_commander.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
+#include "vehicle_sil/j1939/listener.hpp"
 #include "vehicle_sil/j1939/monitor.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
@@ -955,6 +956,100 @@ TEST_CASE(typed_messages_do_not_allocate_in_steady_state)
     CHECK(resets > 300u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 40u);
+}
+
+TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
+{
+    // A Listener with handlers of every kind on a network with a node: single frames, a
+    // connection between two other ECUs in every step (sniffed) and now and then one that is
+    // never answered (it times out at a step's end). The frames are built before counting.
+    Bench bench;
+    Node& a = bench.add_node(0x80);
+    std::size_t handled = 0;
+    a.on_any_message([&](const Message&) { ++handled; });
+    vehicle_sil::j1939::ListenerOptions options;
+    options.sniffer.sessions = 4;
+    vehicle_sil::j1939::Listener listener(bench.network, options);
+    std::size_t messages = 0;
+    std::size_t bytes = 0;
+    std::size_t frames = 0;
+    std::size_t transfers = 0;
+    listener.on_message(Pgn{0xEF00}, [&](const Message& m) { bytes += m.data.size(); });
+    listener.on_any_message([&](const Message&) { ++messages; });
+    listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) { ++frames; });
+    listener.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer&) { ++transfers; });
+    // Handlers that are removed while the steps are counted: one from its own call, one from a
+    // node's handler.
+    std::size_t removed = 0;
+    vehicle_sil::j1939::ListenerSubscription once;
+    vehicle_sil::j1939::ListenerSubscription other(listener, listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) {}));
+    bool counting = false;
+    once = vehicle_sil::j1939::ListenerSubscription(listener, listener.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            once.reset();
+            ++removed;
+        }
+    }));
+    a.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            other.reset();
+        }
+    });
+    const Bytes message = payload(30);
+    std::vector<J1939Frame> round{frame(6, kPgnPropB, 0x90, kGlobal, {9, 8, 7}), frame(3, kPgnPropA, 0x91, 0x80, {1}),
+                                  rts(0x10, 0x20, 30, 0xEF00), cts(0x20, 0x10, 5, 1, 0xEF00)};
+    for (const auto& f : dts(0x10, 0x20, message, 1, 5))
+    {
+        round.push_back(f);
+    }
+    round.push_back(eoma(0x20, 0x10, 30, 0xEF00));
+    const J1939Frame unanswered = rts(0x40, 0x20, 30, 0xEF00);
+    int step = 0;
+    const auto inject_traffic = [&] {
+        const SimTime t = bench.last_time();
+        for (std::size_t i = 0; i < round.size(); ++i)
+        {
+            bench.inject(t + std::chrono::microseconds(100 * (i + 1)), round[i]);
+        }
+        if (++step % 160 == 0)
+        {
+            bench.inject(t + 5ms, unanswered);
+        }
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        inject_traffic();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    const std::size_t messagesBefore = messages;
+    counting = true;
+    std::size_t counted = 0;
+    constexpr std::size_t kSteps = 400;
+    for (std::size_t i = 0; i < kSteps; ++i)
+    {
+        inject_traffic();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK_EQ(messages - messagesBefore, 3 * kSteps); // two single frames and the sniffed connection
+    CHECK(bytes >= 30 * kSteps);
+    CHECK(frames >= 10 * kSteps);
+    CHECK(handled >= 2 * kSteps);
+    CHECK(transfers > kSteps);
+    CHECK_EQ(removed, 1u);
+    CHECK(!once.active());
+    CHECK(!other.active());
+    CHECK(listener.sniffer_statistics().timed_out >= 1u);
+    CHECK_EQ(listener.sniffer_statistics().completed, kSteps + 4); // the first step is before the first frames
+    CHECK(!bench.network.failed());
 }
 
 TEST_CASE(following_transfers_with_a_sniffer_does_not_allocate)

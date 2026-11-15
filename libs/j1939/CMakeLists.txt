@@ -1,6 +1,7 @@
 # vehicle_sil::j1939 - the J1939 stack (namespace vehicle_sil::j1939, headers
 # vehicle_sil/j1939/). Runs on vehicle_sil::can only: no SIL Kit, no Vector XL.
 add_library(vehicle_sil_j1939 STATIC
+  src/listener.cpp
   src/network.cpp
   src/node.cpp
   src/timer_set.cpp

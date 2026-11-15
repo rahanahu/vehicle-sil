@@ -282,11 +282,12 @@ What they check in the engine:
 - The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
 - `j1939.seat_*`: the listener seat, an internal interface of the engine (what it hears, its order against the `Observer`, handlers and timers, that it is read-only, that having it or not changes no trace)
 - `j1939.sniffer_*`: `TransferSniffer`, with the rules on hand-written frames and agreement with the receiving node of an engine that got the same frames (transfers between engines, fault injection with a fixed seed); `j1939.sniffer_boundary` checks that it does not depend on `Network`
+- `j1939.listener_*`: `Listener`: what it overhears from exchanges between engines matches the receiver, transmissions of nodes of the same `Network` are not passed, how node addresses are handled, the order of handlers, that it is read-only, construction and destruction; `j1939.sniffer_boundary` also checks that `listener.cpp` uses no engine internals other than the seat
 
 Virtual bus and SIL Kit give the same result:
 
 - With an in-process registry, the trace of the same scenario is the same on the virtual bus and on SIL Kit (also with the simple CAN Network Simulator)
-- `j1939_silkit.listen_only_participants_*`: adding listen-only participants (raw CAN, a `Network` without nodes, various step sizes) does not change a single line of each ECU's received data, the frames passed to its port, or its transmit acknowledgements and statistics
+- `j1939_silkit.listen_only_participants_*`: adding listen-only participants (raw CAN, a `Network` without nodes, the same with a `Listener`, various step sizes) does not change a single line of each ECU's received data, the frames passed to its port, or its transmit acknowledgements and statistics
 - In the same test, the listen-only participants send nothing (on both the virtual bus and SIL Kit)
 
 Protocol parts (`j1939_parts.*`):
@@ -626,11 +627,13 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | `Subscription`, `Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
 | `TransferSniffer` (follows the transfers between other ECUs from the frames; does not depend on `Network`) | `j1939/transfer_sniffer.hpp` |
+| `Listener`, `ListenerSubscription` (hears the messages of other participants, whatever their destination; the subscription holds a handler registration and removes it when destroyed) | `j1939/listener.hpp` |
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
 | Transfer sniffer | `src/transfer_sniffer.cpp` |
 | The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
+| `Listener`, which sits in the seat | `src/listener.cpp` |
 
 - Tests: `tests/j1939`
 - `ctest -R`: `^j1939\.`, `^j1939_silkit\.`

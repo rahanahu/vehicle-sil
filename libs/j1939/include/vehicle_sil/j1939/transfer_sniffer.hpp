@@ -48,7 +48,8 @@ enum class SniffEnd : std::uint8_t
     AbortedByReceiver, ///< Connection Abort from the receiver; `reason` is its reason byte.
     Replaced,          ///< The sender announced again before the transfer ended (for another group:
                        ///< when the receiver answered that announcement, see SniffSecondAnnouncement).
-    Lost,              ///< A broadcast with a missing, repeated or out-of-order packet.
+    Lost,              ///< A broadcast with a missing, repeated or out-of-order packet, or a transfer
+                       ///< ended by TransferSniffer::end_transfers_of() (its address is no longer followed).
     TimedOut,          ///< No frame of the transfer for too long.
     Refused,           ///< Complete, but of a group that is single-frame only (Request, Address
                        ///< Claimed): the engine's receiver does not hand such a message on either.
@@ -173,7 +174,7 @@ struct SnifferStatistics
     std::uint64_t aborted_by_sender = 0;
     std::uint64_t aborted_by_receiver = 0;
     std::uint64_t replaced = 0;
-    std::uint64_t lost = 0;
+    std::uint64_t lost = 0; ///< Broken broadcasts and transfers ended by end_transfers_of().
     std::uint64_t timed_out = 0;
     std::uint64_t refused = 0;
     // Announcements not followed:
@@ -251,6 +252,20 @@ public:
     /// decides the acknowledgements that waited for the time to move. A `now` before the latest
     /// time seen does nothing.
     void advance(SimTime now);
+
+    /// Ends every transfer followed from or to `address` as Lost (SniffedTransfer::time is
+    /// `time`) and reports each one; announcements remembered for them (SniffSecondAnnouncement)
+    /// are forgotten. Returns how many it ended. For the moment the caller stops feeding the
+    /// frames of an address: what happens there is no longer a conversation between other ECUs
+    /// (a Listener does this when a node of its own Network takes the address), or the ECU that
+    /// had the address lost it (code that feeds raw CAN frames may call it when it sees the
+    /// address claimed by another NAME; the sniffer does not read Address Claimed itself).
+    ///
+    /// `time` moves the time on first, like a frame of that time (a transfer that had timed out
+    /// before is reported as TimedOut, not as Lost); a `time` before the latest time seen moves
+    /// nothing. The handler rules of feed() apply (not from the handler: std::logic_error; what
+    /// the handler throws leaves this function when it is done).
+    std::size_t end_transfers_of(Address address, SimTime time);
 
     /// The transfers followed right now.
     [[nodiscard]] std::size_t active() const noexcept { return active_; }

@@ -1212,3 +1212,129 @@ TEST_CASE(sniffer_handles_the_frame_before_it_passes_on_what_the_handler_threw)
     CHECK_EQ(s.stats().orphan_control, 0u);
     CHECK_EQ(s.stats().orphan_data, 0u);
 }
+
+// --- ending the transfers of an address ---------------------------------------------------------
+
+TEST_CASE(sniffer_ends_the_transfers_from_and_to_an_address_as_lost)
+{
+    Sniffer s(with_broadcasts());
+    s.feed(at(0ms), rts(kA, kB, 30, kPgn));   // from A
+    s.feed(at(1ms), rts(kC, kA, 30, kPgn));   // to A
+    s.feed(at(2ms), bam(kA, 30, kOther));     // a broadcast of A
+    s.feed(at(3ms), rts(kB, kC, 30, kPgn));   // not A's
+    CHECK_EQ(s.sniffer.active(), 4u);
+    CHECK_EQ(s.sniffer.end_transfers_of(kA, at(5ms)), 3u);
+    CHECK_EQ(s.sniffer.active(), 1u);
+    CHECK(s.heard.size() == 3u);
+    for (const Heard& h : s.heard)
+    {
+        CHECK(h.end == SniffEnd::Lost);
+        CHECK(h.time == at(5ms));
+        CHECK(h.noticed == at(5ms));
+        CHECK(h.sa == kA || h.da == kA);
+        CHECK(h.data.empty());
+    }
+    CHECK(s.heard[0].sa == kA && s.heard[0].da == kB && s.heard[0].started == at(0ms));
+    CHECK(s.heard[1].sa == kC && s.heard[1].da == kA);
+    CHECK(s.heard[2].da == kGlobal);
+    CHECK_EQ(s.stats().lost, 3u);
+    // Nothing left to end, and the other transfer goes on to its end.
+    CHECK_EQ(s.sniffer.end_transfers_of(kA, at(6ms)), 0u);
+    const Bytes message = payload(30);
+    s.feed(at(10ms), cts(kC, kB, 5, 1, kPgn));
+    s.feed(at(20ms), dts(kB, kC, message, 1, 5));
+    s.feed(at(30ms), eoma(kC, kB, 30, kPgn));
+    CHECK(s.heard.size() == 4u);
+    CHECK(s.heard[3].end == SniffEnd::Completed);
+    CHECK(s.heard[3].data == message);
+    CHECK_EQ(s.stats().lost, 3u);
+    // The frames of the ended transfers find none, and a new announcement is followed again.
+    s.feed(at(40ms), cts(kB, kA, 5, 1, kPgn));
+    CHECK_EQ(s.stats().orphan_control, 1u);
+    s.feed(at(50ms), rts(kA, kB, 30, kPgn));
+    CHECK_EQ(s.sniffer.active(), 1u);
+}
+
+TEST_CASE(sniffer_ending_the_transfers_of_an_address_forgets_the_announcement_that_waited)
+{
+    Sniffer s;
+    open(s, 30);
+    s.feed(at(20ms), rts(kA, kB, 14, kOther)); // ignored and remembered
+    CHECK_EQ(s.stats().announcements_ignored, 1u);
+    CHECK_EQ(s.sniffer.end_transfers_of(kB, at(25ms)), 1u);
+    CHECK(s.ends() == (EndList{SniffEnd::Lost}));
+    CHECK_EQ(s.sniffer.active(), 0u);
+    // The receiver's answer to the remembered announcement starts nothing.
+    s.feed(at(30ms), cts(kB, kA, 2, 1, kOther));
+    CHECK_EQ(s.sniffer.active(), 0u);
+    CHECK_EQ(s.stats().started, 1u);
+    CHECK_EQ(s.stats().orphan_control, 1u);
+}
+
+TEST_CASE(sniffer_ending_the_transfers_of_an_address_moves_the_time_first)
+{
+    // A transfer that had timed out before is TimedOut whether or not advance() was called
+    // between, and an acknowledgement that waited is decided.
+    for (const bool advanced : {false, true})
+    {
+        Sniffer s;
+        s.feed(at(0ms), rts(kA, kB, 30, kPgn));
+        s.feed(at(1000ms), rts(kA, kC, 30, kPgn));
+        if (advanced)
+        {
+            s.sniffer.advance(at(1600ms));
+        }
+        CHECK_EQ(s.sniffer.end_transfers_of(kA, at(1600ms)), 1u);
+        CHECK(s.heard.size() == 2u);
+        CHECK(s.heard[0].end == SniffEnd::TimedOut);
+        CHECK(s.heard[0].time == at(1250ms));
+        CHECK(s.heard[1].end == SniffEnd::Lost);
+        CHECK(s.heard[1].da == kC);
+        CHECK(s.heard[1].time == at(1600ms));
+    }
+    {
+        Sniffer s;
+        open(s, 14);
+        s.feed(at(20ms), eoma(kB, kA, 14, kPgn)); // before any packet
+        CHECK_EQ(s.sniffer.end_transfers_of(kA, at(20ms)), 1u); // the same time: not decided yet
+        CHECK(s.ends() == (EndList{SniffEnd::Lost}));
+    }
+    {
+        Sniffer s;
+        open(s, 14);
+        s.feed(at(20ms), eoma(kB, kA, 14, kPgn));
+        CHECK_EQ(s.sniffer.end_transfers_of(kA, at(21ms)), 0u); // decided by the time
+        CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+        // An earlier time moves nothing back.
+        s.feed(at(100ms), rts(kA, kB, 30, kPgn));
+        CHECK_EQ(s.sniffer.end_transfers_of(kB, at(50ms)), 1u);
+        CHECK(s.heard.back().time == at(50ms));
+        CHECK(s.heard.back().noticed == at(100ms));
+    }
+}
+
+TEST_CASE(sniffer_ending_the_transfers_of_an_address_follows_the_handler_rules)
+{
+    TransferSniffer sniffer;
+    int calls = 0;
+    sniffer.on_transfer([&](const SniffedTransfer&) {
+        ++calls;
+        CHECK(throws_with<std::logic_error>(
+            [&] { static_cast<void>(sniffer.end_transfers_of(kA, at(1s))); },
+            "vehicle_sil::j1939::TransferSniffer: end_transfers_of() was called from the on_transfer handler. Copy "
+            "what the handler needs and call it after feed() or advance() has returned"));
+        throw std::runtime_error("handler " + std::to_string(calls));
+    });
+    sniffer.feed(TimedFrame{at(0ms), to_can(rts(kA, kB, 30, kPgn))});
+    sniffer.feed(TimedFrame{at(0ms), to_can(rts(kA, kC, 30, kPgn))});
+    // Both end; the first exception leaves the call when it is done.
+    CHECK(throws_with<std::runtime_error>([&] { static_cast<void>(sniffer.end_transfers_of(kA, at(1ms))); }, "handler 1"));
+    CHECK_EQ(calls, 2);
+    CHECK_EQ(sniffer.active(), 0u);
+    CHECK_EQ(sniffer.statistics().lost, 2u);
+    // Without transfers and without a handler it is a plain 0.
+    sniffer.on_transfer({});
+    CHECK_EQ(sniffer.end_transfers_of(kA, at(2ms)), 0u);
+    TransferSniffer fresh;
+    CHECK_EQ(fresh.end_transfers_of(kA, at(0ms)), 0u);
+}

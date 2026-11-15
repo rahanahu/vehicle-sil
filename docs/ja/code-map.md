@@ -282,11 +282,12 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - ツールキット（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
 - `j1939.seat_*`: エンジンの内部の口である聞き役の席（聞こえるもの、`Observer`、ハンドラー、タイマーとの順、読み取り専用であること、席の有無で記録が変わらないこと）
 - `j1939.sniffer_*`: `TransferSniffer` の、手で書いたフレームでの決まりと、同じフレームを受けたエンジンの受信側のノードとの一致（エンジンどうしの転送、種を固定した故障注入）。`j1939.sniffer_boundary` は `Network` に依らないことを検査する
+- `j1939.listener_*`: `Listener` の、エンジンどうしのやり取りを横から聞いた結果が受け手と一致すること、同じ `Network` のノードの送信が渡らないこと、ノードのアドレスの扱い、ハンドラーの順、読み取り専用であること、生成と破棄。`j1939.sniffer_boundary` は `listener.cpp` がエンジンの内部を席のほかに使わないことも検査する
 
 仮想バスと SIL Kit の一致:
 
 - プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（簡易 CAN Network Simulator ありでも）
-- `j1939_silkit.listen_only_participants_*`: 受信だけをする participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
+- `j1939_silkit.listen_only_participants_*`: 受信だけをする participant（生の CAN、ノードのない `Network`、それに `Listener` を付けたもの。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
 - 同じテストで、受信だけをする participant が何も送信しないこと（仮想バスと SIL Kit の両方で）
 
 プロトコルのコンポーネント（`j1939_parts.*`）:
@@ -626,11 +627,13 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Subscription`、`Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
 | `TransferSniffer`（ほかの ECU どうしの転送をフレームから追う。`Network` に依らない） | `j1939/transfer_sniffer.hpp` |
+| `Listener`、`ListenerSubscription`（ほかの participant のメッセージを、宛先が誰でも聞く。ハンドラーの登録を持って、壊れると外す） | `j1939/listener.hpp` |
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
 | 盗み聞き | `src/transfer_sniffer.cpp` |
 | トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
 | 聞き役の席（内部の口） | `src/frame_seat.hpp` |
+| 席に座る `Listener` | `src/listener.cpp` |
 
 - テスト: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
