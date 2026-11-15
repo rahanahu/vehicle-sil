@@ -861,7 +861,7 @@ TEST_CASE(a_hello_of_another_version_is_reported_and_makes_no_peer)
     wire::Bytes bytes;
     std::string why;
     CHECK(wire::encode_hello(hello, bytes, why));
-    bytes[4] = static_cast<std::uint8_t>(wire::kVersion + 1);
+    bytes[4] = static_cast<std::uint8_t>(wire::kNewestVersion + 1);
     bytes.push_back(0x55); // whatever that version adds
     publisher->Publish(detail::span_of(bytes));
     // And something that is no message at all.
@@ -885,7 +885,7 @@ TEST_CASE(a_hello_of_another_version_is_reported_and_makes_no_peer)
         {
             found = true;
             CHECK(link.state == LinkState::VersionMismatch);
-            CHECK_EQ(link.version, static_cast<std::uint16_t>(wire::kVersion + 1));
+            CHECK_EQ(link.version, static_cast<std::uint16_t>(wire::kNewestVersion + 1));
         }
     }
     CHECK(found);
@@ -1632,7 +1632,7 @@ TEST_CASE(hellos_beyond_the_bounds_are_refused_and_counted)
     wire::Bytes bytes;
     std::string why;
     CHECK(wire::encode_hello(newer, bytes, why));
-    bytes[4] = static_cast<std::uint8_t>(wire::kVersion + 1);
+    bytes[4] = static_cast<std::uint8_t>(wire::kNewestVersion + 1);
     flood.hello_out->Publish(topics::span_of(bytes));
     CHECK(eventually([&] { return side.transport->stats().refused_hellos == 7; }, 30s));
     CHECK_EQ(side.transport->links().size(), std::size_t{4});

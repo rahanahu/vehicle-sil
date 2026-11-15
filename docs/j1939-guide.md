@@ -44,7 +44,7 @@ namespace codec = vehicle_sil::j1939::codec;
 
 | You write | The stack handles |
 |---|---|
-| The node's address and NAME | Address Claim (contention, arbitrary address capability, receiving Commanded Address, the 250 ms wait) |
+| The node's address and NAME | Address Claim (contention, arbitrary address capability, receiving Commanded Address, the wait after the claim) |
 | The PGs to send, their periods and how to build their data | Keeping the periods, sending only while the node holds an address, stopping on DM13 |
 | The PGs to receive and what to do with them | Sorting by destination, reassembling transport protocol messages (9–1785 bytes) |
 | Whom to send a Request to, and what to do with the response | Waiting for the response, timeouts, retries, merging identical requests into one |
@@ -272,7 +272,7 @@ You can change the period, the destination and the priority later:
 - To answer a new request from the same peer, change the period instead of re-creating the part (`examples/pid_stream`).
 - To send in the step of the call, use `node.send()` instead of `trigger()`.
 
-The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (this includes the 250 ms wait after the Address Claim). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
+The node's address state decides when sending starts and stops. The sender sends nothing until the node can send (this includes the wait after the Address Claim, 250 ms by default). As soon as the node can send, it sends once and then starts counting the period. It stops when the node loses its address, and resumes when the node claims an address again.
 
 While broadcasts are stopped by DM13 (another node's DM13, or the node's own `BroadcastSuppression::suspend()`), the behavior depends on the destination:
 
@@ -282,6 +282,21 @@ While broadcasts are stopped by DM13 (another node's DM13, or the node's own `Br
 | To one address | Not stopped by default, because its treatment in the standard has not been verified. |
 
 By default, the current destination decides whether a transmission stops (calling `set_destination()` decides again). To change a sender created for one address to the global address, attach `BroadcastSuppression::of(node)` during setup; without it, the change throws `std::logic_error`. For either kind of transmission, you can fix the behavior with `PeriodicSenderOptions::suppressible` (true or false).
+
+### Times of the transport protocol (`NetworkOptions::timing`)
+
+Messages of 9 bytes or more go over the transport protocol: BAM to the global address, a connection (RTS/CTS) to one address. The `Network` sends the packets, asks again for missing ones and ends a transfer that stops. The times it waits, and the wait after the Address Claim, are fields of `NetworkOptions::timing`:
+
+| Field | Default | What it sets |
+|---|---|---|
+| `t1` | 750 ms | T1: how long a receiver waits for the next packet |
+| `t2` | 1250 ms | T2: how long a receiver waits for the first packet after its CTS |
+| `t3` | 1250 ms | T3: how long a sender waits for the receiver's CTS or EndOfMsgACK |
+| `t4` | 1050 ms | T4: how long a sender waits after a CTS that holds the connection |
+| `max_retransmit_requests` | 2 | Retransmission requests per window; when one more is needed, the receiver aborts |
+| `address_claim_wait` | 250 ms | How long a node holds what it sends after its Address Claimed |
+
+This project has not checked these defaults against the standard, which is why they can be set. Change them when the ECUs you simulate or connect to use other values: `Ecu::j1939(network, NetworkOptions{.timing = {...}})` (for `Peer`, `J1939ChannelOptions::network.timing`). A time of 0 or less makes the `Network` constructor throw `std::invalid_argument`. A `Listener` on the same `Network` uses the same times (see "Listen-only participants" below). The details are in "Transport protocol timers" in [internals/j1939.md](internals/j1939.md#transport-protocol-timers).
 
 ## Respond to a Request
 
@@ -819,6 +834,8 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 | `testkit::J1939Events` | Watch send requests, frames put on the bus, ends of transfers and address changes |
 | `testkit::FrameLog` | Watch the frames on the bus |
 
+A network has one `J1939Events` and a tap one `FrameLog`: creating a second one on the same network or tap is a `std::logic_error`, so share the first one with the helpers that need it.
+
 The recording and fault injection tools (`testkit::J1939Events`, `FrameLog`, `faults`) are in `vehicle_sil::testkit`. Link it to use them (`vehicle_sil::simulation` does not link it).
 
 `LocalBench` functions take names:
@@ -880,7 +897,7 @@ Choose the behavior on reconnection with the network's `NetworkOptions::on_recon
 | `j1939::OnReconnect::Announce` (default) | Each node with a NAME sends a Request for Address Claimed to the global address, and also sends its own Address Claimed. |
 | `j1939::OnReconnect::Nothing` | Sends nothing (simulates an ECU that does not notice it was disconnected). |
 
-With `Announce`, the other nodes' responses resolve conflicts with any node that took the same address during the disconnection. The node does not do the 250 ms wait after the claim. There is no option yet to restart the Address Claim from the beginning (with the wait).
+With `Announce`, the other nodes' responses resolve conflicts with any node that took the same address during the disconnection. The node does not do the wait after the claim. There is no option yet to restart the Address Claim from the beginning (with the wait).
 
 A fragment (`ecu` is an `Ecu&`, `kName` a NAME). `tests/simulation/test_disconnect.cpp` tests both values of `on_reconnect`.
 
@@ -935,7 +952,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 
 - `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
 - `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
-  - `on_message(pgn, handler)`, `on_any_message`, `on_transfer`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
+  - `on_message(pgn, handler)`, `on_any_message`, `on_transfer_end`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
   - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
   - `on_step(fn)`: calls `fn` every ECU step with the time of that step, after the handlers of the step and before the variables are sampled. Use it for what follows from elapsed time (such as counting how often messages stopped coming). The result depends on the granularity of the step size. As in handlers, only update the watcher's members. The functions of all watchers run from one `Ecu::on_step` function that the `Spy` registers when it is created: after the `ecu.on_step()` functions the application added before it created the `Spy`, and before those it added later (for example in the constructor body of a class that has the `Spy` as a member). If `fn` throws, the functions registered after it are not called in that step, and the step stops as when an `ecu.on_step()` function throws.
 
@@ -978,7 +995,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 - Using a `Listener` directly: instead of a `Spy`, you can create a `j1939::Listener` on the `Network`, add handlers and write variables with `ecu.output()`. Watching code takes a `Listener&` and adds handlers instead of creating its own `Listener`. An added handler is called until it is removed or the `Listener` is destroyed, so a watcher that can be destroyed before the `Listener` keeps the return value of the registration (`Listener::HandlerId`) in a `j1939::ListenerSubscription` member (the same shape as `j1939::Subscription` for a node's handlers). A `ListenerSubscription` removes the handler when destroyed or on `reset()`. It works within a step and from inside that handler itself, and destroying it after the `Listener` is safe. The missed-traffic counts are in `Listener::sniffer_statistics()` and `Network::statistics()`.
 - On J1939 (what a `Listener` passes):
   - `on_message(pgn, handler)` and `on_any_message(handler)`: messages sent by other participants, whatever their destination: single frames, messages sent with BAM, and messages sent over a connection (RTS/CTS) between 2 ECUs. The handler takes the same `j1939::Message` type as a node's handler, so nodes and listeners can share the functions that read it. You can add several handlers for the same PGN; they are called in the order they were added.
-  - `on_transfer(handler)`: how a connection between other ECUs ended (`SniffedTransfer`: completed, aborted, timed out or missed).
+  - `on_transfer_end(handler)`: how a connection between other ECUs ended (`SniffedTransfer`: completed, aborted, timed out or missed).
   - `on_frame(handler)`: one frame at a time (including TP.CM, TP.DT and frames to other addresses). Use it to reassemble messages yourself.
 - What it does not hear:
   - What nodes of the same `Network` sent. A `Listener` passes "what other participants said". Count the transmissions of your own nodes with the results on the sending side (`Node::on_transfer_end`, the results of `Requester`). With `ListenerOptions::hear_local`, frames and messages looped back between nodes of the same `Network` are passed too (with `ReceivedFrame::local` set), but loopback happens only with 2 or more nodes, so on a `Network` with one node it adds nothing. Even with `hear_local`, a connection (RTS/CTS) from a node to another participant passes only its frames, not its message.
@@ -986,11 +1003,11 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
   - What was not reassembled, and connections that could not be followed: the breakdown of the missed-traffic variables above.
 - Messages that may differ from the receiver's: a message of a connection between other ECUs has the same bytes as the receiving node's message when the transfer's `conflicting_packets` (packets seen with the sequence number of an earlier packet but different bytes) is 0. Otherwise the bus does not show which of the two the receiver took (the `Listener` passes the one it saw first). `Message` carries no mark for this. There are 2 ways to tell:
   - While `spy.conflicting_packets` (included in `spy.missed`) stays 0, every message passed is the same as the receiver's.
-  - Use the values in the `on_message` handler, and discard the value just taken if the `on_transfer` handler, called right after for the same transfer (same PGN, source and destination), sees it `Completed` with `SniffedTransfer::conflicting_packets` not 0. Other messages (single frames, messages sent with BAM, messages addressed to a node of this `Network`) get no `on_transfer` call, and they cannot differ from the receiver's.
-- A participant with its own nodes can use a `Listener` too. The `Network` handles connections addressed to its nodes and connections they send, and a message addressed to a node is passed once (it does not appear in `on_transfer`).
+  - Use the values in the `on_message` handler, and discard the value just taken if the `on_transfer_end` handler, called right after for the same transfer (same PGN, source and destination), sees it `Completed` with `SniffedTransfer::conflicting_packets` not 0. Other messages (single frames, messages sent with BAM, messages addressed to a node of this `Network`) get no `on_transfer_end` call, and they cannot differ from the receiver's.
+- A participant with its own nodes can use a `Listener` too. The `Network` handles connections addressed to its nodes and connections they send, and a message addressed to a node is passed once (it does not appear in `on_transfer_end`).
 - Handlers only read. Sending or registering a handler from inside a handler is a `std::logic_error`, and the participant fails and stops (also if the exception is swallowed). Update variables in handlers and send from `ecu.on_step`.
 - Time and order: the `Message::time` of a message sent over a connection is the time at which the receiver received the message (the last packet), the same time that the receiving node sees. The handler, however, is called after the receiver has answered that it received the message. So a message with an earlier time can be passed after a message with a later time. To find the latest value or a period, compare `time`, not the order of the calls. What follows from frames (messages, Aborts) does not depend on the step size of the listening participant. What follows from elapsed time (such as `TimedOut`) has a `time` that does not depend on the step size, but the step in which the handler is called does, so compare `time` here too.
-- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (with a `Spy`, `SpyOptions::listener.sniffer`) (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
+- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (with a `Spy`, `SpyOptions::listener.sniffer`). The timeouts follow the listening `Network`'s `NetworkOptions::timing` unless you set them; set them when the ECUs you listen to use other times than that `Network` (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
 - To see the events of a `Network` (including transmissions and address changes) for recording or tests, use a `j1939::Observer` (see "Observation (`Observer`)" in [internals/j1939.md](internals/j1939.md#observation-observer)). It can be set together with a `Listener`.
 - Raw CAN sends nothing unless you call `send()`. If you read the frames yourself but want connections between other ECUs followed and reassembled for you, pass the frames to a `j1939::TransferSniffer`.
 

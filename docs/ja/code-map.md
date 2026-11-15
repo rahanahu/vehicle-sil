@@ -654,7 +654,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
 | 盗み聞き | `src/transfer_sniffer.cpp` |
-| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
+| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、告知の形の検査。時間切れは `types.hpp` の `ProtocolTiming`） | `src/transport_wire.hpp` |
 | 聞き役の席（内部の口） | `src/frame_seat.hpp` |
 | 席に座る `Listener` | `src/listener.cpp` |
 
@@ -695,6 +695,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
 | ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
 | 引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| `Peer` の監視の出力の名前（`peer.*`、`j1939.<network>.*`）。`Peer` が登録し、ランチャーが読む | `ecu/monitor_names.hpp` |
 | バスからの切断（`ecu.connected`）の `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort` | `ecu/detail/bus_connection.hpp` |
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
@@ -1470,7 +1471,7 @@ flowchart TD
 | Control API | `run --control` | [ランチャーの Control Server](#ランチャーの-control-server) |
 | Control API | シナリオの実行中の読み取り専用 | [シナリオの実行中の Control Server](#シナリオの実行中の-control-server) |
 | Control API | `GetSnapshot` | [時刻と値をまとめて読む](#時刻と値をまとめて読む) |
-| Control API | `wire.cpp`、`kVersion` | [Agent と Hub の間のメッセージ](#agent-と-hub-の間のメッセージ) |
+| Control API | `wire.cpp`、`kVersion`、`kRevision` | [Agent と Hub の間のメッセージ](#agent-と-hub-の間のメッセージ) |
 | Control API | `control_silkit`、開始前の窓 | [SIL Kit の上のトランスポートと開始前の窓](#sil-kit-の上のトランスポートと開始前の窓) |
 | ブリッジ | 止め方、終了コード、監視の行 | [ブリッジの止め方と終了コード](#ブリッジの止め方と終了コード) |
 | ブリッジ | イーサネットのブリッジの出力とエラーの文 | [イーサネットのブリッジの出力](#イーサネットのブリッジの出力) |
@@ -2279,9 +2280,13 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- 並びを変えたら、`control/wire.hpp` の `kVersion` を上げます。復号は、自分のバージョンだけを受け付けます。
-- 相手が知らなくても困らない種類を追加するだけなら、上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
-- hello の先頭から participant 名までは、どのバージョンでも変えません。バージョンの違う相手の名前を読むためです。
+- バージョン 1 は変えません。vehicle-sil 0.1.0 でビルドした ECU が話します。
+- バージョン 2 に項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
+- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kNewestVersion` を上げ、古いバージョンも読み続けます。
+- `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
+- 要素の最小の大きさは、バージョンごとに違います（`kLeastV1`、`kLeastV2`）。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
+- 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
+- ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
 
 合わせて直すドキュメント:
 
@@ -2290,6 +2295,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 テスト:
 
 - `^control\.wire_`: 1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと、sanitizer のプリセットで失敗します。
+- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージがどちらのバージョンでも上限ちょうどまで詰まること。
+- `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
 - `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
 
 ### SIL Kit の上のトランスポートと開始前の窓

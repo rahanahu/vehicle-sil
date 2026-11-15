@@ -19,6 +19,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
     test_j1939_transport_bam.cpp
     test_j1939_transport_faults.cpp
     test_j1939_transport_rts.cpp
+    test_j1939_transport_timing.cpp
     test_j1939_types.cpp
   LINK vehicle_sil::j1939)
 target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

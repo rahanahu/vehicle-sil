@@ -15,9 +15,10 @@
 namespace vehicle_sil::testkit {
 
 /// Records every event of one J1939 network (an Observer; read only). The constructor sets it
-/// as the network's observer: only outside a step (std::logic_error otherwise); a network has
-/// one observer, so this replaces another one. Records beyond `capacity` are not kept, only
-/// counted (dropped()): a test that sees dropped() > 0 looked at an incomplete record.
+/// as the network's observer: only outside a step, and a network has one observer
+/// (std::logic_error otherwise: share one J1939Events per network). Records beyond `capacity`
+/// are not kept, only counted (dropped()): a test that sees dropped() > 0 looked at an
+/// incomplete record.
 class J1939Events final : public j1939::Observer
 {
 public:
@@ -52,8 +53,8 @@ private:
 };
 
 /// Records what passes through one TapPort (a TapListener; read only). The constructor sets
-/// it as the tap's listener (replacing another one). Records beyond `capacity` are only
-/// counted (dropped()).
+/// it as the tap's listener; a TapPort has one listener (std::logic_error if it has another:
+/// share one FrameLog per TapPort). Records beyond `capacity` are only counted (dropped()).
 class FrameLog final : public can::TapListener
 {
 public:

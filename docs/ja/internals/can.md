@@ -330,7 +330,7 @@ participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコ�
 - リスナーの中からその `TapPort` の `send()`、`release_before()`、`release_events_before()`、`set_listener()` を呼ぶと `std::logic_error` です。
 - 時間の領域と wakeup は包んだポートのものです。
 - 包んだポートと同じく、ドライバーのスレッドから使います。
-- リスナーは 1 つです。
+- リスナーは 1 つです。設定してある間に `set_listener()` で別のリスナーを設定すると、そのことを伝える `std::logic_error` になり、先のリスナーが聞き続けます。先のものからフレームを読むか（`TapPort` ごとに `testkit::FrameLog` を 1 つ）、`set_listener(nullptr)` で外してから設定します。同じリスナーをもう一度設定しても何も変わりません。
 - リスナーと `TapPort` は互いの登録を覚えているので、どちらを先に破棄しても安全です。
 
 ## SIL Kit のポート（`SilKitCanPort`）

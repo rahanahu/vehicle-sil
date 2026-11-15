@@ -910,6 +910,7 @@ sections:
 | トークンの扱い | 「[トークンの受け取り](#トークンの受け取り)」 |
 | Vite などの開発サーバーとの併用 | 「[開発サーバーを使う](#開発サーバーを使う)」 |
 | スライダーやランプの作り方 | 「[変数のコンポーネントを作る](#変数のコンポーネントを作る)」 |
+| ライブラリの型にない、ランチャーの結果のキーを読む | 「[ランチャーの結果を読む](#ランチャーの結果を読む)」 |
 | ライブラリが代行しないルール | 「[画面を作るときのルール](#画面を作るときのルール)」 |
 | 画面なしで API を使う方法 | 「[画面のないツールから使う](#画面のないツールから使う)」 |
 
@@ -1094,6 +1095,16 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
   ```
 
 - ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
+
+### ランチャーの結果を読む
+
+チェックの結果、実行の結果、指摘、ランチャーのイベントはランチャーが書いたものです。GUI サーバーはそのまま中継し、クライアントのライブラリはそのキーをすべて渡します。型のあるフィールド（例: 実行の結果の `traffic`）は、ランチャーの形式の版（`vehicle_sil_check`、`vehicle_sil_run`、`vehicle_sil_events`）に従います。ランチャーから読んだオブジェクトには、どれにも `raw`（届いたままのランチャーのオブジェクト）があるので、画面やパネルは、型にないキーもライブラリの更新を待たずに読めます。`raw` の値は確かめていません。型を確かめ、文字列として出してください。ライブラリの知らないイベントは、`client.connection.onBatch` にだけ届きます。詳しくは [gui/client/README.md](../../gui/client/README.ja.md#ランチャーのキーraw) の「ランチャーのキー（`raw`）」にあります。
+
+```ts
+const result = client.session.session.get()?.result; // RunResult | null
+for (const network of result?.traffic?.networks ?? []) console.log(network.name, network.delivered);
+const strict = result?.raw?.['strict']; // 型のないキー: unknown
+```
 
 ### 画面を作るときのルール
 
