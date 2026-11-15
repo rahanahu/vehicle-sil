@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vehicle_sil::eth_link {
 
@@ -74,6 +75,10 @@ struct LinkEvent
     /// that. The link passes the frame on as it is, and tells why and what to do in one Warning
     /// before the first such frame.
     bool checksum_incomplete = false;
+    /// Valid for Frame: this computer sent the frame on the interface (the link saw it go out),
+    /// whatever its source address. Set only where the link can tell (the packet link); false
+    /// elsewhere.
+    bool sent_here = false;
     /// Valid for Overrun.
     std::uint64_t count = 0;
     /// Valid for LinkState.
@@ -160,11 +165,14 @@ public:
     /// own address and to group addresses (false), as start() set it up. nullopt: the link has no
     /// such setting (a TAP device, a fake), or start() has not opened the interface yet.
     [[nodiscard]] virtual std::optional<bool> promiscuous() const noexcept { return std::nullopt; }
-    /// The MAC address of the interface start() opened: what this computer itself sends there
-    /// comes from it. Set before the link reports its first event, and fixed until stop().
-    /// nullopt: the link cannot tell, or start() has not opened the interface yet. A link that
-    /// wraps another passes the wrapped link's answer on.
-    [[nodiscard]] virtual std::optional<MacAddress> own_address() const noexcept { return std::nullopt; }
+    /// The MAC addresses this computer sends from on the link's side of the interface: those of
+    /// all of this computer's Ethernet adapters, as start() found them (once: an adapter added or
+    /// changed later is not in them). The bridge does not count a frame from one of them as a
+    /// frame from a device. Empty: nothing that comes in is this computer's own (a TAP device,
+    /// whose other end is this computer's network stack). nullopt: the link cannot tell, or it
+    /// has not started. Valid from the return of start() until stop(). A link that wraps another
+    /// passes the wrapped link's answer on.
+    [[nodiscard]] virtual std::optional<std::vector<MacAddress>> this_computer_addresses() const { return std::nullopt; }
 };
 
 } // namespace vehicle_sil::eth_link

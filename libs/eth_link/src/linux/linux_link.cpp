@@ -3,6 +3,8 @@
 
 #include "../os_link_errors.hpp"
 
+#include <ifaddrs.h>
+#include <linux/if_packet.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <poll.h>
@@ -11,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -79,14 +82,42 @@ std::optional<InterfaceState> interface_state(const std::string& name)
     if (::ioctl(control.get(), SIOCGIFHWADDR, &hardware) == 0)
     {
         state.link_type = hardware.ifr_hwaddr.sa_family;
-        if (state.link_type == ARPHRD_ETHER)
-        {
-            MacAddress address;
-            std::memcpy(address.bytes.data(), hardware.ifr_hwaddr.sa_data, address.bytes.size());
-            state.hardware_address = address;
-        }
     }
     return state;
+}
+
+std::optional<std::vector<MacAddress>> ethernet_addresses()
+{
+    struct ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0)
+    {
+        return std::nullopt;
+    }
+    std::vector<MacAddress> addresses;
+    for (const struct ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next)
+    {
+        if (entry->ifa_addr == nullptr || entry->ifa_addr->sa_family != AF_PACKET)
+        {
+            continue;
+        }
+        const auto* const link = reinterpret_cast<const sockaddr_ll*>(entry->ifa_addr);
+        if (link->sll_hatype != ARPHRD_ETHER || link->sll_halen != 6)
+        {
+            continue;
+        }
+        MacAddress address;
+        std::memcpy(address.bytes.data(), link->sll_addr, address.bytes.size());
+        if (std::find(addresses.begin(), addresses.end(), address) == addresses.end())
+        {
+            addresses.push_back(address);
+        }
+    }
+    ::freeifaddrs(list);
+    if (addresses.empty())
+    {
+        return std::nullopt;
+    }
+    return addresses;
 }
 
 std::vector<std::string> interface_names()
@@ -114,9 +145,10 @@ std::string executable_path()
 
 LinuxLink::LinuxLink(std::string name) : name_(std::move(name)) {}
 
-std::optional<MacAddress> LinuxLink::own_address() const noexcept
+std::optional<std::vector<MacAddress>> LinuxLink::this_computer_addresses() const
 {
-    return own_address_.load();
+    const std::lock_guard errors(error_mutex_);
+    return this_computer_;
 }
 
 std::uint64_t LinuxLink::take_overruns(int) noexcept
@@ -143,16 +175,16 @@ void LinuxLink::start(EventHandler handler)
         throw LinkError(LinkErrorKind::Other, "cannot start the link on '" + name_ + "' (eventfd): " + error_text(errno) + ".");
     }
     interface_index_ = ::if_nametoindex(name_.c_str());
-    const auto state = interface_state(name_);
-    own_address_.store(state ? state->hardware_address : std::nullopt);
     handler_ = std::move(handler);
     buffer_.assign(kReadBufferBytes, 0);
     reported_state_ = LinkState::Unknown;
     checksum_warned_ = false;
     faulted_.store(false);
+    auto thisComputer = ethernet_addresses();
     {
         const std::lock_guard errors(error_mutex_);
         last_error_.clear();
+        this_computer_ = std::move(thisComputer);
     }
     {
         const std::unique_lock lock(fd_mutex_);
@@ -346,6 +378,7 @@ void LinuxLink::run()
                     event.kind = LinkEventKind::Frame;
                     event.frame = result.frame;
                     event.checksum_incomplete = result.checksum_incomplete;
+                    event.sent_here = result.sent_here;
                     handler_(event);
                 }
                 else if (result.status == ReadStatus::Empty)

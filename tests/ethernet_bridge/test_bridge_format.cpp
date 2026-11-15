@@ -38,7 +38,7 @@ TEST_CASE(format_statistics_names_every_counter)
     s.silkit_tx_failures = 12;
     s.ext_checksum_incomplete = 14;
     s.ext_from_devices = 15;
-    // The keys and their order are what vehicle_sil_launch reads (docs/ethernet-bridge.md,
+    // The keys and their order are what programs that read the line rely on (docs/ethernet-bridge.md,
     // "Statistics"): a change here is a change of that agreement.
     CHECK_TEXT(format_statistics(s),
                "stats silkit_to_ext=1 ext_to_silkit=2 ext_from_devices=15 own_tx_dropped=3 loop_suspected=4 mac_unguarded=13 "

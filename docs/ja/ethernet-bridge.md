@@ -51,11 +51,11 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 [eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> tap 'vsil0' (TAP device in this computer): every frame, both ways; MAC guard on; Ctrl+C to stop
 ```
 
-手順 4 の表示です。OS が TAP デバイスに送信したフレームがあると、`ext_to_silkit` は 0 になりません。
+手順 4 の表示です。OS が TAP デバイスに送信したフレームがあると、`ext_to_silkit` は 0 になりません。TAP デバイスでは相手が OS なので、そのフレームは機器からのものに数えます（`ext_from_devices`。「[統計](#統計)」）。
 
 ```
 [eth-bridge] stopping
-[eth-bridge] stats silkit_to_ext=0 ext_to_silkit=6 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
+[eth-bridge] stats silkit_to_ext=0 ext_to_silkit=6 ext_from_devices=6 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
 [eth-bridge] stopped
 ```
 
@@ -305,11 +305,12 @@ no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (net
 物理のアダプターにフレームを出せるバックエンド（`packet`、`npcap`、`pcap`）で、ブリッジが外部へ最初にフレームを送信してから 10 秒たっても、そこの機器からフレームが 1 つも来ないとき（`ext_from_devices` が 0 のまま。「[統計](#統計)」）、ブリッジはヒントを 1 回だけ警告します。ケーブルが挿さっていない、機器の電源が入っていない、アダプターを取り違えた、のどれもこう見え、それでも送信は成功します。たとえば Hyper-V の `vEthernet` のアダプターは、その物理 NIC にケーブルがなくても接続済みのままです。
 
 ```
-nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (frames from this computer's own address 00:15:5d:01:02:03 do not count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
-nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (the bridge does not know this adapter's own address, so frames this computer sends there would count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
+nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (frames from the addresses of this computer's adapters do not count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
+nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (the bridge does not know the addresses of this computer's adapters, so frames this computer sends there would count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
 ```
 
-- 1 つ目は、ブリッジがアダプター自身の MAC アドレスを知っているとき、2 つ目は知らないときの文です。アダプター自身のアドレスからのフレームは、この PC が自分でそこへ送信したもの（ARP、IPv6）で、機器がいてもいなくても来るので、数えません。ブリッジはアドレスをバックエンドから知ります。`packet` はカーネルから、`pcap` は libpcap のインターフェースの一覧から、`npcap` は Windows から（アダプターの物理アドレス）です。
+- この PC がそこへ送信するフレーム（ARP、IPv6）は、機器がいてもいなくても来るので、数えません。この PC のどれかのアダプターの MAC アドレスからのフレーム（ブリッジのアダプター、そのアダプターに結んだスイッチの `vEthernet` のアダプター、そのアダプターを足にする Linux のブリッジ、その上の macvlan）と、`packet` では、カーネルがこの PC の送信と印を付けたフレームを、アドレスによらず数えません。ブリッジはアドレスを、起動のときに 1 回だけバックエンドから知ります（後から増えた・変わったアダプターは入りません）。`packet` はカーネルから、`pcap` は libpcap のインターフェースの一覧から、`npcap` は Windows から（すべてのアダプターの物理アドレス）です。1 つ目は知っているとき、2 つ目は知らないときの文です。
+- 同じ仮想スイッチのほかの仮想マシンのフレームは数えます。ブリッジは機器のフレームと見分けられず、ケーブルがなくても来ることがあります。
 - 時間は、外部へ最初に送信したときから数えます。それより前に機器から来たフレームもヒントを止め、機器からフレームが 1 つ来たら、ヒントは出ません。
 - レスポンスを待たない使い方（外部へ流すだけ）でも出るので、文は条件つきです。
 - `tap` ではヒントを出しません。TAP デバイスはこの PC の中にあるからです。
@@ -706,7 +707,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 |---|---|---|
 | `silkit_to_ext` | SIL Kit から外部へ送信したフレーム | — |
 | `ext_to_silkit` | 外部から SIL Kit へ渡したフレーム（`SendFrame()` が戻ったもの） | — |
-| `ext_from_devices` | 外部から来たフレームのうち、送信元が機器のもの。アダプター自身のアドレスでも、SIL Kit 側のアドレスでもないもの。フィルターの前に数える | — |
+| `ext_from_devices` | 外部から来たフレームのうち、この PC が送信したのではなく、送信元が SIL Kit 側のアドレスでもないもの。フィルターの前に数える | — |
 | `own_tx_dropped` | 外部リンクから戻ってきた、自分が送信したフレーム（自分の送信を戻す外部リンクだけ） | — |
 | `loop_suspected` | 送信元が両側にあるアドレスのフレーム | ○ |
 | `mac_unguarded` | MAC テーブルに入らず、ループを調べずに通したフレーム | ○ |
@@ -722,7 +723,9 @@ stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_s
 - 「問題の数」に ○ のあるキーが増えると、監視の行が出ます（`problems_grew()`）。転送した数、フィルターの数、`own_tx_dropped` は問題に数えません。
 - `silkit_tx_failures` のうち、SIL Kit が送信できなかったと確認したフレームは、渡した時点で `ext_to_silkit` にも数えてあります。
 - `ext_checksum_incomplete` に数えるのは、`packet` で、同じ PC の OS が送信したフレームです（「[同じ PC の OS のネットワークスタックと通信する](#同じ-pc-の-os-のネットワークスタックと通信する)」）。`ext_to_silkit` にも数えてあります。
-- `ext_from_devices` で、外の何かが答えているかが分かります。数えないもの: アダプター自身の MAC アドレスからのフレーム（この PC 自身のフレーム。ブリッジがアドレスを知る方法は「[機器から何も来ないときのヒント](#機器から何も来ないときのヒント)」のとおりで、知らなければ数えます）、SIL Kit 側のアドレスからのフレーム（`--src-mac` のアドレスと、MAC のルールがあれば、ブリッジが外部へ送信したフレームの送信元。`own_tx_dropped` と `loop_suspected` が数えるフレーム）、ヘッダーより短いフレームと最大長より長いフレーム、SIL Kit のコントローラーを有効にする前のフレーム。機器からのフレームは、フィルターが SIL Kit へ通さないものでも数えます（`filtered_from_ext` にも数えます）。
+- `ext_from_devices` で、外の何かが答えているかが分かります。数えないもの: この PC が送信したフレーム（この PC のアダプターの MAC アドレスからのものと、`packet` ではカーネルがこの PC の送信と印を付けたもの。「[機器から何も来ないときのヒント](#機器から何も来ないときのヒント)」のとおりで、ブリッジがアドレスを知らなければ数えます）、SIL Kit 側のアドレスからのフレーム（`--src-mac` のアドレスと、MAC のルールがあれば、ブリッジが外部へ送信したフレームの送信元。`own_tx_dropped` と `loop_suspected` が数えるフレーム）、ヘッダーより短いフレームと最大長より長いフレーム、SIL Kit のコントローラーを有効にする前のフレーム。機器からのフレームは、フィルターが SIL Kit へ通さないものでも数えます（`filtered_from_ext` にも数えます）。
+- 同じアダプターを使うこの PC のプログラムの答えは数えません。`packet` では送信元のアドレスによらず、`npcap` と `pcap` では、この PC のアダプターのアドレスから送ったとき（そうしたプログラムはふつうそうします）です。
+- `tap` では、相手がこの PC のネットワークスタックなので、来たものをこの PC のものとはみなしません。`ext_from_devices` は、SIL Kit 側からでない来たフレームをすべて数え、`ext_to_silkit` と `filtered_from_ext` を合わせたものと同じです。
 - `--no-mac-guard` では、SIL Kit 側を見分けるのは `--src-mac` のアドレスだけです。自分の送信を戻す外部リンクでは、ブリッジが外部へ送信して戻ってきたフレームを `ext_from_devices` に数えます。vehicle-sil の外部リンクは、どれも戻しません。
 
 ## 監視の行
@@ -898,7 +901,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 | `transmit(frame)` | フレームを 1 つ送信する。結果は `Ok`、`QueueFull`（送信のキューがいっぱいで送信しなかった）、`Failed`（ほかのエラー。理由は `last_error()`）。フレームは呼び出しの間だけ読む。ブロックしない |
 | `echoes_own_transmissions()` | `transmit()` で送信したフレームが、受信したフレームとしてハンドラーに戻るか。外部リンクの寿命の間は変わらない。ブリッジは `start()` のときに読み、ループの防ぎ方を変える（「[ループの防止](#ループの防止macsidetable)」） |
 | `describe()` | 起動の 1 行に入る文字列。種類、名前、物理か仮想か（例: `tap 'vsil0' (TAP device in this computer)`、`packet 'enp3s0' (network interface)`） |
-| `own_address()` | `start()` が開いたインターフェースの MAC アドレス。外部リンクが分からなければ `nullopt`（既定）。最初のイベントの前に決まり、`stop()` まで変わらない。ブリッジは `start()` のときに読み、このアドレスからのフレームを `ext_from_devices` に数えない。ほかの外部リンクを包む外部リンクは、包んだものの答えをそのまま返す |
+| `this_computer_addresses()` | 外部リンクの側でこの PC が送信に使う MAC アドレス。この PC のすべてのイーサネットのアダプターのもので、`start()` が 1 回だけ調べる。空: 来るものにこの PC のものはない（`tap`）。`nullopt`: 外部リンクが分からない（既定）。ブリッジは `start()` のときに読み、これらのアドレスからのフレームを `ext_from_devices` に数えない。ほかの外部リンクを包む外部リンクは、包んだものの答えをそのまま返す |
 
 ### スレッドとロック
 
@@ -922,6 +925,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 | `Fault` | 外部リンクが動かなくなった（インターフェースがなくなった、読み取りが失敗し続ける）。理由は `detail` |
 | `Warning` | 止めるほどではないが利用者に通知すること（`detail`） |
 
+- `Frame` の `sent_here` が真なら、この PC がそのフレームをインターフェースへ送信したものです（`packet` だけが伝えます）。ブリッジは `ext_from_devices` に数えません。
 - `Frame` の `checksum_incomplete` が真なら、UDP や TCP のチェックサムが未完成のフレーム（同じ PC の OS が送信し、計算を NIC に任せたもの）です。外部リンクはそのまま渡し、最初の 1 つの前に `Warning` を 1 回出します。ブリッジは渡して `ext_checksum_incomplete` に数えます。
 - `Fault` の後は、フレームは渡されず、`transmit()` は失敗します。
 
@@ -996,7 +1000,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 
 `tap`:
 
-- TAP デバイスの側の packet ソケットから送信したフレームを、SIL Kit 側の相手がそのまま受信し、レスポンスが戻る。
+- TAP デバイスの側の packet ソケットから送信したフレームを、SIL Kit 側の相手がそのまま受信し、レスポンスが戻る。来たフレームは、すべて `ext_from_devices` に数える。
 - ブリッジが書き込んだフレームがブリッジに戻らない。
 - 2 つ目のブリッジは拒否される。
 - `--tap-create` で作ったデバイスが、down の状態で作られ、ブリッジが止まるとなくなる。
@@ -1004,7 +1008,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 `packet`（veth の対）:
 
 - タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。
-- 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。送信元がインターフェース自身のアドレス（カーネルが `SIOCGIFHWADDR` に答えるもの）でなければ、`ext_from_devices` に数える。
+- 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。`ext_from_devices` には数えない（カーネルがここで送信したと印を付ける）。インターフェースのアドレスと、名前空間のほかのインターフェースのアドレスからのフレームも数えない。
 - ブリッジが送信したフレームがブリッジに戻らない。
 - `--promiscuous` のプロミスキャスが、インターフェースの promiscuity を、動いている間だけ上げる。既定と `--no-promiscuous` は、ここでは本物のカーネルで確かめていない（モードの選び方は単体試験が確かめる）。
 - リンクの up と down の監視の行。
@@ -1015,7 +1019,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 
 - ライブラリの読み込みと、ブリッジが使う関数と構造体の形。
 - タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。
-- 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。送信元がインターフェース自身のアドレス（libpcap のインターフェースの一覧にあるもの）でなければ、`ext_from_devices` に数える。
+- 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。`ext_from_devices` に数える（libpcap はここで送信したことを伝えない）。インターフェースのアドレスと、名前空間のほかのインターフェースのアドレスからのフレームは数えない。
 - ブリッジが送信したフレームがブリッジに戻らない。
 - `--promiscuous`、`--list-interfaces`、リンクの up と down の監視の行。
 - 開けないときのメッセージ（ない、イーサネットでない、down、権限を落としたとき）。
@@ -1039,7 +1043,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 - Npcap の開き方では、送信したフレームを戻すデバイスでも自分の送信が戻らず、同じデバイスのほかのハンドルが送信したフレームは受信する。
 - 同じデバイスに接続した 2 つのブリッジのループが、コピーを受信する順序によらず止まる。`--no-mac-guard` でも自分のフレームが SIL Kit に戻らない。
 - `pcap_open` のないライブラリは、Npcap としては拒否する。
-- 機器からの答えは `ext_from_devices` に数え、アダプター自身のアドレスからの答えは転送するが数えない（Linux だけ。Windows では自身のアドレスを OS から得るので、OS が知らないフェイクのアダプターでは確かめられない）。`--stats-every-ms` で、動いている間に統計の行が出て、その後は変わったときだけ出る。
+- 機器からの答えは `ext_from_devices` に数え、ライブラリの一覧にあるアダプターのアドレスからの答えは転送するが数えない（Linux だけ。Windows ではアドレスを OS から得るので、OS が知らないフェイクのアダプターでは確かめられない）。`--stats-every-ms` で、動いている間に統計の行が出て、その後は変わったときだけ出る。
 - Windows では、フェイクのライブラリが使う DLL が、フェイクのライブラリと同じディレクトリかシステムのディレクトリにあるものだけであること（テスト `eth_link.fake_pcap_imports.*`）。ブリッジが DLL を探させるのはこの 2 か所だけなので、フェイクのライブラリにはコンパイラーのランタイムを静的にリンクしています。
 
 ### 確認したこと（Windows、本物の Npcap、手動）
@@ -1074,7 +1078,7 @@ Windows:
 - 戻さない指定を受け付けて、それでも自分の送信を戻す Npcap やアダプターがあるか。
 - 「管理者だけ」の Npcap で、デスクトップのある Windows が表示する確認の画面。
 - 本物の Npcap で、送信の詰まりが `ext_queue_full` に数えられることがあるか（確認では詰まりが起きなかった）。
-- 本物の Npcap での、Windows から得るアダプター自身のアドレス。物理 NIC にケーブルのない `vEthernet` のアダプターで `ext_from_devices` が 0 のままか（そこでのホストの OS のフレームの送信元が `vEthernet` のアダプターのアドレスであること）と、自分の送信を戻さない Npcap の指定との関係。機器から何も来ないときのヒントは、テストが時刻を与える単体試験でだけ確かめている。
+- 本物の Npcap での、Windows から得るアダプターのアドレス。物理 NIC にケーブルがないとき、`vEthernet` のアダプター、またはそのスイッチを結んだ物理 NIC で `ext_from_devices` が 0 のままか（そこでのホストの OS のフレームの送信元が、ホストのアダプターのアドレスであること）と、自分の送信を戻さない Npcap の指定との関係。機器から何も来ないときのヒントは、テストが時刻を与える単体試験でだけ確かめている。
 
 Linux:
 
@@ -1122,7 +1126,7 @@ Linux:
 - MAC テーブルがあふれたとき、転送の最中の `stop()`、失ったフレーム、`Fault`、警告、開始と停止を確認します。
 - `ethernet_bridge.silkit_*` は、プロセス内の registry（空いているポート）と 2 つの participant で、本物の SIL Kit 側を確認します。
 - `ethernet_bridge.app_*` のプロミスキャスのヒントは、時計を差し替えて、5 秒を待たずに確認します。
-- `ext_from_devices` に数えるものを確認します。機器からのフレームは、フィルターが通さないものも数え、アダプター自身のアドレス、SIL Kit 側、戻す外部リンクから戻ったもの、短すぎるものは数えません。`--no-mac-guard` では `--src-mac` のアドレスで見分けます。
+- `ext_from_devices` に数えるものを確認します。機器からのフレームは、フィルターが通さないものも数え、この PC のどれかのアドレスから来たもの、ここで送信したと印の付いたもの、SIL Kit 側、戻す外部リンクから戻ったもの、短すぎるものは数えません。`--no-mac-guard` では `--src-mac` のアドレスで見分けます。
 - 機器から何も来ないときのヒントの決まり（`bridge_runtime.nothing_came_hint_*`）と、動いている間の統計の行（`bridge_runtime.run_bridge_*`）は、テストが時刻を与えて確認します。
 
 ### `ethernet_bridge.integration.*`
@@ -1137,7 +1141,7 @@ Linux:
 - `eth_link.pcap_*` は、Npcap と libpcap の両方のメッセージを、どの OS でも照合します。
 - 開き方は、Npcap の `pcap_open()` と libpcap の `pcap_create()` の両方を、どの OS でも確認します。
 - フェイクのライブラリ（`tests/eth_link/fake_pcap`）は、本物と同じ名前の関数を持つ共有ライブラリで、実行時に読み込みます。
-- フェイクのライブラリの `fake0` は、レスポンスを返す機器です。ほかに、開けない、送信できない、読めない、捨てる、無線、送信したものを戻す、のデバイスと、答えがアダプター自身のアドレスから来る `fake-self` があります。
+- フェイクのライブラリの `fake0` は、レスポンスを返す機器です。ほかに、開けない、送信できない、読めない、捨てる、無線、送信したものを戻す、のデバイスと、答えがアダプター自身のアドレスから来る `fake-self` があります。`fake0`、`fake1`、`fake-self` は、Linux の libpcap のように、アドレスを 1 つずつ一覧に載せます。
 - 関数が 1 つ足りないバージョンが 2 つあります（古いバージョンと、`pcap_open` のないバージョン）。
 - `ethernet_bridge.integration.pcap-*` は、インストールする実行ファイルと同じ中身で、ライブラリを読み込む場所だけをフェイクのライブラリに変えたもの（`vehicle_sil_ethernet_bridge_on_fake_pcap`）を使います。
 - `ethernet_bridge.integration.pcap-*` が確認するのは、往復と統計、一覧、ライブラリがない・古いときのメッセージ（3。SIL Kit に接続する前）、ないデバイス（3）、読み取りの失敗（1）です。

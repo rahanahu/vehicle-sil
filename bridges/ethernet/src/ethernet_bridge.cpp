@@ -211,9 +211,9 @@ void EthernetBridge::start()
         // The link first, so that frames arriving from SIL Kit can be sent right away.
         external_.start([this](const eth_link::LinkEvent& event) { on_external_event(event); });
         externalStarted = true;
-        // The link knows its address once it has opened the interface. Frames before this are
-        // not counted anyway: the controller is not activated yet.
-        own_address_.store(external_.own_address());
+        // The link knows the addresses once it has started. Frames before this are not counted
+        // anyway: the controller is not activated yet.
+        this_computer_ = external_.this_computer_addresses();
         frame_handler_ = silkit_.AddFrameHandler(
             [this](ethernet::IEthernetController*, const ethernet::EthernetFrameEvent& event) { on_silkit_frame(event); },
             static_cast<SilKit::Services::DirectionMask>(SilKit::Services::TransmitDirection::RX));
@@ -415,7 +415,7 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
 {
     switch (event.kind)
     {
-    case LinkEventKind::Frame: on_external_frame(event.frame, event.checksum_incomplete); return;
+    case LinkEventKind::Frame: on_external_frame(event.frame, event.checksum_incomplete, event.sent_here); return;
     case LinkEventKind::Overrun:
         ext_overruns_.fetch_add(event.count);
         set_last_error("the OS lost frames received on the external link");
@@ -442,7 +442,7 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
     }
 }
 
-void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete)
+void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete, bool sent_here)
 {
     // Before the controller is activated, SIL Kit refuses what it is given (ControllerInactive).
     if (!running_.load() || !controller_started_.load())
@@ -494,10 +494,11 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
             mac_unguarded_.fetch_add(1);
         }
     }
-    // From a device outside: not from this computer (the link's own address), not from the SIL
-    // Kit side (the table let it through; without the table, not a --src-mac address). Before
-    // the filter: an answer counts even where the filter keeps it out of SIL Kit.
-    if (!own_address_.is(source) && (table_ || !is_listed_silkit_address(source)))
+    // From a device outside: not sent by this computer (as the link tells, or from an address of
+    // its adapters), not from the SIL Kit side (the table let it through; without the table, not
+    // a --src-mac address). Before the filter: an answer counts even where the filter keeps it
+    // out of SIL Kit.
+    if (!sent_here && !is_this_computer(source) && (table_ || !is_listed_silkit_address(source)))
     {
         ext_from_devices_.fetch_add(1);
     }
@@ -545,6 +546,11 @@ bool EthernetBridge::is_listed_silkit_address(const eth_link::MacAddress& source
 {
     const auto& listed = filter_.options().silkit_macs;
     return std::find(listed.begin(), listed.end(), source) != listed.end();
+}
+
+bool EthernetBridge::is_this_computer(const eth_link::MacAddress& source) const noexcept
+{
+    return this_computer_ && std::find(this_computer_->begin(), this_computer_->end(), source) != this_computer_->end();
 }
 
 EthernetBridgeStatistics EthernetBridge::statistics() const noexcept

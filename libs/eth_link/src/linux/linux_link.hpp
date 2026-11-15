@@ -53,17 +53,19 @@ private:
     int fd_ = -1;
 };
 
-/// The interface's flags (IFF_UP, IFF_RUNNING, ...), link type (ARPHRD_*) and, on an Ethernet
-/// interface, its MAC address; or nullopt if there is no interface `name`.
+/// The interface's flags (IFF_UP, IFF_RUNNING, ...) and link type (ARPHRD_*), or nullopt if there
+/// is no interface `name`.
 struct InterfaceState
 {
     unsigned flags = 0;
     unsigned link_type = 0;
-    std::optional<MacAddress> hardware_address;
 };
 [[nodiscard]] std::optional<InterfaceState> interface_state(const std::string& name);
 /// The names of this computer's interfaces.
 [[nodiscard]] std::vector<std::string> interface_names();
+/// The MAC addresses of this computer's Ethernet interfaces (getifaddrs(), AF_PACKET), each once;
+/// nullopt if the OS does not tell.
+[[nodiscard]] std::optional<std::vector<MacAddress>> ethernet_addresses();
 /// The path of this program ("/proc/self/exe"), or empty.
 [[nodiscard]] std::string executable_path();
 
@@ -77,8 +79,10 @@ public:
     /// test ethernet_bridge.netns.* holds this against the kernel).
     [[nodiscard]] bool echoes_own_transmissions() const noexcept final { return false; }
     [[nodiscard]] std::string last_error() const final;
-    /// The interface's MAC address as start() found it (SIOCGIFHWADDR).
-    [[nodiscard]] std::optional<MacAddress> own_address() const noexcept final;
+    /// This computer's Ethernet addresses as start() found them (ethernet_addresses()). Frames
+    /// this computer sends on the interface come from one of them, or are marked sent_here (the
+    /// packet link tells).
+    [[nodiscard]] std::optional<std::vector<MacAddress>> this_computer_addresses() const override;
 
 protected:
     explicit LinuxLink(std::string name);
@@ -140,7 +144,6 @@ private:
     Fd wake_; // eventfd: written to end the receive thread
     unsigned interface_index_ = 0;
     std::atomic<bool> faulted_{false};
-    AtomicMacAddress own_address_; // set by start() before the receive thread starts
     EventHandler handler_;
     std::thread thread_;
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
@@ -148,8 +151,9 @@ private:
     std::vector<std::string> start_warnings_;       // open() fills it, then the receive thread reads it
     std::vector<std::uint8_t> buffer_;              // receive thread only
 
-    mutable std::mutex error_mutex_;
+    mutable std::mutex error_mutex_; // also guards this_computer_
     std::string last_error_;
+    std::optional<std::vector<MacAddress>> this_computer_;
 };
 
 } // namespace vehicle_sil::eth_link::detail

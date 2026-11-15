@@ -6,8 +6,8 @@
 //
 //   fake0       a wire with one device (02:00:00:00:00:02) that answers every frame the bridge
 //               sends: to the frame's source, from its own address, the bytes behind the two
-//               addresses and the EtherType inverted; the bridge's link has the address
-//               02:00:00:00:00:f0 of its own
+//               addresses and the EtherType inverted; this computer's adapters have the
+//               address 02:00:00:00:00:f0
 //   fake-fault  a link that reports a Fault as soon as it is started
 //   other       no such interface (LinkError)
 //
@@ -47,7 +47,10 @@ public:
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return link_.echoes_own_transmissions(); }
     [[nodiscard]] std::string describe() const override { return link_.describe(); }
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
-    [[nodiscard]] std::optional<eth_link::MacAddress> own_address() const noexcept override { return link_.own_address(); }
+    [[nodiscard]] std::optional<std::vector<eth_link::MacAddress>> this_computer_addresses() const override
+    {
+        return link_.this_computer_addresses();
+    }
 
 protected:
     FakeSegment segment_;
@@ -59,7 +62,7 @@ class AnsweringDeviceLink final : public WiredFakeLink
 public:
     explicit AnsweringDeviceLink(const std::string& name) : WiredFakeLink(name), device_(segment_, "device")
     {
-        link_.set_own_address(eth_link::parse_mac_address("02:00:00:00:00:f0"));
+        link_.set_this_computer_addresses(std::vector<eth_link::MacAddress>{*eth_link::parse_mac_address("02:00:00:00:00:f0")});
     }
     ~AnsweringDeviceLink() override { stop(); }
 

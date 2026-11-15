@@ -10,7 +10,8 @@ The "device outside" is this script, with packet sockets of its own.
 
 tap     the bridge on a TAP device made before it starts: frames from a packet socket on the
         device reach the SIL Kit peer unchanged and its answers come back; a frame of another
-        EtherType is filtered; what the bridge writes to the device does not come back to it
+        EtherType is filtered; every frame that comes in counts in ext_from_devices (the other
+        end is this computer's stack); what the bridge writes to the device does not come back to it
         (loop_suspected stays 0). A second bridge on the same device is refused (busy).
         --tap-create: the device is made down (the bridge warns and tells when it is up) and is
         gone when the bridge stops. The messages for a device that is missing, not a TAP, there
@@ -18,9 +19,9 @@ tap     the bridge on a TAP device made before it starts: frames from a packet s
         while the bridge runs: the bridge fails with exit code 1.
 packet  the bridge on one end of a veth pair, this script on the other: frames with no VLAN tag,
         one tag and two tags pass both ways with their tags; a frame another socket sends on the
-        bridge's own interface reaches the SIL Kit peer, and counts as from a device
-        (ext_from_devices) unless it is from the interface's own address; what the bridge sends
-        does not come back to it. --promiscuous sets the interface's promiscuity while the bridge
+        bridge's own interface reaches the SIL Kit peer, and does not count as from a device
+        (ext_from_devices: the kernel marks it as sent here), nor do frames from the addresses of
+        va and vb; what the bridge sends does not come back to it. --promiscuous sets the interface's promiscuity while the bridge
         runs only. The
         messages for an interface that is missing, not Ethernet, and (with the capability
         dropped) not allowed to be opened. The link down and up: the monitor lines. UDP that the
@@ -31,7 +32,7 @@ packet  the bridge on one end of a veth pair, this script on the other: frames w
 pcap    the same veth pair with --backend pcap, which loads the libpcap of this computer: frames
         with no VLAN tag, one tag and two tags pass both ways with their tags; a frame another
         socket sends on the bridge's own interface reaches the SIL Kit peer, and counts as from a
-        device unless it is from the interface's own address (libpcap lists it); what the bridge sends
+        device unless it is from the address of an interface (libpcap lists them); what the bridge sends
         does not come back to it. --promiscuous, --list-interfaces. The messages for an interface
         that is missing, not Ethernet, down, and (with the capability dropped) not allowed to be
         opened. The link down and up: the monitor lines. The interface removed: exit code 1.
@@ -296,14 +297,15 @@ def interface_address(name: str) -> bytes:
 
 
 def check_counted_from_devices(stats: dict[str, int], from_devices: int, own: int, what: str) -> None:
-    """ext_from_devices has the `from_devices` frames of the test (the OS's own frames from vb may
-    add to them), and not the `own` ones this computer sent from va's own address: of all the
+    """ext_from_devices has the `from_devices` frames of the test (the OS's own frames may add to
+    them), and not the `own` ones this computer sent (from the address of va or of vb: the
+    namespace is this computer; with packet also those the kernel marks as sent on va): of all the
     frames that came in, those `own` frames are not among the counted ones."""
     came_in = stats["ext_to_silkit"] + stats["filtered_from_ext"]
     check(from_devices <= stats["ext_from_devices"] <= came_in - own,
-          f"ext_from_devices counts the {from_devices} frames from devices and not the {own} from va's own address "
+          f"ext_from_devices counts the {from_devices} frames from devices and not the {own} this computer sent "
           f"(at most {came_in} came in): {stats}")
-    say(f"{what}: ext_from_devices counted the frames from devices, not those from the interface's own address")
+    say(f"{what}: ext_from_devices counted the frames from devices, not those this computer sent")
 
 
 class World:
@@ -427,6 +429,10 @@ def tap(world: World) -> None:
     check(stats["ext_to_silkit"] == len(requests) and stats["silkit_to_ext"] == len(requests),
           f"the bridge forwarded {len(requests)} frames each way: {stats}")
     check(stats["filtered_from_ext"] >= 1, f"the frame of another EtherType was filtered: {stats}")
+    # The other end of a TAP device is this computer's network stack: whatever comes in is from the
+    # far side, also the frames from the device's own address.
+    check(stats["ext_from_devices"] == stats["ext_to_silkit"] + stats["filtered_from_ext"],
+          f"on a TAP device every frame that came in counts in ext_from_devices: {stats}")
     # The answers the bridge wrote to the device have the SIL Kit peer's source address: had one
     # come back to the bridge, it would have counted it (the link says it does not echo).
     check(stats["loop_suspected"] == 0 and stats["own_tx_dropped"] == 0 and "warning:" not in bridge.text(),
@@ -522,6 +528,10 @@ def packet(world: World) -> None:
     world.peer.wait_for(f"[peer] rx {own.hex()}")
     near.expect(answer_to(own), "va's own address, for the answer", outgoing=True)
     requests.append(own)
+    # Also from the address of another adapter of this computer (vb: the namespace is the computer).
+    other_adapter = frame(PEER_MAC, interface_address("vb"), EXPERIMENTAL, 46, 12)
+    round_trips(world, far, [other_adapter], "from another adapter of this computer")
+    requests.append(other_adapter)
 
     far.send(frame(PEER_MAC, DEVICE_MAC, OTHER_ETHERTYPE, 46, 8))  # not let in
     last = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 9)
@@ -540,8 +550,9 @@ def packet(world: World) -> None:
     check(stats["ext_to_silkit"] == len(requests) and stats["silkit_to_ext"] == len(requests),
           f"the bridge forwarded {len(requests)} frames each way: {stats}")
     check(stats["filtered_from_ext"] >= 1, f"the frame of another EtherType was filtered: {stats}")
-    # From devices: every request but the one from va's own address, and the frame of another EtherType.
-    check_counted_from_devices(stats, len(requests) - 1 + 1, 1, "packet")
+    # From devices: every request but the one sent on va by another socket (the kernel marks it as
+    # sent here), the one from va's address and the one from vb's; and the frame of another EtherType.
+    check_counted_from_devices(stats, len(requests) - 3 + 1, 3, "packet")
     check(stats["loop_suspected"] == 0 and stats["own_tx_dropped"] == 0 and "warning:" not in bridge.text(),
           f"nothing the bridge sent on its socket came back to it:\n{bridge.text()}")
     say("packet: what the bridge sent did not come back to it (loop_suspected=0, own_tx_dropped=0, no warning)")
@@ -709,6 +720,10 @@ def pcap(world: World) -> None:
     world.peer.wait_for(f"[peer] rx {own.hex()}")
     near.expect(answer_to(own), "va's own address, for the answer", outgoing=True)
     requests.append(own)
+    # Also from the address of another adapter of this computer (vb: the namespace is the computer).
+    other_adapter = frame(PEER_MAC, interface_address("vb"), EXPERIMENTAL, 46, 12)
+    round_trips(world, far, [other_adapter], "from another adapter of this computer")
+    requests.append(other_adapter)
 
     far.send(frame(PEER_MAC, DEVICE_MAC, OTHER_ETHERTYPE, 46, 8))  # not let in
     last = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 9)
@@ -731,8 +746,10 @@ def pcap(world: World) -> None:
     check(stats["ext_to_silkit"] == len(requests) and stats["silkit_to_ext"] == len(requests),
           f"the bridge forwarded {len(requests)} frames each way: {stats}")
     check(stats["filtered_from_ext"] >= 1, f"the frame of another EtherType was filtered: {stats}")
-    # From devices: every request but the one from va's own address, and the frame of another EtherType.
-    check_counted_from_devices(stats, len(requests) - 1 + 1, 1, "pcap")
+    # From devices: every request but the one from va's address and the one from vb's, and the frame
+    # of another EtherType. The frame another socket sent on va counts: libpcap does not tell that
+    # it was sent here, and its address is no adapter's.
+    check_counted_from_devices(stats, len(requests) - 2 + 1, 2, "pcap")
     check(stats["loop_suspected"] == 0 and stats["own_tx_dropped"] == 0 and "warning:" not in bridge.text(),
           f"nothing the bridge sent through libpcap came back to it:\n{bridge.text()}")
     say("pcap: what the bridge sent did not come back to it (loop_suspected=0, own_tx_dropped=0, no warning)")

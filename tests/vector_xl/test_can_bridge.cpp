@@ -421,7 +421,7 @@ TEST_CASE(bridge_nothing_came_warning_names_the_channel)
 
 TEST_CASE(bridge_statistics_line_names_every_counter)
 {
-    // The keys and their order are documented output that vehicle_sil_launch reads
+    // The keys and their order are documented output that programs that read the line rely on
     // (docs/bridges.md, "Statistics"): a change here is a change of that agreement.
     vehicle_sil::vector_xl::CanBridgeStatistics s;
     s.silkit_to_external = 1;

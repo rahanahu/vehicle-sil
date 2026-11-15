@@ -224,7 +224,8 @@ int run(const BridgeOptions& options)
     {
         nothingCame = std::make_unique<bridge_runtime::NothingCameHint>(
             [&bridge, &external] {
-                return nothing_came_warning(external.describe(), bridge.own_address(), bridge_runtime::kNothingCameAfter);
+                return nothing_came_warning(external.describe(), bridge.this_computer_addresses().has_value(),
+                                            bridge_runtime::kNothingCameAfter);
             });
     }
     EthernetBridgeHooks hooks(bridge, hint.get(), std::move(nothingCame), options.interface_name);

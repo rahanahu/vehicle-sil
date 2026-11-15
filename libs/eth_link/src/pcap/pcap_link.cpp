@@ -173,8 +173,14 @@ public:
         const int now = promiscuous_.load();
         return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
     }
-    /// The device's MAC address as the list of devices told it when start() opened it.
-    [[nodiscard]] std::optional<MacAddress> own_address() const noexcept override { return own_address_.load(); }
+    /// The addresses of this computer's adapters as start() found them: on Linux those in the
+    /// library's list of devices, on Windows those the OS tells (all adapters, also those Npcap
+    /// does not offer, such as the vEthernet adapter of a Hyper-V switch a physical one is bound to).
+    [[nodiscard]] std::optional<std::vector<MacAddress>> this_computer_addresses() const override
+    {
+        const std::lock_guard lock(text_mutex_);
+        return this_computer_;
+    }
 
 private:
     /// Opens `device` for sending and receiving without blocking, in promiscuous mode as
@@ -224,7 +230,6 @@ private:
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
     /// What open() set up: 1 promiscuous, 0 not, -1 not opened yet.
     std::atomic<int> promiscuous_{-1};
-    AtomicMacAddress own_address_; // set by start() before the receive thread starts
     std::atomic<bool> faulted_{false};
     EventHandler handler_;
     std::thread thread_;
@@ -234,6 +239,7 @@ private:
     mutable std::mutex text_mutex_;
     std::string last_error_;
     std::string described_;
+    std::optional<std::vector<MacAddress>> this_computer_; // under text_mutex_
 };
 
 PcapHandle* PcapLink::try_open(const PcapDevice& device, bool promiscuous, std::string& why)
@@ -390,11 +396,26 @@ void PcapLink::start(EventHandler handler)
     auto waiter = library_->make_waiter(handle);
     watch_ = library_->make_watch(device.name);
     reported_state_ = LinkState::Unknown;
-    own_address_.store(device.hardware_address);
+    std::vector<MacAddress> thisComputer;
+    const auto add = [&thisComputer](const std::optional<MacAddress>& address) {
+        if (address && std::find(thisComputer.begin(), thisComputer.end(), *address) == thisComputer.end())
+        {
+            thisComputer.push_back(*address);
+        }
+    };
+    for (const auto& listed : devices)
+    {
+        add(listed.hardware_address);
+    }
+    for (const auto& connection : library_->connection_names())
+    {
+        add(connection.hardware_address);
+    }
 
     {
         const std::lock_guard lock(text_mutex_);
         last_error_.clear();
+        this_computer_ = thisComputer.empty() ? std::nullopt : std::optional<std::vector<MacAddress>>(std::move(thisComputer));
         described_ = std::string(backend_name(flavor_)) + " '" + display_name(device) + "' (";
         if (device.name != display_name(device))
         {

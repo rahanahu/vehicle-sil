@@ -4,7 +4,6 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -33,37 +32,8 @@ struct MacAddress
         }
         return v;
     }
-    /// The address whose value() is the low 48 bits of `value`.
-    [[nodiscard]] static constexpr MacAddress from_value(std::uint64_t value) noexcept
-    {
-        MacAddress address;
-        for (std::size_t i = address.bytes.size(); i-- > 0;)
-        {
-            address.bytes[i] = static_cast<std::uint8_t>(value & 0xFFu);
-            value >>= 8;
-        }
-        return address;
-    }
 
     [[nodiscard]] friend constexpr bool operator==(const MacAddress&, const MacAddress&) noexcept = default;
-};
-
-/// A MAC address or none, that one thread may set while others read it, without a lock.
-class AtomicMacAddress
-{
-public:
-    void store(const std::optional<MacAddress>& address) noexcept { value_.store(address ? address->value() | kKnown : 0); }
-    [[nodiscard]] std::optional<MacAddress> load() const noexcept
-    {
-        const std::uint64_t value = value_.load();
-        return (value & kKnown) != 0 ? std::optional<MacAddress>(MacAddress::from_value(value)) : std::nullopt;
-    }
-    /// Whether an address is set and it is `address`.
-    [[nodiscard]] bool is(const MacAddress& address) const noexcept { return value_.load() == (address.value() | kKnown); }
-
-private:
-    static constexpr std::uint64_t kKnown = std::uint64_t{1} << 48;
-    std::atomic<std::uint64_t> value_{0};
 };
 
 /// "02:00:00:00:00:01" or "02-00-00-00-00-01" (the form Windows shows), either case. Six bytes of
