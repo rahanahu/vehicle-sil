@@ -2096,7 +2096,7 @@ Like `control-server`, `scenario-control` is printed only by builds that have it
 Rules:
 
 - Calls are rejected in one place, before the body of the RPC.
-- Do not add a path from client calls that operates the run's tap (`RunSamples`), writes or guard.
+- Do not add a path by which a client call operates the run's tap (`RunSamples`), the writes or the guard.
 - Do not add anything that waits to the Hub's subscriptions or tap.
 
 Tests:
