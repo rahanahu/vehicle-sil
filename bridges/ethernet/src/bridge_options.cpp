@@ -93,6 +93,19 @@ std::size_t parse_size(std::string_view option, std::string_view text, std::size
     return value;
 }
 
+std::chrono::milliseconds parse_start_timeout(std::string_view text)
+{
+    std::uint64_t value = 0;
+    const auto* const end = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(text.data(), end, value, 10);
+    if (text.empty() || ec != std::errc{} || ptr != end || value == 0 || value > kMaxStartTimeoutMs)
+    {
+        throw BridgeUsageError("--start-timeout-ms must be between 1 and " + std::to_string(kMaxStartTimeoutMs) +
+                               ", got: " + std::string(text));
+    }
+    return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(value));
+}
+
 } // namespace
 
 std::string_view to_string(Backend backend) noexcept
@@ -130,14 +143,21 @@ std::string bridge_usage()
            "  vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]\n"
            "  vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name>\n"
            "                              --backend <tap|packet|npcap|pcap> --interface <name> [options]\n"
+           "  vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name>\n"
+           "                              [options]\n"
            "\n"
            "Forwards Ethernet frames in both directions between a SIL Kit Ethernet network and an\n"
            "Ethernet interface outside SIL Kit until Ctrl+C.\n"
            "\n"
            "  --list-interfaces        print the interfaces of this computer and exit; with --backend\n"
            "                           npcap or pcap, the interfaces the pcap library offers\n"
+           "  --describe               write what the bridge is (its name and network) as JSON to stdout,\n"
+           "                           as an ecu_main executable does for vehicle_sil_launch, and exit\n"
+           "                           without opening the interface or joining SIL Kit\n"
            "  --registry-uri <uri>     SIL Kit registry\n"
-           "  --participant <name>     SIL Kit participant name (EthernetBridge)\n"
+           "  --name <name>            SIL Kit participant name (EthernetBridge)\n"
+           "  --participant <name>     the same as --name\n"
+           "  --start-timeout-ms <ms>  how long to wait for the participant to run in SIL Kit (15000)\n"
            "  --network <name>         SIL Kit Ethernet network (no default)\n"
            "  --backend <backend>      tap: a TAP device (Linux); packet: a network interface (Linux);\n"
            "                           npcap: a network adapter through Npcap (Windows);\n"
@@ -161,6 +181,7 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
 {
     BridgeOptions options;
     auto& filter = options.bridge.filter;
+    std::string_view named; // "name" or "participant", whichever was given
 
     for (std::size_t i = 0; i < args.size(); ++i)
     {
@@ -173,6 +194,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         if (arg == "--list-interfaces")
         {
             options.list_interfaces = true;
+            continue;
+        }
+        if (arg == "--describe")
+        {
+            options.describe = true;
             continue;
         }
         if (arg == "--all-frames")
@@ -200,9 +226,10 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
             throw BridgeUsageError("unexpected argument: " + std::string(arg) + " (options start with --; see --help)");
         }
         const std::string_view key = arg.substr(2);
-        const bool known = key == "registry-uri" || key == "participant" || key == "network" || key == "backend" ||
-                           key == "interface" || key == "ethertype" || key == "src-mac" || key == "vlan-tpid" ||
-                           key == "max-frame-bytes" || key == "mac-table-size";
+        const bool known = key == "registry-uri" || key == "participant" || key == "name" || key == "network" ||
+                           key == "backend" || key == "interface" || key == "ethertype" || key == "src-mac" ||
+                           key == "vlan-tpid" || key == "max-frame-bytes" || key == "mac-table-size" ||
+                           key == "start-timeout-ms";
         if (!known)
         {
             throw BridgeUsageError("unknown option: " + std::string(arg) + " (see --help)");
@@ -217,9 +244,18 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         {
             options.registry_uri = value;
         }
-        else if (key == "participant")
+        else if (key == "participant" || key == "name")
         {
+            if (!named.empty() && named != key)
+            {
+                throw BridgeUsageError("--name and --participant are the same option: give one of them");
+            }
+            named = key;
             options.participant = value;
+        }
+        else if (key == "start-timeout-ms")
+        {
+            options.start_timeout = parse_start_timeout(value);
         }
         else if (key == "network")
         {
@@ -263,9 +299,13 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
 
     if (options.list_interfaces)
     {
+        if (options.describe)
+        {
+            throw BridgeUsageError("--describe and --list-interfaces exclude each other: give one of them");
+        }
         return options;
     }
-    if (options.registry_uri.empty())
+    if (options.registry_uri.empty() && !options.describe)
     {
         throw BridgeUsageError("missing --registry-uri: give the SIL Kit registry, e.g. --registry-uri silkit://127.0.0.1:8500");
     }
@@ -276,7 +316,7 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
     }
     if (options.participant.empty())
     {
-        throw BridgeUsageError("--participant must not be empty");
+        throw BridgeUsageError("--" + std::string(named) + " must not be empty");
     }
     if (!options.backend)
     {

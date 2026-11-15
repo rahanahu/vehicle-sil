@@ -5,6 +5,8 @@
 
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
 
+#include <chrono>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -33,14 +35,25 @@ inline constexpr std::size_t kMinMaxFrameBytes = 60;
 inline constexpr std::size_t kMaxMaxFrameBytes = 65535;
 inline constexpr std::size_t kMinMacTableSize = 16;
 inline constexpr std::size_t kMaxMacTableSize = eth_link::MacSideTable::kMaxCapacity;
+/// The longest --start-timeout-ms: the longest that vehicle_sil_launch gives (kMaxMillis of
+/// vehicle_sil/ecu/executable.hpp).
+inline constexpr std::uint64_t kMaxStartTimeoutMs = 1'000'000'000'000;
+/// How long the bridge waits for its participant to run in SIL Kit without --start-timeout-ms.
+inline constexpr std::chrono::milliseconds kDefaultStartTimeout{15000};
 
 struct BridgeOptions
 {
     bool help = false;
     bool list_interfaces = false;
+    /// --describe: write the bridge's description (describe_json()) and exit; nothing is opened,
+    /// and --registry-uri is not needed.
+    bool describe = false;
 
     std::string registry_uri;
+    /// --name, or --participant (the same option).
     std::string participant = "EthernetBridge";
+    /// --start-timeout-ms: how long ParticipantRuntime::start() waits for Running.
+    std::chrono::milliseconds start_timeout = kDefaultStartTimeout;
     /// The SIL Kit Ethernet network. No default: the bridge never joins a network by mistake.
     std::string network;
 

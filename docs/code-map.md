@@ -502,7 +502,7 @@ Tests of the Ethernet Bridge (all platforms). The `unit` label is also set.
 | `ethernet_bridge.*` | Checks the bridge's behavior and output with a fake SIL Kit controller and a fake external link |
 | `ethernet_bridge.silkit_*` | Checks the real SIL Kit side with an in-process registry (on a free port) |
 | `ethernet_bridge.integration.*` (`integration` label) | Runs an executable linked with a fake external link as a process, and checks round trips, exit codes and shutdown |
-| `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library |
+| `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library; `pcap-describe` checks `--describe`, and `pcap-launcher` starts the bridge with an ECU from a configuration file of `vehicle_sil_launch` |
 | `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable with TAP devices and veth in a namespace |
 
 `ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (frame orders in which the loop stops and in which it does not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
@@ -520,6 +520,8 @@ With fake `hooks` and a fake participant whose states are scripted, they check:
 - A state in the middle of startup is not treated as a failure; the startup limit
 
 One test uses a real participant with an in-process registry (on a free port). The message for a registry that cannot be reached (`registry_failure_message()`) is also checked with the text that SIL Kit actually throws.
+
+`describe_json()` (what a bridge writes for `--describe`) is compared byte for byte with `to_json()` of `libs/ecu` and read with the reader of `vehicle_sil_launch` (`read_description()`), so the bridges keep the form of an ecu_main executable without linking `libs/ecu`.
 
 ### `fetchcontent`
 
@@ -902,6 +904,7 @@ Command-line handling shared by the executables (target `vehicle_sil_cli`).
 |---|---|
 | `run_bridge()`, `BridgeHooks`, `judge_participant_state()`, `request_stop()`, `finish_console_close()` | `bridge_runtime/run_bridge.hpp` |
 | `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
+| `describe_json()`, `BridgeDescription` (`--describe` of a bridge) | `bridge_runtime/describe.hpp` |
 
 - Tests: `tests/bridge_runtime`, the E2E tests of the bridge executable (`integration.*` in `tests/vector_xl`)
 - `ctest -R`: `^bridge_runtime\.`, `^vector_xl\.integration\.`
@@ -944,6 +947,7 @@ Contents of `libs/eth_link/src/pcap`:
 | Executable with the fake external link | `fake_link_factory.cpp` in `tests/ethernet_bridge` |
 | Executable that loads the fake pcap library | `fake_pcap_library.cpp` in `tests/ethernet_bridge` |
 | Namespace tests | `bridge_netns.py` in `tests/ethernet_bridge` |
+| ECU of the test that starts the bridge from a configuration file (`pcap-launcher`) | `eth_bridge_it_ecu.cpp` in `tests/ethernet_bridge` |
 
 ### `examples/j1939` (sender and receiver)
 
@@ -1385,7 +1389,7 @@ flowchart TD
 | `vector_xl`, `vehicle_sil_vector_xl_bridge` | Only on Windows, when the XL Driver Library is available |
 | `bridge_runtime` (`bridges/common`) | On every platform |
 
-`bridge_runtime` keeps the shutdown, the monitoring loop and the exit codes of the bridge executables in one place.
+`bridge_runtime` keeps the shutdown, the monitoring loop, the exit codes and the `--describe` output of the bridge executables in one place.
 
 ```mermaid
 flowchart TD
@@ -1402,6 +1406,7 @@ flowchart TD
     vehicle_sil_vector_xl_bridge -.-> vehicle_sil_cli
     bridge_runtime --> SilKit
     bridge_runtime -.-> core
+    bridge_runtime -.-> json
     bridge_runtime -.-> vehicle_sil_cli
 ```
 

@@ -4,13 +4,14 @@
 // Ethernet network and an Ethernet interface outside SIL Kit (a TAP device, a network interface).
 //
 // Exit codes: 0 stopped normally (Ctrl+C / Ctrl+Break / SIGTERM / console closed) or
-//               --list-interfaces/--help done,
+//               --list-interfaces/--describe/--help done,
 //             1 failed while running: the SIL Kit participant stopped or ended on its own (e.g.
 //               connection lost) or the interface stopped working (e.g. removed),
 //             3 setup failed (the backend cannot be used here, the interface, SIL Kit),
 //             4 bad command line.
 #include "link_factory.hpp"
 
+#include "vehicle_sil/bridge_runtime/describe.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
@@ -126,6 +127,18 @@ int run(const BridgeOptions& options)
         cli::write_text(stdout, interface_list(options));
         return kExitOk;
     }
+    if (options.describe)
+    {
+        // Before anything is opened or loaded (the pcap library too): vehicle_sil_launch check asks
+        // this on computers where the bridge will not run.
+        const bridge_runtime::BridgeDescription description{options.participant, options.network,
+                                                            bridge_runtime::BridgedNetworkKind::Ethernet};
+        if (!cli::write_text(stdout, bridge_runtime::describe_json(description)))
+        {
+            throw std::runtime_error("could not write the description to stdout (is it closed?)");
+        }
+        return kExitOk;
+    }
 
     // Declaration order is destruction order in reverse: the bridge goes first, then the SIL Kit
     // participant (which owns the Ethernet controller), then the link (which closes the interface).
@@ -154,7 +167,7 @@ int run(const BridgeOptions& options)
     bridge.start();
     try
     {
-        runtime.start(std::chrono::seconds(15));
+        runtime.start(options.start_timeout);
     }
     catch (...)
     {

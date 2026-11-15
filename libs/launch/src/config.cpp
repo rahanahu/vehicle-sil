@@ -814,13 +814,16 @@ private:
             {
                 usable = check_arguments(prefix, who, participant) && usable;
             }
-            if (participant.describe && describeRead && !participant.required)
+            // A bridge (role: bridge) joins on its own, outside the coordinated start, also with
+            // describe: true.
+            if (participant.describe && describeRead && !participant.required && participant.role != ParticipantRole::Bridge)
             {
                 error("not-required-ecu", requiredLine,
-                      prefix + "required: false is only for executables with describe: false: an ecu_main executable joins "
-                               "as a coordinated participant, which SIL Kit starts only among the required participants; "
-                               "remove required: false (to run the simulation without this ECU, write enabled: false "
-                               "instead, or give vehicle_sil_launch --disable " + (who.empty() ? std::string("<name>") : who) + ")",
+                      prefix + "required: false is only for executables with describe: false or role: bridge: an ecu_main "
+                               "executable joins as a coordinated participant, which SIL Kit starts only among the required "
+                               "participants; remove required: false (to run the simulation without this ECU, write "
+                               "enabled: false instead, or give vehicle_sil_launch --disable " +
+                          (who.empty() ? std::string("<name>") : who) + ")",
                       who);
             }
             if (!participant.describe && participant.step_ms)

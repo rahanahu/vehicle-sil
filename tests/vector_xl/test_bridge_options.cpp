@@ -167,3 +167,29 @@ TEST_CASE(selection_channel_list_text)
     CHECK(parse_xl_target("physical") == XlTarget::Physical);
     CHECK(!parse_xl_target("Virtual").has_value());
 }
+
+TEST_CASE(options_name_describe_and_start_timeout)
+{
+    const auto named = parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--name",
+                              "XlBridge", "--start-timeout-ms", "40000"});
+    CHECK(named.participant == std::string("XlBridge"));
+    CHECK(named.start_timeout == std::chrono::milliseconds(40000));
+    CHECK(!named.describe);
+    CHECK(parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1"}).start_timeout ==
+          std::chrono::milliseconds(15000));
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1", "--name", "A",
+                       "--participant", "B"}));
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+                       "--start-timeout-ms", "0"}));
+    CHECK(usage_error({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+                       "--start-timeout-ms", "1000000000001"}));
+
+    // --describe needs no registry, and checks the rest as a run does.
+    const auto described = parse({"--describe", "--name", "XlBridge", "--network", "VehicleCAN", "--xl-target",
+                                   "physical", "--xl-channel", "2"});
+    CHECK(described.describe);
+    CHECK(described.registry_uri.empty());
+    CHECK(described.network == std::string("VehicleCAN"));
+    CHECK(usage_error({"--describe", "--xl-target", "virtual"}));
+    CHECK(usage_error({"--describe", "--list-channels"}));
+}

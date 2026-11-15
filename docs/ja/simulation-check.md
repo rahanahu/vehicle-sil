@@ -85,7 +85,7 @@
 | `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` があります。 | `step_ms` を削除するか、`ecu_main` の実行ファイルなら `describe: true` にします。 |
 | `executable` | エラー | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない、のどれかです。 | `command` のパスを直すか、実行ファイルを置きます。 |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけました（その場所を表示します）。 | 表示された場所が、意図した実行ファイルかを確認します。 |
-| `not-required-ecu` | エラー | `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。 |
+| `not-required-ecu` | エラー | `role: bridge` でない `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。 |
 | `no-required-participant` | エラー | 無効にしていない participant がどれも `required: false` か、すべてを無効にしました（シミュレーションが待つ participant がない）。 | 必須（`required: true`）の participant を、1 つ以上有効にします。 |
 | `describe-start` | エラー | 実行ファイルを起動できません。 | そのファイルが、この PC で動く実行ファイルかを確認します。 |
 | `describe-timeout` | エラー | `--describe` が時間内に終わりません。 | ECU の組み立ての中で待っている処理（接続、入力）を直すか、`--describe-timeout-ms` を長くします。 |
@@ -177,7 +177,7 @@
 
 **`ethernet-duplicate-mac`**: 指摘の文は、participant とアドレスを言います。同じアドレスをわざと使う設定（待機系と現用系など）では、1 つを残して、ほかの participant の `eth::ChannelOptions::mac` を渡さずにおきます。そうすると、`ethernet-mac-unknown` の注記だけになります。ただし、`mac` のないチャネルは `Accept::Addressed` を使えません。同じステップで送信したフレームの順は、SIL Kit では実行ごとに変わりえます。
 
-**`ethernet-mac-unknown`**: `ethernet()` にアドレスを渡していない ECU がいると出ます。アドレスの重なりを確認できないことを伝える注記です。
+**`ethernet-mac-unknown`**: `ethernet()` にアドレスを渡していない ECU がいると出ます。アドレスの重なりを確認できないことを伝える注記です。アドレスを報告しない `role: bridge` の participant（ブリッジはほかの participant のフレームを運ぶ）は、この注記と `ethernet-duplicate-mac` の対象になりません。
 
 **`participant-manual`**: `registry_uri` がループバックのアドレスでないとき、この注記の文は、環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を設定して起動するように言います。この変数が必要なのは、ランチャーと同じ PC で、ループバックのアドレスの URI で起動するときだけです。ほかの PC で起動するときは、設定しません（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）。注記の文は、どの PC で起動するかを区別しません。
 

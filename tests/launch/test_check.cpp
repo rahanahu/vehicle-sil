@@ -770,6 +770,30 @@ TEST_CASE(an_ethernet_network_has_one_mac_address_per_participant)
     CHECK(wrong.check().find("ethernet-duplicate-mac") == std::string::npos);
 }
 
+TEST_CASE(a_bridge_without_a_mac_address_is_left_out_of_the_ethernet_address_rules)
+{
+    const auto on_eth = [](std::optional<eth::MacAddress> mac) {
+        return NetworkDescription{"Backbone", NetworkUse::Ethernet, {}, mac};
+    };
+    const eth::MacAddress one{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}};
+    const eth::MacAddress two{{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}};
+    // A bridge (role: bridge, in real time, as vehicle_sil_ethernet_bridge --describe says) carries
+    // the frames of others: it has no address of its own to report.
+    Setup s;
+    s.network("Backbone", NetworkKind::Ethernet, 3)
+        .described(participant("Camera", 6), ecu("Camera", 5ms, {on_eth(one)}))
+        .described(with_role(participant("EthBridge", 9), ParticipantRole::Bridge), ecu("EthBridge", std::nullopt, {on_eth(std::nullopt)}));
+    check_text(s.check(), "");
+    // An ECU without an address is still a note, and a bridge that reports one is compared.
+    s.described(participant("Gateway", 12), ecu("Gateway", 5ms, {on_eth(std::nullopt)}));
+    CHECK(s.check().find("ethernet-mac-unknown: network 'Backbone': Gateway reports no MAC address") != std::string::npos);
+    s.results[1].ecu->description.networks[0].mac = one;
+    CHECK(s.check().find("ethernet-duplicate-mac: network 'Backbone': Camera and EthBridge have the same MAC address") !=
+          std::string::npos);
+    s.results[1].ecu->description.networks[0].mac = two;
+    CHECK(s.check().find("EthBridge") == std::string::npos);
+}
+
 TEST_CASE(a_lin_network_has_one_master)
 {
     const auto lin = [](NetworkUse use) { return NetworkDescription{"Body", use, {}}; };

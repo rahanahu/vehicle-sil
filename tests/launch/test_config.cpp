@@ -720,11 +720,12 @@ TEST_CASE(required_false_is_only_for_executables_that_are_not_ecu_main)
 {
     check_text(read(with_participants("  - name: A\n    command: a\n    required: false\n"
                                       "  - name: B\n    command: b\n    describe: false\n    required: false\n"
-                                      "  - name: C\n    command: c\n    required: true\n")),
-               "E 6 not-required-ecu: participant 'A': required: false is only for executables with describe: false: an "
-               "ecu_main executable joins as a coordinated participant, which SIL Kit starts only among the required "
-               "participants; remove required: false (to run the simulation without this ECU, write enabled: false "
-               "instead, or give vehicle_sil_launch --disable A)\n"
+                                      "  - name: C\n    command: c\n    required: true\n"
+                                      "  - name: D\n    command: d\n    role: bridge\n    required: false\n")),
+               "E 6 not-required-ecu: participant 'A': required: false is only for executables with describe: false or "
+               "role: bridge: an ecu_main executable joins as a coordinated participant, which SIL Kit starts only among "
+               "the required participants; remove required: false (to run the simulation without this ECU, write "
+               "enabled: false instead, or give vehicle_sil_launch --disable A)\n"
                "N 8 no-registry-uri: participant 'B': the command has no {registry_uri}, so the executable is not told "
                "where the simulation's registry is: if it needs it, add its option for the registry URI with "
                "\"{registry_uri}\" as the value\n");
@@ -848,10 +849,10 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
-               "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
-               "ecu_main executable joins as a coordinated participant, which SIL Kit starts only among the required "
-               "participants; remove required: false (to run the simulation without this ECU, write enabled: false "
-               "instead, or give vehicle_sil_launch --disable B)\n"
+               "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false or "
+               "role: bridge: an ecu_main executable joins as a coordinated participant, which SIL Kit starts only among "
+               "the required participants; remove required: false (to run the simulation without this ECU, write "
+               "enabled: false instead, or give vehicle_sil_launch --disable B)\n"
                "E 11 duplicate-name: participant 'A' is listed twice (first at line 4); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
 }

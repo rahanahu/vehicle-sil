@@ -1549,7 +1549,9 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             {
                 slaves.push_back(who);
             }
-            else if (used.use == NetworkUse::Ethernet)
+            // A bridge (role: bridge) without an address carries the frames of others: it has no
+            // address of its own to compare (no ethernet-mac-unknown for it).
+            else if (used.use == NetworkUse::Ethernet && (used.mac || p.role != ParticipantRole::Bridge))
             {
                 macs.emplace_back(who, used.mac);
             }

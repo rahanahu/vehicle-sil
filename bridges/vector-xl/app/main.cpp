@@ -4,10 +4,11 @@
 // CAN network and a Vector XL CAN channel (Vector Virtual CAN or CAN hardware such as CANcase).
 //
 // Exit codes: 0 stopped normally (Ctrl+C / Ctrl+Break / SIGTERM / console closed) or
-//               --list-channels/--help done,
+//               --list-channels/--describe/--help done,
 //             1 failed while running: the SIL Kit participant stopped or ended on its own (e.g.
 //               connection lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
+#include "vehicle_sil/bridge_runtime/describe.hpp"
 #include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
@@ -99,6 +100,20 @@ std::unique_ptr<ParticipantRuntime> connect_to_registry(const ParticipantRuntime
 
 int run(const BridgeOptions& options)
 {
+    if (options.describe)
+    {
+        // Without the XL driver: vehicle_sil_launch check asks this on computers where the bridge
+        // will not run.
+        const bridge_runtime::BridgeDescription description{options.participant, options.network,
+                                                            bridge_runtime::BridgedNetworkKind::Can};
+        if (!cli::write_text(stdout, bridge_runtime::describe_json(description)))
+        {
+            log(kTag, "FAIL setup: could not write the description to stdout (is it closed?)");
+            return kExitSetupFailed;
+        }
+        return kExitOk;
+    }
+
     // Declaration order is destruction order in reverse: the bridge goes first, then the XL
     // port, the SIL Kit participant (which owns the CAN controller) and the XL driver.
     std::unique_ptr<XlDriver> driver;
@@ -158,7 +173,7 @@ int run(const BridgeOptions& options)
         bridge = std::make_unique<CanBridge>(controller, *port);
         runtime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
         bridge->start();
-        runtime->start(std::chrono::seconds(15));
+        runtime->start(options.start_timeout);
     }
     catch (const std::exception& e)
     {

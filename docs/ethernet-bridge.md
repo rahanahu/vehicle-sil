@@ -93,13 +93,17 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 ```
 vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]
 vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> --backend <tap|packet|npcap|pcap> --interface <name> [options]
+vehicle_sil_ethernet_bridge --describe --network <name> --backend <backend> --interface <name> [options]
 ```
 
 | Argument | Meaning |
 |---|---|
 | `--registry-uri <uri>` | Address of the SIL Kit registry (required). |
 | `--network <name>` | Name of the SIL Kit Ethernet network (required; there is no default name). |
-| `--participant <name>` | Participant name (default `EthernetBridge`). |
+| `--name <name>` | Participant name (default `EthernetBridge`). |
+| `--participant <name>` | The same as `--name` (give one of them). |
+| `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |
+| `--describe` | Writes what the bridge is as JSON to stdout and exits (see "[Starting from a configuration file](#starting-from-a-configuration-file)"). |
 | `--backend <tap\|packet\|npcap\|pcap>` | How the external interface is opened (required; see "[Backends](#backends)"). |
 | `--interface <name>` | The interface to connect to (required; the bridge never picks "the first one found"). |
 | `--ethertype <hex>,...` | EtherTypes that may pass (hexadecimal starting with `0x`; repeating the option adds more). |
@@ -120,7 +124,7 @@ Notes on the arguments:
 - The `tap` backend is treated as a virtual interface inside the computer; the others are treated as able to put frames on a physical adapter. `tap`, `packet` and `pcap` are available on Linux, `npcap` on Windows.
 - The minimum of `--max-frame-bytes` is 60 because SIL Kit does not pass on frames shorter than 60 bytes.
 - `--list-interfaces` with `--backend npcap` or `--backend pcap` prints the list that the pcap library returns.
-- On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--participant`, `--network` and `--interface` can therefore contain non-ASCII characters.
+- On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--name`, `--network` and `--interface` can therefore contain non-ASCII characters.
 
 With a `--backend` that can put frames on a physical adapter (`packet`, `npcap`, `pcap`), you must say what may pass: one of `--ethertype`, `--src-mac` or `--all-frames`. Without it, the bridge reports this error:
 
@@ -130,11 +134,37 @@ With a `--backend` that can put frames on a physical adapter (`packet`, `npcap`,
 
 `parse_bridge_options()` in `vehicle_sil/ethernet_bridge/bridge_options.hpp` parses the arguments. An error is a `BridgeUsageError` that says what is wrong and how to fix it. `bridge_usage()` returns the full usage.
 
+## Starting from a configuration file
+
+`vehicle_sil_launch` can start the bridge with the other participants of a simulation. Write it in the configuration file like an ECU (`describe: true`, the default), with `role: bridge` and `required: false`:
+
+```yaml
+participants:
+  - name: EthBridge
+    role: bridge
+    required: false
+    command: [vehicle_sil_ethernet_bridge, --network, ETH_EXT, --backend, npcap,
+              --interface, "Ethernet 2", --src-mac, "02:00:00:00:00:01", --promiscuous]
+```
+
+On Linux, write `--backend packet` (or `pcap`) and the name of the network interface. The network (`ETH_EXT`) must be in `networks` with `kind: ethernet`.
+
+| Command | Arguments that `vehicle_sil_launch` adds |
+|---|---|
+| `check` | `--describe --name EthBridge` |
+| `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
+
+- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0. It does not open the interface, load the pcap library or connect to SIL Kit, so `check` works on a computer without Npcap or libpcap. `--registry-uri` is not needed; if it is given, it is not used.
+- The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "ethernet"`, `"use": "ethernet"` and `"mac": null`, no variables, `"control": null` and an empty `features` list.
+- `check` therefore knows which network the bridge carries. A network that is not in `networks` is reported as for an ECU (`unknown-network`). The bridge, which has no MAC address of its own, does not cause the note `ethernet-mac-unknown`.
+- Because the URI comes from the launcher, `registry_uri` may have port 0.
+- `required: false`: the simulation does not wait for the bridge, and when the run ends, the launcher asks the bridge to stop (see "[Startup order](bridges.md#startup-order)" in [bridges.md](bridges.md) for frames sent before the bridge joins).
+
 ## Exit codes
 
 | Exit code | Meaning | Output |
 |---|---|---|
-| 0 | Stopped by a stop request. Also 0 when `--list-interfaces` or `--help` finishes. | The statistics line and `stopped` |
+| 0 | Stopped by a stop request. Also 0 when `--list-interfaces`, `--describe` or `--help` finishes. | The statistics line and `stopped` |
 | 1 | Failure while running. | `FAIL: <reason>` |
 | 3 | Failure during setup (a backend not available on this OS, a pcap library that is not installed, the interface, SIL Kit). | `FAIL setup: <reason>` |
 | 4 | Argument error. | `error: <reason>` |
@@ -900,7 +930,7 @@ Linux:
 
 Other:
 
-- Starting the bridge from a launcher configuration file (`describe: false`, `required: false`).
+- Starting the bridge from a configuration file with the real Npcap on Windows, and with a physical NIC on Linux. The automated test `ethernet_bridge.integration.pcap-launcher` starts it from a configuration file with the fake pcap library.
 - The position of the EtherType, the VLAN TPIDs and the maximum length are not verified against the standards, as the note in "[Filter](#filter-framefilter)" says.
 
 ## Tests
@@ -950,6 +980,8 @@ These tests run, as processes, the executable linked with a fake external link (
 - There are 2 versions that lack one function each (an old version, and a version without `pcap_open`).
 - `ethernet_bridge.integration.pcap-*` uses an executable with the same content as the installed one, except that the library location is changed to the fake library (`vehicle_sil_ethernet_bridge_on_fake_pcap`).
 - `ethernet_bridge.integration.pcap-*` checks round trips and statistics, the list, the messages when the library is missing or old (3, before connecting to SIL Kit), a missing device (3) and a read failure (1).
+- `pcap-describe` checks that `--describe` answers without the library.
+- `pcap-launcher` writes a configuration file with the bridge (`role: bridge`, `required: false`, `--promiscuous`) and an ECU on its network (`eth_bridge_it_ecu.cpp`), with `registry_uri` on port 0. It checks that `check` passes without a finding and lists the bridge on the network, that the ECU's frames go out through the bridge and the device's answers come back to the ECU (a scenario expects them), and that the bridge ends with exit code 0 when the run ends.
 
 ### `ethernet_bridge.netns.*`
 

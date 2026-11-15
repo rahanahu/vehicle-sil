@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/ethernet_bridge/bridge_options.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -175,4 +176,44 @@ TEST_CASE(options_unknown_and_unexpected_arguments)
 {
     CHECK_TEXT(usage_error(with({"--xl-channel", "1"})), "unknown option: --xl-channel (see --help)");
     CHECK_TEXT(usage_error(with({"eth0"})), "unexpected argument: eth0 (options start with --; see --help)");
+}
+
+TEST_CASE(options_name_is_the_participant_name_and_participant_the_same_option)
+{
+    CHECK_TEXT(parse(with({"--name", "EthBridge"})).participant, "EthBridge");
+    CHECK_TEXT(parse(with({"--participant", "EthBridge"})).participant, "EthBridge");
+    CHECK_TEXT(usage_error(with({"--name", "A", "--participant", "B"})),
+               "--name and --participant are the same option: give one of them");
+    CHECK_TEXT(usage_error(with({"--name", ""})), "--name must not be empty");
+}
+
+TEST_CASE(options_start_timeout_is_how_long_the_start_may_take)
+{
+    CHECK(parse(with({})).start_timeout == std::chrono::milliseconds(15000));
+    CHECK(parse(with({"--start-timeout-ms", "40000"})).start_timeout == std::chrono::milliseconds(40000));
+    // The longest that vehicle_sil_launch gives (a run that waits for a participant started by hand).
+    CHECK(parse(with({"--start-timeout-ms", "1000000000000"})).start_timeout == std::chrono::milliseconds(1000000000000));
+    for (const std::string_view bad : {"0", "1000000000001", "-1", "5s"})
+    {
+        CHECK_TEXT(usage_error(with({"--start-timeout-ms", bad})),
+                   "--start-timeout-ms must be between 1 and 1000000000000, got: " + std::string(bad));
+    }
+}
+
+TEST_CASE(options_describe_needs_no_registry_and_checks_the_rest_as_a_run_does)
+{
+    const auto o = parse({"--describe", "--name", "EthBridge", "--network", "ETH1", "--backend", "npcap", "--interface",
+                          "Ethernet 2", "--promiscuous", "--all-frames"});
+    CHECK(o.describe);
+    CHECK(o.registry_uri.empty());
+    CHECK_TEXT(o.participant, "EthBridge");
+    // vehicle_sil_launch run gives --registry-uri and --start-timeout-ms; check only --name.
+    CHECK(parse(with({"--describe", "--start-timeout-ms", "1000"})).describe);
+    CHECK_TEXT(usage_error({"--describe", "--backend", "tap", "--interface", "vsil0"}),
+               "missing --network: name the SIL Kit Ethernet network to bridge (there is no default, so that the "
+               "bridge never joins a network by mistake)");
+    CHECK_TEXT(usage_error({"--describe", "--network", "ETH1", "--backend", "packet", "--interface", "eth0"}),
+               "--backend packet sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.");
+    CHECK_TEXT(usage_error({"--describe", "--list-interfaces"}),
+               "--describe and --list-interfaces exclude each other: give one of them");
 }
