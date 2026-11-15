@@ -151,8 +151,14 @@ public:
     /// What the engine notes for a timeline, if set (run()).
     TimelineRecord* record = nullptr;
     /// If set: what `peer` answers at once to a command for the time `at` instead of taking it
-    /// (its status and reason; empty: it takes the command as ever).
+    /// (its status and reason, and failed_write if it is about one write; empty: it takes the
+    /// command as ever).
     std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
+    /// The ECUs say which writes of a command took effect and which one a refusal is about
+    /// (control::TargetResult::applied_writes and failed_write, filled as control::Hub fills
+    /// them). false: ECUs built with vehicle-sil 0.1.0, which do not say and whose reason for a
+    /// setter that threw does not name the variable: only a command of one write is known.
+    bool ecus_say_which_writes = true;
 
     World()
     {
@@ -166,6 +172,7 @@ public:
         const std::uint64_t ticket = ++tickets_;
         control::OperationResult op;
         op.seq = ticket;
+        std::map<std::string, std::uint32_t> positions; // by peer: of the next write in its command
         for (const auto& w : writes)
         {
             auto target = std::find_if(op.targets.begin(), op.targets.end(), [&w](const auto& t) { return t.peer == w.peer; });
@@ -174,23 +181,31 @@ public:
                 op.targets.push_back(control::TargetResult{w.peer, control::TargetStatus::Queued, std::nullopt, false, ""});
                 target = op.targets.end() - 1;
             }
+            const std::uint32_t position = positions[w.peer]++;
             const auto ecu = std::find_if(ecus.begin(), ecus.end(), [&w](const ModelEcu& e) { return e.name == w.peer; });
             if (ecu == ecus.end())
             {
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "unknown peer";
+                target->applied_writes = 0;
                 continue;
             }
             if (const auto refused = refuse ? refuse(w.peer, time) : std::nullopt)
             {
                 target->status = refused->status;
                 target->reason = refused->reason;
+                target->applied_writes = 0;
+                target->failed_write = refused->failed_write;
                 continue;
             }
             if (w.name == "level" && (std::get<std::int64_t>(w.value) < 0 || std::get<std::int64_t>(w.value) > 100))
             {
+                // The agent's check: the hub knows the write from the agent's number, and for an
+                // agent that does not say from the name its reason begins with.
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "level: out of range";
+                target->applied_writes = 0;
+                target->failed_write = position;
                 continue;
             }
             auto command = std::find_if(ecu->queue.begin(), ecu->queue.end(), [ticket](const auto& c) { return c.ticket == ticket; });
@@ -308,27 +323,40 @@ private:
                 ++it;
                 continue;
             }
-            control::TargetResult r{m.name, control::TargetStatus::Applied, now, false, ""};
+            // As control::Hub fills them for an agent (see TargetResult): the positions count in
+            // this command.
+            const auto n = static_cast<std::uint32_t>(it->writes.size());
+            control::TargetResult r{m.name, control::TargetStatus::Applied, now, false, "", n};
             if (m.last_step && *m.last_step >= it->at)
             {
-                r = control::TargetResult{m.name, control::TargetStatus::Late, std::nullopt, true, "its time had passed"};
+                r = control::TargetResult{m.name, control::TargetStatus::Late, std::nullopt, true, "its time had passed", 0U};
+            }
+            else if (m.last_step &&
+                     std::any_of(it->writes.begin(), it->writes.end(), [](const auto& w) { return w.first == "gain"; }))
+            {
+                // A command that writes a parameter after the first step: refused as a whole, no
+                // setter is called.
+                r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
+                                          "a parameter is writable only before the first step", 0U,
+                                          n == 1 ? std::optional<std::uint32_t>(0) : std::nullopt};
             }
             else
             {
+                std::uint32_t position = 0;
                 for (const auto& [name, value] : it->writes)
                 {
-                    if (name == "gain" && m.last_step)
-                    {
-                        r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "a parameter is writable only before the first step"};
-                        break;
-                    }
                     if (name == "level" && std::get<std::int64_t>(value) == 13)
                     {
                         r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "level: a setter threw: 13 is not a level"};
+                                                  "level: a setter threw: 13 is not a level", position, position};
+                        if (!ecus_say_which_writes)
+                        {
+                            r.reason = "a setter threw: 13 is not a level";
+                            r.applied_writes = r.failed_write = n == 1 ? std::optional<std::uint32_t>(0) : std::nullopt;
+                        }
                         break;
                     }
+                    ++position;
                     if (name == "level")
                     {
                         m.level = std::get<std::int64_t>(value);
@@ -3067,10 +3095,16 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
     // An ECU applies the writes of one command one after the other and stops at the one whose
     // setter throws: the writes before it are applied. The file says so per write, marks only the
     // points that were not applied, and names the write that is the reason.
-    const auto failed = [](const std::string& text, const ScenarioCatalog& described = catalog()) {
-        const std::string timeline = timeline_of(text, 10ms, {}, described);
+    const auto failed = [](const std::string& text, const ScenarioCatalog& described = catalog(),
+                           const std::function<void(World&)>& setup = {}) {
+        const std::string timeline = timeline_of(text, 10ms, setup, described);
         return part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n") +
                part(timeline, "  \"series\": [", "  \"lines\"");
+    };
+    // The message and the writes of the failure only.
+    const auto failed_writes = [](const std::string& text, const std::function<void(World&)>& setup = {}) {
+        const std::string timeline = timeline_of(text, 10ms, setup);
+        return part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n");
     };
     // The setter of the second of three writes throws (level 13); a write of another
     // participant in the same set is applied. The sample of 20 ms has the mode that was applied.
@@ -3202,8 +3236,9 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "    }\n"
                "  ],\n"
                "");
-    // A result that does not name a write (here: a parameter after the first step): which of
-    // the writes were applied is not known, and no write is named as the reason.
+    // A parameter and an input in one command, after the first step: the ECU refuses the command
+    // as a whole and calls no setter. None of its writes was applied (the result says so: 0), and
+    // no write is named as the reason (the refusal is about the command).
     // (Described as an input, so that the check lets it through: as with an ECU that says less
     // than its agent checks.)
     ScenarioCatalog unnamed = catalog();
@@ -3212,21 +3247,21 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                               "  - at_ms: 20\n"
                               "    set: { Body.mode: 2, Body.gain: 3 }\n",
                       unnamed),
-               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a parameter is writable only before the first step); which of the 2 writes of that command the ECU applied is not known\",\n"
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a parameter is writable only before the first step); none of the 2 writes of that command was applied\",\n"
                "        \"writes\": [\n"
                "          {\n"
                "            \"variable\": \"Body.mode\",\n"
                "            \"at_ms\": 20,\n"
                "            \"value\": 2,\n"
                "            \"point\": 0,\n"
-               "            \"applied\": null\n"
+               "            \"applied\": false\n"
                "          },\n"
                "          {\n"
                "            \"variable\": \"Body.gain\",\n"
                "            \"at_ms\": 20,\n"
                "            \"value\": 3,\n"
                "            \"point\": 0,\n"
-               "            \"applied\": null\n"
+               "            \"applied\": false\n"
                "          }\n"
                "        ],\n"
                "        \"write\": null  \"series\": [\n"
@@ -3258,6 +3293,39 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "    }\n"
                "  ],\n"
                "");
+    // An ECU built with vehicle-sil 0.1.0 does not say how many writes took effect, and its reason
+    // for a setter that threw does not name the variable: for a command of several writes, which
+    // were applied is not known, and no write is named as the reason. The write to the other
+    // participant, whose command has one write, is known.
+    const auto old_ecus = [](World& world) { world.ecus_say_which_writes = false; };
+    check_text(failed_writes(kHead + "  - at_ms: 20\n"
+                                     "    set: { Body.mode: 2, Body.level: 13, Door.level: 13 }\n",
+                             old_ecus),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a setter threw: 13 is not a level); which of the 2 writes of that command the ECU applied is not known\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Door.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": null");
     // Refused by the agent's check when it got the command: none of its writes was applied, and
     // the reason names the write.
     ScenarioCatalog loose = catalog();
@@ -4060,8 +4128,8 @@ TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_kno
                    "scenario-write: the dither of Body.level (line 3) wrote 97 at 10 ms, and participant 'Body' did not take the write: "
                    "the ECU's agent refused it (level: the simulation has ended)\n");
     }
-    // Two dithered inputs of Body in one command, and the agent says which one it refuses (its
-    // reason begins with the variable's name): that input and its range, though it is the
+    // Two dithered inputs of Body in one command, and the agent says which one it refuses (the
+    // result points at its position in the command): that input and its range, though it is the
     // second of the command.
     {
         World world;

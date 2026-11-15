@@ -2128,3 +2128,50 @@ TEST_CASE(an_agent_does_not_answer_what_is_written_to_it_in_an_older_version)
     CHECK(eventually([&] { return hub.probe("A").has_value(); }, 30s));
     a.end();
 }
+
+// Which write a refusal is about: an agent of version 2 says it with a number, and its reason is
+// not read; an agent of version 1 cannot say it, and the hub reads the name its reason begins with.
+TEST_CASE(the_reason_of_a_refusal_is_read_only_for_an_agent_of_version_1)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Unused"});
+    auto& hub = side.hub;
+    RawAgent old("Old", registry.uri, 0x0101, 1);
+    RawAgent fresh("New", registry.uri, 0x0202, 2);
+    for (RawAgent* agent : {&old, &fresh})
+    {
+        agent->answers.store(true);
+        agent->hello(3);
+    }
+    side.wait_ready({"Old", "New"});
+    // The same refusal from both: the second write of the command, named in the reason.
+    const auto refuse = [&](RawAgent& agent, std::optional<std::uint32_t> failed_write) {
+        const std::size_t before = agent.commands_so_far().size();
+        const std::uint64_t seq =
+            hub.write(OperationRequest{{{agent.name, "v1", Value{std::int64_t{1}}}, {agent.name, "v2", Value{0.5}}}});
+        if (!eventually([&] { return agent.commands_so_far().size() == before + 1; }, 30s))
+        {
+            throw vehicle_sil::unit::Failure("the command did not arrive at " + agent.name);
+        }
+        wire::CommandMessage command;
+        if (wire::decode_command(agent.commands_so_far().back(), command))
+        {
+            throw vehicle_sil::unit::Failure("the command for " + agent.name + " cannot be read");
+        }
+        agent.submitted(wire::SubmittedMessage{agent.session, command.command.seq,
+                                               SubmitResult{SubmitStatus::Invalid, "v2: out of range", failed_write}},
+                        agent.version);
+        const OperationResult done = settled(hub.wait_done(seq, scaled_timeout(30s)), seq, "the refused write to " + agent.name);
+        check_status(done, agent.name, TargetStatus::Invalid);
+        return target(done, agent.name);
+    };
+    // Version 1 has no place for the number: read from the reason.
+    const TargetResult from_old = refuse(old, 1);
+    CHECK(from_old.failed_write == std::optional<std::uint32_t>{1});
+    CHECK(from_old.applied_writes == std::optional<std::uint32_t>{0});
+    // Version 2 says it ...
+    CHECK(refuse(fresh, 1).failed_write == std::optional<std::uint32_t>{1});
+    // ... and when it does not, the reason is not read for it.
+    CHECK(!refuse(fresh, std::nullopt).failed_write.has_value());
+    CHECK_EQ(side.transport->stats().undecodable, std::uint64_t{0});
+}

@@ -324,6 +324,21 @@ Agent は、participant 名（空は不可）と、起動ごとの ID（incarnat
 
 Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Late、Rejected、Cancelled のどれか、または Disconnected、Invalid、Busy、Unknown です。Sent、Queued、Disconnected 以外は確定で、二度と変わりません。
 
+状態と一緒に、Peer ごとの結果は、どの書き込みが反映され、どの書き込みが断られたかを、位置で返します（`TargetResult::applied_writes`、`TargetResult::failed_write`）。1 つの操作のうち 1 つの Peer への書き込みは、リクエストの順に並んだ、その Peer へのコマンドです（同じ変数を 2 回書けば、2 つの書き込みです）。位置はその中で 0 から数え、`n` は書き込みの数です。
+
+| 状態 | `applied_writes` | `failed_write` |
+|---|---|---|
+| Applied | `n` | 空 |
+| Late、Cancelled、Busy | 0 | 空 |
+| Invalid | 0 | Hub の確認が止まった書き込みか、Agent が指した書き込み。コマンド全体を断ったとき（Peer が接続していない、リンクが断った）は空 |
+| Rejected | setter が例外を投げた書き込みの位置（それより前の書き込みは反映済み） | 同じ位置 |
+| Sent、Queued、Disconnected、Unknown | 空 | 空 |
+
+- 最初のステップの後に Parameter を書くコマンドは、何も反映せず、setter も呼ばずに Rejected になります。`applied_writes` は 0 で、`failed_write` は、書き込みが 1 つだけのコマンドでなければ空です。
+- Agent が返した数が `n` より大きいときは信じません（どちらも空）。
+- 形式のバージョン 1 の Agent（vehicle-sil 0.1.0 でビルドした ECU）は、どちらの数も返しません。そういう Peer（`PeerHello::legacy_reasons`）では、Hub が、理由の先頭の名前（`"<名前>: "`）を読みます。コマンドの中でその名前の書き込みがちょうど 1 つなら両方を埋め、そうでなければ空のままにします。書き込みが 1 つのコマンドは、いつもわかります。理由を読んで書き込みを探すのは、ここだけです（`libs/control/src/hub.cpp` の `write_named()`）。バージョン 2 の Agent の理由は読みません。
+- 呼び出す側は、どの書き込みが反映されたかを、`reason` ではなく、この数で判断します（ランチャーのシナリオはそうしています: `ScenarioEngine::failed_write()`）。
+
 ### 受け付けと確定を待つ（`wait_queued()`、`wait_done()`）
 
 - `wait_queued(seq)` は、Sent の目標がなくなるまで待ち、そのときの操作を返します（タイムアウトと、知らない番号は空）。

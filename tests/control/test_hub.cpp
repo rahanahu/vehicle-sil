@@ -960,3 +960,239 @@ TEST_CASE(control_hub_tap_sees_every_sample_in_order_until_it_is_taken_away)
     engine.step(at(40ms));
     CHECK_EQ(seen.size(), std::size_t{4});
 }
+
+namespace {
+
+/// A peer that is a schema and a link, without an agent: the test says what its agent answers.
+/// Its variables: the inputs "level" and "lamp", the parameter "gain" and the output "speed".
+struct ScriptedPeer
+{
+    Hub& hub;
+    std::string name;
+    std::shared_ptr<FakePeer::Link> link = std::make_shared<FakePeer::Link>();
+    ConnectionId connection = 0;
+
+    ScriptedPeer(Hub& h, std::string n, bool legacy_reasons) : hub(h), name(std::move(n))
+    {
+        const auto variable = [](const char* variable_name, ValueType type, Causality causality) {
+            VariableInfo v;
+            v.name = variable_name;
+            v.type = type;
+            v.causality = causality;
+            return v;
+        };
+        PeerHello hello{name, "i1",
+                        {variable("level", ValueType::Real, Causality::Input), variable("lamp", ValueType::Bool, Causality::Input),
+                         variable("gain", ValueType::Real, Causality::Parameter),
+                         variable("speed", ValueType::Real, Causality::Output)},
+                        64};
+        hello.legacy_reasons = legacy_reasons;
+        connection = hub.agent_connected(std::move(hello), link);
+    }
+
+    /// Writes `names` (in this order, a value that fits each) as one command for the next step.
+    std::uint64_t write(const std::vector<std::string>& names)
+    {
+        std::vector<PeerWrite> writes;
+        for (const auto& variable : names)
+        {
+            writes.push_back({name, variable, variable == "lamp" ? Value{true} : Value{1.0}});
+        }
+        return hub.write(req(std::move(writes)));
+    }
+    void submitted(std::uint64_t seq, SubmitResult result) { hub.agent_submitted(connection, seq, result); }
+    void queued(std::uint64_t seq) { submitted(seq, SubmitResult{SubmitStatus::Queued, {}}); }
+    void result(std::uint64_t seq, CommandStatus status, std::string reason, std::optional<std::uint32_t> applied_writes)
+    {
+        hub.agent_result(connection, CommandResult{seq, status, std::nullopt, false, std::move(reason), applied_writes});
+    }
+    [[nodiscard]] TargetResult target(std::uint64_t seq) const { return ::target(*hub.operation(seq), name); }
+};
+
+using Count = std::optional<std::uint32_t>;
+const Count kNone = std::nullopt;
+
+/// The status and the two numbers of a target, as text: a difference shows all three.
+std::string counts(const TargetResult& t)
+{
+    static const char* const kNames[] = {"Sent",     "Queued",    "Disconnected", "Applied", "Late",
+                                         "Rejected", "Cancelled", "Invalid",      "Busy",    "Unknown"};
+    const auto text = [](const Count& c) { return c ? std::to_string(*c) : std::string("-"); };
+    return std::string(kNames[static_cast<std::size_t>(t.status)]) + " applied " + text(t.applied_writes) + " failed " +
+           text(t.failed_write);
+}
+
+} // namespace
+
+// TargetResult::applied_writes and failed_write for every status, with an agent that says them.
+TEST_CASE(control_hub_says_how_many_writes_took_effect_and_which_one_was_refused)
+{
+    Hub hub;
+    ScriptedPeer peer(hub, "Engine", false);
+    const std::vector<std::string> three{"level", "lamp", "level"}; // a variable twice: the positions say which
+
+    // Nothing is known while the command is on its way or queued.
+    std::uint64_t seq = peer.write(three);
+    CHECK(counts(peer.target(seq)) == "Sent applied - failed -");
+    peer.queued(seq);
+    CHECK(counts(peer.target(seq)) == "Queued applied - failed -");
+    // Applied: all of them, whatever the agent's number is.
+    peer.result(seq, CommandStatus::Applied, "", kNone);
+    CHECK(counts(peer.target(seq)) == "Applied applied 3 failed -");
+    // Late and Cancelled: none.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Late, "its time had passed", Count{0});
+    CHECK(counts(peer.target(seq)) == "Late applied 0 failed -");
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Cancelled, "", Count{0});
+    CHECK(counts(peer.target(seq)) == "Cancelled applied 0 failed -");
+
+    // Rejected: the setter of the write at the agent's number threw, the ones before it took
+    // effect. The second "level" is not confused with the first.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", Count{2});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 2 failed 2");
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", Count{0});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 0 failed 0");
+    // The reason is not read: a name in it changes nothing.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "lamp: a setter threw: no", Count{2});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 2 failed 2");
+    // A number the command does not have is not believed: more writes than there are.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", Count{4});
+    CHECK(counts(peer.target(seq)) == "Rejected applied - failed -");
+    // All of them and yet rejected: no write is the one.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "odd", Count{3});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 3 failed -");
+    // A parameter and an input in one command, after the first step: nothing was applied, and no
+    // setter was called, so no write is the one. With the parameter alone it is that write.
+    seq = peer.write({"level", "gain"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "a parameter is writable only before the first step", Count{0});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 0 failed -");
+    seq = peer.write({"gain"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "a parameter is writable only before the first step", Count{0});
+    CHECK(counts(peer.target(seq)) == "Rejected applied 0 failed 0");
+    // An agent that says nothing (its results do not come over a wire that carries the number):
+    // only a command of one write is known.
+    seq = peer.write(three);
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied - failed -");
+    seq = peer.write({"lamp"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "lamp: a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied 0 failed 0");
+
+    // Invalid, refused by the agent's check: none applied, and the write the agent names.
+    seq = peer.write(three);
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range", Count{2}});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed 2");
+    seq = peer.write(three);
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range", Count{3}}); // not a write of the command
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed -");
+    seq = peer.write(three);
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range", kNone}); // the reason is not read
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed -");
+    // Busy, said by the agent.
+    seq = peer.write(three);
+    peer.submitted(seq, SubmitResult{SubmitStatus::Busy, "full"});
+    CHECK(counts(peer.target(seq)) == "Busy applied 0 failed -");
+
+    // Invalid, refused by the hub's own check: the write at which it stopped.
+    CHECK(counts(peer.target(peer.write({"level", "lamp", "speed", "nope"}))) == "Invalid applied 0 failed 2"); // an output
+    CHECK(counts(peer.target(peer.write({"nope", "level"}))) == "Invalid applied 0 failed 0");                 // unknown
+    // ... or the command as a whole: no write is the one.
+    CHECK(counts(::target(*hub.operation(hub.write(req({{"Nobody", "level", 1.0}}))), "Nobody")) == "Invalid applied 0 failed -");
+    peer.link->up = false;
+    CHECK(counts(peer.target(peer.write(three))) == "Invalid applied 0 failed -"); // the link refused it
+    peer.link->up = true;
+
+    // No result will come: not known.
+    seq = peer.write(three);
+    peer.queued(seq);
+    hub.agent_disconnected(peer.connection);
+    CHECK(counts(peer.target(seq)) == "Disconnected applied - failed -");
+    CHECK(hub.forget_peer("Engine"));
+    CHECK(counts(peer.target(seq)) == "Unknown applied - failed -");
+}
+
+// The same with a variable map: the positions are those of the request, whatever the names are.
+TEST_CASE(control_hub_positions_of_writes_do_not_depend_on_the_variable_map)
+{
+    Hub hub;
+    hub.set_variable_map("Engine", VariableMap{VariableMapping{.name = "throttle", .from = "level"}});
+    ScriptedPeer peer(hub, "Engine", false);
+    std::uint64_t seq = peer.write({"lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range", Count{1}});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed 1");
+    CHECK(peer.target(seq).reason == "throttle (the executable's level): out of range");
+    // The executable's name is not a name to write under the map: the hub's check stops there.
+    CHECK(counts(peer.target(peer.write({"lamp", "level"}))) == "Invalid applied 0 failed 1");
+}
+
+// An agent that does not say (wire version 1, an ECU built with vehicle-sil 0.1.0): the hub reads
+// the name its reason begins with, in this one place, and says "not known" where the name does
+// not tell.
+TEST_CASE(control_hub_reads_the_reason_of_an_agent_that_does_not_say_which_write)
+{
+    Hub hub;
+    hub.set_variable_map("Old", VariableMap{VariableMapping{.name = "throttle", .from = "level"}});
+    ScriptedPeer peer(hub, "Old", true);
+
+    // The agent's check names the write ("<name>: <why>"), with the executable's name.
+    std::uint64_t seq = peer.write({"lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range"});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed 1");
+    CHECK(peer.target(seq).reason == "throttle (the executable's level): out of range");
+    // A reason that names no write of the command, or names it without the ": " behind it.
+    seq = peer.write({"lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "the agent has finished"});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed -");
+    seq = peer.write({"lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "levels are out"});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed -");
+    // The same variable twice: the name does not say which of the two.
+    seq = peer.write({"throttle", "lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "level: out of range"});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed -");
+    seq = peer.write({"throttle", "lamp", "throttle"});
+    peer.submitted(seq, SubmitResult{SubmitStatus::Invalid, "lamp: wrong type"});
+    CHECK(counts(peer.target(seq)) == "Invalid applied 0 failed 1");
+
+    // Rejected by 0.1.0: "a setter threw: ..." names no variable. Known for a command of one
+    // write only.
+    seq = peer.write({"lamp", "throttle"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied - failed -");
+    seq = peer.write({"throttle"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied 0 failed 0");
+    // Rejected by an agent of version 1 that names the variable: the writes before it took effect.
+    seq = peer.write({"lamp", "throttle", "gain"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied 1 failed 1");
+    seq = peer.write({"throttle", "lamp", "throttle"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Rejected, "level: a setter threw: no", kNone);
+    CHECK(counts(peer.target(seq)) == "Rejected applied - failed -");
+    // What its status says by itself needs no reason.
+    seq = peer.write({"lamp", "throttle"});
+    peer.queued(seq);
+    peer.result(seq, CommandStatus::Applied, "", kNone);
+    CHECK(counts(peer.target(seq)) == "Applied applied 2 failed -");
+}

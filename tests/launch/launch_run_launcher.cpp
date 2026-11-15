@@ -3473,6 +3473,22 @@ void control_version_1(const Options& o)
             "the scenario's writes and expectations pass:\n" + scenario);
     require(run.standard_error.find("error:") == std::string::npos, "the ECU of version 1 ends without an error:\n" + run.standard_error);
 
+    // A write that its setter refuses fails the step, with the ECU's reason: its results arrive
+    // in version 1 too. (Its command has one write, so it is known that nothing was applied; for
+    // a command of several writes an ECU of 0.1.0 does not say where it stopped.)
+    write_file(dir / "Old.refuse-13", "\n");
+    write_file(dir / "refused.yaml", "vehicle_sil_scenario: 1\n"
+                                     "name: a refused write\n"
+                                     "steps:\n"
+                                     "  - set: { Old.level: 13, New.level: 7 }\n");
+    const Captured refused = launch(o, {"run", "sim.yaml", "--scenario", "refused.yaml", "--json"}, dir);
+    fs::remove(dir / "Old.refuse-13");
+    expect_code(refused, 1, "run --scenario with a write that the ECU of version 1 refuses");
+    const std::string failed = scenario_json(lf(refused.standard_output));
+    require(contains(failed, "\"status\": \"failed\"") && contains(failed, "\"code\": \"scenario-write\"") &&
+                contains(failed, "was not applied by participant 'Old': the ECU rejected it (level: a setter threw: 13 is not taken)"),
+            "the refusal of the ECU of version 1 fails the step, with its reason:\n" + failed);
+
     // Its hello is waited for before the start, as the hello of every ECU whose --describe offers
     // the variables in a version the launcher speaks: one that does not come is no_hello (not
     // version_mismatch, and not passed over in silence).

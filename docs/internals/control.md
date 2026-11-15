@@ -324,6 +324,21 @@ If `forget_peer()` removes a disconnected peer, its unsettled operations become 
 
 For each peer, the state goes from Sent to Queued (the Agent queued it), then to one of Applied, Late, Rejected and Cancelled. It can also be Disconnected, Invalid, Busy or Unknown. Every state except Sent, Queued and Disconnected is final and never changes.
 
+With the state, each peer's result says which of its writes took effect and which one was refused, as positions (`TargetResult::applied_writes`, `TargetResult::failed_write`). The writes of an operation for one peer are that peer's command, in the order of the request (a variable written twice is two writes); the positions count in it, from 0, and `n` is the number of its writes.
+
+| State | `applied_writes` | `failed_write` |
+|---|---|---|
+| Applied | `n` | empty |
+| Late, Cancelled, Busy | 0 | empty |
+| Invalid | 0 | The write at which the Hub's check stopped, or the one the Agent names. Empty when the command as a whole was refused (the peer is not connected, the link refused it). |
+| Rejected | The position of the write whose setter threw (the writes before it took effect) | The same position |
+| Sent, Queued, Disconnected, Unknown | empty | empty |
+
+- A command that writes a Parameter after the first step is Rejected with nothing applied and no setter called: `applied_writes` is 0, and `failed_write` is empty unless the command has only one write.
+- A number from the Agent that is larger than `n` is not believed: both are empty.
+- An Agent of wire version 1 (an ECU built with vehicle-sil 0.1.0) does not say either number. For such a peer (`PeerHello::legacy_reasons`) the Hub reads the name its reason begins with (`"<name>: "`): it fills both when exactly one write of the command has that name, and leaves them empty otherwise. A command of one write is always known. This is the only place that reads a reason to find a write (`write_named()` in `libs/control/src/hub.cpp`); the reasons of an Agent of version 2 are never read.
+- Callers tell which writes took effect from these numbers, not from `reason` (the launcher's scenario does: `ScenarioEngine::failed_write()`).
+
 ### Waiting for queued and done (`wait_queued()`, `wait_done()`)
 
 - `wait_queued(seq)` waits until no target is Sent, then returns the operation as it is at that point (empty on timeout and for an unknown number).

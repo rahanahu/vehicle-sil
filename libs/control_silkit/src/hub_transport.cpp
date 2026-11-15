@@ -298,6 +298,8 @@ struct HubTransport::State
         peer.schema = std::move(hello.schema);
         peer.max_pending = hello.max_pending;
         peer.virtual_time = hello.virtual_time;
+        // Version 1 has no place for the numbers that say which writes took effect.
+        peer.legacy_reasons = read.version < 2;
         std::shared_ptr<Link> replaced;
         try
         {
