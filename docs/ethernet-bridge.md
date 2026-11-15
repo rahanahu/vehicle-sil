@@ -9,10 +9,10 @@
 | The network stack of the same computer's OS, and programs that open the TAP device | `tap` | Linux | Nothing | Automated tests against the real kernel in a network namespace |
 | Devices beyond a network interface (NIC, veth) | `packet` | Linux | Nothing | Automated tests on a veth pair (physical NICs not verified) |
 | Same as `packet` | `pcap` | Linux | libpcap | Automated tests on a veth pair with the real libpcap (physical NICs not verified) |
-| Devices beyond a network adapter | `npcap` | Windows | Npcap | With the real Npcap, only manual checks on the virtual NIC of a virtual machine |
+| Devices beyond a network adapter | `npcap` | Windows | Npcap | With the real Npcap, only manual checks: on the virtual NIC of a virtual machine, and on one physical USB adapter on a LAN |
 
 > [!WARNING]
-> On Windows, `npcap` is verified against the real Npcap only by hand, on the virtual NIC of a virtual machine. It is not verified on a physical NIC. The tests run against a fake library that has the same functions. For what is verified, see "[Verified and not verified](#verified-and-not-verified)".
+> On Windows, `npcap` is verified against the real Npcap only by hand: on the virtual NIC of a virtual machine, and on one physical USB adapter passed through to that virtual machine, on a LAN with a computer's network stack as the peer. It is not verified with a device or a second computer on a cable, or with high traffic on a physical NIC. The tests run against a fake library that has the same functions. For what is verified, see "[Verified and not verified](#verified-and-not-verified)".
 
 For the Vector XL CAN Bridge, see [bridges.md](bridges.md).
 
@@ -395,7 +395,7 @@ The tests load a fake library, but the means to do so exists only in a separate 
 - Connection names are compared as UTF-8 strings (the arguments are read as UTF-8).
 - Both the list and the error messages are written in a form that is readable in a console whatever the code page, and as UTF-8 to files and pipes (see "Output encoding" in [bridges.md](bridges.md#output-encoding)). You do not need `chcp`.
 - Text that Npcap returns (device descriptions, error texts) is read in the Windows ANSI code page and converted to UTF-8.
-- Whether Japanese names are shown and matched on Japanese Windows is not verified.
+- A connection name in Japanese is listed and matched (checked on English Windows). Files and pipes receive it as correct UTF-8, and a console receives the correct characters; the console font of English Windows draws them as boxes. How a console on Japanese Windows shows them is not verified.
 
 #### Behavior common to `npcap` and `pcap`
 
@@ -487,7 +487,9 @@ cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). R
 
 #### Connecting within one computer on Windows
 
-Windows has no backend that corresponds to a TAP device. To connect programs within one computer, install the virtual adapter that comes with Windows, "Microsoft KM-TEST Loopback Adapter", and have both the bridge and the other program open that adapter with Npcap. If you open the same adapter in Wireshark, you can see the frames that come out of SIL Kit. Between programs that open the same adapter with Npcap, frames pass in both directions and VLAN tags are kept. Whether programs that use ordinary OS sockets can receive them is **not verified**.
+Windows has no backend that corresponds to a TAP device. To connect programs within one computer, install the virtual adapter that comes with Windows, "Microsoft KM-TEST Loopback Adapter", and have both the bridge and the other program open that adapter with Npcap. If you open the same adapter in Wireshark, you can see the frames that come out of SIL Kit. Between programs that open the same adapter with Npcap, frames pass in both directions and VLAN tags are kept.
+
+Programs that use ordinary OS sockets (UDP, TCP) on the same computer: frames that the OS sends on the adapter reach the bridge, but **frames that the bridge sends do not reach the OS**. The bridge opens the adapter with the option not to receive its own transmissions (`PCAP_OPENFLAG_NOCAPTURE_LOCAL`), and on this adapter a frame sent through a capture opened with that option did not reach the OS, while the same frame sent through a capture opened without it did.
 
 ### When the interface state changes while running
 
@@ -852,32 +854,36 @@ Verified against the fake pcap library `tests/eth_link/fake_pcap`. The fake is a
 
 ### Verified (Windows, real Npcap, manual)
 
-Verified by hand against the real Npcap, on the virtual NIC of a virtual machine and on the Microsoft KM-TEST Loopback Adapter. These checks are not automated tests.
+Verified by hand against the real Npcap, on the virtual NIC of a virtual machine, on the Microsoft KM-TEST Loopback Adapter and on one physical USB adapter (the last item). These checks are not automated tests.
 
 - `wpcap.dll` loads from `System32\Npcap` (and `Packet.dll` is found). The functions the bridge uses are there, and the structures have the expected shape (the list, frame length and content, the dropped count).
 - With the receive event, the bridge receives without busy-waiting and without losing frames.
-- Connection names appear in the list and match `--interface` (English Windows, ASCII names). This was checked when arguments and names were handled in the ANSI code page. Since they are handled as UTF-8 and written to the console as UTF-16, this has not been checked with the real Npcap.
+- Connection names appear in the list and match `--interface`, in ASCII and in Japanese (English Windows), in a console and in a file. The adapter identifier (lower case, without braces) and the pcap name open the adapter too. A name that differs only in upper and lower case does not match.
 - Round trips between a peer on the SIL Kit side and a device beyond the adapter. Without `--promiscuous`, unicast frames to SIL Kit devices are not received and the hint warning appears.
 - Frames pass in both directions with other programs that open the same adapter with Npcap (on the virtual NIC and on the KM-TEST Loopback Adapter).
 - Npcap gives a handle back the frames that handle sent. A handle opened with `PCAP_OPENFLAG_NOCAPTURE_LOCAL` does not receive its own transmissions but receives those of other handles.
 - On an adapter that the bridge opens the current way (`pcap_open()` with the option not to receive its own transmissions), the bridge's transmissions do not come back to it (also with `--no-mac-guard`). 2 bridges on the same adapter warn and stop forwarding, whichever starts first. Receiving is not delayed, and the bridge uses no CPU when idle.
 - The bridge receives frames that the OS sends on the same adapter (ARP).
 - Whether frames with VLAN tags pass depends on the adapter driver and its settings (see "[`npcap` and `pcap`](#npcap-and-pcap)"). One NIC kept all tags; on another, one direction lost them with either setting.
+- Frames that Npcap drops because the bridge did not read them in time are counted in `ext_overruns` (exactly the frames that reached the adapter but not SIL Kit), and a health line reports them.
+- Frames sent from SIL Kit in bursts all left the virtual NIC; no transmit congestion occurred, and `ext_queue_full` stayed 0. While the virtual NIC's link was down, every send failed and was counted in `ext_tx_failures`, with the library's text after `last error:`, and the bridge kept running.
+- On the KM-TEST Loopback Adapter, frames that the OS sends reach the bridge, and frames that the bridge sends do not reach programs that use ordinary OS sockets (see "[Connecting within one computer on Windows](#connecting-within-one-computer-on-windows)").
 - On a stop request (Ctrl+C, Ctrl+Break), the bridge prints the statistics and exits with code 0. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Disabled adapters are not in the list.
 - Npcap installed without the limit can be used by users who are not administrators. If Npcap was installed for administrators only and a user who is not an administrator uses it, the bridge stops at the elevation prompt.
+- Physical NIC: one USB Ethernet adapter (ASIX AX88772, 100 Mbit/s, the driver that comes with Windows), passed through to the virtual machine, on a LAN with the network stack of the host computer (on its own NIC) as the peer (ARP). The list and `--interface` find the adapter. Without `--promiscuous`, the request goes out, the unicast reply is not received, and the hint warning appears. With `--promiscuous`, the adapter accepts promiscuous mode and the reply reaches the SIL Kit side. The bridge's transmissions do not come back to it, and no loop warning appears. Frames that the OS sends on the adapter reach the bridge. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Ctrl+C prints the statistics and exits with code 0.
 
 ### Not verified
 
 Windows:
 
-- Physical NICs and wires, wireless adapters.
-- Windows in Japanese (connection names in Japanese).
+- Physical NICs other than the one USB adapter above; a device or a second computer on a cable; pulling the cable while the bridge runs; wireless adapters.
+- High traffic on a physical NIC, and VLAN tags on a physical NIC.
+- Windows in Japanese (how its console shows connection names in Japanese).
 - Computers with Npcap installed in WinPcap compatible mode.
 - Whether an adapter that does not accept promiscuous mode can be opened with `--promiscuous`, or fails to open (and the library's text if it fails).
 - Whether there is an Npcap or adapter that accepts the option against echoes but still echoes the bridge's own transmissions.
-- Whether programs that use ordinary OS sockets can receive on the KM-TEST Loopback Adapter.
 - The confirmation prompt that Windows with a desktop shows for Npcap installed for administrators only.
-- Whether transmit congestion (`ext_queue_full`) and lost frames (`ext_overruns`) are counted with the real Npcap.
+- Whether transmit congestion is ever counted in `ext_queue_full` with the real Npcap (it did not occur in the checks).
 
 Linux:
 
