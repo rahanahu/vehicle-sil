@@ -744,18 +744,28 @@ void quitter(const Options& o)
     {
         shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
     }
-    expect_text(shown,
-                "run: the simulation did not start\n"
-                "\n"
-                "participant  required  ended\n"
-                "Engine       yes       stopped (" + kStop + "), exit code 130\n"
-                "Quitter      yes       exit code 2\n"
-                "\n"
-                "error: sim.yaml:8: participant 'Quitter': it ended before the simulation started: its process exited "
-                "with code 2, so the simulation could not start; the lines [Quitter] above show what it wrote [ended-before-start]\n"
-                "\n"
-                "failed: 1 error, 0 warnings, 1 note\n",
-                "run with a participant that ends before the start");
+    try
+    {
+        expect_text(shown,
+                    "run: the simulation did not start\n"
+                    "\n"
+                    "participant  required  ended\n"
+                    "Engine       yes       stopped (" + kStop + "), exit code 130\n"
+                    "Quitter      yes       exit code 2\n"
+                    "\n"
+                    "error: sim.yaml:8: participant 'Quitter': it ended before the simulation started: its process exited "
+                    "with code 2, so the simulation could not start; the lines [Quitter] above show what it wrote [ended-before-start]\n"
+                    "\n"
+                    "failed: 1 error, 0 warnings, 1 note\n",
+                    "run with a participant that ends before the start");
+    }
+    catch (const std::runtime_error& e)
+    {
+        // What Engine wrote and when the launcher asked it to stop tell why it ended another way
+        // (an Engine that had to be ended wrote no "interrupted" line: the request did not reach
+        // its handling).
+        throw std::runtime_error(std::string(e.what()) + "\n--- stderr ---\n" + run.standard_error);
+    }
 }
 
 void hang(const Options& o)
