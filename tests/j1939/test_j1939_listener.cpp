@@ -1077,6 +1077,29 @@ TEST_CASE(listener_rejects_empty_handlers_and_options_that_cannot_work)
     CHECK_EQ(good.options().sniffer.sessions, 32u);
 }
 
+TEST_CASE(listener_timeouts_follow_the_timing_of_its_network_unless_set)
+{
+    NetworkOptions networkOptions = quiet();
+    networkOptions.timing.t1 = 100ms;
+    networkOptions.timing.t2 = 200ms;
+    networkOptions.timing.t3 = 400ms;
+    networkOptions.timing.t4 = 300ms;
+    Bench bench(networkOptions);
+    const Listener follows(bench.network);
+    CHECK(follows.options().sniffer.timeout == SimDuration{400ms});
+    CHECK(follows.options().sniffer.broadcast_timeout == SimDuration{100ms});
+    Bench other(networkOptions);
+    ListenerOptions options;
+    options.sniffer.timeout = 900ms;
+    const Listener set(other.network, options);
+    CHECK(set.options().sniffer.timeout == SimDuration{900ms});
+    CHECK(set.options().sniffer.broadcast_timeout == SimDuration{100ms});
+    Bench plain(quiet());
+    const Listener defaults(plain.network);
+    CHECK(defaults.options().sniffer.timeout == SimDuration{1250ms});
+    CHECK(defaults.options().sniffer.broadcast_timeout == SimDuration{750ms});
+}
+
 // --- lifetime -------------------------------------------------------------------------------------
 
 TEST_CASE(listener_is_one_per_network_and_says_what_to_do_about_a_second)

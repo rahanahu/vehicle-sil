@@ -15,9 +15,11 @@
 #include <vector>
 
 using namespace vehicle_sil::unit::j1939;
+using vehicle_sil::SimDuration;
 using vehicle_sil::SimTime;
 using vehicle_sil::can::TimedFrame;
 using vehicle_sil::j1939::Message;
+using vehicle_sil::j1939::ProtocolTiming;
 using vehicle_sil::j1939::SniffDelivery;
 using vehicle_sil::j1939::SniffedTransfer;
 using vehicle_sil::j1939::SniffEnd;
@@ -55,7 +57,7 @@ struct Heard
 
 struct Sniffer
 {
-    explicit Sniffer(SnifferOptions options = {}) : sniffer(options)
+    explicit Sniffer(SnifferOptions options = {}, const ProtocolTiming& timing = {}) : sniffer(options, timing)
     {
         sniffer.on_transfer([this](const SniffedTransfer& t) {
             heard.push_back(Heard{t.end, t.pgn.value(), t.source, t.destination, t.size, t.started, t.time, t.noticed,
@@ -452,6 +454,43 @@ TEST_CASE(sniffer_timeouts_can_be_changed)
     s.sniffer.advance(at(101ms));
     CHECK_EQ(s.heard.size(), 2u);
     CHECK(s.heard[1].time == at(100ms));
+}
+
+TEST_CASE(sniffer_timeouts_left_empty_follow_the_engine_timing)
+{
+    // By default: the engine's defaults.
+    const TransferSniffer plain;
+    CHECK(plain.options().timeout == SimDuration{1250ms});
+    CHECK(plain.options().broadcast_timeout == SimDuration{750ms});
+    // From the timing given: a connection waits for the longest of T1..T4, a broadcast for T1.
+    ProtocolTiming timing;
+    timing.t1 = 100ms;
+    timing.t2 = 200ms;
+    timing.t3 = 400ms;
+    timing.t4 = 300ms;
+    SnifferOptions options;
+    options.grace = 0ms;
+    options.broadcasts = true;
+    Sniffer s(options, timing);
+    CHECK(s.sniffer.options().timeout == SimDuration{400ms});
+    CHECK(s.sniffer.options().broadcast_timeout == SimDuration{100ms});
+    s.feed(at(0ms), rts(kA, kB, 30, kPgn));
+    s.feed(at(0ms), bam(kC, 30, kOther));
+    s.sniffer.advance(at(100ms));
+    CHECK(s.heard.empty());
+    s.sniffer.advance(at(101ms));
+    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK_EQ(s.heard[0].sa, kC);
+    s.sniffer.advance(at(400ms));
+    CHECK_EQ(s.heard.size(), 1u);
+    s.sniffer.advance(at(401ms));
+    CHECK_EQ(s.heard.size(), 2u);
+    CHECK(s.heard[1].time == at(400ms));
+    // A value that is set wins over the timing.
+    options.timeout = 900ms;
+    const TransferSniffer set(options, timing);
+    CHECK(set.options().timeout == SimDuration{900ms});
+    CHECK(set.options().broadcast_timeout == SimDuration{100ms});
 }
 
 TEST_CASE(sniffer_broadcast_packet_exactly_at_the_timeout_is_taken_and_the_next_instant_is_not)
@@ -1119,9 +1158,10 @@ TEST_CASE(sniffer_rejects_options_that_cannot_work_and_says_what_to_give)
     fine.grace = 0ms;
     TransferSniffer sniffer(fine);
     CHECK_EQ(sniffer.options().sessions, 1u);
-    // The defaults are the engine's timeouts.
-    CHECK(SnifferOptions{}.timeout == 1250ms);
-    CHECK(SnifferOptions{}.broadcast_timeout == 750ms);
+    // The defaults are the engine's timeouts (left empty, the sniffer takes them from the
+    // engine's default timing).
+    CHECK(TransferSniffer{}.options().timeout == SimDuration{1250ms});
+    CHECK(TransferSniffer{}.options().broadcast_timeout == SimDuration{750ms});
     CHECK(SnifferOptions{}.grace == 250ms);
     CHECK_EQ(SnifferOptions{}.sessions, 32u);
     CHECK(!SnifferOptions{}.broadcasts);

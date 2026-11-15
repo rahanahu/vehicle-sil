@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -140,21 +141,29 @@ enum class SniffSecondAnnouncement : std::uint8_t
 
 /// The defaults are the values of this repository's engine. They were not compared with the
 /// standard: change them if the ECUs on your bus behave differently.
+///
+/// The two timeouts follow the engine's timing (ProtocolTiming) unless they are set: a
+/// TransferSniffer takes them from the ProtocolTiming its constructor is given, a Listener from
+/// its Network (NetworkOptions::timing). Set them yourself only when the ECUs you listen to use
+/// other times than that Network, or than the ProtocolTiming you give a TransferSniffer that
+/// reads raw CAN frames.
 struct SnifferOptions
 {
     /// The transfers followed at the same time (connections and broadcasts together). The
     /// constructor reserves sessions x kMaxTransportLength bytes; nothing is allocated later.
     /// An announcement that finds no free place is counted in no_session and not followed.
     std::size_t sessions = 32;
-    /// A connection without a frame for longer than this is over.
-    SimDuration timeout = std::chrono::milliseconds(1250);
+    /// A connection without a frame for longer than this is over. Empty: the longest of the
+    /// engine's T1..T4 (1250 ms by default), the longest any side of a connection waits.
+    std::optional<SimDuration> timeout{};
     /// How much longer the sniffer waits before it reports a connection as TimedOut. The ECU
     /// that gives up sends a Connection Abort, which arrives a little after the timeout (its
     /// step, the transmission, the listener's step); within the grace it ends the transfer as
     /// AbortedBySender or AbortedByReceiver instead. Raise it for step sizes above a few 10 ms.
     SimDuration grace = std::chrono::milliseconds(250);
     /// A broadcast without a packet for longer than this is over (no grace: nobody aborts one).
-    SimDuration broadcast_timeout = std::chrono::milliseconds(750);
+    /// Empty: the engine's T1 (750 ms by default).
+    std::optional<SimDuration> broadcast_timeout{};
     SniffDelivery delivery = SniffDelivery::WhenAcknowledged;
     SniffSecondAnnouncement other_group = SniffSecondAnnouncement::KeepRunning;
     /// Also follow broadcasts (BAM). Off by default: a Network assembles the broadcasts itself
@@ -229,8 +238,9 @@ public:
     using Handler = std::function<void(const SniffedTransfer&)>;
 
     /// Throws std::invalid_argument if sessions is 0, timeout or broadcast_timeout is not
-    /// positive, or grace is negative.
-    explicit TransferSniffer(SnifferOptions options = {});
+    /// positive, or grace is negative. An empty timeout or broadcast_timeout is first taken
+    /// from `timing` (see SnifferOptions); options() has the values used.
+    explicit TransferSniffer(SnifferOptions options = {}, const ProtocolTiming& timing = {});
     ~TransferSniffer();
     TransferSniffer(const TransferSniffer&) = delete;
     TransferSniffer& operator=(const TransferSniffer&) = delete;

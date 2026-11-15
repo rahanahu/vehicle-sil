@@ -651,7 +651,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
 | 盗み聞き | `src/transfer_sniffer.cpp` |
-| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
+| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、告知の形の検査。時間切れは `types.hpp` の `ProtocolTiming`） | `src/transport_wire.hpp` |
 | 聞き役の席（内部の口） | `src/frame_seat.hpp` |
 | 席に座る `Listener` | `src/listener.cpp` |
 

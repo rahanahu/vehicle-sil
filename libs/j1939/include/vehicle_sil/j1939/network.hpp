@@ -158,8 +158,9 @@ enum class AddressState : std::uint8_t
 {
     Fixed,       ///< No NAME: the node uses its configured address without claiming it.
     NotStarted,  ///< Has a NAME; claims its address in its first step.
-    Claiming,    ///< Sent its Address Claimed, in the 250 ms after it (messages are held unless
-                 ///< the node is one of the exceptions that do not wait).
+    Claiming,    ///< Sent its Address Claimed, in the wait after it (250 ms by default,
+                 ///< ProtocolTiming::address_claim_wait; messages are held unless the node is
+                 ///< one of the exceptions that do not wait).
     Claimed,     ///< Owns its address.
     CannotClaim, ///< Has no address (254): lost it to a node with a higher-priority NAME and could
                  ///< not move to another one.
@@ -344,9 +345,9 @@ struct NodeOptions
 /// host's application stage. Sending outside a step throws std::logic_error.
 ///
 /// Address claiming (nodes with a NAME): in its first step the node sends Address Claimed for
-/// its address and then waits 250 ms; messages it sends during the wait (also responses and
-/// acknowledgements) are held (NetworkOptions::hold_capacity) and leave when the wait ends,
-/// from the address it then has. A node that is not arbitrary address capable and claims an
+/// its address and then waits (NetworkOptions::timing.address_claim_wait, 250 ms by default);
+/// messages it sends during the wait (also responses and acknowledgements) are held
+/// (NetworkOptions::hold_capacity) and leave when the wait ends, from the address it then has. A node that is not arbitrary address capable and claims an
 /// address of 0..127 or 248..253 does not wait. If another node claims the same address with a
 /// lower NAME (or the same NAME), the node loses the address and drops what it holds; an
 /// arbitrary address capable node then claims the first free address of the network's
@@ -650,6 +651,11 @@ struct NetworkOptions
     /// The time between the packets of a broadcast this network sends (10 .. 200 ms), counted
     /// from the step that sent the previous frame.
     SimDuration bam_packet_interval = std::chrono::milliseconds(50);
+    /// The timeouts of the transport protocol (T1..T4), the retransmission requests a receiver
+    /// sends per window, and the wait after an address claim. The defaults have not been
+    /// checked against the standard (see ProtocolTiming). A Listener on this network follows
+    /// the same values unless its SnifferOptions set others.
+    ProtocolTiming timing{};
     /// The addresses an arbitrary address capable node chooses from (the lowest free one) when
     /// it loses its address or has none configured. Within 0..253, first <= last.
     Address arbitrary_address_first = 128;
@@ -836,6 +842,8 @@ public:
     [[nodiscard]] const NetworkStatistics& statistics() const noexcept { return statistics_; }
     /// NetworkOptions::on_reconnect, as the network was created with.
     [[nodiscard]] OnReconnect on_reconnect() const noexcept { return options_.on_reconnect; }
+    /// NetworkOptions::timing, as the network was created with.
+    [[nodiscard]] const ProtocolTiming& timing() const noexcept { return options_.timing; }
     [[nodiscard]] bool failed() const noexcept { return phase_ == Phase::Failed; }
     [[nodiscard]] const std::string& error() const noexcept { return error_; }
     /// Time of the current (or last) step.

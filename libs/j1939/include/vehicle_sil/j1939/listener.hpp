@@ -47,7 +47,8 @@ struct ReceivedFrame
 struct ListenerOptions
 {
     /// How the connections between other ECUs are followed. `broadcasts` is not read: the
-    /// Network assembles the broadcasts itself and the Listener hands each one on once.
+    /// Network assembles the broadcasts itself and the Listener hands each one on once. The
+    /// timeouts left empty follow the Network's NetworkOptions::timing.
     SnifferOptions sniffer{};
     /// Also hand on what the nodes of the Listener's own Network sent to each other. Off by
     /// default: the Listener hears the other participants only.
@@ -168,7 +169,9 @@ public:
 
     /// Starts listening to `network`. Only outside a step. std::logic_error if the Network has a
     /// Listener already (add the handlers to that one); std::invalid_argument for sniffer
-    /// options that cannot work (see TransferSniffer). Reserves
+    /// options that cannot work (see TransferSniffer). The sniffer's timeouts that
+    /// options.sniffer leaves empty follow the Network's timing (Network::timing());
+    /// options().sniffer has the values used. Reserves
     /// options.sniffer.sessions x kMaxTransportLength bytes; nothing is allocated in the steps.
     explicit Listener(Network& network, ListenerOptions options = {});
     ~Listener();

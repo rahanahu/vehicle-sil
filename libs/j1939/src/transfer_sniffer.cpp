@@ -81,23 +81,34 @@ private:
 
 } // namespace
 
-TransferSniffer::TransferSniffer(SnifferOptions options) : options_(options)
+TransferSniffer::TransferSniffer(SnifferOptions options, const ProtocolTiming& timing) : options_(options)
 {
+    if (!options_.timeout)
+    {
+        // The longest wait of either side of a connection: until then nobody has given up.
+        options_.timeout = std::max({timing.t1, timing.t2, timing.t3, timing.t4});
+    }
+    if (!options_.broadcast_timeout)
+    {
+        options_.broadcast_timeout = timing.t1;
+    }
     if (options_.sessions == 0)
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::sessions is 0. Give the number "
                                     "of transfers to follow at the same time (at least 1; the default is 32)");
     }
-    if (options_.timeout <= SimDuration::zero())
+    if (*options_.timeout <= SimDuration::zero())
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::timeout is " +
-                                    nanoseconds(options_.timeout) + ". It must be greater than 0 (the default is 1250 ms)");
+                                    nanoseconds(*options_.timeout) +
+                                    ". It must be greater than 0 (left empty it is the longest of T1..T4, 1250 ms "
+                                    "by default)");
     }
-    if (options_.broadcast_timeout <= SimDuration::zero())
+    if (*options_.broadcast_timeout <= SimDuration::zero())
     {
         throw std::invalid_argument("vehicle_sil::j1939::TransferSniffer: SnifferOptions::broadcast_timeout is " +
-                                    nanoseconds(options_.broadcast_timeout) +
-                                    ". It must be greater than 0 (the default is 750 ms)");
+                                    nanoseconds(*options_.broadcast_timeout) +
+                                    ". It must be greater than 0 (left empty it is T1, 750 ms by default)");
     }
     if (options_.grace < SimDuration::zero())
     {
@@ -138,13 +149,13 @@ bool TransferSniffer::expired(const Session& session, SimTime time) const noexce
     // the grace is added: the ECU that gives up sends its abort after its own timeout, and that
     // abort is to end the transfer, not to find it gone. Decided by the frame times alone, so
     // the result does not depend on when advance() is called.
-    const SimDuration limit = session.broadcast ? options_.broadcast_timeout : options_.timeout + options_.grace;
+    const SimDuration limit = session.broadcast ? *options_.broadcast_timeout : *options_.timeout + options_.grace;
     return time - session.last > limit;
 }
 
 void TransferSniffer::time_out(Session& session)
 {
-    end(session, SniffEnd::TimedOut, session.last + (session.broadcast ? options_.broadcast_timeout : options_.timeout));
+    end(session, SniffEnd::TimedOut, session.last + (session.broadcast ? *options_.broadcast_timeout : *options_.timeout));
 }
 
 void TransferSniffer::move_time(SimTime time)
@@ -277,7 +288,7 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
                             how == SniffEnd::AbortedByReceiver;
     const bool follow = session.unanswered != 0 &&
                         (how == SniffEnd::TimedOut ||
-                         (byReceiver && time - session.waiting.time <= options_.timeout + options_.grace));
+                         (byReceiver && time - session.waiting.time <= *options_.timeout + options_.grace));
     const Announcement next = session.waiting;
     session.unanswered = 0;
     report(session, how, time, reason);

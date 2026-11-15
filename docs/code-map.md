@@ -651,7 +651,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
 | Transfer sniffer | `src/transfer_sniffer.cpp` |
-| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, checks on the form of an announcement; the timeouts are `ProtocolTiming` in `types.hpp`) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
 | `Listener`, which sits in the seat | `src/listener.cpp` |
 
