@@ -31,6 +31,9 @@ const PASSED_THROUGH: readonly string[] = [
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
   'run result: strict',
+  // The file of --timeline as the launcher was given it (the GUI server's temporary file): screens use the summary's
+  // scenario.timeline_url instead
+  'run result: scenario.timeline',
   'event participant: command',
   'event participant: log',
   'event log: colour',

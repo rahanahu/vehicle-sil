@@ -295,6 +295,8 @@ class Session:
         self.scenario_steps_omitted = 0
         self.scenario_status: str | None = None
         self.scenario_over_at_ms: float | None = None
+        # Where the server serves the run's timeline file (api/timeline/<id>), once the run has ended with one.
+        self.timeline_url: str | None = None
 
     # ------------------------------------------------------------ input
 
@@ -513,7 +515,7 @@ class Session:
         return {"file": self.scenario, "name": self.scenario_name, "step_count": self.scenario_step_count,
                 "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
                 "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
-                "over_at_ms": self.scenario_over_at_ms}
+                "over_at_ms": self.scenario_over_at_ms, "timeline_url": self.timeline_url}
 
     def _keep_log(self, event: dict, size: int) -> None:
         log = self._log_of(event["source"])
