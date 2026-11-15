@@ -1768,7 +1768,7 @@ Rules:
 
 Tests:
 
-- `launch.timeline_*`: independence from the time step, steps that change with the time step, the reference files, the limits, how samples are counted, the point of a refused write, a run that ended partway
+- `launch.timeline_*`: independence from the time step, steps that change with the time step, the reference files, the limits, how samples are counted, which writes of a failed `set` were applied and which point each is, a run that ended partway
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`

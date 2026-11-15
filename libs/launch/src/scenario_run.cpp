@@ -347,8 +347,10 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
             if (writes)
             {
                 const auto set = std::find_if(step.writes.begin(), step.writes.end(), [variable = v](const ScenarioWrite& w) { return w.variable == variable; });
-                failure.write = TimelineFailedWrite{
-                    v, time, set == step.writes.end() ? std::nullopt : std::optional<control::Value>(set->value)};
+                // Nothing was sent: the one write the step could not make.
+                failure.writes.push_back(TimelineFailedWrite{
+                    v, time, set == step.writes.end() ? std::nullopt : std::optional<control::Value>(set->value)});
+                failure.write = 0;
             }
             else
             {
@@ -644,7 +646,9 @@ bool ScenarioEngine::submit_one(Write write)
         {
             const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
             TimelineFailure failure;
-            failure.write = TimelineFailedWrite{motion.motion.variable, write.at, std::nullopt};
+            // Nothing was sent: the one write the step could not make.
+            failure.writes.push_back(TimelineFailedWrite{motion.motion.variable, write.at, std::nullopt});
+            failure.write = 0;
             fail(write.step, write.at, "scenario-write",
                  "the " + kind + " of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
                      ms_text(write.at) + " ms and the scenario has not written it; " + motion.motion.hint,
@@ -658,10 +662,8 @@ bool ScenarioEngine::submit_one(Write write)
     {
         const ScenarioVariable& v = scenario_.variables[w.variable];
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
-        if (record_ != nullptr)
-        {
-            record_->written(write.step, w.variable, write.at, w.value, write.motion.has_value());
-        }
+        write.sent.push_back(record_ != nullptr ? record_->written(write.step, w.variable, write.at, w.value, write.motion.has_value())
+                                                : std::nullopt);
     }
     write.ticket = port_.write(std::move(out), write.at);
     write.judge = judge_time(write.writes, write.at);
@@ -672,10 +674,13 @@ bool ScenarioEngine::submit_one(Write write)
         {
             if (control::is_final(target.status) && target.status != control::TargetStatus::Applied)
             {
+                TimelineFailure failure = failed_write(write, &*result, target);
+                const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
                 fail(write.step, write.at, "scenario-write",
                      "the write for " + ms_text(write.at) + " ms was not taken by participant '" + target.peer + "': " +
-                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")"),
-                     failed_write(write.writes, write.at, target.peer));
+                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")") +
+                         which,
+                     std::move(failure));
                 return false;
             }
         }
@@ -827,7 +832,8 @@ void ScenarioEngine::judge(SimTime p)
         {
             fail(write.step, write.at, "scenario-write",
                  "the result of the write for " + ms_text(write.at) + " ms is not known any more: this is an error of "
-                                                                      "vehicle_sil_launch");
+                                                                      "vehicle_sil_launch",
+                 failed_write(write, nullptr, {}));
             return;
         }
         SimTime applied = write.at;
@@ -835,14 +841,17 @@ void ScenarioEngine::judge(SimTime p)
         {
             if (target.status != control::TargetStatus::Applied)
             {
+                TimelineFailure failure = failed_write(write, &*result, target);
+                const std::string which = applied_text(failure, target.peer); // before `failure` is moved from
                 fail(write.step, write.at, "scenario-write",
                      "the write for " + ms_text(write.at) + " ms was not applied by participant '" + target.peer + "': " +
                          target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")") +
                          (control::is_final(target.status)
                               ? ""
                               : "; at " + ms_text(p) + " ms the result of the ECU's step at or after " + ms_text(write.at) +
-                                    " ms should be there (does the ECU step as --describe says?)"),
-                     failed_write(write.writes, write.at, target.peer));
+                                    " ms should be there (does the ECU step as --describe says?)") +
+                         which,
+                     std::move(failure));
                 return;
             }
             if (target.applied_at)
@@ -887,18 +896,138 @@ TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::opti
     return out;
 }
 
-TimelineFailure ScenarioEngine::failed_write(const std::vector<ScenarioWrite>& writes, SimTime at, const std::string& peer) const
+std::optional<std::size_t> ScenarioEngine::named_write(const std::vector<ScenarioWrite>& writes, const std::vector<std::size_t>& command,
+                                                       const std::string& reason) const
+{
+    // The agent says "<name>: <why>" and the hub's variable map "<name> (the executable's
+    // <name>): <why>" (a result has no status per write).
+    for (const std::size_t i : command)
+    {
+        const std::string& name = scenario_.variables[writes[i].variable].name;
+        if (reason.compare(0, name.size(), name) == 0 &&
+            (reason.compare(name.size(), 2, ": ") == 0 || reason.compare(name.size(), 18, " (the executable's ") == 0))
+        {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::OperationResult* result,
+                                             const control::TargetResult& failed) const
 {
     TimelineFailure out;
-    for (const ScenarioWrite& w : writes)
+    for (std::size_t i = 0; i < write.writes.size(); ++i)
     {
-        if (scenario_.participants[scenario_.variables[w.variable].participant].name == peer)
+        // Not known, unless the result of its participant says (below).
+        out.writes.push_back(TimelineFailedWrite{write.writes[i].variable, write.at, write.writes[i].value,
+                                                 i < write.sent.size() ? write.sent[i] : std::nullopt, std::nullopt});
+    }
+    if (result == nullptr)
+    {
+        return out;
+    }
+    for (const control::TargetResult& target : result->targets)
+    {
+        // The participant's command: its writes of the request, in the order sent.
+        std::vector<std::size_t> command;
+        for (std::size_t i = 0; i < write.writes.size(); ++i)
         {
-            out.write = TimelineFailedWrite{w.variable, at, w.value};
+            if (scenario_.participants[scenario_.variables[write.writes[i].variable].participant].name == target.peer)
+            {
+                command.push_back(i);
+            }
+        }
+        const std::optional<std::size_t> named = named_write(write.writes, command, target.reason);
+        const auto all = [&](std::optional<bool> applied) {
+            for (const std::size_t i : command)
+            {
+                out.writes[i].applied = applied;
+            }
+        };
+        switch (target.status)
+        {
+        case control::TargetStatus::Applied:
+            all(true);
             break;
+        case control::TargetStatus::Late:
+        case control::TargetStatus::Cancelled:
+        case control::TargetStatus::Invalid:
+        case control::TargetStatus::Busy:
+            // The command as a whole was refused, or never came to its step.
+            all(false);
+            break;
+        case control::TargetStatus::Rejected:
+            // The ECU applies the writes of a command one after the other and stops at the one
+            // whose setter throws: the ones before it are applied. Without its name (an agent
+            // that does not say; a parameter after the first step) only a command of one write
+            // is known.
+            if (named)
+            {
+                bool before = true;
+                for (const std::size_t i : command)
+                {
+                    before = before && i != *named;
+                    out.writes[i].applied = before;
+                }
+            }
+            else if (command.size() == 1)
+            {
+                all(false);
+            }
+            break;
+        case control::TargetStatus::Sent:
+        case control::TargetStatus::Queued:
+        case control::TargetStatus::Disconnected:
+        case control::TargetStatus::Unknown:
+            break; // no result: it may or may not have taken effect
+        }
+        if (target.peer == failed.peer)
+        {
+            // The reason: the write the result names, or the only one there is.
+            out.write = named ? named : command.size() == 1 ? std::optional<std::size_t>(command.front()) : std::nullopt;
         }
     }
     return out;
+}
+
+std::string ScenarioEngine::applied_text(const TimelineFailure& failure, const std::string& peer) const
+{
+    // Of a command of several writes for that participant: which of them took effect.
+    std::vector<const TimelineFailedWrite*> command;
+    for (const TimelineFailedWrite& w : failure.writes)
+    {
+        if (scenario_.participants[scenario_.variables[w.variable].participant].name == peer)
+        {
+            command.push_back(&w);
+        }
+    }
+    if (command.size() < 2)
+    {
+        return {};
+    }
+    std::string applied;
+    std::size_t count = 0;
+    bool unknown = false;
+    for (const TimelineFailedWrite* w : command)
+    {
+        unknown = unknown || !w->applied;
+        if (w->applied == std::optional<bool>(true))
+        {
+            const ScenarioVariable& v = scenario_.variables[w->variable];
+            applied += (count++ == 0 ? "" : ", ") + v.text + " = " + (w->value ? value_text(*w->value, &v) : "?");
+        }
+    }
+    if (unknown)
+    {
+        return "; which of the " + std::to_string(command.size()) + " writes of that command the ECU applied is not known";
+    }
+    if (count == 0)
+    {
+        return "; none of the " + std::to_string(command.size()) + " writes of that command was applied";
+    }
+    return "; the ECU had already applied the write" + std::string(count > 1 ? "s" : "") + " before it in that command (" + applied +
+           "), and " + (count > 1 ? "they stay" : "it stays") + " applied";
 }
 
 std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTime> since) const

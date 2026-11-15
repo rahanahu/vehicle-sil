@@ -53,19 +53,31 @@ struct TimelineFailedCondition
     std::optional<SimTime> sample{};       ///< the time of that sample
 };
 
-/// A write a failed step could not make.
+/// A write of the request a step failed of.
 struct TimelineFailedWrite
 {
     std::size_t variable = 0; ///< index in Scenario::variables
     SimTime at{};
     std::optional<control::Value> value{}; ///< empty: not known (it was never worked out)
+    /// What TimelineRecord::written() gave for it: which point of the variable's series it is.
+    /// Empty: nothing was sent.
+    std::optional<std::uint64_t> sent{};
+    /// Whether the ECU applied it: true, false (also: not sent), or empty if that is not known
+    /// (no result came, or the result does not say which writes of its command took effect).
+    std::optional<bool> applied{false};
 };
 
 /// What a failed step failed of, as numbers (its message says the same for people).
 struct TimelineFailure
 {
     std::vector<TimelineFailedCondition> conditions{};
-    std::optional<TimelineFailedWrite> write{};
+    /// A step that failed of a write: every write of the request that failed (what was sent
+    /// together for one time, for all its participants), in the order sent. An ECU takes its
+    /// part of them one after the other and stops at the one it rejects, so the writes before
+    /// that one are applied. A step that could not send: the one write it could not make.
+    std::vector<TimelineFailedWrite> writes{};
+    /// Index in `writes` of the write that is the reason, if that is known.
+    std::optional<std::size_t> write{};
 };
 
 /// What a scenario's engine wrote and saw, per variable of the scenario. The engine fills it on
@@ -76,7 +88,7 @@ struct TimelineFailure
 /// step failed of.
 ///
 /// Two kinds of series. Written: every value the engine sent for a variable, in the order sent
-/// (sent: also the write that was refused, which failed() marks).
+/// (sent: also the writes that were not applied, which failed() marks).
 /// Sampled: the values of a variable that a condition reads, of every sample the engine looked at;
 /// kept are the samples at which the value changed, and how many samples there were.
 class TimelineRecord
@@ -87,7 +99,10 @@ public:
         SimTime at{};
         control::Value value{};
         bool motion = false; ///< of a ramp or a wave (may go at a limit); else of a set (is kept)
-        bool refused = false; ///< the write a step failed of (failed()): sent, and not taken or not applied
+        /// A write of the request a step failed of that is not known to be applied (failed()):
+        /// sent, and not taken, not applied, or without a result.
+        bool refused = false;
+        std::uint64_t serial = 0; ///< what written() gave for it (points may go at a limit: no index)
     };
     /// Samples of one value, one after the other. A sample with the value of the one before it
     /// that does not come at the same distance begins a new one (`repeats`), so that the samples
@@ -156,12 +171,18 @@ public:
     // --- the engine's side ---
     /// A write that is sent, of `step` (index in Scenario::steps): a point of the variable's
     /// series, and the line that step put at `at` on the variable has happened (Line::sent).
-    void written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
+    /// Returns what names that point from then on (TimelineFailedWrite::sent); empty if the
+    /// record keeps none.
+    std::optional<std::uint64_t> written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
     /// A sample of `variable` (kept if a condition reads the variable).
     void sampled(std::size_t variable, SimTime at, const control::Value& value);
     void line(Line line);
     void watch(std::size_t step, Watch watch);
+    /// The step failed. Marks the points of `failure.writes` that are not known to be applied.
     void failed(std::size_t step, TimelineFailure failure);
+    /// The index in the written series of `variable` of the point that written() named
+    /// `serial`; empty if it went at a limit (or there is none).
+    [[nodiscard]] std::optional<std::size_t> point_of(std::size_t variable, std::uint64_t serial) const;
     /// The scenario is over: nothing after `to` is kept, and the limits are applied for good.
     void close(SimTime to);
 
@@ -195,6 +216,7 @@ private:
     std::vector<Line> lines_;
     std::optional<SimTime> recorded_to_{};
     std::size_t total_ = 0; ///< the points that can go, of all series
+    std::uint64_t next_serial_ = 0;
 };
 
 /// What a timeline file is made of.

@@ -418,7 +418,7 @@ The 6 main values of `status`:
 | `applied` | The write was applied (`applied_at` is the time of the step in which it was applied). |
 | `late` | The write missed the step at the time you gave. |
 | `invalid` | The checks of name, type, range and writability rejected the write. A write to a destination that is not connected also gets this value. |
-| `rejected` | The ECU's setter rejected the write. |
+| `rejected` | The ECU's setter rejected the write. The reason starts with the name of that variable. In a write of several variables, the variables before it are already applied (see "When a write is applied" in [control-api.md](../control-api.md#when-a-write-is-applied)). |
 | `unknown` | It is not known whether the write was applied. |
 
 3 rules apply when you wait:
