@@ -601,11 +601,11 @@ void Transport::on_control_sent(std::uint32_t tag, std::uint32_t generation)
         arm(*s, TimerKind::Scheduled, now + options_.bam_packet_interval);
         break;
     case State::RtsSent:
-        arm(*s, TimerKind::Timeout, now + kT3);
+        arm(*s, TimerKind::Timeout, now + options_.timing.t3);
         break;
     case State::CtsPending:
         s->state = State::WaitData;
-        arm(*s, TimerKind::Timeout, now + kT2);
+        arm(*s, TimerKind::Timeout, now + options_.timing.t2);
         break;
     default:
         break;
@@ -690,7 +690,7 @@ void Transport::flush_data(can::Port& port, std::size_t limit)
             ++s->next;
         }
         s->state = s->window_end >= s->packets ? State::WaitEoma : State::WaitCts;
-        arm(*s, TimerKind::Timeout, now + kT3);
+        arm(*s, TimerKind::Timeout, now + options_.timing.t3);
     }
 }
 
@@ -820,7 +820,7 @@ void Transport::send_cts(Session& session)
 
 void Transport::request_retransmit(Session& session, SimTime time)
 {
-    if (session.retries >= kMaxRetransmitRequests)
+    if (session.retries >= options_.timing.max_retransmit_requests)
     {
         abort(session, AbortReason::RetransmitLimit, time);
         return;
@@ -856,7 +856,7 @@ void Transport::on_cts(const Message& message, std::int32_t sender)
     if (count == 0)
     {
         s->state = State::Hold;
-        arm(*s, TimerKind::Timeout, message.time + kT4);
+        arm(*s, TimerKind::Timeout, message.time + options_.timing.t4);
         return;
     }
     // Packets before the last window's first one were acknowledged by asking for it; packets
@@ -929,7 +929,7 @@ void Transport::on_bam(const Message& message, std::int32_t sender)
     s->packets = packets;
     s->rx_sender = sender;
     s->state = State::BamReceiving;
-    arm(*s, TimerKind::Timeout, message.time + kT1);
+    arm(*s, TimerKind::Timeout, message.time + options_.timing.t1);
     report_receive_start(*s, message.time);
     announce_receive(*s, message.time);
 }
@@ -1049,7 +1049,7 @@ void Transport::on_bam_data(Session& session, const Message& message, std::int32
         deliver(session, message.time, sender);
         return;
     }
-    arm(session, TimerKind::Timeout, message.time + kT1);
+    arm(session, TimerKind::Timeout, message.time + options_.timing.t1);
 }
 
 void Transport::on_rts_data(Session& session, const Message& message, std::int32_t sender)
@@ -1060,7 +1060,7 @@ void Transport::on_rts_data(Session& session, const Message& message, std::int32
         return;
     }
     session.state = State::Receiving;
-    arm(session, TimerKind::Timeout, message.time + kT1);
+    arm(session, TimerKind::Timeout, message.time + options_.timing.t1);
     const std::uint8_t sequence = message.data[0];
     if (sequence != 0 && sequence < session.window_start)
     {

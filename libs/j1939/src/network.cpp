@@ -11,6 +11,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace vehicle_sil::j1939 {
@@ -31,6 +32,33 @@ constexpr SimDuration kStepSizeLimit = std::chrono::milliseconds(200);
 [[nodiscard]] std::size_t control_capacity(const NetworkOptions& o) noexcept
 {
     return (o.receive_capacity + o.max_nodes * (o.hold_capacity + 2) + transport_sessions(o) + o.response_queue_capacity) * 2;
+}
+
+/// std::invalid_argument for a time of `timing` that is not greater than 0, naming the field,
+/// its value and its default.
+void check_timing(const ProtocolTiming& timing)
+{
+    const ProtocolTiming defaults{};
+    const struct
+    {
+        const char* name;
+        SimDuration value;
+        SimDuration fallback;
+    } times[] = {{"t1", timing.t1, defaults.t1},
+                 {"t2", timing.t2, defaults.t2},
+                 {"t3", timing.t3, defaults.t3},
+                 {"t4", timing.t4, defaults.t4},
+                 {"address_claim_wait", timing.address_claim_wait, defaults.address_claim_wait}};
+    for (const auto& time : times)
+    {
+        if (time.value <= SimDuration::zero())
+        {
+            throw std::invalid_argument(
+                std::string("vehicle_sil::j1939::Network: NetworkOptions::timing.") + time.name + " is " +
+                std::to_string(time.value.count()) + " ns. It must be greater than 0 (the default is " +
+                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(time.fallback).count()) + " ms)");
+        }
+    }
 }
 
 [[nodiscard]] Address source_of(const can::Frame& frame) noexcept { return static_cast<Address>(frame.id & 0xFFu); }
@@ -154,6 +182,7 @@ Network::Network(NetworkOptions options)
     {
         throw std::invalid_argument("vehicle_sil::j1939::Network: bam_packet_interval must be 10 .. 200 ms");
     }
+    check_timing(options_.timing);
     for (const NodeOverride& entry : options_.node_overrides)
     {
         if (const std::string problem = node_override_range_problem(entry); !problem.empty())

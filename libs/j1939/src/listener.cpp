@@ -31,8 +31,9 @@ class Listener::Seat final : public detail::FrameSeat
 {
 public:
     Seat(Network& network, ListenerOptions options)
-      : network_(network), options_(without_broadcasts(options)), sniffer_(options_.sniffer)
+      : network_(network), options_(without_broadcasts(options)), sniffer_(options_.sniffer, network.timing())
     {
+        options_.sniffer = sniffer_.options(); // with the timeouts taken from the network
         sniffer_.on_transfer([this](const SniffedTransfer& transfer) { on_sniffed(transfer); });
         sit(network);
     }

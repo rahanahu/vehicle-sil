@@ -44,7 +44,7 @@ namespace codec = vehicle_sil::j1939::codec;
 
 | 利用者が書くもの | スタックが受け持つもの |
 |---|---|
-| ノードのアドレスと NAME | Address Claim（競合、任意アドレス、Commanded Address の受信、250 ms の待ち） |
+| ノードのアドレスと NAME | Address Claim（競合、任意アドレス、Commanded Address の受信、Claim の後の待ち） |
 | 送信する PG と周期、データの作り方 | 周期の管理、アドレスを持つ間だけ送信すること、DM13 による停止 |
 | 受信する PG と、受信したときの処理 | 宛先の振り分け、トランスポートプロトコル（9〜1785 バイト）の組み立て |
 | Request を送信する相手と、応答の使い方 | 応答待ち、タイムアウト、再送、同じ要求を 1 つにまとめること |
@@ -272,7 +272,7 @@ auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vect
 - 同じ相手からの新しい要求には、コンポーネントを作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
 - 呼んだステップで送信したいときは、`trigger()` ではなく `node.send()` を使います。
 
-送信を始める時点と止める時点は、ノードのアドレスの状態で決まります。ノードが送信できるようになるまで（Address Claim の後の 250 ms の待ちの間も）送信せず、送信できるようになったときに 1 回送信してから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
+送信を始める時点と止める時点は、ノードのアドレスの状態で決まります。ノードが送信できるようになるまで（Address Claim の後の待ち、既定 250 ms の間も）送信せず、送信できるようになったときに 1 回送信してから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
 
 DM13 でブロードキャストを止めている間（ほかのノードの DM13 か、自分の `BroadcastSuppression::suspend()`）の扱いは、宛先で変わります。
 
@@ -282,6 +282,21 @@ DM13 でブロードキャストを止めている間（ほかのノードの DM
 | 1 つのアドレス宛ての送信 | 既定では止めません（規格での扱いを確認していないため）。 |
 
 既定では、止めるかどうかは、そのときの宛先で決まります（`set_destination()` で決め直します）。1 つのアドレス宛てで作った送信を全体宛てにするには、組み立てで `BroadcastSuppression::of(node)` を付けておきます。付けていなければ `std::logic_error` です。どちらの送信も、`PeriodicSenderOptions::suppressible`（true か false）で固定できます。
+
+### トランスポートプロトコルの時間（`NetworkOptions::timing`）
+
+9 バイト以上のメッセージは、トランスポートプロトコルで送ります（全体宛ては BAM、1 つのアドレス宛ては接続 RTS/CTS）。パケットの送信、欠けたパケットの求め直し、止まった転送の打ち切りは `Network` が受け持ちます。そのときに待つ時間と、Address Claim の後の待ちは、`NetworkOptions::timing` の項目です。
+
+| 項目 | 既定 | 決めるもの |
+|---|---|---|
+| `t1` | 750 ms | T1: 受信側が次のパケットを待つ時間 |
+| `t2` | 1250 ms | T2: 受信側が、自分の CTS の後の最初のパケットを待つ時間 |
+| `t3` | 1250 ms | T3: 送信側が、受信側の CTS か EndOfMsgACK を待つ時間 |
+| `t4` | 1050 ms | T4: 送信側が、接続を保留する CTS の後に待つ時間 |
+| `max_retransmit_requests` | 2 | ウィンドウごとの再送の要求の回数。もう 1 回必要なとき、受信側は Abort する |
+| `address_claim_wait` | 250 ms | ノードが Address Claimed の後に、送信するものを保留する時間 |
+
+これらの既定は、このプロジェクトでは規格と照らしていません。そのため変えられるようにしてあります。模擬する ECU やつなぐ ECU が別の値を使うときは、`Ecu::j1939(network, NetworkOptions{.timing = {...}})`（`Peer` では `J1939ChannelOptions::network.timing`）で変えます。0 以下の時間は、`Network` のコンストラクターが `std::invalid_argument` を投げます。同じ `Network` の `Listener` も同じ時間を使います（下の「受信だけをする participant」）。詳しくは [internals/j1939.md](internals/j1939.md) の「トランスポートプロトコルのタイマー」にあります。
 
 ## Request に応答する
 
@@ -882,7 +897,7 @@ J1939 では次のように見えます（保証は [internals/execution.md](int
 | `j1939::OnReconnect::Announce`（既定） | NAME を持つ各ノードが、Request for Address Claimed を全体へ送信し、自分の Address Claimed も送信します。 |
 | `j1939::OnReconnect::Nothing` | 何も送信しません（切断されていたことに気づかない ECU を模擬します）。 |
 
-`Announce` では、ほかのノードの応答で、切断している間に同じアドレスを取ったノードとの競合が解けます。ノードは Claim の後の 250 ms の待ちをしません。Address Claim を最初からやり直す（待ちを含む）選択肢は、まだありません。
+`Announce` では、ほかのノードの応答で、切断している間に同じアドレスを取ったノードとの競合が解けます。ノードは Claim の後の待ちをしません。Address Claim を最初からやり直す（待ちを含む）選択肢は、まだありません。
 
 断片です（`ecu` は `Ecu&`、`kName` は NAME）。`on_reconnect` の 2 つの値は `tests/simulation/test_disconnect.cpp` がテストしています。
 
@@ -992,7 +1007,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 - 自分のノードを持つ participant でも使えます。ノード宛ての接続とノードが送信する接続は `Network` が扱い、ノード宛てのメッセージは 1 回だけ渡ります（`on_transfer` には出ません）。
 - ハンドラーは読むだけです。ハンドラーの中から送信やハンドラーの登録をすると `std::logic_error` で、その participant は失敗して止まります（例外を握りつぶしても止まります）。ハンドラーでは変数を更新し、送信は `ecu.on_step` からにします。
 - 時刻と順: 接続で送信されたメッセージの `Message::time` は、受け手がメッセージを受け取った時点（最後のパケット）の時刻で、受け手のノードが見る時刻と同じです。ただしハンドラーが呼ばれるのは、受け手が「受け取った」と返した後です。そのため、後の時刻のメッセージより後に、前の時刻のメッセージが渡ることがあります。最後の値や周期を出すときは、呼ばれた順ではなく `time` を比べます。フレームから決まること（メッセージ、Abort）は、聞く participant のステップ幅によりません。時間の経過から決まること（`TimedOut` など）は、`time` はステップ幅によりませんが、ハンドラーが呼ばれるステップは変わるので、これも `time` で比べます。
-- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer`（`Spy` では `SpyOptions::listener.sniffer`）で変えられます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
+- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer`（`Spy` では `SpyOptions::listener.sniffer`）で変えられます。時間切れは、決めなければ聞く側の `Network` の `NetworkOptions::timing` に従います。聞く相手の ECU がその `Network` と違う時間を使うときは決めます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
 - 記録やテストのために `Network` のイベント（送信、アドレスの変化を含む）を見るなら `j1939::Observer` です（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。`Listener` と同時に付けられます。
 - 生の CAN は、`send()` を呼ばなければ何も送信しません。独自の組み立てをするときに、接続だけを追わせたいなら `j1939::TransferSniffer` にフレームを渡します。
 
