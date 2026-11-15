@@ -10,6 +10,7 @@ const BROWSER = [
   'window',
   'document',
   'location',
+  'history',
   'fetch',
   'URL',
   'URLSearchParams',

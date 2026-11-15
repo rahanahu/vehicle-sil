@@ -9,7 +9,8 @@
 //      element of type application/json, which timeline.html has empty). A tool that makes one HTML file puts
 //      it there, with '<', '>' and '&' written as \u003c, \u003e and \u0026. This script must never contain
 //      the closing tag of a script element, so that it can be put inline too;
-//   2. ?src=<url> on the page's own origin (a server that serves the page and the file);
+//   2. ?src=<url> on the page's own origin (a server that serves the page and the file). Served by the GUI server
+//      (vehicle-sil-gui), the request carries the server's token, as every screen of the server sends it;
 //   3. a file dropped on the page or chosen with "Open a file" (works when the page is opened as a file).
 // Everything above "The page" needs no DOM: tests/viewer.test.js runs it in Node.
 (function (global) {
@@ -2157,19 +2158,87 @@
       );
       return;
     }
+    const token = takeToken();
+    let name = url.pathname.split('/').pop() || url.pathname;
     // A redirect could lead to another origin: the file must come from this address itself.
-    fetch(url, { credentials: 'same-origin', redirect: 'error' })
+    fetch(url, {
+      credentials: 'same-origin',
+      redirect: 'error',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (r.status === 401)
+          throw new Error(
+            'HTTP 401: the GUI server did not accept this page\'s token. Open the timeline again with the GUI\'s "Timeline" link',
+          );
+        if (!r.ok) {
+          return r.text().then((body) => {
+            throw new Error(`HTTP ${r.status}${serverMessage(body)}`);
+          });
+        }
+        name = fileName(r.headers.get('Content-Disposition')) || name;
         return r.text();
       })
       .then(
-        (text) => load(text, url.pathname.split('/').pop() || url.pathname),
+        (text) => load(text, name),
         (e) =>
           showError(
             `${url.href} could not be loaded (${e.message}). Check the address, or drop the file on the page.`,
           ),
       );
+  }
+
+  // The token of the GUI server that serves this page (vehicle-sil-gui): "#token=" in the address, taken out of it
+  // at once, else the one this tab keeps in sessionStorage. The key is the GUI's (takeToken of its client library):
+  // a tab that the GUI's "Timeline" link opens starts with a copy of the GUI tab's sessionStorage.
+  const TOKEN_KEY = 'vehicle-sil-gui-token';
+
+  function takeToken() {
+    let storage = null;
+    try {
+      storage = window.sessionStorage;
+    } catch {
+      // the browser blocks site data: the token is kept in memory only
+    }
+    const match = /(?:^#|&)token=([^&]*)/.exec(location.hash);
+    if (match) {
+      history.replaceState(history.state, '', location.pathname + location.search);
+      let token;
+      try {
+        token = decodeURIComponent(match[1]) || null;
+      } catch {
+        token = null;
+      }
+      if (token) {
+        try {
+          storage?.setItem(TOKEN_KEY, token);
+        } catch {
+          // kept in memory only
+        }
+        return token;
+      }
+    }
+    try {
+      return storage?.getItem(TOKEN_KEY) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The message of a GUI server's error ({"error": {"message"}}), as ": <message>", or nothing. */
+  function serverMessage(body) {
+    try {
+      const message = JSON.parse(body)?.error?.message;
+      return typeof message === 'string' ? `: ${message}` : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** The file name of a Content-Disposition header (filename="..."), or null. */
+  function fileName(header) {
+    const match = /filename="([^"\\]+)"/.exec(header ?? '');
+    return match ? match[1] : null;
   }
 
   function start() {

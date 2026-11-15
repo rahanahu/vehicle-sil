@@ -24,7 +24,7 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
-                       FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
+                       FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
                        Launcher, check_command, check_disable, check_manual, check_speed, check_time_command,
                        command_line, run_command)
 from .paths import ConfigFile, ConfigRoot, PathRejected
@@ -33,6 +33,7 @@ from .scenarios import list_scenarios, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
+from .timelines import KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
 PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
@@ -150,6 +151,7 @@ class Run:
     credentials: Path | None = None  # the control server's credentials file, until the launcher has read it
     token: str | None = None  # of that file
     recording: Recording = field(default_factory=Recording)  # the applied writes made through this server
+    timeline: Path | None = None  # the file the launcher writes the scenario's timeline to (--timeline)
 
 
 @dataclass(eq=False)
@@ -169,6 +171,8 @@ class GuiServer:
         # is not the token, gives only the reading of panel modules, and is told only with GET api/dashboard.
         self.panel_key = secrets.token_urlsafe(18)
         self.static = StaticFiles(options.web_dir)
+        self.timelines = Timelines()
+        self.timeline_page = find_page_dir()
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
         self._starting = False
@@ -220,9 +224,12 @@ class GuiServer:
         app.router.add_get("/api/dashboard", self.get_dashboard)
         app.router.add_get("/api/scenarios", self.get_scenarios)
         app.router.add_get("/api/recording", self.get_recording)
+        app.router.add_get("/api/timeline/{session}", self.get_timeline)
         app.router.add_get("/ws", self.websocket)
         app.router.add_route("*", "/api/{rest:.*}", self.api_not_found)
         app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
+        app.router.add_get("/timeline", self.get_timeline_page)
+        app.router.add_get("/timeline/{name:.*}", self.get_timeline_page)
         app.router.add_get("/{path:.*}", self.get_static)
         return app
 
@@ -382,6 +389,38 @@ class GuiServer:
         return web.json_response({"recording": run.recording.to_json(run.session.id, run.session.file,
                                                                      run.session.state, enums, run_ms)})
 
+    async def get_timeline(self, request: web.Request) -> web.StreamResponse:
+        """The timeline file of a scenario run (one of the last runs that wrote one), as the launcher wrote it."""
+        text = request.match_info["session"]
+        session_id = int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
+        path = self.timelines.file_of(session_id) if session_id is not None else None
+        if path is None:
+            return error(404, "no-timeline",
+                         f"run {text} has no timeline file on this server: a scenario run started from this GUI "
+                         "server records one when the launcher has the feature 'timeline', and it can be read once "
+                         f"the run has ended; the server keeps the files of the last {TIMELINES_KEPT} such runs "
+                         "until it stops", {"session_id": session_id})
+        path, name = path
+        return web.FileResponse(path, headers={"Content-Type": "application/json",
+                                               "Content-Disposition": f'inline; filename="{name}"'})
+
+    async def get_timeline_page(self, request: web.Request) -> web.StreamResponse:
+        """The page that draws a timeline file (gui/timeline), under timeline/; no token (as the screen's files):
+        it reads the token as every screen of this server does, and sends it with its request for the file."""
+        if "name" not in request.match_info:
+            return web.Response(status=308, headers={"Location": "/timeline/"})
+        found = PAGE_FILES.get(request.match_info["name"])
+        if found is None:
+            return error(404, "not-found", f"GET {request.path}: the timeline page has no such file")
+        if self.timeline_page is None:
+            return error(404, "not-found", "the timeline page (gui/timeline) is not in this installation of the GUI "
+                                           "server: install the GUI from the tools archive, or run it from the "
+                                           "repository")
+        body = await asyncio.to_thread(read_page_file, self.timeline_page, found[0])
+        if body is None:
+            return error(404, "not-found", f"GET {request.path}: {found[0]} of the timeline page cannot be read")
+        return web.Response(body=body, headers={"Content-Type": found[1]})
+
     def _scenario(self, config: ConfigFile, body: dict) -> str | None:
         """The scenario of a check or run request (None: none), when the launcher can play one."""
         scenario = resolve_scenario(self.root, config, body.get("scenario"))
@@ -476,8 +515,11 @@ class GuiServer:
                 raise
             except OSError as e:
                 why_not = f"the file with the control server's credentials could not be made ({e})"
+        # A scenario run records its timeline when the launcher can (the file is named here, the launcher makes it)
+        timeline = await asyncio.to_thread(self.timelines.new_file) \
+            if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
         argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials, scenario,
-                           manual)
+                           manual, timeline)
         try:
             proc = await process.start(argv, cwd=self.root.root)
         except BaseException as e:
@@ -500,7 +542,7 @@ class GuiServer:
             available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
             is not None else f"this run has no variables to write: {why_not}")
         run = Run(session, proc, variables, features=tuple(self.launcher.features), credentials=credentials,
-                  token=token, recording=recording)
+                  token=token, recording=recording, timeline=timeline)
         self._runs.add(run)
         self.current = run
         run.task = asyncio.create_task(self._follow(run))
@@ -740,6 +782,7 @@ class GuiServer:
             session.launcher_exited(code)
             done, _ = await asyncio.wait({reader}, timeout=process.OUTPUT_GRACE_S)
             await self._close_variables(run)  # before the end: the summary sent with it has their last state
+            await self._keep_timeline(run)  # before the end too: the summary says where the file is
             self.hub.broadcast(session.ended(output_cut=not done))
         finally:
             watch.cancel()
@@ -750,6 +793,18 @@ class GuiServer:
             if not run.variables.closed:  # cancelled on the way: the connection is still closed
                 await asyncio.shield(self._close_variables(run))
             self._runs.discard(run)
+
+    async def _keep_timeline(self, run: Run) -> None:
+        """Keeps the run's timeline file if the launcher wrote a whole one: a result that does not report
+        timeline-write (a file written only in part), and a file that is not empty."""
+        if run.timeline is None:
+            return
+        findings = (run.session.result or {}).get("findings")
+        broken = not isinstance(run.session.result, dict) or (isinstance(findings, list) and any(
+            isinstance(f, dict) and f.get("code") == "timeline-write" for f in findings))
+        if await asyncio.to_thread(self.timelines.finish, run.session.id, run.timeline, not broken,
+                                   run.session.scenario or ""):
+            run.session.timeline_url = api_path(run.session.id)
 
     def _remove_credentials(self, run: Run, last: bool = False) -> None:
         """Removes the run's credentials file. One that cannot be removed now (another program holds it open) is
@@ -861,6 +916,7 @@ class GuiServer:
         if self._ticker is not None:
             self._ticker.cancel()
         await self._close_sockets()
+        await asyncio.to_thread(self.timelines.remove_all)
 
     def kill_all(self) -> None:
         """The last resort when the end takes longer than it may: every launcher's and check's tree."""

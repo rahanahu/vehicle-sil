@@ -89,11 +89,12 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
+| `GET api/timeline/<session の id>` | シナリオの実行の時間の軸のファイル。ランチャーが書いたそのまま（オブジェクトで包まない） | — |
 
 - `api/app` のレスポンスは、サーバーのバージョン、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`）です。`limits` には `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` などがあります。
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
 - `api/check` の `check` は `check --json` の結果そのままです。照合が失敗しても 200 です。
-- `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
+- `api/write` は下の「ECU の変数」、`api/scenarios` と `scenario` は下の「シナリオ」、`api/recording` は下の「操作の記録（`api/recording`）」、`api/timeline` は下の「シナリオの実行の時間の軸（`api/timeline`）」、`api/dashboard` は下の「ダッシュボードのファイル」にあります。`api/dashboard` の `file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
 - サーバーが終了を始めたら、`api/run`、`api/check`、`api/write` は 503 `shutting-down` です。
 
 ### `disable` と `manual`
@@ -184,6 +185,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 403 | `cors-not-allowed` | `OPTIONS`（CORS は許可しない） |
 | 404 | `file-not-found` | `file` が root の下にない |
 | 404 | `not-found` | そういう API や画面のファイルはない |
+| 404 | `no-timeline` | `api/timeline/<session の id>`: その実行の時間の軸のファイルを、サーバーが持っていない（「シナリオの実行の時間の軸（`api/timeline`）」） |
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
 | 409 | `already-running` | 実行が始まりかけているか動いている |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
@@ -585,7 +587,7 @@ participant ごとの `state` は次のとおりです。
 - 手順の指摘（`scenario-failed` など）は、シナリオの `file` と `line` を持つ `finding` です。
 - シナリオで止まった実行の結果の `simulation` は `ended` です（結果の `scenario` があることで、participant が止めた `ended` と区別します）。
 
-要約の `scenario` は `{file, name, step_count, steps, steps_omitted, status, over_at_ms}` です。途中から開いた画面も、これで手順の表を作れます。
+要約の `scenario` は `{file, name, step_count, steps, steps_omitted, status, over_at_ms, timeline_url}` です。途中から開いた画面も、これで手順の表を作れます。
 
 | フィールド | 内容 |
 |---|---|
@@ -594,9 +596,19 @@ participant ごとの `state` は次のとおりです。
 | `steps` | 届いた手順（`index` の順。手順ごとに最後の状態） |
 | `steps_omitted` | 1000 手順を超えた数 |
 | `status`、`over_at_ms` | 結果の `scenario` から（結果が来るまで `null`） |
+| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る所（`api/timeline/<session の id>`）。実行が終わるまでと、ファイルのない実行（下）では `null` |
 
 - `steps[]` のフィールドはイベントと同じです。`text` と `message` は 1000 文字で切ります。
 - 結果が来たら、`steps` は結果の手順（`not_run` を含む）になります。
+
+### シナリオの実行の時間の軸（`api/timeline`）
+
+ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline` と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャーには `--timeline` を付けず、その実行には時間の軸がありません。
+
+- 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約の `scenario.timeline_url` が `api/timeline/<session の id>` になります。
+- `GET api/timeline/<session の id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオの名前>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（シナリオがない、`timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
+- サーバーは、ファイルを書いた最後の 4 つの実行のファイルを残します。5 つ目を残すときに、いちばん古いものを消します。サーバーが止まるときに、全部を消します。
+- ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/viewer.js`）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<session の id>` です。
 
 ## 操作の記録（`api/recording`）
 
