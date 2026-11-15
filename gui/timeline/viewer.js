@@ -2278,7 +2278,9 @@
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((r) => {
-        if (r.status === 401) throw new Error(t('load.unauthorized'));
+        // Said alone: the address is right, and there is no file at hand to drop.
+        if (r.status === 401)
+          throw Object.assign(new Error(t('load.unauthorized')), { whole: true });
         if (!r.ok) {
           return r.text().then((body) => {
             throw new Error(t('load.http', { status: r.status, message: serverMessage(body) }));
@@ -2289,7 +2291,8 @@
       })
       .then(
         (text) => load(text, name),
-        (e) => showError(t('load.failed', { url: url.href, error: e.message })),
+        (e) =>
+          showError(e.whole ? e.message : t('load.failed', { url: url.href, error: e.message })),
       );
   }
 
@@ -2435,7 +2438,13 @@
     const embedded = $('timeline-data');
     const src = new URLSearchParams(location.search).get('src');
     if (embedded && embedded.textContent.trim() !== '') load(embedded.textContent, null);
-    else if (src) fromSrc(src);
+    else if (src) {
+      fromSrc(src);
+      // "#token=" added to the address after a 401 changes only the hash: load the file again with it.
+      window.addEventListener('hashchange', () => {
+        if (/(?:^#|&)token=/.test(location.hash)) fromSrc(src);
+      });
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

@@ -275,8 +275,9 @@
     'load.failed': ({ url, error }) =>
       `${url} could not be loaded (${error}). Check the address, or drop the file on the page.`,
     'load.unauthorized':
-      "HTTP 401: the GUI server did not accept this page's token. Open the timeline again with the GUI's " +
-      '"Timeline" link',
+      "HTTP 401: the GUI server did not accept this page's token. Open the timeline with a left click on the " +
+      'GUI\'s "Timeline" link (a middle click or "Open link in new tab" does not pass the token on), or add ' +
+      '"#token=<token>" from the address the GUI server printed to the end of this page\'s address.',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
   };
 
@@ -545,7 +546,9 @@
     'load.failed': ({ url, error }) =>
       `${url} を読み込めませんでした（${error}）。アドレスを確かめるか、ファイルをページに落としてください。`,
     'load.unauthorized':
-      'HTTP 401: GUI サーバーが、このページのトークンを受け付けませんでした。GUI の「時間の軸」のリンクから開き直してください',
+      'HTTP 401: GUI サーバーが、このページのトークンを受け付けませんでした。GUI の「時間の軸」のリンクを左クリックで' +
+      '開いてください（中ボタンや「新しいタブで開く」では、トークンが渡りません）。または、GUI サーバーが表示した' +
+      'アドレスの「#token=<トークン>」を、このページのアドレスの末尾に付けてください。',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
   };
 

@@ -447,7 +447,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | ページ | GUI サーバーの `timeline/`（`gui/timeline` の `timeline.html`、`viewer.js`、`messages.js`。ビルド済みの道具の圧縮ファイルでは GUI の中にあります）。リンクは `timeline/?src=/api/timeline/<session の id>&lang=<ja か en>` です。 |
 | ファイル | `GET api/timeline/<session の id>`（ほかの API と同じく、トークンが要ります）。サーバーは、ファイルを書いた最後の 4 つのシナリオの実行のファイルを、自分の一時ディレクトリ（`vehicle-sil-gui-timelines-*`）に置き、止まるときに消します。ファイルがなくなった実行は、ページが 404 `no-timeline` と言います。 |
 | `timeline` のないランチャー | サーバーは `--timeline` を渡さず、カードにリンクは出ません。 |
-| トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います。リンクから開き直してください。 |
+| トークン | リンクにトークンは入れません。新しいタブは、GUI のタブの `sessionStorage`（GUI がトークンを持つ所）の写しを持って始まり、ページはそこからトークンを読んで `Authorization: Bearer` で送ります。ほかの開き方（アドレスのコピー、ブックマーク、ブラウザによっては中ボタンなど、開いたタブとのつながりのない開き方）ではトークンがなく、ページがそう言います（HTTP 401）。リンクを左クリックで開くか、サーバーが表示したアドレスの `#token=<トークン>` を、ページのアドレスの末尾に付けてください。ページはそれを読んでアドレスから消し、ファイルを読み込みます。 |
 
 - ファイルは、最後の 4 つの実行より前のものと、サーバーが止まった後には残りません。残したいときは、それまでにトークンを付けて `api/timeline/<session の id>` を取るか、自分で `vehicle_sil_launch run --scenario <シナリオ> --timeline <ファイル>` で実行します。
 - サーバーの API は、要約の `scenario.timeline_url` と `GET api/timeline/<session の id>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md#シナリオの実行の時間の軸apitimeline) の「シナリオの実行の時間の軸（`api/timeline`）」）、ライブラリでは、セッションのコピーの `scenario` の `timelineUrl` です。

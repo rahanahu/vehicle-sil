@@ -107,6 +107,9 @@ def test_the_page_is_served_without_a_token_under_the_servers_checks(tmp_path: P
                 assert headers["Content-Security-Policy"] == CSP and headers["X-Content-Type-Options"] == "nosniff"
             status, _, headers = await get_raw(c, "timeline", token=None)
             assert status == 308 and headers["Location"] == "/timeline/"
+            # The page's query (the file and the language) goes along
+            status, _, headers = await get_raw(c, "timeline?src=/api/timeline/3&lang=ja", token=None)
+            assert status == 308 and headers["Location"] == "/timeline/?src=/api/timeline/3&lang=ja"
             for path in ("timeline/eslint.config.js", "timeline/tests/viewer.test.js", "timeline/..%2Fweb",
                          "timeline/x.js"):
                 status, body, _ = await get_raw(c, path, token=None)

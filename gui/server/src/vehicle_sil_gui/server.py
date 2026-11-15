@@ -394,7 +394,7 @@ class GuiServer:
         """The timeline file of a scenario run (one of the last runs that wrote one), as the launcher wrote it."""
         text = request.match_info["session"]
         session_id = int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
-        path = self.timelines.file_of(session_id) if session_id is not None else None
+        path = await asyncio.to_thread(self.timelines.file_of, session_id) if session_id is not None else None
         if path is None:
             return error(404, "no-timeline",
                          f"run {text} has no timeline file on this server: a scenario run started from this GUI "
@@ -409,7 +409,9 @@ class GuiServer:
         """The page that draws a timeline file (gui/timeline), under timeline/; no token (as the screen's files):
         it reads the token as every screen of this server does, and sends it with its request for the file."""
         if "name" not in request.match_info:
-            return web.Response(status=308, headers={"Location": "/timeline/"})
+            # Keeps ?src= and ?lang=: /timeline?src=... must open the same file as /timeline/?src=...
+            query = request.query_string
+            return web.Response(status=308, headers={"Location": "/timeline/" + (f"?{query}" if query else "")})
         found = PAGE_FILES.get(request.match_info["name"])
         if found is None:
             return error(404, "not-found", f"GET {request.path}: the timeline page has no such file")
