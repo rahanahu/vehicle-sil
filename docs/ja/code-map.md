@@ -54,7 +54,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 ### 一部のテストだけを実行する
 
 - 1 つのテストは、テストの実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
-- 接頭辞だけを指定するときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも一致します。
+- 接頭辞だけを指定するときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.`、`j1939_spy.` にも一致します。
 - ラベルで選ぶときは `-L` を使います（[テストのラベル](#テストのラベル)）。
 
 ### ポートとロック
@@ -264,6 +264,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 | `j1939_silkit.*` | SIL Kit 上のテスト | `unit` も |
 | `j1939_parts.*` | プロトコルのコンポーネント | |
 | `j1939_codec.*` | 型付きメッセージ | |
+| `j1939_spy.*` | `Spy`（`tests/spy`） | `unit` も |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` | それぞれのディレクトリのソースが、エンジンの内部を使っていないこと | `unit` と `j1939` |
 
 エンジンで確認すること:
@@ -304,6 +305,18 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 小さい信号のすべての raw 値の往復
 - ノードでの送受信
 - `j1939_codec.generator`: 生成器が、誤った定義を止めること
+
+`Spy`（`j1939_spy.*`）。`LocalBench` の ECU で:
+
+- 見張りの変数の名前と値、見張りの呼ばれる順
+- ハンドラーの後に getter と `Scope::now()` の時刻が来ること
+- 壊す順（ハンドラーを外してから見張り、最後に `Listener`）、見張りから追加した見張り、`Scope::on_step`
+- 変数を書いた `Spy` が ECU より先に壊れたときに、次のステップが止まること（仮想バスと SIL Kit）
+- 聞きこぼしの変数の内訳と和、誤りの文
+- `Spy` があってもほかの ECU の記録が変わらず、`Spy` が何も送信しないこと
+- 定常状態のステップでメモリを確保しないこと
+- 手引きの見本
+- `j1939_spy.boundary`: `libs/spy` がエンジンの内部を使っていないこと。`j1939.sniffer_boundary` は、エンジンが `vehicle_sil::spy` を知らないことも検査する
 
 ### `peer` / `testkit`
 
@@ -675,6 +688,15 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
 - `ctest -R`: `^ecu\.`、`^simulation\.disconnect`
+
+### `libs/spy`
+
+| 名前 | 場所 |
+|---|---|
+| `Spy`、`Scope`、`SpyOptions`（受信だけをする participant が、聞いたことを ECU の変数に書く。見張りは `Scope&` を取るクラス） | `spy/spy.hpp` |
+
+- テスト: `tests/spy`
+- `ctest -R`: `^j1939_spy\.`
 
 ### `libs/local`
 
@@ -1262,6 +1284,8 @@ flowchart TD
     testkit --> can
     testkit --> j1939
     testkit --> ecu
+    spy --> ecu
+    spy --> j1939
 ```
 
 ### Peer と Simulation
@@ -1388,7 +1412,7 @@ flowchart TD
 | テスト | 検査すること |
 |---|---|
 | `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API とツールキットだけを使い、`vehicle_sil::j1939` とほかのコンポーネントだけをリンクする |
-| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
+| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary`、`j1939_spy.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `peer.controllers_are_made_on_the_simulation_name` | `libs/` で SIL Kit のバスのコントローラーを作るのは `libs/peer/src/peer.cpp` だけで、どの呼び出しも `simulation_name()` を通した名前のネットワークに作る（`cmake/VehicleSilCheckControllerNetworks.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の設定は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |

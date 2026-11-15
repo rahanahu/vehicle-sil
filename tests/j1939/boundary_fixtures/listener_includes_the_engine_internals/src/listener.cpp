@@ -4,4 +4,5 @@
 
 #include "frame_seat.hpp"
 #include "transport.hpp"
+#include "transport_wire.hpp"
 #include "vehicle_sil/j1939/network.hpp"

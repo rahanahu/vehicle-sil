@@ -54,7 +54,7 @@ Rules for areas (the directories directly under `tests/`):
 ### Run a subset of tests
 
 - To run one test, pass its name to the test executable (`<executable> <name>`). This is also how ctest runs it.
-- To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.` and `j1939_silkit.`.
+- To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.`, `j1939_silkit.` and `j1939_spy.`.
 - To select by label, use `-L` (see [Test labels](#test-labels)).
 
 ### Ports and locks
@@ -264,6 +264,7 @@ The last item includes 3 senders that send at the same time. Their addresses are
 | `j1939_silkit.*` | Tests on SIL Kit | `unit` too |
 | `j1939_parts.*` | Protocol parts | |
 | `j1939_codec.*` | Typed messages | |
+| `j1939_spy.*` | `Spy` (`tests/spy`) | `unit` too |
 | `local.boundary`, `testkit.boundary`, `peer.boundary`, `simulation.boundary`, `ecu.boundary` | The sources of each directory do not use the engine's internals | `unit` and `j1939` |
 
 What they check in the engine:
@@ -304,6 +305,18 @@ Typed messages (`j1939_codec.*`):
 - A round trip of every raw value of small signals
 - Transmission and reception on a node
 - `j1939_codec.generator`: the generator rejects wrong definitions
+
+`Spy` (`j1939_spy.*`), on an ECU of `LocalBench`:
+
+- The names and values of the watchers' variables, and the order in which watchers are called
+- Getters run after the handlers of their step, and what `Scope::now()` returns in a handler and in a getter
+- The destruction order (the handlers are removed, then the watchers are destroyed, and the `Listener` last), watchers added by a watcher, `Scope::on_step`
+- If a `Spy` that wrote variables is destroyed before its ECU, the next step stops (on the virtual bus and on SIL Kit)
+- The breakdown and the sum of the missed-traffic variables, and the error messages
+- With a `Spy`, the records of the other ECUs do not change, and the `Spy` sends nothing
+- No memory allocation in steady-state steps
+- The example in the guide
+- `j1939_spy.boundary`: `libs/spy` does not use the engine's internals. `j1939.sniffer_boundary` also checks that the engine does not know `vehicle_sil::spy`
 
 ### `peer` / `testkit`
 
@@ -675,6 +688,15 @@ Main classes and functions:
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
 - `ctest -R`: `^ecu\.`, `^simulation\.disconnect`
+
+### `libs/spy`
+
+| Name | Location |
+|---|---|
+| `Spy`, `Scope`, `SpyOptions` (a listen-only participant writes what it hears to ECU variables; a watcher is a class that takes a `Scope&`) | `spy/spy.hpp` |
+
+- Tests: `tests/spy`
+- `ctest -R`: `^j1939_spy\.`
 
 ### `libs/local`
 
@@ -1262,6 +1284,8 @@ flowchart TD
     testkit --> can
     testkit --> j1939
     testkit --> ecu
+    spy --> ecu
+    spy --> j1939
 ```
 
 ### Peer and Simulation
@@ -1388,7 +1412,7 @@ These tests read the sources' `#include` lines and similar, and check the bounda
 | Test | What it checks |
 |---|---|
 | `j1939_parts.boundary` | `libs/j1939/parts` uses only the engine's public API and the toolbox, and links only `vehicle_sil::j1939` and other protocol parts |
-| `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary`, `simulation.boundary`, `j1939_codec.boundary`, `param_service.boundary` | The sources of that directory do not use the engine's internals (`cmake/VehicleSilCheckJ1939Parts.cmake`) |
+| `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary`, `simulation.boundary`, `j1939_codec.boundary`, `param_service.boundary`, `j1939_spy.boundary` | The sources of that directory do not use the engine's internals (`cmake/VehicleSilCheckJ1939Parts.cmake`) |
 | `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
 | `peer.controllers_are_made_on_the_simulation_name` | In `libs/`, only `libs/peer/src/peer.cpp` creates SIL Kit bus controllers, and every call creates one on a network whose name went through `simulation_name()` (`cmake/VehicleSilCheckControllerNetworks.cmake`) |
 | `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |

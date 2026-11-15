@@ -246,7 +246,7 @@ You can also run several ECUs in one process. This runs without SIL Kit, which m
 | Time and control | The Control API, the configuration file and the GUI cannot select CAN or LIN channels or devices. | Give the channel of the Vector XL CAN Bridge as an argument when you start the bridge. |
 | Time and control | If the DLL of an existing ECU uses real time internally (sleeping, reading the clock), vehicle-sil cannot replace it with virtual time. | — |
 | Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | To record, observe the virtual LIN bus. To disconnect a single ECU, use `ecu.connected`. |
-| Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`) and `vehicle_sil::testkit` are not stable. | — |
+| Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`), `vehicle_sil::testkit` and `vehicle_sil::spy` are not stable. | — |
 | Tools and build | `install()` and packaging (`find_package`) are not supported. | Include vehicle-sil with FetchContent or `add_subdirectory` (see "Use from another project (FetchContent)" in [docs/build.md](docs/build.md#use-from-another-project-fetchcontent)). |
 | OS and hardware | Windows 10 is not verified. | Verified on Windows 11 with MSYS2 UCRT64. |
 | OS and hardware | The Vector XL CAN Bridge handles classic CAN only. | For how to use it and how it behaves, see [bridges.md](docs/bridges.md). |

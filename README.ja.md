@@ -246,7 +246,7 @@ int main(int argc, char** argv)
 | 時間と操作 | CAN と LIN のチャネルやデバイスは、Control API、設定ファイル、GUI からは選択できません。 | Vector XL CAN Bridge のチャネルは、起動時の引数で指定します。 |
 | 時間と操作 | 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。 | — |
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |
-| ツールとビルド | `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は安定していません。 | — |
+| ツールとビルド | `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は安定していません。 | — |
 | ツールとビルド | `install()` とパッケージ化（`find_package`）には未対応です。 | FetchContent か `add_subdirectory` で組み込みます（[docs/build.md](docs/ja/build.md) の「外部プロジェクトから使う（FetchContent）」）。 |
 | OS と機器 | Windows 10 は未確認です。 | Windows 11 の MSYS2 UCRT64 で確認しています。 |
 | OS と機器 | Vector XL CAN Bridge が扱うのは、クラシック CAN だけです。 | 使い方と仕様は [bridges.md](docs/ja/bridges.md) にあります。 |

@@ -78,6 +78,7 @@ add_subdirectory(libs/peer ${_vehicle_sil_exclude})
 add_subdirectory(libs/process ${_vehicle_sil_exclude})
 add_subdirectory(libs/signal ${_vehicle_sil_exclude})
 add_subdirectory(libs/simulation ${_vehicle_sil_exclude})
+add_subdirectory(libs/spy ${_vehicle_sil_exclude})
 add_subdirectory(libs/step ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 # The control server (gRPC). After the libraries above, and proto before control_grpc, which

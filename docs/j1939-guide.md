@@ -22,7 +22,7 @@ This page shows, in C++, how to use the J1939 stack of vehicle-sil to create ECU
 | Run ECUs in a simulation | `Simulation` | [Run in a simulation](#run-in-a-simulation) |
 | Test an ECU | `Simulation::local()`, `vehicle_sil::testkit` | [Test an ECU](#test-an-ecu) |
 | Disconnect an ECU from the bus | The variable `ecu.connected` | [Disconnect an ECU from the bus (`ecu.connected`)](#disconnect-an-ecu-from-the-bus-ecuconnected) |
-| Receive bus traffic without sending anything | `j1939::Listener`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
+| Receive bus traffic without sending anything | `vehicle_sil::spy::Spy`, `j1939::Listener`, `Ecu::can()` | [Listen-only participants](#listen-only-participants) |
 | Read and write an ECU's values from a UI or a test | `Ecu::input`, `Ecu::output` | [Read and write signals from outside (UI, tests)](#read-and-write-signals-from-outside-ui-tests) |
 | Work with signals without writing bit positions | Typed messages | [Data layout (Codec)](#data-layout-codec) |
 
@@ -871,80 +871,105 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ### Listen-only participants
 
-To check the communication between other ECUs in a scenario, add an ECU that sends nothing to the configuration file, and write what it receives to `output` variables (see "Read and write signals from outside"). If it sends nothing, it puts nothing on the bus.
+To check the communication between other ECUs in a scenario, add an ECU that sends nothing to the configuration file, and write what it hears to variables (see "Read and write signals from outside"). If it sends nothing, it puts nothing on the bus.
 
 What the other ECUs receive and send, their transmit acknowledgements, and the times of all of these are the same with or without that ECU, and do not depend on its step size (tested on the virtual bus, on SIL Kit's trivial simulation and on the simple CAN network simulator).
 
-The repository does not contain this code. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_listener.cpp` tests the `Listener`, and `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+`vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). Write what to watch in a watcher class and add it to the `Spy`.
+
+`tests/spy/test_spy.cpp` contains this example without `main()` and tests it. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
 
 ```cpp
-// A watcher: takes the Listener instead of creating it, and adds handlers. It keeps the registration as a member (removed when destroyed)
-class StatusWatch {
-public:
-    StatusWatch(vehicle_sil::Ecu& ecu, j1939::Listener& listener)
-      : status_(listener, listener.on_message(kPgnStatus, [this](const j1939::Message& m) {   // any destination; long messages too
-            if (m.time < latest_) { return; }   // the order of delivery can vary: compare times to find the newest
-            latest_ = m.time;
-            ++seen_;
-            to_ = m.destination;
-        })) {
-        ecu.output("watch.status_seen", &seen_);
-        ecu.output("watch.status_to", &to_);
-    }
+namespace cal {
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+}
 
-private:
-    vehicle_sil::SimTime latest_{};
-    int seen_ = 0;
-    int to_ = 0;
-    j1939::ListenerSubscription status_;   // last member: destroyed first, so the handler is removed
-};
-
-class BusWatch {
+class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
 public:
-    explicit BusWatch(vehicle_sil::Ecu& ecu)
-      : network_(ecu.j1939("J1939_CAN")),   // no node added: sends not a single frame
-        listener_(network_),
-        status_(ecu, listener_) {
-        // let scenarios see what was missed, and messages that may differ from the receiver's
-        ecu.output("watch.missed", [this] {
-            const auto& s = listener_.sniffer_statistics();
-            return static_cast<std::int64_t>(s.no_session + s.incomplete + s.replaced + s.lost + s.conflicting_packets +
-                                             network_.statistics().receive_overflows);
+    BlockWatch(vehicle_sil::spy::Scope& s, j1939::Address from) {
+        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // the Scope keeps the registration (no removal to write)
+            if (m.source != from || m.time < latest_) { return; }        // the order of delivery can vary: compare times to find the newest
+            latest_ = m.time; ++count_; bytes_ = static_cast<int>(m.data.size());
         });
+        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // becomes "block.count"
     }
-
-private:
-    j1939::Network& network_;
-    j1939::Listener listener_;
-    StatusWatch status_;
+private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0;
 };
 
-int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, argv, {.name = "Watch", .step = 10ms}); }
+class CalSpy {
+public:
+    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
+    }                                                                               // the Spy writes spy.missed and its breakdown
+private: vehicle_sil::spy::Spy spy_;
+};
+
+int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
 
 | How it receives | Use | What it sees |
 |---|---|---|
-| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `j1939::Listener` on it | The messages and frames that other participants sent, whatever their destination, with their times. |
+| On J1939 | A `Network` with no nodes (`ecu.j1939(network)`), and a `vehicle_sil::spy::Spy` on it (or a `j1939::Listener` directly) | The messages and frames that other participants sent, whatever their destination, with their times. |
 | On raw CAN | `on_frame` of `ecu.can(network)` | Every frame (including 11-bit frames, TP.CM and TP.DT). |
 
-- A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK.
-- Create one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network` and add handlers to it. The `Listener` only listens and sends nothing. Its handlers:
+- `Spy(ecu, network)` creates one `j1939::Listener` (header `vehicle_sil/j1939/listener.hpp`) on that `Network`. A `Network` with no nodes does no Address Claim, does not respond to Requests and sends no ACK or NACK. The `Listener` only listens, too, and sends nothing.
+- `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
+  - `on_message(pgn, handler)`, `on_any_message`, `on_transfer`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
+  - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
+  - `on_step(fn)`: calls `fn` every ECU step with the time of that step, after the handlers of the step and before the variables are sampled. Use it for what follows from elapsed time (such as counting how often messages stopped coming). The result depends on the granularity of the step size. As in handlers, only update the watcher's members. The functions of all watchers run from one `Ecu::on_step` function that the `Spy` registers when it is created: after the `ecu.on_step()` functions the application added before it created the `Spy`, and before those it added later (for example in the constructor body of a class that has the `Spy` as a member). If `fn` throws, the functions registered after it are not called in that step, and the step stops as when an `ecu.on_step()` function throws.
+
+    ```cpp
+    s.on_step([this](vehicle_sil::SimTime now) {           // count once when nothing came for 100 ms
+        if (count_ > 0 && !quiet_ && now - latest_ > 100ms) { quiet_ = true; ++silences_; }
+    });                                                     // the handler sets quiet_ = false again when a message arrives
+    ```
+
+  - `now()`: the time of the ECU's last step. In a variable's getter it is the time of the step being sampled, so "how many ms since the last message" is the difference between `now()` and the last `Message::time` (the result depends on the granularity of the step size). In a handler it is the time of the previous step; use `Message::time` there.
+  - Add watchers, and register their handlers and variables, in the constructor of the ECU class. After the run has started, these are a `std::logic_error` ("... after the run started: add the watchers in the ECU class's constructor"). A wrong name is a `std::invalid_argument`: a name used a second time, an empty name, a name that starts or ends with `.`, or the name of the missed-traffic prefix (below). The message says how to fix it.
+- From inside a watcher's constructor, you can `add()` another watcher through the `Spy&` it received (a watcher composed of watchers). The added watcher is destroyed after the composing one (the `Spy` destroys watchers in the reverse order in which `add()` returned). If the constructor throws, the handlers and `on_step` functions it registered so far are removed, and the watchers it added are destroyed.
+- Missed-traffic variables: the `Spy` writes the counts of the `Listener` and the `Network` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, it can tell "did not come" from "missed".
+
+  | Variable | What it counts |
+  |---|---|
+  | `spy.missed` | The sum of the 8 below. While it stays 0, the `Network` dropped none of the frames it received; the BAM and connections that the `Network` and the `Listener` started to follow were not lost to a packet that was repeated, out of order or missing before a later one came, or to a lack of free places; and every message passed has the receiver's bytes. It does not tell you that every transfer came to its end (for what it cannot see, see below) |
+  | `spy.no_session` | Connections not followed because no place was free (the number followed at the same time is `ListenerOptions::sniffer.sessions`, default 32) |
+  | `spy.incomplete` | Connections with missed packets |
+  | `spy.replaced` | Connections announced again before they ended |
+  | `spy.lost` | Connections no longer followed because a node of the same participant took the address |
+  | `spy.conflicting_packets` | Packets with the sequence number of an earlier packet but different bytes (see "Messages that may differ from the receiver's" below) |
+  | `spy.receive_overflows` | Frames that the `Network` could not accept (`NetworkOptions::receive_capacity`) |
+  | `spy.transport_rejected` | BAM that the `Network` did not start to reassemble (a malformed announcement, no free session), and RTS that a node of the same participant refused (busy with another PGN, too large, malformed, no free place) |
+  | `spy.transport_bam_dropped` | BAM that the `Network` dropped in the middle of reassembly (missing, repeated or out-of-order packets) |
+
+  - What they cannot see: frames that arrive while the spy ECU is disconnected from the bus (`ecu.connected` is false) are dropped before the `Network` and counted nowhere. They also leave out `frames_ignored` of `Network::statistics()` (11-bit frames and so on; on a bus that also carries 11-bit frames it always grows) and connections that were already running when the spy started listening, so that it never heard their announcement (`orphan_data` of `sniffer_statistics()`).
+  - They also cannot see a transfer whose end never came. A BAM or a connection whose last packets did not come times out, and you cannot tell whether the sender stopped or the packets were missed. BAM timeouts are counted in `transport_timeouts` of `Network::statistics()`, which is not in the sum because it also counts the timeouts of the nodes of this participant; connections between other ECUs are counted in `timed_out` of `sniffer_statistics()`. A BAM that the next announcement of the same sender replaced before its last packet came is counted nowhere.
+  - `SpyOptions::statistics_as` (default `"spy"`) changes the prefix. An empty prefix writes none of these variables.
+- Lifetime: variables cannot be withdrawn, so make a `Spy` that writes variables a member of the ECU class, and keep it alive as long as the ECU (as in the example; the classes that `ecu_main` and `Simulation::add()` create are destroyed after the ECU's networks and variables). If a `Spy` that wrote variables is destroyed before its ECU, the next step of that ECU stops with a `std::logic_error` before it reads the variables ("vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ..."). When the `Spy` is destroyed, it removes the handlers and `on_step` functions of each watcher and then destroys the watcher (from the one whose `add()` returned last), and finally destroys the `Listener` it created.
+- A `Network` has one `Listener` (a second one is a `std::logic_error`). To share the `Listener` with other code, create it yourself and pass it as `Spy(ecu, network, listener)`. To put 2 `Spy` objects on that `Listener`, set `SpyOptions::statistics_as` of the second one to `""`.
+- To test a watcher, put a class that adds it on an ECU of a `LocalBench`, inject frames, run, and read the variables (the example tests in `tests/spy` take this form). Declare what you pass to a watcher by reference (such as a `std::vector` for records) before the `LocalBench`, because the watchers are destroyed with the ECUs when the `LocalBench` is destroyed.
+
+  ```cpp
+  auto& ecu = bench.add_ecu("CalSpy", 5ms); ecu.emplace<CalSpy>(ecu);
+  bench.inject("J1939_CAN", t, frame); bench.run_until(end);
+  // values: find the position i of the name in ecu.agent().schema(), and read ecu.agent().latest().values[i]
+  ```
+
+- Using a `Listener` directly: instead of a `Spy`, you can create a `j1939::Listener` on the `Network`, add handlers and write variables with `ecu.output()`. Watching code takes a `Listener&` and adds handlers instead of creating its own `Listener`. An added handler is called until it is removed or the `Listener` is destroyed, so a watcher that can be destroyed before the `Listener` keeps the return value of the registration (`Listener::HandlerId`) in a `j1939::ListenerSubscription` member (the same shape as `j1939::Subscription` for a node's handlers). A `ListenerSubscription` removes the handler when destroyed or on `reset()`. It works within a step and from inside that handler itself, and destroying it after the `Listener` is safe. The missed-traffic counts are in `Listener::sniffer_statistics()` and `Network::statistics()`.
+- On J1939 (what a `Listener` passes):
   - `on_message(pgn, handler)` and `on_any_message(handler)`: messages sent by other participants, whatever their destination: single frames, messages sent with BAM, and messages sent over a connection (RTS/CTS) between 2 ECUs. The handler takes the same `j1939::Message` type as a node's handler, so nodes and listeners can share the functions that read it. You can add several handlers for the same PGN; they are called in the order they were added.
   - `on_transfer(handler)`: how a connection between other ECUs ended (`SniffedTransfer`: completed, aborted, timed out or missed).
   - `on_frame(handler)`: one frame at a time (including TP.CM, TP.DT and frames to other addresses). Use it to reassemble messages yourself.
 - What it does not hear:
-  - What nodes of the same `Network` sent. A `Listener` passes "what other participants said". Count the transmissions of your own nodes with the results on the sending side (`Node::on_transfer_end`, the results of `Requester`). With `ListenerOptions::hear_local`, frames and messages looped back between nodes of the same `Network` are passed too (with `ReceivedFrame::local` set), but loopback happens only with 2 or more nodes, so on a `Network` with one node it adds nothing.
-  - 11-bit frames, and frames that the `Network` did not accept (`receive_overflows` in `Network::statistics()`). To see 11-bit frames, listen on raw CAN.
-  - Connections that the `Listener` could not follow. Announcements beyond the number it can follow at the same time (`ListenerOptions::sniffer.sessions`, default 32) count in `no_session`, transfers with missed packets in `incomplete`, and transfers announced again before they ended in `replaced` (`Listener::sniffer_statistics()`). Write these to a variable as in the example, and a scenario can tell "did not come" from "missed".
+  - What nodes of the same `Network` sent. A `Listener` passes "what other participants said". Count the transmissions of your own nodes with the results on the sending side (`Node::on_transfer_end`, the results of `Requester`). With `ListenerOptions::hear_local`, frames and messages looped back between nodes of the same `Network` are passed too (with `ReceivedFrame::local` set), but loopback happens only with 2 or more nodes, so on a `Network` with one node it adds nothing. Even with `hear_local`, a connection (RTS/CTS) from a node to another participant passes only its frames, not its message.
+  - Frames that the `Network` ignores (`frames_ignored`: 11-bit frames, frames from source 255, frames from source 254 other than Address Claimed and Request, malformed frames), and frames that the `Network` did not accept (`receive_overflows`). To see 11-bit frames, listen on raw CAN.
+  - What was not reassembled, and connections that could not be followed: the breakdown of the missed-traffic variables above.
 - Messages that may differ from the receiver's: a message of a connection between other ECUs has the same bytes as the receiving node's message when the transfer's `conflicting_packets` (packets seen with the sequence number of an earlier packet but different bytes) is 0. Otherwise the bus does not show which of the two the receiver took (the `Listener` passes the one it saw first). `Message` carries no mark for this. There are 2 ways to tell:
-  - Write the statistic `sniffer_statistics().conflicting_packets` to a variable, as in the example. While it stays 0, every message passed is the same as the receiver's.
+  - While `spy.conflicting_packets` (included in `spy.missed`) stays 0, every message passed is the same as the receiver's.
   - Use the values in the `on_message` handler, and discard the value just taken if the `on_transfer` handler, called right after for the same transfer (same PGN, source and destination), sees it `Completed` with `SniffedTransfer::conflicting_packets` not 0. Other messages (single frames, messages sent with BAM, messages addressed to a node of this `Network`) get no `on_transfer` call, and they cannot differ from the receiver's.
 - A participant with its own nodes can use a `Listener` too. The `Network` handles connections addressed to its nodes and connections they send, and a message addressed to a node is passed once (it does not appear in `on_transfer`).
-- Handlers only read. Sending or registering a handler from inside a handler is a `std::logic_error`, and the participant fails and stops (also if the exception is swallowed). Update variables in handlers and send from `ecu.on_step`. Register the handlers before the simulation starts (in the constructor).
+- Handlers only read. Sending or registering a handler from inside a handler is a `std::logic_error`, and the participant fails and stops (also if the exception is swallowed). Update variables in handlers and send from `ecu.on_step`.
 - Time and order: the `Message::time` of a message sent over a connection is the time at which the receiver received the message (the last packet), the same time that the receiving node sees. The handler, however, is called after the receiver has answered that it received the message. So a message with an earlier time can be passed after a message with a later time. To find the latest value or a period, compare `time`, not the order of the calls. What follows from frames (messages, Aborts) does not depend on the step size of the listening participant. What follows from elapsed time (such as `TimedOut`) has a `time` that does not depend on the step size, but the step in which the handler is called does, so compare `time` here too.
-- How to write watchers: a `Network` has one `Listener` (a second one is a `std::logic_error`). A watcher class or function takes a `Listener&` and adds handlers instead of creating its own `Listener`. Then you can put any number of watchers in one participant without rewriting them.
-- Handler lifetime: an added handler is called until it is removed or the `Listener` is destroyed. What the handler captured (`this` and so on) must live that long. A watcher that can be destroyed before the `Listener` keeps the return value of the registration (`Listener::HandlerId`) in a `j1939::ListenerSubscription` member (`StatusWatch` in the example; the same shape as `j1939::Subscription` for a node's handlers). A `ListenerSubscription` removes the handler when destroyed or on `reset()`. It works within a step and from inside that handler itself, and the handler is not called after that. Destroying it after the `Listener` is safe. A handler whose return value was discarded stays registered until the `Listener` is destroyed.
-- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
+- The rules for following connections follow the receiving side of this repository's engine and were not compared with the standard. Values that can differ in other stacks (timeouts, when a transfer counts as complete, and so on) can be changed with `ListenerOptions::sniffer` (with a `Spy`, `SpyOptions::listener.sniffer`) (see "Hearing what other participants say (`Listener`)" and "Following other ECUs' transfers (`TransferSniffer`)" in [internals/j1939.md](internals/j1939.md#hearing-what-other-participants-say-listener)). On a network with a physical bridge, neither times nor order are exact (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
 - To see the events of a `Network` (including transmissions and address changes) for recording or tests, use a `j1939::Observer` (see "Observation (`Observer`)" in [internals/j1939.md](internals/j1939.md#observation-observer)). It can be set together with a `Listener`.
 - Raw CAN sends nothing unless you call `send()`. If you read the frames yourself but want connections between other ECUs followed and reassembled for you, pass the frames to a `j1939::TransferSniffer`.
 
