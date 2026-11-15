@@ -34,6 +34,8 @@ First, it waits until the state leaves ReadyToRun. For a participant without tim
 
 Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, when the wait sees a stopping or ended state, it reads the flags again, so that a run that passed through Running and stopped after the flags were read does not count as a failure. For the same reason it reads the flags again when `give_up` tells it to stop waiting: `give_up` looks at the simulation later than the wait did, and a short run can have begun and ended in between. If this participant has begun, the answer is not taken and `start()` returns as for any start.
 
+An Error before the participant begins to run is a failed start, even if the state says otherwise when `start()` looks. `start()` goes by the Error that SIL Kit published for this participant (the status handler remembers it), not only by the current state: a SIL Kit without patch 0006 can replace Error with the next state of the start and go on, up to Running (see "Known upstream bugs" in [dependencies.md](../dependencies.md#known-upstream-bugs)). With the patch, the participant stays in Error, and both ways of looking agree. `start()` then throws as for any start that ended in Error, and the step handler is not called for the steps that SIL Kit may still run.
+
 The tests `core.participant_start_*` check both orders, using a test hook in `libs/core/src/participant_runtime_probe.hpp` to force the order (only tests use it; it is not installed).
 
 ### CommunicationReady handlers
@@ -104,6 +106,8 @@ When a participant fails (in the step handler, in the real-time driver, or throu
 Setting the failure flag and reporting Error to SIL Kit happen under one lock. A stop issued after the failure became visible therefore never overtakes the report. The implementation does not rely on the order in which SIL Kit runs work it has deferred.
 
 `stop()` waits at most `shutdown_timeout` for Error and Shutdown together. After that, it passes the stop even before Error.
+
+`stop()` normally waits for the future of the final state, which SIL Kit sets at Shutdown once the other participants have replied. After a start that failed by an Error before the participant began to run, it also ends the wait when the lifecycle is in Shutdown: SIL Kit runs one wait for replies at a time, and a stop that comes while the start still waits for replies loses its own wait, so the future is never set.
 
 In these cases the participant does not go through Error, or reaches Error after Stopping:
 

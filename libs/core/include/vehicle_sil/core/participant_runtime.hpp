@@ -269,6 +269,9 @@ public:
     /// system controller and all other required participants.
     /// Throws StartTimeoutError (a std::runtime_error) on timeout, std::runtime_error if the
     /// lifecycle fails, std::logic_error if virtual time is used without a step handler.
+    /// An Error that SIL Kit publishes for this participant before it begins to run is such a
+    /// failure whatever the state is afterwards (SIL Kit may go on from it, see "Known upstream
+    /// bugs" in docs/dependencies.md): start() throws, and the step handler is not called.
     /// `give_up`, if set, is asked while it waits (on the calling thread, every few milliseconds):
     /// a non-empty answer ends the wait at once with std::runtime_error that has the answer (for
     /// a required participant that has gone, which the lifecycle would wait for until the
@@ -298,6 +301,9 @@ public:
     /// shutdown_timeout; if the Error has not come by then, the stop goes out anyway. A stop or
     /// abort that another participant (the controller) gives first is not held back: the
     /// participant then may stop (Stopping, Stopped) before it is in Error, or never be in Error.
+    /// After a start that failed by an Error before the participant began to run, the wait also
+    /// ends once the lifecycle is in Shutdown: SIL Kit may then never complete the shutdown (see
+    /// patch 0006 in docs/dependencies.md).
     void stop(std::string_view reason) noexcept;
 
     /// Asks the lifecycle to stop without waiting. Callable from any thread, including the step
@@ -444,6 +450,11 @@ private:
     /// The step handler runs, until its error (if any) is reported: a stop request waits.
     std::atomic<bool> handler_running_{false};
     std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
+    /// SIL Kit published Error for this participant before it began to run (neither flag above
+    /// was set). start() goes by this and not by the state alone: a SIL Kit without
+    /// patches/sil-kit/0006 can leave Error again (see "Known upstream bugs" in
+    /// docs/dependencies.md), and the state then looks like a start.
+    std::atomic<bool> failed_before_start_{false};
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 
     std::mutex communication_ready_gate_;      // held while the CommunicationReady handlers run

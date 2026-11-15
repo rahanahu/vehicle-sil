@@ -422,6 +422,23 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         const bool startingEntered = starting_entered_.load(std::memory_order_acquire);
         start_probe(detail::StartProbePoint::BetweenFlagsAndState);
         const auto current = lifecycle_->State();
+        if (failed_before_start_.load(std::memory_order_acquire))
+        {
+            // SIL Kit put this participant into Error before it ran (on_status()). With a SIL Kit
+            // that lacks patches/sil-kit/0006 (the consumer's own SilKit::SilKit), the state may
+            // say something else by now: a step of the start that was under way when the error
+            // came (the wait for the other participants' replies, for the subscriptions) sets the
+            // next state when it completes, whatever the state is then, and the lifecycle goes on
+            // from there, to Running if the simulation starts, or it stays where the simulation
+            // has passed already. Either way this participant failed: it must not take part, and
+            // must not keep the others waiting for it. The patched SIL Kit stays in Error, and
+            // this is the same as the check of the state below.
+            throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name + "' failed to start, state: " +
+                                     orch::to_string(orch::ParticipantState::Error) +
+                                     (current == orch::ParticipantState::Error
+                                          ? std::string()
+                                          : " (the state is " + orch::to_string(current) + " now)"));
+        }
         if (current == orch::ParticipantState::Running || stepEntered
             || (startingEntered && current != orch::ParticipantState::ReadyToRun))
         {
@@ -536,9 +553,28 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
     {
-        if (!final_state() && done.wait_until(deadline) == std::future_status::ready)
+        // SIL Kit sets the future at Shutdown, once the others have replied. After a start that
+        // SIL Kit failed (failed_before_start_), it may never set it: a Stop() that comes while
+        // the start still waits for the others' replies has its own wait for them dropped (SIL
+        // Kit takes one such wait at a time), and the lifecycle stays in Shutdown. Shutdown then
+        // ends the wait too. Otherwise only the future does: a normal stop still waits for the
+        // replies, which make sure the others got this participant's last messages.
+        while (!final_state())
         {
-            set_final_state(done.get());
+            const auto now = std::chrono::steady_clock::now();
+            if (done.wait_until(std::min(deadline, now + std::chrono::milliseconds(5))) == std::future_status::ready)
+            {
+                set_final_state(done.get());
+            }
+            else if (failed_before_start_.load(std::memory_order_acquire)
+                     && lifecycle_->State() == orch::ParticipantState::Shutdown)
+            {
+                set_final_state(orch::ParticipantState::Shutdown); // the value the future has at Shutdown
+            }
+            else if (std::chrono::steady_clock::now() >= deadline)
+            {
+                break;
+            }
         }
     }
     catch (const std::exception&)
@@ -778,7 +814,9 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
     {
         const std::lock_guard gate(step_gate_);
         // Only this thread writes step_error_, so reading it here needs no lock.
-        if (steps_disabled_ || !step_error_.empty())
+        // A participant that failed before it began (start() throws) does not run its steps if
+        // SIL Kit lets it go on meanwhile.
+        if (steps_disabled_ || !step_error_.empty() || failed_before_start_.load(std::memory_order_acquire))
         {
             return true;
         }
@@ -1052,6 +1090,14 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
     // deliver_stop() keeps a request for the first step where it has to, and passes it on once.
     if (status.participantName == options_.participant_name)
     {
+        // An Error before this participant began to run is a start that failed, also if SIL Kit
+        // leaves Error again (start()). Only a status as it comes (on the SIL Kit thread, which
+        // also sets the two flags): a replay may bring an old Error after a run has begun.
+        if (!replayed && status.state == orch::ParticipantState::Error && started()
+            && !step_entered_.load(std::memory_order_acquire) && !starting_entered_.load(std::memory_order_acquire))
+        {
+            failed_before_start_.store(true, std::memory_order_release);
+        }
         if (has_finished(PeerStatus{status.state}))
         {
             notify_stop_observer(); // also a stop that another participant asked for

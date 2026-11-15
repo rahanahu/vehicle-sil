@@ -226,6 +226,7 @@ The consumer's SIL Kit does not have the patches of "Patches to SIL Kit" applied
 | 0003 | Registry | After a participant refused for its name disconnects, participants that cannot connect directly to the earlier participant with that name can no longer connect to it through the relay. |
 | 0004 | The participant that creates the network simulator (`vehicle_sil_can_bus_simulator`) | Rarely, the network is not announced and all controllers stay in trivial simulation. The bit rate and the mode do not reach the simulator, with no error and no warning. |
 | 0005 | Registry | When a participant joins right after another one ended, it rarely fails after waiting 5 seconds (`Middleware.ConnectTimeoutSeconds`) with "Timeout during connection handshake with the SIL Kit Registry". Creating the participant again connects. |
+| 0006 | Coordinated participants (the ECUs of a run) | A participant that the run does not require (a mistyped `--name`, for example) can leave Error again during the start. `ParticipantRuntime::start()` still fails for it, but SIL Kit may not take its stop, so it can stay for up to `shutdown_timeout` and hold the virtual time of all participants at 0 meanwhile. Rarely, `start()` returns and the participant then runs no step and reports nothing. |
 
 The registry that `vehicle_sil_launch run` starts, and the executables built with vehicle-sil, have all patches applied.
 
@@ -457,9 +458,46 @@ A status that arrives between 2 and 3 does not reach the new handler. If it is t
 
 **Reported upstream**: Not yet.
 
+### SIL Kit: the lifecycle goes on after an Error during the start
+
+**Description**: Two steps of the start of a coordinated participant are finished by a callback that runs later: the wait for the replies of all participants (`ServicesCreatedState::ServicesCreated()`) and the wait for the pending subscriptions (`CommunicationInitializingState::CommunicationInitializing()`, both in `SilKit/source/services/orchestration/LifecycleStates.cpp`). The callback sets the next state without looking at the current one. If the participant enters Error while one of these waits is under way, the callback replaces Error with CommunicationInitializing or CommunicationInitialized, and the lifecycle goes on from there.
+
+A coordinated participant that is not required gets into this order. `LifecycleService::SetWorkflowConfiguration()` reports the error with a deferred call (`ReportError()`). If the same message, or one that is read from the socket together with it, makes the system state ServicesCreated, the wait for the replies begins before the deferred call runs.
+
+**Impact**: What the participant does next depends on which message arrives first. Either it goes on to Running and takes part in the simulation, although SIL Kit reported it as invalid. Or it stays in a state before Running for good, because the system state it waits for has already passed. With time synchronization, the other participants then wait for it, and virtual time stays at 0 until it leaves.
+
+**Handling**: Fixed by patch [0006](#0006-the-lifecycle-does-not-leave-error-when-a-wait-of-the-start-ends): the two callbacks do nothing unless the participant is still in the state that began the wait, so a participant in Error stays there until it is stopped. `ParticipantRuntime::start()` throws for it, and an ecu_main executable ends with the exit code of a failed start and leaves the simulation. The test `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` forces the order and fails without the patch.
+
+The patch does not cover a stop that comes while the start still waits for the replies. SIL Kit takes the participant to Shutdown, but drops the wait for the replies that would then set the final state, because it runs one such wait at a time (`ParticipantReplies::CallAfterAllParticipantsReplied()`). `ParticipantRuntime::stop()` therefore ends its wait when the lifecycle is in Shutdown after such a failed start, instead of waiting for `shutdown_timeout`; the test `core.participant_stop_after_a_failed_start_returns_once_the_lifecycle_is_in_shutdown` holds the replies back to force this order.
+
+`ParticipantRuntime` also has a provision for a SIL Kit without the patch (the consumer's own `SilKit::SilKit`). It remembers an Error that SIL Kit publishes for its own participant before the participant begins to run. `start()` then throws, as it does for a start that ended in Error, whatever the state is by then, and the step handler is not called (see "State when `start()` returns" in [internals/core.md](internals/core.md#state-when-start-returns)). The provision does not put SIL Kit back into Error, so two things remain without the patch:
+
+- SIL Kit may not take the stop of the participant whose start failed. The participant then stays until `shutdown_timeout` has passed, and with time synchronization the virtual time of all participants does not advance meanwhile.
+- Rarely, `start()` reads the state after SIL Kit has left Error and before the Error status is delivered. It returns, and the participant runs no step and reports nothing for the rest of the run.
+
+Remove the patch when the submodule is updated to an upstream commit that has the fix.
+
+**Reported upstream**: Not yet.
+
+### SIL Kit: a participant that joins while another one leaves waits for the one that left
+
+**Description**: When a participant ends, the registry learns of it only when its I/O thread handles the end of that connection. A participant that joins before that gets the participant that ended in its list of known participants (`VAsioRegistry::SendKnownParticipants()`). It then tries 3 ways to reach it (`ConnectKnownParticipants.cpp`):
+
+1. A direct connection. It fails at once.
+2. A connection that the other participant makes on a request relayed by the registry. The registry has removed the target by then and drops the request without an answer (`VAsioConnection::ReceiveRemoteParticipantConnectRequest_Registry()`, "Ignoring invalid RemoteParticipantConnectRequest"). The requester waits for `Middleware.ConnectTimeoutSeconds`.
+3. The registry as a proxy. The registry cannot deliver the message either ("Unable to deliver proxy message") and does not say so. The requester waits for a reply for another `ConnectTimeoutSeconds`.
+
+Nothing tells the joining participant that the other one is gone.
+
+**Impact**: Rarely, when a participant joins right after another one ended (an ECU that is started again at once, runs that follow each other at one registry), `CreateParticipant()` fails after twice `ConnectTimeoutSeconds` (10 seconds by default) with `Timeout while waiting for replies from known participants: <name> (...) is waiting for reply`. The constructor of `ParticipantRuntime` throws this error. A second attempt succeeds.
+
+**Handling**: None so far. Patch 0005 covers only the moment in which the registry has already closed the socket of the participant that ended. A longer `ConnectTimeoutSeconds` does not help, because the reply never comes.
+
+**Reported upstream**: Not yet.
+
 ## Patches to SIL Kit
 
-The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test.
+The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test, and 0006 includes upstream unit tests.
 
 | Patch | What it fixes |
 |---|---|
@@ -468,8 +506,9 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 | [0003](#0003-the-registry-removes-only-the-peers-own-name-entry) | The registry removes only the peer's own name entry |
 | [0004](#0004-do-not-lose-a-handler-when-an-asynchronous-subscription-completes) | Does not lose a handler when an asynchronous subscription completes |
 | [0005](#0005-the-registry-does-not-advertise-a-participant-whose-connection-has-closed) | The registry does not advertise a participant whose connection has closed |
+| [0006](#0006-the-lifecycle-does-not-leave-error-when-a-wait-of-the-start-ends) | The lifecycle does not leave Error when a wait of the start ends |
 
-**Reported upstream**: None of them yet. The code that 0001, 0002, 0004 and 0005 change is the same on upstream `main` (for 0003, upstream `main` has not been checked).
+**Reported upstream**: None of them yet. The code that 0001, 0002, 0004 and 0005 change is the same on upstream `main` (for 0003 and 0006, upstream `main` has not been checked).
 
 ### 0001: The LIN master does not count dynamic-response nodes
 
@@ -520,6 +559,16 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 **Upstream reproduction test**: None (the timing of the overlap cannot be controlled from outside, and vehicle-sil has no test that always fails either)
 
 **Verification**: Verified by temporarily delaying the end processing in the registry: without the patch, a test that creates participants one after another always fails with this timeout; with the patch, it passes. The temporary delay was not kept.
+
+### 0006: The lifecycle does not leave Error when a wait of the start ends
+
+**Description**: The two callbacks that finish a wait of the start (the replies of all participants in `ServicesCreatedState::ServicesCreated()`, the pending subscriptions in `CommunicationInitializingState::CommunicationInitializing()`) set the next state only if the participant is still in the state that began the wait. Before, they set it whatever the state was. A participant that had entered Error, or had been aborted, while it waited was put back into the start and went on from there (see "[SIL Kit: the lifecycle goes on after an Error during the start](#sil-kit-the-lifecycle-goes-on-after-an-error-during-the-start)").
+
+**Why vehicle-sil needs it**: A participant that is started by hand with a name that the run does not have joins as a coordinated participant that is not required. SIL Kit puts it into Error when the simulation starts. Without the patch it sometimes left Error again: it took part in the run, or it stayed before Running and held the virtual time of all participants at 0, so the run ended with "virtual time has not advanced". Handling this in `ParticipantRuntime` alone leaves the two cases listed under that bug.
+
+**Upstream reproduction test**: `Test_LifecycleService.error_while_waiting_for_replies_is_kept` and `Test_LifecycleService.error_while_waiting_for_subscriptions_is_kept` (in the patch)
+
+**Verification**: Verified with the upstream unit tests of the lifecycle service and with `core.participant_start_fails_for_a_participant_that_is_not_required_and_it_stays_in_error` of vehicle-sil. Both fail without the patch. The abort during a wait is fixed by the same check and has no test of its own.
 
 ## Updating the upstream version
 
