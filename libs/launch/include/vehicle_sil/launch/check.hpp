@@ -254,9 +254,14 @@ struct NetworkOutside
     friend bool operator==(const NetworkOutside&, const NetworkOutside&) = default;
 };
 
+/// How often a bridge that run starts writes its statistics line while it runs, if the counts have
+/// changed (its --stats-every-ms): run reads the counts from it (detail::read_outside_counts()).
+inline constexpr std::int64_t kBridgeStatisticsEveryMs = 1000;
+
 /// The arguments run starts the bridge of `outside` with, after its executable: its arguments
 /// (as the check showed them in its command, untouched: an adapter's name may have "{name}" in
-/// it), then --name, --registry-uri `registry_uri` and --start-timeout-ms `start_timeout_ms`.
+/// it), then --name, --registry-uri `registry_uri`, --start-timeout-ms `start_timeout_ms` and
+/// --stats-every-ms kBridgeStatisticsEveryMs.
 [[nodiscard]] std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std::string_view registry_uri,
                                                             std::int64_t start_timeout_ms);
 

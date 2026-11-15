@@ -2194,3 +2194,60 @@ TEST_CASE(the_outputs_of_a_connected_run_have_the_bridge_and_where_it_connects)
     // Without --connect: no line, and no change in the table.
     CHECK(format_run_text(report_of(passed_run())).find("outside") == std::string::npos);
 }
+
+TEST_CASE(a_bridge_that_sent_and_got_nothing_from_a_device_is_a_note)
+{
+    const auto counted = [](std::optional<std::uint64_t> to, std::optional<std::uint64_t> from) {
+        RunOutcome o = connected_run(stopped_bridge(0));
+        o.outside[0].to_outside = to;
+        o.outside[0].from_outside = from;
+        o.outside[0].tool = "vehicle_sil_ethernet_bridge";
+        return o;
+    };
+    RunOutcome o = counted(152, 0);
+    check_text(lines(report_of(o).findings),
+               "N 3 connect-nothing-received: network 'ETH': nothing came from a device on the real bus (eth0): bridge.ETH sent "
+               "152 frames there and got none from a device (frames that this computer sent do not count). If a device is "
+               "meant to answer, check that it is on, its cable, and that --connect names the adapter it is on\n");
+    CHECK(report_of(o).findings[0].participant == "bridge.ETH" && report_of(o).findings[0].network == "ETH");
+    // A note: --strict passes.
+    CHECK(report_of(o, true).result() == RunResult::Passed);
+    // Known once the bridge's output has been read to the end: no event before the participants have ended.
+    CHECK(launch::detail::settled_findings(o).empty());
+    // One frame; the bridge of a CAN network.
+    o = counted(1, 0);
+    o.outside[0].tool = "vehicle_sil_vector_xl_bridge";
+    check_text(lines(assess_run(o)),
+               "N 3 connect-nothing-received: network 'ETH': nothing came from a device on the real bus (eth0): bridge.ETH sent 1 "
+               "frame there and got none from a device. If a device is meant to answer, check that it is on, its cable and "
+               "termination, the bit rate, and that --connect names the channel it is on\n");
+    // Nothing: a frame came, nothing was sent, the counts are not known (none could be read), or only one of them.
+    CHECK(assess_run(counted(152, 1)).empty());
+    CHECK(assess_run(counted(0, 0)).empty());
+    CHECK(assess_run(counted(std::nullopt, std::nullopt)).empty());
+    CHECK(assess_run(counted(152, std::nullopt)).empty());
+    // The simulation did not start.
+    o = counted(152, 0);
+    o.simulation = SimulationEnd::NotStarted;
+    CHECK(lines(assess_run(o)).find("connect-nothing-received") == std::string::npos);
+    // The bridge failed the run: connect-lost says it.
+    o = counted(152, 0);
+    o.participants.back().ending = Ending::Exited;
+    o.participants.back().exit = ExitStatus{1, std::nullopt};
+    o.simulation = SimulationEnd::Aborted;
+    o.failed_participant = "bridge.ETH";
+    const std::string found = lines(assess_run(o));
+    CHECK(found.find("connect-lost") != std::string::npos && found.find("connect-nothing-received") == std::string::npos);
+}
+
+TEST_CASE(the_outputs_of_a_connected_run_have_the_counts)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.outside[0].to_outside = 152;
+    o.outside[0].from_outside = 3;
+    const RunReport r = report_of(o);
+    CHECK(format_run_text(r).find("outside: ETH -> eth0 (bridge.ETH): 152 frames out, 3 from devices\n\n") != std::string::npos);
+    CHECK(format_run_json(r).find("\"participant\": \"bridge.ETH\",\n      \"to_outside\": 152,\n      \"from_outside\": 3\n") !=
+          std::string::npos);
+    CHECK(lines(r.findings).empty());
+}

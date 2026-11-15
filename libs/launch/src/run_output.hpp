@@ -9,10 +9,12 @@
 
 #include "vehicle_sil/launch/events.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +32,10 @@ namespace vehicle_sil::launch::detail {
 /// RunOptions::write_line: no other lock of the run is taken while it is held. hold() gives it to
 /// the caller, who then must not call say(), on_line() or anything that takes another lock of the
 /// run. event() does not take it (EventStream keeps itself).
+///
+/// The bridges of --connect: their statistics lines that read_outside_counts() reads are the
+/// launcher's to read, not lines for people: they go to the log file only, and their counts to the
+/// event "outside" (OutsideNote, under `mutex_`) and, at the end, to the result (take_counts()).
 ///
 /// Lifetime: it must outlive the participants' processes (their reader threads end in
 /// process::Process's destructor).
@@ -73,8 +79,17 @@ public:
     [[nodiscard]] bool open_logs(RunOutcome& outcome);
 
     /// A line that participant `index` wrote (its reader thread). Of a bridge of --connect, it is
-    /// also kept for last_line().
+    /// also kept for last_line(), and a statistics line with its counts is not shown (see above).
     void on_line(std::size_t index, std::string_view line);
+
+    /// run --events: writes the event "outside" of each bridge whose counts were held back and are
+    /// due at `now` (OutsideNote::due()). The thread that watches the simulation, at each look.
+    void outside_due(std::chrono::steady_clock::time_point now);
+
+    /// The last counts of the bridge `index`, or empty if none were read; first writes the event
+    /// "outside" with any that were held back (OutsideNote::flush()). After its output has been
+    /// read to the end, and before the result: the last event "outside" has the result's counts.
+    [[nodiscard]] std::optional<OutsideCounts> take_counts(std::size_t index);
 
     /// The last line of the bridge `index` (ParticipantConfig::for_network) that says why it failed
     /// (detail::LastLine::failure()), or "". Takes the lock.
@@ -83,11 +98,16 @@ public:
 private:
     void write(const std::string& line) const;
     void say_held(const std::string& text) const;
+    /// The event "outside" of the bridge `index` (run --events). Under the lock.
+    void write_outside(std::size_t index, const OutsideCounts& counts) const;
 
     const RunContext& ctx_;
     std::mutex mutex_;
     std::vector<std::unique_ptr<std::ofstream>> logs_; ///< per participant; guarded by mutex_ once the participants run
     std::vector<LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
+    /// Per participant: the tool of a bridge of --connect (NetworkOutside::tool), else "". Set in the constructor.
+    std::vector<std::string> tools_;
+    std::vector<OutsideNote> outside_; ///< per participant (only a bridge's is used); guarded by mutex_
 };
 
 } // namespace vehicle_sil::launch::detail

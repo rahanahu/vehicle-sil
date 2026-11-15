@@ -29,7 +29,7 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 20> kFeatures{"events",
+inline constexpr std::array<std::string_view, 21> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -48,7 +48,8 @@ inline constexpr std::array<std::string_view, 20> kFeatures{"events",
                                                             "run-traffic",
                                                             "j1939-nodes",
                                                             "connect",
-                                                            "connections"};
+                                                            "connections",
+                                                            "connect-counts"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -300,6 +301,9 @@ public:
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// event that may be dropped (see above).
     void log(const std::string& source, const std::string& line);
+    /// "outside" (run --connect): what the bridge of `network` has counted so far (the result's
+    /// outside[].to_outside and from_outside). Not dropped, unlike "log".
+    void outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside);
     /// One of the run's findings, with the fields of the results' "findings".
     void finding(const std::string& file, const Finding& finding);
     /// The simulation's virtual time as the controller sees it, and how it goes.

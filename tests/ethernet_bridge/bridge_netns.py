@@ -41,7 +41,8 @@ launch  vehicle_sil_launch run --connect ETH_EXT=va starts the bridge itself (fo
         its default backend, packet) on one end of a veth pair; this script answers at the other
         end. A scenario (--speed 1 --strict) expects 3 answers at the ECU eth_bridge_it_ecu; the
         run passes without a finding, the bridge was given the ECU's MAC address as --src-mac, and
-        the launcher stopped it with exit code 0 at the end.
+        the launcher stopped it with exit code 0 at the end. The result and the events "outside"
+        count at least 3 frames each way, as the bridge's last statistics line in its log does.
 Every scenario but launch: no registry at --registry-uri: exit code 3 and where the bridge looked.
 
 Exit code 77 (skipped), with the reason, where this cannot be made:
@@ -839,7 +840,7 @@ def launch(world: World) -> None:
     # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
     env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
     run = world.run([world.args.launch, "run", "--events", "--scenario", "answers.yaml", "--speed", "1", "--strict",
-                     "--connect", "ETH_EXT=va", "sim.yaml"], env)
+                     "--log-dir", "logs", "--connect", "ETH_EXT=va", "sim.yaml"], env)
     code = run.wait(4 * WAIT)
     done.set()
     answering.join(5)
@@ -851,8 +852,17 @@ def launch(world: World) -> None:
     check(result["result"] == "passed" and result["errors"] == 0 and result["warnings"] == 0 and result["notes"] == 0,
           f"the run passes without a finding (--strict):\n{text}")
     check(len(answered) >= 3, f"the ECU's frames reached the device at the other end ({len(answered)} answered):\n{text}")
-    check(result["outside"] == [{"network": "ETH_EXT", "target": "va", "participant": "bridge.ETH_EXT", "to_outside": None,
-                                 "from_outside": None}], f"the result says where ETH_EXT was connected:\n{result['outside']}")
+    outside = result["outside"]
+    check(len(outside) == 1 and {k: outside[0][k] for k in ("network", "target", "participant")}
+          == {"network": "ETH_EXT", "target": "va", "participant": "bridge.ETH_EXT"},
+          f"the result says where ETH_EXT was connected:\n{outside}")
+    check(isinstance(outside[0]["to_outside"], int) and outside[0]["to_outside"] >= 3
+          and isinstance(outside[0]["from_outside"], int) and outside[0]["from_outside"] >= 3,
+          f"the result counts the frames to the device and its answers:\n{outside}")
+    counted = [e for e in events if e["event"] == "outside" and e["network"] == "ETH_EXT"]
+    check(counted != [] and (counted[-1]["to_outside"], counted[-1]["from_outside"])
+          == (outside[0]["to_outside"], outside[0]["from_outside"]),
+          f"the last event outside has the result's counts:\n{counted}\n{outside}")
     bridge = [p for p in result["participants"] if p["name"] == "bridge.ETH_EXT"]
     check(len(bridge) == 1 and bridge[0]["for_network"] == "ETH_EXT" and bridge[0]["ended"] == "stopped"
           and bridge[0]["exit_code"] == 0, f"the launcher stopped the bridge at the end, with exit code 0:\n{bridge}")
@@ -862,9 +872,16 @@ def launch(world: World) -> None:
           f"the launcher started the bridge of PATH on va, with the ECU's MAC address as the filter:\n{started}")
     bridge_lines = "\n".join(e["line"] for e in events if e["event"] == "log" and e.get("source") == "bridge.ETH_EXT")
     check("<-> packet 'va' (network interface)" in bridge_lines, f"the bridge chose its default backend, packet:\n{bridge_lines}")
-    stats = statistics(bridge_lines)
+    # The launcher reads the bridge's statistics lines: they are in its log, not in the events.
+    check("] stats " not in bridge_lines, f"the statistics lines are not log events:\n{bridge_lines}")
+    with open(os.path.join(world.work, "logs", "bridge.ETH_EXT.log"), encoding="utf-8") as f:
+        logged = [line for line in f.read().splitlines() if "] stats " in line]
+    check(logged != [], "the bridge's log has its statistics lines")
+    stats = statistics(logged[-1])
     check(stats["silkit_to_ext"] >= 3 and stats["ext_to_silkit"] >= 3 and stats["loop_suspected"] == 0,
           f"the bridge forwarded the frames both ways: {stats}")
+    check((stats["silkit_to_ext"], stats["ext_from_devices"]) == (outside[0]["to_outside"], outside[0]["from_outside"]),
+          f"the result's counts are those of the bridge's last statistics line: {stats}, {outside}")
     say(f"launch: run --connect ETH_EXT=va started the bridge, and the ECU got {len(answered)} answers from the device")
 
 

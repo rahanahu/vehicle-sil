@@ -67,7 +67,9 @@ public:
     void note_bridges_ended_with_run();
 
     /// for_network: copies the line of each bridge's output that says most (RunOutput::last_line())
-    /// into the result. After end_children(), which has read their output to the end.
+    /// and its last counts (RunOutput::take_counts(), which writes the last event "outside") into
+    /// the result. After end_children(), which has read their output to the end, and before the
+    /// result.
     void note_last_lines();
 
     /// After a start that failed: the first required participant or bridge whose process has ended; if one

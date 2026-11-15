@@ -152,9 +152,14 @@ struct RunOutside
     std::string network;
     std::string target;      ///< as --connect gave it
     std::string participant; ///< the bridge's name (bridge.<network>)
-    /// The frames that went out to the bus and came in from it; empty: not counted (yet).
+    /// The frames that the bridge sent to the bus, and those that came from a device there (not
+    /// from this computer), from the last statistics line of the bridge that the launcher could
+    /// read (detail::read_outside_counts()); empty: none could be read.
     std::optional<std::uint64_t> to_outside{};
     std::optional<std::uint64_t> from_outside{};
+    /// The bridge's tool (bridge_tool(), NetworkOutside::tool): which counts its line has. Not in
+    /// the outputs.
+    std::string tool{};
 };
 
 /// Whether `run` is a participant that stops the run when it ends: a bridge that run started for
@@ -653,6 +658,49 @@ struct HostAddress
 /// "" when there is nothing to add.
 [[nodiscard]] std::string registry_listen_hint(const std::string& listen, bool written, bool fixed,
                                                const std::vector<HostAddress>& addresses);
+/// What a bridge of --connect has counted: the frames it sent to the real bus, and those that came
+/// from a device there (RunOutside::to_outside, from_outside).
+struct OutsideCounts
+{
+    std::uint64_t to_outside = 0;
+    std::uint64_t from_outside = 0;
+
+    friend bool operator==(const OutsideCounts&, const OutsideCounts&) = default;
+};
+
+/// The counts in one line of the bridge `tool` (bridge_tool()), or empty. The line is a statistics
+/// line of the bridge ("stats key=N key=N ...", after the tag the bridge puts first, such as
+/// "[eth-bridge] "; a "\r" at its end does not count) with the keys of `tool`: silkit_to_ext and
+/// ext_from_devices of vehicle_sil_ethernet_bridge, silkit_to_xl and xl_to_silkit of
+/// vehicle_sil_vector_xl_bridge. Empty for any other line, for a line with a key twice, with a
+/// value that is not a decimal number of 64 bits or with a part of another form, for one without
+/// either key (a bridge of another version), and for any other tool.
+[[nodiscard]] std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line);
+
+/// When run --events writes the event "outside" of one bridge: when its counts have changed
+/// (on_counts()), at most once in kEvery; counts held back by that go out once kEvery has passed
+/// (due(), which the run asks while it watches the simulation) and at the end (flush()), so the last
+/// counts are always written. Time is an argument: no clock, no thread, no lock (the caller's).
+class OutsideNote
+{
+public:
+    static constexpr std::chrono::milliseconds kEvery{1000};
+
+    /// Counts read at `now`: what to write now, or empty (the same as written last, or too soon).
+    [[nodiscard]] std::optional<OutsideCounts> on_counts(OutsideCounts counts, std::chrono::steady_clock::time_point now);
+    /// The counts held back, if kEvery has passed at `now` since the last ones written; else empty.
+    [[nodiscard]] std::optional<OutsideCounts> due(std::chrono::steady_clock::time_point now);
+    /// The counts held back, whatever the time; else empty.
+    [[nodiscard]] std::optional<OutsideCounts> flush();
+    /// The counts read last, or empty if none were.
+    [[nodiscard]] std::optional<OutsideCounts> last() const { return last_; }
+
+private:
+    std::optional<OutsideCounts> last_;
+    std::optional<OutsideCounts> written_;
+    std::chrono::steady_clock::time_point written_at_{};
+};
+
 /// One line of a participant's output as the launcher shows it: control characters (C0 but tabs,
 /// DEL, C1) and bytes that are not UTF-8 as '?'.
 [[nodiscard]] std::string printable(std::string_view line);

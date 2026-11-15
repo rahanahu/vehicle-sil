@@ -219,12 +219,12 @@ TEST_CASE(bridge_run_arguments_add_what_run_gives_after_the_checked_ones)
                        bridge_arguments(network("ETH", NetworkKind::Ethernet), "lab {name} (2)", {mac("02:00:00:00:00:01")})};
     check_text(words(bridge_run_arguments(eth, "silkit://127.0.0.1:41234", 30000)),
                "--network ETH --interface lab {name} (2) --src-mac 02:00:00:00:00:01 --name bridge.ETH --registry-uri "
-               "silkit://127.0.0.1:41234 --start-timeout-ms 30000");
+               "silkit://127.0.0.1:41234 --start-timeout-ms 30000 --stats-every-ms 1000");
     NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", "/opt/vehicle_sil_vector_xl_bridge", "virtual:1", "bridge.CAN1",
                        bridge_arguments(network("CAN1", NetworkKind::Can), "virtual:1", {})};
     check_text(words(bridge_run_arguments(can, "silkit://127.0.0.1:8500", 5000)),
                "--network CAN1 --xl-target virtual --xl-channel 1 --name bridge.CAN1 --registry-uri silkit://127.0.0.1:8500 "
-               "--start-timeout-ms 5000");
+               "--start-timeout-ms 5000 --stats-every-ms 1000");
 }
 
 TEST_CASE(find_tool_looks_next_to_the_launcher_first_then_on_path)

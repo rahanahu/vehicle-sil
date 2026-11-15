@@ -9,10 +9,16 @@
 //
 //   connect_roundtrip           Ethernet and CAN connected, registry_uri at port 0, --speed 1
 //                               --strict: no finding; the frames go out and the answers come back
-//                               (the bridges' statistics); each bridge has joined before any ECU
-//                               starts; the bridge's command has the registry's real port; the
-//                               result has the bridges last with for_network, and outside; the
-//                               launcher stops the bridges at the end (exit code 0).
+//                               (the counts of the result and of the events "outside", the same as
+//                               the bridges' last statistics lines in their logs, which are no "log"
+//                               events); each bridge has joined before any ECU starts; the bridge's
+//                               command has the registry's real port; the result has the bridges last
+//                               with for_network, and outside; the launcher stops the bridges at the
+//                               end (exit code 0).
+//   connect_nothing_received    fake1 (no device) and a CAN channel without the echo node: frames go
+//                               out and none comes in, a note connect-nothing-received for each
+//                               network, and --strict passes; the counts with --json too (no events),
+//                               and the statistics lines only in the bridges' logs.
 //   connect_no_adapter          an adapter and a channel that are not there: connect-failed with
 //                               the bridge's own line, no ECU started, the simulation not started.
 //                               start_timeout_ms is long: the launcher saw the bridge end (it did not
@@ -32,6 +38,8 @@
 #include "launch_run_support.hpp"
 
 #include <regex>
+#include <tuple>
+#include <utility>
 
 namespace {
 
@@ -116,20 +124,69 @@ std::size_t index_of(const std::vector<std::string>& lines, const std::vector<st
     return lines.size();
 }
 
-/// The number after "<key>=" in the lines of `source` (a bridge's statistics), or -1.
-long long stat_of(const std::vector<std::string>& lines, const std::string& source, const std::string& key)
+/// The number after "<key>=" in the last statistics line of a bridge's log file (--log-dir), or -1.
+long long stat_of(const fs::path& log, const std::string& key)
 {
-    const std::regex pattern(key + "=([0-9]+)");
     long long value = -1;
-    for (const std::string& line : events_with(lines, {"\"event\":\"log\"", "\"source\":\"" + source + "\""}))
+    for (const std::string& line : lines_of(read_text(log)))
     {
         std::smatch match;
-        if (std::regex_search(line, match, pattern))
+        if (contains(line, "] stats ") && std::regex_search(line, match, std::regex(" " + key + "=([0-9]+)")))
         {
             value = std::stoll(match[1].str());
         }
     }
     return value;
+}
+
+/// "result":...,"strict":...,"errors":N,"warnings":N,"notes":N of the run in its result event (not
+/// those of its check, which the result has at its end in the same form), or "".
+std::string run_counts(const std::string& result)
+{
+    std::smatch match;
+    const std::regex head("^\\{\"event\":\"result\",\"seq\":[0-9]+,\"t_ms\":[0-9]+,\"result\":\\{\"vehicle_sil_run\":1,\"vehicle_sil\":\"[^\"]*\","
+                          "\"file\":\"[^\"]*\",(\"result\":\"[a-z_]+\",\"strict\":(true|false),\"errors\":[0-9]+,\"warnings\":[0-9]+,"
+                          "\"notes\":[0-9]+)");
+    return std::regex_search(result, match, head) ? match[1].str() : std::string{};
+}
+
+/// The counts of `network` in the result's outside[] (-1, -1 if they are null).
+std::pair<long long, long long> result_counts(const std::string& result, const std::string& network)
+{
+    std::smatch match;
+    // Compact (events) or written out (--json).
+    const std::regex counts("\"network\":\\s*\"" + network +
+                            "\",\\s*\"target\":\\s*\"[^\"]*\",\\s*\"participant\":\\s*\"[^\"]*\",\\s*\"to_outside\":\\s*([0-9]+),\\s*"
+                            "\"from_outside\":\\s*([0-9]+)\\s*\\}");
+    if (!std::regex_search(result, match, counts))
+    {
+        return {-1, -1};
+    }
+    return {std::stoll(match[1].str()), std::stoll(match[2].str())};
+}
+
+/// What run says of the counts of the bridge of `network` (bridge.<network>), which wrote `to_key` and
+/// `from_key` in its statistics lines: the result has them (`to`, `from`); its "outside" events
+/// come after it started, the last with the result's counts; its log file has every statistics
+/// line, the last with the same counts; no statistics line of it is a "log" event.
+void expect_counts(const std::vector<std::string>& lines, const fs::path& logs, const std::string& network,
+                   const std::string& to_key, const std::string& from_key, long long& to, long long& from)
+{
+    const std::string bridge = "bridge." + network;
+    std::tie(to, from) = result_counts(lines.back(), network);
+    require(to >= 0 && from >= 0, network + ": the result has the counts:\n" + lines.back());
+    const std::vector<std::string> events = events_with(lines, {"\"event\":\"outside\"", "\"network\":\"" + network + "\""});
+    require(!events.empty(), network + ": run --events wrote the event outside:\n" + out_of(lines));
+    require(index_of(lines, {"\"name\":\"" + bridge + "\"", "\"state\":\"started\""}) <
+                index_of(lines, {"\"event\":\"outside\"", "\"network\":\"" + network + "\""}),
+            network + ": the event outside after the bridge started:\n" + out_of(lines));
+    require(value_of(events.back(), "to_outside") == std::to_string(to) && value_of(events.back(), "from_outside") == std::to_string(from),
+            network + ": the last event outside has the result's counts:\n" + events.back() + "\n" + lines.back());
+    const fs::path log = logs / (bridge + ".log");
+    require(stat_of(log, to_key) == to && stat_of(log, from_key) == from,
+            network + ": the bridge's last statistics line in its log has the result's counts:\n" + read_text(log));
+    require(events_with(lines, {"\"event\":\"log\"", "\"source\":\"" + bridge + "\"", "stats "}).empty(),
+            network + ": the statistics lines are not log events:\n" + out_of(lines));
 }
 
 /// The process ID in the "started" event of `name`.
@@ -204,13 +261,16 @@ void connect_lost(const Options& base, bool hard)
 void connect_roundtrip(const Options& base)
 {
     const Options o = connect_options(base);
-    const fs::path dir = connect_dir(o, "roundtrip", "stop_at_ms: 1500\n", talker(o), {{"Talker", "talk CAN"}});
-    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--strict", "--connect", "ETH_EXT=fake0", "--connect",
-                                    "CAN=virtual:1", "sim.yaml"},
+    // Long enough for a statistics line of the bridges while the frames go (once a second): on Windows
+    // the launcher may have to end them, and then their last one is what run has.
+    const fs::path dir = connect_dir(o, "roundtrip", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const Captured run = launch(o, {"run", "--events", "--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake0",
+                                    "--connect", "CAN=virtual:1", "sim.yaml"},
                                 dir);
     const std::vector<std::string> lines = check_events(run.standard_output);
     expect_code(run, 0, "run --connect with both bridges");
-    require(contains(lines.back(), "\"errors\":0,\"warnings\":0,\"notes\":0"), "no finding:\n" + lines.back());
+    require(run_counts(lines.back()) == "\"result\":\"passed\",\"strict\":true,\"errors\":0,\"warnings\":0,\"notes\":0",
+            "no finding:\n" + lines.back());
     // Each bridge joined the simulation before any ECU was started.
     const std::size_t firstEcu = std::min(index_of(lines, {"\"name\":\"Pinger\"", "\"state\":\"started\""}),
                                           index_of(lines, {"\"name\":\"Talker\"", "\"state\":\"started\""}));
@@ -227,14 +287,15 @@ void connect_roundtrip(const Options& base)
         require(std::regex_search(started, match, port) && match[1].str() != "0",
                 std::string(bridge) + " was given the registry's port:\n" + started);
     }
-    // The frames went out and the answers came back.
-    for (const auto& [source, key] : std::vector<std::pair<std::string, std::string>>{{"bridge.ETH_EXT", "silkit_to_ext"},
-                                                                                       {"bridge.ETH_EXT", "ext_to_silkit"},
-                                                                                       {"bridge.CAN", "silkit_to_xl"},
-                                                                                       {"bridge.CAN", "xl_to_silkit"}})
-    {
-        require(stat_of(lines, source, key) >= 1, source + " " + key + " >= 1:\n" + out_of(lines));
-    }
+    // The frames went out and the answers came back: the device of fake0 answers each frame, the
+    // echo node each CAN frame.
+    long long to = 0;
+    long long from = 0;
+    expect_counts(lines, dir / "logs", "ETH_EXT", "silkit_to_ext", "ext_from_devices", to, from);
+    require(to >= 1 && from >= 1,
+            "ETH_EXT: frames out and answers in: " + std::to_string(to) + ", " + std::to_string(from));
+    expect_counts(lines, dir / "logs", "CAN", "silkit_to_xl", "xl_to_silkit", to, from);
+    require(to >= 1 && from >= 1, "CAN: frames out and echoes in: " + std::to_string(to) + ", " + std::to_string(from));
     // The result: the bridges last, with the network each connects, and where.
     const std::string& result = lines.back();
     require(contains(result, "\"name\":\"Talker\",\"required\":true,\"enabled\":true,\"manual\":false,\"for_network\":null,") &&
@@ -245,9 +306,10 @@ void connect_roundtrip(const Options& base)
                 result.find("\"name\":\"Talker\"") < result.find("\"name\":\"bridge.ETH_EXT\"") &&
                 result.find("\"name\":\"bridge.ETH_EXT\"") < result.find("\"name\":\"bridge.CAN\""),
             "the result has the bridges after the participants of the file:\n" + result);
-    require(contains(result, "\"outside\":[{\"network\":\"ETH_EXT\",\"target\":\"fake0\",\"participant\":\"bridge.ETH_EXT\","
-                             "\"to_outside\":null,\"from_outside\":null},{\"network\":\"CAN\",\"target\":\"virtual:1\","
-                             "\"participant\":\"bridge.CAN\",\"to_outside\":null,\"from_outside\":null}]"),
+    require(std::regex_search(result, std::regex("\"outside\":\\[\\{\"network\":\"ETH_EXT\",\"target\":\"fake0\",\"participant\":"
+                                                 "\"bridge\\.ETH_EXT\",\"to_outside\":[0-9]+,\"from_outside\":[0-9]+\\},\\{\"network\":"
+                                                 "\"CAN\",\"target\":\"virtual:1\",\"participant\":\"bridge\\.CAN\",\"to_outside\":[0-9]+,"
+                                                 "\"from_outside\":[0-9]+\\}\\]")),
             "the result has outside:\n" + result);
 #ifndef _WIN32
     // On Windows the launcher can ask only where it shares a console with the bridge, and else ends it.
@@ -283,6 +345,49 @@ void connect_no_adapter(const Options& base)
     {
         require(finding_in(lines, code).empty(), std::string("no finding ") + code + ":\n" + out_of(lines));
     }
+}
+
+void connect_nothing_received(const Options& base)
+{
+    const Options o = connect_options(base);
+    // No echo node on the CAN channel; fake1 has no device behind it.
+    set_environment("VEHICLE_SIL_FAKE_XL_ECHO", "");
+    const fs::path dir = connect_dir(o, "nothing_received", "stop_at_ms: 2500\n", talker(o), {{"Talker", "talk CAN"}});
+    const std::vector<std::string> args{"--speed", "1", "--strict", "--log-dir", "logs", "--connect", "ETH_EXT=fake1",
+                                        "--connect", "CAN=virtual:1", "sim.yaml"};
+    std::vector<std::string> withEvents{"run", "--events"};
+    withEvents.insert(withEvents.end(), args.begin(), args.end());
+    const Captured run = launch(o, withEvents, dir);
+    const std::vector<std::string> lines = check_events(run.standard_output);
+    expect_code(run, 0, "run --connect --strict with a note");
+    require(run_counts(lines.back()) == "\"result\":\"passed\",\"strict\":true,\"errors\":0,\"warnings\":0,\"notes\":2",
+            "two notes, and --strict passes:\n" + lines.back());
+    long long to = 0;
+    long long from = 0;
+    expect_counts(lines, dir / "logs", "ETH_EXT", "silkit_to_ext", "ext_from_devices", to, from);
+    require(to >= 1 && from == 0, "ETH_EXT: frames out, none in: " + std::to_string(to) + ", " + std::to_string(from));
+    require(contains(finding_in(lines, "connect-nothing-received"),
+                     "network 'ETH_EXT': nothing came from a device on the real bus (fake1): bridge.ETH_EXT sent " +
+                         std::to_string(to) + (to == 1 ? " frame" : " frames") + " there and got none from a device"),
+            "the note about ETH_EXT:\n" + out_of(lines));
+    expect_counts(lines, dir / "logs", "CAN", "silkit_to_xl", "xl_to_silkit", to, from);
+    require(to >= 1 && from == 0, "CAN: frames out, none in: " + std::to_string(to) + ", " + std::to_string(from));
+    const std::vector<std::string> notes = events_with(lines, {"\"event\":\"finding\"", "\"code\":\"connect-nothing-received\""});
+    require(notes.size() == 2 && contains(notes[0] + notes[1], "network 'CAN': nothing came from a device on the real bus (virtual:1)") &&
+                contains(notes[0] + notes[1], "\"severity\":\"note\""),
+            "a note for each network, as events:\n" + out_of(lines));
+    // Without events (--json): the counts come from the bridges' lines all the same, and no
+    // statistics line is shown.
+    std::vector<std::string> withJson{"run", "--json"};
+    withJson.insert(withJson.end(), args.begin(), args.end());
+    const Captured json = launch(o, withJson, dir);
+    expect_code(json, 0, "run --connect --json");
+    const auto [ethTo, ethFrom] = result_counts(lf(json.standard_output), "ETH_EXT");
+    const auto [canTo, canFrom] = result_counts(lf(json.standard_output), "CAN");
+    require(ethTo >= 1 && ethFrom == 0 && canTo >= 1 && canFrom == 0 && contains(json.standard_output, "connect-nothing-received"),
+            "the result of --json has the counts and the note:\n" + json.standard_output);
+    require(!contains(json.standard_error, "] stats ") && contains(read_text(dir / "logs" / "bridge.ETH_EXT.log"), "] stats "),
+            "the statistics lines are in the log, not in the output:\n" + json.standard_error);
 }
 
 void connect_lost_kill(const Options& o) { connect_lost(o, true); }

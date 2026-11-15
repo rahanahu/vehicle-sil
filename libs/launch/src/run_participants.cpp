@@ -441,6 +441,16 @@ void RunParticipants::note_last_lines()
         if (stops_run(run))
         {
             run.last_line = out_.last_line(i);
+            // Its last counts (also of one that was killed: those of its last line while it ran).
+            const std::optional<OutsideCounts> counts = out_.take_counts(i);
+            for (RunOutside& o : outcome_.outside)
+            {
+                if (o.network == run.for_network && counts)
+                {
+                    o.to_outside = counts->to_outside;
+                    o.from_outside = counts->from_outside;
+                }
+            }
         }
     }
 }

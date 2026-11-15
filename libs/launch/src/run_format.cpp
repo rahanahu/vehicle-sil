@@ -204,7 +204,12 @@ std::string format_run_text(const RunReport& report)
     // --connect: the networks connected to a real bus, each through its bridge (the last rows below).
     for (const RunOutside& o : run.outside)
     {
-        out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")\n";
+        out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")";
+        if (o.to_outside && o.from_outside)
+        {
+            out += ": " + std::to_string(*o.to_outside) + " frames out, " + std::to_string(*o.from_outside) + " from devices";
+        }
+        out += "\n";
     }
     if (!run.outside.empty())
     {

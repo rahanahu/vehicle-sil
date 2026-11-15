@@ -794,6 +794,15 @@ void EventStream::log(const std::string& source, const std::string& line)
          Kind::Log, source);
 }
 
+void EventStream::outside(const std::string& network, std::uint64_t to_outside, std::uint64_t from_outside)
+{
+    emit("outside", object([&](Writer& w) {
+             w.string("network", network);
+             w.integer("to_outside", static_cast<std::int64_t>(to_outside));
+             w.integer("from_outside", static_cast<std::int64_t>(from_outside));
+         }));
+}
+
 void EventStream::finding(const std::string& file, const Finding& finding)
 {
     emit("finding", object([&](Writer& w) { detail::write_finding_members(w, file, finding); }));

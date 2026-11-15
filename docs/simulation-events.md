@@ -41,6 +41,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control_link` | Right after the simulation starts (before `phase` `running`), once per participant | `name`, `state`, `variables`, `version` |
 | `log` | A participant or `vehicle_sil_launch` writes a line | `source`, `line` |
 | `log_dropped` | In place of `log` events that could not be written because the reader is slow | `count`, `sources` |
+| `outside` | With `--connect`, the counts of a bridge change (at most once a second for each network) | `network`, `to_outside`, `from_outside` |
 | `finding` | A run finding is decided | The same keys as one entry of `findings[]` in the result |
 | `scenario_step` | A step of the `--scenario` scenario starts or is decided | The same keys as one entry of `scenario.steps[]` in the result |
 | `time` | Virtual time advances, the simulation pauses or resumes, or the speed changes | `sim_ms`, `speed`, `paused`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
@@ -196,6 +197,7 @@ The first line is `hello` and the last line is `result`. Nothing is written afte
 | `participant` with `manual` | Where `started` would be, in configuration file order |
 | `participant` of a bridge of `--connect` (`bridge.<network>`) | Its `started` and `joined` come before the `started` of any participant of the file (see "Connecting a bus outside" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect)) |
 | `log` of a participant | After that participant's `started` |
+| `outside` | After the `started` of that network's bridge, and before `result` (see [Counts of a connected network (`outside`)](#counts-of-a-connected-network-outside)) |
 | `participant` with `joined` | Only for participants that join through the SIL Kit lifecycle |
 | `control_link` | After `joined` of all required participants and before `phase` `running`, in configuration file order |
 | `participant` with `failed` | Immediately when the failure is decided |
@@ -264,6 +266,24 @@ These usage errors are found by reading the configuration file:
 No key marks a `log` as the continuation of a split line.
 
 The `--log-dir` files get the original bytes, before replacement. They contain every line, even when `log` events could not be written because the reader was slow.
+
+### Counts of a connected network (`outside`)
+
+With `--connect`, `run` reads the counts of each bridge from its statistics lines (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)) and writes them as `outside` events.
+
+| Key | Value |
+|---|---|
+| `network` | The network that `--connect` connected |
+| `to_outside` | The frames that the bridge sent to the bus so far (an integer) |
+| `from_outside` | The frames that came from a device on the bus so far (an integer) |
+
+- An `outside` is written when the counts of a network differ from those of its last `outside`, at most once a second for each network. Counts that change within the second are written when the second has passed.
+- The last `outside` of a network has the counts of that network in the result's `outside[]`. It comes before `result`, and it can come after the bridge's `ended` and after `phase` `stopping`.
+- No `outside` is written for a network whose bridge wrote no statistics line that `run` could read (its counts in the result are `null`).
+- Unlike `log`, `outside` is not dropped when the reader is slow.
+- The statistics lines that give the counts are not `log` events (the `--log-dir` file of the bridge has them).
+
+A reader that does not know `outside` can ignore it (the result has the last counts).
 
 ### Slow readers and readers that stop reading
 
@@ -486,7 +506,8 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "run-traffic",
     "j1939-nodes",
     "connect",
-    "connections"
+    "connections",
+    "connect-counts"
   ]
 }
 ```
@@ -543,6 +564,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `j1939-nodes` | `j1939_nodes` in the configuration file (see "Matching J1939 addresses and NAMEs (`j1939_nodes`)" in [simulation-config.md](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)) |
 | `connect` | `--connect` of `check` and `run`: connecting a network to a real bus through its bridge (see "Connecting a bus outside (`--connect`)" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect)) |
 | `connections` | `vehicle_sil_launch connections`: where each network can be connected on this computer (see "Where a network can be connected (`vehicle_sil_launch connections`)" in [simulation-run.md](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)) |
+| `connect-counts` | The frames that a connected network sent to the real bus and got from a device there (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
 
@@ -564,6 +586,7 @@ Each name indicates that the following are present:
 | `j1939-nodes` | `--j1939-node` passed to executables, `participants[].j1939_nodes` in the check JSON, the findings `j1939-node-*`, the end of `address-conflict`, `address-shared` and `name-conflict` that says how to fix them in the configuration file, and `0x01<-0x00` in the participant table of the check |
 | `connect` | `external` of a network in the configuration file, `check --connect` and `run --connect`, `networks[].outside` in the check JSON, `outside` and `participants[].for_network` in the result, the participant `bridge.<network>` in the result and the events, the `outside:` lines of the human-readable result, and the findings `connect-*` |
 | `connections` | `vehicle_sil_launch connections` with `--json` and `--network`, `connections` in `formats`, and `vehicle_sil_launch connections` named by the findings `connect-target` and `connect-failed` |
+| `connect-counts` | The event `outside`, the counts in `outside[].to_outside` and `from_outside` of the result (`null` before this feature), the counts at the end of the `outside:` lines of the human-readable result, the finding `connect-nothing-received`, and `--stats-every-ms 1000` in the command of a bridge that `run` starts |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).

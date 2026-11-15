@@ -301,14 +301,14 @@ The check looks for the bridge and asks it `--describe`, as `check --connect` do
 
 | Order | What `run` does |
 |---|---|
-| 1 | Starts the bridge of each connected network as the participant `bridge.<network>`, in the order of the networks in the file. The arguments are the command that the check shows (`networks[].outside.command` of `check --json`), then `--name`, `--registry-uri` and `--start-timeout-ms`. |
+| 1 | Starts the bridge of each connected network as the participant `bridge.<network>`, in the order of the networks in the file. The arguments are the command that the check shows (`networks[].outside.command` of `check --json`), then `--name`, `--registry-uri`, `--start-timeout-ms` and `--stats-every-ms 1000`. |
 | 2 | Waits until each bridge runs in SIL Kit, up to `start_timeout_ms`. A bridge runs in real time and does not take part in the coordinated start. |
 | 3 | Starts the participants of the file, as without `--connect`. |
 | 4 | When the simulation ends, asks the bridges to stop together with the other participants with `required: false` (see [Stopping a run](#stopping-a-run)). |
 
 The bridges start first because a frame that an ECU sends before its bridge has joined does not reach the bus outside (for example the address claims at time 0).
 
-A bridge is not a participant of the file. It appears in the result (`participants[]`, after the participants of the file, with `for_network`; `outside[]`) and in the events (`started`, `joined`, `ended`, its lines) like any participant. `--disable`, `--enable` and `--manual` do not take its name: to run the network on SIL Kit only, give `--connect <network>=none` or leave `--connect` out.
+A bridge is not a participant of the file. It appears in the result (`participants[]`, after the participants of the file, with `for_network`; `outside[]`) and in the events (`started`, `joined`, `ended`, its lines) like any participant, except for its statistics lines (see below). `--disable`, `--enable` and `--manual` do not take its name: to run the network on SIL Kit only, give `--connect <network>=none` or leave `--connect` out.
 
 | What happens to a bridge | What `run` does | Finding |
 |---|---|---|
@@ -321,6 +321,25 @@ A bridge is not a participant of the file. It appears in the result (`participan
 The messages say how the bridge ended and quote the line in which it said why: its last line that starts with `error:` or `FAIL`, after its tag such as `[eth-bridge]`. A bridge that was killed, or ended without such a line, has none quoted (its last line would be about something else, such as `stopped`). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
 
 A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. The first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended.
+
+### Counting the frames to and from the bus
+
+`run` counts, for each connected network, the frames that the bridge sent to the bus and the frames that came from a device there. It reads them from the statistics line of the bridge (`stats ...`, see "Statistics" in [ethernet-bridge.md](ethernet-bridge.md#statistics) and in [bridges.md](bridges.md#statistics)). `--stats-every-ms 1000` makes the bridge write that line while it runs, once a second when a count has changed, and once more when it stops.
+
+| Network | `to_outside` | `from_outside` |
+|---|---|---|
+| Ethernet | `silkit_to_ext` | `ext_from_devices`: frames whose source is not this computer, counted before the bridge's filter |
+| CAN | `silkit_to_xl` | `xl_to_silkit` |
+
+- The counts are in the result (`outside[]`; `outside:` lines of the human-readable result, such as `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`) and, with `--events`, in the event `outside` while the run goes (see "Counts of a connected network (`outside`)" in [simulation-events.md](simulation-events.md#counts-of-a-connected-network-outside)). They are the same with and without `--events`.
+- A statistics line that `run` reads is not shown as a line of the bridge (`[bridge.<network>] ...`) or as a `log` event. The `--log-dir` file of the bridge has every line. A line that `run` cannot read (for example, of a bridge of another version without these keys) is shown as usual.
+- The counts are those of the last line read. A bridge that was ended without its last line (on Windows, where the launcher could not ask it to stop) has the counts of its last line while it ran. Without any line read, both are `null`.
+
+When the simulation ran and a bridge sent frames to the bus but none came from a device there, the run ends with the note `connect-nothing-received`. A device that does not answer is not always a fault, so it is a note: `--strict` does not fail on it. A bridge that failed the run (`connect-failed`, `connect-lost`) and counts of `null` give no such note. On Ethernet, frames that this computer sends on the adapter (for example the IPv6 and ARP frames of the operating system on a Hyper-V `vEthernet` adapter) do not count, so a cable that is not plugged in gives the note. The bridges also warn while they run, 10 s after the first frame they sent with nothing from a device ("Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
+
+```text
+network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)): bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on
+```
 
 For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`, because it runs each scenario as fast as possible.
 
@@ -677,7 +696,7 @@ The human-readable result has these parts, in this order:
 | 1 | The check tables and the check findings |
 | 2 | The simulation line, which starts with `run:` |
 | 3 | The `time:` line (when a speed is set, or when there was a paced time step) |
-| 4 | With `--connect`, one `outside:` line for each connected network (`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT)`) |
+| 4 | With `--connect`, one `outside:` line for each connected network (`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`; without the counts when they are not known) |
 | 5 | The participant table (whether each is required, and how it ended; the bridges of `--connect` last) |
 | 6 | The traffic on each network (the `traffic:` line and table; see [Network traffic](#network-traffic-traffic) below) |
 | 7 | The run findings |
@@ -803,6 +822,7 @@ When the simulation started, the result shows after the participant table whethe
 | `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so the simulation was not started; if it failed before the participants of the file were started, they were not (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
 | `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended |
 | `connect-time-changed` | Warning | With `--connect`, a command paused or stepped the simulation, or set a speed other than 1, while the devices on the real bus went on (one for the run, about the first such command; see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
+| `connect-nothing-received` | Note | With `--connect`, the bridge of a network sent frames to the real bus, and none came from a device there (one for each such network; see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
@@ -942,7 +962,8 @@ Keys of `outside[]` (see [Connecting a bus outside](#connecting-a-bus-outside---
 | `network` | The network |
 | `target` | Where it is connected, as `--connect` gave it |
 | `participant` | The bridge's name in `participants[]` (`bridge.<network>`) |
-| `to_outside`, `from_outside` | The frames that went to the bus and came from it. Always `null` in this version (not counted yet) |
+| `to_outside` | The frames that the bridge sent to the bus (Ethernet `silkit_to_ext`, CAN `silkit_to_xl`), or `null` if no statistics line of the bridge could be read |
+| `from_outside` | The frames that came from a device on the bus (Ethernet `ext_from_devices`, CAN `xl_to_silkit`), or `null` as `to_outside` (see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
 
 Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):
 

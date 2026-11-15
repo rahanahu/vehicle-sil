@@ -450,7 +450,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 - `launch_run.ethernet`: `examples/ethernet` の 2 つの ECU の照合とシナリオ
 - `launch_run.test_command`、`launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: 止めるまで動く例の設定ファイル `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行
-- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告、`connect-time-changed`（実行の最初の一時停止についての警告 1 つ。`--strict` では速さの命令で実行が失敗する）。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
+- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告、`connect-time-changed`（実行の最初の一時停止についての警告 1 つ。`--strict` では速さの命令で実行が失敗する）、数（`connect_roundtrip`: 結果、`outside` イベント、ログの中のブリッジの最後の統計の行が一致し、統計の行は `log` イベントにならない。`connect_nothing_received`: `fake1` と返す相手のないチャンネルで、両方のネットワークに `connect-nothing-received`。`--strict` でも通る注意。`--json` でも）。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
 
 `process.*` が確認すること:
 
@@ -863,6 +863,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/check.cpp` の `run_tool()` で起こします | `src/connections.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
+| `run --connect`: ブリッジの数。`detail::read_outside_counts()` がブリッジの統計の行を読む（キーは `ethernet_bridge::format_statistics()` と `vector_xl::format_statistics()` のもの。`launch.read_outside_counts_reads_the_lines_the_bridges_print` が両側を守る）。`detail::OutsideNote` が `outside` イベントを出す時を決める（時刻は引数）。`RunOutput::on_line()`（読み手のスレッド）が、出力の鍵の下で行を読み、数を覚え、イベントを書き、行は出さない。主スレッドは `RunWatch::watch()` の見回りごとに控えの数を書き（`outside_due()`）、`RunParticipants::note_last_lines()` が出力を読み終えた後に最後の数を結果に取る（`take_counts()`。結果のイベントより前）。注意 `connect-nothing-received` は `run_assess.cpp` | `src/run_outside.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |

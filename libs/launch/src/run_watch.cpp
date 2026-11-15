@@ -126,6 +126,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         // The events of what changed (here: the one look per poll the watch gives).
         notes_.note_joined(controller, outcome_);
         notes_.note_time(controller, TimeNote::Poll, outcome_);
+        out_.outside_due(std::chrono::steady_clock::now());
         const TimeState time = controller.time_state();
         if (!running)
         {
