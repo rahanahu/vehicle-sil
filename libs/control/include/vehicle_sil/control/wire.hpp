@@ -17,11 +17,43 @@
 
 namespace vehicle_sil::control::wire {
 
-/// The version of the format. A decoder accepts only its own version; every message says which
-/// version wrote it, and a hello of any version can be read far enough to name its participant
-/// (decode_hello()), so that a mismatch is reported instead of looking like silence. It changes
-/// when the layout of a message changes; a new kind that the other side may ignore keeps it.
+/// The versions of the format. Every message says which version wrote it. The decoders read
+/// kOldestVersion..kNewestVersion (speaks()); a hello of any other version can still be read far
+/// enough to name its participant (decode_hello()), so that a mismatch is reported instead of
+/// looking like silence. The encoders write the version they are told to, kVersion by default.
+///
+/// What never moves, in any version: the eight bytes of the header ('V' 'S' 'C' 'W', the version
+/// u16, the kind u8, and one more byte), the participant of a hello right behind the header, and
+/// the session of every other message right behind the header.
+///
+/// Version 1 is fixed: its bytes are what the ECUs built with vehicle-sil 0.1.0 send and expect.
+///
+/// Version 2 can grow without a new version:
+/// - The last byte of the header is the revision of the writer (kRevision; version 1 has none,
+///   and the byte is not looked at there).
+/// - Each variable, write, result and event begins with its size (u32: the bytes that follow).
+/// - A new field goes to the end of its element, or to the end of the message if it belongs to
+///   the message, and kRevision goes up by one. A reader reads a field that revision k added
+///   only from a writer of revision k or later.
+/// - A reader skips what it does not know (the rest of an element, the rest of a message, flag
+///   bits) only in a message whose revision is newer than its own. From a writer of its own
+///   revision or an older one, every size has to be exactly what the reader reads, and bytes left
+///   over are ErrorCode::Malformed.
+/// - What a reader must not skip (a new enumerator, a field whose meaning changes) is
+///   ErrorCode::Malformed for it: the writer looks at the revision of the other side (the hub at
+///   the header of the hello, the agent at the header of a probe for it) and does not send it.
+/// - A new kind that the other side may ignore changes neither the version nor the revision.
+inline constexpr std::uint16_t kOldestVersion = 1;
+inline constexpr std::uint16_t kNewestVersion = 2;
+/// The version the encoders write when they are not given one.
 inline constexpr std::uint16_t kVersion = 1;
+/// The revision this build writes into a message of version 2, and up to which it knows the fields.
+inline constexpr std::uint8_t kRevision = 0;
+/// `version` is one the decoders read and the encoders write.
+[[nodiscard]] constexpr bool speaks(std::uint16_t version) noexcept
+{
+    return version >= kOldestVersion && version <= kNewestVersion;
+}
 
 /// The largest command, submitted and step message. What an agent has to say in a step (results,
 /// events, the values) is split into as many step messages as it takes (encode_step()); a command
@@ -63,16 +95,22 @@ enum class ErrorCode
     Ok,
     Truncated,       ///< the message ends before its content does
     NotAMessage,     ///< it does not begin like a message of this format
-    VersionMismatch, ///< written by another version (Error::version)
+    VersionMismatch, ///< written by a version that is not read (Error::version; speaks())
     WrongKind,       ///< a message of another kind than asked for (or of none)
     TooLarge,        ///< larger than the limit for its kind, or it announces more than it can hold
-    Malformed,       ///< a value out of range, an unknown enumerator, or bytes after the end
+    /// A value out of range, an unknown enumerator, bytes after the end of the message or of an
+    /// element, or an element whose size is smaller than its content.
+    Malformed,
 };
 
 struct Error
 {
     ErrorCode code = ErrorCode::Ok;
-    std::uint16_t version = 0; ///< the version the message says it has, once it could be read
+    /// The version the message says it has, once it could be read: also when `code` is Ok (a
+    /// decoder tells here which version it read).
+    std::uint16_t version = 0;
+    /// The revision the message says it has (also when `code` is Ok); 0 for version 1.
+    std::uint8_t revision = 0;
     std::string text;          ///< what is wrong, for a log
     explicit operator bool() const noexcept { return code != ErrorCode::Ok; }
 };
@@ -131,21 +169,24 @@ struct Header
 {
     std::uint16_t version = 0;
     Kind kind = Kind::Hello;
+    std::uint8_t revision = 0; ///< 0 for version 1
 };
 [[nodiscard]] std::optional<Header> peek(std::span<const std::uint8_t> bytes, Error& error);
 
-/// Each encoder replaces `out`.
+/// Each encoder replaces `out` and writes the message in `version` (std::invalid_argument unless
+/// speaks(version)). What version 1 has no place for is left out: CommandResult::applied_writes
+/// and SubmitResult::failed_write.
 /// false (`out` empty, `why` says what to do): the hello would exceed kMaxHelloBytes, its
 /// participant name or a variable's name is empty or longer than kMaxNameBytes, it has more than
 /// kMaxVariables variables, or max_pending is not within 1..kMaxPending.
-[[nodiscard]] bool encode_hello(const Hello& hello, Bytes& out, std::string& why);
+[[nodiscard]] bool encode_hello(const Hello& hello, Bytes& out, std::string& why, std::uint16_t version = kVersion);
 /// false (`out` empty): the command would exceed kMaxMessageBytes.
-[[nodiscard]] bool encode_command(const CommandMessage& message, Bytes& out);
-void encode_submitted(const SubmittedMessage& message, Bytes& out);
+[[nodiscard]] bool encode_command(const CommandMessage& message, Bytes& out, std::uint16_t version = kVersion);
+void encode_submitted(const SubmittedMessage& message, Bytes& out, std::uint16_t version = kVersion);
 /// A message that is the session of an agent and nothing else: a probe for it, its ready answer,
 /// or the answer to its last word (`kind`: Kind::Probe, Kind::Ready or Kind::LastWordReceived;
 /// std::invalid_argument otherwise).
-void encode_session(Kind kind, std::uint64_t session, Bytes& out);
+void encode_session(Kind kind, std::uint64_t session, Bytes& out, std::uint16_t version = kVersion);
 /// What a step at `time` produced, as step messages of at most `max_bytes` each (kMinMessageBytes
 /// ..kMaxMessageBytes; std::invalid_argument otherwise), given to `emit` in order: the results,
 /// then the events, then `sample` (null: none) in as many parts as it takes. Nothing is emitted
@@ -154,25 +195,30 @@ void encode_session(Kind kind, std::uint64_t session, Bytes& out);
 /// once it has grown).
 void encode_step(std::uint64_t session, SimTime time, bool final, std::span<const CommandResult> results,
                  std::span<const Event> events, const Snapshot* sample, std::size_t max_bytes, Bytes& scratch,
-                 const std::function<void(const Bytes& message)>& emit);
+                 const std::function<void(const Bytes& message)>& emit, std::uint16_t version = kVersion);
 
 /// The decoders never throw and never read outside `bytes`; `out` is unspecified after an error.
+/// They read every version of speaks(), and Error::version and Error::revision of what they return
+/// say which one the message was written in. Decoded from version 1, CommandResult::applied_writes
+/// and SubmitResult::failed_write are empty.
 /// A decoder that is given the same `out` again reuses its storage. The size limit of the kind is
 /// looked at before the version: a message of another version is not read beyond it either.
-/// A hello of another version: ErrorCode::VersionMismatch with Error::version, and
+/// A hello of a version that is not read: ErrorCode::VersionMismatch with Error::version, and
 /// `out.participant` is set if it could be read and is not longer than kMaxNameBytes (the
 /// beginning of a hello, up to the participant, is the same in every version).
 [[nodiscard]] Error decode_hello(std::span<const std::uint8_t> bytes, Hello& out);
 [[nodiscard]] Error decode_command(std::span<const std::uint8_t> bytes, CommandMessage& out);
 [[nodiscard]] Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& out);
 [[nodiscard]] Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out);
-/// The session of a command, probe, ready or last-word-received message of this version, without
-/// decoding the rest (an agent looks at it first: every agent receives every command). Empty for
-/// anything else.
+/// The session of a command, probe, ready or last-word-received message of a version of speaks(),
+/// without decoding the rest (an agent looks at it first: every agent receives every command),
+/// and the version and revision it was written in. Empty for anything else.
 struct Addressed
 {
     Kind kind = Kind::Command;
     std::uint64_t session = 0;
+    std::uint16_t version = 0;
+    std::uint8_t revision = 0; ///< 0 for version 1
 };
 [[nodiscard]] std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes);
 

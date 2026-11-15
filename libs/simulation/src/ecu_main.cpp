@@ -5,6 +5,7 @@
 #include "vehicle_sil/control_silkit/agent_transport.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
+#include "vehicle_sil/ecu/j1939_node_argument.hpp"
 
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/peer/peer.hpp"
@@ -77,6 +78,8 @@ struct CommandLine
     std::optional<std::chrono::milliseconds> start_timeout;
     /// --map-network, in the order given: the simulation's name and the executable's.
     std::vector<std::pair<std::string, std::string>> network_map;
+    /// --j1939-node, in the order given.
+    std::vector<ecu_executable::J1939NodeOverride> j1939_nodes;
 };
 
 /// The start timeout without --start-timeout-ms (SilKitOptions::start_timeout).
@@ -84,12 +87,17 @@ constexpr std::chrono::milliseconds kDefaultStartTimeout{30000};
 
 /// The options that take a value.
 constexpr std::string_view kValueOptions[] = {"--registry-uri", "--name", "--run-for-ms", "--start-timeout-ms",
-                                              "--silkit-config", ecu_executable::kMapNetworkArgument};
+                                              "--silkit-config", ecu_executable::kMapNetworkArgument,
+                                              ecu_executable::kJ1939NodeArgument};
 
 /// An example of --map-network with what it means, for the messages.
 constexpr const char* kMapNetworkExample =
     "e.g. --map-network VehicleCAN=J1939_CAN: the network that the ECU's code names J1939_CAN is VehicleCAN in the "
     "simulation";
+
+/// An example of the value of --j1939-node, for the usage (the messages about its value come with
+/// their own, from vehicle_sil/ecu/j1939_node_argument.hpp).
+constexpr const char* kJ1939NodeExample = "VehicleCAN=from:0x00,address:0x01,identity_number:2";
 
 bool takes_value(std::string_view arg)
 {
@@ -155,6 +163,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--no-control] [--name <name>]\n"
            "       " + pad + "                      [--silkit-config <file>]\n"
            "       " + pad + "                      [--map-network <simulation's name>=<executable's name>]...\n"
+           "       " + pad + "                      [--j1939-node <network>=<setting>:<value>[,...]]...\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
            "the ECU " + in_quotes(options.name) + ", step " + duration_text(options.step) + "\n"
@@ -171,6 +180,11 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "  --map-network <s>=<e>   with --registry-uri, any number of times: the network that this ECU's code\n"
            "                          names <e> is the network <s> of the simulation (split at the first '=').\n"
            "                          Only the SIL Kit network changes; the code and --describe keep <e>\n"
+           "  --j1939-node <n>=<s>    with --registry-uri, any number of times: change the address and NAME\n"
+           "                          fields of a J1939 node on the simulation's network <n>; <s> is\n"
+           "                          from:<address in the code>, address:<a>, identity_number:<n>,\n"
+           "                          function_instance:<n>, ecu_instance:<n>, separated by commas\n"
+           "                          (e.g. " + std::string(kJ1939NodeExample) + ")\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
            "  --name <name>           the participant name instead of " + in_quotes(options.name) + "; only the name\n"
@@ -222,7 +236,8 @@ CommandLine parse(const std::vector<std::string_view>& args)
         const std::string_view arg = args[i];
         for (const auto& before : seen)
         {
-            if (before == arg && arg != ecu_executable::kMapNetworkArgument) // that one: once for each network
+            // Those two: once for each network (or node); their values say what is given twice.
+            if (before == arg && arg != ecu_executable::kMapNetworkArgument && arg != ecu_executable::kJ1939NodeArgument)
             {
                 throw UsageError(in_quotes(arg) + " is given twice; give it once");
             }
@@ -317,6 +332,20 @@ CommandLine parse(const std::vector<std::string_view>& args)
             }
             c.network_map.emplace_back(std::move(simulation), std::move(executable));
         }
+        else if (arg == ecu_executable::kJ1939NodeArgument)
+        {
+            if (i + 1 >= args.size() || args[i + 1].substr(0, 2) == "--")
+            {
+                throw UsageError(ecu_executable::j1939_node_argument_missing() +
+                                 (i + 1 < args.size() ? ", not the option " + in_quotes(args[i + 1]) : std::string()));
+            }
+            const ecu_executable::J1939NodeArgument read = ecu_executable::parse_j1939_node_argument(args[++i]);
+            if (!read.entry)
+            {
+                throw UsageError(read.error);
+            }
+            c.j1939_nodes.push_back(*read.entry);
+        }
         else if (arg == "--start-timeout-ms")
         {
             c.start_timeout = parse_millis(arg, value("a duration in milliseconds", "60000"));
@@ -372,6 +401,18 @@ CommandLine parse(const std::vector<std::string_view>& args)
                                "networks, whatever a simulation calls them; leave --map-network out"
                              : "--map-network is for --registry-uri: --local runs the ECU alone on local virtual buses, "
                                "where there is no other name for a network; leave --map-network out");
+    }
+    if (!c.j1939_nodes.empty() && !c.registry_uri)
+    {
+        throw UsageError(c.describe
+                             ? "--j1939-node is for --registry-uri: --describe says the addresses and NAMEs in the ECU's "
+                               "code, whatever a simulation changes them to; leave --j1939-node out"
+                             : "--j1939-node is for --registry-uri: --local runs the ECU alone on local virtual buses, "
+                               "where no other ECU needs another address; leave --j1939-node out");
+    }
+    if (const std::string error = ecu_executable::j1939_node_arguments_error(c.j1939_nodes); !error.empty())
+    {
+        throw UsageError(error);
     }
     if (c.silkit_config && c.local)
     {
@@ -868,15 +909,93 @@ private:
     std::atomic<int> stopped_by_{0};
 };
 
+/// The addresses as the code gives them ("0x00, 0x21"; 254: "any (254)").
+std::string coded_addresses_text(const std::vector<j1939::Address>& addresses)
+{
+    std::string text;
+    for (const j1939::Address a : addresses)
+    {
+        text += (text.empty() ? "" : ", ") + j1939::coded_address_text(a);
+    }
+    return text;
+}
+
+/// Why no node took the --j1939-node `unused` (Peer::unused_j1939_nodes()), and what to do, for
+/// the line of a failed set-up.
+std::string unused_j1939_node_text(const UnusedJ1939Node& unused)
+{
+    const std::string argument =
+        std::string(ecu_executable::kJ1939NodeArgument) + " " + ecu_executable::format_j1939_node_argument(unused.entry);
+    const std::string network = "'" + unused.entry.network + "'";
+    const auto& from = unused.entry.node.from;
+    switch (unused.reason)
+    {
+    case UnusedJ1939Node::Reason::NoNetwork:
+    {
+        if (unused.networks.empty())
+        {
+            return argument + ": the ECU has no J1939 network: leave this --j1939-node out";
+        }
+        std::string names;
+        const UnusedJ1939Node::Network* same = nullptr; // the first one that the simulation does not rename
+        for (const auto& n : unused.networks)
+        {
+            names += (names.empty() ? "'" : ", '") + n.simulation + "'" +
+                     (n.code == n.simulation ? "" : " (" + n.code + " in its code)");
+            if (same == nullptr && n.code == n.simulation)
+            {
+                same = &n;
+            }
+        }
+        std::string text = argument + ": the ECU has no J1939 network " + network + " (its J1939 networks: " + names +
+                           "): write the simulation's name of one of them";
+        if (same != nullptr)
+        {
+            text += "; if the simulation calls '" + same->code + "' " + network + ", give --map-network " +
+                    unused.entry.network + "=" + same->code + " too";
+        }
+        return text;
+    }
+    case UnusedJ1939Node::Reason::NoNodes:
+        return argument + ": the ECU has no node on " + network +
+               " (nodes that it adds after it starts cannot be changed): leave this --j1939-node out";
+    case UnusedJ1939Node::Reason::NoNodeAtFrom:
+        return argument + ": the ECU has no node that its code puts at " +
+               j1939::coded_address_text(from.value_or(j1939::kNullAddress)) + " on " + network + " (its nodes there: " +
+               coded_addresses_text(unused.coded_addresses) +
+               "; nodes that it adds after it starts cannot be changed): after from: goes the address in the ECU's code, "
+               "not the new one; correct it, or leave this --j1939-node out";
+    case UnusedJ1939Node::Reason::AddedAfterFirstStep:
+        break;
+    }
+    // ecu_main() looks before any step, so only a node added in a step would get here.
+    if (from)
+    {
+        return argument + ": the ECU's node at " + j1939::coded_address_text(*from) + " on " + network +
+               " was added after the network's first step, so it keeps the values in its code: add the node before the "
+               "ECU starts";
+    }
+    if (unused.coded_addresses.size() > 1)
+    {
+        return argument + ": the ECU's nodes on " + network + " (" + coded_addresses_text(unused.coded_addresses) +
+               " in its code) were added after the network's first step, so they keep the values in their code: add "
+               "the nodes before the ECU starts";
+    }
+    return argument + ": the ECU's node on " + network + " (" + coded_addresses_text(unused.coded_addresses) +
+           " in its code) was added after the network's first step, so it keeps the values in its code: add the node "
+           "before the ECU starts";
+}
+
 } // namespace
 
 #ifdef _WIN32
-/// The value of the first --map-network of this process's command line that has a character that
-/// is not ASCII, as UTF-8. `argv` cannot tell: it is the command line in the code page, where a
-/// character that the code page lacks has become '?' or a similar ASCII letter, which would be the
-/// name of another network without any error. None if `argv` is not this process's command line
-/// (a caller's own arguments: where the wide command line is ASCII, the two must be the same).
-std::optional<std::string> map_network_not_ascii(int argc, const char* const* argv)
+/// The value of the first `option` (--map-network, --j1939-node) of this process's command line
+/// that has a character that is not ASCII, as UTF-8. `argv` cannot tell: it is the command line in
+/// the code page, where a character that the code page lacks has become '?' or a similar ASCII
+/// letter, which would be the name of another network without any error. None if `argv` is not
+/// this process's command line (a caller's own arguments: where the wide command line is ASCII,
+/// the two must be the same).
+std::optional<std::string> value_not_ascii(int argc, const char* const* argv, std::wstring_view option)
 {
     int count = 0;
     wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
@@ -905,7 +1024,7 @@ std::optional<std::string> map_network_not_ascii(int argc, const char* const* ar
     std::optional<std::string> found;
     for (int i = 1; same && !found && i + 1 < count; ++i)
     {
-        if (std::wstring_view(wide[i]) == L"--map-network")
+        if (std::wstring_view(wide[i]) == option)
         {
             const std::wstring_view value = wide[++i];
             if (!is_ascii(value))
@@ -946,12 +1065,17 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     try
     {
 #ifdef _WIN32
-        if (const auto text = map_network_not_ascii(argc, argv))
+        const std::string inCodePage = ": on Windows the arguments of an ECU executable arrive in the code page, which "
+                                       "can turn such a name into another one without an error. ";
+        if (const auto text = value_not_ascii(argc, argv, L"--map-network"))
         {
-            throw UsageError("--map-network " + in_quotes(*text) + " has characters that are not ASCII: on Windows the "
-                             "arguments of an ECU executable arrive in the code page, which can turn such a name into "
-                             "another one without an error. Give the networks to rename ASCII names (in the simulation "
-                             "and in the ECU's code)");
+            throw UsageError("--map-network " + in_quotes(*text) + " has characters that are not ASCII" + inCodePage +
+                             "Give the networks to rename ASCII names (in the simulation and in the ECU's code)");
+        }
+        if (const auto text = value_not_ascii(argc, argv, L"--j1939-node"))
+        {
+            throw UsageError("--j1939-node " + in_quotes(*text) + " has characters that are not ASCII" + inCodePage +
+                             "Give the J1939 networks of the simulation ASCII names");
         }
 #endif
         c = parse(args);
@@ -990,6 +1114,11 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             {
                 silkit.network_names.emplace(simulation, executable);
                 renames = renames || simulation != executable;
+            }
+            if (!c.j1939_nodes.empty())
+            {
+                // For this ECU by its participant name (--name), the name add_ecu() gets.
+                silkit.j1939_nodes[name] = c.j1939_nodes;
             }
             if (c.silkit_config)
             {
@@ -1082,6 +1211,15 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
                 }
             }
         }
+        // So is a --j1939-node that no node took (the first one). The nodes are all added now,
+        // before any step: one that the ECU adds later keeps the values in its code.
+        if (!c.j1939_nodes.empty()) // only with --registry-uri
+        {
+            if (const auto unused = sim->peer(name).unused_j1939_nodes(); !unused.empty())
+            {
+                throw std::invalid_argument(unused_j1939_node_text(unused.front()));
+            }
+        }
     }
     catch (const std::exception& e)
     {
@@ -1125,7 +1263,8 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
         }
         // What this executable takes from whoever starts it (the same for every way to call it).
-        description.features = {std::string(ecu_executable::kFeatureMapNetwork)};
+        description.features = {std::string(ecu_executable::kFeatureMapNetwork),
+                                 std::string(ecu_executable::kFeatureJ1939Node)};
         if (!describe_out->write(to_json(description)))
         {
             return fail(name, kExitSetupFailed, "could not write the description to stdout (is it closed?)");

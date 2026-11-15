@@ -43,6 +43,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 - シナリオの一覧は `CMakeLists.txt` の `SCENARIOS` です。
 - 中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。
 - 共通のコードは `tests/integration/launcher_support.hpp` にあります。
+- `launch_run` のシナリオは、題ごとに `tests/launch/launch_run_<題>.cpp` に分けてあります。`main()` は `launch_run_launcher.cpp` に、共通のコードは `launch_run_support.hpp` にあります。
 
 領域（`tests/` の直下のディレクトリ）のルール:
 
@@ -369,6 +370,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `Ecu::describe()`
 - 関数として呼んだ `ecu_main()` の引数と終了コード
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ追加する場面）、ない ECU の名前や当たらなかった行を始める前に拒否すること
+- `simulation.ecu_main_j1939_node*`: `ecu_main()` の `--j1939-node` が、行の値をノードに与えること（名前を替えたネットワークでも）、どのノードにも当たらない行のメッセージ（終了コード 3）、ステップの中で追加したノードがコードの値のままであること。値の使い方の誤りは `simulation.ecu_main_refuses_bad_command_lines`
 
 イーサネットのチャネル（`test_ethernet.cpp`）では、次のステップで受信すること、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、拒否するときの文言、`LocalBench` の参照を確認します。
 
@@ -384,6 +386,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `--describe` の JSON を [ecu-executable.md](ecu-executable.md) の例と、vehicle-sil のバージョンを除いてバイト単位で照合
 - `--local`
 - `vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU
+- エンジンの 2 つのコピー、2 つ目に `--j1939-node`（`ecu_main.j1939_node`。監視の出力のアドレス）
 - 使い方、停止の要求
 
 ### `core` / `lin`
@@ -1172,13 +1175,12 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 ## 依存の向き
 
-どの図でも、矢印は「リンクする」（`target_link_libraries`）です（太い矢印だけは違います。表を見てください）。逆向きの依存は作りません。
+どの図でも、矢印は「リンクする」（`target_link_libraries`）です。逆向きの依存は作りません。
 
 | 図の書き方 | 意味 |
 |---|---|
 | 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
 | 点線の矢印 | 非公開（`PRIVATE`）のリンク |
-| 太い矢印 | 自分のリンクはない。公開のヘッダーが相手のヘッダーを読み、リンクはほかのターゲットの公開のリンクから来る |
 | ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
 
 ### 全体の層
@@ -1332,11 +1334,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1349,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` と `control`: `launch` の公開のヘッダーは `control` のヘッダー（`hub.hpp`、`agent.hpp`、`variable_map.hpp`）を読みます。`launch` は `control` を `ecu` の公開のリンクから得ています。
 - `launch` と `ecu`: `launch` のソースは `ecu` の内部のヘッダー `vehicle_sil/ecu/detail/json_writer.hpp` も読みます。ランチャーは、`--describe` の出力と同じ書き手で JSON を書きます。
 
 ### Vector XL CAN Bridge
@@ -1468,7 +1469,7 @@ flowchart TD
 | Control API | `run --control` | [ランチャーの Control Server](#ランチャーの-control-server) |
 | Control API | シナリオの実行中の読み取り専用 | [シナリオの実行中の Control Server](#シナリオの実行中の-control-server) |
 | Control API | `GetSnapshot` | [時刻と値をまとめて読む](#時刻と値をまとめて読む) |
-| Control API | `wire.cpp`、`kVersion` | [Agent と Hub の間のメッセージ](#agent-と-hub-の間のメッセージ) |
+| Control API | `wire.cpp`、`kVersion`、`kRevision` | [Agent と Hub の間のメッセージ](#agent-と-hub-の間のメッセージ) |
 | Control API | `control_silkit`、開始前の窓 | [SIL Kit の上のトランスポートと開始前の窓](#sil-kit-の上のトランスポートと開始前の窓) |
 | ブリッジ | 止め方、終了コード、監視の行 | [ブリッジの止め方と終了コード](#ブリッジの止め方と終了コード) |
 | ブリッジ | イーサネットのブリッジの出力とエラーの文 | [イーサネットのブリッジの出力](#イーサネットのブリッジの出力) |
@@ -2246,9 +2247,13 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- 並びを変えたら、`control/wire.hpp` の `kVersion` を上げます。復号は、自分のバージョンだけを受け付けます。
-- 相手が知らなくても困らない種類を追加するだけなら、上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
-- hello の先頭から participant 名までは、どのバージョンでも変えません。バージョンの違う相手の名前を読むためです。
+- バージョン 1 は変えません。vehicle-sil 0.1.0 でビルドした ECU が話します。
+- バージョン 2 に項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
+- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kNewestVersion` を上げ、古いバージョンも読み続けます。
+- `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
+- 要素の最小の大きさは、バージョンごとに違います（`kLeastV1`、`kLeastV2`）。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
+- 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
+- ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
 
 合わせて直すドキュメント:
 
@@ -2257,6 +2262,9 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 テスト:
 
 - `^control\.wire_`: 1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと、sanitizer のプリセットで失敗します。
+- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージがどちらのバージョンでも上限ちょうどまで詰まること。
+- `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
+- `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
 
 ### SIL Kit の上のトランスポートと開始前の窓
 
