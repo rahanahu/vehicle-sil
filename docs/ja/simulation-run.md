@@ -146,7 +146,7 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 |---|---|---|---|
 | `connected` | hello を受信し、コマンドを受け取れるという返事があった | できる | なし |
 | `no_hello` | `--describe` の出力では公開するのに、待っても hello（か返事）が来なかった | この実行ではできない | 警告 `control-link-no-hello`（実行の指摘） |
-| `version_mismatch` | ECU のメッセージの形式のバージョンを、`vehicle_sil_launch` が話せない（自分より新しい） | この実行ではできない | 警告 `control-link-version` |
+| `version_mismatch` | メッセージの形式のバージョンが `vehicle_sil_launch` と違う | この実行ではできない | 警告 `control-link-version` |
 | `not_offered` | 変数はあるが、`--describe` の出力では公開しない（`--no-control`、`control` のない古い vehicle-sil の実行ファイル） | できない | 注記 `control-link-not-offered`（照合の指摘） |
 | `none` | 接続するものがない（変数がない古い vehicle-sil の実行ファイル、`describe: false`） | できない | なし |
 
@@ -154,13 +154,13 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 - `not_offered` の ECU は待ちません。
 - `--describe` の出力では公開しないのに hello を受信した participant は、`connected` です。
 - どの状態でも、シミュレーションは動きます（`--strict` では警告が失敗です）。
-- `vehicle_sil_launch` は、自分と同じか古いバージョン（0.1.0 以降）の vehicle-sil でビルドした ECU の変数を読み書きできます。ランチャーより新しい vehicle-sil でビルドした ECU は保証しません。変数を使えないときは照合が `control-link-version` を出すので、ECU 以上のバージョンのランチャーを使ってください。
+- `vehicle_sil_launch` が変数を読み書きできるのは、メッセージの形式のバージョンが自分と同じ ECU の実行ファイルだけです。vehicle-sil 0.1.0 でビルドした ECU と新しいランチャー、新しい ECU と 0.1.0 のランチャーの組み合わせでは、ECU はシミュレーションに加わりますが、変数を読み書きできません。照合が `control-link-version` を出します。
 
 ### 始まる前の待ち
 
 必須の participant がそろうと、全員が最初のステップの前で待ちます。その間に `run` は、次の条件を全部満たす ECU の hello と、「コマンドを受け取れる」という返事を待ちます。
 
-- `--describe` の出力で、`vehicle_sil_launch` が話せるバージョン（自分と同じか古いもの）の変数の接続を持つと言っている。変数がない ECU も含みます（`run` は、同じ接続でネットワークの送受信の数を読みます）。
+- `--describe` の出力で、`vehicle_sil_launch` と同じバージョンの変数の接続を持つと言っている。変数がない ECU も含みます（`run` は、同じ接続でネットワークの送受信の数を読みます）。
 - 必須で、無効にしていない。
 
 `describe: false` の participant は待ちません。その participant が変数の接続を持つかどうかを、`run` は知る手段がないからです。hello が始まった後に届いた場合、`control_link` は `none` のままですが、`variables` の対応のうち合わないものは同じように指摘します（`variable-map-not-applied`）。
@@ -575,7 +575,7 @@ passed: 0 errors, 1 warning, 1 note
 
 ### ネットワークの送受信（`traffic:`）
 
-シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU が変数の接続で送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です（[ECU の変数との接続](#ecu-の変数との接続control_link)）。
+シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU が変数の接続で送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です（[ECU の変数との接続](#ecu-の変数との接続control_link)）。接頭辞 `j1939.` は予約してあるので、ECU 自身の変数がこの名前になることはありません（[ecu-executable.md](ecu-executable.md) の「使えない変数名の接頭辞」）。
 
 - `traffic:` の行は、設定ファイルのネットワークごとに、数えた participant のうち、フレームを 1 つ以上送ったものの数と、1 つ以上受けたものの数です（`J1939_CAN: 1 participant sent, 1 received (2 counted)`）。上の最初の例は、Engine が送り、Dashboard が受けています。Dashboard は受けるだけで何も送らないので、送ったのは 1、受けたのも 1 で、これで正常です。割合ではないので、2 つの数が `counted` と同じである必要はありません。届いていないのは、送った participant がいるのに `0 received` で、括弧の中が `counted` だけのネットワークです。
 - 数えなかった participant がいれば、括弧の中に `1 not counted` と続けます。誰も送らず誰も受けておらず、全員を数えたネットワークは `nothing sent (2 counted)` です。そうでなければ、誰も送っていないネットワークも数で言います（`0 participants sent, 1 received (1 counted, 1 not counted)`）。数えた participant が 1 つもないネットワーク（LIN、イーサネット、生の CAN として使うネットワークなど）は `not counted (3 participants)`、誰がいるかをランチャーが知らないネットワークは `not counted (no participant known to be on it)` です（そのネットワークに居場所がわからない participant がいれば、括弧の中に `, 1 unplaced` と続けます。下）。設定ファイルにネットワークが 1 つもないときは、`traffic: no network in use` の 1 行だけです。
@@ -621,7 +621,7 @@ passed: 0 errors, 1 warning, 1 note
 | `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
 | `control-link-no-hello` | 警告 | 変数を公開するはずの ECU の hello か、コマンドを受け取れるという返事が、始まる前に来なかった |
 | `control-link-dropped` | 警告 | `vehicle_sil_launch` が、ECU の変数との接続のメッセージを捨てた |
-| `control-link-version` | 警告 | 受信した hello の、メッセージの形式のバージョンを `vehicle_sil_launch` が話せない |
+| `control-link-version` | 警告 | 受信した hello の、メッセージの形式のバージョンが `vehicle_sil_launch` と違う |
 | `control-link-late-values` | 警告 | ECU の値か結果を、仮想時刻の保証より遅れて受信した |
 | `variable-map-not-applied` | エラー | 設定ファイルの `variables` の対応のうち、ECU が接続のときに通知した変数に合わないものがあった |
 | `before-start` | エラー | 開始を待っている間にする処理が失敗した |
@@ -657,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 - 別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている。
 - 実行中に参加した participant の hello を、まだ受信していなかった。
 
-`control-link-version` が出たら、ECU をビルドした vehicle-sil 以上のバージョンの `vehicle_sil_launch` を使います。
+`control-link-version` が出たら、どちらが古いかが文に出ます。ECU のほうが古ければ `vehicle_sil_launch` の vehicle-sil でビルドし直し、新しければ ECU の vehicle-sil と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。
 
 `variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、実行の行（`log`）にも 1 回書きます。始まった時点で接続している ECU は始まったときに、その後に接続した ECU は実行の終わりに書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
 
@@ -1102,11 +1102,14 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 ### 時間の軸のファイルを見る
 
-vehicle-sil のリポジトリの `gui/timeline/timeline.html` は、時間の軸のファイルを図にするページです。ブラウザで開き（ローカルのファイルとして開いてかまいません。隣に `viewer.js` が要ります）、時間の軸のファイルをページに落とすか、**Open a file**（ボタンなので、キーボードでも押せます）で選びます。ページはファイルをブラウザの中で読み、どこにも送りません。
+時間の軸のページは、時間の軸のファイルを図にします。ブラウザの GUI から始めたシナリオの実行なら、「シナリオ」のカードのリンク「時間の軸」で開きます。GUI サーバーが実行の時間の軸を記録し、ページを GUI と同じ言語で配ります（[gui.md](gui.md#シナリオの実行の時間の軸) の「シナリオの実行の時間の軸」）。
+
+`--timeline` で自分で書いたファイルには、vehicle-sil のリポジトリの `gui/timeline/timeline.html`、またはビルド済みの道具の圧縮ファイルの `python/vehicle_sil_gui/timeline/timeline.html` を使います。ブラウザで開き（ローカルのファイルとして開いてかまいません。隣に `viewer.js` と `messages.js` が要ります）、時間の軸のファイルをページに落とすか、**Open a file**（日本語では **ファイルを開く**。ボタンなので、キーボードでも押せます）で選びます。ページはファイルをブラウザの中で読み、どこにも送りません。
 
 - シナリオが失敗していれば、ページは失敗の所を開きます。失敗した手順とその時刻、ランチャーの文、成り立たなかった条件とそのとき見た値、書き込みの失敗なら、その時刻の書き込みのうち ECU に入ったもの、入らなかったもの、入ったかどうかを言う結果がないもの（不明）を出します。
 - 図には、手順の段と、変数ごとの段があります。入力（送った値と、条件が読む入力なら見た値）、その後にほかの変数です。帯は、条件が許す値の範囲です（緑は成り立った、赤は成り立たなかった、灰はその条件では決まらなかった手順）。送った値のうち、ECU に入らなかったものは赤の破線、入ったかどうか不明なものはオレンジの点線で描き、どちらも変数がとった値としては描きません。図の上をドラッグすると拡大し、ダブルクリックで実行の全体に戻ります。
 - 図の下の表に、同じ手順、入力の線、指摘があります。
+- ページは英語か日本語です。アドレスの `?lang=en` か `?lang=ja`、なければブラウザの言語、それもなければ英語です。ファイルとランチャーの名前、値、文は、そのまま出します。
 - Web サーバーから配ったページは、`?src=` でファイルのアドレスも受け取ります。同じサーバーのものだけです（`timeline.html?src=runs/throttle_step.timeline.json`）。
 - ページが読むのは、形の版 1 で `stage` が `"run"` のファイルです。ほかの版や `stage` のファイルは、描かずに、表示できないと言います。知らないキーは無視し、知らない値と、変数の型に合わない値は、描かずに段の下に名前を出します。表示できないファイルを開くと、ページは何も出さない状態に戻ります（前のファイルの図を、そのファイルのものと取り違えないため）。表示しているファイルの名前は、上の欄に出ます。
 
@@ -1200,7 +1203,7 @@ vehicle-sil のリポジトリの `gui/timeline/timeline.html` は、時間の�
   |---|---|
   | `true` | ECU に入りました。手順は失敗しましたが、値は ECU に入っています。 |
   | `false` | ECU に入っていません。ECU かそのエージェントが断った、同じ `set` の中で断られた書き込みより後ろにある、送っていない、のどれかです。 |
-  | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。vehicle-sil 0.1.0 でビルドした ECU は、複数の書き込みの `set` がどこで止まったかを報告しません。 |
+  | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。 |
 
   ECU は、1 つの `set` の書き込みを順に適用し、setter が断った書き込みで止まります。そのため、断られた書き込みより前のものはもう入っていて（`true`）、断られたものとその後ろは入っていません（`false`）。ECU のエージェントが受け取った時点で断ったとき（名前、型、範囲の誤り）は、その `set` のその participant への書き込みは、どれも入っていません。最初のステップの後に `set` がパラメータを書くときも同じで、ECU はその participant への書き込みをまとめて断ります。
 - `point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点がこの書き込みです。何も送っていなければ `null` です。`applied` が `false` か `null` の点は、その系列の `not_applied_from` か、それより後ろにあります。

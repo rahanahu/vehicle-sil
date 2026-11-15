@@ -9,8 +9,11 @@
 //   local     --local --run-for-ms runs one ECU alone (the dashboard receives nothing)
 //   silkit    a sil-kit-registry, vehicle_sil_sim_controller and both ECUs with --registry-uri:
 //             the dashboard shows the engine's speed; every process exits 0
-//   usage     without arguments: the usage and exit code 4; on Windows also a --map-network that is
-//             not ASCII: exit code 4
+//   j1939_node  two engines with --registry-uri, the second with --name Engine2 and --j1939-node:
+//             its node is at 0x01 and the first one's at 0x00 (their monitoring outputs, read by
+//             a hub on the controller's participant); every process exits 0
+//   usage     without arguments: the usage and exit code 4; on Windows also a --map-network and a
+//             --j1939-node that are not ASCII: exit code 4
 //   signal    a stop request (POSIX SIGTERM, Windows Ctrl+Break) to an ECU with --registry-uri:
 //             before the start it ends at once; while the simulation runs it stops the simulation
 //             in order (the controller of this test sees it shut down) and ends; exit code 130
@@ -18,12 +21,15 @@
 #include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <exception>
 #include <mutex>
 #include <filesystem>
@@ -31,6 +37,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #ifdef _WIN32
@@ -208,6 +215,67 @@ void silkit(const Options& o)
     log("CHECK the dashboard shows the engine's speed over SIL Kit -> ok");
 }
 
+/// The integer value of the variable `name` in the last sample of `participant` that `hub` got.
+std::int64_t latest_integer(const vehicle_sil::control::Hub& hub, const std::string& participant, const std::string& name)
+{
+    const auto snapshot = hub.latest(participant);
+    require(snapshot != nullptr, "the hub has no sample of " + participant);
+    for (const auto& peer : hub.peers())
+    {
+        if (peer.participant != participant)
+        {
+            continue;
+        }
+        for (std::size_t i = 0; i < peer.schema.size() && i < snapshot->values.size(); ++i)
+        {
+            if (peer.schema[i].name == name)
+            {
+                const auto* value = std::get_if<std::int64_t>(&snapshot->values[i]);
+                require(value != nullptr, participant + ": " + name + " is not an integer");
+                return *value;
+            }
+        }
+    }
+    throw std::runtime_error(participant + " has no variable " + name);
+}
+
+void j1939_node(const Options& o)
+{
+    RegistryProcess registry(o.registry, o.work_dir);
+    const std::string& uri = registry.uri();
+    vehicle_sil::SimulationControllerOptions c;
+    c.registry_uri = uri;
+    c.required_participants = {"Engine", "Engine2"};
+    c.stop_at = 1000ms;
+    c.time_control = vehicle_sil::TimeControlOptions{};
+    vehicle_sil::SimulationController controller(std::move(c));
+    vehicle_sil::control::Hub hub;
+    vehicle_sil::control_silkit::HubTransport transport(hub, controller.runtime());
+    const auto deadline = std::chrono::steady_clock::now() + o.timeout;
+    // The same executable twice: without --j1939-node, both nodes would ask for 0x00 with one NAME.
+    ChildProcess engine(o.engine, {"--registry-uri", uri}, o.work_dir / "engine.log");
+    ChildProcess engine2(o.engine,
+                         {"--registry-uri", uri, "--name", "Engine2", "--j1939-node", "J1939_CAN=address:0x01,identity_number:2"},
+                         o.work_dir / "engine2.log");
+    controller.start(o.timeout);
+    const auto end = controller.wait_until_finished(o.timeout);
+    const auto engineCode = wait_or_kill(engine, deadline);
+    const auto engine2Code = wait_or_kill(engine2, deadline);
+    if (end != SilKit::Services::Orchestration::ParticipantState::Shutdown || engineCode != 0 || engine2Code != 0)
+    {
+        dump_log(o.work_dir / "engine.log");
+        dump_log(o.work_dir / "engine2.log");
+        throw std::runtime_error("the simulation did not shut down in order, or exit codes: engine " +
+                                 exit_code_text(engineCode) + ", engine2 " + exit_code_text(engine2Code));
+    }
+    const std::string variable = "j1939.J1939_CAN.node0.address";
+    const auto first = latest_integer(hub, "Engine", variable);
+    const auto second = latest_integer(hub, "Engine2", variable);
+    require(first == 0 && second == 1,
+            variable + ": Engine " + std::to_string(first) + ", Engine2 " + std::to_string(second) + " (expected 0 and 1)");
+    log("CHECK --j1939-node puts the second engine's node at 0x01 -> ok");
+}
+
 void usage(const Options& o)
 {
     const auto [code, written] = run(o, o.engine, {}, "engine-usage");
@@ -229,6 +297,14 @@ void usage(const Options& o)
     require(mapOut.rfind("error: Engine: --map-network \"" + renamed + "\" has characters that are not ASCII: on Windows", 0) == 0,
             "engine with a --map-network that is not ASCII wrote:\n" + mapOut);
     log("CHECK engine with a --map-network that is not ASCII (Windows): exit code 4 -> ok");
+    const std::string node = "\xE8\xBB\x8A\xE4\xB8\xA1" "CAN=address:0x01";
+    const auto [nodeCode, nodeWritten] =
+        run(o, o.engine, {"--registry-uri", "silkit://localhost:8500", "--j1939-node", node}, "engine-node-not-ascii");
+    const std::string nodeOut = lf(nodeWritten);
+    require(nodeCode == 4, "engine with a --j1939-node that is not ASCII exited " + std::to_string(nodeCode) + ":\n" + nodeOut);
+    require(nodeOut.rfind("error: Engine: --j1939-node \"" + node + "\" has characters that are not ASCII: on Windows", 0) == 0,
+            "engine with a --j1939-node that is not ASCII wrote:\n" + nodeOut);
+    log("CHECK engine with a --j1939-node that is not ASCII (Windows): exit code 4 -> ok");
 #endif
 }
 
@@ -351,6 +427,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "silkit")
         {
             silkit(o);
+        }
+        else if (o.scenario == "j1939_node")
+        {
+            j1939_node(o);
         }
         else if (o.scenario == "usage")
         {

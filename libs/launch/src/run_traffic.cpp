@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_traffic.hpp"
 
+#include "vehicle_sil/ecu/monitor_names.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -89,21 +91,6 @@ namespace detail {
 
 namespace {
 
-constexpr std::string_view kPrefix = "j1939.";
-constexpr std::string_view kSent = ".frames_sent";
-constexpr std::string_view kReceived = ".frames_received";
-
-/// The N of "j1939.<N><field>", or empty if `name` is not of that form.
-std::string_view counter_network(std::string_view name, std::string_view field)
-{
-    if (name.size() <= kPrefix.size() + field.size() || name.substr(0, kPrefix.size()) != kPrefix ||
-        name.substr(name.size() - field.size()) != field)
-    {
-        return {};
-    }
-    return name.substr(kPrefix.size(), name.size() - kPrefix.size() - field.size());
-}
-
 std::optional<std::int64_t> counter(const control::Snapshot& sample, const std::optional<std::size_t>& index)
 {
     if (!index || *index >= sample.values.size())
@@ -126,8 +113,8 @@ TrafficSchema traffic_schema(const control::PeerInfo& peer)
         // With a variable map, the name the agent announced is beside the one the clients see.
         const bool mapped = i < peer.sources.size() && !peer.sources[i].empty();
         const std::string_view announced = mapped ? std::string_view(peer.sources[i]) : std::string_view(variable.name);
-        const std::string_view sent = counter_network(announced, kSent);
-        const std::string_view received = counter_network(announced, kReceived);
+        const std::string_view sent = monitor_names::j1939_network(announced, monitor_names::kFramesSent);
+        const std::string_view received = monitor_names::j1939_network(announced, monitor_names::kFramesReceived);
         const std::string_view network = !sent.empty() ? sent : received;
         if (network.empty() || variable.type != control::ValueType::Integer)
         {

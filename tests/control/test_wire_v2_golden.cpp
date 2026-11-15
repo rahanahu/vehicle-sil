@@ -2,8 +2,7 @@
 //
 // vehicle_sil::control::wire against the bytes of version 2, revision 0, written out by hand
 // (wire_v2_golden.hpp): the encoder writes exactly them, and they decode to the structures they
-// were written from, with the two numbers version 2 added. The base for whoever adds a field: a
-// later revision still reads these bytes.
+// were written from. The base for whoever adds a field: a later revision still reads these bytes.
 #include "test_harness.hpp"
 #include "wire_v2_golden.hpp"
 
@@ -84,7 +83,7 @@ std::vector<wire::Bytes> step_messages(SimTime time, bool final, const std::vect
     std::vector<wire::Bytes> out;
     wire::Bytes scratch;
     wire::encode_step(golden::kSession, time, final, results, events, sample, max_bytes, scratch,
-                      [&](const wire::Bytes& message) { out.push_back(message); }, 2);
+                      [&](const wire::Bytes& message) { out.push_back(message); });
     return out;
 }
 
@@ -103,10 +102,10 @@ void check_read(const wire::Error& error, int line)
 TEST_CASE(wire_v2_revision_0_hello_has_its_bytes)
 {
     // What this file pins is revision 0. A later revision pins its own bytes beside these.
-    CHECK_EQ(wire::kNewestVersion, std::uint16_t{2});
+    CHECK_EQ(wire::kVersion, std::uint16_t{2});
     wire::Bytes bytes;
     std::string why;
-    CHECK(wire::encode_hello(golden::hello(), bytes, why, 2));
+    CHECK(wire::encode_hello(golden::hello(), bytes, why));
     CHECK_BYTES(bytes, golden::kHello);
 
     wire::Hello decoded;
@@ -121,7 +120,7 @@ TEST_CASE(wire_v2_revision_0_command_has_its_bytes)
           std::pair{golden::command_next_step(), std::span<const std::uint8_t>(golden::kCommandNextStep)}})
     {
         wire::Bytes bytes;
-        CHECK(wire::encode_command(message, bytes, 2));
+        CHECK(wire::encode_command(message, bytes));
         CHECK_BYTES(bytes, expected);
         wire::CommandMessage decoded;
         check_read(wire::decode_command(expected, decoded), __LINE__);
@@ -139,7 +138,7 @@ TEST_CASE(wire_v2_revision_0_command_has_its_bytes)
         CHECK(to.has_value());
         CHECK(to->kind == wire::Kind::Command);
         CHECK_EQ(to->session, golden::kSession);
-        CHECK_EQ(to->version, std::uint16_t{2});
+        CHECK_EQ(to->revision, std::uint8_t{0});
     }
 }
 
@@ -150,7 +149,7 @@ TEST_CASE(wire_v2_revision_0_submitted_has_its_bytes)
           std::pair{golden::submitted_without_a_write(), std::span<const std::uint8_t>(golden::kSubmittedWithoutAWrite)}})
     {
         wire::Bytes bytes;
-        wire::encode_submitted(message, bytes, 2);
+        wire::encode_submitted(message, bytes);
         CHECK_BYTES(bytes, expected);
         wire::SubmittedMessage decoded;
         check_read(wire::decode_submitted(expected, decoded), __LINE__);
@@ -244,13 +243,13 @@ TEST_CASE(wire_v2_revision_0_probe_ready_and_last_word_received_have_their_bytes
     for (const auto& [kind, expected] : cases)
     {
         wire::Bytes bytes;
-        wire::encode_session(kind, golden::kSession, bytes, 2);
+        wire::encode_session(kind, golden::kSession, bytes);
         CHECK_BYTES(bytes, expected);
         const auto to = wire::addressed(expected);
         CHECK(to.has_value());
         CHECK(to->kind == kind);
         CHECK_EQ(to->session, golden::kSession);
-        CHECK_EQ(to->version, std::uint16_t{2});
+        CHECK_EQ(to->revision, std::uint8_t{0});
         CHECK_EQ(to->revision, std::uint8_t{0});
     }
 }

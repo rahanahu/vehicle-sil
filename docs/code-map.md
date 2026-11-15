@@ -43,6 +43,7 @@ Where scenario tests live:
 - `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
 - Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
 - The shared code is in `tests/integration/launcher_support.hpp`.
+- The `launch_run` scenarios are in `tests/launch/launch_run_<topic>.cpp`, one file for each topic. `main()` is in `launch_run_launcher.cpp`, and the code they share is in `launch_run_support.hpp`.
 
 Rules for areas (the directories directly under `tests/`):
 
@@ -369,6 +370,7 @@ What `simulation.*` checks:
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
+- `simulation.ecu_main_j1939_node*`: `--j1939-node` of `ecu_main()` gives the node the values of the line (also on a renamed network), the message for a line that applies to no node (exit code 3), a node added in a step keeps the values of the code; the usage errors of its value are in `simulation.ecu_main_refuses_bad_command_lines`
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -384,6 +386,7 @@ What `ecu_main.*` checks:
 - The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
 - `--local`
 - 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- 2 copies of the engine, the second with `--j1939-node` (`ecu_main.j1939_node`: the addresses in the monitoring output)
 - Usage, stop requests
 
 ### `core` / `lin`
@@ -651,7 +654,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
 | Transfer sniffer | `src/transfer_sniffer.cpp` |
-| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, checks on the form of an announcement; the timeouts are `ProtocolTiming` in `types.hpp`) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
 | `Listener`, which sits in the seat | `src/listener.cpp` |
 
@@ -692,6 +695,7 @@ Main classes and functions:
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
 | The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| The names of a `Peer`'s monitoring outputs (`peer.*`, `j1939.<network>.*`), which `Peer` registers and the launcher reads | `ecu/monitor_names.hpp` |
 | `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
@@ -1172,13 +1176,12 @@ No test compares the following. Keep them in sync by hand.
 
 ## Dependency direction
 
-In every diagram, an arrow means "links" (`target_link_libraries`), except the thick arrow (see the table). Do not create dependencies in the opposite direction.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
 
 | In the diagrams | Meaning |
 |---|---|
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
-| Thick arrow | No link of its own: the public headers include the other target's headers, and the link comes through another target's public link |
 | Node name | Target name (without `vehicle_sil::`) |
 
 ### Layers
@@ -1332,11 +1335,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1350,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `control`: the public headers of `launch` include headers of `control` (`hub.hpp`, `agent.hpp`, `variable_map.hpp`). `launch` gets `control` through the public link of `ecu`.
 - `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
 
 ### Vector XL CAN Bridge
@@ -1842,6 +1844,9 @@ Where to change:
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
 | The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
+| The page's words (English and Japanese) | `gui/timeline/messages.js`: every text the page shows, by key, in both languages (the unit tests check the keys; the page's lint refuses a string of words in `viewer.js`) |
+| The GUI server: `--timeline` for a scenario run, the files it keeps, the page and the file it serves | `gui/server/src/vehicle_sil_gui/timelines.py`, and `_start()`, `_keep_timeline()`, `get_timeline()` and `get_timeline_page()` in `server.py` |
+| The **Timeline** link of the sample screen | `ScenarioPanel` and `timelinePageUrl()` in `gui/web/src/app/run/scenario-panel.ts` |
 | A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.html`, and `KNOWN` for a value the page should draw instead of naming |
 
 What to update together:
@@ -1866,6 +1871,7 @@ Tests:
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`
 - The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
+- The GUI server's part: `gui/server/tests/test_timelines.py` (the argument with and without the feature, the file and the page with and without the token, the files kept), on the recordings `run-scenario-*-timeline` (made with `--timeline`; `record_launcher.py --compare` compares them with the real launcher). The link and the page from the GUI: `gui/web/e2e/timeline-link.spec.ts` (`--e2e-grep 'timeline'`).
 
 ### Running several scenarios
 
@@ -2246,13 +2252,12 @@ Where to change:
 
 Rules:
 
-- Do not change version 1. ECUs built with vehicle-sil 0.1.0 speak it.
-- An Agent writes `kVersion` and reads only `kVersion`. The Hub's transport keeps the version of each Agent's hello in its link and writes to that Agent in it (`libs/control_silkit/src/hub_transport.cpp`). `vehicle_sil_launch` decides with `wire::speaks()` whether it can use what `--describe` announces (`libs/launch/src/check_rules.cpp`, `run_control.cpp`). Do not compare with `kVersion` there.
+- Both sides write `kVersion` and read only `kVersion`. A hello of another version is reported (its participant name is read) and makes no peer; any other message of another version is dropped. `vehicle_sil_launch` compares what `--describe` announces with `kVersion` (`libs/launch/src/check_rules.cpp`, `run_control.cpp`), and `control_version_fix()` in `libs/launch/src/check_words.hpp` says which side to build again.
 - Which writes of a command took effect, and which write a refusal is about, travel as numbers (`CommandResult::applied_writes`, `SubmitResult::failed_write`, and the Hub's `TargetResult` with the same two names). Do not read a `reason` for them. The one exception is `write_named()` in `libs/control/src/hub.cpp`, for an Agent of version 1, which has no place for the numbers (see "[Control Server core (`vehicle_sil::control::Hub`)](internals/control.md#control-server-core-vehicle_silcontrolhub)" in [internals/control.md](internals/control.md)).
-- To add a field to version 2, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
-- A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kNewestVersion` and keep reading the older versions.
+- To add a field, put it at the end of its element (a variable, write, result or event), or at the end of the message if it belongs to the message. Raise `kRevision` in `control/wire.hpp` by one, and read the field only from a writer of that revision or later. The decoder of an older build skips it.
+- A change that a reader must not skip (a field moved or removed, a new enumerator sent to a reader that does not know it) needs a new version. Raise `kVersion`: ECUs and launchers of different versions then cannot read and write variables together (the check says `control-link-version`).
 - `result_bytes()` and `event_bytes()` must return exactly what `write_result()` and `write_event()` write. `encode_step()` splits by them, so a value that is too small makes a message larger than its limit.
-- The smallest size of each element differs by version (`kLeastV1`, `kLeastV2`). The decoder checks a count against it before it reads anything. Update it when an element gets a field.
+- `kLeast` is the smallest size of each element. The decoder checks a count against it before it reads anything. Update it when an element gets a field.
 - If you only add a kind that the other side can safely ignore, raise neither the version nor the revision. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
 - Never change the eight bytes of the header, the participant name right after the header of a hello, or the session right after the header of every other message, in any version. This lets a peer with a different version read the name, and lets an ECU see whom a message is for.
 
@@ -2263,11 +2268,10 @@ Documentation to update:
 Tests:
 
 - `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
-- `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit in both versions.
+- `^control\.wire_v2_`: version 2 (its messages are also written out by hand in `tests/control/test_wire_v2.cpp`), that an older or newer version is not read, what the decoder skips from a newer revision and refuses from its own, element sizes, and that a step message is filled exactly to its limit.
 - `^control\.wire_building_`: building the step messages of a step allocates nothing once the buffer has grown (a binary of its own, `tests/control/test_wire_allocation.cpp`).
-- `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
 - `^control\.wire_v2_revision_0_`: the bytes of version 2, revision 0, written out by hand in `tests/control/wire_v2_golden.hpp`. When you add a field, add the bytes of the new revision beside them and leave these as they are.
-- `^control_silkit\..*version_1`, `launch_run.control_version_1`: an Agent that speaks only version 1 under this Hub and under `vehicle_sil_launch run`. The rule of such an Agent (drop what is not version 1) is written out by hand in `tests/control_silkit/version1_agent.hpp`, and `tests/launch/version1_ecu.cpp` is an ECU executable built on it.
+- `control_silkit.a_hello_of_another_version_is_reported_and_makes_no_peer`, `control_silkit.an_agent_does_not_answer_what_is_written_to_it_in_another_version`: an older and a newer version, on each side.
 
 ### The SIL Kit transport and the start window
 

@@ -110,10 +110,10 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
 | `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
-| `version-mismatch` | Note | The vehicle-sil version that the executable was built with differs from the version of `vehicle_sil_launch`. | Nothing, if the ECU is the older one: `vehicle_sil_launch` reads and writes the variables of ECU executables built with its own version of vehicle-sil or an older one, back to 0.1.0. If they do not work together, rebuild with the same version. |
+| `version-mismatch` | Note | The vehicle-sil version that the executable was built with differs from the version of `vehicle_sil_launch`. | If they do not work together, rebuild with the same version. |
 | `coarse-time-step` | Warning | The file has `speed` (a number) and `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
 | `control-link-not-offered` | Note | An ECU with variables does not report in its `--describe` output that it exposes them to the simulation (`--no-control`, or an old executable without `control`). | To read and write the variables, remove `--no-control`, or rebuild the ECU with a newer vehicle-sil. |
-| `control-link-version` | Warning | An ECU with variables reports a message format version (or a transport) that `vehicle_sil_launch` does not speak. The launcher speaks its own version and the older ones, so the ECU was built with a newer vehicle-sil than the launcher. | Use a `vehicle_sil_launch` at least as new as the vehicle-sil the ECU was built with. |
+| `control-link-version` | Warning | An ECU with variables reports another message format version than `vehicle_sil_launch`, or another transport than `silkit`. The simulation runs, but `run` cannot read or write that ECU's variables. The message says which side is older. | If the ECU is older, rebuild it with the vehicle-sil of `vehicle_sil_launch`. If it is newer, use a `vehicle_sil_launch` of its vehicle-sil version or a newer one. For another transport, make the executable offer its variables over `silkit`. |
 | `variable-map-unknown` | Error | The `from` variable of a mapping in `variables` does not exist in the executable. | Correct the `from` name (the finding message gives a close name or the list of the executable's variables). |
 | `variable-map-type` | Error | The form of the mapping does not fit the type of the variable. | Write `scale`, `offset` for integer or real variables, and `map` for integer or enum variables. |
 | `variable-map-value` | Error | The executable's variable cannot take a value in `map` (not an item of the enum, or out of range). | Change the values in `map` to values the variable can take. |
@@ -391,7 +391,7 @@ If only one of `scale` and `offset` is written, the other has its default, 1 or 
 
 **`network_map`**: Each element has `name` (the simulation's name), `line` (the line in the configuration file) and `from` (the executable's name). Lines whose key and value are the same are included. Lines that could not be read (the error `value`) are not.
 
-**`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version; the launcher speaks its own, 2, and the older one, 1). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
+**`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
 Keys of each element of `networks[]` and `findings[]`:
 

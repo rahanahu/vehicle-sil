@@ -42,7 +42,7 @@ ControlLink RunControl::described_link(std::size_t i) const
     {
         return ControlLink::NotOffered;
     }
-    return offer->transport == "silkit" && control::wire::speaks(offer->wire_version)
+    return offer->transport == "silkit" && offer->wire_version == static_cast<int>(control::wire::kVersion)
                ? ControlLink::Connected
                : ControlLink::VersionMismatch;
 }
@@ -55,7 +55,7 @@ bool RunControl::offers_control(std::size_t i) const
         return false;
     }
     const auto& offer = *ecu->description.control;
-    return offer.transport == "silkit" && control::wire::speaks(offer.wire_version);
+    return offer.transport == "silkit" && offer.wire_version == static_cast<int>(control::wire::kVersion);
 }
 
 std::vector<std::string> RunControl::expected_agents() const

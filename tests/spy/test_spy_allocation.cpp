@@ -35,7 +35,7 @@ public:
             }
         });
         s.on_any_message([this](const Message& m) { bytes_ = static_cast<int>(m.data.size()); });
-        s.on_transfer([this](const SniffedTransfer&) { ++transfers_; });
+        s.on_transfer_end([this](const SniffedTransfer&) { ++transfers_; });
         s.on_frame([this](const ReceivedFrame&) { ++frames_; });
         s.on_step([this](SimTime now) { quiet_steps_ += now - latest_ > std::chrono::milliseconds(5) ? 1 : 0; });
         s.output("count", &count_);

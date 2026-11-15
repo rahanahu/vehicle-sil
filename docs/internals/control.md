@@ -243,8 +243,8 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 | `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the `Peer` and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
 | A node is added after the schema is fixed | The node is not monitored |
 | Raw CAN and LIN | Not monitored |
-| An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
-| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
+| An ECU variable is declared with a name that starts with `peer.` or `j1939.` (`input()`, `output()` and so on) | These prefixes are reserved, as are `can.`, `lin.` and `eth.` for the other buses (`monitor_names::kReservedPrefixes` in `ecu/monitor_names.hpp`). The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
+| A variable registered directly on `agent()` clashes with a monitoring output | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
 
 In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
@@ -431,18 +431,16 @@ Messages flow in this order: the hello; the start window before the first step (
 
 The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-Every message starts with the format version. The decoder reads versions 1 and 2 (`kOldestVersion` to `kNewestVersion`) and tells the caller which one a message was written in. Each encoder writes the version it is given, or `kVersion` (2) when it is given none. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of a version that the decoder does not read.
+Every message starts with the format version, `kVersion` (2). Both sides write `kVersion` and read only `kVersion`; nothing is negotiated. In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of another version: the Hub reports it (`LinkState::VersionMismatch`) and makes no peer of it. An Agent drops every message of another version.
 
-- Version 1 is fixed. Its bytes are what ECUs built with vehicle-sil 0.1.0 send and expect.
-- Nothing is negotiated. An Agent writes `kVersion` and reads only `kVersion`. A Hub takes the version of each Agent from the header of its hello and writes to that Agent in that version (its commands, its probes and the answer to its last word), so an ECU built with an older vehicle-sil keeps working under a newer Hub. A message from an Agent in another version than its hello is counted as unreadable and dropped. Agents of version 1 and version 2 can be peers of one Hub: every Agent receives every command, and one in a version it does not read is not for it.
-- An Agent built with vehicle-sil 0.1.0 drops every message that is not version 1, so a Hub that wrote version 2 to it would never get an answer to its probe.
-- Version 2 can get new fields without a new version:
+- Version 1 (vehicle-sil 0.1.0) is not read any more. An ECU built with vehicle-sil 0.1.0 under a newer Hub, or a newer ECU under the Hub of 0.1.0, takes part in the simulation, but its variables cannot be read or written.
+- The format can get new fields without a new version:
   - Each variable, write, result and event starts with its size in bytes.
   - The last byte of the header is the revision of the writer (`kRevision`).
   - A new field goes at the end of its element, or at the end of the message if it belongs to the message, and `kRevision` goes up by one.
   - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
   - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer looks at the other side's revision before it sends one.
-- Version 2 carries two fields that version 1 has no place for: how many writes of a command were applied (`CommandResult::applied_writes`), and which write a refusal is about (`SubmitResult::failed_write`). Decoded from version 1, both are empty.
+- A result says how many writes of a command were applied (`CommandResult::applied_writes`), and a refusal says which write it is about (`SubmitResult::failed_write`); either can be empty (not said).
 - Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
 - The decoder never throws and never reads outside the bytes it is given.
@@ -605,12 +603,12 @@ If a participant ended in order (reached Shutdown) but its last word did not arr
 | An Agent that does not know the answer | Drops the answer and ends as before |
 | An Agent whose Hub does not answer | Waits the full wait time, then ends |
 
-Neither case depends on the format version: the answer is a kind of its own, added to version 1 without a new version.
+Neither case depends on the format version: the answer is a kind of its own, added without a new version.
 
 ### Peers that send no hello
 
 - An ECU without a transport (`--no-control`, an executable of an old vehicle-sil without an Agent, a participant that has no Agent) sends no hello, so it does not become a peer of the Hub.
-- A participant that sent a hello of a version the Hub does not speak (`wire::speaks()`: not 1 or 2) does not become a peer. It remains in `HubTransport::links()` with its participant name and version.
+- A participant that sent a hello of another version does not become a peer. It remains in `HubTransport::links()` with its participant name and version.
 - To a caller that waits, both cases appear as distinct results, not as "did not come" (`connected`, `mismatched`, `ended`, `missing` in `HelloReport`).
 
 ### Real-time peers and restarted participants

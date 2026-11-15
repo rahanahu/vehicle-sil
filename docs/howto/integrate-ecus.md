@@ -86,7 +86,7 @@ Besides the names, ask the ECU authors for the following:
 |---|---|
 | Build `main()` with `ecu_main()`. | `check` cannot check that ECU. |
 | Use the agreed names, and verify them with `--describe` before delivering the executable (step 2). | The check reports the findings of step 3. |
-| Build with a vehicle-sil version that is not newer than the integrator's. | The check reports the note `version-mismatch` whenever the versions differ. `vehicle_sil_launch` reads and writes the variables of ECU executables built with its own version of vehicle-sil or an older one, back to 0.1.0. An ECU built with a newer vehicle-sil than the launcher is not promised to work: if its variables cannot be used, the check reports the warning `control-link-version`; use a launcher at least as new as the ECU. |
+| Build with the same vehicle-sil version as the integrator. | The check reports the note `version-mismatch`. If the format version for reading and writing variables also differs (for example an ECU built with vehicle-sil 0.1.0 and a newer `vehicle_sil_launch`, or the other way round), the simulation still runs, but you cannot read or write that ECU's variables, and the check reports the warning `control-link-version`. |
 | End the processes that the ECU started when the ECU exits. | `run` reports the warning `left-processes`. |
 | Write stdout and stderr in UTF-8. | Bytes that are not UTF-8 appear as `?`. |
 
@@ -277,8 +277,8 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
 | `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
-| `[version-mismatch]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Nothing, if the ECU is the older one and works. If the two do not work together, use the same vehicle-sil version for both. |
-| `[control-link-version]` | The ECU was built with a newer vehicle-sil than `vehicle_sil_launch`, and the launcher cannot read or write its variables. | Use a `vehicle_sil_launch` at least as new as the ECU (or ask the ECU author to build with your version). |
+| `[version-mismatch]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
+| `[control-link-version]` | The ECU and `vehicle_sil_launch` use different versions of the messages that read and write variables (or the ECU offers its variables over another transport), so the launcher cannot read or write the ECU's variables. The message says which side is older. | If the ECU is older, ask its author to rebuild it with your vehicle-sil version. If it is newer, use a `vehicle_sil_launch` of its vehicle-sil version or a newer one. |
 
 ### If the ECU cannot be rebuilt
 

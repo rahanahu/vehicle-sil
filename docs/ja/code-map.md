@@ -43,6 +43,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 - シナリオの一覧は `CMakeLists.txt` の `SCENARIOS` です。
 - 中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。
 - 共通のコードは `tests/integration/launcher_support.hpp` にあります。
+- `launch_run` のシナリオは、題ごとに `tests/launch/launch_run_<題>.cpp` に分けてあります。`main()` は `launch_run_launcher.cpp` に、共通のコードは `launch_run_support.hpp` にあります。
 
 領域（`tests/` の直下のディレクトリ）のルール:
 
@@ -369,6 +370,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `Ecu::describe()`
 - 関数として呼んだ `ecu_main()` の引数と終了コード
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ追加する場面）、ない ECU の名前や当たらなかった行を始める前に拒否すること
+- `simulation.ecu_main_j1939_node*`: `ecu_main()` の `--j1939-node` が、行の値をノードに与えること（名前を替えたネットワークでも）、どのノードにも当たらない行のメッセージ（終了コード 3）、ステップの中で追加したノードがコードの値のままであること。値の使い方の誤りは `simulation.ecu_main_refuses_bad_command_lines`
 
 イーサネットのチャネル（`test_ethernet.cpp`）では、次のステップで受信すること、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、拒否するときの文言、`LocalBench` の参照を確認します。
 
@@ -384,6 +386,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `--describe` の JSON を [ecu-executable.md](ecu-executable.md) の例と、vehicle-sil のバージョンを除いてバイト単位で照合
 - `--local`
 - `vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU
+- エンジンの 2 つのコピー、2 つ目に `--j1939-node`（`ecu_main.j1939_node`。監視の出力のアドレス）
 - 使い方、停止の要求
 
 ### `core` / `lin`
@@ -651,7 +654,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
 | 盗み聞き | `src/transfer_sniffer.cpp` |
-| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
+| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、告知の形の検査。時間切れは `types.hpp` の `ProtocolTiming`） | `src/transport_wire.hpp` |
 | 聞き役の席（内部の口） | `src/frame_seat.hpp` |
 | 席に座る `Listener` | `src/listener.cpp` |
 
@@ -692,6 +695,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
 | ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
 | 引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| `Peer` の監視の出力の名前（`peer.*`、`j1939.<network>.*`）。`Peer` が登録し、ランチャーが読む | `ecu/monitor_names.hpp` |
 | バスからの切断（`ecu.connected`）の `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort` | `ecu/detail/bus_connection.hpp` |
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
@@ -1172,13 +1176,12 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 ## 依存の向き
 
-どの図でも、矢印は「リンクする」（`target_link_libraries`）です（太い矢印だけは違います。表を見てください）。逆向きの依存は作りません。
+どの図でも、矢印は「リンクする」（`target_link_libraries`）です。逆向きの依存は作りません。
 
 | 図の書き方 | 意味 |
 |---|---|
 | 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
 | 点線の矢印 | 非公開（`PRIVATE`）のリンク |
-| 太い矢印 | 自分のリンクはない。公開のヘッダーが相手のヘッダーを読み、リンクはほかのターゲットの公開のリンクから来る |
 | ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
 
 ### 全体の層
@@ -1332,11 +1335,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1350,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` と `control`: `launch` の公開のヘッダーは `control` のヘッダー（`hub.hpp`、`agent.hpp`、`variable_map.hpp`）を読みます。`launch` は `control` を `ecu` の公開のリンクから得ています。
 - `launch` と `ecu`: `launch` のソースは `ecu` の内部のヘッダー `vehicle_sil/ecu/detail/json_writer.hpp` も読みます。ランチャーは、`--describe` の出力と同じ書き手で JSON を書きます。
 
 ### Vector XL CAN Bridge
@@ -1842,6 +1844,9 @@ flowchart TD
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
 | ファイルを描くページ | `gui/timeline/viewer.js`（ページは `timeline.html`。「The page」より上は DOM なしで動き、単体テストが呼ぶ部分） |
+| ページの文言（英語と日本語） | `gui/timeline/messages.js`: ページが出す文言のすべてを、鍵ごとに両方の言語で（鍵は単体テストが確かめる。`viewer.js` の単語の並んだ文字列は、ページの lint が断る） |
+| GUI サーバー: シナリオの実行に付ける `--timeline`、残すファイル、配るページとファイル | `gui/server/src/vehicle_sil_gui/timelines.py`、`server.py` の `_start()`、`_keep_timeline()`、`get_timeline()`、`get_timeline_page()` |
+| サンプルの画面のリンク「時間の軸」 | `gui/web/src/app/run/scenario-panel.ts` の `ScenarioPanel` と `timelinePageUrl()` |
 | 新しい種類の段、送った値の新しい状態 | `laneKind()` と `variableLane()` の分岐、状態は `pointState()` と `holdSegments()`、`timeline.html` の CSS のクラス。名前を出す代わりに描かせる値は `KNOWN` |
 
 合わせて直すもの:
@@ -1866,6 +1871,7 @@ flowchart TD
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`
 - 基準のファイルと、ページの試験用のファイル `gui/timeline/tests/fixtures/`（基準のファイルにない形。`tests/schema/test_schemas.py` がスキーマに通ることを確かめる）でページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`）。
+- GUI サーバーの部分: `gui/server/tests/test_timelines.py`（機能のあるランチャーとないランチャーでの引数、トークンのあるときとないときのファイルとページ、残すファイルの数）。記録 `run-scenario-*-timeline`（`--timeline` を付けて記録したもの。`record_launcher.py --compare` が本物のランチャーと比べる）を使います。GUI のリンクから開くページは `gui/web/e2e/timeline-link.spec.ts`（`--e2e-grep 'timeline'`）。
 
 ### シナリオをまとめて実行する
 
@@ -2246,13 +2252,12 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 守ること:
 
-- バージョン 1 は変えません。vehicle-sil 0.1.0 でビルドした ECU が話します。
-- Agent は `kVersion` で書き、`kVersion` だけを読みます。Hub のトランスポートは、それぞれの Agent の hello のバージョンを接続（link）に持ち、その Agent にはそのバージョンで書きます（`libs/control_silkit/src/hub_transport.cpp`）。`vehicle_sil_launch` は、`--describe` が出力したバージョンを使えるかどうかを `wire::speaks()` で決めます（`libs/launch/src/check_rules.cpp`、`run_control.cpp`）。そこで `kVersion` と比べないでください。
+- どちらの側も `kVersion` で書き、`kVersion` だけを読みます。別のバージョンの hello は報告し（participant 名は読みます）、Peer にしません。ほかのメッセージは、別のバージョンなら捨てます。`vehicle_sil_launch` は、`--describe` が出力したバージョンを `kVersion` と比べ（`libs/launch/src/check_rules.cpp`、`run_control.cpp`）、どちらをビルドし直すかを `libs/launch/src/check_words.hpp` の `control_version_fix()` で言います。
 - コマンドのどの書き込みが反映されたかと、断った理由がどの書き込みについてかは、数で運びます（`CommandResult::applied_writes`、`SubmitResult::failed_write` と、同じ 2 つの名前を持つ Hub の `TargetResult`）。そのために `reason` を読まないでください。例外は `libs/control/src/hub.cpp` の `write_named()` だけで、数の置き場所がないバージョン 1 の Agent のためのものです（[internals/control.md](internals/control.md) の「Control Server の中核」）。
-- バージョン 2 に項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
-- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kNewestVersion` を上げ、古いバージョンも読み続けます。
+- 項目を追加するときは、その要素（変数、書き込み、結果、イベント）の末尾に追加します。メッセージ全体の項目なら、メッセージの末尾に追加します。`control/wire.hpp` の `kRevision` を 1 上げ、その項目は、その改訂番号以降の相手からだけ読みます。古いビルドの復号は、その項目を読み飛ばします。
+- 読み飛ばしてはいけない変更（項目の移動や削除、相手が知らない列挙の値を送ること）には、新しいバージョンが必要です。`kVersion` を上げます。バージョンの違う ECU とランチャーは、変数を一緒に読み書きできなくなります（照合が `control-link-version` を出します）。
 - `result_bytes()` と `event_bytes()` は、`write_result()` と `write_event()` が書くバイト数とちょうど同じ値を返すようにします。`encode_step()` はこの値で分割するので、小さすぎるとメッセージが上限を超えます。
-- 要素の最小の大きさは、バージョンごとに違います（`kLeastV1`、`kLeastV2`）。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
+- `kLeast` は、要素の最小の大きさです。復号は、何かを読む前に、個数をこの値と照らします。要素に項目を追加したら、ここも直します。
 - 相手が知らなくても困らない種類を追加するだけなら、バージョンも改訂番号も上げません。知らない種類は捨てられます（最後の通知への返事 `Kind::LastWordReceived` がその例です）。
 - ヘッダーの 8 バイト、hello のヘッダーの直後の participant 名、ほかのメッセージのヘッダーの直後の session は、どのバージョンでも変えません。バージョンの違う相手の名前を読むためと、ECU がメッセージの宛先を見るためです。
 
@@ -2263,11 +2268,10 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 テスト:
 
 - `^control\.wire_`: 1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと、sanitizer のプリセットで失敗します。
-- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージがどちらのバージョンでも上限ちょうどまで詰まること。
+- `^control\.wire_v2_`: バージョン 2（メッセージは `tests/control/test_wire_v2.cpp` にも手で書いてあります）。古いバージョンと新しいバージョンを読まないこと、新しい改訂番号から読み飛ばすものと同じ改訂番号から断るもの、要素の大きさ、ステップのメッセージが上限ちょうどまで詰まること。
 - `^control\.wire_building_`: ステップのメッセージを組み立てるとき、バッファが育った後はメモリを確保しないこと（専用の実行ファイル、`tests/control/test_wire_allocation.cpp`）。
-- `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
 - `^control\.wire_v2_revision_0_`: バージョン 2、改訂 0 のバイト列（`tests/control/wire_v2_golden.hpp` に手で書いたもの）。項目を追加するときは、新しい改訂のバイト列を横に追加し、これは変えません。
-- `^control_silkit\..*version_1`、`launch_run.control_version_1`: バージョン 1 だけを話す Agent を、この Hub と `vehicle_sil_launch run` の下で動かします。そういう Agent の決まり（バージョン 1 でないものを捨てる）は `tests/control_silkit/version1_agent.hpp` に手で書いてあり、`tests/launch/version1_ecu.cpp` はその上に作った ECU の実行ファイルです。
+- `control_silkit.a_hello_of_another_version_is_reported_and_makes_no_peer`、`control_silkit.an_agent_does_not_answer_what_is_written_to_it_in_another_version`: 古いバージョンと新しいバージョンを、それぞれの側で。
 
 ### SIL Kit の上のトランスポートと開始前の窓
 

@@ -585,7 +585,7 @@ struct ListenOnlyStack
                 listener = std::make_unique<vehicle_sil::j1939::Listener>(network);
                 listener->on_any_message([this](const Message&) { ++listener_messages; });
                 listener->on_frame([this](const vehicle_sil::j1939::ReceivedFrame&) { ++listener_frames; });
-                listener->on_transfer([this](const vehicle_sil::j1939::SniffedTransfer&) { ++listener_transfers; });
+                listener->on_transfer_end([this](const vehicle_sil::j1939::SniffedTransfer&) { ++listener_transfers; });
             }
             host.add(network, tap);
         }

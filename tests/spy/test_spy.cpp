@@ -507,8 +507,8 @@ TEST_CASE(errors_say_what_is_wrong_and_how_to_fix_it)
                   "variables in the watcher's constructor (Spy::add() makes the watcher before the run)");
     CHECK(throws_with<std::logic_error>([&] { late.scope.on_message(vehicle_sil::j1939::Pgn{kPgnPropA}, [](const Message&) {}); },
                                         "on_message() after the run started"));
-    CHECK(throws_with<std::logic_error>([&] { late.scope.on_transfer([](const SniffedTransfer&) {}); },
-                                        "on_transfer() after the run started"));
+    CHECK(throws_with<std::logic_error>([&] { late.scope.on_transfer_end([](const SniffedTransfer&) {}); },
+                                        "on_transfer_end() after the run started"));
     CHECK(throws_with<std::logic_error>([&] { late.scope.on_frame([](const ReceivedFrame&) {}); },
                                         "on_frame() after the run started"));
     CHECK(throws_with<std::logic_error>([&] { late.scope.on_step([](SimTime) {}); }, "on_step() after the run started"));

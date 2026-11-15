@@ -5,8 +5,8 @@
 // stdout, a closed stdout), --local (runs the ECU, a failed step), a failed set-up (also with an
 // exception that is not a std::exception, a reserved variable name, a name that is not UTF-8), a
 // registry that cannot be reached, a start that times out (--start-timeout-ms) or fails, the
-// ECU's variables offered to a hub over SIL Kit (and --no-control), and the template form passing
-// its arguments to the application.
+// ECU's variables offered to a hub over SIL Kit (and --no-control), --map-network and --j1939-node
+// on a run, and the template form passing its arguments to the application.
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -19,6 +19,7 @@
 #include "vehicle_sil/simulation/simulation.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -157,11 +158,11 @@ struct Probe
 };
 
 /// The description as ecu_main() writes it: the executable offers the ECU's variables over SIL
-/// Kit (unless --no-control) and takes --map-network.
+/// Kit (unless --no-control) and takes --map-network and --j1939-node.
 vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
     description.control = vehicle_sil::ControlOffer{"silkit", 2};
-    description.features = {"map-network"};
+    description.features = {"map-network", "j1939-node"};
     return description;
 }
 
@@ -267,6 +268,11 @@ TEST_CASE(ecu_main_help_writes_the_usage_to_stdout)
         require(contains(r.out, " --describe [--name <name>] [--silkit-config <file>]\n") &&
                     contains(r.out, "  --silkit-config <file>  with --registry-uri: a SIL Kit participant configuration (YAML or JSON)\n"),
                 "the usage has --silkit-config", r);
+        require(contains(r.out, "[--j1939-node <network>=<setting>:<value>[,...]]...\n") &&
+                    contains(r.out, "  --j1939-node <n>=<s>    with --registry-uri, any number of times: change the address "
+                                    "and NAME\n") &&
+                    contains(r.out, "(e.g. VehicleCAN=from:0x00,address:0x01,identity_number:2)\n"),
+                "the usage has --j1939-node", r);
         CHECK_EQ(probe.made, 0);
     }
 }
@@ -361,6 +367,68 @@ TEST_CASE(ecu_main_refuses_bad_command_lines)
          "name for a network; leave --map-network out"},
         {{"--map-network=VehicleCAN=CAN", "--describe"},
          "unknown argument \"--map-network=VehicleCAN=CAN\" (write the value after a space: --map-network VehicleCAN=CAN)"},
+        // --j1939-node: the messages of vehicle_sil/ecu/j1939_node_argument.hpp, as they are.
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node"},
+         "--j1939-node needs <simulation's network name>=<setting>:<value>[,...] after it (e.g. --j1939-node "
+         "VehicleCAN=from:0x00,address:0x01,identity_number:2)"},
+        {{"--j1939-node", "--registry-uri", "silkit://localhost:8500"},
+         "--j1939-node needs <simulation's network name>=<setting>:<value>[,...] after it (e.g. --j1939-node "
+         "VehicleCAN=from:0x00,address:0x01,identity_number:2), not the option \"--registry-uri\""},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN"},
+         "--j1939-node needs <simulation's network name>=<setting>:<value>[,...], not \"VehicleCAN\" (e.g. --j1939-node "
+         "VehicleCAN=from:0x00,address:0x01,identity_number:2: the node that the ECU's code puts at 0x00 on VehicleCAN "
+         "is at 0x01, with identity number 2)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "=address:0x01"},
+         "--j1939-node \"=address:0x01\" has an empty network name: it needs the simulation's name of a J1939 network "
+         "before the '='"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "-x=address:0x01"},
+         "--j1939-node \"-x=address:0x01\" has a network name that starts with '-': it needs the simulation's name of a "
+         "J1939 network before the '='"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN="},
+         "--j1939-node \"VehicleCAN=\" has an empty setting: write <setting>:<value> between the commas (settings: from, "
+         "address, identity_number, function_instance, ecu_instance)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=address:0x01,,ecu_instance:1"},
+         "--j1939-node \"VehicleCAN=address:0x01,,ecu_instance:1\" has an empty setting: write <setting>:<value> between "
+         "the commas (settings: from, address, identity_number, function_instance, ecu_instance)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=address"},
+         "--j1939-node \"VehicleCAN=address\" has the setting \"address\" without a value: write address:<value>"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=adress:0x01"},
+         "--j1939-node \"VehicleCAN=adress:0x01\" has the unknown setting \"adress\": the settings are from, address, "
+         "identity_number, function_instance, ecu_instance"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=address:0x01,address:0x02"},
+         "--j1939-node \"VehicleCAN=address:0x01,address:0x02\" sets address twice: give each setting once"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=from:0x00"},
+         "--j1939-node \"VehicleCAN=from:0x00\" changes nothing: give at least one of address, identity_number, "
+         "function_instance, ecu_instance, or leave it out"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=address:x1"},
+         "--j1939-node \"VehicleCAN=address:x1\" has address \"x1\", which is not a number: write it in decimal or as "
+         "0x.. in hexadecimal"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=identity_number:2097152"},
+         "--j1939-node \"VehicleCAN=identity_number:2097152\" has identity_number 2097152, which is out of its range "
+         "0..2097151"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=address:255"},
+         "--j1939-node \"VehicleCAN=address:255\" has address 255, which is out of its range 0..254"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "\x83G"},
+         "--j1939-node needs ASCII or UTF-8 text, not the bytes 83 47 (a name in another encoding, e.g. a Windows code "
+         "page)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=from:0x00,address:0x01", "--j1939-node",
+          "VehicleCAN=from:0x00,identity_number:2"},
+         "--j1939-node VehicleCAN=from:0x00,address:0x01 and --j1939-node VehicleCAN=from:0x00,identity_number:2 change "
+         "the same node (at 0x00 in the ECU's code): give its settings in one --j1939-node"},
+        {{"--registry-uri", "silkit://localhost:8500", "--j1939-node", "VehicleCAN=from:0x21,address:0x22", "--j1939-node",
+          "VehicleCAN=address:0x01"},
+         "--j1939-node VehicleCAN=address:0x01 has no from, so it is for the only node of the ECU on VehicleCAN, and "
+         "--j1939-node VehicleCAN=from:0x21,address:0x22 is for the same network: give every --j1939-node of a network a "
+         "from"},
+        {{"--describe", "--j1939-node", "VehicleCAN=address:0x01"},
+         "--j1939-node is for --registry-uri: --describe says the addresses and NAMEs in the ECU's code, whatever a "
+         "simulation changes them to; leave --j1939-node out"},
+        {{"--local", "--run-for-ms", "10", "--j1939-node", "VehicleCAN=address:0x01"},
+         "--j1939-node is for --registry-uri: --local runs the ECU alone on local virtual buses, where no other ECU needs "
+         "another address; leave --j1939-node out"},
+        {{"--j1939-node=VehicleCAN=address:0x01", "--describe"},
+         "unknown argument \"--j1939-node=VehicleCAN=address:0x01\" (write the value after a space: --j1939-node "
+         "VehicleCAN=address:0x01)"},
     };
     for (const auto& c : cases)
     {
@@ -413,8 +481,9 @@ TEST_CASE(ecu_main_describe_writes_the_json_of_the_ecu)
     CHECK_EQ(probe.made, 1);
     CHECK_EQ(probe.steps, 0); // nothing ran
     require(contains(r.out, "\"name\": \"Engine\",\n  \"step_ns\": 10000000,\n"), "name and step", r);
-    // The executable says that it takes --map-network, last and whatever else is given.
-    const std::string features = "  \"features\": [\n    \"map-network\"\n  ]\n}\n";
+    // The executable says that it takes --map-network and --j1939-node, last and whatever else is
+    // given.
+    const std::string features = "  \"features\": [\n    \"map-network\",\n    \"j1939-node\"\n  ]\n}\n";
     require(r.out.size() > features.size() && r.out.compare(r.out.size() - features.size(), features.size(), features) == 0,
             "the features", r);
     const Result quiet = call({"--describe", "--no-control", "--name", "Other"});
@@ -929,12 +998,12 @@ TEST_CASE(ecu_main_start_timeout_and_start_failure)
     require(contains(timeout.err, "within 300 ms"), "the timeout given", timeout);
     require(contains(timeout.err, "To wait longer: --start-timeout-ms)\n"), "the hint", timeout);
 
-    // A start that fails for another reason (a variable that clashes with a network's
-    // monitoring output on SIL Kit): no hint about a controller.
+    // A start that fails for another reason (a variable registered on the agent that clashes
+    // with a network's monitoring output on SIL Kit): no hint about a controller.
     const Result clash = call_with({"--registry-uri", uri, "--name", "Clash"}, [](Ecu& ecu) {
         static double x = 0;
         static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
-        ecu.input("j1939.CAN.bus_state", &x);
+        ecu.agent().input("j1939.CAN.bus_state", &x);
     });
     require(clash.code == 3, "exit 3", clash);
     require(clash.err.rfind("error: Clash: could not start: ", 0) == 0, "could not start", clash);
@@ -1067,12 +1136,13 @@ TEST_CASE(ecu_main_map_network_renames_the_networks_of_the_run)
     const Result none = call_with({"--registry-uri", uri, "--map-network", "VehicleCAN=CAN"}, [](Ecu&) {});
     require(none.code == 3 && contains(none.err, "the ECU has no network 'CAN' (its networks: none): "), "an ECU without networks", none);
     // The other name reaches the ECU's participant: its monitoring outputs are named with it, so
-    // a variable of the ECU with that name clashes (and with the code's name it does not).
+    // a variable registered on the agent with that name clashes (and with the code's name it
+    // does not; input() and the like refuse any name under "j1939.").
     static double x = 0.0;
     const auto with_variable = [](const char* name) {
         return [name](Ecu& ecu) {
             static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
-            ecu.input(name, &x);
+            ecu.agent().input(name, &x);
         };
     };
     const Result clash = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--map-network", "VehicleCAN=CAN"},
@@ -1090,6 +1160,168 @@ TEST_CASE(ecu_main_map_network_renames_the_networks_of_the_run)
     // Two networks of the ECU that would be one in the simulation: the set-up fails.
     const Result one_bus = call_with({"--registry-uri", uri, "--map-network", "BODY_LIN=CAN"}, two_networks);
     require(one_bus.code == 3 && contains(one_bus.err, "so two networks of the ECU would be one bus"), "one bus", one_bus);
+}
+
+namespace {
+
+/// A NAME for the tests of --j1939-node (the example Manufacturer Code).
+vehicle_sil::j1939::Name named(std::uint32_t identity_number, bool arbitrary_address_capable = false)
+{
+    return vehicle_sil::j1939::Name{}
+        .set_identity_number(identity_number)
+        .set_manufacturer_code(0x7F0)
+        .set_arbitrary_address_capable(arbitrary_address_capable);
+}
+
+} // namespace
+
+TEST_CASE(ecu_main_j1939_node_changes_the_nodes_of_the_run)
+{
+    vehicle_sil::Simulation registry(vehicle_sil::SilKitOptions{});
+    const std::string uri = registry.registry_uri();
+    // The ECU has one node, at 0x10 on its network CAN; the set-up records what add_node() made.
+    struct Made
+    {
+        vehicle_sil::j1939::Address coded = 0;
+        vehicle_sil::j1939::Address requested = 0;
+        std::uint32_t identity_number = 0;
+    };
+    Made made;
+    const auto one_node = [&made](Ecu& ecu) {
+        const auto& node = ecu.j1939("CAN").add_node({.address = 0x10, .name = named(1)});
+        made = {node.coded_address(), node.requested_address(), node.name()->identity_number()};
+    };
+    // The set-up passes: the node has the other values, and the ECU joins (nobody starts the
+    // simulation).
+    struct Passing
+    {
+        std::vector<std::string> args;
+        vehicle_sil::j1939::Address address;
+        std::uint32_t identity_number;
+    };
+    for (const auto& p : std::vector<Passing>{
+             {{"--j1939-node", "CAN=address:0x11"}, 0x11, 1},
+             {{"--j1939-node", "CAN=from:0x10,address:0x11,identity_number:2"}, 0x11, 2},
+             {{"--j1939-node", "CAN=from:16,identity_number:3"}, 0x10, 3},
+             // The simulation's name of a renamed network.
+             {{"--map-network", "VehicleCAN=CAN", "--j1939-node", "VehicleCAN=address:0x12"}, 0x12, 1}})
+    {
+        std::vector<std::string> args{"--registry-uri", uri, "--start-timeout-ms", "300"};
+        args.insert(args.end(), p.args.begin(), p.args.end());
+        made = {};
+        const Result r = call_with(args, one_node);
+        require(r.code == 3 && r.err.rfind("error: Engine: the simulation did not start: ", 0) == 0, "it joined and gave up", r);
+        require(made.coded == 0x10 && made.requested == p.address && made.identity_number == p.identity_number,
+                "the node took the values of " + p.args.back(), r);
+    }
+    {
+        // The lines are for the ECU under its participant name (--name).
+        made = {};
+        const Result r = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--name", "Engine2", "--j1939-node",
+                                    "CAN=address:0x11,identity_number:2"},
+                                   one_node);
+        require(r.code == 3 && r.err.rfind("error: Engine2: the simulation did not start: ", 0) == 0,
+                "Engine2 joined and gave up", r);
+        require(made.requested == 0x11 && made.identity_number == 2, "the node of Engine2 took the values", r);
+    }
+
+    // A --j1939-node that no node takes: a mistake of the command line that only the set-up
+    // shows. Exit code 3, one line, before the ECU joins.
+    const auto refused = [&uri](const std::vector<std::string>& extra, const std::function<void(Ecu&)>& set_up,
+                                const std::string& error) {
+        std::vector<std::string> args{"--registry-uri", uri, "--start-timeout-ms", "300"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        const Result r = call_with(args, set_up);
+        require(r.code == 3 && r.err == "error: Engine: " + error + "\n", "exit 3 and the line " + error, r);
+    };
+    refused({"--j1939-node", "CAN=from:0x20,address:0x01"}, one_node,
+            "--j1939-node CAN=from:0x20,address:0x01: the ECU has no node that its code puts at 0x20 on 'CAN' (its nodes "
+            "there: 0x10; nodes that it adds after it starts cannot be changed): after from: goes the address in the "
+            "ECU's code, not the new one; correct it, or leave this --j1939-node out");
+    refused({"--j1939-node", "CAN=address:0x01"}, [](Ecu& ecu) { static_cast<void>(ecu.j1939("CAN")); },
+            "--j1939-node CAN=address:0x01: the ECU has no node on 'CAN' (nodes that it adds after it starts cannot be "
+            "changed): leave this --j1939-node out");
+    refused({"--j1939-node", "VehicleCAN=address:0x01"}, one_node,
+            "--j1939-node VehicleCAN=address:0x01: the ECU has no J1939 network 'VehicleCAN' (its J1939 networks: 'CAN'): "
+            "write the simulation's name of one of them; if the simulation calls 'CAN' 'VehicleCAN', give --map-network "
+            "VehicleCAN=CAN too");
+    // The code's name of a renamed network: no --map-network to suggest.
+    refused({"--map-network", "VehicleCAN=CAN", "--j1939-node", "CAN=address:0x01"}, one_node,
+            "--j1939-node CAN=address:0x01: the ECU has no J1939 network 'CAN' (its J1939 networks: 'VehicleCAN' (CAN in "
+            "its code)): write the simulation's name of one of them");
+    // A raw CAN network of that name is not a J1939 network.
+    refused({"--j1939-node", "CAN=address:0x01"}, [](Ecu& ecu) { static_cast<void>(ecu.can("CAN")); },
+            "--j1939-node CAN=address:0x01: the ECU has no J1939 network: leave this --j1939-node out");
+    // What add_node() refuses fails the set-up with its own message.
+    refused({"--j1939-node", "CAN=address:0x11"},
+            [](Ecu& ecu) {
+                auto& network = ecu.j1939("CAN");
+                static_cast<void>(network.add_node({.address = 0x10, .name = named(1)}));
+                static_cast<void>(network.add_node({.address = 0x20, .name = named(2)}));
+            },
+            "vehicle_sil::j1939::Network: the node override address:0x11 has no from, so it is for the only node, and a "
+            "second node was added (at 0x20 in the code; the first is at 0x10): give it a from (with ecu_main: "
+            "--j1939-node <network>=from:<address in the code>,...)");
+    refused({"--j1939-node", "CAN=from:254,address:0x11"},
+            [](Ecu& ecu) {
+                auto& network = ecu.j1939("CAN");
+                static_cast<void>(network.add_node({.address = vehicle_sil::j1939::kNullAddress, .name = named(1, true)}));
+                static_cast<void>(network.add_node({.address = vehicle_sil::j1939::kNullAddress, .name = named(2, true)}));
+            },
+            "vehicle_sil::j1939::Network: the node override from:254,address:0x11 cannot pick a node: the code adds two "
+            "nodes at any (254), and from tells nodes apart by that address; remove the override, and give the nodes "
+            "addresses of their own in the code");
+    refused({"--j1939-node", "CAN=identity_number:2"},
+            [](Ecu& ecu) { static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10})); },
+            "vehicle_sil::j1939::Network: the node override identity_number:2 sets a NAME field, but the node at 0x10 in "
+            "the code has no NAME (it does not claim its address): remove identity_number; for this node only address can "
+            "be changed");
+    refused({"--j1939-node", "CAN=address:254"}, one_node,
+            "vehicle_sil::j1939::Network: the node override address:254 asks for any free address (254), but the NAME of "
+            "the node at 0x10 in the code is not arbitrary address capable: give an address of 0..253");
+}
+
+TEST_CASE(ecu_main_j1939_node_leaves_a_node_added_in_a_step_as_its_code_has_it)
+{
+    // A controller runs the simulation for a few steps; the ECU adds a second node in its first
+    // step. The entry without from is for the network's only node at the set-up; the node added
+    // later keeps its code's values, and the run goes on.
+    vehicle_sil::Simulation registry(vehicle_sil::SilKitOptions{});
+    vehicle_sil::SimulationControllerOptions c;
+    c.registry_uri = registry.registry_uri();
+    c.required_participants = {"Engine"};
+    c.stop_at = 50ms;
+    c.time_control = vehicle_sil::TimeControlOptions{};
+    vehicle_sil::SimulationController controller(std::move(c));
+    std::string start_error;
+    std::thread starter([&] {
+        try
+        {
+            controller.start(60s);
+        }
+        catch (const std::exception& e)
+        {
+            start_error = e.what();
+        }
+    });
+    vehicle_sil::j1939::Address first = 0;
+    vehicle_sil::j1939::Address second = 0;
+    int steps = 0;
+    const Result r = call_with({"--registry-uri", registry.registry_uri(), "--j1939-node", "CAN=address:0x11"}, [&](Ecu& ecu) {
+        auto& network = ecu.j1939("CAN");
+        const auto& node = network.add_node({.address = 0x10, .name = named(1)});
+        ecu.on_step([&network, &node, &first, &second, &steps](SimTime) {
+            if (steps++ == 0)
+            {
+                second = network.add_node({.address = 0x20, .name = named(2)}).requested_address();
+            }
+            first = node.requested_address();
+        });
+    });
+    starter.join();
+    require(r.code == 0, "the ECU ran to the end of the simulation", r);
+    require(start_error.empty(), "the controller started: " + start_error, r);
+    require(steps > 1 && first == 0x11 && second == 0x20, "the first node took the entry, the second kept 0x20", r);
 }
 
 TEST_CASE(ecu_main_map_network_refuses_a_silkit_configuration_that_names_a_network)

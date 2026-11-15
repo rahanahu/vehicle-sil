@@ -820,45 +820,47 @@ TEST_CASE(reads_what_an_executable_says_about_offering_its_variables)
     check_text(refused(R"({"wire_version": 1})"), "control: the key transport is missing");
     check_text(refused(R"({"transport": "silkit"})"), "control: the key wire_version is missing");
     check_text(refused(R"({"transport": "silkit", "wire_version": -1})"), "control.wire_version is -1, not a version");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 0})"), "control.wire_version is 0, not a version");
     check_text(refused(R"({"transport": "silkit", "wire_version": 70000})"), "control.wire_version is 70000, not a version");
 }
 
 TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_messages_a_warning)
 {
-    // Variables, offered in a version of the messages this launcher speaks (its own, and the one
-    // of an ECU built with vehicle-sil 0.1.0): nothing to say.
+    // Variables, offered in the version of the messages this launcher speaks: nothing to say.
     Setup s = good_pair();
     s.results[0].ecu->description.variables = {variable("x")};
     // No variables: nothing to offer, whatever the executable says.
     s.results[1].ecu->description.control.reset();
-    for (const int spoken : {1, 2})
-    {
-        s.results[0].ecu->description.control = ControlOffer{"silkit", spoken};
-        check_text(s.check(), "");
-    }
-    CHECK_EQ(control::wire::kOldestVersion, std::uint16_t{1});
-    CHECK_EQ(control::wire::kNewestVersion, std::uint16_t{2});
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2};
+    check_text(s.check(), "");
+    CHECK_EQ(control::wire::kVersion, std::uint16_t{2});
     // Variables that the executable does not offer (--no-control, an earlier vehicle-sil).
     s.results[1].ecu->description.variables = {variable("y")};
     check_text(s.check(), "N 9 control-link-not-offered: participant 'Dashboard': it describes variables, but does not offer "
                           "them to the simulation (--no-control, or an executable of a vehicle-sil that does not yet): "
                           "vehicle_sil_launch run cannot read or write them\n");
-    // Offered in a version this launcher does not speak (a later one, or none at all): known before
-    // anything is started.
-    for (const int other : {3, 0})
+    // Offered in another version: known before anything is started, and the fix depends on which
+    // side is the older one.
+    s.results[1].ecu->description.control = ControlOffer{"silkit", 1};
+    check_text(s.check(), "W 9 control-link-version: participant 'Dashboard': it offers its variables as silkit messages of "
+                          "version 1, and this vehicle_sil_launch speaks version 2, so vehicle_sil_launch run cannot read or "
+                          "write them: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this "
+                          "vehicle_sil_launch\n");
+    s.results[1].ecu->description.control = ControlOffer{"silkit", 3};
+    check_text(s.check(), "W 9 control-link-version: participant 'Dashboard': it offers its variables as silkit messages of "
+                          "version 3, and this vehicle_sil_launch speaks version 2, so vehicle_sil_launch run cannot read or "
+                          "write them: the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a "
+                          "newer one\n");
+    // ... or in another transport, whatever its version: not a matter of versions.
+    for (const int version : {1, 2, 3})
     {
-        s.results[1].ecu->description.control = ControlOffer{"silkit", other};
-        check_text(s.check(), "W 9 control-link-version: participant 'Dashboard': it offers its variables as silkit messages of "
-                              "version " + std::to_string(other) +
-                                  ", and this vehicle_sil_launch speaks silkit messages of versions 1 to 2, so "
-                                  "vehicle_sil_launch run cannot read or write them: use a vehicle_sil_launch that is at least "
-                                  "as new as the vehicle-sil the ECU was built with\n");
+        s.results[1].ecu->description.control = ControlOffer{"other", version};
+        check_text(s.check(), "W 9 control-link-version: participant 'Dashboard': it offers its variables over the transport "
+                              "other, and this vehicle_sil_launch reads and writes variables over silkit only, so "
+                              "vehicle_sil_launch run cannot read or write them: make the executable offer them over silkit "
+                              "(as ecu_main does), or use a vehicle_sil_launch that knows the transport other\n");
     }
-    // ... or in another transport, whatever its version.
-    s.results[1].ecu->description.control = ControlOffer{"other", 2};
-    CHECK(s.check().find("W 9 control-link-version: participant 'Dashboard': it offers its variables as other messages of "
-                         "version 2, and this vehicle_sil_launch speaks silkit messages of versions 1 to 2, so") == 0);
-    s.results[0].ecu->description.control = ControlOffer{"silkit", 1};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 2};
     s.results[1].ecu->description.control = ControlOffer{"silkit", 3};
     // The check's JSON says what each executable offers.
     CheckReport r;
@@ -866,7 +868,7 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     r.config = s.config;
     r.participants = s.results;
     const std::string json = format_json(r);
-    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 1\n      }\n") !=
+    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 2\n      }\n") !=
           std::string::npos);
     CHECK(json.find("\"wire_version\": 3\n") != std::string::npos);
     // A disabled participant is not in the simulation: nothing about its variables.

@@ -615,7 +615,7 @@
         "t_ms": 190,
         "name": "Dashboard",
         "state": "version_mismatch",
-        "version": 3
+        "version": 1
       }
     },
     {
@@ -895,7 +895,7 @@
         "line": null,
         "participant": "Dashboard",
         "network": null,
-        "message": "participant 'Dashboard': its control agent speaks version 3 of the control messages and this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with"
+        "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
       }
     },
     {
@@ -963,7 +963,7 @@
               "control_link": {
                 "state": "version_mismatch",
                 "variables": null,
-                "version": 3,
+                "version": 1,
                 "late_messages": 0
               }
             },
@@ -1072,7 +1072,7 @@
               "line": null,
               "participant": "Dashboard",
               "network": null,
-              "message": "participant 'Dashboard': its control agent speaks version 3 of the control messages and this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with"
+              "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
             }
           ],
           "check": {
@@ -1730,7 +1730,7 @@
             "log": null,
             "control_link": {
               "state": "version_mismatch",
-              "version": 3
+              "version": 1
             },
             "exit_code": 0,
             "signal": null
@@ -1786,7 +1786,7 @@
             "line": null,
             "participant": "Dashboard",
             "network": null,
-            "message": "participant 'Dashboard': its control agent speaks version 3 of the control messages and this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with"
+            "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
           }
         ],
         "findings_omitted": 0,
@@ -1849,7 +1849,7 @@
               "control_link": {
                 "state": "version_mismatch",
                 "variables": null,
-                "version": 3,
+                "version": 1,
                 "late_messages": 0
               }
             },
@@ -1958,7 +1958,7 @@
               "line": null,
               "participant": "Dashboard",
               "network": null,
-              "message": "participant 'Dashboard': its control agent speaks version 3 of the control messages and this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with"
+              "message": "participant 'Dashboard': its control agent speaks version 1 of the control messages and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
             }
           ],
           "check": {

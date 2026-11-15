@@ -536,8 +536,8 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
         "transport of its own gives --no-control), or the launcher did not take its hello (the finding "
         "control-link-dropped says so, if it is there); the lines [Engine] above show what it wrote\n"
         "W 7 control-link-version: participant 'Brake': its control agent speaks version 7 of the control messages and "
-        "this launcher versions 1 to 2, so its variables cannot be read or written in this run: use a "
-        "vehicle_sil_launch that is at least as new as the vehicle-sil the ECU was built with\n";
+        "this launcher version 2, so its variables cannot be read or written in this run: the ECU is of a newer "
+        "vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one\n";
     check_text(lines(assess_run(o)), expected);
     // They are settled when the simulation starts: the participants' end does not change them.
     check_text(lines(launch::detail::settled_findings(o)), expected);
@@ -548,6 +548,13 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
     CHECK(json.find("        \"state\": \"no_hello\",\n") != std::string::npos);
     CHECK(json.find("        \"state\": \"version_mismatch\",\n        \"variables\": null,\n        \"version\": 7,\n") !=
           std::string::npos);
+    // An older version than the launcher's: the ECU is the one to build again.
+    o.participants[0].control = ControlLink::None;
+    o.participants[1].control_version = 1;
+    check_text(lines(assess_run(o)),
+               "W 7 control-link-version: participant 'Brake': its control agent speaks version 1 of the control messages "
+               "and this launcher version 2, so its variables cannot be read or written in this run: the ECU is of an older "
+               "vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch\n");
     // A version that --describe announced is the check's finding: the run does not say it again.
     o.participants[0].control = ControlLink::None;
     o.participants[1].control_version_described = true;
@@ -588,9 +595,10 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
     check_text(lines(assess_run(mute)),
                "W 5 control-link-no-hello: participant 'Engine': it offers its variables (--describe), but its control agent "
                "said hello and then did not answer that it receives the launcher's commands within 5000 ms before the "
-               "simulation started, so its variables cannot be read or written in this run. Its transport does not answer "
-               "the launcher's probe: build the ECU and vehicle_sil_launch from the same version of vehicle-sil; the lines "
-               "[Engine] above show what it wrote\n");
+               "simulation started, so its variables cannot be read or written in this run. Its transport did not answer "
+               "the launcher's probe: look in the ECU's output for an error of its control transport (an application with "
+               "a transport of its own answers the probe, or gives --no-control); the lines [Engine] above show what it "
+               "wrote\n");
 
     // What the launcher's end dropped is said once, with the numbers.
     RunOutcome dropped = passed_run();

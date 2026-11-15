@@ -36,6 +36,7 @@ using vehicle_sil::can::TapRecord;
 using vehicle_sil::can::TimedFrame;
 using vehicle_sil::can::VirtualCanBus;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 
 namespace {
 
@@ -234,6 +235,38 @@ TEST_CASE(tap_port_and_listener_can_be_destroyed_in_either_order)
         second.set_listener(nullptr);
         CHECK(second.listener() == nullptr);
     }
+}
+
+TEST_CASE(tap_port_has_one_listener_and_refuses_a_second)
+{
+    // A second TapListener does not replace the first one silently: it is refused, and the first
+    // one keeps listening. Removing the first one makes room for another.
+    VirtualCanBus bus;
+    auto& peer = bus.attach();
+    auto& port = bus.attach();
+    Log first;
+    Log second;
+    TapPort tap(port, &first);
+    CHECK(throws_with<std::logic_error>(
+        [&] { tap.set_listener(&second); },
+        "vehicle_sil::can::TapPort::set_listener(): this TapPort already has a TapListener (a TapPort has one); read the "
+        "frames from that listener (one testkit::FrameLog per TapPort), or remove it first with set_listener(nullptr)"));
+    CHECK(tap.listener() == &first);
+    tap.set_listener(&first); // the same one again: nothing changes
+    peer.send(TimedFrame{at(1ms), frame(1)});
+    CHECK_EQ(tap.release_before(at(2ms), [](const TimedFrame&) {}), 1u);
+    CHECK_EQ(first.records.size(), 1u);
+    CHECK(second.records.empty());
+    tap.set_listener(nullptr);
+    tap.set_listener(&second);
+    peer.send(TimedFrame{at(3ms), frame(2)});
+    CHECK_EQ(tap.release_before(at(4ms), [](const TimedFrame&) {}), 1u);
+    CHECK_EQ(first.records.size(), 1u);
+    CHECK_EQ(second.records.size(), 1u);
+    // A listener of another tap does not leave it for a tap that has one.
+    TapPort other(port, &first);
+    CHECK(throws<std::logic_error>([&] { other.set_listener(&second); }));
+    CHECK(other.listener() == &first);
 }
 
 TEST_CASE(tap_port_forwards_the_time_domain_and_the_counts)
