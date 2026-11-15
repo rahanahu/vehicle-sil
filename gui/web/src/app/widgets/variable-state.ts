@@ -1,5 +1,6 @@
 import { VariableInfo, VariableValue } from '@vehicle-sil/gui-client';
 import { formatMeasure } from '../core/format/measure-pipe';
+import { numberText } from '../core/format/number-text';
 
 // 値を文字にする、入力を数にする（画面の側の決まり）。値の状態（ValueCondition）、書けない理由（WriteBlock）、
 // 書き込みの様子（WriteStatus）とそれを決める関数は、クライアントのライブラリ（`@vehicle-sil/gui-client`）にある。
@@ -30,14 +31,14 @@ export function formatValue(
 }
 
 /**
- * 入力された文字を、変数に書ける数にする。読めなければ理由（kind）を返す: not-a-number（数でない）、
+ * 入力された文字（全角の数字も）を、変数に書ける数にする。読めなければ理由（kind）を返す: not-a-number（数でない）、
  * not-integer（整数の変数に小数）、below（min より小さい）、above（max より大きい）。
  */
 export function parseNumber(
   info: Pick<VariableInfo, 'type' | 'min' | 'max'>,
   text: string,
 ): { value: number } | { problem: 'not-a-number' | 'not-integer' | 'below' | 'above' } {
-  const trimmed = text.trim();
+  const trimmed = numberText(text);
   const value = trimmed === '' ? NaN : Number(trimmed);
   if (!Number.isFinite(value)) return { problem: 'not-a-number' };
   if (info.type === 'integer' && !Number.isSafeInteger(value)) return { problem: 'not-integer' };

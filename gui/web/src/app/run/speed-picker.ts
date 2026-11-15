@@ -1,8 +1,9 @@
-import { Component, computed, input, linkedSignal, model } from '@angular/core';
+import { Component, computed, input, linkedSignal, model, signal } from '@angular/core';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { Speed } from '@vehicle-sil/gui-client';
+import { numberText } from '../core/format/number-text';
 
 /** file: 構成ファイルのとおり（ランチャーの既定）、max: 最速、real: 等速、factor: 倍率。 */
 export type SpeedChoice = 'file' | 'max' | 'real' | 'factor';
@@ -21,7 +22,7 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
 
 /**
  * 速度: 構成のとおり / 最速 / 等速 / 倍率。倍率は打った文字のまま持ち、範囲の中の数のときだけ speed に返す。
- * 範囲の外か数でないときは、欄の下に理由を出し、invalid を true にする（開始の理由に出す）。
+ * 範囲の外か数でないときは invalid を true にし（開始の理由に出す）、欄を離れたか Enter の後に、欄の下に理由を出す。
  */
 @Component({
   selector: 'app-speed-picker',
@@ -52,21 +53,24 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
           data-testid="speed-factor"
           [value]="factorText()"
           [disabled]="locked()"
-          [attr.aria-invalid]="error() !== null"
-          [attr.aria-describedby]="error() !== null ? id + '-error' : null"
+          [attr.aria-invalid]="shownError() !== null"
+          [attr.aria-describedby]="shownError() !== null ? id + '-error' : null"
           #factorInput
           (input)="setFactor(factorInput.value)"
+          (blur)="checked.set(true)"
+          (keydown.enter)="enter($event)"
         />
       </mat-form-field>
     }
+    <!-- 誤りは、欄を離れたときか Enter で出す（打っている間は消すだけ） -->
     <p
       class="error"
       [id]="id + '-error'"
-      role="alert"
+      role="status"
       data-testid="speed-error"
-      [class.shown]="error() !== null"
+      [class.shown]="shownError() !== null"
     >
-      {{ error() }}
+      {{ shownError() }}
     </p>
   `,
   styles: `
@@ -129,40 +133,51 @@ export class SpeedPicker {
   protected readonly factorText = linkedSignal<Speed, string>({
     source: this.speed,
     computation: (speed, previous) => {
-      if (previous && Number(previous.value) === speed) return previous.value;
+      if (previous && Number(numberText(previous.value)) === speed) return previous.value;
       return typeof speed === 'number' && speed !== 1 ? String(speed) : (previous?.value ?? '2');
     },
   });
 
   protected readonly error = computed(() => {
-    if (this.choice() !== 'factor' || this.valid(this.factorText())) return null;
+    if (this.choice() !== 'factor' || this.factorOf(this.factorText()) !== null) return null;
     return $localize`倍率は ${this.min()}:min: から ${this.max()}:max: の数にしてください。`;
   });
+  /** 倍率の誤りを出してよいか: 欄を離れたか Enter の後。打ち直すと消す（invalid は打つたびに決める）。 */
+  protected readonly checked = signal(false);
+  protected readonly shownError = computed(() => (this.checked() ? this.error() : null));
 
   protected choose(choice: SpeedChoice): void {
     this.choice.set(choice);
-    const factor = this.factorText();
+    const factor = this.factorOf(this.factorText());
     const speeds: Record<SpeedChoice, Speed> = {
       file: null,
       max: 'max',
       real: 1,
-      factor: this.valid(factor) ? Number(factor) : this.speed(),
+      factor: factor ?? this.speed(),
     };
     this.speed.set(speeds[choice]);
-    this.invalid.set(choice === 'factor' && !this.valid(factor));
+    this.invalid.set(choice === 'factor' && factor === null);
   }
 
   protected setFactor(text: string): void {
     this.factorText.set(text);
-    const valid = this.valid(text);
-    this.invalid.set(!valid);
-    if (valid) this.speed.set(Number(text));
+    this.checked.set(false);
+    const factor = this.factorOf(text);
+    this.invalid.set(factor === null);
+    if (factor !== null) this.speed.set(factor);
   }
 
-  private valid(text: string): boolean {
-    const value = Number(text);
-    return (
-      text.trim() !== '' && Number.isFinite(value) && value >= this.min() && value <= this.max()
-    );
+  /** Enter で誤りを出す。日本語入力の変換を確定する Enter（isComposing）は数えない。 */
+  protected enter(event: Event): void {
+    if (!(event as KeyboardEvent).isComposing) this.checked.set(true);
+  }
+
+  /** 倍率の欄の文字（全角の数字も）が範囲の中の数なら、その数。 */
+  private factorOf(text: string): number | null {
+    const trimmed = numberText(text);
+    const value = Number(trimmed);
+    return trimmed !== '' && Number.isFinite(value) && value >= this.min() && value <= this.max()
+      ? value
+      : null;
   }
 }

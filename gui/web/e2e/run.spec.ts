@@ -75,11 +75,18 @@ test('started paused: a step, resume, pause, a new speed, stop', async ({ page }
 
   // ステップ送り: ランチャーが刻み（10 ms）の倍数に切り上げた、実際に進む量を出す
   // ダブルクリックしても 1 回だけ進む（ランチャーの答えが届くまで、次を送らない）
-  await page.getByTestId('step-ms').fill('２５');
   const steps: unknown[] = [];
   page.on('request', (r) => {
     if (r.url().endsWith('/api/time')) steps.push(r.postDataJSON());
   });
+  // A wrong amount: no error while it is typed; Enter (the field's form) says why and sends nothing
+  await page.getByTestId('step-ms').fill('0');
+  await expect(page.getByTestId('step-ms-error')).toHaveText('');
+  await page.getByTestId('step-ms').press('Enter');
+  await expect(page.getByTestId('step-ms-error')).toContainText('1 から');
+  await expect(page.getByTestId('step-ms')).toHaveAttribute('aria-invalid', 'true');
+  await page.getByTestId('step-ms').fill('２５');
+  await expect(page.getByTestId('step-ms-error')).toHaveText('');
   await expect(page.getByTestId('step')).not.toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('step').dblclick();
   await expect(page.getByTestId('step-hint')).toContainText('30 ms');

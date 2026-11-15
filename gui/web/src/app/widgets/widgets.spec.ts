@@ -336,9 +336,13 @@ describe('variable widgets', () => {
     fixture.detectChanges();
     expect(text(fixture, 'widget-error')).toBe('✗ 数を入れてください');
     expect(writes()).toHaveLength(0);
-    field.value = '12.5';
+    // 日本語入力の変換を確定する Enter では書かない。Enter（form の送信）で書く。全角の数字も受ける
+    field.value = '１２．５';
     field.dispatchEvent(new Event('input'));
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }));
+    fixture.detectChanges();
+    expect(writes()).toHaveLength(0);
+    field.form!.requestSubmit();
     fixture.detectChanges();
     const [request] = writes();
     expect(request.request.body).toEqual({
@@ -368,7 +372,7 @@ describe('variable widgets', () => {
     const field = element<HTMLInputElement>(fixture, 'input[data-testid="widget-control"]');
     field.value = '101';
     field.dispatchEvent(new Event('input'));
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    field.form!.requestSubmit();
     fixture.detectChanges();
     expect(text(fixture, 'widget-error')).toBe('✗ 100 以下にしてください');
     expect(writes()).toHaveLength(0);
