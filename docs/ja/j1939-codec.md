@@ -44,7 +44,7 @@ vehicle_sil_add_j1939_codec(engine_messages engine_messages.yaml)   # engine_mes
 target_link_libraries(my_ecu PRIVATE engine_messages)
 ```
 
-`vehicle_sil_add_j1939_codec(<target> <定義.yaml>...)` は、次のことをします。
+`vehicle_sil_add_j1939_codec(<target> <definition.yaml>...)` は、次のことをします。
 
 | 項目 | 内容 |
 |---|---|
@@ -62,7 +62,7 @@ target_link_libraries(my_ecu PRIVATE engine_messages)
 生成器は、次のコマンドで直接実行することもできます。
 
 ```sh
-tools/j1939_codegen/j1939_codegen.py <定義.yaml> -o <ヘッダー>
+tools/j1939_codegen/j1939_codegen.py <definition.yaml> -o <header>
 ```
 
 ## 定義の書き方
@@ -126,7 +126,7 @@ messages:
 | `byte_order` | `little`（既定）か `big` |
 | `signed` | `true` で 2 の補数（既定 `false`） |
 | `scale`、`offset` | 物理値 = raw × `scale` + `offset`（既定 1 と 0、`scale` は正の数）。数のほかに `"1/8"`、`"1e-3"` のような文字列も書ける |
-| `min`、`max` | 物理値の有効範囲。raw の有効範囲は、この範囲に入る raw 値（端は切り上げと切り捨て）に狭まる |
+| `min`、`max` | 物理値の有効範囲。raw の有効範囲は、この範囲に入る raw 値（`min` に当たる raw の端は切り上げ、`max` に当たる端は切り捨て）に狭まる |
 | `unit` | 単位（文字列） |
 | `indicators` | この信号の、特別な値のプロファイル（既定はメッセージの `indicators`）。下の「特別な値」 |
 | `special_values` | この信号だけの特別な値（名前と値。書き方はプロファイルの `values` と同じ）。継承したプロファイルを置き換える |

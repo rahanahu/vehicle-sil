@@ -629,7 +629,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - テスト: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
 
-### `libs/j1939/parts/<コンポーネント>`
+### `libs/j1939/parts/<part>`
 
 コンポーネントごとに、1 つのディレクトリと 1 つのターゲットがあります。
 
@@ -1541,7 +1541,7 @@ flowchart TD
 - [simulation-events.md](simulation-events.md) の「プログラムから使う」: イベントと `state` の表、コマンドの表、`features` の表
 - [simulation-events.md](simulation-events.md) の「プログラムから使う」: イベントの例（`launch_run.events` が、置き換えの後にバイト単位で照合）
 - [simulation-events.md](simulation-events.md) の「プログラムから使う」の「読む側が遅いとき、読まないとき」（下の不変条件を変えたとき）
-- [simulation-events.md](simulation-events.md) の「プログラムから使う」: 引数の表（`--events-stall-ms` を変えたとき）
+- [simulation-config.md](simulation-config.md): 引数の表（`--events-stall-ms` を変えたとき）
 
 変更ごとに決めること:
 
@@ -1610,7 +1610,7 @@ flowchart TD
 合わせて直すドキュメント:
 
 - [simulation-config.md](simulation-config.md) の「participant を自分で起動する」と、その例（`launch_run.manual` が照合）
-- [simulation-config.md](simulation-config.md): イベント `participant` の `manual`、`features` の `manual-participants`
+- [simulation-events.md](simulation-events.md): イベント `participant` の `manual`、`features` の `manual-participants`
 - [howto/first-ecu.md](howto/first-ecu.md) の「デバッガーから動かす」（同じ標準エラーの行と結果の表を、`Cooler` の名前で載せている。照合しないので、手で合わせる）
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」の開始の期限（下の値を変えたとき）
 
@@ -1625,7 +1625,7 @@ flowchart TD
 
 ### 機種とシナリオのパラメーター
 
-設定ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`${名前}`・`only` です。`absent: true` の変数や、機種が無効にした participant の変数を使う手順のスキップも含みます。
+設定ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`${name}`・`only` です。`absent: true` の変数や、機種が無効にした participant の変数を使う手順のスキップも含みます。
 
 変える場所（設定ファイルの側。`libs/launch/src/config.cpp`）:
 
@@ -1680,7 +1680,8 @@ flowchart TD
 - [scenario.md](scenario.md): `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロック（`launch_run.scenario` がバイト単位で照合）
 - [scenario.md](scenario.md): `<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->` のブロック
 - [howto/scenario-tests.md](howto/scenario-tests.md): ガイドが載せているファイル、出力、終了コード（`launch_run.scenario_guide` が、ガイドの順に実行して照合）
-- [simulation-config.md](simulation-config.md): 引数の表、イベント `scenario_step`、`features` の `scenario`
+- [simulation-config.md](simulation-config.md): 引数の表
+- [simulation-events.md](simulation-events.md): イベント `scenario_step`、`features` の `scenario`
 - [internals/control.md](internals/control.md) の「シナリオ」
 
 例のファイル:
@@ -1955,7 +1956,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 合わせて直すドキュメント:
 
 - [control-api.md](control-api.md) の「ランチャーに接続する」（始まる前に書く、標準入力とクライアントのコマンド、認証）
-- [simulation-config.md](simulation-config.md): イベント `control_server`、`command` の `source` と `at_ms`、引数の表、`features` の `control-server`（`kControlServerFeature`）
+- [simulation-config.md](simulation-config.md): 引数の表
+- [simulation-events.md](simulation-events.md): イベント `control_server`、`command` の `source` と `at_ms`、`features` の `control-server`（`kControlServerFeature`）
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、標準入力とクライアントのコマンドの順序、開始前に止めること、終わり方）
 
 `features` の `control-server` は、Control Server を持つビルドだけが出力します。そのため `version --json` の例には入れず、`launch_cli.docs` がこの名前を除いて照合します。
@@ -1986,7 +1988,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 - [scenario.md](scenario.md) の「実行中に変数を見る」（拒否する呼び出しの表、理由 `scenario-running`）
 - [control-api.md](control-api.md) の「ランチャーに接続する」と `ControlError.reason`
-- [simulation-config.md](simulation-config.md): `features` の `scenario-control`（`kScenarioControlFeature`）と、引数の表
+- [simulation-config.md](simulation-config.md): 引数の表
+- [simulation-events.md](simulation-events.md): `features` の `scenario-control`（`kScenarioControlFeature`）
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」
 
 `scenario-control` は、`control-server` と同じく、持つビルドだけが出力します。RPC を追加したら、`rpc_rules()` の表の行に種類を書きます（状態を変える RPC は `Effect::Change`）。
@@ -2141,7 +2144,7 @@ simulation-run.md に書いてあるランチャーの出力:
 - `template/get_tools.py`
 - `template/CMakeLists.txt` の `GIT_TAG`
 - `template/README.md` のバージョン
-- `CHANGELOG.md` の見出し `## [<バージョン>] - Unreleased`
+- `CHANGELOG.md` の見出し `## [<version>] - Unreleased`
 
 リリースのとき:
 
@@ -2151,7 +2154,7 @@ simulation-run.md に書いてあるランチャーの出力:
 テスト:
 
 - `scripts/package.py version`（と `template.get_tools`）が、不整合を見つけます。
-- `--expect v<バージョン>`（リリースのワークフロー）は、日付のない見出しも拒否します。
+- `--expect v<version>`（リリースのワークフロー）は、日付のない見出しも拒否します。
 
 ### `VEHICLE_SIL_STATIC`
 
@@ -2198,7 +2201,7 @@ gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、
 
 追加する場所:
 
-- `libs/j1939/parts/<コンポーネント>/`
+- `libs/j1939/parts/<part>/`
 - `libs/j1939/CMakeLists.txt` の `add_subdirectory`
 - テスト: `tests/j1939/CMakeLists.txt` の `vehicle_sil_j1939_parts_tests` の `SOURCES` と `LINK`
 

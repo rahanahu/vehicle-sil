@@ -166,7 +166,7 @@ Writes applied in the same step are applied in (at, seq) order (a write without 
 - Every queued operation gets exactly one `CommandResult`: `Applied` with the time of the step that applied it, `Late`, `Rejected` or `Cancelled`.
 - When the simulation ends, `finish()` sets the remaining operations to `Cancelled` (for an ECU's Agent, the ECU calls it; see "When variable writes are applied" in [execution.md](execution.md#when-variable-writes-are-applied)).
 - Operations with a time at or after `VirtualTimeOptions::end`, and operations on a `Peer` whose step failed, also stay unsettled until `finish()`.
-- In a real-time `Peer`, `at` is a time on the clock of that Peer's driver.
+- In a real-time `Peer`, `at` is a time on the clock of that `Peer`'s driver.
 
 ### Reading values
 
@@ -243,7 +243,7 @@ Monitoring covers the networks and nodes that exist when the schema is fixed (by
 | An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
 | A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the Peer and `PeerOptions::monitor = false`. |
 
-In the last case, variables declared after that are also ECU variables in `describe()`.
+In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
 Step failures are not reported here (no step runs after a failure). Read `Peer::failed()` and `error()` (thread-safe) on the transport side.
 
@@ -522,7 +522,7 @@ In this window, wait for the Agents' hellos with `HubTransport::wait_for_hellos(
 - Nothing can stop the function from outside. Each time the function waits, it checks `StartWindow::cancelled()` (a stop request, the end of the lifecycle, the `start()` timeout) and returns at once if it is set.
 - `start()` waits for the function to end, whether `start()` returns or throws.
 - If the function throws, the window still closes and everyone starts. `start()` then throws `std::runtime_error` with the function's message.
-- Commands written before the window (before the workflow, or right after the hello arrives) are not guaranteed to arrive.
+- Commands written before the window (before the controller publishes the SIL Kit workflow configuration with `SetWorkflowConfiguration`, or right after the hello arrives) are not guaranteed to arrive.
 
 #### Always completing the window
 
@@ -544,7 +544,7 @@ The window is always completed. If the window starts after `start()` has given u
 
 Operations that were waiting for that Agent settle with the result in the last word (Cancelled and so on) or as Unknown.
 
-#### Delivery guarantee for the last notice
+#### Delivery guarantee for the last word
 
 `HubTransport` answers the Agent after it receives the last word and ends the connection (it also answers the last word of a connection that has already ended). The destructor of `AgentTransport` waits for that answer before it returns. The reason: the ECU process destroys the participant right after the transport, and SIL Kit drops sends that it has not yet written to the socket when it destroys a participant.
 
@@ -762,7 +762,7 @@ The SIL Kit registry and data plane have no authentication. Use them on a closed
 |---|---|---|
 | Unfinished operations in the Server | Each peer's `max_pending` (the value in the hello; up to 65536) | Busy (see "Writes and operation state" under "Control Server core") |
 | Settled operations | `max_operations` | The oldest are forgotten |
-| Subscription | `capacity` (default 1024, up to `max_watch_capacity`) | None |
+| Unread events and operation updates, per subscription | `capacity` (default 1024; a larger value than `max_watch_capacity` is reduced to it) | The oldest are dropped and counted in `dropped` |
 | Writes in one `Write` | `max_writes_per_request` (default 4096) | `INVALID_ARGUMENT` |
 | Names in one `GetSnapshot` | `max_peers_per_request` (default 1024) | `INVALID_ARGUMENT` |
 | Waiting calls and `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
@@ -855,7 +855,7 @@ In such a run, in every phase, `give_up` watches for a stop request (an interrup
 - The main thread and the thread of the window read and write the deadline under one mutex.
 - The main thread checks `give_up` every 5 ms.
 - When the deadline passes, `start()` ends, and the message lists the participants that have not reached the first step (those not in ReadyToRun) and their states.
-- `--timeout-ms` counts from the moment of the hold.
+- In a run without a required manual participant, `--timeout-ms` counts from the moment of the hold (it is not checked before the hold). In a run with one, it counts from when the launcher starts waiting for participants, as above.
 
 ### Values after the end
 

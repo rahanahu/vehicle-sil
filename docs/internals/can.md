@@ -70,13 +70,13 @@ A `RealTime` port stamps received frames and events with their arrival time, usi
 
 ## Port events (`PortEvent`)
 
-A port event reports what became known about a frame the port sent, after the synchronous result of `send()`.
+A port event reports, after the fact, what happened at the port: what became of a frame the port sent (known after the synchronous result of `send()`), and the state of the receive queue and of the controller.
 
 | Kind | Meaning | Time |
 |---|---|---|
 | `TransmitCompleted` | The frame was sent. | For a backend that simulates the bus, the end of the transmission; otherwise, the time the backend confirmed the transmission |
 | `TransmitFailed` | The backend did not send a frame that `send()` had accepted (transmit queue full, cancelled, disconnected from the bus). | The time the backend reported |
-| `ReceiveOverflow` | The receive queue was full and received frames were dropped (`count` is the number dropped; 0 means the number is not known, at least in part). | The earliest time among the dropped frames |
+| `ReceiveOverflow` | The receive queue was full and received frames were dropped (`count` is the number dropped; it is 0 when any of the merged overflows has an unknown number, because the total is then unknown). | The earliest time among the dropped frames |
 | `BusStateChanged` | The controller's error state changed to `bus_state` (`ErrorActive`, `ErrorPassive`, `BusOff`). | The time of the change |
 | `ErrorFrame` | An error frame was seen on the bus. | The time it was seen |
 
@@ -484,7 +484,7 @@ The following cases are not deterministic.
 
 | Case | Handling |
 |---|---|
-| Requests without a marker (from participants other than vehicle-sil), and requests with a time 1 s or more after the last step | Treated as sent at the time of the last step, and counted. |
+| Requests without a marker (from participants other than vehicle-sil), and requests whose marked time is beyond the limit (the larger of 1 s and the step size after the last step) | Treated as sent at the time of the last step, and counted. |
 | A run in which a controller with frames waiting to be sent calls `Reset()` | Which frames get `Transmitted` and which get `Canceled` is undecided for one step (see `Reset()` under "Controller modes" below). |
 
 The limit for a marked send time is the larger of 1 s and the step size, counted from the last step.

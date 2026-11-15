@@ -190,7 +190,7 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // �
 
 ### 決まった時刻に 1 回送信する
 
-シナリオの「ある時刻に 1 回」（要求を送信する、購読を始める、止める）は `ecu.at(time, fn)` で書きます。
+ECU が決まった時刻に 1 回だけ行う操作（要求を送信する、購読を始める、止める）は `ecu.at(time, fn)` で書きます。
 
 | 項目 | ルール |
 |---|---|
@@ -367,7 +367,7 @@ node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
 });
 ```
 
-`parse_dtc_list()`（`j1939/diagnostics.hpp`、コンポーネント `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` コンポーネントが送信する形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）が続く形です。どんな長さのバイト列を渡しても安全に読めます。
+`parse_dtc_list()`（`j1939/diagnostics.hpp`、CMake のターゲット `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` コンポーネントが送信する形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）が続く形です。どんな長さのバイト列を渡しても安全に読めます。
 
 | 渡したバイト列 | 読み方 |
 |---|---|
@@ -409,7 +409,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 | `PeriodicSender` | PG を周期的に送信する | 期限は仮想時間の格子でずれず、送信はその後の最初のステップ（PG ごとにタイマーを 1 つ使う） |
 | `Ecu::every(period, fn)` | モデルの計算（`tick()`）、アプリの周期的な処理 | 0、period、2 * period、… の時刻以後の最初のステップ（1 ステップに 1 回まで） |
 | `Ecu::on_step(fn)` | 毎ステップの処理 | ステップの時刻（受信の処理の後、送信の前） |
-| `Ecu::at(time, fn)` | シナリオの 1 回きりの操作（要求を送信する、購読を始める、止める） | 開始時刻が `time` 以後の最初のステップで 1 回（`time` がステップ幅で割り切れなくてもよい） |
+| `Ecu::at(time, fn)` | ECU が決まった時刻に 1 回だけ行う操作（要求を送信する、購読を始める、止める） | 開始時刻が `time` 以後の最初のステップで 1 回（`time` がステップ幅で割り切れなくてもよい） |
 | `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`）。`Ecu` の外、`ParticipantRuntime` のステップハンドラで使う | ステップ幅の倍数の周期だけ（違えば例外） |
 | `j1939::Timer` | コンポーネントの中の時間（待ち時間、遅延、独自の周期） | イベントの時刻から数える（ステップ幅によらない） |
 

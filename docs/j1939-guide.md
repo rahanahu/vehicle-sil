@@ -190,7 +190,7 @@ You cannot call `send()`, or a sending function of a protocol part (such as `sub
 
 ### Send once at a set time
 
-Write the "once at a given time" actions of a script (send a request, start a subscription, stop it) with `ecu.at(time, fn)`.
+Write the ECU's scripted one-time actions (send a request, start a subscription, stop it) with `ecu.at(time, fn)`.
 
 | Item | Rule |
 |---|---|
@@ -367,7 +367,7 @@ node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
 });
 ```
 
-`parse_dtc_list()` (`j1939/diagnostics.hpp`, protocol part `vehicle_sil::j1939_diagnostics`) reads the form that the `Diagnostics` part sends, in reverse: 2 lamp bytes, followed by 4 bytes per DTC (diagnostic trouble code: SPN, FMI, occurrence count). It reads bytes of any length safely.
+`parse_dtc_list()` (`j1939/diagnostics.hpp`, CMake target `vehicle_sil::j1939_diagnostics`) reads the form that the `Diagnostics` part sends, in reverse: 2 lamp bytes, followed by 4 bytes per DTC (diagnostic trouble code: SPN, FMI, occurrence count). It reads bytes of any length safely.
 
 | Bytes passed | How they are read |
 |---|---|
@@ -409,7 +409,7 @@ When the peer sends Address Claimed with the new address, the result is `Moved`.
 | `PeriodicSender` | Sending a PG periodically | Deadlines stay on the virtual-time grid without drift; each message is sent in the first step after its deadline (one timer per PG) |
 | `Ecu::every(period, fn)` | Model computation (`tick()`), periodic application processing | The first step at or after 0, period, 2 * period, … (at most once per step) |
 | `Ecu::on_step(fn)` | Processing in every step | The time of the step (after reception processing, before transmission) |
-| `Ecu::at(time, fn)` | One-off actions of a script (send a request, start a subscription, stop it) | Once, in the first step whose start time is at or after `time` (`time` need not be a multiple of the step size) |
+| `Ecu::at(time, fn)` | The ECU's scripted one-time actions (send a request, start a subscription, stop it) | Once, in the first step whose start time is at or after `time` (`time` need not be a multiple of the step size) |
 | `TickScheduler` | Existing fixed-period models (a DLL's `tick()`). Used outside `Ecu`, in the step handler of `ParticipantRuntime` | Only periods that are multiples of the step size (any other period throws) |
 | `j1939::Timer` | Time inside a protocol part (waiting times, delays, custom periods) | Counted from the time of the event (independent of the step size) |
 
@@ -720,7 +720,7 @@ sim.run_for(3s);                                               // 3 s of virtual
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|
-| ECU | A host on the virtual bus (`LocalBench`). Advances on the calling thread | A Coordinated participant in virtual time (`Peer`). Advances on SIL Kit threads |
+| ECU | A host on the virtual bus (`LocalBench`). Advances on the calling thread | A coordinated participant in virtual time (`Peer`). Advances on SIL Kit threads |
 | `run_for(d)` | Can be called any number of times; each call continues from the last | Once only (a second call throws `std::logic_error`) |
 | Returns | When it has advanced by `d` | After every participant has stopped |
 | After an exception in a step | The next `run_for()` throws `SimulationError` too | `run_for()` ends the simulation, then throws |

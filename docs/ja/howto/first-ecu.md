@@ -35,11 +35,11 @@
 
 テンプレートに入っている 2 つの ECU（エンジンと表示）をそのまま動かして、ビルドと実行の環境がそろっていることを確認します。
 
-[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)からテンプレートのアーカイブ（`vehicle-sil-template-<バージョン>.zip`）をダウンロードして展開します。zip の中の `vehicle-sil-template-<バージョン>` のディレクトリを、自分のプロジェクトの名前に変えます。そのディレクトリで次のコマンドを実行します。これ以降のコマンドも、すべて同じディレクトリ（`simulation.yaml` のある所）で実行します。
+[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)からテンプレートのアーカイブ（`vehicle-sil-template-<version>.zip`）をダウンロードして展開します。zip の中の `vehicle-sil-template-<version>` のディレクトリを、自分のプロジェクトの名前に変えます。そのディレクトリで次のコマンドを実行します。これ以降のコマンドも、すべて同じディレクトリ（`simulation.yaml` のある所）で実行します。
 
 ```sh
 python3 get_tools.py             # ビルド済みのツールを tools/ にダウンロードし、最後に export PATH=... の行を表示する
-export PATH="$PWD/tools/vehicle-sil-tools-<バージョン>-linux-x86_64/bin:$PATH"   # 表示された行。シェルを開くたびに実行する
+export PATH="$PWD/tools/vehicle-sil-tools-<version>-linux-x86_64/bin:$PATH"   # 表示された行。シェルを開くたびに実行する
 cmake --preset linux             # vehicle-sil と SIL Kit をダウンロードする
 cmake --build --preset linux     # 最初の 1 回だけ、SIL Kit のコンパイルに数分かかる
 vehicle_sil_launch check simulation.yaml
@@ -53,7 +53,7 @@ Windows では、次の 4 つが変わります。
 | ツールのダウンロード | `python3 get_tools.py` | `python get_tools.py` |
 | configure | `cmake --preset linux` | `cmake --preset windows` |
 | ビルド | `cmake --build --preset linux` | `cmake --build --preset windows` |
-| ツールのディレクトリ | `tools/vehicle-sil-tools-<バージョン>-linux-x86_64` | `tools/vehicle-sil-tools-<バージョン>-windows-x86_64` |
+| ツールのディレクトリ | `tools/vehicle-sil-tools-<version>-linux-x86_64` | `tools/vehicle-sil-tools-<version>-windows-x86_64` |
 
 ### 確認
 
@@ -134,7 +134,7 @@ participants:
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
-| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
+| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-<version>-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された `export` の行を実行します。 |
 | `check` が、末尾に `[executable]` の付いたエラーを表示する | ECU の実行ファイルが `bin/` にありません。 | `cmake --build --preset linux` を実行します。 |
 
@@ -415,10 +415,10 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
               f"cooler.temperature = {values['cooler.temperature']}")
 ```
 
-Python のクライアント（`vehicle_sil_control`）は、ビルド済みのツールの `python/` に入っています。uv で実行します。`<バージョン>` は、`vehicle_sil_launch version` が表示するバージョン（`tools/` の下のディレクトリの名前と同じ）です。
+Python のクライアント（`vehicle_sil_control`）は、ビルド済みのツールの `python/` に入っています。uv で実行します。`<version>` は、`vehicle_sil_launch version` が表示するバージョン（`tools/` の下のディレクトリの名前と同じ）です。
 
 ```sh
-T=tools/vehicle-sil-tools-<バージョン>-linux-x86_64
+T=tools/vehicle-sil-tools-<version>-linux-x86_64
 PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
     --with-requirements $T/python/requirements.txt python read_cooler.py
 ```

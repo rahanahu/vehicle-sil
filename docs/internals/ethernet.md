@@ -197,7 +197,7 @@ The counters only increase.
 | `frames_invalid` | (`max_frame_bytes` in "Limits") |
 | `frames_sent` | Frames the port accepted |
 | `sends_rejected` | Frames `send()` rejected |
-| `frames_dropped` | Frames `send()` took that the port did not accept |
+| `frames_dropped` | Outgoing frames that `send()` took but the port did not accept |
 | `transmit_completed`, `transmit_failed`, `port_receive_overflows` | Port events |
 | `port_event_overflows` | Transmit acknowledgements that the port dropped among its events (`transmit_completed` and `transmit_failed` are lower by that much) |
 

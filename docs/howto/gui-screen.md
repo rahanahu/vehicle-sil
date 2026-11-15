@@ -85,7 +85,7 @@ When you are done, stop the GUI server with Ctrl+C. From another terminal, `kill
 |---|---|---|
 | `there is no index.html in it`, and the exit code is 2 | The directory you passed has no `index.html`. | Pass a directory that contains `index.html`. |
 | `it has package.json, so it is the project and not its build`, and the exit code is 2 | You passed the project directory, not its build output. | Pass the build output directory (such as `dist/`). |
-| The screen shows "No token: open the URL that vehicle-sil-gui printed" | You opened a URL without `#token=`. | Open the URL that the terminal printed, including everything after `#token=`. |
+| The screen shows `No token: open the URL that vehicle-sil-gui printed (with #token=...).` | You opened a URL without `#token=`. | Open the URL that the terminal printed, including everything after `#token=`. |
 
 ## Step 2: Find the name of the variable to show
 
@@ -304,6 +304,6 @@ rm token.header
 
 ## What to read next
 
-- Build sliders and switches that write values: "Slider and lamp" in the template's `main.js`, and "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)
+- Build sliders and switches that write values: "Slider and lamp" in the template's `index.html` and `showSlider()` in its `main.js`; also "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)
 - Build with TypeScript and a framework (React, Vue and others): "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#build-with-typescript-and-a-framework)
 - Look up the served files, the CSP, the development server and the rules to follow: "Reference for your own screen" in [gui.md](../gui.md#reference-for-your-own-screen)

@@ -27,7 +27,7 @@ cd build/linux-gcc-control/examples/ecu_main
 | もの | この文書（リポジトリのビルド） | テンプレートのプロジェクト |
 |---|---|---|
 | 実行するディレクトリ | `build/linux-gcc-control/examples/ecu_main` | プロジェクトのディレクトリ |
-| `vehicle_sil_launch` のある所 | `build/linux-gcc-control/tools/launch` | `tools/vehicle-sil-tools-<バージョン>-linux-x86_64/bin` |
+| `vehicle_sil_launch` のある所 | `build/linux-gcc-control/tools/launch` | `tools/vehicle-sil-tools-<version>-linux-x86_64/bin` |
 | ECU の実行ファイル | `engine/vehicle_sil_engine_ecu`、`dashboard/vehicle_sil_dashboard_ecu` | `bin/engine_ecu`、`bin/dashboard_ecu` |
 | 設定ファイル | `simulation.two-pcs.yaml` | `simulation.yaml` をコピーし、手順 1 の表の 2 つのキーを追加したもの |
 | GUI サーバーの起動 | リポジトリのルートで `scripts/run-gui.py` | `vehicle-sil-gui simulation.yaml` |
@@ -226,7 +226,7 @@ t=1000 ms engine speed 1200 rpm (10 messages)
 | ECU が約 5 秒後に終わり、`... already exists ... (the registry refused the name "<名前>" for 5000 ms: ...)` と表示する | 同じ名前の participant が、すでに参加しています。 | `--name` を確認します。 |
 | ランチャーが `participant 'x' joined the simulation, but this run has no participant of that name (...)` と表示する | `--name` が、設定ファイルの名前と違います。 | その ECU を Ctrl+C で止め、設定ファイルの名前で起動し直します。 |
 
-2 行目の `Timeout during connection handshake` は SIL Kit のメッセージで、同じ名前の participant を疑う文が続きます。ポートを転送した構成で、ファイアウォールが接続を止めたときに表示されました。3 行目は、同じ名前ですぐに起動し直しただけのときにも表示されます。その場合は、5 秒の間に参加できます。4 行目の、名前を間違えた ECU は、シミュレーションが始まらないまま待ち続けます。
+2 行目の `Timeout during connection handshake` は SIL Kit のメッセージで、同じ名前の participant を疑う文が続きます。ポートを転送した構成で、ファイアウォールが接続を止めたときに表示されました。3 行目は、同じ名前ですぐに起動し直しただけのときにも表示されます。ECU は、registry に名前を断られている間、5 秒まで参加をやり直します（`--start-timeout-ms` がそれより短ければ、その時間まで）。その間に registry が前の participant の終わりを知れば、そのまま参加できます。4 行目の、名前を間違えた ECU は、シミュレーションが始まらないまま待ち続けます。
 
 ## 手順 4: 結果を確認する
 

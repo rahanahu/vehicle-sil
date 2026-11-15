@@ -243,7 +243,7 @@ Agent は反映の時刻を決めるだけで、ステップの並びとデー�
 | ECU の変数を `peer.` で始まる名前で宣言する（`input()`、`output()` など） | `peer.` で始まる名前は予約なので、`monitor` の設定と実装（`Peer`、`LocalBench`）によらず、宣言のときに `std::invalid_argument`（文言に ECU と変数の名前、ルール） |
 | ネットワークの出力（`j1939.N.` で始まる名前）が ECU の変数と重なる | 確定させる呼び出しが `std::invalid_argument`（何も変えず、スキーマは確定しない。文言に Peer の名前と `PeerOptions::monitor = false`） |
 
-最後の行の場合、その後に宣言した変数も、`describe()` の ECU の変数です。
+最後の行の場合、スキーマは開いたままなので、確定させる呼び出しが例外を投げた後に宣言した変数も、`describe()` の ECU の変数です。
 
 ステップの失敗はここでは通知しません（失敗の後はステップが実行されないため）。`Peer::failed()` と `error()`（スレッド安全）を、トランスポートの側で読みます。
 
@@ -522,7 +522,7 @@ Hub の側の participant が時刻同期に参加し、ECU が仮想時間で�
 - 関数を外から止める手段はないので、関数は待つたびに `StartWindow::cancelled()`（停止の要求、ライフサイクルの終わり、`start()` のタイムアウト）を見て、すぐ戻ります。
 - `start()` は、戻るときも投げるときも、関数の終わりを待ちます。
 - 関数が投げても区間は閉じて全員が始まり、`start()` がその文言で `std::runtime_error` を投げます。
-- 区間より前（workflow の前や、hello を受信した直後）に書いたコマンドは、届く保証がありません。
+- 区間より前（controller が SIL Kit の workflow の構成（`SetWorkflowConfiguration`）を公開する前や、hello を受信した直後）に書いたコマンドは、届く保証がありません。
 
 #### 区間を必ず完了させる
 
@@ -762,7 +762,7 @@ SIL Kit の registry とデータプレーンには認証がありません。�
 |---|---|---|
 | Server の未完了の操作 | Peer ごとの `max_pending`（hello の値。65536 まで） | Busy（「Control Server の中核」の「書き込みと操作の状態」） |
 | 確定した操作 | `max_operations` | 古いものから忘れる |
-| 購読 | `capacity`（既定 1024、`max_watch_capacity` まで） | なし |
+| 購読ごとの、読んでいないイベントと操作の更新 | `capacity`（既定 1024。`max_watch_capacity` を超える値は、それに切り詰める） | 古いものから捨て、捨てた数を `dropped` に加える |
 | 1 回の `Write` の書き込み | `max_writes_per_request`（既定 4096） | `INVALID_ARGUMENT` |
 | 1 回の `GetSnapshot` の名前 | `max_peers_per_request`（既定 1024） | `INVALID_ARGUMENT` |
 | 待つ呼び出しと `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
@@ -855,7 +855,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 - 期限は、main と区間のスレッドが 1 つのミューテックスで読み書きします。
 - `give_up` は、main のスレッドで 5 ms ごとに見ます。
 - 期限を過ぎたら、最初のステップに着いていない participant（ReadyToRun でないもの）と状態を文言に挙げて、`start()` を終わらせます。
-- `--timeout-ms` は、止まった時点から数えます。
+- manual の必須の participant がいない実行では、`--timeout-ms` は止まった時点から数えます（止まるまでは見ません）。manual の participant がいる実行では、上のとおり、participant を待ち始めた時点から数えます。
 
 ### 終わった後の値
 

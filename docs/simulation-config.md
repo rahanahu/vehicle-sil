@@ -233,7 +233,7 @@ In `command`, only the form `{word}`, letters, digits and `_` between `{` and `}
 | The check | `--describe --name <participant name>` |
 | `run` | `--name <participant name> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. The launcher is the one that waits for the start and names the participants that did not join; the limit on the ECU side is for the case where the launcher has gone away. In the following 2 kinds of run, the wait for the ECU to start has no limit, so `<ms>` is 10^12 (`1000000000000`). The launcher's `start_timeout_ms` finds a participant that does not start, both before the run comes to a halt and after it moves on.
+`<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. The launcher is the one that waits for the start and names the participants that did not join; the limit on the ECU side is for the case where the launcher has gone away. In the following 2 kinds of run, the wait for the ECU to start has no limit, so `<ms>` is 10^12 (`1000000000000`). In these 2 kinds of run too, the launcher finds a participant that does not start, with `start_timeout_ms`. In a run with a manual participant, it counts per interval, as the table in "[How `run` waits](#how-run-waits)" below shows. In a run that pauses before time 0, it counts from when the launcher starts waiting for participants until the pause, does not count during the pause, and counts a new `start_timeout_ms` from when the run moves on.
 
 - A run with a required participant that you start yourself.
 - A run with `--control` and `--start-paused`, which pauses before the step at time 0.
@@ -393,7 +393,7 @@ While `run` waits, if a participant whose name is not in the configuration file 
 
 `participant '<name>' joined the simulation, but this run has no participant of that name (did you mean '<close name>'?): it waits for the simulation's start, which only the participants of the file get; ...`
 
-That participant does not start. `run` keeps waiting for the participants named in the configuration file. Participants that are not in the file but run on their own (autonomous participants: real-time Peers, bridges) count as participants of the simulation, and `run` prints nothing about them.
+That participant does not start. `run` keeps waiting for the participants named in the configuration file. Participants that are not in the file but run on their own (autonomous participants: real-time `Peer`s, bridges) count as participants of the simulation, and `run` prints nothing about them.
 
 #### During the run
 
@@ -571,7 +571,7 @@ A `describe: false` participant can also have `variables`, but they cannot be co
 | Item | Handling |
 |---|---|
 | Applying | Mappings that do not match are not applied. |
-| Notification | At that moment, a line of the run reports it (`[vehicle_sil_launch] participant ...: variables: ...`; with events, a `log` event). |
+| Notification | At that moment, a line of the run reports it (`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`; with events, a `log` event). |
 | Run finding | At the end, `variable-map-not-applied` (an error). |
 | Reads | For the rest of that run, the variables of mappings that do not match can be read under the executable's names, with the executable's values. |
 | Writes | Writes to the names of that mapping (the key and `from`) are rejected. |

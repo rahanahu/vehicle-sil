@@ -226,7 +226,7 @@ In each row, either `Dashboard` on the joining computer exits with exit code 3, 
 | The ECU exits after about 5 s and prints `... already exists ... (the registry refused the name "<name>" for 5000 ms: ...)` | A participant with the same name has already joined. | Check `--name`. |
 | The launcher prints `participant 'x' joined the simulation, but this run has no participant of that name (...)` | `--name` differs from the name in the configuration file. | Stop that ECU with Ctrl+C and start it again with the name from the configuration file. |
 
-`Timeout during connection handshake` in the second row is a SIL Kit message, and the sentence after it suggests a participant with the same name as the cause. It appeared in a setup with port forwarding, when the firewall blocked the connection. The message in the third row also appears when you merely restart an ECU at once under the same name; in that case, the ECU can join within those 5 s. An ECU with a wrong name, as in the fourth row, keeps waiting, and the simulation does not start.
+`Timeout during connection handshake` in the second row is a SIL Kit message, and the sentence after it suggests a participant with the same name as the cause. It appeared in a setup with port forwarding, when the firewall blocked the connection. The message in the third row also appears when you merely restart an ECU at once under the same name. While the registry refuses the name, the ECU retries joining for up to 5 s (or for `--start-timeout-ms`, if that is shorter). If the registry sees the end of the earlier participant within that time, the ECU joins. An ECU with a wrong name, as in the fourth row, keeps waiting, and the simulation does not start.
 
 ## Step 4: Read the result
 

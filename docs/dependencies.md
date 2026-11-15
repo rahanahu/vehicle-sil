@@ -182,7 +182,7 @@ The libpcap (Linux) behavior the implementation relies on (`ethernet_bridge.netn
 The Npcap behavior the implementation relies on (verified by hand against the real Npcap; for the scope, see "Verified and not verified" in [ethernet-bridge.md](ethernet-bridge.md#verified-and-not-verified)):
 
 - The structure layouts match.
-- The event is reset once everything has been read.
+- The library's event (`pcap_getevent`) is reset by the library once every received frame has been read (vehicle-sil never resets it).
 - A sent frame comes back to the receive side of the handle that sent it.
 - It does not come back to a handle opened by `pcap_open` with `PCAP_OPENFLAG_NOCAPTURE_LOCAL`, and that handle still receives frames that other handles sent.
 
@@ -489,7 +489,7 @@ The patches in `patches/sil-kit/` were created with `git format-patch` on the up
 
 **Upstream reproduction test**: None (verified with the ThreadSanitizer tests of vehicle-sil). Not fixed: on a second switch, when the simulator leaves and appears again, a call that uses the behavior from before the switch can overlap with the rewrite of the simulator link.
 
-**Verification**: Verified by running the simple CAN Network Simulator tests of vehicle-sil (`can_netsim.*`) with ThreadSanitizer. The race overlaps only rarely, so the tests do not necessarily catch it if the patch is removed. Decide whether to remove the patch from the remaining places listed under "Why vehicle-sil needs it" above.
+**Verification**: Verified by running the simple CAN Network Simulator tests of vehicle-sil (`can_netsim.*`) with ThreadSanitizer. The race overlaps only rarely, so the tests do not necessarily catch it if the patch is removed. The tests therefore cannot tell whether the patch can go. Decide by checking whether the code still has the places listed under "Why vehicle-sil needs it" above, which call the controller from outside the SIL Kit thread.
 
 ### 0003: The registry removes only the peer's own name entry
 

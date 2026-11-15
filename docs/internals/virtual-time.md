@@ -32,7 +32,7 @@ If `ParticipantRuntimeOptions::virtual_time` is set, the participant joins time 
 
 SIL Kit calls the step handler and the receive handlers on the same I/O thread, so while a step runs, no other handler of that participant is called.
 
-`CompleteSimulationStep()` queues the completion as a task on the I/O thread. So not only the messages sent in the step, but also the messages SIL Kit sends when it delivers those messages to the participant itself (frames the LIN master sends), are sent before the time of the next step is announced. With the blocking version, this second-stage send comes after the announcement, and there is no guarantee that it arrives in time for the receiver's step (see [dependencies.md](../dependencies.md)).
+`CompleteSimulationStep()` queues the completion as a task on the I/O thread. So not only the messages sent in the step, but also the messages SIL Kit sends when it delivers those messages to the participant itself (frames the LIN master sends: a second round of sends), are sent before the time of the next step is announced. With the blocking version, this second round of sends comes after the announcement, and there is no guarantee that it arrives in time for the receiver's step (see [dependencies.md](../dependencies.md)).
 
 You pass the per-step work with `set_step_handler()`. If you do not pass it before `start()`, `start()` throws `std::logic_error`.
 

@@ -157,7 +157,7 @@ participants:
 
 **`variants`**: 機種を書いた設定ファイルは、`check` と `run` に `--variant <名前>` が必要です。
 
-**`params`**: 値は、シナリオの `${名前}` に反映されます。
+**`params`**: 値は、シナリオの `${name}` に反映されます。
 
 ### 書き方のルール
 
@@ -205,35 +205,35 @@ JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.j
 
 ### 波括弧とプレースホルダー
 
-`command` の中で特別なのは、英数字と `_` を `{` と `}` で囲んだ `{語}` の形だけです。ほかの波括弧は、そのまま渡します（JSON の引数 `'{"a":{"b":1}}'` は 1 バイトも変わりません）。
+`command` の中で特別なのは、英数字と `_` を `{` と `}` で囲んだ `{word}` の形だけです。ほかの波括弧は、そのまま渡します（JSON の引数 `'{"a":{"b":1}}'` は 1 バイトも変わりません）。
 
 | 書いたもの | 扱い |
 |---|---|
 | `describe: false` の `command` の、実行ファイルより後の引数の `{registry_uri}` | シミュレーションの registry の URI に置き換えます。 |
 | `describe: false` の `command` の、実行ファイルより後の引数の `{name}` | participant 名に置き換えます。 |
 | `describe: true` の `command` の `{registry_uri}` と `{name}` | エラーです。 |
-| 知らない `{語}` | どちらの `command` でもエラーです。 |
-| 実行ファイルのパスの `{語}` | すべてエラーです。 |
-| `{{語}}` | `{語}` という文字列そのものを渡します（`{{name}}` は `{name}` になります）。 |
+| 知らない `{word}` | どちらの `command` でもエラーです。 |
+| 実行ファイルのパスの `{word}` | すべてエラーです。 |
+| `{{word}}` | `{word}` という文字列そのものを渡します（`{{name}}` は `{name}` になります）。 |
 | `{registry_uri}` のない `describe: false` の `command` | 注記を表示します（registry の場所を受け取れないかもしれないため）。 |
 
 - プレースホルダーは、長い引数の一部でもかまいません（例: `--uri={registry_uri}`）。
-- `{語}` をエラーにするのは、打ち間違いを見つけるためです。
-- `{{語}}` は、`describe: true` の引数と実行ファイルのパスでも同じです。
+- `{word}` をエラーにするのは、打ち間違いを見つけるためです。
+- `{{word}}` は、`describe: true` の引数と実行ファイルのパスでも同じです。
 - YAML では、`{...}` を引用符で囲みます（`"{registry_uri}"`）。
 - 囲まないと YAML のマッピングになり、エラーになります（指摘の文に直し方があります）。
 - `*` か `&` で始まる値も引用符で囲みます（囲まないとエイリアスとアンカーです）。
 
 ### ecu_main の実行ファイル（`describe: true`）
 
-`vehicle_sil_launch` は、`command` の引数に、次の引数を追加して起動します。`command` の引数は、`{{語}}` を `{語}` に戻したものです。
+`vehicle_sil_launch` は、`command` の引数に、次の引数を追加して起動します。`command` の引数は、`{{word}}` を `{word}` に戻したものです。
 
 | 起動 | 追加する引数 |
 |---|---|
 | 照合 | `--describe --name <participant 名>` |
 | `run` | `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。次の 2 つの実行では、ECU が始まるまで待つ時間に上限がないので、10^12（`1000000000000`）です。始まらない participant は、ランチャーの `start_timeout_ms` が、止まる前と進んだ後に見つけます。
+`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。次の 2 つの実行では、ECU が始まるまで待つ時間に上限がないので、10^12（`1000000000000`）です。この 2 つでも、始まらない participant は、ランチャーが `start_timeout_ms` で見つけます。manual の participant がいる実行では、下の「[待ち方](#待ち方)」の表の区間ごとに数えます。時刻 0 の前に止まる実行では、participant を待ち始めてから止まるまでを数え、止まっている間は数えず、進めた時点から改めて `start_timeout_ms` を数えます。
 
 - 自分で起動する必須の participant がいる実行。
 - `--control` と `--start-paused` で、時刻 0 のステップの前に止まる実行。
@@ -571,7 +571,7 @@ participants:
 | 項目 | 扱い |
 |---|---|
 | 反映 | 合わなかった対応は反映しません。 |
-| 通知 | そのときに、実行の行（`[vehicle_sil_launch] participant ...: variables: ...`、イベントでは `log`）で通知します。 |
+| 通知 | そのときに、実行の行（`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`、イベントでは `log`）で通知します。 |
 | 実行の指摘 | 終わりに、`variable-map-not-applied`（エラー）にします。 |
 | 読み出し | その実行の間、合わなかった対応の変数は、実行ファイルの名前と値のまま読めます。 |
 | 書き込み | その対応の名前（キーと `from`）への書き込みは拒否します。 |
@@ -649,7 +649,7 @@ variants:
 
 ### シナリオのパラメーター（`params`、`--param`）
 
-シナリオの中の数（しきい値、待ち時間、設定する値）を機種ごとに替えるときは、シナリオに `${名前}` と書き、値を `params` に書きます。
+シナリオの中の数（しきい値、待ち時間、設定する値）を機種ごとに替えるときは、シナリオに `${name}` と書き、値を `params` に書きます。
 
 | 項目 | ルール |
 |---|---|

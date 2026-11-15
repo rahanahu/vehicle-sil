@@ -34,7 +34,7 @@
 | 設定ファイル | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` |
 | Python のクライアント | `python/`（パッケージ `vehicle_sil_control`） |
 
-テンプレートのプロジェクトとビルド済みのツールを使うときは、次のように読み替えます。表の `$T` は、ツールのディレクトリ `tools/vehicle-sil-tools-<バージョン>-linux-x86_64` です。テンプレートの 2 つの ECU は、このガイドの例と同じ変数を持っています。
+テンプレートのプロジェクトとビルド済みのツールを使うときは、次のように読み替えます。表の `$T` は、ツールのディレクトリ `tools/vehicle-sil-tools-<version>-linux-x86_64` です。テンプレートの 2 つの ECU は、このガイドの例と同じ変数を持っています。
 
 | もの | リポジトリでビルドしたとき | テンプレートのプロジェクトのとき |
 |---|---|---|

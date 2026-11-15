@@ -197,7 +197,7 @@ SIL Kit では、違う送信側から同じ時刻に受信したフレームの
 | `frames_invalid` | （「上限」の `max_frame_bytes`） |
 | `frames_sent` | ポートが受け付けた |
 | `sends_rejected` | `send()` が拒否した |
-| `frames_dropped` | 受け取ったがポートが受け付けなかった |
+| `frames_dropped` | `send()` が受け取った送信のフレームのうち、ポートが受け付けなかったもの |
 | `transmit_completed`、`transmit_failed`、`port_receive_overflows` | ポートのイベント |
 | `port_event_overflows` | ポートのイベントのうち、ポートが捨てた送信の確認（その分 `transmit_completed` と `transmit_failed` が少ない） |
 

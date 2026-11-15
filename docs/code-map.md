@@ -1045,7 +1045,7 @@ For an introduction, see [gui.md](gui.md).
 
 ### `scripts/`
 
-Scripts for development and CI. For the list, see "Verification and scripts" in [AGENTS.md](../AGENTS.md).
+Scripts for development and CI. For the list, see "Verification and scripts" in [AGENTS.md](../AGENTS.md#verification-and-scripts).
 
 | Test | Covers |
 |---|---|
@@ -1541,7 +1541,7 @@ Documentation to update:
 - [simulation-events.md](simulation-events.md) ("Programmatic use"): the table of events and `state` values, the table of commands, the `features` table
 - [simulation-events.md](simulation-events.md) ("Programmatic use"): the event examples (`launch_run.events` compares them byte for byte after substitution)
 - "[Slow readers and readers that stop reading](simulation-events.md#slow-readers-and-readers-that-stop-reading)" in [simulation-events.md](simulation-events.md) ("Programmatic use"), when you change the invariants below
-- [simulation-events.md](simulation-events.md) ("Programmatic use"): the table of arguments, when you change `--events-stall-ms`
+- [simulation-config.md](simulation-config.md): the table of arguments, when you change `--events-stall-ms`
 
 Decisions for each change:
 
@@ -1610,7 +1610,7 @@ Where to change:
 Documentation to update:
 
 - "[Starting a participant yourself (`manual`, `--manual`)](simulation-config.md#starting-a-participant-yourself-manual---manual)" in [simulation-config.md](simulation-config.md) and its examples (compared by `launch_run.manual`)
-- [simulation-config.md](simulation-config.md): `manual` of the `participant` event, `manual-participants` of `features`
+- [simulation-events.md](simulation-events.md): `manual` of the `participant` event, `manual-participants` of `features`
 - "[Run the ECU from a debugger](howto/first-ecu.md#run-the-ecu-from-a-debugger)" in [howto/first-ecu.md](howto/first-ecu.md) (shows the same stderr lines and result table with the name `Cooler`; not compared, so keep it in sync by hand)
 - The start deadline in "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md), when you change the values below
 
@@ -1680,7 +1680,8 @@ Documentation to update:
 - [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` (`launch_run.scenario` compares it byte for byte)
 - [scenario.md](scenario.md): the blocks of `<!-- throttle_mistakes.yaml -->` and `<!-- throttle_response.yaml -->`
 - [howto/scenario-tests.md](howto/scenario-tests.md): the files, output and exit codes that the guide shows (`launch_run.scenario_guide` runs them in the guide's order and compares)
-- [simulation-config.md](simulation-config.md): the table of arguments, the `scenario_step` event, `scenario` of `features`
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): the `scenario_step` event, `scenario` of `features`
 - "[Scenarios (`vehicle_sil_launch run --scenario`)](internals/control.md#scenarios-vehicle_sil_launch-run---scenario)" in [internals/control.md](internals/control.md)
 
 Example files:
@@ -1955,7 +1956,8 @@ Where to change:
 Documentation to update:
 
 - "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md) (writing before the start, stdin and client commands, authentication)
-- [simulation-config.md](simulation-config.md): the `control_server` event, `source` and `at_ms` of `command`, the table of arguments, `control-server` of `features` (`kControlServerFeature`)
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): the `control_server` event, `source` and `at_ms` of `command`, `control-server` of `features` (`kControlServerFeature`)
 - "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md) (threads, the order of stdin and client commands, pausing before the start, how the run ends)
 
 Only a build with the Control Server prints `control-server` in `features`. It is therefore not in the `version --json` example, and `launch_cli.docs` leaves this name out when it compares.
@@ -1986,7 +1988,8 @@ Documentation to update:
 
 - "[Watching variables during a run (`--control`)](scenario.md#watching-variables-during-a-run---control)" in [scenario.md](scenario.md) (the table of rejected calls, the reason `scenario-running`)
 - "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md), and `ControlError.reason`
-- [simulation-config.md](simulation-config.md): `scenario-control` of `features` (`kScenarioControlFeature`) and the table of arguments
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): `scenario-control` of `features` (`kScenarioControlFeature`)
 - "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md)
 
 Like `control-server`, `scenario-control` is printed only by builds that have it. When you add an RPC, write its kind in its row of the `rpc_rules()` table (an RPC that changes state is `Effect::Change`).
@@ -2038,7 +2041,7 @@ Where to change:
 Rules:
 
 - If you change the layout, raise `kVersion` in `control/wire.hpp`. The decoder accepts only its own version.
-- If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last notice, is an example).
+- If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
 - Do not change the hello from its start up to the participant name in any version. This lets each side read the name of a peer with a different version.
 
 Documentation to update:
@@ -2061,7 +2064,7 @@ Where to change:
 
 Documentation to update:
 
-- "[Transport over SIL Kit (`vehicle_sil::control_silkit`)](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)" in [internals/control.md](internals/control.md) (threads, the guarantee of receive order, the wait before the first step, the end of a connection and the reply to the last notice, the absence of authentication)
+- "[Transport over SIL Kit (`vehicle_sil::control_silkit`)](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)" in [internals/control.md](internals/control.md) (threads, the guarantee of receive order, the wait before the first step, the end of a connection and the reply to the last word, the absence of authentication)
 - [internals/control.md](internals/control.md): the limits in the same section (when you change `kMaxVariables`, `kMaxNameBytes` or `HubTransportOptions::max_links`)
 - "[Upstream behavior the implementation relies on](dependencies.md#upstream-behavior-the-implementation-relies-on)" in [dependencies.md](dependencies.md) (the SIL Kit behavior it depends on)
 - "[Connection to ECU variables (`control_link`)](simulation-run.md#connection-to-ecu-variables-control_link)" and its table in [simulation-run.md](simulation-run.md) (the launcher output listed below)

@@ -49,7 +49,7 @@ The last notification that `last_word_wait` waits for tells the launcher about w
 | Argument | What it does |
 |---|---|
 | `--describe` | Constructs the ECU on in-process virtual buses, runs nothing and connects to nothing, writes `to_json(Ecu::describe())` to stdout and exits. |
-| `--registry-uri <uri>` | Joins the SIL Kit simulation of the registry at `<uri>` as a Coordinated virtual-time participant, and runs until the simulation ends. |
+| `--registry-uri <uri>` | Joins the SIL Kit simulation of the registry at `<uri>` as a coordinated virtual-time participant, and runs until the simulation ends. |
 | `--start-timeout-ms <ms>` | Only with `--registry-uri`. How long to wait from joining until the simulation starts (an integer of 1 or more; default 30000). |
 | `--no-control` | With `--registry-uri`, does not expose the ECU's variables to the simulation (see [Exposing variables](#exposing-variables---registry-uri)). |
 | `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |

@@ -134,8 +134,8 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 
 | アーカイブ | ビルドした環境 | 実行に必要なもの |
 |---|---|---|
-| `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz` | Ubuntu 22.04（x86_64） | glibc 2.35 以上（Ubuntu 22.04 と同じか新しい glibc）だけで、ほかの共有ライブラリは不要です。 |
-| `vehicle-sil-tools-<バージョン>-windows-x86_64.zip` | MSYS2 UCRT64 の MinGW | DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ のランタイムを静的にリンク）。 |
+| `vehicle-sil-tools-<version>-linux-x86_64.tar.gz` | Ubuntu 22.04（x86_64） | glibc 2.35 以上（Ubuntu 22.04 と同じか新しい glibc）だけで、ほかの共有ライブラリは不要です。 |
+| `vehicle-sil-tools-<version>-windows-x86_64.zip` | MSYS2 UCRT64 の MinGW | DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ のランタイムを静的にリンク）。 |
 
 アーカイブには次のものが入っています。詳しい内容はアーカイブの `README.md` に、同梱しているものとそのライセンスは [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) にあります。
 
@@ -149,7 +149,7 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 | ダッシュボードの JSON Schema | — |
 | ライセンスの表示 | — |
 
-ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<バージョン>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
+ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<version>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
 
 アーカイブは `scripts/package.py` が作ります。
 
@@ -159,7 +159,7 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 | `verify` | アーカイブを、利用者の手順で確認します。 |
 | `template` | テンプレートのアーカイブを作ります。 |
 
-引数は `scripts/package.py --help` で表示します。タグ `v<バージョン>` を push すると、GitHub Actions が両方の OS でアーカイブを作って確認し、リリースの下書きに添付します。
+引数は `scripts/package.py --help` で表示します。タグ `v<version>` を push すると、GitHub Actions が両方の OS でアーカイブを作って確認し、リリースの下書きに添付します。
 
 ## 外部プロジェクトから使う（FetchContent）
 
@@ -233,7 +233,7 @@ int main() {
 
 受信、Request と応答、受信の監視、テストの書き方は [j1939-guide.md](j1939-guide.md) にあります。
 
-信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします。Python 3.11 以上と PyYAML が必要です（[j1939-codec.md](j1939-codec.md)）。
+信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <definition.yaml>)` を呼び、`<target>` をリンクします。Python 3.11 以上と PyYAML が必要です（[j1939-codec.md](j1939-codec.md)）。
 
 ### 1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）
 
@@ -247,7 +247,7 @@ ECU の実行ファイルを、ほかのファイルなしで配布したいと�
 
 | OS | 不要になるファイル | ビルドに追加で必要なもの |
 |---|---|---|
-| Linux | `libSilKit.so`、`libstdc++`、`libgcc_s` | 静的な libstdc++（Fedora は `libstdc++-static`。Debian と Ubuntu は `libstdc++-<バージョン>-dev` に入っています） |
+| Linux | `libSilKit.so`、`libstdc++`、`libgcc_s` | 静的な libstdc++（Fedora は `libstdc++-static`。Debian と Ubuntu は `libstdc++-<version>-dev` に入っています） |
 | Windows（MinGW） | `SilKit.dll`、`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll` | なし（`-static` でリンクします） |
 
 Linux の glibc は共有ライブラリのままです。glibc を静的にリンクしたプログラムは、名前の解決などのモジュールを読み込めず、かえって動く環境が限られるためです。

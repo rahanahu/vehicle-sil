@@ -51,7 +51,7 @@ The files are split by role:
 
 ### Reception guarantees
 
-Whatever is sent in step T is always received by the other nodes by their first step after T. On the virtual bus it is received inside the call that sent it. On SIL Kit, SIL Kit sends the frames that the master sends one stage later, but `ParticipantRuntime` completes the step only after that, so the same guarantee holds (see "Joining and advancing" in [virtual-time.md](virtual-time.md#joining-and-advancing)).
+Whatever is sent in step T is always received by the other nodes by their first step after T. On the virtual bus it is received inside the call that sent it. On SIL Kit, the frames that the master sends go out when SIL Kit delivers the header back to the master: a second round of sends, after the messages sent in the step. `ParticipantRuntime` completes the step only after that second round, so the same guarantee holds (see "Joining and advancing" in [virtual-time.md](virtual-time.md#joining-and-advancing)).
 
 The receiver collects the events it gets in a `StepInbox`, and `step(now)` processes only those before now, in time order. State changes and frame reception therefore depend neither on the wall clock nor on the order of steps at the same time.
 

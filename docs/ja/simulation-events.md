@@ -449,7 +449,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 ## バージョンと機能の一覧（`vehicle_sil_launch version`）
 
-`vehicle_sil_launch version`（`--version` も同じ）は、`vehicle_sil_launch <バージョン>` の 1 行を書きます。`version --json` は、書く形式のバージョンと、機能の一覧を書きます。どちらもファイルを読まず、終了コードは 0 です。
+`vehicle_sil_launch version`（`--version` も同じ）は、`vehicle_sil_launch <version>` の 1 行を書きます。`version --json` は、書く形式のバージョンと、機能の一覧を書きます。どちらもファイルを読まず、終了コードは 0 です。
 
 <!-- vehicle_sil_launch version --json -->
 ```json

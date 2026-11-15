@@ -74,7 +74,7 @@ The OS limits the length of a `unix:` path (107 bytes on Linux; a `%XX` such as 
 | What the server covers | The run of that launcher only. |
 | What it handles (ECU variables) | The list of peers, values, writes, results of operations, subscriptions. |
 | What it handles (virtual time) | Pause, resume, step, run until a time, speed, stop. |
-| List of peers | Required participants from the configuration file are in the list even without an agent. |
+| List of peers | Required participants from the configuration file are in the list even without an Agent. |
 
 [examples/launch_control](../examples/launch_control) contains examples.
 
@@ -166,7 +166,7 @@ How the time spent stopped relates to timeouts:
 - If `--timeout-ms` passes after the advance, the message also gives how long the simulation was stopped before the first step.
 - If a required participant goes away during the wait (its process ends, for example), the launcher stops waiting at once and ends the run as one that did not start (`ended-before-start`).
 
-`--start-paused` without `--control` (with `--stdin-commands` only) runs the step at time 0 and then stops at 0. In that case, and when you write after a pause, set `at` later than the time at which the simulation is stopped (see [Python](#python) below).
+`--start-paused` without `--control` (with `--stdin-commands` only) runs the step at time 0 and then stops at 0. In that case, and when you write after a pause, set `at` later than the time at which the simulation is stopped (see "[Rules for writes](#rules-for-writes)" below).
 
 ### Stdin commands and client commands
 
@@ -298,13 +298,13 @@ The types are bool, integer, real and enum. Values are read and written on the E
 | Declaring after the start | Throws `std::logic_error`. The message names the ECU. |
 | The same name twice in one ECU | Throws `std::invalid_argument`. The message names the ECU. |
 | What pointers and functions refer to | Objects that the ECU owns (the class that `Simulation::add()` creates, objects added with `emplace()`). |
-| Destruction order | The ECU destroys the agent after the networks and before the objects added with `emplace()`. |
+| Destruction order | The ECU destroys the Agent after the networks and before the objects added with `emplace()`. |
 
 ### Agent options (`set_agent_options()`)
 
 `set_agent_options()` sets the read period (`sample_period`: 10 ms by default, 0 for every step) and the queue sizes. Call it only before the first `input()`, `output()` or `agent()`. An invalid value throws `std::invalid_argument` at once. The message names the ECU.
 
-Every ECU has an agent, because every ECU has the input `ecu.connected`, even if it declares no variables. So even in an ECU without declared variables, the agent's work (applying writes, and reading the values every `sample_period`) runs in each step. An `ecu_main` ECU sends one values message every `sample_period` (10 ms by default). With `Peer`, the monitoring outputs (`PeerOptions::monitor`) are added as well.
+Every ECU has an Agent, because every ECU has the input `ecu.connected`, even if it declares no variables. So even in an ECU without declared variables, the Agent's work (applying writes, and reading the values every `sample_period`) runs in each step. An `ecu_main` ECU sends one values message every `sample_period` (10 ms by default). With `Peer`, the monitoring outputs (`PeerOptions::monitor`) are added as well.
 
 ### When a write is applied
 
@@ -329,7 +329,7 @@ A GUI widget merges the values that arrive before the server has received its pr
 
 Only ECUs that are SIL Kit participants connect to the launcher's Control Server. For your own `Peer`, create `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` after the ECU has declared its variables and before `start()`. Destroy it after `peer.stop()` and before the `Peer`.
 
-From the same process, write with `ecu.agent().submit()` and read with `latest()`. For an ECU added with `Simulation::add<App>()`, get its agent with `sim.ecu(name).agent()` (example: `examples/vehicle`).
+From the same process, write with `ecu.agent().submit()` and read with `latest()`. For an ECU added with `Simulation::add<App>()`, get its Agent with `sim.ecu(name).agent()` (example: `examples/vehicle`).
 
 ## List of calls
 
@@ -427,7 +427,7 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 | What happened | How it shows in Python |
 |---|---|
 | A call fails | The exception `ControlError` (see [Errors](#errors)). |
-| The agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
+| The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
 ### Rules for writes
 
@@ -460,9 +460,9 @@ Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 
 | Peer field | Meaning |
 |---|---|
-| `has_agent` | Whether an agent has ever connected (false by default). |
+| `has_agent` | Whether an Agent has ever connected (false by default). |
 | `simulation_state` | The SIL Kit state. |
-| `virtual_time` | Whether the agent runs on the simulation's time, as the agent's hello says. False means a real-time peer, or no agent. |
+| `virtual_time` | Whether the Agent runs on the simulation's time, as the Agent's hello says. False means a real-time peer, or no Agent. |
 
 A server of an earlier version, without `virtual_time`, gives false for every peer.
 
@@ -529,7 +529,7 @@ Assumptions and limits:
 |---|---|
 | Assumption of the guarantees | The ECU sends its values from inside its step. ECUs built with `ecu_main` do. |
 | If the assumption does not hold | The launcher prints the warning `control-link-late-values`, and values may be missing even when `consistent` is true. |
-| "The values of a step" | The last sample read before that time. An agent reads every `sample_period`, which can be longer than a step. |
+| "The values of a step" | The last sample read before that time. An Agent reads every `sample_period`, which can be longer than a step. |
 | Values of real-time peers (`virtual_time` false in `peers()`) | No guarantee. `consistent` is decided without looking at them. |
 | Disconnected peers | Their last values are included as they are. Check with `c.peers()` whether a peer is connected. |
 
@@ -537,11 +537,11 @@ Which peers `values` contains:
 
 | Topic | Details |
 |---|---|
-| `values` in Python | Only peers that have values. Peers without values yet, participants without an agent and unknown names are left out. |
+| `values` in Python | Only peers that have values. Peers without values yet, participants without an Agent and unknown names are left out. |
 | The gRPC response (`GetSnapshotReply.values`) when names are given | One entry per name, in the order given (a repeated name once). |
-| The gRPC response when no names are given | The peers that have an agent, in name order. |
+| The gRPC response when no names are given | The peers that have an Agent, in name order. |
 | A peer without values | Has no `snapshot`. |
-| A name without an agent | Has no `incarnation` either. |
+| A name without an Agent | Has no `incarnation` either. |
 | Order of the values | The order of the schema of that `incarnation` (`ListPeers`). |
 
 | Topic | Details |
@@ -615,7 +615,7 @@ Writes and time control during a scenario have the `reason` `scenario-running`.
 
 ## See also
 
-| Topic | Document |
+| To find | See |
 |---|---|
 | Reading and writing values, and pausing and stepping time, step by step | [Read and write signals from outside](howto/operate-signals.md) |
 | Connecting from another computer, step by step (including making certificates) | [Run on several computers](howto/multi-pc.md) |

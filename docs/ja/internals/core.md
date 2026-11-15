@@ -77,7 +77,7 @@ Coordinated では、全員が最初のステップの前で待つので、そ�
 - observer は短くし、`peer_status()` のほかはこの runtime を呼ばないこと。
 - `start()` の前に登録します。
 
-`wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[docs/dependencies.md](../dependencies.md) の既知の不具合を参照）。SIL Kit のハンドラーの中からは呼べません。
+`wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[dependencies.md](../dependencies.md#sil-kit-addparticipantstatushandler-登録中のステータスの取りこぼし) の「SIL Kit: `AddParticipantStatusHandler` 登録中のステータスの取りこぼし」）。SIL Kit のハンドラーの中からは呼べません。
 
 ### `stop()` の保証
 
@@ -191,7 +191,7 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 | 条件 | 変えるキー |
 |---|---|
 | registry の URI のホストがループバックのアドレス | `Middleware.AcceptorUris` で、ループバックのアドレスだけで待ち受ける |
-| Windows | `Middleware.EnableDomainSockets: false`（[dependencies.md](../dependencies.md) の SIL Kit（Windows）の節） |
+| Windows | `Middleware.EnableDomainSockets: false`（[dependencies.md](../dependencies.md#sil-kitwindows-スレッドを止められたプロセスとの-local-domain-ソケットを閉じると戻らないことがある) の「SIL Kit（Windows）: スレッドを止められたプロセスとの local-domain ソケットを閉じると戻らないことがある」） |
 | いつも | `Experimental.TimeSynchronization.DynamicSimulationStep: false` |
 
 `DynamicSimulationStep` のキーがない participant は、ほかの participant（ネットワークのシミュレーターなど）が `true` で参加すると、SIL Kit にステップを全員の最小の幅まで縮められます。`false` なら、自分の幅のままです。

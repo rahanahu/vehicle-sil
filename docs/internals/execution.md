@@ -134,7 +134,7 @@ Each rule lives in one place, shared by the ECUs of `Peer` and `LocalBench`.
 - `at` calls the function even if the step size does not divide `time`. If `time` is before the first step, it calls the function in the first step.
 - The functions of `at` are in the same list as those of `on_step` and `every`, in the order they were added.
 - Passing an empty function to `at` throws `std::invalid_argument`.
-- Use `at` for what a scenario does once at a given time (start or stop a subscription, send with `Node::send()`).
+- Use `at` for the ECU's scripted one-time actions (start or stop a subscription, send with `Node::send()`).
 - `Node::send()` and the sending functions of protocol parts can be used only inside a step. Call them through `at()`, not directly from `main`.
 
 ### Raw CAN (`can::RawChannel`)
@@ -290,7 +290,7 @@ Set up from one thread. Steps run on the implementation's thread, and functions,
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|
-| What an ECU is | A host from `LocalBench::add_ecu()`. It advances on the thread that called `run_for()`. | A `Peer` (Coordinated, virtual time, a participant with the ECU's name). It advances on SIL Kit threads. |
+| What an ECU is | A host from `LocalBench::add_ecu()`. It advances on the thread that called `run_for()`. | A `Peer` (coordinated, virtual time, a participant with the ECU's name). It advances on SIL Kit threads. |
 | `run_for(d)` | Can be called any number of times; each call continues from where the last one stopped | Once only (a second call, or a call with `controller = false`, throws `std::logic_error`) |
 | `run()` | `std::logic_error` | Waits until the end of the simulation, which any participant may end (once only) |
 | Accessors | `local()` for the `LocalBench`, `ecu(name)` for an `Ecu` | `peer(name)` for a `Peer`, `registry_uri()`, `ecu(name)` for an `Ecu` |
@@ -341,7 +341,7 @@ A stop after the failed ECU has reached Shutdown is an ordinary stop. The whole 
 |---|---|
 | `registry_uri` | If empty, the constructor starts a registry in the process |
 | `controller` | Default `true` (the participant name is `SimulationController`) |
-| `other_participants` | Other Coordinated participants that must all be present before the start (usable only when `controller` is `true`) |
+| `other_participants` | Other coordinated participants that must all be present before the start (usable only when `controller` is `true`) |
 | `start_timeout` | Default 30 s |
 
 ### Argument and call checks
@@ -391,7 +391,7 @@ If you write the setup of several ECUs in functions or classes that take an `Ecu
 | Function | Creates |
 |---|---|
 | `j1939(network)` | A SIL Kit CAN controller, a `SilKitCanPort`, a `TapPort` and a `Network` |
-| `j1939(name, port)` | A `Network` on a port that the user created (such as Vector XL's `ExternalPortAdapter`; the Peer owns it) |
+| `j1939(name, port)` | A `Network` on a port that the user created (such as Vector XL's `ExternalPortAdapter`; the `Peer` owns it) |
 | `can(network)` | A raw CAN channel and one SIL Kit CAN controller (named `<network>.raw`) |
 | `Ecu::lin_master(network, schedule, options)`, `Ecu::lin_slave(network, options)` | A SIL Kit LIN controller named after the LIN network, a `SilKitLinPort` and the LIN node |
 | `Ecu::ethernet(network)` | A SIL Kit Ethernet controller named after the network, an `eth::SilKitEthPort` and an `eth::Channel` |
@@ -419,7 +419,7 @@ Overlapping controller names are refused as follows:
 
 | Overlap | Result |
 |---|---|
-| The raw CAN controller name `<network>.raw` and another controller name of the same Peer | `std::invalid_argument` |
+| The raw CAN controller name `<network>.raw` and another controller name of the same `Peer` | `std::invalid_argument` |
 | J1939 controller names with each other | Refused |
 | A CAN controller name and a LIN controller name (the LIN network name) | Refused |
 | An Ethernet controller name (the network name) and a CAN controller name | Refused, in either order |
@@ -442,9 +442,9 @@ The Agent's processing before and after the application does not depend on when 
 | `virtual_time` | How it runs | Buses available |
 |---|---|---|
 | Set | Runs with SIL Kit time synchronization | J1939, LIN, Ethernet |
-| Not set | Runs in real time. The Peer holds a `RealTimeDriver` and a clock (`SteadyRealTimeClock`, or `PeerOptions::real_time_clock`) and runs the SIL Kit CAN port in real time. | J1939 only (LIN and Ethernet throw `std::logic_error`) |
+| Not set | Runs in real time. The `Peer` holds a `RealTimeDriver` and a clock (`SteadyRealTimeClock`, or `PeerOptions::real_time_clock`) and runs the SIL Kit CAN port in real time. | J1939 only (LIN and Ethernet throw `std::logic_error`) |
 
-If the time domain of an external port differs from the Peer's, the result is `std::logic_error`. There is no configuration without SIL Kit (XL only).
+If the time domain of an external port differs from the `Peer`'s, the result is `std::logic_error`. There is no configuration without SIL Kit (XL only).
 
 ### Lifecycle
 
@@ -453,9 +453,9 @@ If the time domain of an external port differs from the Peer's, the result is `s
 | `Coordinated` | `SimulationController` decides the start and the stop |
 | `Autonomous` | Stops with `stop()`, or with `request_stop()` from inside a step |
 
-- To start several Peers and a controller in one process, use `start_together(controller, {&a, &b})`.
+- To start several `Peer`s and a controller in one process, use `start_together(controller, {&a, &b})`.
 - `Autonomous` participants do not necessarily start at the same time. To run several participants deterministically from the same time, use `Coordinated`.
-- In virtual time with `virtual_time.end` set (it must be after 0), the Peer stops itself after the last step before end.
+- In virtual time with `virtual_time.end` set (it must be after 0), the `Peer` stops itself after the last step before end.
 - `wait()` waits for the end of the lifecycle.
 - In `Coordinated` mode, the `start()` of another participant may see the end of the simulation before its own first step, and throw as a start failure.
 
@@ -487,7 +487,7 @@ A `request_stop()` after a failure delivers the stop once the participant is in 
 
 ### Peer ownership and destruction
 
-The Peer owns the participant, the controllers, the ports, the `Network`s, the LIN nodes and the Control Agent. The references it returns are valid for the Peer's lifetime.
+The `Peer` owns the participant, the controllers, the ports, the `Network`s, the LIN nodes and the Control Agent. The references it returns are valid for the `Peer`'s lifetime.
 
 `stop()` (and destruction) stops things in this order:
 
@@ -521,7 +521,7 @@ Objects created with `emplace` are destroyed after the participant, so their des
 | `stop()` | Can be called from any thread except the step and SIL Kit handlers (from another thread, only after `start()` has returned) |
 | `request_stop()`, `failed()`, `error()` | Can be called from anywhere, including inside a step |
 
-Read records after `wait()` or `stop()`. Concurrent `stop()` calls are processed one after another. Destroy the Peer after `stop()` calls on other threads have returned.
+Read records after `wait()` or `stop()`. Concurrent `stop()` calls are processed one after another. Destroy the `Peer` after `stop()` calls on other threads have returned.
 
 ## Local execution (`vehicle_sil::LocalBench`) and the test kit (`vehicle_sil::testkit`)
 

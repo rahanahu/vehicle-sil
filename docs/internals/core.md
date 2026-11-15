@@ -58,7 +58,7 @@ Start the controllers in this handler: `SilKitCanPort::start()`, `SilKitEthPort:
 
 #### `set_communication_ready_handler_async()` and `complete_communication_ready()`
 
-In Coordinated mode every participant waits before the first step, so participants can exchange data over publish/subscribe during that wait. They cannot do so inside the handler. Call the completion from another thread that the handler started.
+In coordinated mode every participant waits before the first step, so participants can exchange data over publish/subscribe during that wait. They cannot do so inside the handler. Call the completion from another thread that the handler started.
 
 | Situation | What happens |
 |---|---|
@@ -77,7 +77,7 @@ No participant's step starts until the completion. Always complete, even when th
 - Keep the observer short, and do not call this runtime from it except `peer_status()`.
 - Register it before `start()`.
 
-`wait_for_peer()` waits until the peer's state meets a condition. While it waits, it re-reads the states from SIL Kit periodically (see the known bug in [dependencies.md](../dependencies.md#known-upstream-bugs)). It cannot be called from inside a SIL Kit handler.
+`wait_for_peer()` waits until the peer's state meets a condition. While it waits, it re-reads the states from SIL Kit periodically (see "SIL Kit: status updates lost while `AddParticipantStatusHandler` registers" in [dependencies.md](../dependencies.md#sil-kit-status-updates-lost-while-addparticipantstatushandler-registers)). It cannot be called from inside a SIL Kit handler.
 
 ### Guarantees of `stop()`
 
@@ -99,7 +99,7 @@ The tests are `core.communication_ready_after_stop_*` and `core.communication_re
 
 ### Stopping a failed participant
 
-When a participant fails (in the step handler, in the real-time driver, or through `report_failure()`), its own `stop()` and `request_stop()` do not pass a stop to the lifecycle until the lifecycle is in Error. If an ordinary stop got there first, in Coordinated mode the whole simulation would stop normally and the controller would not see the failure.
+When a participant fails (in the step handler, in the real-time driver, or through `report_failure()`), its own `stop()` and `request_stop()` do not pass a stop to the lifecycle until the lifecycle is in Error. If an ordinary stop got there first, in coordinated mode the whole simulation would stop normally and the controller would not see the failure.
 
 Setting the failure flag and reporting Error to SIL Kit happen under one lock. A stop issued after the failure became visible therefore never overtakes the report. The implementation does not rely on the order in which SIL Kit runs work it has deferred.
 
@@ -191,7 +191,7 @@ If `ParticipantRuntimeOptions::participant_configuration` is `"{}"` (the default
 | Condition | Key it changes |
 |---|---|
 | The host of the registry URI is a loopback address | `Middleware.AcceptorUris`, to listen on loopback addresses only |
-| Windows | `Middleware.EnableDomainSockets: false` (see the SIL Kit (Windows) section of [dependencies.md](../dependencies.md#sil-kit-windows-closing-a-local-domain-socket-to-a-process-with-suspended-threads-may-not-return)) |
+| Windows | `Middleware.EnableDomainSockets: false` (see "SIL Kit (Windows): closing a local-domain socket to a process with suspended threads may not return" in [dependencies.md](../dependencies.md#sil-kit-windows-closing-a-local-domain-socket-to-a-process-with-suspended-threads-may-not-return)) |
 | Always | `Experimental.TimeSynchronization.DynamicSimulationStep: false` |
 
 A participant without the `DynamicSimulationStep` key has its step shrunk by SIL Kit to the smallest step of all participants when another participant (a network simulator, for example) joins with `true`. With `false`, it keeps its own step size.

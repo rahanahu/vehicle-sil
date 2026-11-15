@@ -521,7 +521,7 @@ error: my_tests/dashboard_speed.yaml:3: the scenario is only for the variant ful
 
 | 知りたいこと | 読む所 |
 |---|---|
-| `${名前}` を書ける位置と、値が決まる順 | [scenario.md](../scenario.md) の「パラメーター（`params`、`${名前}`）」 |
+| `${name}` を書ける位置と、値が決まる順 | [scenario.md](../scenario.md) の「パラメーター（`params`、`${name}`）」 |
 | その機種にない変数を使う手順の扱い | [scenario.md](../scenario.md) の「ない変数を使う手順のスキップ」 |
 | 設定ファイルの `variants` の書き方 | [simulation-config.md](../simulation-config.md) の「機種（`variants`、`--variant`）」 |
 

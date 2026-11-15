@@ -78,7 +78,7 @@
 | `duplicate-name` | エラー | participant 名、またはネットワークの名前が 2 回あります。 | 片方を削除するか、別の名前にします。 |
 | `reserved-name` | エラー | participant 名が `SimulationController` です。 | 別の名前にします。 |
 | `launcher-argument` | エラー | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがあります。 | それを削除するか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
-| `unknown-placeholder` | エラー | `describe: false` の `command` に知らない `{語}` があります。 | `{registry_uri}` か `{name}` に直すか、文字列として渡すなら `{{語}}` と書きます。 |
+| `unknown-placeholder` | エラー | `describe: false` の `command` に知らない `{word}` があります。 | `{registry_uri}` か `{name}` に直すか、文字列として渡すなら `{{word}}` と書きます。 |
 | `no-registry-uri` | 注記 | `describe: false` の `command` に `{registry_uri}` がありません。 | 実行ファイルが registry の URI を必要とするなら、その引数の値に `"{registry_uri}"` を書きます。 |
 | `registry-on-network` | 注記 | `registry_uri` がループバックのアドレスではありません。 | この PC だけで動かすなら、`127.0.0.1` にするか、`registry_uri` を書きません。 |
 | `listen-variable-ignored` | 注記 | `vehicle_sil_launch` 自身の環境の `VEHICLE_SIL_LISTEN_ON_NETWORK` が、`run` が participant に渡す値と違います（その値は使いません）。 | ほかの PC から参加させたいときだけ、`registry_uri` に、その PC から接続できるアドレスを書きます。 |

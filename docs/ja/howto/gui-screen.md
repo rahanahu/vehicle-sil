@@ -16,7 +16,7 @@
 コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを、次の変数に設定しておきます。
 
 ```sh
-TOOLS=tools/vehicle-sil-tools-<バージョン>-linux-x86_64   # <バージョン> は vehicle_sil_launch version が表示するもの
+TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version> は vehicle_sil_launch version が表示するもの
 ```
 
 リポジトリをビルドして使う場合は、次のように読み替えます。
@@ -85,7 +85,7 @@ curl -s "$BASE/" | grep '<title>'
 |---|---|---|
 | `there is no index.html in it` と表示して、終了コード 2 で終わる | 渡したディレクトリに `index.html` がありません。 | `index.html` のあるディレクトリを渡します。 |
 | `it has package.json, so it is the project and not its build` と表示して、終了コード 2 で終わる | ビルドの出力でなく、プロジェクトのディレクトリを渡しています。 | ビルドの出力のディレクトリ（`dist/` など）を渡します。 |
-| 画面に「No token: open the URL that vehicle-sil-gui printed」と表示される | `#token=` のない URL を開いています。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
+| 画面に `No token: open the URL that vehicle-sil-gui printed (with #token=...).` と表示される | `#token=` のない URL を開いています。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
 
 ## 手順 2: 表示する変数の名前を調べる
 
@@ -304,6 +304,6 @@ rm token.header
 
 ## 次に読むもの
 
-- 値を書き込むスライダーやスイッチを作る → テンプレートの `main.js` の「Slider and lamp」と、[gui/client/README.md](../../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」
+- 値を書き込むスライダーやスイッチを作る → テンプレートの `index.html` の「Slider and lamp」と、それを動かす `main.js` の `showSlider()`、[gui/client/README.md](../../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」
 - TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」

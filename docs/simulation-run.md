@@ -51,7 +51,7 @@ With `--scenario <file>`, the check also checks the scenario. Once the simulatio
 | Scenario steps that use a variable the variant does not have (`absent: true`) | Skipped and shown in the result. |
 | Scenario steps that use variables of a participant the variant disables | Also skipped and shown in the result. |
 
-A skipped step has `at_ms` null. If every expect step is skipped, the check reports the warning `scenario-nothing-checked` (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)).
+A skipped step has `at_ms` null. If every checking step is skipped, the check reports the warning `scenario-nothing-checked` (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)).
 
 ## Abort conditions and timeouts
 
@@ -412,7 +412,7 @@ When `registry_uri` is not a loopback address, `run` writes a line with the URI 
 
 Why `1` is passed: when `registry_uri` is `0.0.0.0` (or `[::]`), `run` gives the participants on this computer a URI with `127.0.0.1` (`[::1]`). With only that, they would listen on loopback only, and SIL Kit passes that address unchanged to the participants on other computers too. A participant that receives it tries it on its own loopback address. If another program listens on the same port there, the participant connects to that program, waits for a reply forever and fails to join. Listening on all addresses prevents this.
 
-For a participant that you start yourself (manual), the value to set appears in the command line that `run` prints and in `environment` of the `participant` event (`manual`), only when it is `1`. Also set `1` yourself for a participant that connects to the registry of another computer through a loopback address on that computer.
+For a participant that you start yourself (manual), the value to set appears in the command line that `run` prints and in `environment` of the `participant` event (`manual`), only when it is `1`. Also set `1` yourself for any other participant that runs on the registry's computer and connects to it through a loopback address (such as `127.0.0.1`), when participants on other computers join the same registry.
 
 ### Participants with their own SIL Kit configuration
 

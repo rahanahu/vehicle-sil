@@ -365,7 +365,7 @@ For the rules of the result, see "Results" in [scenario.md](../scenario.md#resul
 
 ## Step 5: Check values while an input moves
 
-`ramp` moves a value in a straight line over a set time. `wave` moves a value along a waveform, such as a sine wave or a pulse. With an `expect` in the same step, either one checks that the condition holds in every sample while the value moves.
+`ramp` moves a value in a straight line over a set time. `wave` moves a value along a waveform, such as a sine wave or a pulse. With an `expect` beside it, either one checks that the condition holds in every sample while the value moves.
 
 Create `my_tests/throttle_motion.yaml` with this content:
 
@@ -415,7 +415,7 @@ line  step                                                                      
 | Symptom | Cause | Fix |
 |---|---|---|
 | The step fails with `not true during the ramp (from ... to ...): at 430 ms ...` | The condition did not hold in one of the samples during the movement. | Look at the time and the value shown, then fix the ECU or the condition. |
-| `within_ms` or `hold_for_ms` on the `expect` in a `ramp` step gives a check error | The interval that this `expect` checks is fixed: it is the time during which the value moves. | To check over another interval, put the `expect` in the next step. |
+| `within_ms` or `hold_for_ms` on the `expect` beside `ramp` gives a check error | The interval that an `expect` beside `ramp` checks is fixed: it is the time during which the value moves. | To check over another interval, put the `expect` in the next step. |
 | A `wave` gets the check warning `scenario-wave-undersampled` | The waveform changes faster than the ECU steps. | Make the period longer. If this is intended, write `undersampled: ok` in that step. |
 | `0x1F` in quotes gives a check error | `"0x1F"` is a string. | Remove the quotes. |
 
@@ -424,7 +424,7 @@ For reference:
 | To find | See |
 |---|---|
 | The waveform types (`sine`, `square`, `pulse`, `noise` and others) and how to write them | "Waveforms (`wave`)" in [scenario.md](../scenario.md#waveforms-wave) |
-| The samples that an `expect` in a `ramp` or `wave` step looks at | "Checking values during a ramp or wave" in [scenario.md](../scenario.md#checking-values-during-a-ramp-or-wave) |
+| The samples that an `expect` beside `ramp` or `wave` looks at | "Checking values during a ramp or wave" in [scenario.md](../scenario.md#checking-values-during-a-ramp-or-wave) |
 | Where you can write hexadecimal | "File format" in [scenario.md](../scenario.md#file-format) |
 
 ## Step 6: Use parameters and variants
@@ -722,7 +722,7 @@ If you use a `vehicle_sil_launch` of a different version, the `features` in the 
 |---|---|
 | `scenario` | `--scenario` |
 | `scenario-wave` | The `wave` step |
-| `scenario-motion-expect` | An `expect` in a `ramp` or `wave` step |
+| `scenario-motion-expect` | `expect` beside `ramp` and `wave` |
 
 ## What to read next
 

@@ -231,7 +231,7 @@ no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (net
 
 The reason for the warning: without promiscuous mode, an interface passes on only frames to its own address and to group addresses, and the SIL Kit devices have addresses other than the interface's. The warning also appears when you do not expect responses (when you only send frames out), so the text is conditional.
 
-Frames received before the bridge's first transmission count too: if the bridge later sends a frame whose source is the destination of such a frame, that address counts as received. The bridge remembers up to 32 destination addresses from before its first transmission and ignores the rest (those do not count as received). There is a limit because the bridge also receives the frames that this computer's OS sends from the same interface, so many destination addresses do not prove that the interface does not filter by destination.
+A frame also counts when its destination was not yet known as a MAC address of the SIL Kit side at the time the bridge received it (including frames received before the bridge's first transmission). The bridge remembers the destination of such a frame (not a group address), and if it later sends a frame with that address as the source, the frame to that address counts as received. The bridge remembers up to 32 such destinations and ignores the rest (those do not count as received). There is a limit because the bridge also receives the frames that this computer's OS sends from the same interface, so many destination addresses do not prove that the interface does not filter by destination.
 
 ## Backends
 

@@ -126,7 +126,7 @@ Write exactly one of `pgn`, `proprietary_a` and `proprietary_b`.
 | `byte_order` | `little` (default) or `big` |
 | `signed` | `true` for two's complement (default `false`) |
 | `scale`, `offset` | Physical value = raw × `scale` + `offset` (defaults 1 and 0; `scale` is positive). Besides numbers, you can write strings such as `"1/8"` and `"1e-3"` |
-| `min`, `max` | Valid range of the physical value. The valid raw range narrows to the raw values inside this range (the ends rounded up and down) |
+| `min`, `max` | Valid range of the physical value. The valid raw range narrows to the raw values inside this range (the raw end for `min` is rounded up, the raw end for `max` is rounded down) |
 | `unit` | Unit (a string) |
 | `indicators` | Special value profile for this signal (default: the message's `indicators`). See "Special values" below |
 | `special_values` | Special values of this signal only (names and values, written like `values` in a profile). Replaces the inherited profile |

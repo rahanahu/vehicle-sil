@@ -229,11 +229,11 @@ A wait step ends at P + time step for this reason: the launcher is sure to have 
 
 For this reason, a step after a wait step cannot have `at_ms` (write `after_ms`). An `at_ms` that goes back in time is also an error.
 
-The controller's time step is `time_step_ms` in the configuration file. If it is not set, the time step is one at which every ECU step starts on a controller step (`timing.time_step_ms` in the result; the same as the default when a speed is set, see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)). In a run with a scenario, this time step applies whatever the speed.
+The controller's time step is `time_step_ms` in the configuration file. If it is not set, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes, so every ECU step starts on a controller step (`timing.time_step_ms` in the result; the same as the default when a speed is set, see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). In a run with a scenario, this time step applies whatever the speed.
 
 ## Values that conditions see
 
-Every `sample_period` of its agent (10 ms of virtual time by default), an ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
+Every `sample_period` of its Agent (10 ms of virtual time by default), an ECU sends one set of the values of all its variables at the end of an ECU step: a sample. The time of a sample is the time at which that ECU step started. Conditions look at these samples.
 
 | Condition | Samples it looks at |
 |---|---|
@@ -297,7 +297,7 @@ For each variable, write one waveform, and beside it the duration (`for_ms`) and
 | `triangle` | A triangle wave with its peaks and troughs at the same places as `sine`. | integer, real |
 | `sawtooth` | A sawtooth wave. It is at its minimum at the start of each period, rises in a straight line to its maximum and drops back. | integer, real |
 | `square` | A square wave. It is high for `duty` % of each period, from the start of the period. | integer, real, bool |
-| `pulse` | The value is `value` for `width_ms` only, then returns to the value it had when the step started (for a bool, the opposite of `value`). | integer, real, bool |
+| `pulse` | The value is `value` for `width_ms` only. When the pulse ends, a number returns to the value it had when the step started, and a bool becomes the opposite of `value` (whatever its value at the start). | integer, real, bool |
 | `noise` | Random values. Each value is held for `hold_ms`. | integer, real |
 | `chirp` | A sine wave whose frequency changes from `from_hz` to `to_hz` over `for_ms`. | integer, real |
 | `lag` | Approaches `to` as a first-order lag (63 % at `tau_ms`, 99 % at 5 times that). | integer, real |
@@ -356,7 +356,7 @@ Three keys go beside the waveform, at the same level:
 
 - **Period**: either `period_ms` (an integer, 1 or more) or `frequency_hz` (a number greater than 0). Write a period shorter than 1 ms with `frequency_hz`.
 - **Center** (`around`): without it, the center is the variable's value when the step starts, decided the same way as `from` of `ramp` (see [Writes](#writes)). If there is no value, the step fails, so write `around`.
-- **`pulse`** takes no `around`. When it ends, the value returns to the value at the start (to set another value, `set` it in the next step). A numeric `pulse` fails if there is no value at the start, so `set` one in an earlier step.
+- **`pulse`** takes no `around`. When it ends, a number returns to the value at the start and a bool becomes the opposite of `value` (to set another value, `set` it in the next step). A numeric `pulse` fails if there is no value at the start, so `set` one in an earlier step.
 - **Start value**: write it as `from` for `lag` and `chatter`, and as the first point for `points`.
 - `${name}` can also go in a numeric position inside a waveform (`amplitude: "${amp}"`).
 
@@ -377,7 +377,7 @@ Three keys go beside the waveform, at the same level:
 |---|---|
 | Waveforms with a center | Returns to the center (`around`, or the value at the start if `around` is omitted). |
 | `square` with `low` and `high`, bool `square` | Ends low. |
-| `pulse` | Returns to the value at the start. |
+| `pulse` | A number returns to the value at the start. A bool becomes the opposite of `value`. |
 | `points` | Stays at the value of the last point. |
 | `chatter` | Stays at `to`. |
 | `lag` | Stays at the value reached at `for_ms` (`to` with `settle: true`). |
@@ -965,7 +965,7 @@ When you use a `vehicle_sil_launch` of another version, check `features` in the 
 
 ## See also
 
-| Topic | Document |
+| To find | See |
 |---|---|
 | Write a scenario step by step | [Write tests with scenarios](howto/scenario-tests.md) |
 | Configuration file, variants, arguments and exit codes | [simulation-config.md](simulation-config.md) |

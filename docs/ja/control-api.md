@@ -166,7 +166,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 - 進めた後に `--timeout-ms` が過ぎたときも、メッセージに、最初のステップの前で止まっていた時間を書きます。
 - 待っている間に必須の participant がいなくなると（プロセスが終わったなど）、すぐに待つのをやめて、始まらなかった実行として終わります（`ended-before-start`）。
 
-`--control` なしの `--start-paused`（`--stdin-commands` だけ）は、時刻 0 のステップを実行してから 0 で止まります。この場合と、一時停止してから書く場合は、`at` を止まっている時刻より後にします（下の「Python」）。
+`--control` なしの `--start-paused`（`--stdin-commands` だけ）は、時刻 0 のステップを実行してから 0 で止まります。この場合と、一時停止してから書く場合は、`at` を止まっている時刻より後にします（下の「[書き込みのルール](#書き込みのルール)」）。
 
 ### 標準入力とクライアントのコマンド
 
@@ -603,7 +603,7 @@ python -m vehicle_sil_control stop
 | Peer の `status`（Python の `Peer.failed` と `error`、CLI の `FAILED`） | いつも空です（ECU の Agent はこれを送信しません）。 |
 | 値の購読 | 最新値です（読む前に来た新しい値で置き換えます）。 |
 
-- 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md) の時間ゲートの「遅れ」）。
+- 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md#遅れの測り方) の「遅れの測り方」）。
 - participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
 - すべての値を記録するには、SIL Kit のトレースか `TapPort` を使います。
 
