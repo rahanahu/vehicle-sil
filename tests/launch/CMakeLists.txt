@@ -250,6 +250,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       connect_no_adapter
       connect_roundtrip
       connect_speed
+      connect_time_changed
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

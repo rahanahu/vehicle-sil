@@ -166,6 +166,60 @@ On Linux, write `--backend packet` (or `pcap`) and the name of the network inter
 
 To have the launcher start the bridge without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). The adapter or channel differs from PC to PC, so it is given when you start, not written in the shared file. `run` then starts the bridge before the ECUs, waits until it runs, so that the first frames reach the bus too, and fails the run if the bridge ends (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
 
+### Trying `run --connect` on one computer (Linux)
+
+A veth pair stands in for the cable: the bridge opens one end (`vsil0`), and `tcpdump` watches the other end (`vsil1`), where a device would be. The steps use the example `examples/ethernet` of a build of this repository (`build/<preset>`). Its two ECUs talk on the network `ETH` and report their MAC addresses, so the bridge passes their frames without an `external` entry in the file. In a build, the bridge is not next to `vehicle_sil_launch`, so the steps put its directory on `PATH`.
+
+| Step | What you do | What you see |
+|---|---|---|
+| 1 | Create a veth pair and bring both ends up. | `vehicle_sil_ethernet_bridge --list-interfaces` lists `vsil0` and `vsil1` as `Ethernet, up`. |
+| 2 | Give the bridge `CAP_NET_RAW` (see "[`packet`](#packet)"). | Nothing. |
+| 3 | In another terminal, watch the other end. | `tcpdump` waits. |
+| 4 | Run the example at speed 1 with `--connect ETH=vsil0`. | The line `outside: ETH -> vsil0 (bridge.ETH)`, `bridge.ETH` in the participant table with `stopped (SIGTERM), exit code 0`, and `passed: 0 errors, 0 warnings, 0 notes`. |
+| 5 | Look at what `tcpdump` printed. | The frames between Sensor (`02:00:00:00:00:01`) and Display (`02:00:00:00:00:02`), EtherType `0x88b5`, about 20 in the second the example runs. |
+| 6 | Remove the veth pair and the capability. | Nothing. |
+
+The commands for steps 1 and 2:
+
+```sh
+sudo ip link add vsil0 type veth peer name vsil1
+sudo ip link set vsil0 up
+sudo ip link set vsil1 up
+build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge --list-interfaces
+sudo setcap cap_net_raw+ep build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
+```
+
+The command for step 3:
+
+```sh
+sudo tcpdump -e -n -i vsil1 ether proto 0x88b5
+```
+
+The commands for step 4:
+
+```sh
+cd build/<preset>/examples/ethernet
+PATH="$PWD/../../bridges/ethernet:$PATH" ../../tools/launch/vehicle_sil_launch run simulation.yaml --speed 1 --connect ETH=vsil0
+```
+
+The first frames that `tcpdump` prints in step 5 look like this:
+
+```
+02:00:00:00:00:01 > 02:00:00:00:00:02, ethertype Unknown (0x88b5), length 60:
+02:00:00:00:00:02 > 02:00:00:00:00:01, ethertype Unknown (0x88b5), length 60:
+```
+
+The commands for step 6:
+
+```sh
+sudo ip link del vsil0
+sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
+```
+
+- Without step 2, the run fails with `connect-failed`, and the bridge's line says which `setcap` command to run.
+- A real device on a NIC is connected the same way: give `--connect ETH=<the NIC's name>` instead of `vsil0`. For an automatic test with the device, run a scenario with `--speed 1 --strict` (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
+- The test `ethernet_bridge.netns.launch` does the same in a network namespace, where it needs neither `sudo` nor `setcap` (see "[`ethernet_bridge.netns.*`](#ethernet_bridgenetns)").
+
 ## Exit codes
 
 | Exit code | Meaning | Output |
@@ -1000,6 +1054,11 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 - The messages when the interface cannot be opened (missing, not Ethernet, down, privileges dropped).
 - CI runs the same tests with the libpcap of the Ubuntu package `libpcap0.8` and fails if they are skipped (`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`).
 
+`vehicle_sil_launch run --connect` (the same veth pair, `ethernet_bridge.netns.launch`):
+
+- The launcher finds the bridge on `PATH`, starts it with its default backend (`packet`) on one end, with the ECU's MAC address as `--src-mac`, and stops it with exit code 0 at the end.
+- The frames of an ECU in SIL Kit reach the other end, and the answers of a device there come back to the ECU (a scenario at speed 1 with `--strict` expects them, and the run has no finding).
+
 Common to all backends:
 
 - The messages and exit code 3 when the interface cannot be opened (missing, not a TAP device, not Ethernet, already exists, busy, privileges dropped).
@@ -1122,7 +1181,7 @@ These tests run, as processes, the executable linked with a fake external link (
 
 ### `ethernet_bridge.netns.*`
 
-`tests/ethernet_bridge/bridge_netns.py` runs `ethernet_bridge.netns.tap`, `ethernet_bridge.netns.packet` and `ethernet_bridge.netns.pcap`. The conditions for skipping and for leaving parts out:
+`tests/ethernet_bridge/bridge_netns.py` runs `ethernet_bridge.netns.tap`, `ethernet_bridge.netns.packet`, `ethernet_bridge.netns.pcap` and `ethernet_bridge.netns.launch` (`vehicle_sil_launch run --connect` with this script as the device at the other end of a veth pair). The conditions for skipping and for leaving parts out:
 
 | Condition | What happens | Environment variable that makes it a failure |
 |---|---|---|

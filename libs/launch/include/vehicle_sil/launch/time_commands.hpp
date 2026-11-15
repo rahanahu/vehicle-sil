@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace vehicle_sil {
@@ -22,6 +23,21 @@ namespace vehicle_sil::launch {
 
 class EventStream;
 struct Command;
+
+/// A time command that changed how the simulation's time goes: a pause (also at a time), a step,
+/// a run_until, or a speed other than 1 (also max). A resume, a speed of 1 and run --start-paused
+/// itself are none.
+struct TimeChange
+{
+    std::string command;     ///< "pause", "step", "run_until" or "speed"
+    std::string source;      ///< as apply() was given it ("stdin", "control_server")
+    std::int64_t sim_ms = 0; ///< the virtual time when it was accepted (0 before the start)
+    /// step: how far (whole steps of the controller); pause at a time, run_until: where it was to
+    /// stand still. As the command event says.
+    std::optional<std::int64_t> ms{};
+    std::optional<std::int64_t> at_ms{};
+    std::optional<double> speed{}; ///< speed: its value (empty: max)
+};
 
 /// The time commands (pause, resume, step, run_until, speed) on their way to the simulation's time
 /// gate, from every source: the reader of standard input (`run --stdin-commands`) and the threads
@@ -108,6 +124,11 @@ public:
     /// hold), or empty on the timeout, once detached and once the controller's lifecycle has ended
     /// (as SimulationController::wait_until_paused()).
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout);
+
+    /// The first accepted command that changed how the time goes (TimeChange), or empty. apply()
+    /// notes it under this object's mutex; the run reads it after detach(), when no command is
+    /// accepted any more (run --connect: the warning connect-time-changed).
+    std::optional<TimeChange> first_time_change();
 
 private:
     struct State;

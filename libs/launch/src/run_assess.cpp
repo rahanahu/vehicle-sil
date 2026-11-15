@@ -118,6 +118,52 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
                    p.line, p.name, p.for_network};
 }
 
+/// connect-time-changed: a run --connect whose time a command paused, stepped or changed the speed
+/// of (the first such command), or nothing.
+std::optional<Finding> time_changed_finding(const RunOutcome& outcome)
+{
+    if (!outcome.time_changed || outcome.outside.empty())
+    {
+        return std::nullopt;
+    }
+    const TimeChange& t = *outcome.time_changed;
+    std::vector<std::string> networks;
+    for (const RunOutside& o : outcome.outside)
+    {
+        networks.push_back(o.network);
+    }
+    // The command as its event says it.
+    std::string command = t.command;
+    if (t.command == "step" && t.ms)
+    {
+        command += " " + std::to_string(*t.ms) + " ms";
+    }
+    else if (t.command == "run_until" && t.at_ms)
+    {
+        command += " " + std::to_string(*t.at_ms) + " ms";
+    }
+    else if (t.command == "pause" && t.at_ms)
+    {
+        command += " at " + std::to_string(*t.at_ms) + " ms";
+    }
+    else if (t.command == "speed")
+    {
+        command += " " + speed_text(t.speed);
+    }
+    const std::string effect = t.command != "speed" ? std::string("the simulation stood still")
+                               : t.speed            ? "the simulation ran at speed " + speed_text(t.speed)
+                                                    : std::string("the simulation ran as fast as possible");
+    return Finding{Severity::Warning, "connect-time-changed",
+                   "--connect connects " + detail::and_list(networks) +
+                       " to a real bus, which does not wait for the virtual time, and the run took the time command '" +
+                       command + "' from " + t.source + " at " + std::to_string(t.sim_ms) + " ms: " + effect +
+                       " while the devices there went on in real time, so from then on they got the messages at the wrong "
+                       "times. It is the first command of the run that paused, stepped or changed the speed (the command "
+                       "events show each one). To pause, step or change the speed, run without --connect (on SIL Kit "
+                       "only); --strict makes this a failure, for an automatic test",
+                   0, "", ""};
+}
+
 std::size_t count(const std::vector<Finding>& findings, Severity severity)
 {
     return static_cast<std::size_t>(
@@ -414,6 +460,10 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 "steps and a larger time_step_ms help then). The launcher cannot tell which participant is slow: leave ECUs "
                 "out one at a time (--disable <name>) and compare",
             nullptr);
+    }
+    if (auto f = time_changed_finding(outcome))
+    {
+        out.push_back(std::move(*f));
     }
     if (!outcome.timing.coarse_step_checked)
     {

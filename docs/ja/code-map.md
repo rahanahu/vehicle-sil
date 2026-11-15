@@ -448,7 +448,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 - `launch_run.ethernet`: `examples/ethernet` の 2 つの ECU の照合とシナリオ
 - `launch_run.test_command`、`launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: 止めるまで動く例の設定ファイル `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行
-- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
+- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告、`connect-time-changed`（実行の最初の一時停止についての警告 1 つ。`--strict` では速さの命令で実行が失敗する）。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
 
 `process.*` が確認すること:
 
@@ -505,7 +505,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `ethernet_bridge.silkit_*` | プロセス内のレジストリ（空いているポート）で、本物の SIL Kit の側を確認する |
 | `ethernet_bridge.integration.*`（`integration` ラベル） | 偽の外部リンクをリンクした実行ファイルをプロセスとして動かし、往復、終了コード、止め方を確認する |
 | `ethernet_bridge.integration.pcap-*` | OS の外部リンクの実行ファイルに偽の pcap のライブラリを読み込ませて、同じことを確認する。`pcap-describe` は `--describe` を、`pcap-launcher` は `vehicle_sil_launch` の設定ファイルから ECU といっしょにブリッジを起こす形を確認する |
-| `ethernet_bridge.netns.*`（Linux だけ、`integration` ラベル） | 名前空間の中の TAP デバイスと veth で、本物の実行ファイルの `tap`、`packet`、`pcap`（本物の libpcap）を確認する |
+| `ethernet_bridge.netns.*`（Linux だけ、`integration` ラベル） | 名前空間の中の TAP デバイスと veth で、本物の実行ファイルの `tap`、`packet`、`pcap`（本物の libpcap）と、`launch`（`vehicle_sil_launch run --connect` がそれを起こす）を確認する |
 
 `ethernet_bridge.*` が確認するのは、転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通るループ（止まる順序と止まらない順序）、失ったフレーム、`Fault`、警告、統計と監視の行、引数のエラーの文言です。`ethernet_bridge.netns.*` は、名前空間を作れない所と libpcap がない所ではスキップします。
 
@@ -855,7 +855,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形、ブリッジの引数、`find_tool()`（ランチャーの隣、次に `PATH`）。`find_tool()` と `find_executable()` が共有する `PATH` の探索は `src/config.cpp` の `detail::find_on_path()` | `src/connect.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
-| `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
+| `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
@@ -1752,7 +1752,7 @@ flowchart TD
 
 - `core.time_gate_model_*`、`core.virtual_time_gate_*`、`core.*deadline_waiter*`
 - `^launch\.`
-- `launch_run.realtime`、`on_time`、`late`、`stall`、`speed_change`、`step_width`、`pause_step`、`paused_failures`、`time_usage`
+- `launch_run.realtime`、`on_time`、`late`、`stall`、`speed_change`、`step_width`、`pause_step`、`paused_failures`、`time_usage`、`connect_time_changed`
 
 ### 自分で起動する participant
 

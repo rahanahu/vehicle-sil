@@ -224,6 +224,8 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     notes_.note_time(controller, TimeNote::Last, outcome_);
     // No time command from here on: the simulation is over.
     ctx_.commands.detach();
+    // The commands' threads (standard input, a control server) noted it; none is accepted any more.
+    outcome_.time_changed = ctx_.commands.first_time_change();
     // An interrupt from here on comes while the launcher waits for the participants to end.
     const int interrupts_at_end = ctx_.interrupts();
     switch (watched.end)

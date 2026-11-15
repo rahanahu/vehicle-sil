@@ -50,6 +50,7 @@ int main(int argc, char** argv)
             {"connect_no_adapter", connect_no_adapter},
             {"connect_roundtrip", connect_roundtrip},
             {"connect_speed", connect_speed},
+            {"connect_time_changed", connect_time_changed},
             {"control", control},
             {"crash", crash},
             {"disabled", disabled},

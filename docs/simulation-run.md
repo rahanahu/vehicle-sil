@@ -285,6 +285,8 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
 
+With `--connect`, the devices on the real bus do not stop or change speed with the simulation: the run warns with `connect-time-changed` (see [Connecting a bus outside](#connecting-a-bus-outside---connect)).
+
 ## Connecting a bus outside (`--connect`)
 
 `run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. The check looks for the bridge and asks it `--describe`, as `check --connect` does (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). If the check passes, `run` goes on:
@@ -310,7 +312,7 @@ A bridge is not a participant of the file. It appears in the result (`participan
 
 The messages say how the bridge ended and quote the line in which it said why: its last line that starts with `error:` or `FAIL`, after its tag such as `[eth-bridge]`. A bridge that was killed, or ended without such a line, has none quoted (its last line would be about something else, such as `stopped`). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
 
-A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step and speed commands during the run are accepted; the devices on the bus do not stop.
+A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. The first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended.
 
 For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`, because it runs each scenario as fast as possible.
 
@@ -651,6 +653,7 @@ When the simulation started, the result shows after the participant table whethe
 | `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
 | `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so the simulation was not started; if it failed before the participants of the file were started, they were not (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
 | `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended |
+| `connect-time-changed` | Warning | With `--connect`, a command paused or stepped the simulation, or set a speed other than 1, while the devices on the real bus went on (one for the run, about the first such command; see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |

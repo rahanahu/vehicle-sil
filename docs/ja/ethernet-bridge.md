@@ -166,6 +166,60 @@ Linux では `--backend packet`（か `pcap`）とネットワークインター
 
 ファイルに書かずにランチャーにブリッジを起こさせるなら、`check` と `run` に `--connect <network>=<target>` を渡します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。アダプターやチャンネルは PC ごとに違うので、共有のファイルには書かず、起動するときに渡します。`run` は、ECU より先にブリッジを起こし、動き出すのを待つので、最初のフレームもバスに出ます。ブリッジが終わると実行を失敗にします（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
 
+### 1 台の PC で `run --connect` を試す（Linux）
+
+veth のペアをケーブルの代わりにします。ブリッジが一方の端（`vsil0`）を開き、機器がいるはずのもう一方の端（`vsil1`）を `tcpdump` で見ます。この手順は、このリポジトリのビルド（`build/<preset>`）の例 `examples/ethernet` を使います。この例の 2 つの ECU はネットワーク `ETH` で通信し、MAC アドレスを報告するので、ファイルに `external` を書かなくても、ブリッジは ECU のフレームを通します。ビルドでは、ブリッジは `vehicle_sil_launch` の隣にないので、手順ではブリッジのディレクトリを `PATH` に足します。
+
+| 手順 | すること | 見えるもの |
+|---|---|---|
+| 1 | veth のペアを作り、両端を up にします。 | `vehicle_sil_ethernet_bridge --list-interfaces` に、`vsil0` と `vsil1` が `Ethernet, up` で出ます。 |
+| 2 | ブリッジに `CAP_NET_RAW` を与えます（「[`packet`](#packet)」）。 | 何も出ません。 |
+| 3 | 別の端末で、もう一方の端を見ます。 | `tcpdump` が待ちます。 |
+| 4 | 例を速さ 1、`--connect ETH=vsil0` で実行します。 | `outside: ETH -> vsil0 (bridge.ETH)` の行、参加者の表に `stopped (SIGTERM), exit code 0` の `bridge.ETH`、`passed: 0 errors, 0 warnings, 0 notes` が出ます。 |
+| 5 | `tcpdump` の出力を見ます。 | Sensor（`02:00:00:00:00:01`）と Display（`02:00:00:00:00:02`）の間のフレーム（EtherType `0x88b5`）が、例が動く 1 秒間に 20 ほど出ます。 |
+| 6 | veth のペアと権限を消します。 | 何も出ません。 |
+
+手順 1 と 2 のコマンド:
+
+```sh
+sudo ip link add vsil0 type veth peer name vsil1
+sudo ip link set vsil0 up
+sudo ip link set vsil1 up
+build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge --list-interfaces
+sudo setcap cap_net_raw+ep build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
+```
+
+手順 3 のコマンド:
+
+```sh
+sudo tcpdump -e -n -i vsil1 ether proto 0x88b5
+```
+
+手順 4 のコマンド:
+
+```sh
+cd build/<preset>/examples/ethernet
+PATH="$PWD/../../bridges/ethernet:$PATH" ../../tools/launch/vehicle_sil_launch run simulation.yaml --speed 1 --connect ETH=vsil0
+```
+
+手順 5 で `tcpdump` が出す最初のフレームは、次のようになります。
+
+```
+02:00:00:00:00:01 > 02:00:00:00:00:02, ethertype Unknown (0x88b5), length 60:
+02:00:00:00:00:02 > 02:00:00:00:00:01, ethertype Unknown (0x88b5), length 60:
+```
+
+手順 6 のコマンド:
+
+```sh
+sudo ip link del vsil0
+sudo setcap -r build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge
+```
+
+- 手順 2 をしないと、実行は `connect-failed` で失敗し、ブリッジの行が、実行する `setcap` のコマンドを書きます。
+- NIC の先の本物の機器も同じようにつなぎます。`vsil0` の代わりに `--connect ETH=<NIC の名前>` を渡します。機器と一緒に自動で試験するなら、シナリオを `--speed 1 --strict` で実行します（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
+- テスト `ethernet_bridge.netns.launch` は、同じことをネットワークの名前空間の中でします。そこでは `sudo` も `setcap` も要りません（「[`ethernet_bridge.netns.*`](#ethernet_bridgenetns)」）。
+
 ## 終了コード
 
 | 終了コード | 意味 | 出力 |
@@ -1000,6 +1054,11 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 - 開けないときのメッセージ（ない、イーサネットでない、down、権限を落としたとき）。
 - CI は Ubuntu のパッケージ `libpcap0.8` の libpcap で同じテストを実行し、スキップしたら失敗にします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`）。
 
+`vehicle_sil_launch run --connect`（同じ veth のペア、`ethernet_bridge.netns.launch`）:
+
+- ランチャーがブリッジを `PATH` で見つけ、既定のバックエンド（`packet`）で一方の端に、ECU の MAC アドレスを `--src-mac` にして起こし、終わりに終了コード 0 で止めます。
+- SIL Kit の ECU のフレームがもう一方の端に届き、そこにいる機器の答えが ECU に戻ります（速さ 1、`--strict` のシナリオがそれを待ち、実行には指摘がありません）。
+
 どのバックエンドにも共通:
 
 - 開けないときのメッセージと終了コード 3（ない、TAP でない、イーサネットでない、すでにある、使用中、権限を落としたとき）。
@@ -1122,7 +1181,7 @@ Linux:
 
 ### `ethernet_bridge.netns.*`
 
-`ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`、`ethernet_bridge.netns.pcap` は、`tests/ethernet_bridge/bridge_netns.py` が実行します。スキップと省略の条件は次のとおりです。
+`ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`、`ethernet_bridge.netns.pcap`、`ethernet_bridge.netns.launch`（`vehicle_sil_launch run --connect`。このスクリプトが veth のペアのもう一方の端で機器の代わりをする）は、`tests/ethernet_bridge/bridge_netns.py` が実行します。スキップと省略の条件は次のとおりです。
 
 | 条件 | 動作 | 失敗にする環境変数 |
 |---|---|---|

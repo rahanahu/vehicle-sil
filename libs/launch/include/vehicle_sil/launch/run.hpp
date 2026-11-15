@@ -277,6 +277,10 @@ struct RunOutcome
     std::vector<ParticipantRun> participants{};
     /// --connect: the networks connected to a real bus, in the order of the file's networks.
     std::vector<RunOutside> outside{};
+    /// The first time command of the simulation that changed how its time goes (a pause, a step, a
+    /// run_until, a speed other than 1), if any: TimeCommands::first_time_change() once the
+    /// simulation is over. With --connect, the warning connect-time-changed.
+    std::optional<TimeChange> time_changed{};
     /// What went over the networks; empty if the simulation did not start.
     std::optional<RunTraffic> traffic{};
     /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did
