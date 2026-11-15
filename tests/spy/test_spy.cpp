@@ -127,11 +127,16 @@ TEST_CASE(watcher_variables_are_named_after_it_and_count_what_it_hears)
     CHECK(info_of(rig.ecu, "block.count").causality == vehicle_sil::control::Causality::Output);
     // The counters of what the Listener missed, under "spy." by default.
     for (const char* name : {"spy.missed", "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
-                             "spy.conflicting_packets", "spy.receive_overflows", "spy.transport_rejected",
-                             "spy.transport_bam_dropped"})
+                             "spy.conflicting_packets", "spy.timed_out"})
     {
         CHECK_EQ(integer_of(rig.ecu, name), 0);
         CHECK(!info_of(rig.ecu, name).description.empty());
+    }
+    // The Network's counters are the participant's "j1939.<network>.*" (a Peer's monitoring), not the Spy's.
+    for (const char* name : {"spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped",
+                             "spy.transport_bam_replaced", "spy.transport_timeouts"})
+    {
+        CHECK(!has_variable(rig.ecu, name));
     }
     CHECK_EQ(spy.missed(), 0u);
     CHECK_EQ(rig.network.statistics().frames_sent, 0u);
@@ -295,11 +300,13 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
 {
     const auto check_sum = [](Rig& rig, const Spy& spy) {
         std::int64_t parts = 0;
-        for (const char* name : {"spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost", "spy.conflicting_packets",
-                                 "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped"})
+        for (const char* name : {"spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost", "spy.conflicting_packets"})
         {
             parts += integer_of(rig.ecu, name);
         }
+        const auto& network = rig.network.statistics();
+        parts += static_cast<std::int64_t>(network.receive_overflows + network.transport_rejected +
+                                           network.transport_bam_dropped + network.transport_bam_replaced);
         CHECK_EQ(integer_of(rig.ecu, "spy.missed"), parts);
         CHECK_EQ(static_cast<std::int64_t>(spy.missed()), parts);
         CHECK(parts > 0);
@@ -384,7 +391,7 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
             rig.inject(at(1ms) + i * 100us, frame(6, kPgnPropB, kA, kGlobal, {static_cast<std::uint8_t>(i)}));
         }
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.receive_overflows"), 2);
+        CHECK_EQ(rig.network.statistics().receive_overflows, 2u);
         check_sum(rig, spy);
     }
     {
@@ -396,7 +403,7 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
         rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
         rig.inject(at(2ms), bam(kC, 20, kPgnPropB));
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.transport_rejected"), 1);
+        CHECK_EQ(rig.network.statistics().transport_rejected, 1u);
         check_sum(rig, spy);
     }
     {
@@ -408,9 +415,39 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
         rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
         rig.inject(at(3ms), dt(kA, kGlobal, 3, message));
         rig.bench.run_until(at(20ms));
-        CHECK_EQ(integer_of(rig.ecu, "spy.transport_bam_dropped"), 1);
+        CHECK_EQ(rig.network.statistics().transport_bam_dropped, 1u);
         check_sum(rig, spy);
     }
+    {
+        // A broadcast that the same sender's next announcement replaced before its last packet.
+        Rig rig;
+        Spy& spy = make_spy(rig);
+        const Bytes message = payload(20);
+        rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
+        rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
+        rig.inject(at(3ms), bam(kA, 20, kPgnPropB));
+        rig.bench.run_until(at(20ms));
+        CHECK_EQ(rig.network.statistics().transport_bam_replaced, 1u);
+        CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 1);
+        check_sum(rig, spy);
+    }
+}
+
+TEST_CASE(timed_out_counts_connections_whose_end_never_came_outside_missed)
+{
+    Rig rig;
+    Spy& spy = make_spy(rig);
+    const Bytes message = payload(20);
+    rig.inject(at(1ms), rts(kA, kB, 20, kPgnPropA));
+    rig.inject(at(2ms), cts(kB, kA, 3, 1, kPgnPropA));
+    rig.inject(at(3ms), dt(kA, kB, 1, message)); // then nothing: the connection times out
+    rig.inject(at(4ms), bam(kC, 20, kPgnPropB));
+    rig.inject(at(5ms), dt(kC, kGlobal, 1, message)); // then nothing: the broadcast times out
+    rig.bench.run_until(at(3s));
+    CHECK_EQ(integer_of(rig.ecu, "spy.timed_out"), 1);
+    CHECK_EQ(rig.network.statistics().transport_timeouts, 1u);
+    CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 0);
+    CHECK_EQ(spy.missed(), 0u);
 }
 
 TEST_CASE(statistics_as_names_the_counters_or_leaves_them_out)

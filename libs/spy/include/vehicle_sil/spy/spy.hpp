@@ -199,30 +199,31 @@ private:
 ///
 /// What the Listener missed ("<SpyOptions::statistics_as>.*", by default "spy.*"; integers that
 /// only grow):
-/// - "spy.missed": the sum of the eight below. While it is 0, the Network dropped no frame it
-///   received, no broadcast or connection that the Network or the Listener followed was lost
-///   for a packet that was repeated, out of order or missing before a later one came, or for
-///   lack of a place, and every message handed to the watchers has the receiver's bytes. It
-///   does not say that every transfer came to its end (see "Not seen by it").
+/// - "spy.missed": the sum of the five Listener counters below and of four counters of the
+///   Network's j1939::NetworkStatistics: receive_overflows, transport_rejected,
+///   transport_bam_dropped and transport_bam_replaced (an ECU that a Peer runs publishes them as
+///   "j1939.<network>.<counter>"). While it is 0, the Network dropped no frame it received, no
+///   broadcast or connection that the Network or the Listener followed was lost for a packet
+///   that was repeated, out of order or missing before a later one came, for the same sender's
+///   next announcement, or for lack of a place, and every message handed to the watchers has
+///   the receiver's bytes. It does not say that every transfer came to its end (see "Not seen by
+///   it"). transport_rejected counts the broadcasts the Network did not start to assemble (a
+///   malformed announcement, no free session) and the connections a node of this participant
+///   refused (busy with another group, too large, malformed, no free session).
 /// - "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
 ///   "spy.conflicting_packets": the Listener's j1939::SnifferStatistics of the same names.
-/// - "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped": the
-///   Network's j1939::NetworkStatistics of the same names. transport_rejected counts the
-///   broadcasts the Network did not start to assemble (a malformed announcement, no free
-///   session) and the connections a node of this participant refused (busy with another
-///   group, too large, malformed, no free session).
+/// - "spy.timed_out": SnifferStatistics::timed_out, connections between other ECUs whose last
+///   packets did not come. Not in the sum (see below).
 /// Not seen by it: frames that came while the ECU was off its buses ("ecu.connected" false:
 /// they are dropped before the Network and counted nowhere), NetworkStatistics::frames_ignored
 /// (11-bit frames among them, so it grows on any bus that also carries 11-bit frames),
 /// connections whose announcement came before the Listener heard the bus
-/// (SnifferStatistics::orphan_data), and transfers of which the end never came:
-/// - a broadcast or a connection whose last packets did not come. It times out, and whether
-///   the sender stopped or the packets were missed cannot be told. Broadcasts are counted in
-///   NetworkStatistics::transport_timeouts, which is not in the sum because it also counts the
-///   timeouts of this participant's own nodes; connections between other ECUs are counted in
-///   SnifferStatistics::timed_out.
-/// - a broadcast that the same sender's next announcement replaced before its last packet
-///   came. It is counted in NetworkStatistics::transport_bam_replaced, which is not in the sum.
+/// (SnifferStatistics::orphan_data), and transfers of which the end never came: a broadcast or
+/// a connection whose last packets did not come times out, and whether the sender stopped or
+/// the packets were missed cannot be told. Connections between other ECUs are counted in
+/// "spy.timed_out", broadcasts in NetworkStatistics::transport_timeouts
+/// ("j1939.<network>.transport_timeouts", which also counts the timeouts of this participant's
+/// own nodes).
 ///
 /// Lifetime. Make the Spy a member of the ECU's class (the class ecu_main() or Simulation::add()
 /// makes), so that it lives as long as the ECU: the variables it and its watchers publish
