@@ -300,7 +300,7 @@ The reason for TCP only: a SIL Kit registry that cannot listen on its TCP port k
 
 - The default of `name_in_use_wait` is 5000 ms. `PeerOptions` has the same option. `Simulation` uses a value no greater than `start_timeout`.
 - The retry exists because, for a process restarted with the same name, the registry may not yet have noticed that the previous connection ended (on a slow computer, or across a network).
-- When the time runs out, it throws `SilKit::ProtocolError` with SIL Kit's message, extended with how long it waited and the hint that another participant may be using the same name.
+- When the time runs out, it throws `NameInUseError` (a `SilKit::ProtocolError`) with SIL Kit's message, extended with how long it waited and the hint that another participant may be using the same name.
 - Any other failure is thrown at once.
 - Programs that create a SIL Kit participant themselves (such as the raw Agent in the tests) can use this function too.
 

@@ -111,7 +111,7 @@ std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit:
             }
             if (std::chrono::steady_clock::now() >= give_up)
             {
-                throw SilKit::ProtocolError(
+                throw NameInUseError(
                     what + " (the registry refused the name \"" + name + "\" for " + std::to_string(name_in_use_wait.count()) +
                     " ms: another participant of this simulation uses it, or the registry has not yet seen the end of "
                     "an earlier participant with this name; give each participant a name of its own, or end the other "

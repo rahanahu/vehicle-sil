@@ -300,7 +300,7 @@ TCP だけにするのは、次の理由です。SIL Kit の registry は、TCP 
 
 - `name_in_use_wait` の既定は 5000 ms です。`PeerOptions` にも同じものがあります。`Simulation` は `start_timeout` を超えない値にします。
 - 作り直すのは、同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い PC、ネットワーク越し）。
-- 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `SilKit::ProtocolError` です。
+- 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `NameInUseError`（`SilKit::ProtocolError` の一種）です。
 - ほかの失敗は、すぐに投げます。
 - SIL Kit の participant を自分で作るプログラム（テストの生の Agent など）も、この関数を使えます。
 

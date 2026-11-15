@@ -843,6 +843,7 @@ TEST_CASE(participant_runtime_says_how_long_the_name_was_refused)
     // Without waiting: refused at once; a negative wait is a mistake.
     options.name_in_use_wait = 0ms;
     CHECK(throws<SilKit::ProtocolError>([&] { ParticipantRuntime second(options); }));
+    CHECK(throws<NameInUseError>([&] { ParticipantRuntime second(options); }));
     options.name_in_use_wait = -1ms;
     CHECK(throws<std::invalid_argument>([&] { ParticipantRuntime second(options); }));
 }

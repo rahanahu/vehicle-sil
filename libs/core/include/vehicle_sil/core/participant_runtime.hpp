@@ -37,6 +37,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// create_participant() (and so the ParticipantRuntime constructor) gave up: the registry still
+/// refused the name as in use when the wait ran out. A SilKit::ProtocolError, so a handler of that
+/// type or of std::exception gets it as well. The message is SIL Kit's, with the time waited and
+/// what it may mean.
+class NameInUseError : public SilKit::ProtocolError
+{
+public:
+    using SilKit::ProtocolError::ProtocolError;
+};
+
 /// As the timeout of ParticipantRuntime::start() and SimulationController::start(): no limit of
 /// its own; the caller's `give_up` decides when to stop waiting.
 inline constexpr std::chrono::milliseconds kNoStartLimit = std::chrono::milliseconds::max();
@@ -76,8 +86,8 @@ struct VirtualTimeOptions
 /// SilKit::CreateParticipant(), tried again for up to `name_in_use_wait` while the registry refuses
 /// the name as in use ("A participant with the same name ... already exists"): the registry may not
 /// yet have seen the end of an earlier participant with this name (a process restarted at once;
-/// over a network it takes longer). After that, SilKit::ProtocolError with SIL Kit's message, the
-/// time waited and what it may mean. Other failures are thrown at once; a negative wait is
+/// over a network it takes longer). After that, NameInUseError (a SilKit::ProtocolError) with SIL
+/// Kit's message, the time waited and what it may mean. Other failures are thrown at once; a negative wait is
 /// std::invalid_argument. ParticipantRuntime uses it; so can a program that makes its own SIL Kit
 /// participants.
 [[nodiscard]] std::unique_ptr<SilKit::IParticipant> create_participant(
