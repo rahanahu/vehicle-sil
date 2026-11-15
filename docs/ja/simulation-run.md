@@ -657,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 | `check` | 照合の結果（`check --json` と同じオブジェクト） |
 | `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」） |
 
-選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）は、`check` の中にあります。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。
+選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）は、`check` の中にあります。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`dither` のあるシナリオでは、どちらの `scenario` にも `inputs[]`（`inputs` に宣言した揺れ）と `lines[]`（文面が入力に置くものの一覧）が入ります。
 
 `simulation` の値:
 
@@ -1082,7 +1082,8 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 }
 ```
 
-- `writes[]` は、失敗した要求の書き込みを、送った順に並べたものです。`set` ならその変数の全部（participant をまたいで全部）、`ramp` と `wave` なら 1 つです。書き込みの失敗でなければ空です。
+- `writes[]` は、失敗した要求の書き込みを、送った順に並べたものです。`set` ならその変数の全部（participant をまたいで全部）、`ramp` と `wave` なら 1 つ、`dither` ならその時刻に `dither` が出した書き込みです。書き込みの失敗でなければ空です。
+- 動きのない間に `dither` が出す書き込みは、手順のものではありません。同じ時刻・同じ participant の分は、1 つの `set` の変数と同じように、まとめて ECU に届きます。そのため、`applied` の決まりも同じで、断られた入力より前の入力は、もう書き込まれています。
 - `applied` は、その書き込みが ECU に入ったかどうかです。
 
   | `applied` | 意味 |
@@ -1116,15 +1117,31 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻。**送った値で、ECU に入ったとは限りません**（下の `not_applied_from`） | `all` |
 | `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ |
 
+- **シナリオが `dither` を置く入力の `written` の系列は 3 列**で、系列に `"columns": ["t_ms", "value", "base"]` があります。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。3 列になるのは、シナリオの文面がその入力に揺れを置くとき（`inputs` の宣言か、その機種で実行する、波形を書いた手順 `dither`）で、揺れを置く前の点も、外した後の点も、全部の点が 3 列です。実行がその手順まで進んだかどうかにはよりません（列の数は controller のタイムステップで変わりません）。`columns` のない系列の点は `[時刻, 値]` です。読む側は、`columns` の名前で列を取ります。
+
+  ```json
+  {
+    "variable": "Engine.engine.throttle",
+    "source": "written",
+    "encoding": "all",
+    "columns": ["t_ms", "value", "base"],
+    "points": [
+      [0, 50, 50],
+      [10, 52, 50],
+      [20, 50, 50]
+    ]
+  }
+  ```
+
 - 記録するのは、シナリオが使う変数だけです。シナリオが書く変数に `written` の系列、条件が読む変数に `sampled` の系列があります（両方の変数には 2 つ）。順は `variables[]` の順で、1 つの変数では `written` が先です。
 - 点は 1 行に 1 つです。時刻は戻りません。同じ時刻の点が続くことがあり（`ramp` の終わりと次の `set`）、順は送った順です。
 - 値は、bool が `true` と `false`、enum が項目の値（名前は `variables[].items`）、数にならない real が `null` です。
 - サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。
 - `changes` の「変わった」は、書いた文字が違うことです（`0` と `-0` は別、`null` が続けば同じ）。
 - `written` の系列に `not_applied_from` があれば、その添字（0 から）の点から後ろは、送ったが、ECU に入ったことがわかっていません。値が変わったように描かないでください。次の 2 つです。
-  - 失敗した手順の書き込みのうち、`applied` が `false` か `null` のものの点（`failed.writes[]` のその要素の `point`）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。同じ `set` の中で ECU に入った書き込み（`applied: true`）には付きません。
+  - 失敗した手順の書き込みのうち、`applied` が `false` か `null` のものの点（`failed.writes[]` のその要素の `point`）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。同じ `set`（または同じ時刻の `dither` の書き込み）の中で ECU に入った書き込み（`applied: true`）には付きません。
   - 時刻が `scenario.over_at_ms` より後の点（どの ECU もその時刻まで進まなかった）。
-- 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確認する前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。
+- 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確認する前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。例外は 1 つで、最後の手順と同じ時刻の `dither` の書き込みは、結果がまだ来ていないことがあります（最後の手順が通った時点で、シナリオが終わるためです）。
 
 ### 入力の線（`lines[]`）
 
@@ -1152,7 +1169,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | キー | 値 |
 |---|---|
 | `variable` | 変数 |
-| `kind`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`）、シナリオのファイルの行、手順の `index` |
+| `kind`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`。`dither` は下）、シナリオのファイルの行、手順の `index` |
 | `from_ms`、`to_ms` | 手順の時刻と、動きの終わり（文面のとおり: `from_ms` + 長さ）。`set` は同じ値。実行が先に終わったとき、点があるのは `recorded_to_ms` まで |
 | `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）では `null` |
 | `base_source` | `base` の出どころ（下の表）。`base` が `null` なら `null` |
@@ -1165,7 +1182,19 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `line` | 線の値: その時刻にシナリオがその変数を置いていた値（前の `set` の値、前の動きの終わりの値。整数には丸めた値） |
 | `sample` | シナリオがまだ書いていない変数の、その時点でいちばん新しいサンプル。**どのサンプルになるかは controller のタイムステップによります**（下の「記録の終わり」）。この値に戻って終わる動きの後ろの、`line` の `base` も同じです |
 
-- `shape` にあるのは、手順に書いたキーだけです（省いたキーの既定の値は [scenario.md](scenario.md) の波形の表）。`from` と `around` は `shape` に入れず、`base` にします。`wave` には `for_ms` も入ります（`for_ms` を書く波形）。
+- `shape` にあるのは、手順に書いたキーだけです（省いたキーの既定の値は [scenario.md](scenario.md) の波形の表）。`from` と `around` は `shape` に入れず、`base` にします。`wave` には `for_ms` も入ります（`for_ms` を書く波形）。`shape` は、線を表示するためのものです。値は系列にあるので、`shape` から数え直しません。
+- `base` の意味は `shape.type` で読みます: `ramp`、`lag`、`chatter` は始まりの値、`sine` などの中心のある波形は振れの中心、`pulse` は終わると戻る値です。
+- **`dither` の線**（`kind` が `dither`）は、入力に重ねた揺れです。`inputs` の宣言と、手順 `dither` が置いたものが、それぞれ 1 本です。
+
+  | キー | `dither` の線での値 |
+  |---|---|
+  | `line`、`step` | 手順 `dither` の行と `index`。`inputs` の宣言は、その入力の行と `null` |
+  | `from_ms` | その揺れが乗った最初の書き込みの時刻（基準のない入力に置いた揺れは、最初の `set`、`ramp`、`wave` から） |
+  | `to_ms` | `null`（文面に終わりがない）。**同じ変数の次の `dither` の線の `from_ms` が、この揺れの終わり**です |
+  | `base`、`base_source` | `null` |
+  | `shape` | 揺れの波形。`none`（外す）は `null` |
+
+  並ぶ位置は、その時刻に手順が置いた線の後ろで、最初の書き込みを送った順です。手順 `dither` の `lines` は、その手順が置いた揺れの線の位置です。1 度も書き込みに乗らなかった揺れ（基準のないまま終わった入力、書き込みの前に次の手順が替えた揺れ）は、線になりません。
 - `points` の `shape` は、点の数（`points`）と `interpolate` です。CSV ファイルから読んだ点では、`file`、`value`、`time`、`time_unit` も、書いたとおりに入ります（列の名前だけ。点の値は系列にあります）。
 - 入るのは、`from_ms` が `recorded_to_ms` 以前で、**書き込みを 1 つでも送った線だけ**です（ファイルは起きたことの記録です）。線の最初の書き込みより前にシナリオが失敗したとき、その線は入らず、手順の `lines` にも入りません。例: 同じ時刻の前の手順の `set` が断られた後ろの `ramp`。1 つの手順がいくつもの変数を動かし、その 1 つの始まりの値が見つからないときの、その変数と、後ろに書いた変数。断られた書き込みは送ったものなので、その線は入ります（系列の点と同じ）。
 - シナリオが始まらなかった実行では、`lines` は空です。
@@ -1186,7 +1215,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - 通った実行と、サンプルか待ち時間で失敗した実行では、`over_at_ms` と `tick_ms` を除いて、controller のタイムステップ（`time_step_ms`）を変えても同じファイルです。ただし、次のものはタイムステップによります（シナリオの結果がタイムステップによる所と同じです。[scenario.md](scenario.md) の「時刻」と「結果」）。
   - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。
   - ある手順が失敗した実行での、ほかの手順（失敗した手順より後ろの手順と、進行中だった手順）の `status`（`passed`、`unfinished`、`not_run` のどれにもなりえます）と、`start_ms`、`at_ms`、`end_ms`。失敗がわかる前に controller がどこまで先を送り、どこまで結果を見たかが、タイムステップで決まるためです。このとき、**`at_ms` が `recorded_to_ms` より後の `passed` の手順がありえます。その手順の書き込みの点は、系列にありません**（系列と `recorded_to_ms` は、タイムステップによりません）。
-  - 書き込みが適用されずに終わった実行の全部。
+  - 書き込みが適用されずに終わった実行の全部。`dither` が動きのない間に出す書き込み（手順のものでない書き込み）が断られたときは、失敗する手順（その時点でまだ決まっていない最初の手順）もタイムステップによります。その書き込みが、最後の手順が決まるタイムステップより後に送る分なら、タイムステップによっては送らずに通ります（[scenario.md](scenario.md) の「手順が失敗したとき」）。
   - シナリオがまだ書いていない変数を、`from` や `around` を省いた `ramp` や `wave` で動かすときの、始まりの値（`lines[]` の `base_source` が `sample` の線の `base`）と、その動きの値。その動きが始まりの値に戻って終わるとき（`around` を省いた `sine` など、中心に戻る波形と、`pulse`）は、後ろに続く、`from` や `around` を省いた動きの `base`（`base_source` は `line`）も、同じサンプルから来るので同じように変わります。controller は、時刻 T の書き込みを、T より前の自分のタイムステップで送ります。始まりの値は、その時までに見たいちばん新しいサンプルなので、タイムステップが粗いと古いサンプルになり、1 つも見る前（T が controller の最初のタイムステップの長さ以下。タイムステップが 30 ms なら、30 ms までの時刻）なら、手順は `scenario-write`（始まりの値がない）で失敗します。タイムステップによらない結果にするには、`from` か `around` を書くか、先に `set` します。
 - `incomplete` の実行と、`stop_at_ms` で終わった実行は、どこまで見たかが実時間で決まることがあるので、同じファイルになるとは限りません。
 

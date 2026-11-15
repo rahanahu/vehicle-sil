@@ -290,6 +290,15 @@ void write_series(JsonWriter& w, const TimelineInput& input)
             w.string("variable", input.scenario->variables[series.variable].text);
             w.string("source", series.sampled ? "sampled" : "written");
             w.string("encoding", series.sampled ? "changes" : "all");
+            if (series.dithered)
+            {
+                // A dither was on the input: every point with what it was made of.
+                w.begin_array_on_one_line("columns");
+                w.string({}, "t_ms");
+                w.string({}, "value");
+                w.string({}, "base");
+                w.end_array();
+            }
             if (series.sampled)
             {
                 w.integer("samples", static_cast<std::int64_t>(series.sample_count));
@@ -316,6 +325,10 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 w.begin_array_on_one_line({});
                 write_ms(w, {}, point.at);
                 write_value(w, {}, point.value);
+                if (series.dithered)
+                {
+                    w.real({}, point.base);
+                }
                 w.end_array();
             }
             for (const TimelineRecord::Sampled& point : series.samples)
@@ -355,6 +368,46 @@ void write_shape_value(JsonWriter& w, std::string_view key, const ScenarioShapeT
     }
 }
 
+/// A dither as a line: what "inputs" declares (no step) or a dither step put, from the first
+/// write that carried it. It has no end in the text and no base.
+void write_dither_line(JsonWriter& w, const Scenario& scenario, const TimelineRecord::Line& line)
+{
+    const bool declared = line.step == TimelineRecord::kNoStep;
+    const ScenarioOverlay& overlay = declared ? scenario.inputs[line.part] : scenario.steps[line.step].overlays[line.part];
+    w.begin_object();
+    w.string("variable", scenario.variables[line.variable].text);
+    w.string("kind", "dither");
+    w.integer("line", static_cast<std::int64_t>(overlay.line));
+    if (declared)
+    {
+        w.null("step");
+    }
+    else
+    {
+        w.integer("step", static_cast<std::int64_t>(line.step + 1));
+    }
+    write_ms(w, "from_ms", line.from);
+    w.null("to_ms");
+    w.null("base");
+    w.null("base_source");
+    if (overlay.shape != nullptr)
+    {
+        w.begin_object("shape");
+        w.string("type", overlay.described.type);
+        for (const auto& [key, value] : overlay.described.values)
+        {
+            write_shape_value(w, key, value);
+        }
+        w.end_object();
+    }
+    else
+    {
+        w.null("shape");
+    }
+    w.string("text", overlay.text);
+    w.end_object();
+}
+
 /// The lines of the inputs: what each step put on the line of a variable it writes.
 void write_lines(JsonWriter& w, const TimelineInput& input)
 {
@@ -364,6 +417,11 @@ void write_lines(JsonWriter& w, const TimelineInput& input)
     {
         for (const TimelineRecord::Line& line : input.record->lines())
         {
+            if (line.dither)
+            {
+                write_dither_line(w, scenario, line);
+                continue;
+            }
             const ScenarioStep& step = scenario.steps[line.step];
             const ScenarioMotion* motion = step.kind == StepKind::Set ? nullptr : &step.motions[line.part];
             w.begin_object();
@@ -475,6 +533,19 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
             reads[c.variable] = true;
         }
     }
+    // The inputs the scenario ever puts a dither on, by its text: not by what a run got to.
+    std::vector<bool> dithered(count, false);
+    for (const ScenarioOverlay& input : scenario.inputs)
+    {
+        dithered[input.variable] = true;
+    }
+    for (const ScenarioStep& step : scenario.steps)
+    {
+        for (const ScenarioOverlay& overlay : step.overlays)
+        {
+            dithered[overlay.variable] = dithered[overlay.variable] || overlay.shape != nullptr;
+        }
+    }
     written_.resize(count);
     sampled_.resize(count);
     for (std::size_t v = 0; v < count; ++v)
@@ -483,6 +554,7 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
         {
             written_[v] = series_.size();
             series_.push_back(Series{v, false});
+            series_.back().dithered = dithered[v];
         }
         if (reads[v])
         {
@@ -492,19 +564,31 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
     }
     watches_.resize(scenario.steps.size());
     failures_.resize(scenario.steps.size());
+    waiting_dither_.resize(count);
 }
 
-std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion)
+std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion,
+                                                     double base)
 {
     if (!recorded_to_)
     {
         // The first write of a line is the one for the time it was put at.
         for (auto line = lines_.rbegin(); line != lines_.rend() && line->from == at; ++line)
         {
-            if (line->step == step && line->variable == variable)
+            if (!line->dither && line->step == step && line->variable == variable)
             {
                 line->sent = true;
             }
+        }
+        // The dither that waits on the variable is carried from this write on: a line now, after
+        // those that the steps put at this time.
+        if (variable < waiting_dither_.size() && waiting_dither_[variable])
+        {
+            Line line = std::move(*waiting_dither_[variable]);
+            waiting_dither_[variable].reset();
+            line.from = at;
+            line.sent = true;
+            lines_.push_back(std::move(line));
         }
     }
     if (recorded_to_ || variable >= written_.size() || !written_[variable])
@@ -513,7 +597,7 @@ std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size
     }
     Series& series = series_[*written_[variable]];
     const std::uint64_t serial = next_serial_++;
-    series.written.push_back(Written{at, value, motion, false, serial});
+    series.written.push_back(Written{at, value, motion, false, serial, base});
     if (motion)
     {
         ++total_;
@@ -584,6 +668,16 @@ void TimelineRecord::line(Line line)
     if (!recorded_to_)
     {
         lines_.push_back(std::move(line));
+    }
+}
+
+void TimelineRecord::dither(Line line)
+{
+    if (!recorded_to_ && line.variable < waiting_dither_.size())
+    {
+        line.dither = true;
+        line.sent = false;
+        waiting_dither_[line.variable] = std::move(line);
     }
 }
 

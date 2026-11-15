@@ -1687,12 +1687,16 @@ Where to change:
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
+| Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
+| The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario.cpp` |
+| The writes of a dither in the engine | In `scenario_run.cpp`: `submit()` (one write per ECU step while no motion runs; it belongs to no step, and writes for the same time are combined into one request), `place()` (places the dither on the line), `fail_grid()` (when such a write is refused, fails the first step not yet decided). The contract is "Dithers" in the comment of `ScenarioEngine` |
 
 Documentation to update:
 
 - [scenario.md](scenario.md): the format, times, how values are seen, writes, results, the table of finding codes, the output
 - [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` (`launch_run.scenario` compares it byte for byte)
 - [scenario.md](scenario.md): the blocks of `<!-- throttle_mistakes.yaml -->` and `<!-- throttle_response.yaml -->`
+- [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->` (`launch_run.scenario_dither` compares it)
 - [howto/scenario-tests.md](howto/scenario-tests.md): the files, output and exit codes that the guide shows (`launch_run.scenario_guide` runs them in the guide's order and compares)
 - [simulation-config.md](simulation-config.md): the table of arguments
 - [simulation-events.md](simulation-events.md): the `scenario_step` event, `scenario` of `features`
@@ -1702,6 +1706,7 @@ Example files:
 
 - The example file that is compared is `examples/ecu_main/scenarios/throttle_step.yaml`.
 - The `wave` example is `examples/ecu_main/scenarios/throttle_wave.yaml`, and `launch_run.scenario_wave` runs it.
+- The `dither` example is `examples/ecu_main/scenarios/throttle_dither.yaml`, and `launch_run.scenario_dither` runs it.
 - The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
 - The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
 - For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
@@ -1712,7 +1717,7 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
 - The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/launch/src/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
-- One function, `motion_value()`, gives the values of a motion, and the engine's `submit_one()` calls it. Code that you add to compute motion values calls the same function.
+- One function, `motion_number()`, gives the values of a motion before rounding. The value to write is made in one place, `Line::written()` of the line, which adds the dither and then rounds to the type. The engine's `submit_one()` calls it. Code that you add to compute values calls the same function.
 - Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
 - `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
 - Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
@@ -1735,11 +1740,13 @@ Tests:
 - `^launch\.scenario_`: with a fake ECU model, the result is the same when the receive order changes
 - `launch.scenario_wave_*`: waveform values, values after the waveform ends, findings
 - `launch.scenario_line_*` (`tests/launch/test_scenario_line.cpp`): the input lines alone
+- `launch.scenario_dither_*`, `launch.timeline_has_the_dithers_*` (the reference is `tests/launch/timeline/dither.yaml`)
 - `launch.scenario_expect_beside_*`: the interval of an `expect` beside `ramp` and `wave`, the order in which steps are decided, skipping only the `expect` by variant
 - `^signal\.`
 - `launch_run.scenario`
 - `launch_run.scenario_wave`: the time at which the ECU saw the waveform, passing with a different time step, the warning and `undersampled: ok`
 - `launch_run.scenario_expect_beside`: the sample that failed an `expect` beside `ramp` or `wave`, `expect_skipped`
+- `launch_run.scenario_dither`: a real ECU, out of range, the example `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: the same result as fast as possible, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`

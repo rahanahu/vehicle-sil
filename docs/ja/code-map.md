@@ -1687,12 +1687,16 @@ flowchart TD
 | ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
 | 全サンプルを受け取る tap | `control::Hub::set_values_tap()` |
+| `dither` の読み手（最上位の `inputs`、手順） | `scenario.cpp` の `read_inputs()`、`read_dither()`、`read_overlay()`。波形の中身は、`wave` と同じ `read_shape()` で読む（`read_wave_of()` と共用） |
+| 指摘 `scenario-dither-*` と、出力の一覧（`Scenario::lines`） | `scenario.cpp` の `note_lines()` と `check_dithers()` |
+| エンジンの揺れの書き込み | `scenario_run.cpp` の `submit()`（動きのない間の、ECU のステップごとの書き込み。手順のものでない書き込みで、同じ時刻の分を 1 つの要求にまとめる）、`place()`（揺れを線に置く）、`fail_grid()`（その書き込みが断られたとき、まだ決まっていない最初の手順を失敗にする）。約束は `ScenarioEngine` のコメントの「Dithers」 |
 
 合わせて直すドキュメント:
 
 - [scenario.md](scenario.md): 形式、時刻、値の見え方、書き込み、結果、指摘の `code` の表、出力
 - [scenario.md](scenario.md): `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロック（`launch_run.scenario` がバイト単位で照合）
 - [scenario.md](scenario.md): `<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->` のブロック
+- [scenario.md](scenario.md): `<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->` の後のブロック（`launch_run.scenario_dither` が照合）
 - [howto/scenario-tests.md](howto/scenario-tests.md): ガイドが載せているファイル、出力、終了コード（`launch_run.scenario_guide` が、ガイドの順に実行して照合）
 - [simulation-config.md](simulation-config.md): 引数の表
 - [simulation-events.md](simulation-events.md): イベント `scenario_step`、`features` の `scenario`
@@ -1702,6 +1706,7 @@ flowchart TD
 
 - 照合する例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml` です。
 - `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、`launch_run.scenario_wave` が実行します。
+- `dither` の例は `examples/ecu_main/scenarios/throttle_dither.yaml` で、`launch_run.scenario_dither` が実行します。
 - CSV ファイルの `points` の例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv` で、`launch_run.scenario_wave` が実行します。
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
@@ -1712,7 +1717,7 @@ flowchart TD
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
 - 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/launch/src/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
-- 動きの値を出す関数は `motion_value()` の 1 つで、エンジンの `submit_one()` はこれを呼びます。動きの値を出す所を追加するときも、同じ関数を呼びます。
+- 動きの値を出す関数は `motion_number()`（丸める前）の 1 つで、書く値は、線の `Line::written()` の 1 か所で、揺れ（`dither`）を足してから型に丸めます。エンジンの `submit_one()` はこれを呼びます。値を出す所を追加するときも、同じ関数を呼びます。
 - ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario.cpp` の `seen_between()` のルール 1 つに従います。
 - `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
 - 点を足す口（文面と CSV ファイル）は `read_points()` の 1 つで、同じ照合を通ります。
@@ -1735,11 +1740,13 @@ flowchart TD
 - `^launch\.scenario_`: 偽の ECU のモデルで、受信の順を変えても結果が同じ
 - `launch.scenario_wave_*`: 波形の値、終わった後の値、指摘
 - `launch.scenario_line_*`（`tests/launch/test_scenario_line.cpp`）: 線だけのテスト
+- `launch.scenario_dither_*`、`launch.timeline_has_the_dithers_*`（基準は `tests/launch/timeline/dither.yaml`）
 - `launch.scenario_expect_beside_*`: `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけスキップすること
 - `^signal\.`
 - `launch_run.scenario`
 - `launch_run.scenario_wave`: 波形を ECU が見た時刻、タイムステップを変えても通ること、警告と `undersampled: ok`
 - `launch_run.scenario_expect_beside`: 横の `expect` が外れたサンプル、`expect_skipped`
+- `launch_run.scenario_dither`: 本物の ECU、範囲の外、例 `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: 最速、等速、遅い ECU、一時停止で同じ結果。書き込みが反映されたステップを、ECU が報告する
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`

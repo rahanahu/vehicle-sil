@@ -103,6 +103,10 @@ public:
         /// sent, and not taken, not applied, or without a result.
         bool refused = false;
         std::uint64_t serial = 0; ///< what written() gave for it (points may go at a limit: no index)
+        /// What the value was made of before a dither was added and the variable's type applied:
+        /// the number of a set's value, a motion's value then. Shown for a series that a dither
+        /// was on (Series::dithered).
+        double base = 0.0;
     };
     /// Samples of one value, one after the other. A sample with the value of the one before it
     /// that does not come at the same distance begins a new one (`repeats`), so that the samples
@@ -122,6 +126,11 @@ public:
         bool sampled = false;
         std::vector<Written> written{};
         std::vector<Sampled> samples{};
+        /// Written: the scenario puts a dither on the variable (its "inputs", or a dither step
+        /// that runs in this configuration, with a shape): every point of the series is then
+        /// shown with its base. Known from the scenario alone, whatever a run got to: the form of
+        /// the file does not depend on the controller's step.
+        bool dithered = false;
         /// How many of its points can go at a limit: of `written` those of a ramp or a wave, of
         /// `samples` all.
         std::size_t droppable = 0;
@@ -148,8 +157,10 @@ public:
     /// order within the step.
     struct Line
     {
-        std::size_t step = 0;     ///< index in Scenario::steps
-        std::size_t part = 0;     ///< index in that step's writes (a set) or motions (a ramp, a wave)
+        std::size_t step = 0;     ///< index in Scenario::steps; kNoStep: of none (a dither that "inputs" declares)
+        /// Index in that step's writes (a set), motions (a ramp, a wave) or overlays (a dither);
+        /// of a dither of no step in Scenario::inputs.
+        std::size_t part = 0;
         std::size_t variable = 0; ///< index in Scenario::variables
         SimTime from{};
         /// Of a set its value. Of a motion what it starts from or swings around: the number the
@@ -164,19 +175,32 @@ public:
         /// and a failure there ends the scenario: a line that sent nothing did not happen, and
         /// close() drops it.
         bool sent = false;
+        /// A dither (dither()): no base. `from` is the time of the first write that carried it,
+        /// and the next dither line of the variable is where it ends.
+        bool dither = false;
     };
+
+    /// The `step` of a write that is no step's (a dither alone moved the input).
+    static constexpr std::size_t kNoStep = static_cast<std::size_t>(-1);
 
     explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {});
 
     // --- the engine's side ---
-    /// A write that is sent, of `step` (index in Scenario::steps): a point of the variable's
+    /// A write that is sent, of `step` (index in Scenario::steps; kNoStep: of none): a point of the variable's
     /// series, and the line that step put at `at` on the variable has happened (Line::sent).
+    /// `base`: Written::base. The dither that was put last on the variable (dither()) begins
+    /// with this write, if it has not yet.
     /// Returns what names that point from then on (TimelineFailedWrite::sent); empty if the
     /// record keeps none.
-    std::optional<std::uint64_t> written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
+    std::optional<std::uint64_t> written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion,
+                                         double base = 0.0);
     /// A sample of `variable` (kept if a condition reads the variable).
     void sampled(std::size_t variable, SimTime at, const control::Value& value);
     void line(Line line);
+    /// A dither was put on the line of a variable (or taken off: the step's "none"), in place of
+    /// the one before it. It is a line (Line::dither) from the first write of the variable that
+    /// goes out while it is there; one that is replaced before that never was.
+    void dither(Line line);
     void watch(std::size_t step, Watch watch);
     /// The step failed. Marks the points of `failure.writes` that are not known to be applied.
     void failed(std::size_t step, TimelineFailure failure);
@@ -214,6 +238,7 @@ private:
     std::vector<std::optional<Watch>> watches_;
     std::vector<std::optional<TimelineFailure>> failures_;
     std::vector<Line> lines_;
+    std::vector<std::optional<Line>> waiting_dither_; ///< per variable: put, and no write since
     std::optional<SimTime> recorded_to_{};
     std::size_t total_ = 0; ///< the points that can go, of all series
     std::uint64_t next_serial_ = 0;

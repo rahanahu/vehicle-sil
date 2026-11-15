@@ -223,9 +223,113 @@ std::string detail::check_text_body(const CheckReport& report)
             out += "parameters: " + params + "\n";
         }
         out += "\n";
+        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        {
+            // Only for a scenario with a dither: another one's output is as it was.
+            out += detail::scenario_lines_text(report.scenario->scenario->lines) + "\n";
+        }
     }
     out += detail::findings_text(report.file, report.findings);
     return out;
+}
+
+void detail::write_scenario_lines_json(vehicle_sil::detail::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
+                                       const std::vector<ScenarioLineText>& lines)
+{
+    const auto number = [&w](std::string_view key, const std::optional<std::int64_t>& n) {
+        if (n)
+        {
+            w.integer(key, *n);
+        }
+        else
+        {
+            w.null(key);
+        }
+    };
+    // As a line of a timeline file has it: its type, and the keys of the text with their values.
+    const auto shape = [&w](const std::optional<ScenarioShapeText>& described) {
+        if (!described)
+        {
+            w.null("shape");
+            return;
+        }
+        w.begin_object("shape");
+        w.string("type", described->type);
+        for (const auto& [key, value] : described->values)
+        {
+            if (const auto* d = std::get_if<double>(&value))
+            {
+                w.real(key, *d);
+            }
+            else if (const auto* i = std::get_if<std::int64_t>(&value))
+            {
+                w.integer(key, *i);
+            }
+            else if (const auto* b = std::get_if<bool>(&value))
+            {
+                w.boolean(key, *b);
+            }
+            else
+            {
+                w.string(key, std::get<std::string>(value));
+            }
+        }
+        w.end_object();
+    };
+    w.begin_array("inputs");
+    for (const ScenarioLineText& input : inputs)
+    {
+        w.begin_object();
+        w.string("variable", input.variable);
+        w.integer("line", static_cast<std::int64_t>(input.line));
+        w.begin_object("dither");
+        shape(input.shape);
+        w.string("text", input.text);
+        w.end_object();
+        w.end_object();
+    }
+    w.end_array();
+    w.begin_array("lines");
+    for (const ScenarioLineText& line : lines)
+    {
+        w.begin_object();
+        w.string("variable", line.variable);
+        w.string("kind", line.kind);
+        w.integer("line", static_cast<std::int64_t>(line.line));
+        number("step", line.step ? std::optional<std::int64_t>(static_cast<std::int64_t>(*line.step)) : std::nullopt);
+        number("from_ms", line.from_ms);
+        number("to_ms", line.to_ms);
+        w.string("time_source", line_time_source_name(line.time_source));
+        number("after_line", line.time_source == ScenarioLineText::TimeSource::AfterWait
+                                 ? std::optional<std::int64_t>(static_cast<std::int64_t>(line.after_wait))
+                                 : std::nullopt);
+        shape(line.shape);
+        w.string("text", line.text);
+        w.end_object();
+    }
+    w.end_array();
+}
+
+std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lines)
+{
+    std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", "line"}};
+    for (const ScenarioLineText& line : lines)
+    {
+        // A time that the text does not give ("?": after a step that waits; "first write": a
+        // declared dither begins with the first write of its input), and no end ("-").
+        const auto ms = [](const std::optional<std::int64_t>& t) { return t ? std::to_string(*t) + " ms" : std::string("?"); };
+        const bool dither = line.kind == "dither";
+        // (The text without the variable, which has its own column.)
+        const std::string what = line.text.rfind(line.variable + " ", 0) == 0 ? line.text.substr(line.variable.size() + 1) : line.text;
+        rows.push_back({line.variable, line.time_source == ScenarioLineText::TimeSource::FirstWrite ? "first write" : ms(line.from_ms),
+                        dither ? "-" : ms(line.to_ms),
+                        line.kind + " " + what +
+                            (line.time_source == ScenarioLineText::TimeSource::AfterWait
+                                 ? " (after the wait of line " + std::to_string(line.after_wait) + ")"
+                                 : ""),
+                        std::to_string(line.line)});
+    }
+    return table(rows);
 }
 
 std::string detail::findings_text(const std::string& file, const std::vector<Finding>& findings)
@@ -604,6 +708,10 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
         if (report.scenario->unchecked_expects > 0)
         {
             w.integer("unchecked_expects", static_cast<std::int64_t>(report.scenario->unchecked_expects));
+        }
+        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        {
+            detail::write_scenario_lines_json(w, scenario_inputs_text(*report.scenario->scenario), report.scenario->scenario->lines);
         }
         w.end_object();
     }

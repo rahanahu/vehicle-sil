@@ -657,7 +657,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `check` | The check result (the same object as `check --json`) |
 | `scenario` | Only with `--scenario`: the scenario result (see "Output" in [scenario.md](scenario.md#output)) |
 
-The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`).
+The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`). In a scenario with a `dither`, both `scenario` objects also have `inputs[]` (the dithers declared in `inputs`) and `lines[]` (the list of what the text places on the inputs).
 
 Values of `simulation`:
 
@@ -1082,7 +1082,8 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 }
 ```
 
-- `writes[]` lists the writes of the failed request in the order sent: every variable of the `set` (for all its participants), or the one write of a `ramp` or `wave`. It is empty unless a write failed.
+- `writes[]` lists the writes of the failed request in the order sent: every variable of the `set` (for all its participants), the one write of a `ramp` or `wave`, or the writes that the `dither`s made for that time. It is empty unless a write failed.
+- The writes that `dither`s make while no motion runs belong to no step. The ones for the same time and the same participant reach the ECU together, like the variables of one `set`, so `applied` follows the same rules: the inputs before the rejected one are already written.
 - `applied` says whether the ECU applied that write:
 
   | `applied` | Meaning |
@@ -1116,15 +1117,31 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 | `written` | Every write that the scenario sent. A point is `[time, value]`, where the time is when the write takes effect. **These are the values sent; they did not necessarily reach the ECU** (see `not_applied_from` below) | `all` |
 | `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points |
 
+- **The `written` series of an input on which the scenario places a `dither` has 3 columns**, and the series has `"columns": ["t_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). The points of a series without `columns` are `[time, value]`. A reader takes the columns by the names in `columns`.
+
+  ```json
+  {
+    "variable": "Engine.engine.throttle",
+    "source": "written",
+    "encoding": "all",
+    "columns": ["t_ms", "value", "base"],
+    "points": [
+      [0, 50, 50],
+      [10, 52, 50],
+      [20, 50, 50]
+    ]
+  }
+  ```
+
 - Only the variables that the scenario uses are recorded. A variable that the scenario writes has a `written` series, and a variable that a condition reads has a `sampled` series (a variable that is both has 2). The series follow the order of `variables[]`, with `written` first for each variable.
 - Each point is on a line of its own. Times never go back. Several points can share a time (the end of a `ramp` and the next `set`); they are in the order sent.
 - Values: a bool is `true` or `false`, an enum is the item's value (the names are in `variables[].items`), and a real that is not a number is `null`.
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).
 - "Changed" in `changes` means that the written text differs (`0` and `-0` differ; consecutive `null`s are the same).
 - If a `written` series has `not_applied_from`, the points from that index (from 0) on were sent but are not known to have reached the ECU. Do not draw them as if the value changed. These are:
-  - The point of a write of the failed step whose `applied` is `false` or `null` (the `point` of that entry in `failed.writes[]`) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step. A write of the same `set` that the ECU did apply (`applied: true`) is not marked.
+  - The point of a write of the failed step whose `applied` is `false` or `null` (the `point` of that entry in `failed.writes[]`) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step. A write of the same `set` (or of the same time's `dither` writes) that the ECU did apply (`applied: true`) is not marked.
   - Points whose time is after `scenario.over_at_ms` (no ECU advanced to that time).
-- In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied.
+- In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied, with one exception: a `dither` write for the time of the last step may not have its result yet, because the scenario is over as soon as its last step passes.
 
 ### Input lines (`lines[]`)
 
@@ -1152,7 +1169,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Key | Value |
 |---|---|
 | `variable` | The variable |
-| `kind`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`), the line in the scenario file, and the step's `index` |
+| `kind`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`; for `dither`, see below), the line in the scenario file, and the step's `index` |
 | `from_ms`, `to_ms` | The step's time and the end of the motion as written (`from_ms` + the duration). The same value for `set`. If the run ended first, points exist only up to `recorded_to_ms` |
 | `base` | For `set`, the value written. For `ramp` and `wave`, the start value or the center of the swing (`from` and `around` in [scenario.md](scenario.md)). Written the same way as the series points (a number that the step wrote stays as written). `null` for shapes that carry their own values (`square` with `low` and `high`, `points` that start at 0 ms, and so on) |
 | `base_source` | Where `base` came from (see the table below). `null` if `base` is `null` |
@@ -1165,7 +1182,19 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | `line` | The line's value: the value that the scenario had placed for the variable at that time (the value of an earlier `set` or the end value of an earlier motion, rounded for integers) |
 | `sample` | The latest sample at that moment, for a variable that the scenario has not written yet. **Which sample it is depends on the controller's time step** (see "End of the record" below). The same holds for `line` bases after a motion that ends by returning to this value |
 
-- `shape` holds only the keys written in the step (for the defaults of omitted keys, see the waveform tables in [scenario.md](scenario.md#waveform-keys)). `from` and `around` are not in `shape`; they become `base`. For `wave`, `shape` also holds `for_ms` (for waveforms that take `for_ms`).
+- `shape` holds only the keys written in the step (for the defaults of omitted keys, see the waveform tables in [scenario.md](scenario.md#waveform-keys)). `from` and `around` are not in `shape`; they become `base`. For `wave`, `shape` also holds `for_ms` (for waveforms that take `for_ms`). `shape` is there to display the line. The values are in the series, so do not compute them again from `shape`.
+- Read the meaning of `base` from `shape.type`: the start value for `ramp`, `lag` and `chatter`, the center of the swing for waveforms with a center such as `sine`, and the value to return to at the end for `pulse`.
+- **A `dither` line** (`kind` is `dither`) is a dither overlaid on an input. Each `inputs` declaration and each item that a `dither` step placed is one line.
+
+  | Key | Value in a `dither` line |
+  |---|---|
+  | `line`, `step` | The line and `index` of the `dither` step. For an `inputs` declaration, the line of that input and `null` |
+  | `from_ms` | The time of the first write that carried this dither (a dither placed on an input without a base starts at the first `set`, `ramp` or `wave`) |
+  | `to_ms` | `null` (the text gives no end). **The `from_ms` of the next `dither` line of the same variable is the end of this dither** |
+  | `base`, `base_source` | `null` |
+  | `shape` | The waveform of the dither. `null` for `none` (removed) |
+
+  A dither line comes after the lines that steps placed at that time, in the order in which the first writes were sent. The `lines` of a `dither` step are the positions of the dither lines that the step placed. A dither that no write ever carried (on an input that never got a base, or replaced by the next step before any write) does not become a line.
 - The `shape` of `points` holds the number of points (`points`) and `interpolate`. For points read from a CSV file, it also holds `file`, `value`, `time` and `time_unit` as written (the column names only; the point values are in the series).
 - The file holds only lines whose `from_ms` is at or before `recorded_to_ms` and **for which at least one write was sent** (the file records what happened). If the scenario failed before the first write of a line, the line is left out, and it is not in the step's `lines` either. Examples: a `ramp` after a refused `set` of an earlier step at the same time; when one step moves several variables and the start value of one is not found, that variable and the variables written after it. A refused write was sent, so its line is included (as with the series points).
 - In a run where the scenario did not start, `lines` is empty.
@@ -1186,7 +1215,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 - For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `tick_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.
   - In a run where a step failed, the `status` of the other steps (the steps after the failed one and the steps in progress), which can be `passed`, `unfinished` or `not_run`, and their `start_ms`, `at_ms` and `end_ms`. The time step decides how far ahead the controller had sent and how many results it had seen before the failure was known. **So a `passed` step can have an `at_ms` after `recorded_to_ms`, and the points of that step's writes are not in the series** (the series and `recorded_to_ms` do not depend on the time step).
-  - Everything in a run that ended with a write not applied.
+  - Everything in a run that ended with a write not applied. When a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, the step that fails (the first step not yet decided at that moment) also depends on the time step. If that write would be sent after the time step that decides the last step, with some time steps the scenario passes without sending it (see "When a step fails" in [scenario.md](scenario.md#when-a-step-fails)).
   - The start value of a `ramp` or `wave` without `from` or `around` on a variable that the scenario has not written yet (the `base` of a line whose `base_source` is `sample`), and the values of that motion. When that motion ends by returning to its start value (`pulse`, and waveforms that return to the center, such as `sine` without `around`), the `base` of the following motions without `from` or `around` (`base_source` `line`) comes from the same sample and changes the same way. The controller sends a write for time T in its own time step before T, and the start value is the latest sample seen by then. A coarse time step therefore gives an older sample, and before any sample has been seen (T is at most the length of the controller's first time step: with a 30 ms time step, times up to 30 ms), the step fails with `scenario-write` (no start value). For a result that does not depend on the time step, write `from` or `around`, or `set` the variable first.
 - An `incomplete` run and a run that ended at `stop_at_ms` do not always give the same file, because real time can decide how far the run saw.
 

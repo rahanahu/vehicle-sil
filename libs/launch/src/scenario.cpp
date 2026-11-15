@@ -3,6 +3,7 @@
 
 #include "vehicle_sil/launch/check.hpp"
 #include "scenario_csv.hpp"
+#include "scenario_line.hpp"
 #include "scenario_shapes.hpp"
 #include "yaml_reader.hpp"
 
@@ -28,10 +29,10 @@ namespace {
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
-const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "steps"};
-const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",        "wait_until",
-                                            "timeout_ms", "expect",   "within_ms", "hold_for_ms", "undersampled"};
-const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "wait_until", "expect"};
+const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "inputs", "steps"};
+const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",         "dither",
+                                            "wait_until", "timeout_ms", "expect",  "within_ms",   "hold_for_ms", "undersampled"};
+const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};
 const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
 const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
 // A wave: the shapes (one per variable) and the keys beside the shape.
@@ -39,11 +40,17 @@ const std::vector<std::string> kWaveShapes = {"sine", "triangle", "sawtooth", "s
                                               "noise", "chirp", "lag", "chatter", "points"};
 const std::vector<std::string> kWaveKeys = {"sine",  "triangle", "sawtooth", "square", "pulse",  "noise",      "chirp",
                                             "lag",   "chatter",  "points",   "around", "for_ms", "interpolate"};
+// A dither: what an entry of "inputs" may have, and the shapes that can be one (around 0, without an end).
+const std::vector<std::string> kInputKeys = {"dither", "undersampled"};
+const std::vector<std::string> kDitherShapes = {"sine", "triangle", "sawtooth", "square", "noise"};
+constexpr const char* kDitherExample = "{ triangle: { amplitude: 1, period_ms: 100 } }";
 // The keys of points from a CSV file (points: { file: ..., value: ... }).
 const std::vector<std::string> kPointsFileKeys = {"file", "value", "time", "time_unit"};
 constexpr const char* kPointsFileExample = "points: { file: traces/drive.csv, value: throttle }";
 // How a wave that an ECU cannot see as written is run anyway (in every such message).
 constexpr const char* kAsItIs = "; to run it as it is without this message, add undersampled: ok to the step";
+// The same for a dither that "inputs" declares.
+constexpr const char* kAsItIsInput = "; to run it as it is without this message, add undersampled: ok to the input's entry in inputs";
 /// A smooth shape with fewer steps of its ECU per period is coarse (a note).
 constexpr std::int64_t kSmoothSteps = 8;
 /// Two values of a shape (as a share of its amplitude) that are this close are the same value.
@@ -151,6 +158,7 @@ public:
         ryml::id_type paramsNode = ryml::NONE;
         ryml::id_type onlyNode = ryml::NONE;
         ryml::id_type stepsNode = ryml::NONE;
+        ryml::id_type inputsNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
@@ -202,6 +210,10 @@ public:
             {
                 stepsNode = child;
             }
+            else if (key == "inputs")
+            {
+                inputsNode = child;
+            }
             else
             {
                 unknown_key(child, key, "", kTopKeys);
@@ -215,11 +227,21 @@ public:
             read_only(onlyNode);
         }
         const bool hasSteps = stepsNode != ryml::NONE;
+        // The inputs before the steps, wherever the file has them: what they declare is there
+        // from the start. (Both are looked through for parameters before either is read.)
+        const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || resolve_params(inputsNode);
         if (hasSteps)
         {
-            if (!out_.not_for_variant && resolve_params(stepsNode))
+            if (!out_.not_for_variant && resolve_params(stepsNode) && inputsOk)
             {
+                if (inputsNode != ryml::NONE)
+                {
+                    inputs_written_ = true;
+                    read_inputs(inputsNode);
+                }
+                declared_ = dithers_.size(); // (the steps' dithers come after those of "inputs")
                 read_steps(stepsNode);
+                check_dithers();
                 check_given_params();
                 check_something_is_checked();
             }
@@ -244,7 +266,7 @@ public:
         if (!hasSteps)
         {
             error("missing-key", 0,
-                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, wait_until, expect)");
+                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, dither, wait_until, expect)");
         }
         if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
         {
@@ -740,6 +762,8 @@ private:
         out.type = v->type;
         out.items = v->items;
         out.text = text;
+        out.min = v->min;
+        out.max = v->max;
         scenario_.variables.push_back(std::move(out));
         infos_.push_back(&*v);
         maps_.push_back(p->map.get());
@@ -858,6 +882,10 @@ private:
                                               ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
         }
+        if (out && write && (v.type == control::ValueType::Integer || v.type == control::ValueType::Real))
+        {
+            note_base(variable, as_number(*out), line, true);
+        }
         return out;
     }
 
@@ -935,6 +963,8 @@ private:
         ScenarioStep step;
         step.line = line;
         absent_.clear();
+        step_bases_.clear();
+        step_dithers_.clear();
         std::map<std::string, std::size_t> seen;
         std::map<std::string, ryml::id_type> nodes;
         for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
@@ -977,6 +1007,7 @@ private:
         step.kind = action == "set"      ? StepKind::Set
                     : action == "ramp"   ? StepKind::Ramp
                     : action == "wave"   ? StepKind::Wave
+                    : action == "dither" ? StepKind::Dither
                     : action == "expect" ? StepKind::Expect
                                          : StepKind::WaitUntil;
 
@@ -1006,7 +1037,7 @@ private:
         only_with("timeout_ms", step.kind == StepKind::WaitUntil, "wait_until");
         only_with("within_ms", step.kind == StepKind::Expect, "expect");
         only_with("hold_for_ms", step.kind == StepKind::Expect, "expect");
-        only_with("undersampled", step.kind == StepKind::Wave, "wave");
+        only_with("undersampled", step.kind == StepKind::Wave || step.kind == StepKind::Dither, "wave and dither");
         bool undersampledOk = false;
         if (nodes.count("undersampled") > 0)
         {
@@ -1015,8 +1046,8 @@ private:
             if (!undersampledOk)
             {
                 error("value", doc_.line(said),
-                      "undersampled must be ok (run the step's waves as they are, also where they change faster than their ECU "
-                      "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
+                      std::string("undersampled must be ok (run the step's ") + (step.kind == StepKind::Dither ? "dithers" : "waves") +
+                          " as they are, also where they change faster than their ECU steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
             }
         }
 
@@ -1076,6 +1107,7 @@ private:
         case StepKind::Set: read_set(nodes.at("set"), step, time); break;
         case StepKind::Ramp: length = read_ramp(nodes.at("ramp"), step, time); break;
         case StepKind::Wave: length = read_wave(nodes.at("wave"), step, time, undersampledOk); break;
+        case StepKind::Dither: read_dither(nodes.at("dither"), step, undersampledOk); break;
         case StepKind::Expect:
         case StepKind::WaitUntil:
             read_conditions(nodes.at(action), step, action);
@@ -1167,7 +1199,243 @@ private:
         {
             end_ms_ = *time + length;
         }
+        if (step.skipped.empty())
+        {
+            note_lines(step, time);
+        }
         scenario_.steps.push_back(std::move(step));
+    }
+
+    // --- what the steps put on the inputs, as the text says it ---
+
+    /// A value the text puts on a written variable (a set's value, an end of a ramp, a level or
+    /// an end of a wave), of the step being read: what a dither on the variable may be added to.
+    /// `stays`: the step leaves the input there.
+    void note_base(std::size_t variable, double value, std::size_t line, bool stays)
+    {
+        step_bases_.push_back(Base{variable, value, line, stays});
+    }
+
+    /// A step that runs: what it puts on the inputs, for the list of the lines and the findings
+    /// about the dithers (a skipped step puts nothing).
+    void note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time)
+    {
+        const std::size_t index = scenario_.steps.size(); // (it is pushed after this)
+        for (const Base& base : step_bases_)
+        {
+            flow_.push_back(Flow{index, base, std::nullopt});
+        }
+        for (const Dither& dither : step_dithers_)
+        {
+            flow_.push_back(Flow{index, std::nullopt, dithers_.size()});
+            dithers_.push_back(dither);
+        }
+        const auto put = [&](std::size_t variable, const std::optional<std::int64_t>& length, const std::string& text,
+                             const ScenarioShapeText* shape) {
+            ScenarioLineText line;
+            line.variable = scenario_.variables[variable].text;
+            line.kind = step_kind_name(step.kind);
+            line.line = step.line;
+            line.step = index + 1;
+            line.from_ms = time;
+            if (time && length)
+            {
+                line.to_ms = *time + *length;
+            }
+            line.time_source = time ? ScenarioLineText::TimeSource::Text : ScenarioLineText::TimeSource::AfterWait;
+            line.after_wait = time ? 0 : wait_line_;
+            line.text = text;
+            if (shape != nullptr && !shape->type.empty())
+            {
+                line.shape = *shape;
+            }
+            line_variables_.push_back(variable);
+            lines_.push_back(std::move(line));
+        };
+        for (const ScenarioWrite& w : step.writes)
+        {
+            placed_.insert(w.variable);
+            put(w.variable, 0, w.text, nullptr);
+        }
+        for (const ScenarioMotion& m : step.motions)
+        {
+            placed_.insert(m.variable);
+            put(m.variable, m.length_ms, m.text, &m.described);
+        }
+        for (const ScenarioOverlay& o : step.overlays)
+        {
+            put(o.variable, std::nullopt, o.text, &o.described);
+        }
+    }
+
+    /// A number as it is written to the variable: an integer rounded as the run rounds it.
+    double as_written(double value, std::size_t variable) const
+    {
+        const control::ValueType type = scenario_.variables[variable].type;
+        return type == control::ValueType::Integer ? detail::number_of(detail::value_of_type(value, type)) : value;
+    }
+    /// Whether `value` with `reach` on both sides, as it is written, stays within the variable's range.
+    bool reaches_outside(double value, double reach, std::size_t variable) const
+    {
+        return !in_range(as_written(value - reach, variable), variable) || !in_range(as_written(value + reach, variable), variable);
+    }
+
+    /// Once the steps are read: the dithers that may leave the range of their input, those that
+    /// an integer rounds away, and those that nothing is ever under.
+    void check_dithers()
+    {
+        const std::size_t before = findings_.size();
+        // Which dither is on which value, by the order of the steps in the file (the steps that
+        // run come one after the other, also after one that waits): per input the dither that is
+        // on it now, and the value the last step left it at. A value is under the dither that is
+        // on when its step comes; a dither that a step puts is on the value the input was left at.
+        std::vector<std::vector<Base>> under(dithers_.size());
+        std::map<std::size_t, std::size_t> on;                    // per variable: its dither
+        std::map<std::size_t, Base> left;                         // per variable: where the last step left it
+        std::map<std::size_t, std::size_t> valued;                // per variable: the step that put values on it last
+        for (std::size_t i = 0; i < declared_; ++i)
+        {
+            on[dithers_[i].variable] = i;
+        }
+        for (const Flow& flow : flow_)
+        {
+            if (flow.value)
+            {
+                const Base& base = *flow.value;
+                if (const auto at = valued.find(base.variable); at == valued.end() || at->second != flow.step)
+                {
+                    valued[base.variable] = flow.step;
+                    left.erase(base.variable); // (a step that does not say where it leaves the input: not known)
+                }
+                if (const auto dither = on.find(base.variable); dither != on.end())
+                {
+                    under[dither->second].push_back(base);
+                }
+                if (base.stays)
+                {
+                    left.insert_or_assign(base.variable, base);
+                }
+            }
+            else
+            {
+                const Dither& dither = dithers_[*flow.dither];
+                if (dither.off)
+                {
+                    on.erase(dither.variable);
+                    continue;
+                }
+                on[dither.variable] = *flow.dither;
+                if (const auto base = left.find(dither.variable); base != left.end())
+                {
+                    under[*flow.dither].push_back(base->second);
+                }
+            }
+        }
+        for (std::size_t i = 0; i < dithers_.size(); ++i)
+        {
+            const Dither& dither = dithers_[i];
+            if (dither.off)
+            {
+                continue;
+            }
+            const ScenarioVariable& var = scenario_.variables[dither.variable];
+            const std::string range = range_text(*info_of(dither.variable));
+            std::vector<const Base*> outside;
+            for (const Base& base : under[i])
+            {
+                const bool said = std::any_of(outside.begin(), outside.end(), [&base](const Base* b) { return b->value == base.value && b->line == base.line; });
+                if (!said && reaches_outside(base.value, dither.reach, dither.variable))
+                {
+                    outside.push_back(&base);
+                }
+            }
+            if (!outside.empty())
+            {
+                // One finding per dither, with every value it may leave the range on.
+                const Base& first = *outside.front();
+                std::string others;
+                if (outside.size() > 1)
+                {
+                    std::vector<std::string> where;
+                    for (std::size_t k = 1; k < outside.size(); ++k)
+                    {
+                        const std::string line = std::to_string(outside[k]->line);
+                        if (std::find(where.begin(), where.end(), line) == where.end())
+                        {
+                            where.push_back(line);
+                        }
+                    }
+                    others = "; so on " + std::to_string(outside.size() - 1) + " other value" + (outside.size() > 2 ? "s" : "") + " (line" +
+                             (where.size() > 1 ? "s " : " ") + join(where) + ")";
+                }
+                add(Severity::Warning, "scenario-dither-range", dither.line,
+                    "the dither of " + var.text + " may take it out of its range (" + range + "): on the " + number_text(first.value) +
+                        " of line " + std::to_string(first.line) + ", the values written go " + (dither.about ? "about " : "") + "from " +
+                        number_text(as_written(first.value - dither.reach, dither.variable)) + " to " +
+                        number_text(as_written(first.value + dither.reach, dither.variable)) +
+                        (dither.about ? " (three times the amplitude of a gaussian noise, which is its standard deviation)" : "") + others +
+                        ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is "
+                        "right, the run fails at the write that is outside. Lower the amplitude, keep the values of " + var.text +
+                        " further from the ends of its range, or take the dither off before them (dither: { " + var.text + ": none })",
+                    owner_of(dither.variable));
+            }
+            if (var.type == control::ValueType::Integer && dither.swing && *dither.swing < 0.5 && !dither.quiet)
+            {
+                // What to do about it must not be what the finding above warns of: not "0.5 or
+                // more" where a value under the dither is so near an end that 0.5 leaves the range.
+                const auto end = std::find_if(under[i].begin(), under[i].end(),
+                                              [&](const Base& base) { return reaches_outside(base.value, 0.5, dither.variable); });
+                add(Severity::Warning, "scenario-wave-undersampled", dither.line,
+                    "the " + dither.shape + " dither of " + var.text + " has an amplitude of " + number_text(*dither.swing) + ", but " +
+                        var.text +
+                        " is an integer: on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only "
+                        "where a ramp or a wave is between two whole values). " +
+                        (end == under[i].end() ? std::string("Make the amplitude 0.5 or more")
+                                               : "An amplitude of 0.5 or more would show, but on the " + number_text(end->value) + " of line " +
+                                                     std::to_string(end->line) + " it would leave the range (" + range +
+                                                     "): keep that value further from the end of the range first, or remove the dither") +
+                        dither.as_it_is,
+                    owner_of(dither.variable));
+            }
+        }
+        for (const ScenarioOverlay& input : scenario_.inputs)
+        {
+            if (placed_.count(input.variable) == 0)
+            {
+                const std::string& name = scenario_.variables[input.variable].text;
+                add(Severity::Warning, "scenario-dither-unused", input.line,
+                    "the dither of " + name + " is never written: no step that runs puts a value on " + name +
+                        " (set, ramp or wave), and a dither is added to what the steps put; add a set of " + name +
+                        ", or remove the entry",
+                    owner_of(input.variable));
+            }
+        }
+        if (findings_.size() > before)
+        {
+            // Among the findings of the steps, which are in the order of the file.
+            std::stable_sort(findings_.begin(), findings_.end(), [](const Finding& x, const Finding& y) { return x.line < y.line; });
+        }
+        // The list of the lines is for a scenario with a dither: another one's outputs are as
+        // they were. It has the inputs that a dither is ever put on or taken off: what is under
+        // the dithers, not every write of the scenario.
+        std::set<std::size_t> listed;
+        for (const Dither& dither : dithers_)
+        {
+            listed.insert(dither.variable);
+        }
+        if (!scenario_.inputs.empty() || !listed.empty() || inputs_written_)
+        {
+            scenario_.has_dither = true;
+            std::vector<ScenarioLineText> all = scenario_inputs_text(scenario_);
+            for (std::size_t i = 0; i < lines_.size(); ++i)
+            {
+                if (listed.count(line_variables_[i]) > 0)
+                {
+                    all.push_back(std::move(lines_[i]));
+                }
+            }
+            scenario_.lines = std::move(all);
+        }
     }
 
     /// The step uses variables that their participants do not have (absent_): it does nothing in
@@ -1177,6 +1445,7 @@ private:
         step.skipped = skip_reason();
         step.writes.clear();
         step.motions.clear();
+        step.overlays.clear();
         step.conditions.clear();
         ++out_.skipped;
         add(Severity::Note, "scenario-step-skipped", step.line,
@@ -1366,10 +1635,12 @@ private:
                     else if (key == "to")
                     {
                         to = d;
+                        note_base(*v, d, doc_.line(part), true);
                     }
                     else
                     {
                         ramp.base = d;
+                        note_base(*v, d, doc_.line(part), false);
                     }
                     hasTo = hasTo || key == "to";
                 }
@@ -1532,6 +1803,7 @@ private:
                       range_text(*info_of(variable)) + ")");
             return std::nullopt;
         }
+        note_base(variable, d, doc_.line(node), key == "to"); // (what a lag or a chatter comes to rest at)
         return d;
     }
 
@@ -1665,7 +1937,7 @@ private:
             add(Severity::Warning, "scenario-wave-undersampled", line,
                 what + " has a period of " + span_text(period) + ", but " + takes_inputs(variable) +
                     ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. " + longer +
-                    kAsItIs,
+                    as_it_is_,
                 owner_of(variable));
             return true;
         }
@@ -1689,7 +1961,7 @@ private:
                     add(Severity::Warning, "scenario-wave-undersampled", line,
                         what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": at each of those times " +
                             shape + " is at " + (std::fabs(low) <= kSameValue ? "its middle" : "the same value") +
-                            ", so the ECU sees a constant, not " + shape + ". " + longer + kAsItIs,
+                            ", so the ECU sees a constant, not " + shape + ". " + longer + as_it_is_,
                         owner_of(variable));
                     return true;
                 }
@@ -1698,7 +1970,7 @@ private:
                 what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": the ECU sees " +
                     rounded_text(static_cast<double>(period.count()) / static_cast<double>(step->count())) +
                     " values per period, so it can miss the highest and the lowest. A period of " +
-                    span_text(kSmoothSteps * *step) + " or more gives it " + std::to_string(kSmoothSteps) + kAsItIs,
+                    span_text(kSmoothSteps * *step) + " or more gives it " + std::to_string(kSmoothSteps) + as_it_is_,
                 owner_of(variable));
         }
         return false;
@@ -1719,7 +1991,7 @@ private:
             add(Severity::Warning, "scenario-wave-duty", line,
                 what + " has a period of " + span_text(periodic.period) + ", which is not a multiple of " + step_of(variable) +
                     ": the ECU sees high and low times that change from period to period. Make the period a multiple of " +
-                    span_text(SimDuration{step}) + kAsItIs,
+                    span_text(SimDuration{step}) + as_it_is_,
                 owner_of(variable));
             return;
         }
@@ -1734,7 +2006,7 @@ private:
                     number_text(duty) + " %), but " + takes_inputs(variable) + ": the ECU sees it high for " +
                     span_text(SimDuration{seen}) + " of each period (" +
                     rounded_text(100.0 * static_cast<double>(seen) / static_cast<double>(period)) +
-                    " %). Make the high time (period x duty / 100) a multiple of " + span_text(SimDuration{step}) + kAsItIs,
+                    " %). Make the high time (period x duty / 100) a multiple of " + span_text(SimDuration{step}) + as_it_is_,
                 owner_of(variable));
         }
     }
@@ -1749,7 +2021,7 @@ private:
         if (step && span < *step)
         {
             add(Severity::Warning, "scenario-wave-undersampled", line,
-                what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + kAsItIs, owner_of(variable));
+                what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + as_it_is_, owner_of(variable));
         }
     }
 
@@ -1828,7 +2100,7 @@ private:
         }
         add(Severity::Warning, "scenario-wave-undersampled", line,
             what + " is " + span_text(width) + " wide, shorter than " + step_of(variable) + ": " + sees + ". Make width_ms " +
-                whole_ms(*step) + " or more" + kAsItIs,
+                whole_ms(*step) + " or more" + as_it_is_,
             owner_of(variable));
     }
 
@@ -1939,6 +2211,695 @@ private:
         return longest;
     }
 
+    // --- dithers ---
+
+    /// The file's "inputs": per input what is on top of it from the start (its dither).
+    void read_inputs(ryml::id_type node)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  "inputs must be a mapping of inputs to what is on top of them ({ " + example_variable() + ": { dither: " +
+                      kDitherExample + " } }), not " + shown_value(node));
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string name = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, name, child, "inputs: "))
+            {
+                continue;
+            }
+            absent_.clear();
+            const auto v = variable(child);
+            const auto parts = parts_of(child, "inputs: " + name, kInputKeys,
+                                        std::string("a mapping with the input's dither ({ dither: ") + kDitherExample + " })");
+            if (!parts)
+            {
+                continue;
+            }
+            bool quiet = false;
+            if (parts->count("undersampled") > 0)
+            {
+                const ryml::id_type said = parts->at("undersampled");
+                quiet = is_scalar(said) && !is_null(said) && text_of(said) == "ok";
+                if (!quiet)
+                {
+                    error("value", doc_.line(said),
+                          "undersampled must be ok (run the input's dither as it is, also where it changes faster than its ECU "
+                          "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
+                }
+            }
+            if (parts->count("dither") == 0)
+            {
+                error("missing-key", doc_.line(child),
+                      "inputs: " + name + " has no dither: say what is on top of the input (dither: " + kDitherExample +
+                          "), or remove the entry");
+                continue;
+            }
+            if (!v)
+            {
+                if (!absent_.empty())
+                {
+                    // As a step that uses the variable: not in this configuration, and said.
+                    add(Severity::Note, "scenario-input-skipped", doc_.line(child),
+                        "the dither of " + name + " is not used: " + skip_reason() +
+                            "; the steps that write " + name + " are skipped too");
+                }
+                continue;
+            }
+            as_it_is_ = kAsItIsInput;
+            // (Known by the entry's line, also if its dither is on a line below.)
+            auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc_.line(child));
+            as_it_is_ = kAsItIs;
+            if (overlay)
+            {
+                scenario_.inputs.push_back(std::move(*overlay));
+            }
+        }
+        absent_.clear();
+    }
+
+    /// The step "dither": per variable none, or the shape that is on top of it from the step's time.
+    void read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
+    {
+        if (!tree_.is_map(node) || !tree_.has_children(node))
+        {
+            error("value", doc_.line(node),
+                  "dither must be a mapping of inputs to a shape or none ({ " + example_variable() + ": " + kDitherExample + " }, or { " +
+                      example_variable() + ": none } to take a dither off), not " + shown_value(node));
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "dither: "))
+            {
+                continue;
+            }
+            if (const auto v = variable(child))
+            {
+                if (auto overlay = read_overlay(child, *v, quiet, true, step.line))
+                {
+                    step.overlays.push_back(std::move(*overlay));
+                }
+            }
+        }
+    }
+
+    /// The dither of the variable `v` (`node`: a shape, or in a step none), or empty (and its errors).
+    /// `shown`: the line it is known by (ScenarioOverlay::line): the step's, or its entry's in "inputs".
+    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown)
+    {
+        const std::size_t line = doc_.line(node);
+        const ScenarioVariable& var = scenario_.variables[v];
+        const std::string& name = var.text;
+        const std::string what = "the dither of " + name;
+        bool good = writable(v, line, std::nullopt, "a dither");
+        if (!good)
+        {
+            return std::nullopt; // (what else is wrong with it does not matter: it cannot be written)
+        }
+        ScenarioOverlay out;
+        out.variable = v;
+        out.line = shown;
+        if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
+        {
+            error("scenario-value", line,
+                  name + " is " + (var.type == control::ValueType::Bool ? "a bool" : "an enum") +
+                      ": a dither needs a number (an integer or a real input); remove it");
+            return std::nullopt;
+        }
+        if (!tree_.is_map(node))
+        {
+            // none takes it off. (Not "off": a YAML 1.1 tool reads that as false.)
+            const bool none = is_scalar(node) && !is_null(node) && param_at(node) == nullptr && text_of(node) == "none";
+            if (none && in_step)
+            {
+                step_dithers_.push_back(Dither{v, shown, 0.0, false, std::nullopt, true, true, as_it_is_, {}});
+                out.text = name + " none";
+                return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
+            }
+            if (const ParamValue* param = param_at(node))
+            {
+                error("value", line,
+                      what + " is the parameter " + param->name + ": a parameter cannot stand for none or for a shape; write " +
+                          (in_step ? "none or " : "") + "the shape here (its numbers can be parameters)");
+                return std::nullopt;
+            }
+            error("value", line,
+                  none ? what + " in inputs is none: an input without a dither needs no entry; remove it"
+                       : what + " must be " + (in_step ? "none (which takes the dither off) or " : "") + "a shape (" + kDitherExample +
+                             "), not " + shown_value(node) + (in_step ? ": write none, or a shape" : ": write a shape"));
+            return std::nullopt;
+        }
+        // The keys by hand: what a wave has and a dither cannot have gets a sentence of its own.
+        Parts parts;
+        std::vector<std::string> shapes;
+        std::map<std::string, std::size_t> seen;
+        for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+        {
+            const std::string key = detail::to_string(tree_.key(part));
+            if (!first_occurrence(seen, key, part, "dither of " + name + ": "))
+            {
+                continue;
+            }
+            if (std::find(kDitherShapes.begin(), kDitherShapes.end(), key) != kDitherShapes.end())
+            {
+                parts.emplace(key, part);
+                shapes.push_back(key);
+                continue;
+            }
+            good = false;
+            if (key == "for_ms")
+            {
+                error("value", doc_.line(part),
+                      what + " has for_ms: a dither has no end, it stays until a dither step changes it; remove for_ms (dither: { " +
+                          name + ": none } takes it off)");
+            }
+            else if (key == "around")
+            {
+                error("value", doc_.line(part),
+                      what + " has around: a dither swings around the value the scenario puts on the input (set, ramp, wave); "
+                             "remove around");
+            }
+            else if (std::find(kWaveShapes.begin(), kWaveShapes.end(), key) != kWaveShapes.end())
+            {
+                error("value", doc_.line(part),
+                      key + " cannot be a dither (it has a length): use sine, triangle, sawtooth, square with amplitude or noise, or "
+                            "write it as a wave step");
+            }
+            else
+            {
+                unknown_key(part, key, "dither of " + name + ": ", kDitherShapes);
+            }
+        }
+        if (shapes.size() != 1)
+        {
+            if (good || shapes.size() > 1)
+            {
+                error("value", line,
+                      shapes.empty() ? what + " names no shape: give it one of " + join(kDitherShapes)
+                                     : what + " has " + join(shapes) + ": an input has one dither; keep one of them");
+            }
+            return std::nullopt;
+        }
+        const std::string& shape = shapes.front();
+        const ryml::id_type body = parts.at(shape);
+        if (shape == "square" && tree_.is_map(body))
+        {
+            for (auto part = tree_.first_child(body); part != ryml::NONE; part = tree_.next_sibling(part))
+            {
+                const std::string key = detail::to_string(tree_.key(part));
+                if (key == "low" || key == "high")
+                {
+                    error("value", doc_.line(part),
+                          what + " is a square with " + key + ": a dither swings around the value of the input, it has no values of "
+                                 "its own; give the square amplitude instead (square: { amplitude: 1, period_ms: 100 })");
+                    return std::nullopt;
+                }
+            }
+        }
+        ScenarioMotion read; // what a wave of this shape would be: the parts a dither has too
+        std::string text = name + " " + shape;
+        std::optional<std::int64_t> length;
+        bool wantsFor = true;
+        std::string noAround;
+        std::optional<double> swing;
+        MakeShape make;
+        if (!read_shape(shape, body, Parts{}, v, "the " + shape + " dither of " + name, line, std::nullopt, quiet, good, read, text, length,
+                        wantsFor, noAround, swing, make) ||
+            !good || !make)
+        {
+            return std::nullopt;
+        }
+        out.shape = make(SimDuration{});
+        out.text = std::move(text);
+        out.described = std::move(read.described);
+        out.described.type = shape;
+        // How far from the value under it the dither goes: its amplitude, or for a gaussian noise
+        // (whose amplitude is the standard deviation) three times that, which nearly every value is within.
+        Dither noted{v, shown, swing.value_or(0.0), !swing.has_value(), swing, quiet, false, as_it_is_, shape};
+        if (!swing)
+        {
+            for (const auto& [key, value] : out.described.values)
+            {
+                if (key == "amplitude")
+                {
+                    const double* real = std::get_if<double>(&value);
+                    const std::int64_t* whole = std::get_if<std::int64_t>(&value);
+                    noted.reach = 3.0 * (real != nullptr ? *real : whole != nullptr ? static_cast<double>(*whole) : 0.0);
+                }
+            }
+        }
+        (in_step ? step_dithers_ : dithers_).push_back(noted);
+        return out;
+    }
+
+    /// What makes a wave's shape once everything is read: given the wave's length.
+    using MakeShape = std::function<std::shared_ptr<const Waveform>(SimDuration)>;
+
+    /// The body of a shape other than points (`body`: the value of its key, `shape`), for the
+    /// variable `v`: its keys, with their errors and what the ECU's step makes of it (warnings).
+    /// What a wave and a dither have in common; what stands beside the shape (for_ms, around) is
+    /// the caller's. `top` is where the shape's key stands (a chatter looks for for_ms there).
+    /// Fills in what it found: `text` (appended), `make`, `swing` (how far from the middle it
+    /// goes at most, if that is known), `length` (of a shape that says it itself), `wantsFor`,
+    /// `noAround` (why around does not go with it), and of `out` the base, the hint and what the
+    /// text has (ScenarioMotion::described). `good` turns false with an error.
+    /// @returns false if the body is not a mapping of the shape's keys (nothing else was read).
+    bool read_shape(const std::string& shape, ryml::id_type body, const Parts& top_parts, std::size_t v, const std::string& what,
+                    std::size_t line, const std::optional<std::int64_t>& time, bool quiet, bool& good, ScenarioMotion& out,
+                    std::string& text, std::optional<std::int64_t>& length, bool& wantsFor, std::string& noAround,
+                    std::optional<double>& swing, MakeShape& make)
+    {
+        const Parts* top = &top_parts;
+        const ScenarioVariable& var = scenario_.variables[v];
+        const std::string name = var.text;
+        const bool isBool = var.type == control::ValueType::Bool;
+        static const std::map<std::string, std::vector<std::string>> kShapeKeys = {
+            {"sine", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
+            {"triangle", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
+            {"sawtooth", {"amplitude", "period_ms", "frequency_hz", "phase_deg", "falling"}},
+            {"square", {"low", "high", "amplitude", "period_ms", "frequency_hz", "duty", "phase_deg"}},
+            {"pulse", {"value", "width_ms"}},
+            {"noise", {"amplitude", "hold_ms", "seed", "distribution"}},
+            {"chirp", {"amplitude", "from_hz", "to_hz", "sweep"}},
+            {"lag", {"to", "tau_ms", "from", "settle"}},
+            {"chatter", {"to", "interval_ms", "bounces", "seed", "from"}},
+        };
+        static const std::map<std::string, std::string> kShapeExample = {
+            {"sine", "{ amplitude: 1, period_ms: 100 }"},
+            {"triangle", "{ amplitude: 1, period_ms: 100 }"},
+            {"sawtooth", "{ amplitude: 1, period_ms: 100 }"},
+            {"square", "{ low: 0, high: 1, period_ms: 100 }"},
+            {"pulse", "{ value: 1, width_ms: 50 }"},
+            {"noise", "{ amplitude: 1, hold_ms: 10, seed: 1 }"},
+            {"chirp", "{ amplitude: 1, from_hz: 1, to_hz: 10 }"},
+            {"lag", "{ to: 1, tau_ms: 100 }"},
+            {"chatter", "{ to: 1, bounces: 3, interval_ms: 10 }"},
+        };
+        const auto parts = parts_of(body, what, kShapeKeys.at(shape), "a mapping of its values (" + kShapeExample.at(shape) + ")");
+        if (!parts)
+        {
+            return false;
+        }
+        const auto has = [&](const char* key) { return parts->count(key) > 0; };
+        // A key the shape cannot do without: `meaning` says what it is.
+        const auto need = [&](const char* key, const std::string& meaning) {
+            if (!has(key))
+            {
+                error("missing-key", line, what + " needs " + key + ": " + meaning);
+                good = false;
+                return false;
+            }
+            return true;
+        };
+        const auto amplitude_of = [&](const std::string& meaning) {
+            std::optional<double> amplitude;
+            if (need("amplitude", meaning))
+            {
+                amplitude = measure(parts->at("amplitude"), "amplitude of " + what, 0.0, false, HUGE_VAL, meaning);
+                good = good && amplitude.has_value();
+                text += amplitude ? " amplitude " + number_text(*amplitude) : "";
+            }
+            return amplitude.value_or(0.0);
+        };
+
+        if (shape == "sine" || shape == "triangle" || shape == "sawtooth")
+        {
+            const double amplitude = amplitude_of("how far the value goes above and below the middle");
+            const auto periodic = periodic_of(*parts, what, line, text);
+            bool falling = false;
+            if (has("falling"))
+            {
+                const auto said = flag(parts->at("falling"), "falling of " + what, "true: each period goes down and jumps up");
+                good = good && said.has_value();
+                falling = said.value_or(false);
+                text += falling ? " falling" : "";
+            }
+            good = good && periodic.has_value();
+            swing = amplitude;
+            if (periodic)
+            {
+                const detail::Periodic p = *periodic;
+                check_period(v, what, line, quiet, p.period, [&](SimDuration t) {
+                    return shape == "sine" ? signal::sine(t, p.period, p.phase_deg)
+                           : shape == "triangle" ? signal::triangle(t, p.period, p.phase_deg)
+                                                 : signal::sawtooth(t, p.period, falling, p.phase_deg);
+                });
+                make = [=](SimDuration) {
+                    return shape == "sine" ? detail::sine_shape(amplitude, *periodic)
+                           : shape == "triangle" ? detail::triangle_shape(amplitude, *periodic)
+                                                 : detail::sawtooth_shape(amplitude, *periodic, falling);
+                };
+            }
+        }
+        else if (shape == "square")
+        {
+            std::optional<double> low;
+            std::optional<double> high;
+            std::optional<double> amplitude;
+            const bool levels = has("low") || has("high");
+            if (isBool)
+            {
+                for (const char* key : {"low", "high", "amplitude"})
+                {
+                    if (has(key))
+                    {
+                        error("value", doc_.line(parts->at(key)),
+                              std::string(key) + " does not go with " + what + ": the square of a bool is false and true; remove it");
+                        good = false;
+                    }
+                }
+                low = 0.0;
+                high = 1.0;
+            }
+            else if (levels && has("amplitude"))
+            {
+                error("value", doc_.line(parts->at("amplitude")),
+                      what + " has amplitude and " + (has("low") ? "low" : "high") +
+                          ": give low and high (its two values), or amplitude (so far above and below the middle)");
+                good = false;
+            }
+            else if (levels)
+            {
+                if (need("low", "the value while it is low") && need("high", "the value while it is high"))
+                {
+                    low = level(parts->at("low"), v, "low", "the square");
+                    high = level(parts->at("high"), v, "high", "the square");
+                    good = good && low && high;
+                    text += low && high ? " low " + number_text(*low) + " high " + number_text(*high) : "";
+                }
+            }
+            else
+            {
+                amplitude = amplitude_of("how far the value goes above and below the middle; or give low and high, its two values");
+                swing = amplitude;
+            }
+            const auto periodic = periodic_of(*parts, what, line, text);
+            good = good && periodic.has_value();
+            double duty = 50.0;
+            if (has("duty"))
+            {
+                const auto said = measure(parts->at("duty"), "duty of " + what, 0.0, false, 100.0,
+                                          "the percent of each period for which it is high");
+                good = good && said.has_value();
+                duty = said.value_or(50.0);
+                text += said ? " duty " + number_text(duty) + " %" : "";
+            }
+            if (!amplitude)
+            {
+                noAround = isBool ? "a bool has no middle" : "low and high are the values themselves";
+            }
+            if (periodic)
+            {
+                check_square(v, what, line, quiet, *periodic, duty);
+                if (amplitude)
+                {
+                    make = [=](SimDuration) { return detail::square_shape(*amplitude, *periodic, duty); };
+                }
+                else if (low && high)
+                {
+                    make = [=](SimDuration) { return detail::square_levels_shape(*low, *high, *periodic, duty); };
+                }
+            }
+        }
+        else if (shape == "pulse")
+        {
+            std::optional<double> value;
+            if (isBool && !has("value"))
+            {
+                value = 1.0;
+            }
+            else if (need("value", "the value during the pulse"))
+            {
+                value = level(parts->at("value"), v, "value", "the pulse");
+                good = good && value.has_value();
+            }
+            text += value ? " " + (isBool ? std::string(*value != 0.0 ? "true" : "false") : number_text(*value)) : "";
+            if (need("width_ms", "how long the pulse lasts, in milliseconds of virtual time"))
+            {
+                length = millis(parts->at("width_ms"), "width_ms", 1, "milliseconds of virtual time the pulse lasts");
+                good = good && length.has_value();
+                text += length ? " width " + std::to_string(*length) + " ms" : "";
+            }
+            wantsFor = false;
+            if (isBool)
+            {
+                noAround = "a bool has no middle (the pulse returns to the other value)";
+                out.base = value.value_or(1.0) != 0.0 ? 0.0 : 1.0;
+            }
+            else
+            {
+                noAround = "a pulse returns to the value the variable has when the pulse begins (for another value after it, "
+                           "write a set in the next step)";
+                out.hint = "set the variable in a step before the pulse (set: { " + name + ": <value> })";
+            }
+            if (length)
+            {
+                check_pulse(v, what, line, quiet, std::chrono::milliseconds(*length), time);
+            }
+            if (value)
+            {
+                make = [=](SimDuration) { return detail::pulse_shape(*value); };
+            }
+        }
+        else if (shape == "noise")
+        {
+            bool gaussian = false;
+            if (has("distribution"))
+            {
+                const auto said = choice(parts->at("distribution"), "distribution of " + what, {"uniform", "gaussian"});
+                good = good && said.has_value();
+                gaussian = said && *said == "gaussian";
+            }
+            const double amplitude = amplitude_of(gaussian ? "the standard deviation of the values around the middle"
+                                                           : "how far the values go above and below the middle at most");
+            std::optional<std::int64_t> hold;
+            if (need("hold_ms", "how long each value is kept, in milliseconds of virtual time"))
+            {
+                hold = millis(parts->at("hold_ms"), "hold_ms", 1, "milliseconds of virtual time each value is kept");
+                good = good && hold.has_value();
+                text += hold ? " hold " + std::to_string(*hold) + " ms" : "";
+            }
+            std::optional<std::uint64_t> seed;
+            if (need("seed", "a whole number that picks the values; the same seed gives the same values in every run, so that a "
+                             "failure can be run again"))
+            {
+                seed = seed_of(parts->at("seed"), "seed of " + what);
+                good = good && seed.has_value();
+                text += seed ? " seed " + std::to_string(*seed) : "";
+            }
+            text += gaussian ? " gaussian" : "";
+            if (!gaussian)
+            {
+                swing = amplitude; // a gaussian value has no bound worth checking: the run refuses what is outside
+            }
+            if (hold && seed)
+            {
+                const SimDuration held = std::chrono::milliseconds(*hold);
+                check_span(v, what, line, quiet, held, "changes every " + span_text(held) + ", faster than",
+                           "the ECU gets only the value at the time of each of its steps; the values between are never applied",
+                           "Make hold_ms " + whole_ms(step_ns(v)) + " or more");
+                // (The variable's name is part of the seed: the same seed for two variables is two sequences.)
+                make = [=, mixed = detail::seed_of_variable(*seed, name)](SimDuration) {
+                    return detail::noise_shape(amplitude, held, mixed, gaussian);
+                };
+            }
+        }
+        else if (shape == "chirp")
+        {
+            const double amplitude = amplitude_of("how far the value goes above and below the middle");
+            std::optional<double> fromHz;
+            std::optional<double> toHz;
+            // (0 Hz is a frequency: a linear sweep can begin or end standing still.)
+            if (need("from_hz", "the frequency at the beginning, in periods per second of virtual time"))
+            {
+                fromHz = measure(parts->at("from_hz"), "from_hz of " + what, 0.0, false, 1e9, "the frequency at the beginning");
+                good = good && fromHz.has_value();
+            }
+            if (need("to_hz", "the frequency at the end (after for_ms)"))
+            {
+                toHz = measure(parts->at("to_hz"), "to_hz of " + what, 0.0, false, 1e9, "the frequency at the end");
+                good = good && toHz.has_value();
+            }
+            text += fromHz && toHz ? " from " + number_text(*fromHz) + " Hz to " + number_text(*toHz) + " Hz" : "";
+            signal::Sweep sweep = signal::Sweep::Linear;
+            if (has("sweep"))
+            {
+                const auto said = choice(parts->at("sweep"), "sweep of " + what, {"linear", "log"});
+                good = good && said.has_value();
+                sweep = said && *said == "log" ? signal::Sweep::Log : signal::Sweep::Linear;
+                text += sweep == signal::Sweep::Log ? " log" : "";
+            }
+            swing = amplitude;
+            if (fromHz && toHz && sweep == signal::Sweep::Log && (*fromHz == 0.0 || *toHz == 0.0))
+            {
+                const char* key = *fromHz == 0.0 ? "from_hz" : "to_hz";
+                error("value", doc_.line(parts->at(key)),
+                      std::string(key) + " of " + what + " is 0, but a log sweep changes the frequency by the same factor every second, "
+                      "which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear");
+                good = false;
+            }
+            else if (fromHz && toHz && *fromHz == 0.0 && *toHz == 0.0)
+            {
+                error("value", doc_.line(parts->at("to_hz")),
+                      what + " goes from 0 Hz to 0 Hz, which does not move: give from_hz or to_hz a frequency above 0");
+                good = false;
+            }
+            else if (fromHz && toHz)
+            {
+                check_chirp(v, what, line, quiet, std::max(*fromHz, *toHz));
+                make = [=](SimDuration all) { return detail::chirp_shape(amplitude, *fromHz, *toHz, all, sweep); };
+            }
+        }
+        else if (shape == "lag")
+        {
+            std::optional<double> to;
+            if (need("to", "the value it goes towards"))
+            {
+                to = level(parts->at("to"), v, "to", "the lag");
+                good = good && to.has_value();
+            }
+            if (has("from"))
+            {
+                out.base = level(parts->at("from"), v, "from", "the lag");
+                good = good && out.base.has_value();
+                text += out.base ? " from " + number_text(*out.base) : "";
+            }
+            text += to ? " to " + number_text(*to) : "";
+            std::optional<std::int64_t> tau;
+            if (need("tau_ms", "its time constant in milliseconds of virtual time: after this long it has gone 63 % of the way"))
+            {
+                tau = millis(parts->at("tau_ms"), "tau_ms", 1, "the time constant in milliseconds of virtual time");
+                good = good && tau.has_value();
+                text += tau ? " tau " + std::to_string(*tau) + " ms" : "";
+            }
+            bool settle = false;
+            if (has("settle"))
+            {
+                const auto said = flag(parts->at("settle"), "settle of " + what, "true: at the end the value is set to `to`");
+                good = good && said.has_value();
+                settle = said.value_or(false);
+                text += settle ? " settle" : "";
+            }
+            noAround = "the value it starts from is its from (lag: { from: <value>, ... })";
+            out.hint = "give the lag from: <value>";
+            if (to && tau)
+            {
+                make = [=](SimDuration all) { return detail::lag_shape(*to, std::chrono::milliseconds(*tau), all, settle); };
+            }
+        }
+        else // chatter
+        {
+            std::optional<double> to;
+            if (need("to", "the value it comes to rest at"))
+            {
+                to = level(parts->at("to"), v, "to", "the chatter");
+                good = good && to.has_value();
+            }
+            if (has("from") && isBool)
+            {
+                error("value", doc_.line(parts->at("from")),
+                      "from does not go with " + what + ": a bool bounces between to and the other value; remove it");
+                good = false;
+            }
+            else if (has("from"))
+            {
+                out.base = level(parts->at("from"), v, "from", "the chatter");
+                good = good && out.base.has_value();
+                text += out.base ? " from " + number_text(*out.base) : "";
+            }
+            else if (isBool && to)
+            {
+                out.base = *to != 0.0 ? 0.0 : 1.0;
+            }
+            text += to ? " to " + (isBool ? std::string(*to != 0.0 ? "true" : "false") : number_text(*to)) : "";
+            std::optional<std::int64_t> interval;
+            if (need("interval_ms", "how long it stays at a value between two changes, in milliseconds of virtual time"))
+            {
+                interval = millis(parts->at("interval_ms"), "interval_ms", 1, "milliseconds of virtual time between two changes");
+                good = good && interval.has_value();
+            }
+            std::optional<std::uint64_t> seed;
+            if (has("seed"))
+            {
+                seed = seed_of(parts->at("seed"), "seed of " + what);
+                good = good && seed.has_value();
+            }
+            const bool hasFor = top->count("for_ms") > 0;
+            if (has("bounces") && hasFor)
+            {
+                error("value", doc_.line(top->at("for_ms")),
+                      what + " has bounces and for_ms: give one of them (bounces: how often it falls back; for_ms: how long it bounces)");
+                good = false;
+            }
+            else if (has("bounces"))
+            {
+                std::int64_t bounces = 0;
+                if (!plain_integer(parts->at("bounces"), bounces) || bounces < 1 || bounces > kMaxBounces)
+                {
+                    error("value", doc_.line(parts->at("bounces")),
+                          "bounces of " + what + " must be a whole number from 1 to " + std::to_string(kMaxBounces) +
+                              " (how often it falls back before it rests), not " + shown_value(parts->at("bounces")));
+                    good = false;
+                }
+                else if (interval && *interval > kMaxMillis / (2 * bounces))
+                {
+                    error("value", doc_.line(parts->at("bounces")),
+                          what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(kMaxMillis) + " ms): lower them");
+                    good = false;
+                }
+                else if (interval)
+                {
+                    // To, back, to, back, ...: two stretches per bounce, then it rests.
+                    length = 2 * bounces * *interval;
+                    text += " " + std::to_string(bounces) + (bounces == 1 ? " bounce" : " bounces");
+                }
+                wantsFor = false;
+            }
+            else if (!hasFor)
+            {
+                error("missing-key", line,
+                      what + " needs bounces (how often it falls back before it rests) or for_ms (how long it bounces)");
+                good = false;
+                wantsFor = false;
+            }
+            text += interval ? " interval " + std::to_string(*interval) + " ms" : "";
+            text += seed ? " seed " + std::to_string(*seed) : "";
+            noAround = "the value it bounces back to is its from (chatter: { from: <value>, ... }), or the value it has";
+            out.hint = "give the chatter from: <value>";
+            if (interval)
+            {
+                // With a seed two changes are as little as half an interval apart.
+                const SimDuration regular = std::chrono::milliseconds(*interval);
+                const SimDuration apart = seed ? regular / 2 : regular;
+                check_span(v, what, line, quiet, apart,
+                           seed ? "changes as little as " + span_text(apart) + " apart (interval_ms " + std::to_string(*interval) +
+                                      " with a seed: a half to one and a half intervals), closer than"
+                                : "changes every " + span_text(apart) + ", faster than",
+                           "the ECU gets only the value at the time of each of its steps, so it sees some of the bounces or none",
+                           "Make interval_ms " + whole_ms(seed ? 2 * step_ns(v) : step_ns(v)) + " or more");
+            }
+            if (to && interval)
+            {
+                const std::optional<std::uint64_t> mixed = seed ? std::optional{detail::seed_of_variable(*seed, name)} : std::nullopt;
+                make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), mixed); };
+            }
+        }
+        // The shape as the text has it (what it starts from is the base, not of the shape).
+        for (const std::string& key : kShapeKeys.at(shape))
+        {
+            if (key != "from" && has(key.c_str()) && is_scalar(parts->at(key)))
+            {
+                out.described.values.emplace_back(key, shape_value(parts->at(key), v));
+            }
+        }
+        return true;
+    }
+
     /// The wave of one variable (`node`: its entry in "wave"), or empty (and its errors).
     std::optional<ScenarioMotion> read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
     {
@@ -1991,7 +2952,7 @@ private:
         std::string noAround;               // why around does not go with it, or ""
         std::optional<double> swing;        // how far from around it goes at most, if that is known
         // What makes the shape, once everything is read: (around or its other base, the length).
-        std::function<std::shared_ptr<const Waveform>(SimDuration)> make;
+        MakeShape make;
 
         if (shape == "points")
         {
@@ -1999,427 +2960,9 @@ private:
             wantsFor = false;
             noAround = "the points are the values themselves (for where it begins, start with a point at 0: [0, <value>])";
         }
-        else
+        else if (!read_shape(shape, body, *top, v, what, line, time, quiet, good, out, text, length, wantsFor, noAround, swing, make))
         {
-            static const std::map<std::string, std::vector<std::string>> kShapeKeys = {
-                {"sine", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
-                {"triangle", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
-                {"sawtooth", {"amplitude", "period_ms", "frequency_hz", "phase_deg", "falling"}},
-                {"square", {"low", "high", "amplitude", "period_ms", "frequency_hz", "duty", "phase_deg"}},
-                {"pulse", {"value", "width_ms"}},
-                {"noise", {"amplitude", "hold_ms", "seed", "distribution"}},
-                {"chirp", {"amplitude", "from_hz", "to_hz", "sweep"}},
-                {"lag", {"to", "tau_ms", "from", "settle"}},
-                {"chatter", {"to", "interval_ms", "bounces", "seed", "from"}},
-            };
-            static const std::map<std::string, std::string> kShapeExample = {
-                {"sine", "{ amplitude: 1, period_ms: 100 }"},
-                {"triangle", "{ amplitude: 1, period_ms: 100 }"},
-                {"sawtooth", "{ amplitude: 1, period_ms: 100 }"},
-                {"square", "{ low: 0, high: 1, period_ms: 100 }"},
-                {"pulse", "{ value: 1, width_ms: 50 }"},
-                {"noise", "{ amplitude: 1, hold_ms: 10, seed: 1 }"},
-                {"chirp", "{ amplitude: 1, from_hz: 1, to_hz: 10 }"},
-                {"lag", "{ to: 1, tau_ms: 100 }"},
-                {"chatter", "{ to: 1, bounces: 3, interval_ms: 10 }"},
-            };
-            const auto parts = parts_of(body, what, kShapeKeys.at(shape), "a mapping of its values (" + kShapeExample.at(shape) + ")");
-            if (!parts)
-            {
-                return std::nullopt;
-            }
-            const auto has = [&](const char* key) { return parts->count(key) > 0; };
-            // A key the shape cannot do without: `meaning` says what it is.
-            const auto need = [&](const char* key, const std::string& meaning) {
-                if (!has(key))
-                {
-                    error("missing-key", line, what + " needs " + key + ": " + meaning);
-                    good = false;
-                    return false;
-                }
-                return true;
-            };
-            const auto amplitude_of = [&](const std::string& meaning) {
-                std::optional<double> amplitude;
-                if (need("amplitude", meaning))
-                {
-                    amplitude = measure(parts->at("amplitude"), "amplitude of " + what, 0.0, false, HUGE_VAL, meaning);
-                    good = good && amplitude.has_value();
-                    text += amplitude ? " amplitude " + number_text(*amplitude) : "";
-                }
-                return amplitude.value_or(0.0);
-            };
-
-            if (shape == "sine" || shape == "triangle" || shape == "sawtooth")
-            {
-                const double amplitude = amplitude_of("how far the value goes above and below the middle");
-                const auto periodic = periodic_of(*parts, what, line, text);
-                bool falling = false;
-                if (has("falling"))
-                {
-                    const auto said = flag(parts->at("falling"), "falling of " + what, "true: each period goes down and jumps up");
-                    good = good && said.has_value();
-                    falling = said.value_or(false);
-                    text += falling ? " falling" : "";
-                }
-                good = good && periodic.has_value();
-                swing = amplitude;
-                if (periodic)
-                {
-                    const detail::Periodic p = *periodic;
-                    check_period(v, what, line, quiet, p.period, [&](SimDuration t) {
-                        return shape == "sine" ? signal::sine(t, p.period, p.phase_deg)
-                               : shape == "triangle" ? signal::triangle(t, p.period, p.phase_deg)
-                                                     : signal::sawtooth(t, p.period, falling, p.phase_deg);
-                    });
-                    make = [=](SimDuration) {
-                        return shape == "sine" ? detail::sine_shape(amplitude, *periodic)
-                               : shape == "triangle" ? detail::triangle_shape(amplitude, *periodic)
-                                                     : detail::sawtooth_shape(amplitude, *periodic, falling);
-                    };
-                }
-            }
-            else if (shape == "square")
-            {
-                std::optional<double> low;
-                std::optional<double> high;
-                std::optional<double> amplitude;
-                const bool levels = has("low") || has("high");
-                if (isBool)
-                {
-                    for (const char* key : {"low", "high", "amplitude"})
-                    {
-                        if (has(key))
-                        {
-                            error("value", doc_.line(parts->at(key)),
-                                  std::string(key) + " does not go with " + what + ": the square of a bool is false and true; remove it");
-                            good = false;
-                        }
-                    }
-                    low = 0.0;
-                    high = 1.0;
-                }
-                else if (levels && has("amplitude"))
-                {
-                    error("value", doc_.line(parts->at("amplitude")),
-                          what + " has amplitude and " + (has("low") ? "low" : "high") +
-                              ": give low and high (its two values), or amplitude (so far above and below the middle)");
-                    good = false;
-                }
-                else if (levels)
-                {
-                    if (need("low", "the value while it is low") && need("high", "the value while it is high"))
-                    {
-                        low = level(parts->at("low"), v, "low", "the square");
-                        high = level(parts->at("high"), v, "high", "the square");
-                        good = good && low && high;
-                        text += low && high ? " low " + number_text(*low) + " high " + number_text(*high) : "";
-                    }
-                }
-                else
-                {
-                    amplitude = amplitude_of("how far the value goes above and below the middle; or give low and high, its two values");
-                    swing = amplitude;
-                }
-                const auto periodic = periodic_of(*parts, what, line, text);
-                good = good && periodic.has_value();
-                double duty = 50.0;
-                if (has("duty"))
-                {
-                    const auto said = measure(parts->at("duty"), "duty of " + what, 0.0, false, 100.0,
-                                              "the percent of each period for which it is high");
-                    good = good && said.has_value();
-                    duty = said.value_or(50.0);
-                    text += said ? " duty " + number_text(duty) + " %" : "";
-                }
-                if (!amplitude)
-                {
-                    noAround = isBool ? "a bool has no middle" : "low and high are the values themselves";
-                }
-                if (periodic)
-                {
-                    check_square(v, what, line, quiet, *periodic, duty);
-                    if (amplitude)
-                    {
-                        make = [=](SimDuration) { return detail::square_shape(*amplitude, *periodic, duty); };
-                    }
-                    else if (low && high)
-                    {
-                        make = [=](SimDuration) { return detail::square_levels_shape(*low, *high, *periodic, duty); };
-                    }
-                }
-            }
-            else if (shape == "pulse")
-            {
-                std::optional<double> value;
-                if (isBool && !has("value"))
-                {
-                    value = 1.0;
-                }
-                else if (need("value", "the value during the pulse"))
-                {
-                    value = level(parts->at("value"), v, "value", "the pulse");
-                    good = good && value.has_value();
-                }
-                text += value ? " " + (isBool ? std::string(*value != 0.0 ? "true" : "false") : number_text(*value)) : "";
-                if (need("width_ms", "how long the pulse lasts, in milliseconds of virtual time"))
-                {
-                    length = millis(parts->at("width_ms"), "width_ms", 1, "milliseconds of virtual time the pulse lasts");
-                    good = good && length.has_value();
-                    text += length ? " width " + std::to_string(*length) + " ms" : "";
-                }
-                wantsFor = false;
-                if (isBool)
-                {
-                    noAround = "a bool has no middle (the pulse returns to the other value)";
-                    out.base = value.value_or(1.0) != 0.0 ? 0.0 : 1.0;
-                }
-                else
-                {
-                    noAround = "a pulse returns to the value the variable has when the pulse begins (for another value after it, "
-                               "write a set in the next step)";
-                    out.hint = "set the variable in a step before the pulse (set: { " + name + ": <value> })";
-                }
-                if (length)
-                {
-                    check_pulse(v, what, line, quiet, std::chrono::milliseconds(*length), time);
-                }
-                if (value)
-                {
-                    make = [=](SimDuration) { return detail::pulse_shape(*value); };
-                }
-            }
-            else if (shape == "noise")
-            {
-                bool gaussian = false;
-                if (has("distribution"))
-                {
-                    const auto said = choice(parts->at("distribution"), "distribution of " + what, {"uniform", "gaussian"});
-                    good = good && said.has_value();
-                    gaussian = said && *said == "gaussian";
-                }
-                const double amplitude = amplitude_of(gaussian ? "the standard deviation of the values around the middle"
-                                                               : "how far the values go above and below the middle at most");
-                std::optional<std::int64_t> hold;
-                if (need("hold_ms", "how long each value is kept, in milliseconds of virtual time"))
-                {
-                    hold = millis(parts->at("hold_ms"), "hold_ms", 1, "milliseconds of virtual time each value is kept");
-                    good = good && hold.has_value();
-                    text += hold ? " hold " + std::to_string(*hold) + " ms" : "";
-                }
-                std::optional<std::uint64_t> seed;
-                if (need("seed", "a whole number that picks the values; the same seed gives the same values in every run, so that a "
-                                 "failure can be run again"))
-                {
-                    seed = seed_of(parts->at("seed"), "seed of " + what);
-                    good = good && seed.has_value();
-                    text += seed ? " seed " + std::to_string(*seed) : "";
-                }
-                text += gaussian ? " gaussian" : "";
-                if (!gaussian)
-                {
-                    swing = amplitude; // a gaussian value has no bound worth checking: the run refuses what is outside
-                }
-                if (hold && seed)
-                {
-                    const SimDuration held = std::chrono::milliseconds(*hold);
-                    check_span(v, what, line, quiet, held, "changes every " + span_text(held) + ", faster than",
-                               "the ECU gets only the value at the time of each of its steps; the values between are never applied",
-                               "Make hold_ms " + whole_ms(step_ns(v)) + " or more");
-                    // (The variable's name is part of the seed: the same seed for two variables is two sequences.)
-                    make = [=, mixed = detail::seed_of_variable(*seed, name)](SimDuration) {
-                        return detail::noise_shape(amplitude, held, mixed, gaussian);
-                    };
-                }
-            }
-            else if (shape == "chirp")
-            {
-                const double amplitude = amplitude_of("how far the value goes above and below the middle");
-                std::optional<double> fromHz;
-                std::optional<double> toHz;
-                // (0 Hz is a frequency: a linear sweep can begin or end standing still.)
-                if (need("from_hz", "the frequency at the beginning, in periods per second of virtual time"))
-                {
-                    fromHz = measure(parts->at("from_hz"), "from_hz of " + what, 0.0, false, 1e9, "the frequency at the beginning");
-                    good = good && fromHz.has_value();
-                }
-                if (need("to_hz", "the frequency at the end (after for_ms)"))
-                {
-                    toHz = measure(parts->at("to_hz"), "to_hz of " + what, 0.0, false, 1e9, "the frequency at the end");
-                    good = good && toHz.has_value();
-                }
-                text += fromHz && toHz ? " from " + number_text(*fromHz) + " Hz to " + number_text(*toHz) + " Hz" : "";
-                signal::Sweep sweep = signal::Sweep::Linear;
-                if (has("sweep"))
-                {
-                    const auto said = choice(parts->at("sweep"), "sweep of " + what, {"linear", "log"});
-                    good = good && said.has_value();
-                    sweep = said && *said == "log" ? signal::Sweep::Log : signal::Sweep::Linear;
-                    text += sweep == signal::Sweep::Log ? " log" : "";
-                }
-                swing = amplitude;
-                if (fromHz && toHz && sweep == signal::Sweep::Log && (*fromHz == 0.0 || *toHz == 0.0))
-                {
-                    const char* key = *fromHz == 0.0 ? "from_hz" : "to_hz";
-                    error("value", doc_.line(parts->at(key)),
-                          std::string(key) + " of " + what + " is 0, but a log sweep changes the frequency by the same factor every second, "
-                          "which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear");
-                    good = false;
-                }
-                else if (fromHz && toHz && *fromHz == 0.0 && *toHz == 0.0)
-                {
-                    error("value", doc_.line(parts->at("to_hz")),
-                          what + " goes from 0 Hz to 0 Hz, which does not move: give from_hz or to_hz a frequency above 0");
-                    good = false;
-                }
-                else if (fromHz && toHz)
-                {
-                    check_chirp(v, what, line, quiet, std::max(*fromHz, *toHz));
-                    make = [=](SimDuration all) { return detail::chirp_shape(amplitude, *fromHz, *toHz, all, sweep); };
-                }
-            }
-            else if (shape == "lag")
-            {
-                std::optional<double> to;
-                if (need("to", "the value it goes towards"))
-                {
-                    to = level(parts->at("to"), v, "to", "the lag");
-                    good = good && to.has_value();
-                }
-                if (has("from"))
-                {
-                    out.base = level(parts->at("from"), v, "from", "the lag");
-                    good = good && out.base.has_value();
-                    text += out.base ? " from " + number_text(*out.base) : "";
-                }
-                text += to ? " to " + number_text(*to) : "";
-                std::optional<std::int64_t> tau;
-                if (need("tau_ms", "its time constant in milliseconds of virtual time: after this long it has gone 63 % of the way"))
-                {
-                    tau = millis(parts->at("tau_ms"), "tau_ms", 1, "the time constant in milliseconds of virtual time");
-                    good = good && tau.has_value();
-                    text += tau ? " tau " + std::to_string(*tau) + " ms" : "";
-                }
-                bool settle = false;
-                if (has("settle"))
-                {
-                    const auto said = flag(parts->at("settle"), "settle of " + what, "true: at the end the value is set to `to`");
-                    good = good && said.has_value();
-                    settle = said.value_or(false);
-                    text += settle ? " settle" : "";
-                }
-                noAround = "the value it starts from is its from (lag: { from: <value>, ... })";
-                out.hint = "give the lag from: <value>";
-                if (to && tau)
-                {
-                    make = [=](SimDuration all) { return detail::lag_shape(*to, std::chrono::milliseconds(*tau), all, settle); };
-                }
-            }
-            else // chatter
-            {
-                std::optional<double> to;
-                if (need("to", "the value it comes to rest at"))
-                {
-                    to = level(parts->at("to"), v, "to", "the chatter");
-                    good = good && to.has_value();
-                }
-                if (has("from") && isBool)
-                {
-                    error("value", doc_.line(parts->at("from")),
-                          "from does not go with " + what + ": a bool bounces between to and the other value; remove it");
-                    good = false;
-                }
-                else if (has("from"))
-                {
-                    out.base = level(parts->at("from"), v, "from", "the chatter");
-                    good = good && out.base.has_value();
-                    text += out.base ? " from " + number_text(*out.base) : "";
-                }
-                else if (isBool && to)
-                {
-                    out.base = *to != 0.0 ? 0.0 : 1.0;
-                }
-                text += to ? " to " + (isBool ? std::string(*to != 0.0 ? "true" : "false") : number_text(*to)) : "";
-                std::optional<std::int64_t> interval;
-                if (need("interval_ms", "how long it stays at a value between two changes, in milliseconds of virtual time"))
-                {
-                    interval = millis(parts->at("interval_ms"), "interval_ms", 1, "milliseconds of virtual time between two changes");
-                    good = good && interval.has_value();
-                }
-                std::optional<std::uint64_t> seed;
-                if (has("seed"))
-                {
-                    seed = seed_of(parts->at("seed"), "seed of " + what);
-                    good = good && seed.has_value();
-                }
-                const bool hasFor = top->count("for_ms") > 0;
-                if (has("bounces") && hasFor)
-                {
-                    error("value", doc_.line(top->at("for_ms")),
-                          what + " has bounces and for_ms: give one of them (bounces: how often it falls back; for_ms: how long it bounces)");
-                    good = false;
-                }
-                else if (has("bounces"))
-                {
-                    std::int64_t bounces = 0;
-                    if (!plain_integer(parts->at("bounces"), bounces) || bounces < 1 || bounces > kMaxBounces)
-                    {
-                        error("value", doc_.line(parts->at("bounces")),
-                              "bounces of " + what + " must be a whole number from 1 to " + std::to_string(kMaxBounces) +
-                                  " (how often it falls back before it rests), not " + shown_value(parts->at("bounces")));
-                        good = false;
-                    }
-                    else if (interval && *interval > kMaxMillis / (2 * bounces))
-                    {
-                        error("value", doc_.line(parts->at("bounces")),
-                              what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(kMaxMillis) + " ms): lower them");
-                        good = false;
-                    }
-                    else if (interval)
-                    {
-                        // To, back, to, back, ...: two stretches per bounce, then it rests.
-                        length = 2 * bounces * *interval;
-                        text += " " + std::to_string(bounces) + (bounces == 1 ? " bounce" : " bounces");
-                    }
-                    wantsFor = false;
-                }
-                else if (!hasFor)
-                {
-                    error("missing-key", line,
-                          what + " needs bounces (how often it falls back before it rests) or for_ms (how long it bounces)");
-                    good = false;
-                    wantsFor = false;
-                }
-                text += interval ? " interval " + std::to_string(*interval) + " ms" : "";
-                text += seed ? " seed " + std::to_string(*seed) : "";
-                noAround = "the value it bounces back to is its from (chatter: { from: <value>, ... }), or the value it has";
-                out.hint = "give the chatter from: <value>";
-                if (interval)
-                {
-                    // With a seed two changes are as little as half an interval apart.
-                    const SimDuration regular = std::chrono::milliseconds(*interval);
-                    const SimDuration apart = seed ? regular / 2 : regular;
-                    check_span(v, what, line, quiet, apart,
-                               seed ? "changes as little as " + span_text(apart) + " apart (interval_ms " + std::to_string(*interval) +
-                                          " with a seed: a half to one and a half intervals), closer than"
-                                    : "changes every " + span_text(apart) + ", faster than",
-                               "the ECU gets only the value at the time of each of its steps, so it sees some of the bounces or none",
-                               "Make interval_ms " + whole_ms(seed ? 2 * step_ns(v) : step_ns(v)) + " or more");
-                }
-                if (to && interval)
-                {
-                    const std::optional<std::uint64_t> mixed = seed ? std::optional{detail::seed_of_variable(*seed, name)} : std::nullopt;
-                    make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), mixed); };
-                }
-            }
-            // The shape as the text has it (what it starts from is the base, not of the shape).
-            for (const std::string& key : kShapeKeys.at(shape))
-            {
-                if (key != "from" && has(key.c_str()) && is_scalar(parts->at(key)))
-                {
-                    out.described.values.emplace_back(key, shape_value(parts->at(key), v));
-                }
-            }
+            return std::nullopt;
         }
         out.described.type = shape;
 
@@ -2476,6 +3019,13 @@ private:
         {
             return std::nullopt;
         }
+        if (around && swing)
+        {
+            // Where the wave takes the input: what a dither on top of it starts from.
+            note_base(v, *around - *swing, line, false);
+            note_base(v, *around + *swing, line, false);
+            note_base(v, *around, line, true); // (where it leaves the input)
+        }
         out.length_ms = *length;
         if (wantsFor)
         {
@@ -2504,7 +3054,7 @@ private:
                 what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), but " +
                     takes_inputs(variable) + ": above " + hz_at(2) +
                     " Hz (two steps per period) the ECU sees a slower shape, not the sweep. Keep from_hz and to_hz at " + hz_at(2) +
-                    " or less" + kAsItIs,
+                    " or less" + as_it_is_,
                 owner_of(variable));
         }
         else if (steps < static_cast<double>(kSmoothSteps))
@@ -2513,7 +3063,7 @@ private:
                 what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), and " +
                     takes_inputs(variable) + ": at that frequency the ECU sees " + rounded_text(steps) +
                     " values per period, so it can miss the highest and the lowest. Up to " + hz_at(kSmoothSteps) + " Hz it gets " +
-                    std::to_string(kSmoothSteps) + " or more" + kAsItIs,
+                    std::to_string(kSmoothSteps) + " or more" + as_it_is_,
                 owner_of(variable));
         }
     }
@@ -2786,6 +3336,7 @@ private:
             error("scenario-value", line, pre + " is " + number_text(d) + ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
         }
+        note_base(variable, d, line, false);
         return d;
     }
 
@@ -3160,6 +3711,10 @@ private:
         {
             out += sep() + r.text;
         }
+        for (const auto& o : step.overlays)
+        {
+            out += sep() + o.text;
+        }
         if (beside_)
         {
             // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
@@ -3195,6 +3750,45 @@ private:
     std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
+    /// What the steps that run put on the inputs, as the text says it (note_lines()).
+    struct Base
+    {
+        std::size_t variable;
+        double value;
+        std::size_t line;
+        bool stays; ///< the input is left there when the step is over (a set's value, a ramp's to, a wave's middle)
+    };
+    struct Dither
+    {
+        std::size_t variable;
+        std::size_t line;
+        double reach;                 ///< how far from the value under it
+        bool about;                   ///< `reach` is an estimate (a gaussian noise)
+        std::optional<double> swing;  ///< its amplitude, if that bounds it
+        bool quiet;                   ///< undersampled: ok
+        bool off;                     ///< a dither step's none
+        const char* as_it_is;         ///< how to run it as it is (kAsItIs, kAsItIsInput)
+        std::string shape;
+    };
+    /// In the order of the file, of the steps that run: a value put on an input, or a dither
+    /// step's dither (an index in dithers_).
+    struct Flow
+    {
+        std::size_t step;                   ///< which step (a count)
+        std::optional<Base> value{};
+        std::optional<std::size_t> dither{};
+    };
+    std::vector<Base> step_bases_;     ///< of the step being read
+    std::vector<Dither> step_dithers_; ///< of the step being read
+    std::vector<Dither> dithers_;      ///< those of "inputs" (the first declared_ of them), then those of the steps that run
+    std::size_t declared_ = 0;
+    std::vector<Flow> flow_;
+    std::set<std::size_t> placed_; ///< the variables a step that runs puts a value on (set, ramp, wave)
+    std::vector<ScenarioLineText> lines_;
+    std::vector<std::size_t> line_variables_; ///< per line of lines_: its variable
+    bool inputs_written_ = false; ///< the file has "inputs"
+    /// How the messages say to run a wave or a dither as it is (kAsItIs; kAsItIsInput while "inputs" is read).
+    const char* as_it_is_ = kAsItIs;
     std::vector<std::string> absent_;                   ///< those the step being read uses
     bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
     bool unchecked_ = false;       ///< and only its expect uses what is absent: the expect is not checked
@@ -3227,8 +3821,37 @@ const char* step_kind_name(StepKind kind)
     case StepKind::Wave: return "wave";
     case StepKind::Expect: return "expect";
     case StepKind::WaitUntil: return "wait_until";
+    case StepKind::Dither: return "dither";
     }
     return "set";
+}
+
+const char* line_time_source_name(ScenarioLineText::TimeSource source)
+{
+    switch (source)
+    {
+    case ScenarioLineText::TimeSource::Text: break;
+    case ScenarioLineText::TimeSource::AfterWait: return "after_wait";
+    case ScenarioLineText::TimeSource::FirstWrite: return "first_write";
+    }
+    return "text";
+}
+
+std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario)
+{
+    std::vector<ScenarioLineText> out;
+    for (const ScenarioOverlay& input : scenario.inputs)
+    {
+        ScenarioLineText line;
+        line.variable = scenario.variables[input.variable].text;
+        line.kind = "dither";
+        line.line = input.line;
+        line.time_source = ScenarioLineText::TimeSource::FirstWrite;
+        line.text = input.text;
+        line.shape = input.described;
+        out.push_back(std::move(line));
+    }
+    return out;
 }
 
 std::string value_text(const control::Value& value, const ScenarioVariable* variable)

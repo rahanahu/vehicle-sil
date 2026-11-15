@@ -191,6 +191,8 @@ def scenario_mappings() -> dict[str, dict]:
         "wave": definitions["wave"],
         **{f"wave {shape}": definitions["wave"]["properties"][shape] for shape in WAVE_SHAPES_WITH_KEYS},
         "wave points file": definitions["points_file"],
+        "input": SCENARIO["properties"]["inputs"]["additionalProperties"],
+        "dither": definitions["overlay"],
     }
 
 
@@ -419,6 +421,40 @@ SCENARIO_SAMPLES = [
      "            Engine.ecu.connected: { points: { file: ./points.csv, value: connected, time: time, time_unit: ms } } }\n"
      "  - wave: { Engine.engine.throttle: { points: { file: \"${trace}\", value: \"${column}\", time_unit: \"${unit}\" } } }\n"
      "params: { trace: points.csv, column: throttle, unit: ms }\n", "valid"),
+    ("a dither in the inputs and in a step",
+     "vehicle_sil_scenario: 1\ninputs:\n"
+     "  Engine.engine.throttle: { dither: { triangle: { amplitude: 2, period_ms: 40, phase_deg: 90 } }, undersampled: ok }\n"
+     "steps:\n" + SET +
+     "  - after_ms: 10\n    dither: { Engine.engine.throttle: none }\n"
+     "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, frequency_hz: 5 } } }\n"
+     "  - dither: { Engine.engine.throttle: { sawtooth: { amplitude: 1, period_ms: 100, falling: true } } }\n"
+     "  - dither: { Engine.engine.throttle: { square: { amplitude: 1, period_ms: 100, duty: 30 } } }\n"
+     "  - at_ms: 500\n    dither: { Engine.engine.throttle: { noise: { amplitude: \"${a}\", hold_ms: 2, seed: 7, distribution: gaussian } } }\n"
+     "    undersampled: ok\n"
+     "params: { a: 1 }\n", "valid"),
+    ("JSON with a dither",
+     '{"vehicle_sil_scenario": 1, "inputs": {"Engine.engine.throttle": {"dither": {"triangle": {"amplitude": 2, "period_ms": 40}}}}, '
+     '"steps": [{"set": {"Engine.engine.throttle": 50}}, {"dither": {"Engine.engine.throttle": "none"}}]}', "valid"),
+    ("a dither with a length", S + "  - dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 }, for_ms: 500 } }\n",
+     "invalid"),
+    ("a dither with a middle", S + "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, around: 50 } }\n",
+     "invalid"),
+    ("a dither of a shape that has a length", S + "  - dither: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 } } }\n",
+     "invalid"),
+    ("a dither that is a square with low and high",
+     S + "  - dither: { Engine.engine.throttle: { square: { low: 0, high: 1, period_ms: 100 } } }\n", "invalid"),
+    ("a dither with two shapes",
+     S + "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, noise: { amplitude: 1, hold_ms: 10, seed: 1 } } }\n",
+     "invalid"),
+    ("a dither that is off", S + "  - dither: { Engine.engine.throttle: off }\n", "invalid"),
+    ("a dither step with a hold", S + "  - dither: { Engine.engine.throttle: none }\n    hold_for_ms: 10\n", "invalid"),
+    ("an input with a clip", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: { triangle: { amplitude: 1, "
+                             "period_ms: 100 } }, clip: true } }\nsteps:\n" + SET, "invalid"),
+    ("an input without a dither", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { undersampled: ok } }\nsteps:\n" + SET,
+     "invalid"),
+    ("an input whose dither is none", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: none } }\nsteps:\n" + SET,
+     "invalid"),
+    ("a dither of a bool", S + "  - dither: { Engine.ecu.connected: { square: { amplitude: 1, period_ms: 100 } } }\n", "check only"),
     ("points from a file by an absolute path",
      S + "  - wave: { Engine.engine.throttle: { points: { file: /tmp/points.csv, value: throttle } } }\n", "invalid"),
     ("points from a file on a drive",
@@ -841,6 +877,10 @@ class TimelineSchema(unittest.TestCase):
             return problems(TIMELINE, data)
 
         self.assertEqual(changed(lambda d: None), [])
+
+        def failed_step(data) -> dict:
+            return next(step for step in data["steps"] if step["failed"] is not None)
+
         mistakes = {
             "another format version": lambda d: d.update(vehicle_sil_timeline=2),
             "no series": lambda d: d.pop("series"),
@@ -853,6 +893,14 @@ class TimelineSchema(unittest.TestCase):
             "a line whose step is a text": lambda d: d["lines"][0].update(step="1"),
             "a shape without its type": lambda d: d["lines"][-1].update(shape={"to": 1}),
             "step lines that are no positions": lambda d: d["steps"][0].update(lines=["0"]),
+            "columns that are no names": lambda d: d["series"][0].update(columns=[0, 1, 2]),
+            "writes of a failed step without their variable": lambda d: failed_step(d)["failed"].update(
+                writes=[{"at_ms": 20, "value": 13, "point": 2, "applied": False}]),
+            "writes of a failed step that do not say whether they were applied": lambda d: failed_step(d)["failed"].update(
+                writes=[{"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2}]),
+            "a failed step without its writes": lambda d: failed_step(d)["failed"].pop("writes"),
+            "a failed write that is not an index": lambda d: failed_step(d)["failed"].update(write={"variable": "Body.level"}),
+            "a line whose end is a text": lambda d: d["lines"][0].update(to_ms="never"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
@@ -865,6 +913,14 @@ class TimelineSchema(unittest.TestCase):
             "no lines, in the file and in the steps": lambda d: (d.pop("lines"), [step.pop("lines") for step in d["steps"]]),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
             "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
+            # A dither: a line of no step and without an end, and the columns of its input's points.
+            "a line of no step that has no end": lambda d: d["lines"][0].update(kind="dither", step=None, to_ms=None, base=None,
+                                                                              base_source=None),
+            "the columns of a series": lambda d: d["series"][0].update(columns=["t_ms", "value", "base"]),
+            # Writes that failed without one of them known as the reason, and whether one was applied not known.
+            "the writes of a failed step": lambda d: failed_step(d)["failed"].update(
+                write=None, writes=[{"variable": "Body.ratio", "at_ms": 20, "value": 0.6, "point": 2, "applied": None},
+                                    {"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2, "applied": False}]),
         }
         for what, change in additions.items():
             self.assertEqual(changed(change), [], f"the schema refuses a timeline with {what}")
@@ -892,6 +948,27 @@ class TimelineOfARun(unittest.TestCase):
                          {("Engine.engine.throttle", "written"), ("Engine.engine.speed", "sampled"),
                           ("Dashboard.dashboard.engine_speed", "sampled")})
         self.assertTrue(all(s["points"] for s in data["series"]))
+
+    def test_the_timeline_of_the_example_with_a_dither_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-") as directory:
+            out = Path(directory) / "throttle_dither.timeline.json"
+            proc = subprocess.run([LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml",
+                                   "--timeline", str(out)], cwd=example, capture_output=True, text=True,
+                                  encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"the example's scenario did not pass:\n{proc.stdout[-2000:]}\n"
+                                                 f"{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of a run with a dither is not valid for schema/timeline.schema.json: correct the "
+                         "schema, or the launcher if it writes what docs/simulation-run.md does not say")
+        # The dither is a line of no step and without an end, and its input's points have their base.
+        dithers = [line for line in data["lines"] if line["kind"] == "dither"]
+        self.assertEqual([(line["step"], line["to_ms"], line["shape"] is None) for line in dithers],
+                         [(None, None, False), (6, None, True)])
+        throttle = next(s for s in data["series"] if s["source"] == "written")
+        self.assertEqual(throttle["columns"], ["t_ms", "value", "base"])
+        self.assertTrue(all(len(point) == 3 for point in throttle["points"]))
 
 
 @needs_launcher
@@ -940,6 +1017,9 @@ class SchemaAndLauncher(unittest.TestCase):
             **{f"wave {shape}": S + "  - wave: { Engine.engine.throttle: { " + shape + ": { " + keys + ", zz_probe: 1 }, for_ms: 100 } }\n"
                for shape, keys in WAVE_SHAPES_WITH_KEYS.items()},
             "wave points file": S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: throttle, zz_probe: 1 } } }\n",
+            "input": "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: { triangle: { amplitude: 1, period_ms: 100 } }, "
+                     "zz_probe: 1 } }\nsteps:\n" + SET,
+            "dither": S + "  - dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 }, zz_probe: 1 } }\n",
         }
         mappings = scenario_mappings()
         self.assertEqual(set(probes), set(mappings))

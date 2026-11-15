@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# A scenario of the timeline references (see README.md here): the engine runs it against the model
+# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+# Dithers: a triangle on an integer through a set, a ramp between two steps of its ECU and its
+# end; a noise on a real that is set later; a dither that is taken off, and one that a step puts
+# at the time of a set. Door.level has a dither and is never written: it has no line.
+vehicle_sil_scenario: 1
+name: dither
+inputs:
+  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }
+  Body.ratio: { dither: { noise: { amplitude: 0.05, hold_ms: 20, seed: 7 } } }
+  Door.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }
+steps:
+  - set: { Body.level: 50 }
+  - at_ms: 30
+    set: { Body.ratio: 0.5 }
+  - at_ms: 47
+    ramp: { Body.level: { to: 60, over_ms: 36 } }
+  - at_ms: 120
+    dither: { Body.level: none, Door.level: none }
+  - at_ms: 150
+    dither: { Body.level: { square: { amplitude: 3, period_ms: 40, duty: 25 } } }
+  - at_ms: 150
+    set: { Body.level: 70 }
+  - at_ms: 200
+    expect: { Body.level: { ge: 67, le: 73 }, Body.ratio: { ge: 0.45, le: 0.55 } }
