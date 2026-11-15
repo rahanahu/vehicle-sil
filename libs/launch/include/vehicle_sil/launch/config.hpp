@@ -194,6 +194,10 @@ struct ParticipantConfig
     /// others are reported when reading). What run gives: j1939_node_arguments(); what the check
     /// makes of them: seen_networks().
     std::vector<J1939NodeEntry> j1939_nodes{};
+    /// Not read from the file: run sets it on the bridge it starts for --connect (the name of the
+    /// network it connects; detail::with_bridges()). Such a participant stops the run when it ends
+    /// (a bridge that is gone leaves the network unconnected); "" for every participant of the file.
+    std::string for_network{};
     std::size_t line = 0;         ///< the line of the participant's entry
     std::size_t command_line = 0; ///< the line of its command (its entry's line if it has none)
     std::size_t step_line = 0;    ///< the line of step_ms (its entry's line if it has none)

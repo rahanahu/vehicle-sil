@@ -151,7 +151,13 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
         TrafficPlan::Participant who;
         who.name = p.name;
         who.in_run = p.enabled;
-        if (p.describe && i < check.participants.size() && check.participants[i].ecu)
+        if (!p.for_network.empty())
+        {
+            // A bridge of --connect: it carries the frames of the others and has no counters of
+            // its own; known, so that it is not taken for one that may be on any network.
+            who.described = true;
+        }
+        else if (p.describe && i < check.participants.size() && check.participants[i].ecu)
         {
             who.described = true;
             for (const SeenNetwork& seen : SeenEcu(p, *check.participants[i].ecu).seen_networks())

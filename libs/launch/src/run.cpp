@@ -17,6 +17,7 @@
 //   run_watch.*          RunWatch         the watch of the running simulation, then what is settled at its end
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
+//   run_connect.cpp      with_bridges()   run --connect: the bridges as participants of the run only
 //   timeline.cpp         TimelineRecord, format_timeline_json()   run --timeline: what the scenario's
 //                        engine notes, and the file made of it (Runner::open_timeline(), write_timeline())
 //
@@ -25,7 +26,9 @@
 //   RunNotes, RunWatch and RunStart's own members.
 // - The start window's thread (one that SimulationController::start() makes for the window, not
 //   its SIL Kit thread; RunStartWindow::run()): the StartShared, RunScenario::begin(),
-//   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput.
+//   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput;
+//   it reads the peers' states (gone_before_start(): the required participants and the bridges of
+//   --connect, whose mark ParticipantConfig::for_network is fixed before the run).
 // - The scenario's thread (RunScenario::loop()): the scenario's engine and, with --timeline, the
 //   TimelineRecord it fills, from RunScenario::start() until the main thread joins it,
 //   RunSamples::take(), and RunOutput. The record is filled on this thread (and on the window's,
@@ -33,7 +36,8 @@
 //   timeline file is the main thread's (opened before anything starts, written after the
 //   participants have ended).
 // - The controller's SIL Kit thread: the hub's tap (what RunSamples keeps).
-// - Each participant's reader thread (process::Process): RunOutput::on_line().
+// - Each participant's reader thread (process::Process): RunOutput::on_line() (which keeps a bridge's
+//   last line under RunOutput's mutex; the main thread copies it into the result after the end).
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry, and touches nothing else of the run. The main
 //   thread waits for it with a limit.
@@ -131,16 +135,21 @@ class Runner
     }
 
 public:
-    Runner(const SimulationConfig& config, const CheckReport& check, std::filesystem::path base, const RunOptions& options) :
+    /// `check`: the check that passed, with the bridges of --connect (detail::with_bridges()).
+    Runner(CheckReport checked, std::filesystem::path base, const RunOptions& options) :
       own_commands_(options.time_commands == nullptr ? std::make_unique<TimeCommands>(options.start_paused) : nullptr),
-      ctx_{config, check, options, check.scenario && check.scenario->scenario ? &*check.scenario->scenario : nullptr,
+      check_(std::move(checked)),
+      ctx_{*check_.config, check_, options, check_.scenario && check_.scenario->scenario ? &*check_.scenario->scenario : nullptr,
            own_commands_ ? *own_commands_ : *options.time_commands},
-      out_(ctx_), control_(ctx_, out_), samples_(participant_names(config), detail::traffic_plan(config, check)),
+      out_(ctx_), control_(ctx_, out_),
+      samples_(participant_names(*check_.config), detail::traffic_plan(*check_.config, check_)),
       notes_(ctx_, participants_), scenario_(ctx_, out_, control_, samples_),
       start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
       watch_(ctx_, out_, notes_, samples_, scenario_, start_, participants_, outcome_),
       participants_(ctx_, out_, outcome_, std::move(base))
     {
+        const SimulationConfig& config = ctx_.config;
+        const CheckReport& check = ctx_.check;
         outcome_.start_timeout_ms = config.start_timeout_ms;
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
         outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
@@ -169,8 +178,13 @@ public:
             run.describe = p.describe;
             run.enabled = p.enabled;
             run.manual = p.manual;
+            run.for_network = p.for_network;
             run.line = p.line;
             outcome_.participants.push_back(std::move(run));
+        }
+        for (const NetworkOutside& o : check.outside)
+        {
+            outcome_.outside.push_back(RunOutside{o.network, o.target, o.participant, o.tool, std::nullopt, std::nullopt});
         }
     }
 
@@ -311,7 +325,11 @@ public:
         }
 
         bool ran = false;
-        if (participants_.start_children(uri))
+        // The bridges of --connect first, each Running in SIL Kit before an ECU starts: a frame an
+        // ECU sends before its bridge has joined would not reach the bus outside. A bridge does not
+        // take part in the coordinated start (it runs in real time), so it does not hold it up.
+        if (participants_.start_children(uri, RunParticipants::Which::Bridges) && start_.wait_for_bridges(*controller) &&
+            participants_.start_children(uri, RunParticipants::Which::Others))
         {
             out_.event([](EventStream& e) { e.phase(Phase::Waiting); });
             if (start_.wait_for_start(*controller, *transport))
@@ -339,6 +357,8 @@ public:
         out_.event([](EventStream& e) { e.phase(Phase::Stopping); });
         participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
         participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
+        // Their output is read to the end: the line connect-failed and connect-lost quote.
+        participants_.note_last_lines();
         // The agents have said their last word and waited for this side's answer (their processes
         // have ended); what is still open in the hub (of a process that was killed, or whose last
         // word did not arrive within its wait) is settled here. No sample is taken any more: the
@@ -463,6 +483,9 @@ private:
     // The order matters. Each part keeps references to those it uses (all declared here, so they
     // outlive run()); they are destroyed in the reverse order.
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
+    /// What ctx_ refers to: kept here, so that it stays with a Runner that run_file() never
+    /// destroys (a connection that did not close).
+    const CheckReport check_;
     const RunContext ctx_;
     RunOutcome outcome_; ///< the main thread's: the other threads of the run never see it
     RunOutput out_;
@@ -517,7 +540,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         }
     });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
-    auto runner = std::make_unique<Runner>(*report.check.config, report.check, base, options);
+    auto runner = std::make_unique<Runner>(detail::with_bridges(report.check), base, options);
     report.run = runner->run();
     report.findings = assess_run(*report.run);
     {

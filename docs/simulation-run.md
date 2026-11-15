@@ -10,6 +10,7 @@ This reference describes what `vehicle_sil_launch run <file>` does and in which 
 | When a run aborts, and how timeouts are measured | [Abort conditions and timeouts](#abort-conditions-and-timeouts) |
 | Whether ECU variables can be read and written (`control_link`) | [Connection to ECU variables](#connection-to-ecu-variables-control_link) |
 | `speed`, and how lateness behind real time is measured | [Running at a set speed](#running-at-a-set-speed-speed) |
+| Connecting a network to a real bus, and what happens when its bridge ends | [Connecting a bus outside](#connecting-a-bus-outside---connect) |
 | The order in which participants are ended, Ctrl+C | [Stopping a run](#stopping-a-run), [Interrupting (Ctrl+C)](#interrupting-ctrlc) |
 | Which addresses participants listen on, Windows Firewall | [Listen addresses](#listen-addresses) |
 | Stderr, log files, the result table, the `code` of findings | [Output](#output) |
@@ -36,7 +37,7 @@ Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if 
 
 Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
-Stage 4: `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
+Stage 4: With `--connect`, `run` first starts the bridge of each connected network and waits until it runs (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
 
 Stage 5: Before the start, `run` waits for the connection to the ECUs that expose variables (see [Waiting before the start](#waiting-before-the-start); normally there is no wait). With `--control` and `--start-paused`, every participant pauses before it starts the step at time 0, and the run waits for a `resume`, `step` or `run_until` command (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)). If `stop_at_ms` is set, the simulation stops when virtual time reaches it. Otherwise it runs until a participant stops it, or until Ctrl+C.
 
@@ -66,6 +67,7 @@ A skipped step has `at_ms` null. If every checking step is skipped, the check re
 | After all have joined, the process of a required participant ends while the run waits for the start | Abandons the start at once. | `ended-before-start` |
 | After all have joined, a connection drops while the run waits for the start, with the process still running | Abandons the start at once. | `simulation-start` |
 | After all have joined, the time limit for reaching the first step expires | Abandons the start; the message lists the participants that have not reached the first step and their states. | `simulation-start` |
+| The bridge of `--connect` cannot be started, does not run within `start_timeout_ms`, or ends or leaves the simulation | Starts nothing more, or abandons the start at once. | `connect-failed` |
 
 "Waits for the start" covers the wait for the ECUs that expose variables, and the pause before the step at time 0 with `--control` and `--start-paused`.
 
@@ -77,6 +79,7 @@ A skipped step has `at_ms` null. If every checking step is skipped, the check re
 | A required participant leaves the simulation in the Error state | Aborts at once. | `participant-failed` |
 | A required participant leaves the simulation in another state | Aborts if the simulation has not ended within 5 seconds. | `participant-failed` |
 | A participant with `required: false` ends | Does not stop the simulation. | A warning for a nonzero exit code |
+| The bridge of `--connect` ends, whatever its exit code | Aborts at once. | `connect-lost` |
 | The run has not ended within the real time of `--timeout-ms` | Aborts. | `timeout` (error) |
 | Virtual time does not advance for 10 seconds although the simulation is not paused | Writes one line to stderr and keeps waiting. | None |
 | A participant stops the simulation before `stop_at_ms` | The run ends as it is. | `ended-before-stop-at` (note; not a failure, even with `--strict`) |
@@ -281,6 +284,38 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 |---|---|
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
+
+## Connecting a bus outside (`--connect`)
+
+`run --connect <network>=<target>` connects the network to a real bus (an Ethernet adapter, or a CAN channel of the Vector XL Driver Library) through the bridge of this repository. The check looks for the bridge and asks it `--describe`, as `check --connect` does (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). If the check passes, `run` goes on:
+
+| Order | What `run` does |
+|---|---|
+| 1 | Starts the bridge of each connected network as the participant `bridge.<network>`, in the order of the networks in the file. The arguments are the command that the check shows (`networks[].outside.command` of `check --json`), then `--name`, `--registry-uri` and `--start-timeout-ms`. |
+| 2 | Waits until each bridge runs in SIL Kit, up to `start_timeout_ms`. A bridge runs in real time and does not take part in the coordinated start. |
+| 3 | Starts the participants of the file, as without `--connect`. |
+| 4 | When the simulation ends, asks the bridges to stop together with the other participants with `required: false` (see [Stopping a run](#stopping-a-run)). |
+
+The bridges start first because a frame that an ECU sends before its bridge has joined does not reach the bus outside (for example the address claims at time 0).
+
+A bridge is not a participant of the file. It appears in the result (`participants[]`, after the participants of the file, with `for_network`; `outside[]`) and in the events (`started`, `joined`, `ended`, its lines) like any participant. `--disable`, `--enable` and `--manual` do not take its name: to run the network on SIL Kit only, give `--connect <network>=none` or leave `--connect` out.
+
+| What happens to a bridge | What `run` does | Finding |
+|---|---|---|
+| It cannot be started, ends, or leaves the simulation before the simulation starts (also while the run waits for a participant you start yourself, or stands still before its first step with `--start-paused`) | Starts nothing more and ends what it started. | `connect-failed` |
+| It does not run in SIL Kit within `start_timeout_ms` | The same. | `connect-failed` |
+| It ends while the simulation runs (also with exit code 0, and also while the simulation is paused) | Aborts the simulation at once. | `connect-lost` |
+| It ends by itself after the simulation has ended | The same as for a participant with `required: false`. | A warning for a nonzero exit code |
+
+The messages say how the bridge ended and quote its last line (the last line that starts with `error:`, or else the last line it wrote). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
+
+A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step and speed commands during the run are accepted; the devices on the bus do not stop.
+
+For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`, because it runs each scenario as fast as possible.
+
+```sh
+vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
+```
 
 ## Stopping a run
 
@@ -490,10 +525,11 @@ The human-readable result has these parts, in this order:
 | 1 | The check tables and the check findings |
 | 2 | The simulation line, which starts with `run:` |
 | 3 | The `time:` line (when a speed is set, or when there was a paced time step) |
-| 4 | The participant table (whether each is required, and how it ended) |
-| 5 | The traffic on each network (the `traffic:` line and table; see [Network traffic](#network-traffic-traffic) below) |
-| 6 | The run findings |
-| 7 | The result line (`passed:`, `failed:` or `interrupted:`, with the numbers of errors, warnings and notes from the check and the run together) |
+| 4 | With `--connect`, one `outside:` line for each connected network (`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT)`) |
+| 5 | The participant table (whether each is required, and how it ended; the bridges of `--connect` last) |
+| 6 | The traffic on each network (the `traffic:` line and table; see [Network traffic](#network-traffic-traffic) below) |
+| 7 | The run findings |
+| 8 | The result line (`passed:`, `failed:` or `interrupted:`, with the numbers of errors, warnings and notes from the check and the run together) |
 
 If the check has errors, the `nothing was started:` line follows the check tables and findings.
 
@@ -612,6 +648,8 @@ When the simulation started, the result shows after the participant table whethe
 | `not-joined` | Error | The process of a required participant is running, but it did not join within `start_timeout_ms` |
 | `simulation-start` | Error | All required participants joined, but the simulation could not be started |
 | `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
+| `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so nothing else was started (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
+| `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
@@ -636,6 +674,7 @@ Notes on individual codes:
 | `code` | Notes |
 |---|---|
 | `connection-not-closed` | Gives the time waited. The result is complete. |
+| `connect-failed`, `connect-lost` | Give the network, the target, how the bridge ended and its last line. They take the place of `start`, `ended-before-start`, `not-joined`, `participant-failed` and `exit-code` for the bridge. `connect-failed` names the command that lists what the bridge can open (`vehicle_sil_ethernet_bridge --list-interfaces`, `vehicle_sil_vector_xl_bridge --list-channels`). |
 | `timeout` | In a run with a required manual participant, also reported when the simulation did not start (it names what the run was waiting for). |
 | `control-link-no-hello` | The message says whether the hello or the reply did not arrive (see [Connection state](#connection-state-state)). |
 | `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
@@ -704,7 +743,8 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `interrupted_by` | The signal or key that interrupted the run (`"SIGINT"`, `"Ctrl+C"` and so on). `null` if the run was not interrupted |
 | `registry_uri` | Where the run's registry listened, as the participants got it: with port 0 in the file, the port it took (`registry_uri` of `check` is as written). `null` if no registry was started |
 | `timing` | How time progressed (see the table below). `null` if nothing was started |
-| `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants |
+| `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants; then the bridges of `--connect` |
+| `outside[]` | The networks that `--connect` connected to a real bus (see the table below), in the order of the networks in the file. Empty without `--connect` |
 | `traffic` | The traffic on each network (see [Network traffic](#network-traffic-traffic) and the table below). `null` if the simulation did not start |
 | `findings[]` | Run findings (same form as `findings[]` of the check) |
 | `check` | The check result (the same object as `check --json`) |
@@ -732,6 +772,7 @@ Keys of `participants[]`:
 | `required` | `required` in the configuration file |
 | `enabled` | `false` for a disabled participant (`ended` is `"not_started"`, `log` is `null`) |
 | `manual` | `true` for a participant that you start yourself (`ended` is `"not_started"`, `exit_code` is `null`) |
+| `for_network` | For the bridge that `run` started for `--connect`, the network it connects; `null` for a participant of the file |
 | `ended` | `"exited"`, `"stopped"`, `"killed"`, `"not_started"` |
 | `exit_code` | Exit code (`null` if the participant ended by a signal, was killed or was not started) |
 | `signal` | `"SIGSEGV"` and so on (`null` if none) |
@@ -740,6 +781,15 @@ Keys of `participants[]`:
 | `control_link` | State of the connection to ECU variables at the start (see the table below) |
 
 The simulation waits for the participants whose `required` and `enabled` are both `true`. For `manual`, see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual).
+
+Keys of `outside[]` (see [Connecting a bus outside](#connecting-a-bus-outside---connect)):
+
+| Key | Value |
+|---|---|
+| `network` | The network |
+| `target` | Where it is connected, as `--connect` gave it |
+| `participant` | The bridge's name in `participants[]` (`bridge.<network>`) |
+| `to_outside`, `from_outside` | The frames that went to the bus and came from it. Always `null` in this version (not counted yet) |
 
 Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):
 
@@ -836,6 +886,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
       "required": true,
       "enabled": true,
       "manual": false,
+      "for_network": null,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -853,6 +904,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
       "required": true,
       "enabled": true,
       "manual": false,
+      "for_network": null,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -866,6 +918,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
       }
     }
   ],
+  "outside": [],
   "traffic": {
     "before_ms": 1000,
     "unplaced": [],
@@ -1081,7 +1134,8 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         "participants": [
           "Engine",
           "Dashboard"
-        ]
+        ],
+        "outside": null
       }
     ],
     "findings": []

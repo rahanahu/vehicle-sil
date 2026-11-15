@@ -164,6 +164,8 @@ Linux では `--backend packet`（か `pcap`）とネットワークインター
 - URI はランチャーが渡すので、`registry_uri` のポートは 0 でもかまいません。
 - `required: false`: シミュレーションはブリッジを待たず、実行が終わるとランチャーがブリッジに止める要求を送ります（ブリッジが参加する前に送られたフレームについては、[bridges.md](bridges.md#起動の順序) の「起動の順序」）。
 
+ファイルに書かずにランチャーにブリッジを起こさせるなら、`check` と `run` に `--connect <network>=<target>` を渡します（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。アダプターやチャンネルは PC ごとに違うので、共有のファイルには書かず、起動するときに渡します。`run` は、ECU より先にブリッジを起こし、動き出すのを待つので、最初のフレームもバスに出ます。ブリッジが終わると実行を失敗にします（simulation-run.md の「[バスを外につなぐ](simulation-run.md#バスを外につなぐ--connect)」）。
+
 ## 終了コード
 
 | 終了コード | 意味 | 出力 |

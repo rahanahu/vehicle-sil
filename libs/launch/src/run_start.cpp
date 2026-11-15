@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "run_start.hpp"
 
+#include "run_words.hpp"
+
 #include "vehicle_sil/launch/events.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
@@ -16,12 +18,21 @@ namespace {
 
 namespace orch = SilKit::Services::Orchestration;
 
-/// The first enabled required participant that has left the simulation before it started (a
-/// process that ended is seen as Error: "Connection Lost"), as "participant '<name>' left
-/// ... (state <state>)"; "" if none. Thread safe (the controller's runtime's peer statuses).
+/// The first enabled required participant, or bridge of --connect, that has left the simulation
+/// before it started (a process that ended is seen as Error: "Connection Lost"), as "participant
+/// '<name>' left ... (state <state>)"; "" if none. Thread safe: it reads the run's context (fixed)
+/// and the controller's runtime's peer statuses only.
 [[nodiscard]] std::string gone_before_start(const RunContext& ctx, SimulationController& controller)
 {
-    for (const std::string& name : controller.required_participants())
+    std::vector<std::string> names = controller.required_participants();
+    for (const ParticipantConfig& p : ctx.config.participants)
+    {
+        if (p.enabled && !p.for_network.empty())
+        {
+            names.push_back(p.name);
+        }
+    }
+    for (const std::string& name : names)
     {
         const PeerStatus status = controller.runtime().peer_status(name);
         if (has_finished(status))
@@ -275,6 +286,92 @@ void RunStart::tell_strangers(SimulationController& controller)
                       : ": it waits for the simulation's start, which only the participants of the file get") +
                  "; start it with the name the file gives it (--name)");
     }
+}
+
+bool RunStart::wait_for_bridges(SimulationController& controller)
+{
+    std::vector<std::size_t> bridges;
+    for (std::size_t i = 0; i < outcome_.participants.size(); ++i)
+    {
+        if (stops_run(outcome_.participants[i]) && participants_.in_run(i))
+        {
+            bridges.push_back(i);
+        }
+    }
+    if (bridges.empty())
+    {
+        return true;
+    }
+    const std::chrono::milliseconds limit(ctx_.config.start_timeout_ms);
+    // What went wrong, with the bridge it is about.
+    std::string why;
+    std::size_t failed = 0;
+    const auto state_of = [&controller](const ParticipantRun& run) {
+        return controller.runtime().peer_status(run.name).state;
+    };
+    const Waited waited = detail::wait_for(
+        limit, std::chrono::milliseconds(5),
+        [&] {
+            // "joined" as each comes, so that a bridge's comes before any ECU's "started".
+            notes_.note_joined(controller, outcome_);
+            // A bridge that ended before it connected to SIL Kit has no state: its process says so.
+            if (const int ended = participants_.look_at_children(true); ended >= 0)
+            {
+                failed = static_cast<std::size_t>(ended);
+                const ParticipantRun& run = outcome_.participants[failed];
+                why = run.exit ? exit_text(*run.exit) : std::string("ended");
+                return true;
+            }
+            for (const std::size_t i : bridges)
+            {
+                const auto state = state_of(outcome_.participants[i]);
+                if (state && (*state == orch::ParticipantState::Error || *state == orch::ParticipantState::Shutdown))
+                {
+                    failed = i;
+                    why = "left the simulation (state " + std::string(orch::to_string(*state)) + ")";
+                    return true;
+                }
+            }
+            return std::all_of(bridges.begin(), bridges.end(), [&](std::size_t i) {
+                return state_of(outcome_.participants[i]) == orch::ParticipantState::Running;
+            });
+        },
+        [this] { return ctx_.interrupts() > 0; });
+    if (waited == Waited::Interrupted)
+    {
+        outcome_.interrupted_by = ctx_.interrupt_name();
+        out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+        return false;
+    }
+    if (waited == Waited::TimedOut)
+    {
+        std::string names;
+        for (const std::size_t i : bridges)
+        {
+            ParticipantRun& run = outcome_.participants[i];
+            if (state_of(run) != orch::ParticipantState::Running)
+            {
+                run.missing_at_start = true;
+                names += (names.empty() ? "" : ", ") + run.name;
+            }
+        }
+        out_.say(names + " did not start: not running in SIL Kit within " + std::to_string(limit.count()) +
+                 " ms (start_timeout_ms); nothing else is started");
+        return false;
+    }
+    if (why.empty())
+    {
+        return true;
+    }
+    const ParticipantRun& run = outcome_.participants[failed];
+    outcome_.failed_participant = run.name;
+    if (!run.exit)
+    {
+        outcome_.failure_reason = why;
+    }
+    notes_.note_failed(outcome_, run.name, run.exit ? "ended_before_start" : "left_simulation");
+    out_.say(run.name + " did not start: " + (run.exit ? "its process " : "it ") + why + "; nothing else is started");
+    return false;
 }
 
 bool RunStart::wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport)

@@ -177,6 +177,8 @@ The network (`VehicleCAN`) must be in `networks` with `kind: can`. `check` adds 
 - The executable needs `vxlapi64.dll` to start at all, also for `--describe`: Windows loads it with the executable (the build copies it next to the executable when it finds it). On a computer without it, `check` reports `describe-failed`: the bridge could not start because a DLL it needs was not found. Leave the bridge out there with `--disable XlBridge`.
 - `required: false`: the simulation does not wait for the bridge (see "[Startup order](#startup-order)"), and when the run ends, the launcher asks the bridge to stop.
 
+To have the launcher start the bridge without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). The adapter or channel differs from PC to PC, so it is given when you start, not written in the shared file. `run` then starts the bridge before the ECUs, waits until it runs, so that the first frames reach the bus too, and fails the run if the bridge ends (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
+
 ## Exit codes
 
 | Exit code | Meaning |
@@ -423,7 +425,7 @@ The bridge has no forwarding queue of its own.
 
 Call `CanBridge::start()` before the participant lifecycle starts (`ParticipantRuntime::start()`). Other participants start sending as soon as they see the bridge reach Running. If the handlers and the controller are not running by then, the first frames are lost.
 
-The launcher does not wait for a bridge with `required: false` to join the simulation. Frames that ECUs send before the bridge joins (an address claim right after startup, for example) do not reach the physical bus. In a test that talks to a node on the physical bus from the very start, start sending a little later.
+The launcher does not wait for a bridge with `required: false` in the configuration file to join the simulation. Frames that ECUs send before the bridge joins (an address claim right after startup, for example) do not reach the physical bus. In a test that talks to a node on the physical bus from the very start, start sending a little later, or let the launcher start the bridge with `--connect`: it waits until the bridge runs before it starts the ECUs (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
 
 ### Shutdown order
 

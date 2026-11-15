@@ -438,7 +438,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 
 - [docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合
 - `--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数のエラー
-- `launch_cli.connect`: 2 つのブリッジ（`main()` を偽の pcap ライブラリと偽の XL ドライバーで作ったもの）を、本当の名前でビルドディレクトリの `connect_tools/` に写して `check --connect`。`PATH` と、写した `vehicle_sil_launch` の隣で見つかり、作業ディレクトリでは見つからないこと、`networks[].outside`、引数を受けないブリッジ、`run --connect` と `test --connect` を断ること
+- `launch_cli.connect`: 2 つのブリッジ（`main()` を偽の pcap ライブラリと偽の XL ドライバーで作ったもの）を、本当の名前でビルドディレクトリの `connect_tools/` に写して `check --connect`。`PATH` と、写した `vehicle_sil_launch` の隣で見つかり、作業ディレクトリでは見つからないこと、`networks[].outside`、引数を受けないブリッジ、`run --disable bridge.<network>` と `test --connect` を断ること
 
 `launch_run.*` が確認すること:
 
@@ -448,6 +448,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 - `launch_run.ethernet`: `examples/ethernet` の 2 つの ECU の照合とシナリオ
 - `launch_run.test_command`、`launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: 止めるまで動く例の設定ファイル `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行
+- `launch_run.connect_*`（`launch_run_connect.cpp`）: `connect_tools/` のブリッジでの `run --connect`（偽の pcap ライブラリの装置 `fake0` が答え、偽の XL ドライバーが `virtual:1` で返す）。ブリッジがどの ECU の起動より前に参加すること、両向きのフレーム、起動できないブリッジ（`connect-failed`。時間の上限でなく、プロセスで気づく）、手で起動する participant を待つ間に終わるブリッジ、実行中に強制終了または終了コード 0 で終わるブリッジ（`connect-lost`）、`--strict` と `--start-paused` での速さの警告。どれもイベントか行を待ち（眠らない）、起きてはいけないことは終わった後の出力の全体で確かめる
 
 `process.*` が確認すること:
 
@@ -854,6 +855,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
 | `--connect` の形、ブリッジの引数、`find_tool()`（ランチャーの隣、次に `PATH`）。`find_tool()` と `find_executable()` が共有する `PATH` の探索は `src/config.cpp` の `detail::find_on_path()` | `src/connect.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
+| `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |

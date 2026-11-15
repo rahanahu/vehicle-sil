@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -350,7 +350,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": [
@@ -803,6 +804,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -820,6 +822,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -837,6 +840,7 @@
               "required": false,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "stopped",
               "exit_code": null,
               "signal": "SIGTERM",
@@ -850,6 +854,7 @@
               }
             }
           ],
+          "outside": [],
           "traffic": {
             "before_ms": 1000,
             "unplaced": [
@@ -1137,7 +1142,8 @@
                 "participants": [
                   "Engine",
                   "Dashboard"
-                ]
+                ],
+                "outside": null
               }
             ],
             "findings": [
@@ -1293,6 +1299,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1310,6 +1317,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1327,6 +1335,7 @@
               "required": false,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "stopped",
               "exit_code": null,
               "signal": "SIGTERM",
@@ -1340,6 +1349,7 @@
               }
             }
           ],
+          "outside": [],
           "traffic": {
             "before_ms": 1000,
             "unplaced": [
@@ -1627,7 +1637,8 @@
                 "participants": [
                   "Engine",
                   "Dashboard"
-                ]
+                ],
+                "outside": null
               }
             ],
             "findings": [

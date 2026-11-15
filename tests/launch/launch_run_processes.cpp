@@ -920,7 +920,7 @@ void control(const Options& o)
         require(contains(out, "\"log\":null,\"control_link\":{\"state\":\"connected\",\"variables\":8,\"version\":null,"
                               "\"late_messages\":0}},{\"name\":\"Brake\"") &&
                     contains(out, "\"log\":null,\"control_link\":{\"state\":\"not_offered\",\"variables\":null,\"version\":null,"
-                                  "\"late_messages\":0}}],\"traffic\":{\"before_ms\":"),
+                                  "\"late_messages\":0}}],\"outside\":[],\"traffic\":{\"before_ms\":"),
                 "the result has each participant's control link:\n" + out);
         // The check notes the variables that are not offered, and says what each executable offers.
         require(contains(out, "\"code\":\"control-link-not-offered\"") &&
@@ -1014,11 +1014,11 @@ void disabled(const Options& o)
     const Captured swapped = launch(o, {"run", "--json", "--disable", "Engine", "--enable", "Brake", "sim.yaml"}, dir);
     expect_code(swapped, 0, "run --disable Engine --enable Brake");
     const std::string json = swapped.standard_output;
-    require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n"
+    require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"for_network\": null,\n"
                            "      \"ended\": \"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n"
                            "      \"left_processes\": false,\n      \"log\": null,\n      \"control_link\": {\n"
                            "        \"state\": \"none\",\n") &&
-                contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n"
+                contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n      \"for_network\": null,\n"
                                "      \"ended\": \"exited\",\n      \"exit_code\": 0,\n") &&
                 contains(json, "        \"enabled\": false,\n        \"manual\": false,\n        \"role\": \"ecu\",\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
             "the run's JSON for --disable Engine --enable Brake:\n" + json);
@@ -1057,7 +1057,7 @@ void disabled(const Options& o)
     expect_code(crashed, 1, "run with a crashing ECU and a disabled one");
     require(contains(crashed.standard_output, "  \"result\": \"failed\",\n") &&
                 contains(crashed.standard_output, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": "
-                                                  "false,\n      \"manual\": false,\n      \"ended\": \"not_started\",\n      \"exit_code\": null,\n"
+                                                  "false,\n      \"manual\": false,\n      \"for_network\": null,\n      \"ended\": \"not_started\",\n      \"exit_code\": null,\n"
                                                   "      \"signal\": null,\n      \"left_processes\": false,\n") &&
                 !contains(crashed.standard_output.substr(0, crashed.standard_output.find("  \"check\": {")),
                           "\"participant\": \"Brake\""),

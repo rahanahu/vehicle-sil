@@ -84,7 +84,11 @@ std::string detail::printable(std::string_view line)
 
 namespace detail {
 
-RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx) { logs_.resize(ctx.config.participants.size()); }
+RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
+{
+    logs_.resize(ctx.config.participants.size());
+    last_lines_.resize(ctx.config.participants.size());
+}
 
 void RunOutput::write(const std::string& line) const
 {
@@ -160,6 +164,16 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
     {
         *logs_[index] << line << '\n' << std::flush;
     }
+    if (!ctx_.config.participants[index].for_network.empty())
+    {
+        last_lines_[index].add(line);
+    }
+}
+
+std::string RunOutput::last_line(std::size_t index)
+{
+    const std::lock_guard lock(mutex_);
+    return last_lines_[index].text();
 }
 
 } // namespace detail

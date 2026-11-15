@@ -243,6 +243,21 @@ struct NetworkOutside
     friend bool operator==(const NetworkOutside&, const NetworkOutside&) = default;
 };
 
+/// The arguments run starts the bridge of `outside` with, after its executable: its arguments
+/// (as the check showed them in its command, untouched: an adapter's name may have "{name}" in
+/// it), then --name, --registry-uri `registry_uri` and --start-timeout-ms `start_timeout_ms`.
+[[nodiscard]] std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std::string_view registry_uri,
+                                                            std::int64_t start_timeout_ms);
+
+/// The warnings about time of a check with --connect, for the networks in `outside` (none if it is
+/// empty): connect-not-real-time if the speed is not 1 (`run_speed`: run's --speed, the outer
+/// optional empty without it; then `file_speed`, the file's speed; empty: as fast as possible), and
+/// connect-start-paused with `start_paused` (run --start-paused).
+[[nodiscard]] std::vector<Finding> connect_time_findings(const std::vector<NetworkOutside>& outside,
+                                                         const std::optional<double>& file_speed,
+                                                         const std::optional<std::optional<double>>& run_speed,
+                                                         bool start_paused);
+
 /// What check_connections() uses to look for a bridge and to ask it --describe.
 struct ConnectTools
 {
@@ -262,8 +277,8 @@ struct ConnectTools
 /// all known; the default filter passes the frames of the ECUs only, not of participants with
 /// role: test), connect-tool-missing, connect-tool-failed (its --describe failed, or it described
 /// another name or network); the bridge's --describe runs only if nothing else is wrong with the
-/// request and every enabled participant was described. Then connect-not-real-time once, if a
-/// network is connected and the file's speed is not 1. Without `tools` (only the file is read)
+/// request and every enabled participant was described. (check_file() adds
+/// connect_time_findings() after these.) Without `tools` (only the file is read)
 /// neither the tools nor the participants' descriptions are looked at: only the requests' form and
 /// names. NetworkOutside::arguments is empty for a network with an error here; check_file() also
 /// empties it for one with an error of check_participants() (connect-loop).
@@ -367,6 +382,11 @@ struct CheckOptions
     std::vector<ConnectRequest> connect{};
     /// Where the launcher is: the first place to look for a bridge (find_tool()); empty: PATH only.
     std::filesystem::path tool_directory{};
+    /// run: its --speed (RunOptions::speed), for connect-not-real-time; the outer optional empty
+    /// without it (check: always), and the file's speed counts.
+    std::optional<std::optional<double>> run_speed{};
+    /// run: --start-paused, for connect-start-paused.
+    bool start_paused = false;
 };
 
 /// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each

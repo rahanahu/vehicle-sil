@@ -60,6 +60,12 @@ struct Options
     fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
     fs::path work_dir;
     std::string scenario;
+    // For the scenarios connect_* only (empty for the others): the directory with
+    // vehicle_sil_launch and the two bridges on fake drivers under their names (CMake's
+    // connect_tools), the Ethernet ECU of the bridge's tests, and the fake pcap libraries.
+    fs::path connect_tools{};
+    fs::path bridge_ecu{};
+    fs::path fake_pcap_dir{};
 };
 
 /// The scenario cannot run on this machine: main() exits with 77 (CTest's SKIP_RETURN_CODE).
@@ -496,6 +502,12 @@ private:
 // The scenarios, by the file they are in; main() picks the one --scenario names.
 
 // launch_run_processes.cpp
+void connect_roundtrip(const Options& o);
+void connect_no_adapter(const Options& o);
+void connect_lost_kill(const Options& o);
+void connect_lost_exit0(const Options& o);
+void connect_dies_while_waiting(const Options& o);
+void connect_speed(const Options& o);
 void docs(const Options& o);
 void check(const Options& o);
 void crash(const Options& o);

@@ -10,6 +10,7 @@
 | どんなときに中断するか、タイムアウトの数え方 | [中断する条件とタイムアウト](#中断する条件とタイムアウト) |
 | ECU の変数を読み書きできるか（`control_link`） | [ECU の変数との接続](#ecu-の変数との接続control_link) |
 | `speed` と、実時間からの遅れの数え方 | [速度を指定して動かす](#速度を指定して動かすspeed) |
+| ネットワークを実機のバスにつなぐ、そのブリッジが終わったとき | [バスを外につなぐ](#バスを外につなぐ--connect) |
 | participant を終了させる順序、Ctrl+C | [止め方](#止め方)、[中断（Ctrl+C）](#中断ctrlc) |
 | どのアドレスで待ち受けるか、Windows のファイアウォール | [待ち受けるアドレス](#待ち受けるアドレス) |
 | 標準エラー、ログのファイル、結果の表、指摘の `code` | [出力](#出力) |
@@ -36,7 +37,7 @@
 
 手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（`time_step_ms` か、その既定値）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
 
-手順 4: `manual` の participant は起動せず、起動するコマンドを書きます。起動する participant の作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。
+手順 4: `--connect` があると、先につなぐネットワークごとのブリッジを起動し、動き出すのを待ちます（[バスを外につなぐ](#バスを外につなぐ--connect)）。`manual` の participant は起動せず、起動するコマンドを書きます。起動する participant の作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。
 
 手順 5: 始める前に、変数を公開する ECU との接続を待ちます（[ECU の変数との接続](#ecu-の変数との接続control_link)の「始まる前の待ち」。ふつうは待ちません）。`--control` と `--start-paused` を付けたときは、どの participant も時刻 0 のステップを始める前で止まり、`resume`、`step` か `run_until` のコマンドを待ちます（[control-api.md](control-api.md) の「始まる前に書く」）。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 
@@ -66,6 +67,7 @@
 | そろった後、開始を待っている間に、必須の participant のプロセスが終わった | すぐに開始をやめます。 | `ended-before-start` |
 | そろった後、開始を待っている間に、プロセスは動いたまま接続が切れた | すぐに開始をやめます。 | `simulation-start` |
 | そろった後、最初のステップまでの上限を過ぎた | 開始をやめ、最初のステップに着いていない participant と状態をメッセージに挙げます。 | `simulation-start` |
+| `--connect` のブリッジを起動できない、`start_timeout_ms` の間に動き出さない、終わった、シミュレーションから抜けた | それ以上は起動しないか、すぐに開始をやめます。 | `connect-failed` |
 
 「開始を待っている間」は、変数を公開する ECU を待つ間と、`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間です。
 
@@ -77,6 +79,7 @@
 | 必須の participant が Error の状態でシミュレーションから抜けた | すぐに中断します。 | `participant-failed` |
 | 必須の participant が、ほかの状態でシミュレーションから抜けた | 5 秒たってもシミュレーションが終わらなければ、中断します。 | `participant-failed` |
 | `required: false` の participant が終わった | シミュレーションを止めません。 | 0 でない終了コードは警告 |
+| `--connect` のブリッジが終わった（終了コードによらない） | すぐに中断します。 | `connect-lost` |
 | `--timeout-ms` の実時間で終わらなかった | 中断します。 | `timeout`（エラー） |
 | 一時停止していないのに、仮想時間が 10 秒進まない | 標準エラーに 1 行書いて、待ち続けます。 | なし |
 | `stop_at_ms` より前に、participant がシミュレーションを止めた | そのまま終わります。 | `ended-before-stop-at`（注記。`--strict` でも失敗にしません） |
@@ -281,6 +284,38 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 |---|---|
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
+
+## バスを外につなぐ（`--connect`）
+
+`run --connect <network>=<target>` は、このリポジトリのブリッジで、ネットワークを実機のバス（Ethernet のアダプター、Vector XL Driver Library の CAN チャンネル）につなぎます。照合は、`check --connect` と同じように、ブリッジを探して `--describe` を走らせます（simulation-config.md の「[`--connect`](simulation-config.md#--connect)」）。照合が通ると、`run` は次のように進めます。
+
+| 順 | `run` がすること |
+|---|---|
+| 1 | つなぐネットワークごとのブリッジを、participant `bridge.<network>` として、ファイルのネットワークの順に起動します。引数は、照合が出すコマンド（`check --json` の `networks[].outside.command`）と、`--name`、`--registry-uri`、`--start-timeout-ms` です。 |
+| 2 | 各ブリッジが SIL Kit の中で動き出すのを、`start_timeout_ms` まで待ちます。ブリッジは実時間で動き、足並みをそろえた開始には加わりません。 |
+| 3 | ファイルの participant を、`--connect` がないときと同じように起動します。 |
+| 4 | シミュレーションが終わったら、ほかの `required: false` の participant と一緒に、ブリッジに止まるよう頼みます（[止め方](#止め方)）。 |
+
+ブリッジを先に起動するのは、ブリッジが加わる前に ECU が送ったフレーム（時刻 0 のアドレスの宣言など）が、外のバスに出ないためです。
+
+ブリッジはファイルの participant ではありません。結果（`participants[]` のファイルの participant の後で、`for_network` 付き。`outside[]`）とイベント（`started`、`joined`、`ended`、ブリッジの行）には、ほかの participant と同じように出ます。`--disable`、`--enable`、`--manual` にはその名前を書けません。ネットワークを SIL Kit の中だけで動かすなら、`--connect <network>=none` を渡すか、`--connect` を外します。
+
+| ブリッジに起きたこと | `run` がすること | 指摘 |
+|---|---|---|
+| シミュレーションが始まる前に、起動できない、終わった、シミュレーションから抜けた（手で起動する participant を待つ間と、`--start-paused` で最初のステップの前に止まっている間も） | それ以上は起動せず、起動したものを終わらせます。 | `connect-failed` |
+| `start_timeout_ms` の間に SIL Kit の中で動き出さない | 同じです。 | `connect-failed` |
+| シミュレーションの実行中に終わった（終了コード 0 でも、一時停止中でも） | すぐにシミュレーションを中断します。 | `connect-lost` |
+| シミュレーションが終わった後に、自分で終わった | `required: false` の participant と同じです。 | 0 でない終了コードは警告 |
+
+指摘の文は、ブリッジがどう終わったかと、その最後の行（`error:` で始まる最後の行、なければ最後に書いた行）を出します。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
+
+実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、速さの命令は受け付けます。バスの機器は止まりません。
+
+バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。
+
+```sh
+vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
+```
 
 ## 止め方
 
@@ -490,10 +525,11 @@ participant は UTF-8 で書いてください。Windows のコンソールに�
 | 1 | 照合の表と、照合の指摘 |
 | 2 | `run:` で始まるシミュレーションの 1 行 |
 | 3 | `time:` の 1 行（速度を指定したか、速度を合わせたタイムステップがあったとき） |
-| 4 | participant の表（必須か、どう終わったか） |
-| 5 | ネットワークごとの送受信（`traffic:` の 1 行と表。下の「[ネットワークの送受信](#ネットワークの送受信traffic)」） |
-| 6 | 実行の指摘 |
-| 7 | 結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせたエラー、警告、注記の数） |
+| 4 | `--connect` があると、つないだネットワークごとに `outside:` の 1 行（`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT)`） |
+| 5 | participant の表（必須か、どう終わったか。`--connect` のブリッジは最後） |
+| 6 | ネットワークごとの送受信（`traffic:` の 1 行と表。下の「[ネットワークの送受信](#ネットワークの送受信traffic)」） |
+| 7 | 実行の指摘 |
+| 8 | 結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせたエラー、警告、注記の数） |
 
 照合にエラーがあるときは、照合の表と指摘の後に `nothing was started:` の行を書きます。
 
@@ -612,6 +648,8 @@ passed: 0 errors, 1 warning, 1 note
 | `not-joined` | エラー | 必須の participant が、プロセスは動いているのに `start_timeout_ms` の間に参加しなかった |
 | `simulation-start` | エラー | 必須の participant がそろったのに、シミュレーションを始められなかった |
 | `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
+| `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、ほかは起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
+| `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
@@ -636,6 +674,7 @@ passed: 0 errors, 1 warning, 1 note
 | `code` | 補足 |
 |---|---|
 | `connection-not-closed` | 待った時間を書きます。結果はそろっています。 |
+| `connect-failed`、`connect-lost` | ネットワーク、先、ブリッジがどう終わったかと、その最後の行を書きます。ブリッジについては、`start`、`ended-before-start`、`not-joined`、`participant-failed`、`exit-code` の代わりに出ます。`connect-failed` は、ブリッジが開けるものの一覧を出すコマンド（`vehicle_sil_ethernet_bridge --list-interfaces`、`vehicle_sil_vector_xl_bridge --list-channels`）を挙げます。 |
 | `timeout` | manual の必須の participant がいる実行では、始まらなかったときにも出ます（待っていたものを書きます）。 |
 | `control-link-no-hello` | hello が来なかったのか、返事が来なかったのかは、メッセージに書きます（[接続の状態](#接続の状態state)）。 |
 | `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |
@@ -704,7 +743,8 @@ passed: 0 errors, 1 warning, 1 note
 | `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
 | `registry_uri` | 実行の registry が待ち受けた URI で、participant に渡したもの。ファイルのポートが 0 なら、取ったポートです（`check` の `registry_uri` は書いたとおり）。registry を起動しなかったときは `null` |
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
-| `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む |
+| `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む。その後に `--connect` のブリッジ |
+| `outside[]` | `--connect` で実機のバスにつないだネットワーク（下の表）。ファイルのネットワークの順。`--connect` がなければ空 |
 | `traffic` | ネットワークごとの送受信（[ネットワークの送受信](#ネットワークの送受信traffic)。下の表）。シミュレーションが始まらなかったときは `null` |
 | `findings[]` | 実行の指摘（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト） |
@@ -732,6 +772,7 @@ passed: 0 errors, 1 warning, 1 note
 | `required` | 設定ファイルの `required` |
 | `enabled` | `false` なら無効にした participant（`ended` は `"not_started"`、`log` は `null`） |
 | `manual` | `true` なら利用者が起動する participant（`ended` は `"not_started"`、`exit_code` は `null`） |
+| `for_network` | `--connect` のために `run` が起動したブリッジでは、つなぐネットワーク。ファイルの participant では `null` |
 | `ended` | `"exited"`、`"stopped"`、`"killed"`、`"not_started"` |
 | `exit_code` | 終了コード（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`） |
 | `signal` | `"SIGSEGV"` など（なければ `null`） |
@@ -740,6 +781,15 @@ passed: 0 errors, 1 warning, 1 note
 | `control_link` | 始まったときの、ECU の変数との接続の状態（下の表） |
 
 シミュレーションが待つのは、`required` と `enabled` がどちらも `true` のものです。`manual` は [participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)にあります。
+
+`outside[]` のキー（[バスを外につなぐ](#バスを外につなぐ--connect)）:
+
+| キー | 値 |
+|---|---|
+| `network` | ネットワーク |
+| `target` | つないだ先（`--connect` に渡したとおり） |
+| `participant` | `participants[]` でのブリッジの名前（`bridge.<network>`） |
+| `to_outside`、`from_outside` | バスへ出たフレームと、バスから来たフレームの数。この版ではいつも `null` です（まだ数えません） |
 
 `participants[].control_link` のキー（[ECU の変数との接続](#ecu-の変数との接続control_link)）:
 
@@ -836,6 +886,7 @@ passed: 0 errors, 1 warning, 1 note
       "required": true,
       "enabled": true,
       "manual": false,
+      "for_network": null,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -853,6 +904,7 @@ passed: 0 errors, 1 warning, 1 note
       "required": true,
       "enabled": true,
       "manual": false,
+      "for_network": null,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -866,6 +918,7 @@ passed: 0 errors, 1 warning, 1 note
       }
     }
   ],
+  "outside": [],
   "traffic": {
     "before_ms": 1000,
     "unplaced": [],
@@ -1081,7 +1134,8 @@ passed: 0 errors, 1 warning, 1 note
         "participants": [
           "Engine",
           "Dashboard"
-        ]
+        ],
+        "outside": null
       }
     ],
     "findings": []

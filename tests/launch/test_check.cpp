@@ -1340,7 +1340,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "participants": [
         "Engine",
         "Dashboard"
-      ]
+      ],
+      "outside": null
     },
     {
       "name": "Body",
@@ -1348,7 +1349,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "line": 5,
       "participants": [
         "Engine"
-      ]
+      ],
+      "outside": null
     }
   ],
   "findings": [
@@ -1823,7 +1825,7 @@ TEST_CASE(the_reports_show_a_disabled_participant)
     CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n"
                     "      \"role\": \"ecu\",\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n"
                     "      \"reported\": null,\n      \"variables\": null,\n      \"network_map\": null,\n      \"j1939_nodes\": null,\n      \"control\": null\n") != std::string::npos);
-    CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
+    CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ],\n      \"outside\": null\n") != std::string::npos);
 }
 
 TEST_CASE(the_reports_show_a_role_that_is_not_ecu)
@@ -3227,18 +3229,50 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
                                                                0) == 0);
 }
 
-TEST_CASE(check_connections_warns_when_the_file_does_not_run_in_real_time)
+TEST_CASE(check_connections_leaves_the_time_to_connect_time_findings)
 {
     Setup s = connect_setup();
     s.config.speed.reset();
     FakeTools fake;
-    check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake),
+    check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake), "");
+}
+
+TEST_CASE(connect_time_findings_judge_the_speed_the_simulation_runs_at)
+{
+    const NetworkOutside eth{"ETH", "vehicle_sil_ethernet_bridge", {}, "eth0", "bridge.ETH", std::nullopt};
+    const NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", {}, "virtual:1", "bridge.CAN1", std::nullopt};
+    const std::vector<NetworkOutside> both{eth, can};
+    const std::vector<NetworkOutside> one{eth};
+    using RunSpeed = std::optional<std::optional<double>>;
+    // check, or run without --speed: the file's speed.
+    check_text(lines(connect_time_findings(both, std::nullopt, RunSpeed{}, false)),
                "W 0 connect-not-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the "
-               "virtual time, and the file runs as fast as possible (no speed): write speed: 1 in the file\n");
-    s.config.speed = 2.0;
-    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
+               "virtual time, and the file runs the simulation as fast as possible (no speed): the devices there get the "
+               "messages at the wrong times. Run in real time: write speed: 1 in the file, or run with --speed 1 (--strict "
+               "makes this a failure, for an automatic test)\n");
+    check_text(lines(connect_time_findings(one, 2.0, RunSpeed{}, false)),
                "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and the file runs at speed 2: write speed: 1 in the file\n");
+               "and the file runs the simulation at speed 2: the devices there get the messages at the wrong times. Run in "
+               "real time: write speed: 1 in the file, or run with --speed 1 (--strict makes this a failure, for an "
+               "automatic test)\n");
+    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{}, false)), "");
+    // run --speed: that speed, whatever the file has.
+    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{std::optional<double>(2.0)}, false)),
+               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and --speed 2 runs the simulation at that speed: the devices there get the messages at the wrong times. Run "
+               "in real time: --speed 1 (--strict makes this a failure, for an automatic test)\n");
+    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{std::optional<double>{}}, false)),
+               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and --speed max runs the simulation as fast as possible: the devices there get the messages at the wrong "
+               "times. Run in real time: --speed 1 (--strict makes this a failure, for an automatic test)\n");
+    check_text(lines(connect_time_findings(one, std::nullopt, RunSpeed{std::optional<double>(1.0)}, false)), "");
+    // --start-paused.
+    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{}, true)),
+               "W 0 connect-start-paused: --connect connects ETH to a real bus, which does not stand still: with "
+               "--start-paused, the devices there go on while the simulation waits for its first step. To stop the "
+               "simulation and look at it, run it without --connect (on SIL Kit only)\n");
+    // Nothing connected (no --connect, or only none): nothing to say.
+    check_text(lines(connect_time_findings({}, std::nullopt, RunSpeed{std::optional<double>(2.0)}, true)), "");
 }
 
 TEST_CASE(check_connections_without_tools_reads_only_the_requests)
@@ -3337,7 +3371,9 @@ TEST_CASE(the_outputs_show_where_a_network_is_connected)
     r.participants = s.results;
     const std::string plainText = format_text(r);
     const std::string plainJson = format_json(r);
-    CHECK(plainText.find("outside") == std::string::npos && plainJson.find("\"outside\"") == std::string::npos);
+    // Without --connect: no column, and "outside": null on every network.
+    CHECK(plainText.find("outside") == std::string::npos && plainJson.find("\"outside\": {") == std::string::npos &&
+          plainJson.find("\"outside\": null") != std::string::npos);
     NetworkOutside eth{"ETH",
                        "vehicle_sil_ethernet_bridge",
                        "/opt/vsil/bin/vehicle_sil_ethernet_bridge",
@@ -3375,9 +3411,9 @@ TEST_CASE(the_outputs_show_where_a_network_is_connected)
                     "    },\n") != std::string::npos);
     CHECK(json.find("        \"tool_path\": null,\n        \"target\": \"physical:2\",\n        \"participant\": "
                     "\"bridge.CAN1\",\n        \"command\": null\n      }\n") != std::string::npos);
-    // A network that is not connected has no "outside".
-    CHECK(json.find("\"name\": \"BODY\",\n      \"kind\": \"lin\",\n      \"line\": 7,\n      \"participants\": []\n    }") !=
-          std::string::npos);
+    // A network that is not connected has "outside": null.
+    CHECK(json.find("\"name\": \"BODY\",\n      \"kind\": \"lin\",\n      \"line\": 7,\n      \"participants\": [],\n"
+                    "      \"outside\": null\n    }") != std::string::npos);
 }
 
 TEST_CASE(check_connections_says_when_windows_does_not_start_a_bridge_for_a_dll)

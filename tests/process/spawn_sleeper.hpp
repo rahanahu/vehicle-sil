@@ -299,4 +299,27 @@ inline void kill_one(long pid)
 #endif
 }
 
+/// Ends the process `pid` from outside, as something else on the computer might: `hard` as
+/// kill_one() (POSIX SIGKILL; Windows TerminateProcess with exit code 1), else so that it ends with
+/// exit code 0 (POSIX SIGTERM, which a program that handles it answers by ending with 0; Windows
+/// TerminateProcess with exit code 0: a process without a console gets no request to stop). The ID
+/// must be of a process that its parent still holds open (Windows), as vehicle_sil_launch does
+/// its participants'.
+inline void end_process(long pid, bool hard)
+{
+#ifdef _WIN32
+    HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+    if (process != nullptr)
+    {
+        TerminateProcess(process, hard ? 1 : 0);
+        CloseHandle(process);
+    }
+#else
+    if (pid > 0)
+    {
+        ::kill(static_cast<pid_t>(pid), hard ? SIGKILL : SIGTERM);
+    }
+#endif
+}
+
 } // namespace vehicle_sil::test

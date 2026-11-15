@@ -43,15 +43,26 @@ public:
         return children_[i] != nullptr || (ctx_.config.participants[i].enabled && ctx_.config.participants[i].manual);
     }
 
-    /// Starts every participant in the file's order (for one started by hand: writes how to start
-    /// it). false if a required one could not be started.
-    [[nodiscard]] bool start_children(const std::string& uri);
+    /// Which participants start_children() starts.
+    enum class Which
+    {
+        Bridges, ///< the bridges of --connect (ParticipantConfig::for_network)
+        Others,  ///< the participants of the file
+    };
+
+    /// Starts the participants `which` in their order (for one started by hand: writes how to
+    /// start it). false if a required one or a bridge could not be started.
+    [[nodiscard]] bool start_children(const std::string& uri, Which which);
 
     /// Notes the participants whose process has ended since the last look; returns the first
-    /// required one among them (or -1).
+    /// required one or bridge (stops_run()) among them (or -1).
     int look_at_children(bool before_start);
 
-    /// After a start that failed: the first required participant whose process has ended; if one
+    /// for_network: copies the line of each bridge's output that says most (RunOutput::last_line())
+    /// into the result. After end_children(), which has read their output to the end.
+    void note_last_lines();
+
+    /// After a start that failed: the first required participant or bridge whose process has ended; if one
     /// has left the simulation (`left`), waiting a moment for its process (SIL Kit may see the
     /// connection end before the process can be waited for). -1 if none ended.
     [[nodiscard]] int gone_process(bool left);

@@ -115,7 +115,8 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         {
             return true; // seen in this round already
         }
-        // A required participant whose process failed fails the run at once; one that exited
+        // A required participant whose process failed, or a bridge of --connect whose process
+        // ended, fails the run at once; a required one that exited
         // with 0 may have stopped the simulation (the controller sees that a moment later).
         // Once the simulation stops, participants leave on purpose (a coordinated participant
         // ends only after the controller has stopped): their exit codes are judged after it.
@@ -155,7 +156,9 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         for (std::size_t i = 0; i < known.size(); ++i)
         {
             const ParticipantRun& run = outcome_.participants[i];
-            if (!known[i] && run.required && failed_exit(run))
+            // A bridge of --connect whatever its exit code: one that was asked to stop from outside
+            // ends with 0, and the network is not connected any more all the same.
+            if (!known[i] && ((run.required && failed_exit(run)) || (stops_run(run) && run.exit)))
             {
                 outcome_.failed_participant = run.name;
                 processFailed = true;

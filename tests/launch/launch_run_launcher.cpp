@@ -20,6 +20,9 @@ Options parse(int argc, char** argv)
     o.docs = args.required("docs");
     o.work_dir = args.required("work-dir");
     o.scenario = args.required("scenario");
+    o.connect_tools = args.str("connect-tools", "");
+    o.bridge_ecu = args.str("bridge-ecu", "");
+    o.fake_pcap_dir = args.str("fake-pcap-dir", "");
     return o;
 }
 
@@ -41,6 +44,12 @@ int main(int argc, char** argv)
         const std::vector<std::pair<std::string, void (*)(const Options&)>> scenarios = {
             {"busy_port", busy_port},
             {"check", check},
+            {"connect_dies_while_waiting", connect_dies_while_waiting},
+            {"connect_lost_exit0", connect_lost_exit0},
+            {"connect_lost_kill", connect_lost_kill},
+            {"connect_no_adapter", connect_no_adapter},
+            {"connect_roundtrip", connect_roundtrip},
+            {"connect_speed", connect_speed},
             {"control", control},
             {"crash", crash},
             {"disabled", disabled},

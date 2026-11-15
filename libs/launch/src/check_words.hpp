@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -120,5 +121,37 @@ inline std::string control_version_fix(std::int64_t version)
                ? "the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
                : "the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one";
 }
+
+/// The line of a tool's output that says why it failed, from its lines one at a time: the last
+/// that starts with "error:" (the bridges write the usage hint after it), else the last that is
+/// not empty; without "\r", and cut after 300 bytes. check uses it on a bridge's --describe, run on
+/// the lines of the bridges it starts.
+class LastLine
+{
+public:
+    void add(std::string_view line)
+    {
+        std::string text(line);
+        std::erase(text, '\r');
+        if (text.rfind("error:", 0) == 0)
+        {
+            error_ = text;
+        }
+        if (!text.empty())
+        {
+            last_ = std::move(text);
+        }
+    }
+
+    [[nodiscard]] std::string text() const
+    {
+        const std::string& why = error_.empty() ? last_ : error_;
+        return why.size() > 300 ? why.substr(0, 300) + "..." : why;
+    }
+
+private:
+    std::string last_;
+    std::string error_;
+};
 
 } // namespace vehicle_sil::launch::detail

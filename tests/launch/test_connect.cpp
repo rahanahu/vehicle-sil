@@ -5,6 +5,7 @@
 // working directory are changed in the test and put back).
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
@@ -196,6 +197,21 @@ TEST_CASE(bridge_arguments_of_a_can_network)
     rate.bitrate = 250000;
     check_text(words(bridge_arguments(network("CAN1", NetworkKind::Can, rate), "virtual:1", {})),
                "--network CAN1 --xl-target virtual --xl-channel 1 --bitrate 250000");
+}
+
+TEST_CASE(bridge_run_arguments_add_what_run_gives_after_the_checked_ones)
+{
+    // An adapter's name with a placeholder in it stays as it is (run replaces none for a bridge).
+    NetworkOutside eth{"ETH", "vehicle_sil_ethernet_bridge", "/opt/vehicle_sil_ethernet_bridge", "lab {name} (2)", "bridge.ETH",
+                       bridge_arguments(network("ETH", NetworkKind::Ethernet), "lab {name} (2)", {mac("02:00:00:00:00:01")})};
+    check_text(words(bridge_run_arguments(eth, "silkit://127.0.0.1:41234", 30000)),
+               "--network ETH --interface lab {name} (2) --src-mac 02:00:00:00:00:01 --name bridge.ETH --registry-uri "
+               "silkit://127.0.0.1:41234 --start-timeout-ms 30000");
+    NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", "/opt/vehicle_sil_vector_xl_bridge", "virtual:1", "bridge.CAN1",
+                       bridge_arguments(network("CAN1", NetworkKind::Can), "virtual:1", {})};
+    check_text(words(bridge_run_arguments(can, "silkit://127.0.0.1:8500", 5000)),
+               "--network CAN1 --xl-target virtual --xl-channel 1 --name bridge.CAN1 --registry-uri silkit://127.0.0.1:8500 "
+               "--start-timeout-ms 5000");
 }
 
 TEST_CASE(find_tool_looks_next_to_the_launcher_first_then_on_path)

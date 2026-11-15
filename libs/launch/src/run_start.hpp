@@ -113,6 +113,13 @@ public:
         window_.run(transport, controller, window);
     }
 
+    /// After the bridges of --connect have been started, before anything else: waits until each
+    /// that was started runs in SIL Kit (Running, as the controller sees it), up to start_timeout_ms.
+    /// false if one ended, left (Error or Shutdown), did not get there in time, or the run was
+    /// interrupted: the outcome says why, and nothing else is to be started. true at once without
+    /// bridges.
+    [[nodiscard]] bool wait_for_bridges(SimulationController& controller);
+
     /// Waits until every required participant has joined, then starts the simulation. false if
     /// it did not start (the outcome says why). `transport`: for the control links after the start.
     [[nodiscard]] bool wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport);

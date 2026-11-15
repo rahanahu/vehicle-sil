@@ -849,7 +849,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Engine\",\n"
                "      \"required\": true,\n"
-               "      \"enabled\": true,\n      \"manual\": false,\n"
+               "      \"enabled\": true,\n      \"manual\": false,\n      \"for_network\": null,\n"
                "      \"ended\": \"exited\",\n"
                "      \"exit_code\": 0,\n"
                "      \"signal\": null,\n"
@@ -865,7 +865,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Brake\",\n"
                "      \"required\": true,\n"
-               "      \"enabled\": true,\n      \"manual\": false,\n"
+               "      \"enabled\": true,\n      \"manual\": false,\n      \"for_network\": null,\n"
                "      \"ended\": \"killed\",\n"
                "      \"exit_code\": null,\n"
                "      \"signal\": null,\n"
@@ -879,6 +879,7 @@ TEST_CASE(the_json_report)
                "      }\n"
                "    }\n"
                "  ],\n"
+               "  \"outside\": [],\n"
                "  \"traffic\": {\n"
                "    \"before_ms\": 1000,\n"
                "    \"unplaced\": [],\n"
@@ -955,9 +956,9 @@ TEST_CASE(the_json_report)
     const std::string empty = format_run_json(none);
     CHECK(empty.find("  \"result\": \"check_failed\",\n") != std::string::npos);
     CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"registry_uri\": null,\n  \"timing\": null,\n  \"participants\": [],\n"
-                     "  \"traffic\": null,\n  \"findings\": [],\n") != std::string::npos);
+                     "  \"outside\": [],\n  \"traffic\": null,\n  \"findings\": [],\n") != std::string::npos);
     // A run that did not get to its simulation, and one with nobody on a network; every name of "not_counted".
-    CHECK(format_run_json(report_of(passed_run())).find("  ],\n  \"traffic\": null,\n  \"findings\": [") != std::string::npos);
+    CHECK(format_run_json(report_of(passed_run())).find("  ],\n  \"outside\": [],\n  \"traffic\": null,\n  \"findings\": [") != std::string::npos);
     RunOutcome quiet = passed_run();
     quiet.traffic = RunTraffic{990, {}};
     CHECK(format_run_json(report_of(quiet)).find("  \"traffic\": {\n    \"before_ms\": 990,\n    \"unplaced\": [],\n"
@@ -1833,7 +1834,7 @@ TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
                                                 "\n"
                                                 "passed: 0 errors, 0 warnings, 0 notes\n");
     const std::string json = format_run_json(r);
-    CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"ended\": "
+    CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"for_network\": null,\n      \"ended\": "
                     "\"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n      \"left_processes\": false,\n"
                     "      \"log\": null,\n      \"control_link\": {\n        \"state\": \"none\",\n        \"variables\": null,\n        \"version\": null,\n        \"late_messages\": 0\n      }\n") != std::string::npos);
 }
@@ -1902,4 +1903,186 @@ TEST_CASE(the_start_limit_with_manual_participants_begins_when_they_are_ready_an
         CHECK(after.length == length);
         CHECK(after.after_hold);
     }
+}
+
+namespace {
+
+/// passed_run() with the bridge of --connect for ETH (line 3) at eth0, which ended as `bridge` says.
+RunOutcome connected_run(ParticipantRun bridge)
+{
+    RunOutcome o = passed_run();
+    bridge.name = "bridge.ETH";
+    bridge.line = 3;
+    bridge.required = false;
+    bridge.for_network = "ETH";
+    o.participants.push_back(std::move(bridge));
+    o.outside.push_back(RunOutside{"ETH", "eth0", "bridge.ETH", "vehicle_sil_ethernet_bridge", std::nullopt, std::nullopt});
+    return o;
+}
+
+ParticipantRun stopped_bridge(int code)
+{
+    ParticipantRun p;
+    p.ending = Ending::Stopped;
+    p.exit = ExitStatus{code, std::nullopt};
+    return p;
+}
+
+} // namespace
+
+TEST_CASE(with_bridges_adds_a_participant_for_each_connected_network_after_those_of_the_file)
+{
+    CheckReport check;
+    check.file = "sim.yaml";
+    check.config = read_config("vehicle_sil_simulation: 1\n"
+                               "networks:\n"
+                               "  - { name: ETH, kind: ethernet }\n"
+                               "  - { name: CAN1, kind: can }\n"
+                               "participants:\n"
+                               "  - name: Engine\n"
+                               "    command: e\n")
+                       .config;
+    check.participants.resize(1);
+    check.participants[0].status = ParticipantStatus::Described;
+    // Without --connect: the same participants.
+    CHECK_EQ(launch::detail::with_bridges(check).config->participants.size(), std::size_t{1});
+    check.outside = {NetworkOutside{"CAN1", "vehicle_sil_vector_xl_bridge", "/t/xl", "virtual:1", "bridge.CAN1", std::nullopt},
+                     NetworkOutside{"ETH", "vehicle_sil_ethernet_bridge", "/t/eth", "eth0", "bridge.ETH", std::nullopt}};
+    const CheckReport run = launch::detail::with_bridges(check);
+    CHECK(run.config->participants.size() == 3 && run.participants.size() == 3);
+    if (run.config->participants.size() != 3 || run.participants.size() != 3)
+    {
+        return;
+    }
+    CHECK(run.config->participants[0].name == "Engine" && run.config->participants[0].for_network.empty());
+    const ParticipantConfig& can = run.config->participants[1];
+    CHECK(can.name == "bridge.CAN1" && can.for_network == "CAN1" && can.role == ParticipantRole::Bridge && !can.required &&
+          can.enabled && !can.manual);
+    CHECK_EQ(can.line, std::size_t{4});
+    CHECK(run.config->participants[2].name == "bridge.ETH" && run.config->participants[2].line == 3);
+    CHECK(run.participants[1].status == ParticipantStatus::NotChecked && run.participants[1].executable == "/t/xl" &&
+          !run.participants[1].ecu);
+    CHECK(run.participants[2].executable == "/t/eth");
+    // The check itself is left as it was.
+    CHECK_EQ(check.config->participants.size(), std::size_t{1});
+}
+
+TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else)
+{
+    // Its process ended while the launcher waited for it.
+    ParticipantRun ended;
+    ended.ending = Ending::ExitedBeforeStart;
+    ended.exit = ExitStatus{3, std::nullopt};
+    ended.last_line = "[eth-bridge] FAIL: no such interface: eth0";
+    RunOutcome o = connected_run(ended);
+    o.simulation = SimulationEnd::NotStarted;
+    o.failed_participant = "bridge.ETH";
+    o.participants[0] = participant("Engine", 5);
+    o.participants[1] = participant("Brake", 7);
+    const RunReport r = report_of(o);
+    check_text(lines(r.findings),
+               "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH ended before "
+               "the simulation started (its process exited with code 3; its last line: [eth-bridge] FAIL: no such "
+               "interface: eth0), so nothing else was started. Check that eth0 is there and free on this computer "
+               "(vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can open), or give --connect ETH=none "
+               "to run the network on SIL Kit only\n");
+    CHECK(r.result() == RunResult::Failed);
+    CHECK(r.findings[0].participant == "bridge.ETH" && r.findings[0].network == "ETH");
+    // Its line is known only once its output has been read: not settled before.
+    CHECK(launch::detail::settled_findings(o).empty());
+    // The other of two bridges that ended at once: seen when the launcher ended the run.
+    o.participants[2].ending = Ending::Exited;
+    o.failed_participant.clear();
+    CHECK(lines(report_of(o).findings).rfind("E 3 connect-failed: network 'ETH' could not be connected to the real bus "
+                                             "(eth0): bridge.ETH ended before the simulation started (its process exited "
+                                             "with code 3; ", 0) == 0);
+    // It could not be started at all; a CAN bridge's hint names the channels.
+    ParticipantRun unstarted;
+    unstarted.start_error = "no such file";
+    o = connected_run(unstarted);
+    o.simulation = SimulationEnd::NotStarted;
+    o.participants[0] = participant("Engine", 5);
+    o.participants[1] = participant("Brake", 7);
+    o.outside[0].tool = "vehicle_sil_vector_xl_bridge";
+    check_text(lines(report_of(o).findings),
+               "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH could not be "
+               "started (no such file), so nothing else was started. Check that eth0 is there and free on this computer "
+               "(vehicle_sil_vector_xl_bridge --list-channels lists what the bridge can open), or give --connect ETH=none "
+               "to run the network on SIL Kit only\n");
+    // It did not get to Running in time.
+    ParticipantRun slow = stopped_bridge(0);
+    slow.missing_at_start = true;
+    o = connected_run(slow);
+    o.simulation = SimulationEnd::NotStarted;
+    o.participants[0] = participant("Engine", 5);
+    o.participants[1] = participant("Brake", 7);
+    check_text(lines(report_of(o).findings),
+               "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH did not run in "
+               "SIL Kit within 30000 ms (start_timeout_ms; it wrote nothing), so nothing else was started. Check that eth0 "
+               "is there and free on this computer (vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can "
+               "open), or give --connect ETH=none to run the network on SIL Kit only\n");
+    // It left the simulation before the start while its process ran (the launcher stopped it).
+    o = connected_run(stopped_bridge(0));
+    o.simulation = SimulationEnd::NotStarted;
+    o.failed_participant = "bridge.ETH";
+    o.failure_reason = "left the simulation (state Error)";
+    o.participants[0] = participant("Engine", 5);
+    o.participants[1] = participant("Brake", 7);
+    CHECK(lines(report_of(o).findings).find("bridge.ETH ended before the simulation started (it left the simulation (state "
+                                            "Error); it wrote nothing)") != std::string::npos);
+}
+
+TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_its_exit_code)
+{
+    for (const int code : {0, 1})
+    {
+        ParticipantRun gone;
+        gone.ending = Ending::Exited;
+        gone.exit = ExitStatus{code, std::nullopt};
+        gone.last_line = "[eth-bridge] stopped";
+        RunOutcome o = connected_run(gone);
+        o.simulation = SimulationEnd::Aborted;
+        o.failed_participant = "bridge.ETH";
+        const RunReport r = report_of(o);
+        check_text(lines(r.findings),
+                   "E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost while the simulation "
+                   "was running: bridge.ETH ended (its process exited with code " + std::to_string(code) +
+                       "; its last line: [eth-bridge] stopped), so the launcher aborted the simulation. The devices on the "
+                       "bus missed what came after; the lines [bridge.ETH] above show what the bridge wrote\n");
+        CHECK(r.result() == RunResult::Failed);
+        CHECK(launch::detail::settled_findings(o).empty());
+    }
+}
+
+TEST_CASE(a_bridge_that_the_launcher_stopped_after_the_run_is_no_finding)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    check_text(lines(report_of(o).findings), "");
+    CHECK(report_of(o).result() == RunResult::Passed);
+    // One that ended by itself after the simulation was over: as any optional participant.
+    ParticipantRun late;
+    late.ending = Ending::Exited;
+    late.exit = ExitStatus{2, std::nullopt};
+    o = connected_run(late);
+    check_text(lines(report_of(o).findings),
+               "W 3 exit-code: participant 'bridge.ETH': its process exited with code 2; the lines [bridge.ETH] above show "
+               "what it wrote\n");
+}
+
+TEST_CASE(the_outputs_of_a_connected_run_have_the_bridge_and_where_it_connects)
+{
+    const RunOutcome o = connected_run(stopped_bridge(0));
+    const RunReport r = report_of(o);
+    const std::string text = format_run_text(r);
+    CHECK(text.find("outside: ETH -> eth0 (bridge.ETH)\n\nparticipant  required  ended\n") != std::string::npos);
+    CHECK(text.find("bridge.ETH   no        stopped (" + kStop + "), exit code 0\n") != std::string::npos);
+    const std::string json = format_run_json(r);
+    CHECK(json.find("      \"name\": \"bridge.ETH\",\n      \"required\": false,\n      \"enabled\": true,\n      \"manual\": false,\n"
+                    "      \"for_network\": \"ETH\",\n      \"ended\": \"stopped\",\n") != std::string::npos);
+    CHECK(json.find("  \"outside\": [\n    {\n      \"network\": \"ETH\",\n      \"target\": \"eth0\",\n      \"participant\": "
+                    "\"bridge.ETH\",\n      \"to_outside\": null,\n      \"from_outside\": null\n    }\n  ],\n") != std::string::npos);
+    // The tool is not in the result.
+    CHECK(json.find("vehicle_sil_ethernet_bridge") == std::string::npos);
+    // Without --connect: no line, and no change in the table.
+    CHECK(format_run_text(report_of(passed_run())).find("outside") == std::string::npos);
 }
