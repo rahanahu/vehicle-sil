@@ -282,7 +282,7 @@ A `set` is a write stamped with time T. Each ECU applies it at the start of its 
 
 A write is never too late for the ECU step at its time. The launcher holds each controller step with the time gate, and lets time advance only after it has handed the ECUs every write up to the next time step. It hands over the writes for time 0 while all participants wait before the first simulation step.
 
-When a `dither` write that belongs to no step is refused, the message says which input's dither wrote which value and when. It says that the value is out of range only when the agent refused the write for that reason. For other refusals (not connected, too many commands, an exception in the setter and so on), it gives the state and the reason. When it is not known which input of a combined write caused the refusal (when the ECU refused it in its step, for example), the message names the participant and lists every input and value of that write.
+When a `dither` write that belongs to no step is refused, the message says which input's dither wrote which value and when. It says that the value is out of range only when the ECU's Agent refused the write for that reason. For other refusals (not connected, too many commands, an exception in the setter and so on), it gives the participant's answer and its reason. When it is not known which input of a combined write caused the refusal (when the ECU refused it in its step, for example), the message names the participant and lists every input and value of that write.
 
 ## Waveforms (`wave`)
 
@@ -702,7 +702,7 @@ The failure reported is the first one the launcher learned of, which is not alwa
 If a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, **the first step whose result is not yet decided** fails (`scenario-write`). Two things then depend on the controller's time step. For a result that does not, keep the amplitude within the range (the check warning `scenario-dither-range` says where it can leave it).
 
 - **Which step fails**: this depends on how far the launcher had decided the steps when it sent the refused write. Example: with `expect`s at 30 ms and 60 ms and a refused write at 50 ms, a time step of 10 ms has already decided the 30 ms `expect`, so the 60 ms step fails; with a time step of 30 ms, the 30 ms step fails. The time of the failure (`at`) and the message are the same.
-- **Writes in the time step that decides the last step**: the scenario ends when all its steps are decided, and sends no writes after that. In the example above, if the only step is the 30 ms `expect`, a time step of 10 ms passes before the 50 ms write is sent, and a time step of 30 ms sends it and fails. The scenario does not wait at its end for the results of writes that belong to no step.
+- **Writes in the time step that decides the last step**: the scenario ends when all its steps are decided, and sends no writes after that. In the example above, if the only step is the 30 ms `expect`, with a time step of 10 ms the scenario passes before the 50 ms write is sent, and with a time step of 30 ms it sends that write and fails. The scenario does not wait at its end for the results of writes that belong to no step.
 
 ### The `at` of a step
 
