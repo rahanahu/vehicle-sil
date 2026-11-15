@@ -122,6 +122,17 @@ struct DescribeRun
     std::chrono::milliseconds timeout{};
 };
 
+/// One run of `executable` with `arguments` (process::run_captured(): at most 1 MiB kept of each
+/// output) in `directory` (empty: the launcher's), killed after `timeout`; shown in messages as
+/// `shown` followed by the arguments. A participant's --describe, a bridge's --describe or list.
+[[nodiscard]] DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
+                                   const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
+                                   const std::filesystem::path& directory);
+
+/// Reads the configuration file `path` into `text`: "" if it was read, else what is wrong with it
+/// (the message of the finding "file": it does not exist, is a directory or too large, ...).
+[[nodiscard]] std::string read_config_file(const std::filesystem::path& path, std::string& text);
+
 /// What a participant's --describe gave: its description, or the error that says why not.
 struct DescribeOutcome
 {
@@ -258,15 +269,20 @@ struct NetworkOutside
                                                          const std::optional<std::optional<double>>& run_speed,
                                                          bool start_paused);
 
-/// What check_connections() uses to look for a bridge and to ask it --describe.
+/// What check_connections() uses to look for a bridge and to ask it --describe, and
+/// connections_of() to ask it for its list.
 struct ConnectTools
 {
     /// Where the tool of that name is (find_tool()), or empty.
     std::function<std::optional<std::filesystem::path>(std::string_view)> find;
     /// The first place `find` looks (CheckOptions::tool_directory), for the message when it finds nothing.
     std::filesystem::path launcher_dir{};
-    /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>).
+    /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>;
+    /// list_arguments()), in bridge_working_directory().
     std::function<DescribeRun(const std::filesystem::path&, const std::vector<std::string>&)> describe;
+    /// Whether the bridge of a can network runs on this OS (no_bridge_here()). Where it does not, a
+    /// bridge that `find` finds anyway (a build for tests) is still used.
+    bool can_bridge = kCanBridgeOnThisOs;
 };
 
 /// The findings of the --connect requests and the networks they connect (in the order of the

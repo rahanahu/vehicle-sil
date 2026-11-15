@@ -6,6 +6,7 @@
 #include "vehicle_sil/launch/connect.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -80,6 +81,50 @@ std::string_view bridge_tool(NetworkKind kind)
     return "";
 }
 
+std::size_t detail::unicode_control_at(std::string_view text) noexcept
+{
+    const auto at = [&text](std::size_t i) { return i < text.size() ? static_cast<unsigned char>(text[i]) : 0u; };
+    if (at(0) == 0xC2 && at(1) >= 0x80 && at(1) <= 0x9F)
+    {
+        return 2;
+    }
+    if (at(0) == 0xE2 && ((at(1) == 0x80 && at(2) >= 0xAA && at(2) <= 0xAE) || (at(1) == 0x81 && at(2) >= 0xA6 && at(2) <= 0xA9)))
+    {
+        return 3;
+    }
+    return 0;
+}
+
+bool detail::has_unicode_control(std::string_view text) noexcept
+{
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (unicode_control_at(text.substr(i)) != 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::string> no_bridge_here(NetworkKind kind, bool can_bridge)
+{
+    if (kind == NetworkKind::Lin)
+    {
+        return std::string("there is no bridge for LIN");
+    }
+    if (kind == NetworkKind::Can && !can_bridge)
+    {
+        return std::string("the Vector XL bridge is for Windows");
+    }
+    return std::nullopt;
+}
+
+std::filesystem::path bridge_working_directory(const std::filesystem::path& tool)
+{
+    return std::filesystem::absolute(tool).parent_path();
+}
+
 std::string bridge_participant(std::string_view network) { return "bridge." + std::string(network); }
 
 std::optional<std::string> target_problem(NetworkKind kind, std::string_view target)
@@ -101,7 +146,8 @@ std::optional<std::string> target_problem(NetworkKind kind, std::string_view tar
         return "the target is not UTF-8 text";
     }
     if (std::any_of(target.begin(), target.end(),
-                    [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }))
+                    [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }) ||
+        detail::has_unicode_control(target))
     {
         return "the target has a control character";
     }
@@ -188,6 +234,19 @@ std::optional<std::filesystem::path> find_tool(std::string_view name, const std:
         }
     }
     return detail::find_on_path(name);
+}
+
+std::string tool_not_found(const std::filesystem::path& launcher_dir)
+{
+    return launcher_dir.empty() ? std::string("not on PATH")
+                                : "neither next to vehicle_sil_launch (" + process::shown_path(launcher_dir) + ") nor on PATH";
+}
+
+std::string tool_missing_fix(NetworkKind kind)
+{
+    return std::string(kind == NetworkKind::Can ? "build it with the Vector XL Driver Library (docs/bridges.md)"
+                                                : "build it (docs/ethernet-bridge.md)") +
+           " and put it next to vehicle_sil_launch, or its directory on PATH";
 }
 
 } // namespace vehicle_sil::launch

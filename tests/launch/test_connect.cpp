@@ -142,6 +142,12 @@ TEST_CASE(the_bridge_of_each_kind)
     check_text(std::string(bridge_tool(NetworkKind::Can)), "vehicle_sil_vector_xl_bridge");
     CHECK(bridge_tool(NetworkKind::Lin).empty());
     check_text(bridge_participant("ETH_EXT"), "bridge.ETH_EXT");
+    check_text(no_bridge_here(NetworkKind::Lin, true).value_or("-"), "there is no bridge for LIN");
+    check_text(no_bridge_here(NetworkKind::Can, false).value_or("-"), "the Vector XL bridge is for Windows");
+    CHECK(!no_bridge_here(NetworkKind::Can, true) && !no_bridge_here(NetworkKind::Ethernet, false));
+    // A bridge runs in its own directory, never the configuration file's.
+    CHECK(bridge_working_directory(fs::path("/opt/vsil/bin/vehicle_sil_ethernet_bridge")) == fs::absolute(fs::path("/opt/vsil/bin")));
+    CHECK(bridge_working_directory(fs::path("tools") / "vehicle_sil_vector_xl_bridge") == fs::absolute(fs::path("tools")));
 }
 
 TEST_CASE(target_problem_says_what_is_wrong_with_a_target)
@@ -160,6 +166,13 @@ TEST_CASE(target_problem_says_what_is_wrong_with_a_target)
     check_text(problem(NetworkKind::Ethernet, "eth\xFF"), "the target is not UTF-8 text");
     check_text(problem(NetworkKind::Ethernet, "eth0\n"), "the target has a control character");
     check_text(problem(NetworkKind::Ethernet, "a\x7F"), "the target has a control character");
+    // C1 and the controls of the direction of text: a terminal does not show them as they are.
+    for (const char* control : {"a\xC2\x85", "a\xC2\x9F", "a\xE2\x80\xAE", "a\xE2\x80\xAA", "\xE2\x81\xA6x", "a\xE2\x81\xA9"})
+    {
+        check_text(problem(NetworkKind::Ethernet, control), "the target has a control character", control);
+    }
+    check_text(problem(NetworkKind::Ethernet, "a\xC2\xA0" "b\xE2\x80\xA9\xE2\x80\x9C"), "ok"); // no-break space, others
+
     check_text(problem(NetworkKind::Ethernet, "--all-frames"),
                "the target starts with '-', which the bridge would take for an option");
     check_text(problem(NetworkKind::Can, "virtual:1"), "ok");

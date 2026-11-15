@@ -51,7 +51,6 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     const auto outside = std::find_if(outcome.outside.begin(), outcome.outside.end(),
                                       [&p](const RunOutside& o) { return o.network == p.for_network; });
     const std::string target = outside != outcome.outside.end() ? outside->target : std::string{};
-    const std::string tool = outside != outcome.outside.end() ? outside->tool : std::string{};
     // Only a line that says why: a bridge that was killed, or ended without saying why, wrote last about
     // something else (its start, its statistics, "stopped").
     const std::string said =
@@ -107,13 +106,12 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
     const bool othersStarted = std::any_of(outcome.participants.begin(), outcome.participants.end(), [](const ParticipantRun& o) {
         return !detail::stops_run(o) && o.ending != Ending::NotStarted;
     });
-    const std::string list = tool == "vehicle_sil_vector_xl_bridge" ? std::string("vehicle_sil_vector_xl_bridge --list-channels")
-                                                                     : std::string("vehicle_sil_ethernet_bridge --list-interfaces");
     return Finding{Severity::Error, "connect-failed",
                    "network '" + p.for_network + "' could not be connected to the real bus (" + target + "): " + p.name +
                        " " + what + (othersStarted ? ", so the simulation was not started" : ", so nothing else was started") +
                        ". Check that " + target +
-                       " is there and free on this computer (" + list + " lists what the bridge can open), or give --connect " +
+                       " is there and free on this computer (vehicle_sil_launch connections <file> lists where each "
+                       "network can be connected), or give --connect " +
                        p.for_network + "=none to run the network on SIL Kit only",
                    p.line, p.name, p.for_network};
 }

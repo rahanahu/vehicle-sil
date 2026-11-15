@@ -152,7 +152,6 @@ struct RunOutside
     std::string network;
     std::string target;      ///< as --connect gave it
     std::string participant; ///< the bridge's name (bridge.<network>)
-    std::string tool;        ///< the bridge's executable (bridge_tool()); not in the result
     /// The frames that went out to the bus and came in from it; empty: not counted (yet).
     std::optional<std::uint64_t> to_outside{};
     std::optional<std::uint64_t> from_outside{};

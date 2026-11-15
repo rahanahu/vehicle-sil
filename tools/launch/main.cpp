@@ -9,6 +9,8 @@
 //                  object per line), with --stdin-commands stopped by commands on stdin.
 //   test <file>    runs every scenario of a list with the file, once for each of its variants,
 //                  one run after the other, and reports all of them as one table.
+//   connections <file>  where each network of the file can be connected on this computer: the
+//                  lists of the networks' bridges.
 //   version        its version (--json: also the formats it writes and what it can do).
 // The file format: docs/simulation-config.md; the rules and the output of check: docs/simulation-check.md;
 // the run: docs/simulation-run.md; the events: docs/simulation-events.md.
@@ -31,6 +33,7 @@
 #include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/test.hpp"
@@ -94,6 +97,7 @@ constexpr const char* kUsage =
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
     "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>...\n"
+    "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
@@ -107,6 +111,9 @@ constexpr const char* kUsage =
     "                              processes); then a table of all runs: passed, FAILED or skipped, and why. A\n"
     "                              failed run does not end the test. Ctrl+C stops the current run in order and\n"
     "                              leaves the rest out\n"
+    "  connections <file>          where each network of <file> can be connected on this computer: asks the bridge\n"
+    "                              of each can and ethernet network for its list and writes the targets as\n"
+    "                              --connect lines to copy (connects to nothing)\n"
     "  version                     the version of vehicle_sil_launch (--json: also its formats and features)\n"
     "  --json                      write the result as JSON\n"
     "  --events                    run: write what happens as events on stdout, one JSON object per line, the\n"
@@ -156,11 +163,12 @@ constexpr const char* kUsage =
     "                              test: each run\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
     "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an\n"
-    "                              Ethernet adapter (vehicle_sil_ethernet_bridge --list-interfaces), or virtual:<n>\n"
-    "                              or physical:<n> for a CAN channel (vehicle_sil_vector_xl_bridge --list-channels);\n"
-    "                              none: SIL Kit only. check finds the network's bridge (next to vehicle_sil_launch\n"
-    "                              or on PATH) and asks it --describe; run starts it before the other participants\n"
-    "                              (as bridge.<network>) and fails if it ends. Repeatable, each network once\n"
+    "                              Ethernet adapter, or virtual:<n> or physical:<n> for a CAN channel (connections\n"
+    "                              <file> lists those of this computer); none: SIL Kit only. check finds the\n"
+    "                              network's bridge (next to vehicle_sil_launch or on PATH) and asks it --describe;\n"
+    "                              run starts it before the other participants (as bridge.<network>) and fails if\n"
+    "                              it ends. Repeatable, each network once\n"
+    "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
     "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not\n"
@@ -170,8 +178,8 @@ constexpr const char* kUsage =
     "  --version                   as version\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
     "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation; test: a run failed\n"
-    "            or was left out), 3 the file cannot be read (run: or the registry cannot be set up), 4 usage,\n"
-    "            130 run or test was interrupted (or stopped)\n"
+    "            or was left out; connections: a list could not be made), 3 the file cannot be read (run: or the\n"
+    "            registry cannot be set up), 4 usage, 130 run or test was interrupted (or stopped)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
@@ -766,6 +774,7 @@ enum class Command
     Check,
     Run,
     Test,
+    Connections,
 };
 
 /// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
@@ -787,6 +796,14 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, Command c
             std::fputs(kUsage, stderr);
             std::fflush(stderr);
         }
+    }
+    if (json && command == Command::Connections)
+    {
+        launch::ConnectionsReport report;
+        report.file = file;
+        report.usage = true;
+        report.findings = errors;
+        return write_or_fail(launch::format_connections_json(report), cli::kExitUsage);
     }
     if (json && command == Command::Test)
     {
@@ -841,6 +858,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
+                 a == "--network" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -975,6 +993,40 @@ int check(const cli::Args& args)
     }
     const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
+}
+
+/// `connections [--json] [--network <name>] <file>`.
+int connections(const cli::Args& args)
+{
+    if (args.has("variant"))
+    {
+        throw cli::UsageError("connections takes no --variant: every variant has the networks of the file, so leave it out");
+    }
+    const auto& positionals = args.positionals();
+    if (positionals.size() != 2)
+    {
+        throw cli::UsageError(positionals.size() < 2
+                                  ? "connections needs the configuration file: vehicle_sil_launch connections <file>"
+                                  : "connections takes one file, not " + std::to_string(positionals.size() - 1));
+    }
+    launch::ConnectionsOptions options;
+    if (args.has("network"))
+    {
+        options.network = args.str("network", "");
+        if (options.network->empty())
+        {
+            throw cli::UsageError("--network needs the name of a network of the file");
+        }
+    }
+    options.tool_directory = process::current_executable().parent_path();
+    const std::string& file = positionals[1];
+    const launch::ConnectionsReport report = launch::list_connections(process::path_from_utf8(file), file, options);
+    if (report.usage)
+    {
+        return usage_error(report.findings, args.flag("json"), Command::Connections, file, nullptr);
+    }
+    return write_or_fail(args.flag("json") ? launch::format_connections_json(report) : launch::format_connections_text(report),
+                         report.exit_code());
 }
 
 int run(const cli::Args& args, launch::EventStream* events)
@@ -1346,7 +1398,8 @@ int main(int argc, char** argv)
     const std::vector<std::string> positionals = positional_arguments(arguments);
     const bool isRun = !positionals.empty() && positionals.front() == "run";
     const bool isTest = !positionals.empty() && positionals.front() == "test";
-    const Command command = isRun ? Command::Run : isTest ? Command::Test : Command::Check;
+    const bool isConnections = !positionals.empty() && positionals.front() == "connections";
+    const Command command = isRun ? Command::Run : isTest ? Command::Test : isConnections ? Command::Connections : Command::Check;
     const std::string file = positionals.size() == 2 ? positionals[1] : std::string{};
     if (!positionals.empty() && positionals.front() == "version")
     {
@@ -1377,7 +1430,8 @@ int main(int argc, char** argv)
     {
         // test takes --variant more than once, and has options of its own.
         const cli::Args args =
-            isTest ? cli::Args(arguments,
+            isConnections ? cli::Args(arguments, {"network", "variant"}, {"json"})
+            : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
@@ -1390,17 +1444,18 @@ int main(int argc, char** argv)
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
         {
-            code = usage_error("no command: give check <file>, run <file>, test <file> or version", json, command, file, stream);
+            code = usage_error("no command: give check <file>, run <file>, test <file>, connections <file> or version", json,
+                               command, file, stream);
         }
-        else if (args.positionals().front() != "check" && !isRun && !isTest)
+        else if (args.positionals().front() != "check" && !isRun && !isTest && !isConnections)
         {
             code = usage_error("unknown command '" + args.positionals().front() +
-                                   "': the commands are check, run, test and version",
+                                   "': the commands are check, run, test, connections and version",
                                json, command, file, stream);
         }
         else
         {
-            code = isRun ? run(args, stream) : isTest ? test(args) : check(args);
+            code = isRun ? run(args, stream) : isTest ? test(args) : isConnections ? connections(args) : check(args);
         }
     }
     catch (const cli::UsageError& e)
@@ -1418,7 +1473,14 @@ int main(int argc, char** argv)
         }
         else if (json)
         {
-            if (isTest)
+            if (isConnections)
+            {
+                launch::ConnectionsReport report;
+                report.file = file;
+                report.findings.push_back(launch::Finding{launch::Severity::Error, "internal", e.what(), 0, "", ""});
+                static_cast<void>(write_or_fail(launch::format_connections_json(report), cli::kExitSetupFailed));
+            }
+            else if (isTest)
             {
                 launch::TestReport report;
                 report.unreadable = true;

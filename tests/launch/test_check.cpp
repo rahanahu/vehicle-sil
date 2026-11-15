@@ -2980,10 +2980,12 @@ struct FakeTools
     std::vector<std::string> missing;   ///< tools that are not found
     std::optional<DescribeRun> answer;  ///< instead of the right description
     std::vector<std::string> runs;      ///< "<tool path> <arguments>"
+    bool can_bridge = true;             ///< ConnectTools::can_bridge (as on Windows)
     ConnectTools tools()
     {
         ConnectTools t;
         t.launcher_dir = "/opt/vsil/bin";
+        t.can_bridge = can_bridge;
         t.find = [this](std::string_view name) -> std::optional<std::filesystem::path> {
             if (std::find(missing.begin(), missing.end(), name) != missing.end())
             {
@@ -3090,8 +3092,8 @@ TEST_CASE(check_connections_names_what_is_wrong_with_a_request)
                "'=' in its name, and --connect takes the network's name up to the first '=': rename the network (a name "
                "without '=')\n"
                "E 5 connect-target: network 'CAN1': --connect CAN1=usb:1: a CAN target is virtual:<n> or physical:<n>, "
-               "with the channel number <n> from 1: give a channel that vehicle_sil_vector_xl_bridge --list-channels "
-               "lists, as virtual:<n> or physical:<n>, or none for SIL Kit only\n"
+               "with the channel number <n> from 1: give a channel as virtual:<n> or physical:<n> (vehicle_sil_launch "
+               "connections <file> lists those of this computer), or none for SIL Kit only\n"
                "E 16 connect-name-taken: participant 'bridge.CAN1' has the name that --connect CAN1 gives the bridge of "
                "the network: rename the participant\n"
                "E 7 connect-kind: network 'BODY': it is lin: there is no bridge for LIN, so it runs on SIL Kit only: leave "
@@ -3100,7 +3102,7 @@ TEST_CASE(check_connections_names_what_is_wrong_with_a_request)
     CHECK(fake.runs.empty());
     check_text(connect_lines(s, {{"ETH", "eth0\t\xFF"}}, fake),
                "E 3 connect-target: network 'ETH': --connect ETH=eth0\\x09\\xFF: the target is not UTF-8 text: give an "
-               "adapter that vehicle_sil_ethernet_bridge --list-interfaces lists, or none for SIL Kit only\n");
+               "adapter that vehicle_sil_launch connections <file> lists, or none for SIL Kit only\n");
     Setup empty;
     check_text(connect_lines(empty, {{"ETH", "eth0"}}, fake),
                "E 0 connect-network: --connect names the network 'ETH', which the file does not have: the file has no "
@@ -3191,7 +3193,15 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
                "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, which is neither "
                "next to vehicle_sil_launch (/opt/vsil/bin) nor on PATH: build it with the Vector XL Driver Library "
                "(docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH\n");
+    // Not on Windows: there is nothing to build; found anyway (a build for tests), it is used.
+    fake.can_bridge = false;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, and the Vector XL "
+               "bridge is for Windows: on this computer the network runs on SIL Kit only: leave --connect CAN1 out (or "
+               "give CAN1=none)\n");
     fake.missing.clear();
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake), "");
+    fake.can_bridge = true;
     DescribeRun refused;
     refused.command_text = "vehicle_sil_vector_xl_bridge --network CAN1 ...";
     refused.exit_code = 2;

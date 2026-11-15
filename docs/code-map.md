@@ -439,6 +439,7 @@ What `launch_cli.*` checks:
 - Byte-for-byte comparison with the examples in [docs/simulation-config.md](simulation-config.md)
 - An executable whose `--describe` fails, `--strict`, an unreadable file, argument errors
 - `launch_cli.connect`: `check --connect` with the two bridges (their `main()` on the fake pcap library and the fake XL driver) copied under their real names into `connect_tools/` of the build directory: found on `PATH` and next to a copy of `vehicle_sil_launch`, not in the working directory; `networks[].outside`; a bridge that refuses its arguments; `run --disable bridge.<network>` and `test --connect` refused
+- `launch_cli.connections`: `connections` with the same bridges: the `--connect` lines, which `check` then takes; `--json` (the bridge's list passed on, LIN without one); `--network`; bridges that cannot list (`library-missing`, `driver-missing`) and no bridge (`tool-missing`, exit code 1); the command line (exit code 4) and a file that cannot be read (exit code 3). `launch.connections_*` (`test_connections.cpp`) covers the rest without processes: the quoting, reading a list, the lists the launcher makes, each bridge asked once, the text and the JSON whole
 
 What `launch_run.*` checks:
 
@@ -834,7 +835,8 @@ Public headers:
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, and `find_tool()`, where the launcher looks for a bridge | `launch/connect.hpp` |
+| `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, `find_tool()`, where the launcher looks for a bridge, `no_bridge_here()` (LIN; CAN elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |
+| `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
@@ -854,6 +856,7 @@ Implementation:
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
 | The forms of `--connect`, the bridges' arguments, `find_tool()` (next to the launcher, then `PATH`); the search of `PATH` that `find_tool()` and `find_executable()` share is `detail::find_on_path()` in `src/config.cpp` | `src/connect.cpp` |
+| `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/check.cpp`, as their `--describe` | `src/connections.cpp` |
 | The check output | `src/check_format.cpp` |
 | `run --connect`: the bridges as participants of the run only, after those of the file (`detail::with_bridges()`). Where they are started first and waited for (`RunStart::wait_for_bridges()`), and where their end stops the run (`detail::stops_run()` in `look_at_children()`, `RunWatch::watch()` and `gone_before_start()`): `run.cpp`, `run_participants.cpp`, `run_start.cpp`, `run_watch.cpp`. Their findings `connect-failed` and `connect-lost`: `run_assess.cpp`; their last line: `RunOutput::on_line()` (the reader threads, under the output's lock) | `src/run_connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
