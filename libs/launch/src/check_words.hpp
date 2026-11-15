@@ -76,6 +76,41 @@ inline std::string hex2(unsigned value)
     return buffer;
 }
 
+/// The exit status with which Windows ends a process before main() when a DLL that the executable
+/// imports is missing (STATUS_DLL_NOT_FOUND) or lacks a function it imports
+/// (STATUS_ENTRYPOINT_NOT_FOUND). No other system gives these exit codes, so they are checked
+/// everywhere.
+inline constexpr std::uint32_t kStatusDllNotFound = 0xC0000135u;
+inline constexpr std::uint32_t kStatusEntryPointNotFound = 0xC0000139u;
+
+/// "0xC0000135".
+inline std::string status_hex(std::uint32_t code)
+{
+    char hex[16];
+    std::snprintf(hex, sizeof(hex), "0x%08X", static_cast<unsigned>(code));
+    return hex;
+}
+
+/// How an executable that Windows did not start because of a DLL ended (`exit_code` is
+/// kStatusDllNotFound or kStatusEntryPointNotFound): "could not start (exit status 0xC0000135):
+/// Windows did not find a DLL that it needs"; "" for another exit code. The executable's standard
+/// error is empty then: nothing says which DLL.
+inline std::string dll_start_failure(int exit_code)
+{
+    const auto code = static_cast<std::uint32_t>(exit_code);
+    if (code != kStatusDllNotFound && code != kStatusEntryPointNotFound)
+    {
+        return {};
+    }
+    return "could not start (exit status " + status_hex(code) +
+           (code == kStatusDllNotFound ? "): Windows did not find a DLL that it needs"
+                                       : "): a DLL that it needs is of another version (a function in it is missing)");
+}
+
+/// What to do after dll_start_failure().
+inline constexpr const char* kDllFix =
+    "put that DLL, of the version the executable was built with, next to the executable or in a folder on PATH";
+
 /// What to do about an ECU whose control agent speaks `version` of the control messages, not
 /// control::wire::kVersion: which side is the older one, and what to build or use again
 /// (control-link-version of the check and of the run).

@@ -545,12 +545,13 @@ networks:
 | Key | Kind | Value | If omitted |
 |---|---|---|---|
 | `bitrate` | `can` | The bit rate to set on the channel (bit/s, an integer from 1 to 1000000). The tool that connects the network may take a narrower range (Vector XL: from 15000). | The channel's setting is kept |
-| `ethertypes` | `ethernet` | The EtherTypes of the frames that pass between the network and the outside: a list of one or more, each once (`0x88b5`, `34997`, or `"0x88b5"` in quotes; JSON has no hexadecimal numbers) | Without `ethertypes` and `all_frames`, the frames of the MAC addresses that the participants on the network report pass |
+| `ethertypes` | `ethernet` | The EtherTypes of the frames that pass between the network and the outside: a list of one or more, each once (`0x88b5`, `34997`, or `"0x88b5"` in quotes; JSON has no hexadecimal numbers) | Without `ethertypes` and `all_frames`, the frames of the MAC addresses that the ECUs on the network report pass |
 | `all_frames` | `ethernet` | `true`: every frame passes. Not together with `ethertypes` | `false` |
 
 Other rules:
 
 - A `lin` network cannot have `external`: there is no bridge for LIN, so it runs on SIL Kit only.
+- By default (no `ethertypes`, no `all_frames`) only the frames of the ECUs (participants without `role`, or with `role: ecu`) go out on the real bus, and only frames to them come in. To pass the frames of the participants with `role: test` too, write `ethertypes` or `all_frames`.
 - A key of the other kind (`ethertypes` on a `can` network, `bitrate` on an `ethernet` network) is an `unknown-key` error.
 - A variant (`variants`) cannot change it, as with every key of `networks`.
 
@@ -580,7 +581,7 @@ The arguments that the launcher gives the bridge:
 
 | Kind | Arguments |
 |---|---|
-| `ethernet` | `--network <network> --interface <target>`, and the frames that pass: `--all-frames` (`all_frames: true`), `--ethertype` (`ethertypes`), or else `--src-mac` with the MAC addresses that the participants on the network report in their `--describe` output (if one reports none, or has `describe: false`, the error is `connect-filter`) |
+| `ethernet` | `--network <network> --interface <target>`, and the frames that pass: `--all-frames` (`all_frames: true`), `--ethertype` (`ethertypes`), or else `--src-mac` with the MAC addresses that the ECUs on the network report in their `--describe` output, not those of participants with `role: test` or `role: bridge` (if an ECU reports none, one has `describe: false`, or no ECU reports one, the error is `connect-filter`) |
 | `can` | `--network <network> --xl-target <virtual or physical> --xl-channel <n>`, and `--bitrate <bitrate>` with `bitrate` |
 
 The findings are the `connect-*` codes in [simulation-check.md](simulation-check.md#finding-codes). `check --json` writes the bridge, where it was found and its command line to `networks[].outside`, and the human-readable output adds the column `outside` to the network table.

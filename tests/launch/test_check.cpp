@@ -3025,7 +3025,11 @@ std::string outside_text(const ConnectCheck& check)
     for (const NetworkOutside& o : check.outside)
     {
         out += o.network + " " + o.tool + " [" + o.tool_path.generic_string() + "] " + o.target + " " + o.participant + ":";
-        for (const std::string& a : o.arguments)
+        if (!o.arguments)
+        {
+            out += " (no command)";
+        }
+        for (const std::string& a : o.arguments.value_or(std::vector<std::string>{}))
         {
             out += " " + a;
         }
@@ -3108,30 +3112,63 @@ TEST_CASE(check_connections_needs_a_filter_for_every_participant_on_an_ethernet_
     s.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
     check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
                "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
-               "--connect passes only the frames of the MAC addresses that the participants on the network report, and "
-               "Display reports no MAC address on it: write external: { ethertypes: [0x88b5] } (the EtherTypes the "
-               "participants use) or external: { all_frames: true } for the network, or give each participant on it a "
-               "MAC address (eth::ChannelOptions::mac)\n");
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and "
+               "Display reports no MAC address on it: write external: { ethertypes: [0x88b5] } (the EtherTypes to pass, "
+               "also for participants with role: test) or external: { all_frames: true } for the network, or give each "
+               "ECU on it a MAC address (eth::ChannelOptions::mac)\n");
     // describe: false: its network is not known.
     Setup unknown = connect_setup();
     unknown.unchecked("Logger", 16);
     check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake),
                "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
-               "--connect passes only the frames of the MAC addresses that the participants on the network report, and "
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and "
                "Logger has describe: false, so the check cannot see whether it is on it and with which address: write "
-               "external: { ethertypes: [0x88b5] } (the EtherTypes the participants use) or external: { all_frames: true "
-               "} for the network\n");
-    // A disabled one, or one with role: bridge (connect-loop is about it), does not count.
+               "external: { ethertypes: [0x88b5] } (the EtherTypes to pass, also for participants with role: test) or "
+               "external: { all_frames: true } for the network\n");
+    // One with role: bridge (connect-loop is about it) or role: test does not count.
     unknown.config.participants.back().role = ParticipantRole::Bridge;
     check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake), "");
-    // No participant reports one.
+    unknown.config.participants.back().role = ParticipantRole::Test;
+    check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake), "");
+    // No ECU reports one.
     Setup alone = connect_setup();
     alone.results[0].ecu->description.networks = {NetworkDescription{"CAN1", NetworkUse::Raw, {}}};
-    CHECK(connect_lines(alone, {{"ETH", "eth0"}}, fake).find("and no participant on it reports a MAC address: write") !=
+    CHECK(connect_lines(alone, {{"ETH", "eth0"}}, fake).find("and no ECU on it reports a MAC address: write") !=
           std::string::npos);
-    // A participant without a description: its error comes first.
+    // Only the ECUs' frames go out: a participant for testing with a MAC address is left out of
+    // --src-mac, and one that is alone on the network is no ECU.
+    Setup tested = connect_setup();
+    tested.described(with_role(participant("Stim", 16), ParticipantRole::Test),
+                     ecu("Stim", 10ms, {on_ethernet("ETH", mac_of(0x99))}));
+    tested.described(with_role(participant("Spy", 19), ParticipantRole::Test), ecu("Spy", 10ms, {on_ethernet("ETH", std::nullopt)}));
+    {
+        const ConnectTools tools = fake.tools();
+        const ConnectCheck check = check_connections(tested.config, tested.results, {{"ETH", "eth0"}}, &tools);
+        check_text(lines(check.findings), "");
+        check_text(outside_text(check), "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 "
+                                        "bridge.ETH: --network ETH --interface eth0 --src-mac 02:00:00:00:00:01\n");
+    }
+    tested.results[0].ecu->description.networks.clear();
+    check_text(connect_lines(tested, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and no ECU on it reports a MAC address (only participants with role: test "
+               "do): write external: { ethertypes: [0x88b5] } (the EtherTypes to pass, also for participants with role: "
+               "test) or external: { all_frames: true } for the network\n");
+    // A participant without a description: its error comes first, and with the frames that pass
+    // not known, the bridge is not asked (it would refuse a command without a filter).
     s.results.back() = ParticipantResult{ParticipantStatus::Failed, std::nullopt};
-    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake), "");
+    fake.runs.clear();
+    {
+        const ConnectTools tools = fake.tools();
+        const ConnectCheck check = check_connections(s.config, s.results, {{"ETH", "eth0"}}, &tools);
+        check_text(lines(check.findings), "");
+        CHECK(fake.runs.empty());
+        check_text(outside_text(check),
+                   "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: (no command)\n");
+    }
     // With ethertypes or all_frames, the participants' addresses do not matter.
     Setup typed = connect_setup();
     typed.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
@@ -3306,10 +3343,10 @@ TEST_CASE(the_outputs_show_where_a_network_is_connected)
                        "/opt/vsil/bin/vehicle_sil_ethernet_bridge",
                        "vEthernet (A)",
                        "bridge.ETH",
-                       {"--network", "ETH", "--interface", "vEthernet (A)", "--src-mac", "02:00:00:00:00:01"},
-                       true};
-    NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", {}, "physical:2", "bridge.CAN1",
-                       {"--network", "CAN1", "--xl-target", "physical", "--xl-channel", "2"}, false};
+                       std::vector<std::string>{"--network", "ETH", "--interface", "vEthernet (A)", "--src-mac",
+                                                "02:00:00:00:00:01"}};
+    // Not found, and so no command (connect-tool-missing).
+    NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", {}, "physical:2", "bridge.CAN1", std::nullopt};
     r.outside = {eth, can};
     const std::string text = format_text(r);
     CHECK(text.find("network  kind      participants  outside\n"
@@ -3336,8 +3373,49 @@ TEST_CASE(the_outputs_show_where_a_network_is_connected)
                     "        ]\n"
                     "      }\n"
                     "    },\n") != std::string::npos);
-    CHECK(json.find("        \"tool_path\": null,\n        \"target\": \"physical:2\",\n") != std::string::npos);
+    CHECK(json.find("        \"tool_path\": null,\n        \"target\": \"physical:2\",\n        \"participant\": "
+                    "\"bridge.CAN1\",\n        \"command\": null\n      }\n") != std::string::npos);
     // A network that is not connected has no "outside".
     CHECK(json.find("\"name\": \"BODY\",\n      \"kind\": \"lin\",\n      \"line\": 7,\n      \"participants\": []\n    }") !=
           std::string::npos);
+}
+
+TEST_CASE(check_connections_says_when_windows_does_not_start_a_bridge_for_a_dll)
+{
+    // Windows ends an executable whose DLL is missing (0xC0000135) or of another version
+    // (0xC0000139) before main(), with nothing on stderr; the exit codes are checked on every system.
+    Setup s = connect_setup();
+    FakeTools fake;
+    DescribeRun missing;
+    missing.command_text = "vehicle_sil_vector_xl_bridge ...";
+    missing.exit_code = static_cast<int>(0xC0000135u);
+    fake.answer = missing;
+    check_text(connect_lines(s, {{"CAN1", "physical:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': vehicle_sil_vector_xl_bridge ... could not start (exit status "
+               "0xC0000135): Windows did not find a DLL that it needs: vehicle_sil_vector_xl_bridge needs vxlapi64.dll of "
+               "the Vector XL Driver Library: install the library, or put vxlapi64.dll next to the bridge; for another "
+               "DLL, put that DLL, of the version the executable was built with, next to the executable or in a folder on "
+               "PATH; to check without the real bus on this computer, leave --connect CAN1 out\n");
+    DescribeRun old;
+    old.command_text = "vehicle_sil_ethernet_bridge ...";
+    old.exit_code = static_cast<int>(0xC0000139u);
+    fake.answer = old;
+    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-tool-failed: network 'ETH': vehicle_sil_ethernet_bridge ... could not start (exit status "
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): put that DLL, of "
+               "the version the executable was built with, next to the executable or in a folder on PATH; to check "
+               "without the real bus on this computer, leave --connect ETH out\n");
+}
+
+TEST_CASE(check_connections_gives_no_command_for_a_network_with_an_error)
+{
+    Setup s = connect_setup();
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check = check_connections(s.config, s.results, {{"CAN1", "usb:1"}, {"ETH", "eth0"}}, &tools);
+    CHECK(lines(check.findings).rfind("E 5 connect-target: ", 0) == 0);
+    check_text(outside_text(check),
+               "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: --network ETH "
+               "--interface eth0 --src-mac 02:00:00:00:00:01\n"
+               "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] usb:1 bridge.CAN1: (no command)\n");
 }

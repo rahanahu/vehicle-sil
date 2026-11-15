@@ -30,19 +30,8 @@ using detail::step_text;
 
 std::string participant_prefix(const std::string& name) { return "participant '" + name + "': "; }
 
-/// The exit status with which Windows ends a process before main() when a DLL that the executable
-/// imports is missing (STATUS_DLL_NOT_FOUND) or lacks a function it imports
-/// (STATUS_ENTRYPOINT_NOT_FOUND). No other system gives these exit codes, so they are checked
-/// everywhere.
-constexpr std::uint32_t kStatusDllNotFound = 0xC0000135u;
-constexpr std::uint32_t kStatusEntryPointNotFound = 0xC0000139u;
-
-std::string status_hex(std::uint32_t code)
-{
-    char hex[16];
-    std::snprintf(hex, sizeof(hex), "0x%08X", static_cast<unsigned>(code));
-    return hex;
-}
+using detail::dll_start_failure;
+using detail::status_hex;
 
 /// "0x80 (128)".
 std::string address_text(j1939::Address address) { return hex2(address) + " (" + std::to_string(address) + ")"; }
@@ -173,22 +162,17 @@ DescribeOutcome interpret_describe(const ParticipantConfig& participant, const D
         std::string ended;
         std::string hint;
         const bool bridge = participant.role == ParticipantRole::Bridge;
-        const auto code = static_cast<std::uint32_t>(*run.exit_code);
         if (run.signal)
         {
             ended = "was ended by the signal " + std::to_string(*run.signal);
             hint = "it crashed or was killed while it built the ECU: fix the ECU (its standard error may say where)";
         }
-        else if (code == kStatusDllNotFound || code == kStatusEntryPointNotFound)
+        else if (!dll_start_failure(*run.exit_code).empty())
         {
             // Windows did not start it: the same for an ECU and a bridge, and nothing on its
             // standard error says which DLL.
-            ended = "could not start (exit status " + status_hex(code) +
-                    (code == kStatusDllNotFound ? "): Windows did not find a DLL that it needs"
-                                                : "): a DLL that it needs is of another version (a function in it is "
-                                                  "missing)");
-            hint = "put that DLL, of the version the executable was built with, next to the executable or in a folder on "
-                   "PATH";
+            ended = dll_start_failure(*run.exit_code);
+            hint = detail::kDllFix;
             if (bridge)
             {
                 hint += "; if this computer does not use the bridge, leave it out with vehicle_sil_launch --disable " +
@@ -196,10 +180,10 @@ DescribeOutcome interpret_describe(const ParticipantConfig& participant, const D
             }
         }
 #ifdef _WIN32
-        else if (code >= 0xC0000000u)
+        else if (static_cast<std::uint32_t>(*run.exit_code) >= 0xC0000000u)
         {
             // A Windows exception code, such as 0xC0000005.
-            ended = "ended with the exception code " + status_hex(code);
+            ended = "ended with the exception code " + status_hex(static_cast<std::uint32_t>(*run.exit_code));
             hint = "it crashed while it built the ECU: fix the ECU (its standard error may say where)";
         }
 #endif

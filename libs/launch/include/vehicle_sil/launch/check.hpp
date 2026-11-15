@@ -235,9 +235,10 @@ struct NetworkOutside
     std::filesystem::path tool_path; ///< find_tool(); empty: not found (or not looked for)
     std::string target;              ///< as given
     std::string participant;         ///< bridge_participant()
-    std::vector<std::string> arguments; ///< bridge_arguments()
-    /// No error of the check is about connecting this network: a run could start its bridge.
-    bool usable = false;
+    /// bridge_arguments(): what a run gives the bridge. Empty if an error of the check is about
+    /// connecting this network (a connect-* error), or if the frames that pass are not known (a
+    /// participant has no description).
+    std::optional<std::vector<std::string>> arguments{};
 
     friend bool operator==(const NetworkOutside&, const NetworkOutside&) = default;
 };
@@ -257,12 +258,15 @@ struct ConnectTools
 /// file's networks; a request with kNoTarget connects nothing). In this order for each request:
 /// connect-network (no such network), connect-kind (LIN), connect-target (its form),
 /// connect-name-taken (a participant of the file has the bridge's name), connect-filter (an
-/// Ethernet network without external.ethertypes or all_frames whose participants' MAC addresses
-/// are not all known), connect-tool-missing, connect-tool-failed (its --describe failed, or it
-/// described another name or network); then connect-not-real-time once, if a network is connected
-/// and the file's speed is not 1. Without `tools` (only the file is read) neither the tools nor the
-/// participants' descriptions are looked at: only the requests' form and names. NetworkOutside::usable
-/// is left false: check_file() sets it when every finding is known.
+/// Ethernet network without external.ethertypes or all_frames whose ECUs' MAC addresses are not
+/// all known; the default filter passes the frames of the ECUs only, not of participants with
+/// role: test), connect-tool-missing, connect-tool-failed (its --describe failed, or it described
+/// another name or network); the bridge's --describe runs only if nothing else is wrong with the
+/// request and every enabled participant was described. Then connect-not-real-time once, if a
+/// network is connected and the file's speed is not 1. Without `tools` (only the file is read)
+/// neither the tools nor the participants' descriptions are looked at: only the requests' form and
+/// names. NetworkOutside::arguments is empty for a network with an error here; check_file() also
+/// empties it for one with an error of check_participants() (connect-loop).
 struct ConnectCheck
 {
     std::vector<Finding> findings;

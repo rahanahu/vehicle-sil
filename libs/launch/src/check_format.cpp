@@ -783,13 +783,21 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 optional_text("tool_path", outside->tool_path.empty() ? std::string{} : process::shown_path(outside->tool_path));
                 w.string("target", outside->target);
                 w.string("participant", outside->participant);
-                w.begin_array("command");
-                w.string({}, outside->tool);
-                for (const std::string& argument : outside->arguments)
+                // null: an error is about connecting the network (a command it would refuse).
+                if (outside->arguments)
                 {
-                    w.string({}, argument);
+                    w.begin_array("command");
+                    w.string({}, outside->tool);
+                    for (const std::string& argument : *outside->arguments)
+                    {
+                        w.string({}, argument);
+                    }
+                    w.end_array();
                 }
-                w.end_array();
+                else
+                {
+                    w.null("command");
+                }
                 w.end_object();
             }
             w.end_object();

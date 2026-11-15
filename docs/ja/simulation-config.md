@@ -543,12 +543,13 @@ networks:
 | キー | 種類 | 値 | 省略したとき |
 |---|---|---|---|
 | `bitrate` | `can` | チャンネルに設定する速さ（bit/s。1 から 1000000 の整数）。つなぐ道具によっては、範囲がもっと狭くなります（Vector XL は 15000 から） | チャンネルの設定を変えません |
-| `ethertypes` | `ethernet` | ネットワークと外の間で通すフレームの EtherType。1 つ以上の一覧で、同じ値は 1 回だけ（`0x88b5`、`34997`、または引用符で囲んだ `"0x88b5"`。JSON には 16 進の数がありません） | `ethertypes` も `all_frames` もなければ、そのネットワークの participant が報告した MAC アドレスのフレームを通します |
+| `ethertypes` | `ethernet` | ネットワークと外の間で通すフレームの EtherType。1 つ以上の一覧で、同じ値は 1 回だけ（`0x88b5`、`34997`、または引用符で囲んだ `"0x88b5"`。JSON には 16 進の数がありません） | `ethertypes` も `all_frames` もなければ、そのネットワークの ECU が報告した MAC アドレスのフレームを通します |
 | `all_frames` | `ethernet` | `true` ですべてのフレームを通します。`ethertypes` とは一緒に書けません | `false` |
 
 そのほかのルールは次のとおりです。
 
 - `lin` のネットワークには `external` を書けません。LIN をつなぐブリッジがないので、SIL Kit の中だけで動きます。
+- 既定（`ethertypes` も `all_frames` もない）で実機の線に出るのは、ECU（`role` のない participant、または `role: ecu`）のフレームだけで、入ってくるのもその宛てのフレームだけです。`role: test` の participant のフレームも通すなら、`ethertypes` か `all_frames` を書きます。
 - ほかの種類のキー（`can` のネットワークの `ethertypes`、`ethernet` のネットワークの `bitrate`）は `unknown-key` の誤りです。
 - 機種（`variants`）では変えられません（`networks` のほかのキーと同じです）。
 
@@ -578,7 +579,7 @@ vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=
 
 | 種類 | 引数 |
 |---|---|
-| `ethernet` | `--network <network> --interface <target>` と、通すフレーム。`--all-frames`（`all_frames: true`）、`--ethertype`（`ethertypes`）、どちらもなければ `--src-mac` で、そのネットワークの participant が `--describe` に出力した MAC アドレス（出力しない participant や `describe: false` の participant がいると、誤り `connect-filter`） |
+| `ethernet` | `--network <network> --interface <target>` と、通すフレーム。`--all-frames`（`all_frames: true`）、`--ethertype`（`ethertypes`）、どちらもなければ `--src-mac` で、そのネットワークの ECU が `--describe` に出力した MAC アドレス。`role: test` と `role: bridge` の participant のものは入れません（出力しない ECU や `describe: false` の participant がいる、または出力した ECU が 1 つもないと、誤り `connect-filter`） |
 | `can` | `--network <network> --xl-target <virtual か physical> --xl-channel <n>` と、`bitrate` があれば `--bitrate <bitrate>` |
 
 指摘は [simulation-check.md](simulation-check.md#指摘のコード) の `connect-*` です。`check --json` は、ブリッジ、見つけた場所、コマンドラインを `networks[].outside` に書き、人向けの出力はネットワークの表に列 `outside` を足します。

@@ -87,8 +87,9 @@ std::string target_hint(NetworkKind kind)
 struct MacsOnNetwork
 {
     std::vector<eth::MacAddress> macs;  ///< in the file's order
-    std::vector<std::string> without;   ///< described, on the network, no MAC address
-    std::vector<std::string> unknown;   ///< describe: false (their networks are not known)
+    std::vector<std::string> without;   ///< ECUs described on the network without a MAC address
+    std::vector<std::string> unknown;   ///< ECUs with describe: false (their networks are not known)
+    bool tests = false;                 ///< a participant with role: test reports a MAC address on the network
     bool incomplete = false;            ///< an enabled participant has no description (its error says why)
 };
 
@@ -100,19 +101,33 @@ MacsOnNetwork macs_on(const SimulationConfig& config, const std::vector<Particip
     {
         const ParticipantConfig& p = config.participants[i];
         const ParticipantResult& result = results[i];
-        // A bridge carries the frames of others (connect-loop is about it).
+        // Only the frames of the ECUs go out by default: not those of a participant for testing,
+        // nor of a bridge, which carries the frames of others (connect-loop is about it).
         if (!p.enabled || p.role == ParticipantRole::Bridge)
         {
             continue;
         }
+        const bool test = p.role == ParticipantRole::Test;
         if (result.status == ParticipantStatus::NotChecked)
         {
-            out.unknown.push_back(p.name);
+            if (!test)
+            {
+                out.unknown.push_back(p.name);
+            }
             continue;
         }
         if (result.status != ParticipantStatus::Described || !result.ecu)
         {
             out.incomplete = true;
+            continue;
+        }
+        if (test)
+        {
+            for (const SeenNetwork& seen : SeenEcu(p, *result.ecu).seen_networks())
+            {
+                out.tests = out.tests || (seen.network.name == network &&
+                                          seen.network.kind() == NetworkKind::Ethernet && seen.network.mac);
+            }
             continue;
         }
         bool on = false;
@@ -137,8 +152,8 @@ MacsOnNetwork macs_on(const SimulationConfig& config, const std::vector<Particip
     return out;
 }
 
-/// The error connect-filter for `network`, or empty: the default filter (--src-mac with the
-/// participants' MAC addresses) lets the frames of every participant on it pass.
+/// The error connect-filter for `network`, or empty: the default filter (--src-mac with the ECUs'
+/// MAC addresses) lets the frames of every ECU on it pass.
 std::optional<std::string> filter_problem(const NetworkConfig& network, const MacsOnNetwork& macs)
 {
     std::vector<std::string> why;
@@ -155,7 +170,8 @@ std::optional<std::string> filter_problem(const NetworkConfig& network, const Ma
     }
     if (why.empty() && macs.macs.empty())
     {
-        why.emplace_back("no participant on it reports a MAC address");
+        why.emplace_back(macs.tests ? "no ECU on it reports a MAC address (only participants with role: test do)"
+                                    : "no ECU on it reports a MAC address");
     }
     if (why.empty())
     {
@@ -163,11 +179,11 @@ std::optional<std::string> filter_problem(const NetworkConfig& network, const Ma
     }
     return "network '" + network.name +
            "': without external.ethertypes or external.all_frames, the bridge of --connect passes only the frames of "
-           "the MAC addresses that the participants on the network report, and " +
+           "the MAC addresses that the ECUs on the network report (not those of participants with role: test), and " +
            and_list(why) +
-           ": write external: { ethertypes: [0x88b5] } (the EtherTypes the participants use) or external: { all_frames: "
-           "true } for the network" +
-           (macs.without.empty() ? std::string{} : ", or give each participant on it a MAC address (eth::ChannelOptions::mac)");
+           ": write external: { ethertypes: [0x88b5] } (the EtherTypes to pass, also for participants with role: test) "
+           "or external: { all_frames: true } for the network" +
+           (macs.without.empty() ? std::string{} : ", or give each ECU on it a MAC address (eth::ChannelOptions::mac)");
 }
 
 /// The error connect-tool-failed for one run of the bridge's --describe, or empty if the bridge
@@ -186,6 +202,17 @@ std::optional<std::string> describe_problem(const NetworkConfig& network, const 
     {
         return prefix + run.command_text + " did not end within " + std::to_string(run.timeout.count()) +
                " ms: the bridge answers --describe at once; " + fix;
+    }
+    if (const std::string dll = run.signal ? std::string{} : detail::dll_start_failure(*run.exit_code); !dll.empty())
+    {
+        // Windows did not start it; its standard error is empty.
+        return prefix + run.command_text + " " + dll + ": " +
+               (network.kind == NetworkKind::Can
+                    ? std::string("vehicle_sil_vector_xl_bridge needs vxlapi64.dll of the Vector XL Driver Library: "
+                                  "install the library, or put vxlapi64.dll next to the bridge; for another DLL, ") +
+                          detail::kDllFix
+                    : std::string(detail::kDllFix)) +
+               "; to check without the real bus on this computer, leave --connect " + network.name + " out";
     }
     if (*run.exit_code != 0 || run.signal)
     {
@@ -316,13 +343,17 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
         }
         std::vector<eth::MacAddress> macs;
+        // false: what passes is not known (a participant without a description), so there is no
+        // command to give the bridge, and its --describe is not run.
+        bool passKnown = true;
         const bool described = tools != nullptr && results.size() == config.participants.size();
         if (described && network->kind == NetworkKind::Ethernet &&
             !(network->external && (network->external->all_frames || !network->external->ethertypes.empty())))
         {
             MacsOnNetwork on = macs_on(config, results, network->name);
             // A participant without a description: its error comes first.
-            if (!on.incomplete)
+            passKnown = !on.incomplete;
+            if (passKnown)
             {
                 if (auto problem = filter_problem(*network, on))
                 {
@@ -331,7 +362,7 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
             }
             macs = std::move(on.macs);
         }
-        outside.arguments = bridge_arguments(*network, request->target, macs);
+        const std::vector<std::string> bridgeArguments = bridge_arguments(*network, request->target, macs);
         if (tools != nullptr && tools->find)
         {
             if (auto found = tools->find(outside.tool))
@@ -353,14 +384,18 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
                     "", network->name);
             }
         }
-        if (out.findings.size() == before && !outside.tool_path.empty() && tools->describe)
+        if (out.findings.size() == before && passKnown && !outside.tool_path.empty() && tools->describe)
         {
-            std::vector<std::string> arguments = outside.arguments;
+            std::vector<std::string> arguments = bridgeArguments;
             arguments.insert(arguments.end(), {"--describe", "--name", outside.participant});
             if (auto problem = describe_problem(*network, outside.participant, tools->describe(outside.tool_path, arguments)))
             {
                 add(Severity::Error, "connect-tool-failed", network->line, std::move(*problem), "", network->name);
             }
+        }
+        if (out.findings.size() == before && passKnown)
+        {
+            outside.arguments = bridgeArguments;
         }
         out.outside.push_back(std::move(outside));
     }

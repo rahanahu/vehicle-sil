@@ -109,14 +109,18 @@ std::vector<std::string> outside_names(const std::vector<NetworkOutside>& outsid
     return names;
 }
 
-/// Sets NetworkOutside::usable: no error is about connecting its network.
-void mark_usable(CheckReport& report)
+/// Empties NetworkOutside::arguments of a network that an error about connecting it is about: a
+/// command that a run cannot use is not shown.
+void drop_unusable_commands(CheckReport& report)
 {
     for (NetworkOutside& outside : report.outside)
     {
-        outside.usable = std::none_of(report.findings.begin(), report.findings.end(), [&](const Finding& f) {
-            return f.severity == Severity::Error && f.network == outside.network && f.code.rfind("connect-", 0) == 0;
-        });
+        if (std::any_of(report.findings.begin(), report.findings.end(), [&](const Finding& f) {
+                return f.severity == Severity::Error && f.network == outside.network && f.code.rfind("connect-", 0) == 0;
+            }))
+        {
+            outside.arguments.reset();
+        }
     }
 }
 
@@ -302,7 +306,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         ConnectCheck connect = check_connections(*report.config, {}, options.connect, nullptr);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
-        mark_usable(report);
+        drop_unusable_commands(report);
     }
     if (!report.config || options.file_only)
     {
@@ -391,7 +395,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     const std::vector<std::string> outside = outside_names(report.outside);
     auto compared = check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
-    mark_usable(report);
+    drop_unusable_commands(report);
     // A run at the file's speed with the file's time_step_ms: known before it runs.
     if (report.config->speed && report.config->time_step_ms)
     {
