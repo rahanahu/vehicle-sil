@@ -9,6 +9,9 @@ namespace {
 /// Npcap's device for the traffic of the PC with itself: not a network adapter.
 constexpr std::string_view kNpcapLoopbackName = "\\Device\\NPF_Loopback";
 
+/// How Windows begins the name of the adapter a Hyper-V virtual switch gives the PC itself.
+constexpr std::string_view kHyperVAdapterPrefix = "vEthernet (";
+
 std::string quoted(std::string_view name)
 {
     return "'" + std::string(name) + "'";
@@ -93,8 +96,22 @@ LinkError pcap_no_interface(PcapFlavor flavor, std::string_view wanted, std::spa
                        std::string(library_name(flavor)) + " offers here: " + joined(names) + " (run " + list_command(flavor) + ").";
     if (flavor == PcapFlavor::Npcap)
     {
-        // What was seen with the real Npcap: neither case has a message of its own.
-        what += " Npcap does not offer an adapter that is disabled: enable it in Windows.";
+        // What was seen with the real Npcap: none of these cases has a message of its own. A network
+        // adapter bound to a Hyper-V external switch loses its Npcap binding to the switch, whose
+        // own adapter, "vEthernet (<switch>)", is the one to open.
+        std::string switches;
+        for (const auto& name : names)
+        {
+            const std::string_view bare = name.starts_with('"') ? std::string_view(name).substr(1) : std::string_view(name);
+            if (bare.starts_with(kHyperVAdapterPrefix))
+            {
+                switches += (switches.empty() ? "" : " or ") + name;
+            }
+        }
+        what += " Npcap does not offer an adapter that is disabled: enable it in Windows. It does not offer one it is not "
+                "bound to either, such as the physical adapter of a Hyper-V external switch: give the switch's adapter, " +
+                (switches.empty() ? std::string("\"vEthernet (<switch>)\"") : "here probably " + switches) +
+                ", as --interface instead.";
         if (std::ranges::all_of(names, [](const std::string& name) { return name == kNpcapLoopbackName; }))
         {
             what += " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a "
