@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/ecu/describe.hpp"
 
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/ecu/describe_json.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 
 #include <array>
 #include <charconv>
@@ -26,8 +27,6 @@ namespace {
 }
 
 } // namespace
-
-namespace detail {
 
 const char* value_type_name(control::ValueType type)
 {
@@ -59,7 +58,7 @@ const char* causality_name(control::Causality causality)
     bad_value("control::Causality", static_cast<int>(causality));
 }
 
-void write_variables(JsonWriter& w, std::string_view key, const std::vector<control::VariableInfo>& variables)
+void write_variables(json::JsonWriter& w, std::string_view key, const std::vector<control::VariableInfo>& variables)
 {
     w.begin_array(key);
     for (const auto& variable : variables)
@@ -88,60 +87,13 @@ void write_variables(JsonWriter& w, std::string_view key, const std::vector<cont
     w.end_array();
 }
 
-std::size_t utf8_sequence_length(std::string_view text) noexcept
-{
-    if (text.empty())
-    {
-        return 0;
-    }
-    const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(text[i]); };
-    const unsigned char b0 = byte(0);
-    if (b0 < 0x80)
-    {
-        return 1;
-    }
-    std::size_t n = 0;
-    unsigned char low = 0x80; // the range of the second byte (no overlong form, no surrogate,
-    unsigned char high = 0xBF; // nothing above U+10FFFF)
-    if (b0 >= 0xC2 && b0 <= 0xDF)
-    {
-        n = 2;
-    }
-    else if (b0 >= 0xE0 && b0 <= 0xEF)
-    {
-        n = 3;
-        low = b0 == 0xE0 ? 0xA0 : 0x80;
-        high = b0 == 0xED ? 0x9F : 0xBF;
-    }
-    else if (b0 >= 0xF0 && b0 <= 0xF4)
-    {
-        n = 4;
-        low = b0 == 0xF0 ? 0x90 : 0x80;
-        high = b0 == 0xF4 ? 0x8F : 0xBF;
-    }
-    else
-    {
-        return 0;
-    }
-    if (text.size() < n || byte(1) < low || byte(1) > high)
-    {
-        return 0;
-    }
-    for (std::size_t i = 2; i < n; ++i)
-    {
-        if (byte(i) < 0x80 || byte(i) > 0xBF)
-        {
-            return 0;
-        }
-    }
-    return n;
-}
+namespace detail {
 
 bool is_utf8(std::string_view text) noexcept
 {
     for (std::size_t i = 0; i < text.size();)
     {
-        const std::size_t n = utf8_sequence_length(text.substr(i));
+        const std::size_t n = json::utf8_sequence_length(text.substr(i));
         if (n == 0)
         {
             return false;
@@ -201,7 +153,7 @@ std::optional<NetworkUse> network_use_named(std::string_view name) noexcept
 
 std::string to_json(const EcuDescription& description)
 {
-    detail::JsonWriter w;
+    json::JsonWriter w;
     w.begin_object();
     w.integer("vehicle_sil_ecu", kEcuDescriptionFormat);
     w.string("vehicle_sil", version());
@@ -228,7 +180,7 @@ std::string to_json(const EcuDescription& description)
             w.integer("address", node.address);
             if (node.name)
             {
-                w.string("j1939_name", detail::hex64(node.name->value()));
+                w.string("j1939_name", json::hex64(node.name->value()));
             }
             else
             {
@@ -249,7 +201,7 @@ std::string to_json(const EcuDescription& description)
         w.end_object();
     }
     w.end_array();
-    detail::write_variables(w, "variables", description.variables);
+    write_variables(w, "variables", description.variables);
     if (description.control)
     {
         w.begin_object("control");

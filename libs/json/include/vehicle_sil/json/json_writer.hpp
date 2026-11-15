@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// The JSON writer of to_json() (vehicle_sil/ecu/describe.hpp), shared with the vehicle-sil tools
-// that write JSON in the same layout. Not part of the API.
+// The JSON writer of vehicle-sil's libraries and tools (vehicle_sil::json, header only, no other
+// vehicle-sil library): the output of an ECU's --describe (vehicle_sil/ecu/describe.hpp:
+// to_json()) and the JSON that vehicle_sil_launch writes, in one layout. Not part of the API.
 #pragma once
-
-#include "vehicle_sil/ecu/describe.hpp"
 
 #include <array>
 #include <charconv>
@@ -16,9 +15,60 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
-#include <vector>
 
-namespace vehicle_sil::detail {
+namespace vehicle_sil::json {
+
+/// The length of the valid UTF-8 sequence at the start of `text` (1 to 4), or 0 if it starts
+/// with none (an empty text, a stray or missing continuation byte, an overlong form, a surrogate,
+/// a value above U+10FFFF).
+[[nodiscard]] inline std::size_t utf8_sequence_length(std::string_view text) noexcept
+{
+    if (text.empty())
+    {
+        return 0;
+    }
+    const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(text[i]); };
+    const unsigned char b0 = byte(0);
+    if (b0 < 0x80)
+    {
+        return 1;
+    }
+    std::size_t n = 0;
+    unsigned char low = 0x80; // the range of the second byte (no overlong form, no surrogate,
+    unsigned char high = 0xBF; // nothing above U+10FFFF)
+    if (b0 >= 0xC2 && b0 <= 0xDF)
+    {
+        n = 2;
+    }
+    else if (b0 >= 0xE0 && b0 <= 0xEF)
+    {
+        n = 3;
+        low = b0 == 0xE0 ? 0xA0 : 0x80;
+        high = b0 == 0xED ? 0x9F : 0xBF;
+    }
+    else if (b0 >= 0xF0 && b0 <= 0xF4)
+    {
+        n = 4;
+        low = b0 == 0xF0 ? 0x90 : 0x80;
+        high = b0 == 0xF4 ? 0x8F : 0xBF;
+    }
+    else
+    {
+        return 0;
+    }
+    if (text.size() < n || byte(1) < low || byte(1) > high)
+    {
+        return 0;
+    }
+    for (std::size_t i = 2; i < n; ++i)
+    {
+        if (byte(i) < 0x80 || byte(i) > 0xBF)
+        {
+            return 0;
+        }
+    }
+    return n;
+}
 
 /// Appends JSON text with a fixed layout: one member or element per line, two spaces per level.
 /// An empty key starts an element of an array; any other key a member of an object. Strings:
@@ -207,14 +257,6 @@ private:
     int one_line_ = 0; ///< > 0: in an array on one line, this deep
 };
 
-/// The names to_json() uses: "bool", "integer", "real", "enum"; "input", "output", "parameter".
-/// std::logic_error for a value outside the enumerators.
-[[nodiscard]] const char* value_type_name(control::ValueType type);
-[[nodiscard]] const char* causality_name(control::Causality causality);
-
-/// The array `key` of to_json() ("variables"): each variable with its keys in to_json()'s order.
-void write_variables(JsonWriter& w, std::string_view key, const std::vector<control::VariableInfo>& variables);
-
 /// "0x" and 16 upper-case hexadecimal digits (a J1939 NAME in JSON).
 [[nodiscard]] inline std::string hex64(std::uint64_t value)
 {
@@ -227,4 +269,4 @@ void write_variables(JsonWriter& w, std::string_view key, const std::vector<cont
     return out;
 }
 
-} // namespace vehicle_sil::detail
+} // namespace vehicle_sil::json

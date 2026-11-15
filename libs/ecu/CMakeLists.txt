@@ -12,6 +12,8 @@ set_target_properties(vehicle_sil_ecu PROPERTIES EXPORT_NAME ecu)
 target_include_directories(vehicle_sil_ecu PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_ecu PUBLIC vehicle_sil::can vehicle_sil::j1939 vehicle_sil::lin vehicle_sil::eth
                                              vehicle_sil::control)
+# The JSON writer of to_json(); public: describe_json.hpp takes a json::JsonWriter.
+target_link_libraries(vehicle_sil_ecu PUBLIC vehicle_sil::json)
 # vehicle_sil::version(): the version of the vehicle_sil project, also as a subproject.
 target_compile_definitions(vehicle_sil_ecu PRIVATE VEHICLE_SIL_VERSION="${vehicle_sil_VERSION}")
 vehicle_sil_target_defaults(vehicle_sil_ecu)

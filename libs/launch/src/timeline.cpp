@@ -4,7 +4,8 @@
 #include "check_format.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/ecu/describe_json.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 
 #include <algorithm>
@@ -16,7 +17,7 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-using vehicle_sil::detail::JsonWriter;
+using vehicle_sil::json::JsonWriter;
 
 constexpr double kNanosPerMilli = 1'000'000.0;
 
@@ -125,10 +126,10 @@ void write_variables(JsonWriter& w, const TimelineInput& input)
         w.begin_object();
         w.string("name", v.text);
         w.string("participant", scenario.participants[v.participant].name);
-        w.string("type", vehicle_sil::detail::value_type_name(v.type));
+        w.string("type", vehicle_sil::value_type_name(v.type));
         if (info != nullptr)
         {
-            w.string("causality", vehicle_sil::detail::causality_name(info->causality));
+            w.string("causality", vehicle_sil::causality_name(info->causality));
             w.string("unit", info->unit);
             w.real("min", info->min);
             w.real("max", info->max);

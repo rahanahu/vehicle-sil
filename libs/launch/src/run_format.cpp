@@ -393,14 +393,14 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
 
 std::string format_run_json(const RunReport& report)
 {
-    vehicle_sil::detail::JsonWriter w;
+    vehicle_sil::json::JsonWriter w;
     detail::write_run_json(w, {}, report);
     std::string out = w.take();
     out += '\n';
     return out;
 }
 
-void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const RunReport& report)
+void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const RunReport& report)
 {
     w.begin_object(key);
     w.integer("vehicle_sil_run", kRunFormat);
@@ -621,7 +621,7 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
     w.end_object();
 }
 
-void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, const ScenarioStepRun& step)
+void detail::write_scenario_step_members(vehicle_sil::json::JsonWriter& w, const ScenarioStepRun& step)
 {
     const auto time = [&w](std::string_view key, const std::optional<SimTime>& t) {
         w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(kNanosPerMilli)) : std::nullopt);
@@ -651,7 +651,7 @@ void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, con
     }
 }
 
-void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,
+void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,
                                  const std::string& timeline)
 {
     w.begin_object(key);

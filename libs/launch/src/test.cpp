@@ -677,7 +677,7 @@ std::string format_test_text(const TestReport& report)
 
 std::string format_test_json(const TestReport& report)
 {
-    vehicle_sil::detail::JsonWriter w;
+    vehicle_sil::json::JsonWriter w;
     w.begin_object();
     w.integer("vehicle_sil_test", kTestFormat);
     w.string("vehicle_sil", version());

@@ -694,6 +694,7 @@ Main classes and functions:
 |---|---|
 | `Ecu` | `ecu/ecu.hpp` |
 | `EcuDescription`, `to_json()` | `ecu/describe.hpp` |
+| The names and the `variables` array of `to_json()`, for a tool that reads or repeats them (`value_type_name()`, `causality_name()`, `write_variables()`) | `ecu/describe_json.hpp` |
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
 | The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
@@ -702,6 +703,17 @@ Main classes and functions:
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
 - `ctest -R`: `^ecu\.`, `^simulation\.disconnect`
+
+### `libs/json`
+
+The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_launch` share (target `vehicle_sil::json`, header only).
+
+| Name | Location |
+|---|---|
+| `JsonWriter`, `hex64()` | `vehicle_sil/json/json_writer.hpp` |
+
+- Tests: through the JSON of `--describe` (`tests/ecu`) and of the launcher (`tests/launch`)
+- `ctest -R`: `^ecu\.`, `^launch`
 
 ### `libs/spy`
 
@@ -1235,7 +1247,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-The targets that do not use SIL Kit are `sim_base`, `step`, `can`, `eth`, `lin`, `control`, `j1939` and its protocol parts, `j1939_codec`, `ecu`, `local`, `testkit`, `spy`, `process`, `eth_link` and `signal`. `signal` is header-only and uses no other vehicle-sil library either (it is not in the diagram).
+The targets that do not use SIL Kit are `sim_base`, `step`, `can`, `eth`, `lin`, `control`, `j1939` and its protocol parts, `j1939_codec`, `ecu`, `local`, `testkit`, `spy`, `process`, `eth_link`, `signal` and `json`. `signal` and `json` are header-only and use no other vehicle-sil library either (they are not in the diagram).
 
 ### Foundation and SIL Kit implementations
 
@@ -1293,6 +1305,7 @@ flowchart TD
     ecu --> lin
     ecu --> eth
     ecu --> control
+    ecu --> json
     control --> sim_base
     local --> can
     local --> j1939
@@ -1344,6 +1357,7 @@ flowchart TD
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
+    launch -.-> json
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1354,7 +1368,7 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
+- `launch`, `ecu` and `json`: the launcher writes its JSON with the same writer as the `--describe` output, `vehicle_sil/json/json_writer.hpp` (`json`), and repeats the variables of `--describe` with `vehicle_sil/ecu/describe_json.hpp`. `launch` includes no internal header of `ecu`.
 
 ### Vector XL CAN Bridge
 
@@ -1875,7 +1889,7 @@ Where to change:
 | The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
 | Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline.cpp` |
-| One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
+| One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/json/include/vehicle_sil/json/json_writer.hpp` |
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |

@@ -8,7 +8,7 @@
 #include "check_words.hpp"
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
-#include "vehicle_sil/ecu/detail/json_writer.hpp"
+#include "vehicle_sil/json/json_writer.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -777,8 +777,8 @@ void note_changed_nodes(const Rules& rules, const ParticipantConfig& p, const st
                 continue;
             }
             const bool any = coded.address == j1939::kNullAddress;
-            const std::string names = renamed ? vehicle_sil::detail::hex64(now.name->value()) + " (" +
-                                                    vehicle_sil::detail::hex64(coded.name->value()) + " in its code)"
+            const std::string names = renamed ? vehicle_sil::json::hex64(now.name->value()) + " (" +
+                                                    vehicle_sil::json::hex64(coded.name->value()) + " in its code)"
                                               : std::string{};
             std::string clause = first ? "on '" + n.network.name + "', " : std::string{};
             if (moved)
@@ -805,7 +805,7 @@ void note_changed_nodes(const Rules& rules, const ParticipantConfig& p, const st
             }
             if (renamed)
             {
-                oldNames.push_back(vehicle_sil::detail::hex64(coded.name->value()));
+                oldNames.push_back(vehicle_sil::json::hex64(coded.name->value()));
             }
         }
     }
@@ -1316,7 +1316,7 @@ void check_can_network(const Rules& rules, const NetworkConfig& network, const s
                              ", which none of them keeps (an equal NAME loses the address claim)"
                        : std::string{};
         rules.add(Severity::Error, "name-conflict", network.line,
-            prefix + and_list(labels) + " have the same J1939 NAME " + vehicle_sil::detail::hex64(value) + address +
+            prefix + and_list(labels) + " have the same J1939 NAME " + vehicle_sil::json::hex64(value) + address +
                 ": each node needs its own NAME; " + conflict_fix(rules, network, nodes, same, oneAddress, true, suggested),
             "", network.name);
     }
