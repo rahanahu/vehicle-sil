@@ -474,7 +474,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "manual-participants",
     "scenario-wave",
     "scenario-motion-expect",
-    "scenario-points-file"
+    "scenario-points-file",
+    "timeline"
   ]
 }
 ```
@@ -511,6 +512,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-wave` | シナリオの手順 `wave`（[scenario.md](scenario.md) の「波形で動かす（`wave`）」） |
 | `scenario-motion-expect` | シナリオの `ramp` と `wave` の横に書く `expect`（[scenario.md](scenario.md) の「動かしている間ずっと確認する」） |
 | `scenario-points-file` | シナリオの `wave` の `points` を CSV ファイルから読む（`points: { file, value, time, time_unit }`。[scenario.md](scenario.md) の「点を CSV ファイルから読む」） |
+| `timeline` | `run --scenario --timeline <file>`: シナリオの実行を時間の軸で記録したファイル（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -525,6 +527,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `scenario-wave` | その手順の `undersampled`、指摘 `scenario-wave-*`、結果とイベントの手順の `kind` の `"wave"` |
 | `scenario-motion-expect` | 結果とイベントの手順の `expect_skipped` |
 | `scenario-points-file` | 指摘 `scenario-points-file` |
+| `timeline` | 結果の `scenario.timeline`、指摘 `timeline-write` と `timeline-limit` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

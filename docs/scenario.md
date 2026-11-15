@@ -276,6 +276,7 @@ A `set` is a write stamped with time T. Each ECU applies it at the start of its 
 | Another writer (such as the ECU itself) changed the value after the scenario wrote it | The start value does not change. |
 | When the result of a write is checked | At the controller step after the ECU step that applies it. |
 | A write that was not applied (the ECU's setter rejected it, the target is not connected, and so on) | The step fails. |
+| One `set` with several variables, and the ECU's setter rejects one of them | The step fails. **The variables before the rejected one in that `set` are already written and stay written.** The rejected one and the ones after it are not written. The message names them, and the timeline file marks each write (see "File format" in [simulation-run.md](simulation-run.md#file-format)). |
 
 A write is never too late for the ECU step at its time. The launcher holds each controller step with the time gate, and lets time advance only after it has handed the ECUs every write up to the next time step. It hands over the writes for time 0 while all participants wait before the first simulation step.
 
@@ -797,6 +798,8 @@ The check lists every error; it does not stop at the first one. The exit code is
 
 ## Output
 
+With `--timeline <file>`, `run --scenario` also writes the values that the scenario wrote and saw to a JSON file, in virtual-time order: the interval each step watched, the values at a failure, and the value series (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
 ### Human-readable output
 
 | Part | Content |
@@ -983,6 +986,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario-wave` | The `wave` step | `wave` is an unknown-key error. |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` | An error that the step has 2 actions. |
 | `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |
+| `timeline` | `run --scenario --timeline <file>` | `--timeline` is a usage error. |
 | `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.

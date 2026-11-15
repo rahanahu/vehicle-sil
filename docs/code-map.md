@@ -780,6 +780,7 @@ Public headers:
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
+| `TimelineRecord`, the record of `run --timeline`; `format_timeline_json()`, which writes the file | `launch/timeline.hpp` |
 
 Implementation:
 
@@ -1001,14 +1002,15 @@ All of them are registered only in a build with the Control Server, and only whe
 |---|---|
 | `schema/simulation.schema.json` | Configuration file |
 | `schema/scenario.schema.json` | Scenario |
+| `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
-The schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
+The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
 
 | Where the copies are | Details |
 |---|---|
 | `template/schema/` | Copies of the 3 schemas |
-| `schema/` in the tools archive | The same 3 (`template/get_tools.py` copies them to the project's `schema/`) |
+| `schema/` in the tools archive | The same 3 and `timeline.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
 | Build directory | Copied at configure time when the examples are built (top-level `CMakeLists.txt`) |
 
 Line 1 of an example YAML file copied to the build directory points to the schema copied there.
@@ -1025,6 +1027,7 @@ What `test_schemas.py` checks:
 - The template's copies are identical
 - Line 1 of the example and template YAML files points to a schema
 - A schema copy exists where line 1 of an example copied to the build directory points
+- The reference timeline files (`tests/launch/timeline/`) and the timeline file of an example run pass the timeline schema, and malformed files fail it
 
 This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `mingw-w64-ucrt-x86_64-python-jsonschema` of MSYS2). Without them, configure prints the reason and does not register the test. CI confirms that `schema.files_and_launcher` is registered in `linux-gcc-debug`.
 
@@ -1407,6 +1410,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
 | Launcher | `variants`, `params`, `--variant`, `--param`, `only` | [Variants and scenario parameters](#variants-and-scenario-parameters) |
 | Launcher | `run --scenario`, `check --scenario`, waveforms | [Scenarios](#scenarios) |
+| Launcher | `run --scenario --timeline` | [Timeline files](#timeline-files) |
 | Launcher | `vehicle_sil_launch test` | [Running several scenarios](#running-several-scenarios) |
 | Launcher | `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` | [Launcher limits](#launcher-limits) |
 | ECU | The `--describe` JSON | [The `--describe` JSON](#the---describe-json) |
@@ -1737,6 +1741,43 @@ Tests:
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
+
+### Timeline files
+
+`run --scenario --timeline` (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
+Where to change:
+
+| What | Location |
+|---|---|
+| The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| The file format | `format_timeline_json()` in `timeline.cpp` |
+| One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
+| Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
+| The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
+| The argument | `tools/launch/main.cpp` |
+
+What to update together:
+
+- `schema/timeline.schema.json`
+- "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)
+- The reference files `tests/launch/timeline/*.timeline.json`. Do not edit them by hand; the `README.md` in that directory says how to write them again and which keys are not compared.
+
+Rules:
+
+- Recording happens only on the scenario thread (and in `begin()` on the thread of the start window). Nothing is recorded inside the Hub's tap.
+- Without a recorder (no `--timeline`), the engine and the output of `run` do not change at all.
+- The file holds only what virtual time decides (no real time, process IDs or lateness counts).
+- Keys and values are only ever added, and readers must be able to ignore what they do not know (the schema does not close values with `enum`).
+- The reference scenarios use no `sine`, `chirp` or `lag`. Their last bit can differ between C libraries, so they cannot be compared byte for byte.
+
+Tests:
+
+- `launch.timeline_*`: independence from the time step, steps that change with the time step, the reference files, the limits, how samples are counted, which writes of a failed `set` were applied and which point each is, a run that ended partway
+- `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
+- `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
+- `schema.files_and_launcher`
 
 ### Running several scenarios
 

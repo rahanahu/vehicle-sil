@@ -681,7 +681,7 @@ vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <fil
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+                       [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
                        [--] <file>
@@ -711,6 +711,7 @@ vehicle_sil_launch version [--json]
 | `--scenario <file>` | | シナリオのファイルです（[scenario.md](scenario.md)）。 |
 | `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
+| `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
 | `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
 | `--speed <speed>` | `run` だけ | 設定ファイルの `speed` を上書きします（数か `max`。[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。 |
@@ -742,6 +743,7 @@ vehicle_sil_launch version [--json]
 | `--variant` | `test` では、実行する機種を絞ります（繰り返せる。なければ全部の機種）。 |
 | `--param` | 繰り返せます（同じ名前は 1 回だけ）。 |
 | `--param` | `test` では、その名前のパラメーターがあるシナリオにだけ反映されます（どのシナリオにもなければ引数のエラー）。 |
+| `--timeline` | 開けなければ、何も起動せずに終了コード 3 です。 |
 | `--scenarios` | ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）か、ファイル（書いた順に）です。 |
 | `--scenarios` | 後ろにいくつでも並べられ、繰り返せます。 |
 | `--scenarios` | 設定ファイルは、`--scenarios` より前か、`--` の後に書きます。 |

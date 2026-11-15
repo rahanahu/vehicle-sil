@@ -780,6 +780,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
+| `run --timeline` の記録 `TimelineRecord` と、ファイルを作る `format_timeline_json()` | `launch/timeline.hpp` |
 
 実装:
 
@@ -1001,14 +1002,15 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `schema/simulation.schema.json` | 設定ファイル |
 | `schema/scenario.schema.json` | シナリオ |
+| `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
-スキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と `scenario.cpp` です。
+設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と `scenario.cpp` です。
 
 | コピーの場所 | 内容 |
 |---|---|
 | `template/schema/` | 3 つのスキーマのコピー |
-| ツールのアーカイブの `schema/` | 同じ 3 つ（`template/get_tools.py` が、プロジェクトの `schema/` にコピーする） |
+| ツールのアーカイブの `schema/` | 同じ 3 つと `timeline.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
 | ビルドのディレクトリ | 例をビルドするとき、configure のときにコピーする（最上位の `CMakeLists.txt`） |
 
 ビルドのディレクトリにコピーされた例の YAML の 1 行目は、そこにコピーされたスキーマを指します。
@@ -1025,6 +1027,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - テンプレートのコピーが同じである
 - 例とテンプレートの YAML の 1 行目がスキーマを指す
 - ビルドのディレクトリにコピーされた例の 1 行目の先に、スキーマのコピーがある
+- 時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）と例の実行の出力がスキーマに通り、エラーのある形が落ちる
 
 このテストには、PyYAML と jsonschema のある Python が必要です（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`）。なければ、configure のときに理由を表示して登録しません。CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確認します。
 
@@ -1407,6 +1410,7 @@ flowchart TD
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
 | ランチャー | `variants`、`params`、`--variant`、`--param`、`only` | [機種とシナリオのパラメーター](#機種とシナリオのパラメーター) |
 | ランチャー | `run --scenario`、`check --scenario`、波形 | [シナリオ](#シナリオ) |
+| ランチャー | `run --scenario --timeline` | [時間の軸のファイル](#時間の軸のファイル) |
 | ランチャー | `vehicle_sil_launch test` | [シナリオをまとめて実行する](#シナリオをまとめて実行する) |
 | ランチャー | `kMaxMillis`、`kMinSpeed`、`kMaxSpeed` | [ランチャーの上限](#ランチャーの上限) |
 | ECU | `--describe` の JSON | [`--describe` の JSON](#--describe-の-json) |
@@ -1737,6 +1741,43 @@ flowchart TD
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
+
+### 時間の軸のファイル
+
+`run --scenario --timeline` です（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。
+
+変える場所:
+
+| 内容 | 場所 |
+|---|---|
+| 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
+| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
+| ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
+| 1 行に 1 点 | `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
+| ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
+| 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
+| 引数 | `tools/launch/main.cpp` |
+
+合わせて直すもの:
+
+- `schema/timeline.schema.json`
+- [simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」
+- 基準のファイル `tests/launch/timeline/*.timeline.json`。手で直しません。作り直し方と比べないキーは、そのディレクトリの `README.md` にあります。
+
+守ること:
+
+- 記録は、シナリオのスレッド（と、始まる前の窓のスレッドの `begin()`）でだけ行います。Hub の tap の中では何もしません。
+- 記録の口がない（`--timeline` なし）とき、エンジンの動きと `run` の出力は 1 つも変わりません。
+- ファイルに入れるのは、仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数を入れません）。
+- キーと値は足すだけにし、読む側が知らないものを無視できる形を保ちます（スキーマは値を `enum` で閉じません）。
+- 基準のシナリオには `sine`、`chirp`、`lag` を入れません。最後のビットが C ライブラリで違いうるので、バイト単位で比べられません。
+
+テスト:
+
+- `launch.timeline_*`: タイムステップによらないこと、タイムステップで変わる手順、基準のファイル、上限、サンプルの数え方、失敗した `set` のどの書き込みが入ったかと、それぞれの点、途中で終わった実行
+- `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
+- `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
+- `schema.files_and_launcher`
 
 ### シナリオをまとめて実行する
 

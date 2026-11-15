@@ -418,7 +418,7 @@ expect(done.target("Engine").status == "applied" and done.target("Engine").appli
 | `applied` | 反映されました（`applied_at` が、反映されたステップの時刻です）。 |
 | `late` | 指定した時刻のステップに間に合いませんでした。 |
 | `invalid` | 名前、型、範囲、書き込めるかの検査で拒否されました（接続していない宛先への書き込みも、この値です）。 |
-| `rejected` | ECU の setter が拒否しました。 |
+| `rejected` | ECU の setter が拒否しました。理由は、その変数の名前で始まります。いくつもの変数の書き込みでは、それより前の変数は、もう反映されています（[control-api.md](../control-api.md#書き込みが反映される時点) の「書き込みが反映される時点」）。 |
 | `unknown` | 反映されたかどうかが、わかりません。 |
 
 待つときのルールは、次の 3 つです。

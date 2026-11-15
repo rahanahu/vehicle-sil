@@ -1,0 +1,234 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "steps that wait, passing",
+    "status": "passed",
+    "over_at_ms": 150,
+    "recorded_to_ms": 140
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Body.body.speed",
+      "participant": "Body",
+      "type": "real",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    },
+    {
+      "name": "Body.pulse",
+      "participant": "Body",
+      "type": "bool",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 10",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "expect",
+      "text": "expect Body.body.speed ge 100 (within 200 ms)",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 10,
+      "end_ms": 30,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "once",
+        "from_ms": 0,
+        "until_ms": 200,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    },
+    {
+      "index": 3,
+      "line": 10,
+      "kind": "ramp",
+      "text": "ramp Body.level to 20 over 50 ms",
+      "status": "passed",
+      "start_ms": 30,
+      "at_ms": 80,
+      "end_ms": 80,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 4,
+      "line": 11,
+      "kind": "wait_until",
+      "text": "wait_until Body.body.speed near 200 (tolerance 0.5); Body.pulse eq false (timeout 500 ms)",
+      "status": "passed",
+      "start_ms": 80,
+      "at_ms": 80,
+      "end_ms": 100,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "once",
+        "from_ms": 80,
+        "until_ms": 580,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "near",
+                "value": 200,
+                "tolerance": 0.5
+              }
+            ]
+          },
+          {
+            "variable": "Body.pulse",
+            "compare": [
+              {
+                "op": "eq",
+                "value": false
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    },
+    {
+      "index": 5,
+      "line": 13,
+      "kind": "expect",
+      "text": "expect Body.body.speed eq 200 (for 30 ms)",
+      "status": "passed",
+      "start_ms": 110,
+      "at_ms": 140,
+      "end_ms": 140,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "always",
+        "from_ms": 110,
+        "until_ms": 140,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 200
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 10],
+        [30, 10],
+        [40, 12],
+        [50, 14],
+        [60, 16],
+        [70, 18],
+        [80, 20]
+      ]
+    },
+    {
+      "variable": "Body.body.speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 15,
+      "first_ms": 0,
+      "last_ms": 140,
+      "points": [
+        [0, 50],
+        [10, 100],
+        [40, 120],
+        [50, 140],
+        [60, 160],
+        [70, 180],
+        [80, 200]
+      ]
+    },
+    {
+      "variable": "Body.pulse",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 15,
+      "first_ms": 0,
+      "last_ms": 140,
+      "points": [
+        [0, false]
+      ]
+    }
+  ],
+  "findings": [],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

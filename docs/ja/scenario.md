@@ -276,6 +276,7 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 | シナリオが書いた後に、ほかの書き手（ECU 自身など）が値を変えた | 始まりの値は変わりません。 |
 | 書き込みの結果を確認する時点 | 反映する ECU のステップの、次の controller のステップです。 |
 | 反映されなかった書き込み（ECU の setter が拒否した、相手が接続していない、など） | その手順の失敗です。 |
+| いくつもの変数を書く 1 つの `set` で、ECU の setter がそのうちの 1 つを拒否した | その手順の失敗です。**その `set` の中で、拒否された変数より前の変数は、もう書き込まれていて、そのまま残ります。** 拒否された変数とその後ろは書き込まれていません。メッセージがその変数を挙げ、時間の軸のファイルは書き込みごとに印を付けます（[simulation-run.md](simulation-run.md#ファイルの形) の「ファイルの形」）。 |
 
 書き込みが、書いた時刻のステップに間に合わないことはありません。ランチャーは、時間ゲートで controller の各ステップを止め、次のタイムステップまでの書き込みを ECU に渡し終えてから進めます。時刻 0 の分は、全員が最初のステップの前で待っている間に渡します。
 
@@ -797,6 +798,8 @@ failed: 5 errors, 0 warnings, 0 notes
 
 ## 出力
 
+`run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルにも書きます（手順の見張りの区間、失敗の値、値の列。[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。
+
 ### 人向けの出力
 
 | 部分 | 内容 |
@@ -983,6 +986,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-wave` | 手順 `wave` | `wave` は、知らないキーのエラーです。 |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` | 手順が 2 つの動作をする、というエラーです。 |
 | `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |
+| `timeline` | `run --scenario --timeline <file>` | `--timeline` は引数のエラーです。 |
 | `scenario-control` | `--scenario` と `--control` を一緒に使う | 一緒に使えません（Control Server を持つビルドだけにあります）。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。

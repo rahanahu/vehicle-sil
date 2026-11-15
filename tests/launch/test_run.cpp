@@ -149,6 +149,47 @@ TEST_CASE(the_participant_that_failed_the_run_is_named_with_how_its_process_ende
 #endif
 }
 
+TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
+{
+    // A record of one sampled variable that keeps 2 points, given 5 samples of 5 values.
+    Scenario scenario;
+    scenario.variables.resize(1);
+    scenario.steps.resize(1);
+    scenario.steps[0].conditions.resize(1);
+    const auto record = [&scenario](int samples) {
+        auto out = std::make_shared<TimelineRecord>(scenario, TimelineLimits{2, 100});
+        for (int i = 0; i < samples; ++i)
+        {
+            out->sampled(0, SimTime{std::chrono::milliseconds(10 * i)}, control::Value{std::int64_t{i}});
+        }
+        out->close(SimTime{std::chrono::milliseconds(100)});
+        return out;
+    };
+    RunOutcome o = passed_run();
+    o.timeline = "out/t.json";
+    o.timeline_record = record(5);
+    check_text(lines(assess_run(o)),
+               "N 0 timeline-limit: the timeline out/t.json does not have the whole run: 3 older points were dropped at its "
+               "limits (the newest points, up to the end of the scenario, are all there). limits.dropped in the file says of "
+               "which series and of which time; for a file with every point, record a shorter scenario\n");
+    o.timeline_record = record(3);
+    CHECK(lines(assess_run(o)).find("1 older point was dropped") != std::string::npos);
+    // Nothing dropped, and a record without a file (no --timeline): nothing is said.
+    o.timeline_record = record(2);
+    check_text(lines(assess_run(o)), "");
+    o.timeline_record = record(5);
+    o.timeline.clear();
+    check_text(lines(assess_run(o)), "");
+    // The file could not be written: an error, whatever the scenario made.
+    o.timeline = "out/t.json";
+    o.timeline_record = record(2);
+    o.timeline_error = "writing 10 bytes to it failed (is the disk full?)";
+    check_text(lines(assess_run(o)),
+               "E 0 timeline-write: the timeline out/t.json could not be written: writing 10 bytes to it failed (is the disk "
+               "full?); what is in the file is not complete: do not use it. The scenario's result is not changed by this. Make "
+               "room on the disk, or name another file with --timeline, and run again\n");
+}
+
 TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_end)
 {
     // What the launcher knows when the simulation is over, with Engine and Brake still running...

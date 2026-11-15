@@ -1,0 +1,416 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "set, ramp and waves, with an expect beside",
+    "status": "passed",
+    "over_at_ms": 350,
+    "recorded_to_ms": 340
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Door.lamp",
+      "participant": "Door",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Body.body.speed",
+      "participant": "Body",
+      "type": "real",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    },
+    {
+      "name": "Door.ratio",
+      "participant": "Door",
+      "type": "real",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 1,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Door.level",
+      "participant": "Door",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Door.mode",
+      "participant": "Door",
+      "type": "enum",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [
+        {
+          "name": "off",
+          "value": 0
+        },
+        {
+          "name": "on",
+          "value": 1
+        },
+        {
+          "name": "auto",
+          "value": 2
+        }
+      ],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 20; Door.lamp = true",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "expect",
+      "text": "expect Body.body.speed eq 150",
+      "status": "passed",
+      "start_ms": 20,
+      "at_ms": 20,
+      "end_ms": 20,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "at",
+        "from_ms": 20,
+        "until_ms": null,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 150
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    },
+    {
+      "index": 3,
+      "line": 10,
+      "kind": "ramp",
+      "text": "ramp Body.level to 40 over 100 ms; Door.ratio from 0 to 1 over 50 ms, expecting Body.body.speed le 400; Body.level ge 20",
+      "status": "passed",
+      "start_ms": 20,
+      "at_ms": 120,
+      "end_ms": 120,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "during",
+        "from_ms": 20,
+        "until_ms": 120,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "le",
+                "value": 400
+              }
+            ]
+          },
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 20
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    },
+    {
+      "index": 4,
+      "line": 12,
+      "kind": "wave",
+      "text": "wave Door.level triangle amplitude 5 period 80 ms around 50 for 100 ms; Body.level square low 38 high 40 period 40 ms for 100 ms",
+      "status": "passed",
+      "start_ms": 120,
+      "at_ms": 220,
+      "end_ms": 220,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 5,
+      "line": 14,
+      "kind": "wave",
+      "text": "wave Door.mode points (3, hold) over 60 ms",
+      "status": "passed",
+      "start_ms": 220,
+      "at_ms": 280,
+      "end_ms": 280,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 6,
+      "line": 15,
+      "kind": "expect",
+      "text": "expect Body.body.speed ge 380; Door.mode eq on (1) (for 50 ms)",
+      "status": "passed",
+      "start_ms": 290,
+      "at_ms": 340,
+      "end_ms": 340,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "always",
+        "from_ms": 290,
+        "until_ms": 340,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 380
+              }
+            ]
+          },
+          {
+            "variable": "Door.mode",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 20],
+        [20, 20],
+        [30, 22],
+        [40, 24],
+        [50, 26],
+        [60, 28],
+        [70, 30],
+        [80, 32],
+        [90, 34],
+        [100, 36],
+        [110, 38],
+        [120, 40],
+        [120, 40],
+        [130, 40],
+        [140, 38],
+        [150, 38],
+        [160, 40],
+        [170, 40],
+        [180, 38],
+        [190, 38],
+        [200, 40],
+        [210, 40],
+        [220, 38]
+      ]
+    },
+    {
+      "variable": "Body.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 35,
+      "first_ms": 0,
+      "last_ms": 340,
+      "points": [
+        [0, 20],
+        [30, 22],
+        [40, 24],
+        [50, 26],
+        [60, 28],
+        [70, 30],
+        [80, 32],
+        [90, 34],
+        [100, 36],
+        [110, 38],
+        [120, 40],
+        [140, 38],
+        [160, 40],
+        [180, 38],
+        [200, 40],
+        [220, 38]
+      ]
+    },
+    {
+      "variable": "Door.lamp",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, true]
+      ]
+    },
+    {
+      "variable": "Body.body.speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 35,
+      "first_ms": 0,
+      "last_ms": 340,
+      "points": [
+        [0, 50],
+        [10, 100],
+        [20, 150],
+        [30, 200],
+        [40, 240],
+        [50, 260],
+        [60, 280],
+        [70, 300],
+        [80, 320],
+        [90, 340],
+        [100, 360],
+        [110, 380],
+        [120, 400],
+        [140, 380],
+        [160, 400],
+        [180, 380],
+        [200, 400],
+        [220, 380]
+      ]
+    },
+    {
+      "variable": "Door.ratio",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [20, 0],
+        [30, 0.2],
+        [40, 0.4],
+        [50, 0.6],
+        [60, 0.8],
+        [70, 1]
+      ]
+    },
+    {
+      "variable": "Door.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [120, 50],
+        [130, 53],
+        [140, 55],
+        [150, 53],
+        [160, 50],
+        [170, 48],
+        [180, 45],
+        [190, 48],
+        [200, 50],
+        [210, 53],
+        [220, 50]
+      ]
+    },
+    {
+      "variable": "Door.mode",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [220, 0],
+        [230, 0],
+        [240, 0],
+        [250, 2],
+        [260, 2],
+        [270, 2],
+        [280, 1]
+      ]
+    },
+    {
+      "variable": "Door.mode",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 35,
+      "first_ms": 0,
+      "last_ms": 340,
+      "points": [
+        [0, 0],
+        [250, 2],
+        [280, 1]
+      ]
+    }
+  ],
+  "findings": [],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

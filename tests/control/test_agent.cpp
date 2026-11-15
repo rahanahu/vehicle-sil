@@ -295,6 +295,63 @@ TEST_CASE(control_agent_parameters_only_before_the_first_step)
     CHECK_EQ(g.model.mass, 1000.0);
 }
 
+TEST_CASE(control_agent_a_setter_that_throws_ends_the_command_and_names_its_variable)
+{
+    // Three inputs with setters; the one of "b" throws for a negative value.
+    Agent agent;
+    std::vector<std::string> calls;
+    double a = 0.0;
+    double b = 0.0;
+    double c = 0.0;
+    agent.input("m.a", [&] { return a; }, [&](double v) { calls.push_back("a"); a = v; });
+    agent.input("m.b", [&] { return b; }, [&](double v) {
+        calls.push_back("b");
+        if (v < 0.0)
+        {
+            throw std::runtime_error("b cannot be negative");
+        }
+        b = v;
+    });
+    agent.input("m.c", [&] { return c; }, [&](double v) { calls.push_back("c"); c = v; });
+    const auto step = [&](SimTime now) {
+        std::vector<CommandResult> results;
+        agent.on_step_begin(now);
+        agent.on_step_end(now);
+        agent.drain_results(results);
+        return results;
+    };
+
+    // The writes before the one that threw stay applied; it and the ones after it are not. The
+    // reason begins with the name of the variable whose setter threw.
+    CHECK(agent.submit(Command{1, {{"m.a", 1.0}, {"m.b", -1.0}, {"m.c", 3.0}}, SimTime{}, LatePolicy::Reject}).status == SubmitStatus::Queued);
+    auto results = step(SimTime{});
+    CHECK_EQ(results.size(), std::size_t{1});
+    CHECK(results[0].status == CommandStatus::Rejected);
+    CHECK(results[0].reason == "m.b: a setter threw: b cannot be negative");
+    CHECK(!results[0].applied_at);
+    CHECK(calls == (std::vector<std::string>{"a", "b"}));
+    CHECK_EQ(a, 1.0);
+    CHECK_EQ(b, 0.0);
+    CHECK_EQ(c, 0.0);
+
+    // The first write: nothing was applied, and the name is that one's.
+    calls.clear();
+    CHECK(agent.submit(Command{2, {{"m.b", -2.0}, {"m.a", 5.0}}, at(10ms), LatePolicy::Reject}).status == SubmitStatus::Queued);
+    results = step(at(10ms));
+    CHECK(results[0].status == CommandStatus::Rejected);
+    CHECK(results[0].reason == "m.b: a setter threw: b cannot be negative");
+    CHECK(calls == (std::vector<std::string>{"b"}));
+    CHECK_EQ(a, 1.0);
+
+    // A command whose setters do not throw is applied as a whole, as before.
+    CHECK(agent.submit(Command{3, {{"m.a", 7.0}, {"m.b", 8.0}, {"m.c", 9.0}}, at(20ms), LatePolicy::Reject}).status == SubmitStatus::Queued);
+    results = step(at(20ms));
+    CHECK(results[0].status == CommandStatus::Applied);
+    CHECK(results[0].reason.empty());
+    CHECK_EQ(a + b + c, 24.0);
+    CHECK_EQ(agent.stats().rejected, std::uint64_t{2});
+}
+
 TEST_CASE(control_agent_bounds_the_commands_in_flight)
 {
     Fixture f(AgentOptions{.max_pending = 3});

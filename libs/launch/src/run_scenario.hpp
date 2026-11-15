@@ -105,6 +105,9 @@ private:
     ScenarioSamples samples_;
     bool tapped_ = false;
     std::unique_ptr<HubPort> port_;
+    /// run --timeline: what the engine notes (made in begin(), before the engine). Touched as
+    /// engine_ is: the engine fills it; finish() gives it to the outcome.
+    std::shared_ptr<TimelineRecord> record_;
     std::unique_ptr<ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
     std::thread thread_;
     std::atomic<bool> quit_{false}; ///< main: the simulation is over
