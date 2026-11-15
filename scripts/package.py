@@ -8,13 +8,15 @@ Commands:
               version    the version agrees everywhere (see the command version)
               configure  a Release build of vehicle_sil_launch with its control server (gRPC) in build/package-<platform>,
                          with VEHICLE_SIL_STATIC=ON: SIL Kit, the C++ runtime and gRPC (built here at the pinned
-                         version, never a system one) linked into the launcher
-              build      cmake --build --target vehicle_sil_launch
+                         version, never a system one) linked into the launcher; SIL Kit and the C++ runtime into
+                         the Ethernet bridge
+              build      cmake --build --target vehicle_sil_launch vehicle_sil_ethernet_bridge
               compiler   the build was made with GCC (MinGW-w64 included): the archive this repository hands out is
                          not made with another compiler (anyone may build so for themselves)
               python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
                          and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
-              stage      bin/ (the launcher, the libraries it needs, vehicle-sil-gui), python/ (vehicle_sil_gui with the
+              stage      bin/ (the launcher, the Ethernet bridge vehicle_sil_ethernet_bridge, the libraries they
+                         need, vehicle-sil-gui), python/ (vehicle_sil_gui with the
                          built screen and the timeline page of gui/timeline, vehicle_sil_control with the stubs), client/ (the bundled client library and
                          its npm package), gui_starter/ (examples/gui_starter with the bundled library: a screen of
                          your own, served with vehicle-sil-gui --web),
@@ -22,16 +24,21 @@ Commands:
                          README.md, VERSION. Windows: every DLL the executables load that is not Windows' own, found
                          with objdump, and the MSYS2 license files of their packages
               portable   the staged launcher runs with a PATH of the system's directories only, is this version, and
-                         its version --json lists control-server. Linux: the executables need only the C library (no libstdc++, no other .so); prints the newest
+                         its version --json lists control-server; the staged bridge answers --describe and
+                         --list-interfaces --json (a list, or the error library-missing where Npcap or libpcap is
+                         not installed) and links no pcap library (it loads Npcap or libpcap at run time). Linux:
+                         the executables need only the C library (no libstdc++, no other .so); prints the newest
                          glibc symbol version they use. Windows: every DLL they load is in bin/ or Windows' own
               archive    the archive and its .sha256
             The screen and the client library are built by scripts/verify-web.py (or in gui/web: npm ci, npm run build,
             npm run build:client, npm run pack:client); --web, --client and --client-package name them.
   verify    checks a tools archive as a user uses it, in a new empty directory: copies template/ there, unpacks the
-            archive with the template's get_tools.py (--archive, its SHA-256), runs the launcher with a PATH of the
-            system's directories only (nothing else may be needed), builds the template against this working tree
-            (FETCHCONTENT_SOURCE_DIR_VEHICLE_SIL: no network for vehicle-sil), runs check, run and run --scenario with
-            the archive's launcher, runs examples/launch_control/write_before_start.py with the archive's Python client
+            archive with the template's get_tools.py (--archive, its SHA-256), runs the launcher and the Ethernet
+            bridge with a PATH of the system's directories only (nothing else may be needed), builds the template
+            against this working tree (FETCHCONTENT_SOURCE_DIR_VEHICLE_SIL: no network for vehicle-sil), runs check,
+            run and run --scenario with the archive's launcher, runs check --connect on the template with an
+            Ethernet network added (the launcher finds the bridge next to it in bin/ and runs its --describe; no
+            adapter is opened), runs examples/launch_control/write_before_start.py with the archive's Python client
             against `run --control` (gRPC: write before the start, step, read back), and starts the archive's
             vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
             sh entry) and asks it: the launcher usable, the variables available, the built screen, the timeline
@@ -85,6 +92,14 @@ DIST = ROOT / "build" / "dist"
 WINDOWS = sys.platform == "win32"
 PLATFORM = "windows-x86_64" if WINDOWS else "linux-x86_64"
 EXE = ".exe" if WINDOWS else ""
+# The executables of bin/ that are built here. The Ethernet bridge sits next to the launcher, where
+# vehicle_sil_launch run --connect looks for it first. The Vector XL CAN bridge is not in the archive: it is built
+# only with the Vector XL Driver Library, which vehicle-sil may not hand out.
+LAUNCHER = f"vehicle_sil_launch{EXE}"
+ETHERNET_BRIDGE = f"vehicle_sil_ethernet_bridge{EXE}"
+# The pcap libraries (Npcap's DLLs, libpcap): the bridge loads them at run time where they are installed, so that
+# it starts (--describe, --list-interfaces) without them; neither is in the archive.
+PCAP_LIBRARY = re.compile(r"^(wpcap\.dll|packet\.dll|libpcap\.so.*)$", re.IGNORECASE)
 LINE_CHARS = 300
 MAX_ERROR_LINES = 12
 ERROR = re.compile(r"\berror:|Error|FAILED|fatal|not found|cannot |Traceback|No such file")
@@ -420,6 +435,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | Path | What |
 |---|---|
 | `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`) |
+| `bin/vehicle_sil_ethernet_bridge{exe}` | the Ethernet bridge between a SIL Kit Ethernet network and a network interface of this computer: `vehicle_sil_launch run --connect <network>=<interface>` starts it from here. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap installed, which this archive does not contain; `packet` and `tap` (Linux) need nothing. The Vector XL CAN bridge is not in this archive: build it with the Vector XL Driver Library and put it next to `vehicle_sil_launch` or in a directory on PATH |
 | `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
 | `python/` | the GUI server (`vehicle_sil_gui`, with the built screen and the timeline page) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
@@ -440,7 +456,7 @@ The Control API client from Python: put `python` on PYTHONPATH and use a Python 
 `python/requirements.txt` (for example `uv run --with-requirements python/requirements.txt python your_script.py`).
 
 Documentation: https://github.com/rahanahu/vehicle-sil/tree/v{version} (README.md, docs/howto/first-ecu.md,
-docs/gui.md, docs/control-api.md).
+docs/gui.md, docs/control-api.md, docs/ethernet-bridge.md).
 """
 
 
@@ -470,7 +486,8 @@ def tools_command(args: argparse.Namespace) -> int:
     out = Path(args.out).resolve()
     stage_root = build / "stage"
     stage = stage_root / top
-    launcher = build / "tools" / "launch" / f"vehicle_sil_launch{EXE}"
+    launcher = build / "tools" / "launch" / LAUNCHER
+    bridge = build / "bridges" / "ethernet" / ETHERNET_BRIDGE
     for tool, why in [("cmake", "configure and build"), ("uv", "the Python packages and stubs")] + (
             [] if args.no_build else [("ninja", "the build")]) + (
             [("objdump", "the DLLs of the executables (MSYS2: binutils)"), ("pacman", "the licenses of the DLLs")]
@@ -526,7 +543,8 @@ def tools_command(args: argparse.Namespace) -> int:
         s.run(command, env=env)
 
     def build_step(s: Step) -> None:
-        s.run(["cmake", "--build", build, "--target", "vehicle_sil_launch", "--parallel", str(args.jobs)])
+        s.run(["cmake", "--build", build, "--target", "vehicle_sil_launch", "vehicle_sil_ethernet_bridge",
+               "--parallel", str(args.jobs)])
 
     python_dir = build / "python"
 
@@ -553,12 +571,13 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.rmtree(stage_root, ignore_errors=True)
         (stage / "bin").mkdir(parents=True)
         shutil.copy2(launcher, stage / "bin")
+        shutil.copy2(bridge, stage / "bin")
         if WINDOWS:
-            bundled = stage_windows_dlls(s, launcher.parent, stage / "bin")
+            bundled = stage_windows_dlls(s, [launcher, bridge], stage / "bin")
             (stage / "bin" / "vehicle-sil-gui.cmd").write_text(
                 CMD_WRAPPER.replace("@PYTHON@", python_versions()).replace("\n", "\r\n"), encoding="ascii", newline="")
         else:
-            bundled = stage_linux_libraries(s, launcher, build, stage / "bin")
+            bundled = stage_linux_libraries(s, [launcher, bridge], build, stage / "bin")
         wrapper = stage / "bin" / "vehicle-sil-gui"
         wrapper.write_text(SH_WRAPPER.replace("@PYTHON@", python_versions()), encoding="ascii", newline="\n")
         wrapper.chmod(0o755)
@@ -613,6 +632,14 @@ def tools_command(args: argparse.Namespace) -> int:
         if "control-server" not in info.get("features", []):
             raise StepFailed("the launcher has no control server (features without control-server): gRPC was not "
                              "built in; see the configure log")
+        imports = pe_imports(s, stage / "bin" / ETHERNET_BRIDGE) if WINDOWS else elf_needed(s, stage / "bin" /
+                                                                                          ETHERNET_BRIDGE)
+        linked = [n for n in imports if PCAP_LIBRARY.match(n)]
+        if linked:
+            raise StepFailed(f"{ETHERNET_BRIDGE} links {', '.join(linked)}: it is to load the pcap library at run "
+                             "time (libs/eth_link/src/pcap), so that it starts where Npcap or libpcap is not "
+                             "installed and the archive holds none of their files; load it there instead of linking it")
+        s.notes.append(check_bridge_alone(s, stage / "bin" / ETHERNET_BRIDGE, version))
         if WINDOWS:
             missing = [f"{pe.name} needs {dll}" for pe in sorted((stage / "bin").glob("*.[de][lx][le]"))
                        for dll in pe_imports(s, pe)
@@ -627,7 +654,7 @@ def tools_command(args: argparse.Namespace) -> int:
             s.notes.append("no DLL in bin/")
             return
         newest = (0, 0)
-        for elf in [stage / "bin" / "vehicle_sil_launch", *sorted((stage / "bin").glob("*.so*"))]:
+        for elf in [stage / "bin" / LAUNCHER, stage / "bin" / ETHERNET_BRIDGE, *sorted((stage / "bin").glob("*.so*"))]:
             needed = elf_needed(s, elf)
             allowed = LINUX_SYSTEM_LIBRARIES | ({"libstdc++.so.6", "libgcc_s.so.1"} if args.shared_runtime else set())
             extra = [n for n in needed if n not in allowed and not (stage / "bin" / n).is_file()]
@@ -666,8 +693,10 @@ def tools_command(args: argparse.Namespace) -> int:
     steps = [("version", check_version)]
     if not args.no_build:
         steps += [("configure", configure), ("build", build_step)]
-    elif not launcher.is_file():
-        raise Usage(f"--no-build, and there is no {launcher}: build it first (without --no-build)")
+    else:
+        for built in (launcher, bridge):
+            if not built.is_file():
+                raise Usage(f"--no-build, and there is no {built}: build it first (without --no-build)")
     steps += [("compiler", compiler_step), ("python", python_step), ("stage", stage_step), ("portable", portable_step),
               ("archive", archive_step)]
     print(f"package: tools {version} for {PLATFORM} (build {build})", flush=True)
@@ -678,23 +707,73 @@ def tools_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_json(s: Step, command: list, env: dict, codes: tuple[int, ...] = (0,)) -> dict:
+    """Runs a command whose stdout is one JSON object (stderr only to the log) and returns the object."""
+    s.write(f"$ {' '.join(str(c) for c in command)}")
+    try:
+        p = subprocess.run([str(c) for c in command], env=env, timeout=60, text=True, encoding="utf-8",
+                           errors="replace", stdin=subprocess.DEVNULL, capture_output=True)
+    except subprocess.TimeoutExpired:
+        raise StepFailed(f"{Path(str(command[0])).name} {' '.join(map(str, command[1:]))} did not end within 60 s")
+    s.write(p.stdout + p.stderr)
+    shown = f"{Path(str(command[0])).name} {' '.join(map(str, command[1:]))}"
+    if p.returncode not in codes:
+        raise StepFailed(f"{shown} ended with exit code {p.returncode}: "
+                         f"{(p.stderr or p.stdout).strip()[-300:] or 'no output'}")
+    try:
+        return json.loads(p.stdout)
+    except json.JSONDecodeError:
+        raise StepFailed(f"{shown} wrote no JSON object to stdout: {p.stdout[:300]!r}") from None
+
+
+def check_bridge_alone(s: Step, bridge: Path, version: str) -> str:
+    """Runs the Ethernet bridge as a user's computer does, with a PATH of the system's directories only and maybe
+    without Npcap or libpcap: what vehicle_sil_launch check --connect and connections ask it (--describe,
+    --list-interfaces --json). Opens no adapter. Returns a note for the summary."""
+    env = dict(os.environ, PATH=minimal_path())
+    # The arguments vehicle_sil_launch check --connect ETH=<interface> gives it (the interface is not opened).
+    described = run_json(s, [bridge, "--network", "ETH", "--interface", "vsil-verify0", "--all-frames", "--describe",
+                             "--name", "bridge.ETH"], env)
+    networks = described.get("networks") or [{}]
+    if (described.get("vehicle_sil") != version or described.get("name") != "bridge.ETH"
+            or networks[0].get("name") != "ETH" or networks[0].get("kind") != "ethernet"):
+        raise StepFailed(f"{bridge.name} --describe does not describe bridge.ETH on the Ethernet network ETH of "
+                         f"vehicle-sil {version}: {described}")
+    found = []
+    # The default backend (npcap on Windows, packet on Linux), and on Linux pcap too: a list, or, where the pcap
+    # library is not installed, the error library-missing in the JSON with exit code 3.
+    for backend in [None] + ([] if WINDOWS else ["pcap"]):
+        command = [bridge, "--list-interfaces", "--json"] + (["--backend", backend] if backend else [])
+        listed = run_json(s, command, env, codes=(0, 3))
+        error = listed.get("error")
+        if listed.get("tool") != "vehicle_sil_ethernet_bridge" or (
+                error is not None and error.get("code") != "library-missing"):
+            raise StepFailed(f"{bridge.name} {' '.join(command[1:])} answers neither a list nor library-missing: "
+                             f"{json.dumps(listed)[:300]}")
+        count = len(listed.get("targets") or [])
+        found.append(f"{listed.get('backend')}: " + (f"{count} interface{'' if count == 1 else 's'}" if error is None
+                                                      else "library-missing"))
+    return f"{bridge.name} --describe and --list-interfaces --json ({', '.join(found)})"
+
+
 def elf_needed(s: Step, path: Path) -> list[str]:
     out = s.run(["readelf", "-d", path], capture=True).stdout
     return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
 
 
-def stage_linux_libraries(s: Step, launcher: Path, build: Path, bin_dir: Path) -> list[str]:
-    """Copies the vehicle-sil libraries the launcher needs (libSilKit.so) from the build tree next to it."""
-    copied = []
-    for name in elf_needed(s, launcher):
-        if name in LINUX_SYSTEM_LIBRARIES or name.startswith(("libstdc++.so", "libgcc_s.so")):
-            continue
-        found = sorted(build.glob(f"**/{name}"))
-        if not found:
-            raise StepFailed(f"vehicle_sil_launch needs {name}, which is neither a C library nor in {build}")
-        shutil.copy2(found[0], bin_dir / name)
-        copied.append(name)
-    s.notes.append("bundled " + ", ".join(copied) if copied else "the launcher needs no library of its own")
+def stage_linux_libraries(s: Step, executables: list[Path], build: Path, bin_dir: Path) -> list[str]:
+    """Copies the vehicle-sil libraries the executables need (libSilKit.so) from the build tree next to them."""
+    copied: list[str] = []
+    for executable in executables:
+        for name in elf_needed(s, executable):
+            if name in LINUX_SYSTEM_LIBRARIES or name.startswith(("libstdc++.so", "libgcc_s.so")) or name in copied:
+                continue
+            found = sorted(build.glob(f"**/{name}"))
+            if not found:
+                raise StepFailed(f"{executable.name} needs {name}, which is neither a C library nor in {build}")
+            shutil.copy2(found[0], bin_dir / name)
+            copied.append(name)
+    s.notes.append("bundled " + ", ".join(copied) if copied else "the executables need no library of their own")
     return copied
 
 
@@ -708,13 +787,15 @@ def windows_system_dll(name: str) -> bool:
     return name.lower().startswith(("api-ms-win-", "ext-ms-")) or (system / name).is_file()
 
 
-def stage_windows_dlls(s: Step, build_bin: Path, bin_dir: Path) -> list[Path]:
-    """Copies every DLL the launcher loads, directly or through other DLLs, that is not Windows' own: from the
-    launcher's build directory (SilKit.dll and the imported libraries' DLLs) or the MinGW bin directory (the GCC
-    runtime, gRPC and its dependencies from MSYS2). Returns the DLLs taken from MinGW (for their licenses)."""
+def stage_windows_dlls(s: Step, executables: list[Path], bin_dir: Path) -> list[Path]:
+    """Copies every DLL the executables load, directly or through other DLLs, that is not Windows' own: from an
+    executable's build directory (SilKit.dll and the imported libraries' DLLs) or the MinGW bin directory (the GCC
+    runtime, gRPC and its dependencies from MSYS2). Returns the DLLs taken from MinGW (for their licenses).
+    The portable step then fails on any DLL in bin/: with VEHICLE_SIL_STATIC there is none."""
     mingw_bin = Path(need("gcc", "the MinGW bin directory")).resolve().parent
     from_mingw: list[Path] = []
-    todo = [bin_dir / f"vehicle_sil_launch{EXE}"]
+    todo = [bin_dir / e.name for e in executables]
+    build_dirs = list(dict.fromkeys(e.parent for e in executables))
     seen: set[str] = set()
     while todo:
         for dll in pe_imports(s, todo.pop()):
@@ -722,7 +803,7 @@ def stage_windows_dlls(s: Step, build_bin: Path, bin_dir: Path) -> list[Path]:
             if key in seen:
                 continue
             seen.add(key)
-            for where in (mingw_bin, build_bin):
+            for where in (mingw_bin, *build_dirs):
                 if (where / dll).is_file():
                     shutil.copy2(where / dll, bin_dir / dll)
                     todo.append(bin_dir / dll)
@@ -731,8 +812,8 @@ def stage_windows_dlls(s: Step, build_bin: Path, bin_dir: Path) -> list[Path]:
                     break
             else:
                 if not windows_system_dll(dll):
-                    raise StepFailed(f"a DLL that the launcher loads is nowhere: {dll} (not in {build_bin}, "
-                                     f"{mingw_bin} or Windows' System32)")
+                    raise StepFailed(f"a DLL that the executables load is nowhere: {dll} (not in "
+                                     f"{', '.join(map(str, build_dirs))}, {mingw_bin} or Windows' System32)")
     s.notes.append(f"{len(from_mingw)} DLLs from {mingw_bin}")
     return from_mingw
 
@@ -846,14 +927,14 @@ def verify_command(args: argparse.Namespace) -> int:
     project = work / "project"
     tools = project / "tools" / top
     preset = "windows" if WINDOWS else "linux"
-    launch = tools / "bin" / f"vehicle_sil_launch{EXE}"
+    launch = tools / "bin" / LAUNCHER
     print(f"package: verify {archive.name} in {work}", flush=True)
 
     def unpack(s: Step) -> None:
         copy_template(project)
         s.run([sys.executable, "-I", project / "get_tools.py", "--archive", archive, "--sha256", sha256_of(archive)],
               cwd=project)
-        for path in ["VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", f"bin/vehicle_sil_launch{EXE}",
+        for path in ["VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", f"bin/{LAUNCHER}", f"bin/{ETHERNET_BRIDGE}",
                      "bin/vehicle-sil-gui", "python/requirements.txt", "python/vehicle_sil_gui/web/index.html",
                      *(f"python/vehicle_sil_gui/timeline/{name}" for name in TIMELINE_PAGE),
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
@@ -873,6 +954,7 @@ def verify_command(args: argparse.Namespace) -> int:
         if info.get("vehicle_sil") != version or "control-server" not in info.get("features", []):
             raise StepFailed(f"the archive's launcher is not vehicle-sil {version} with its control server: {info}")
         s.notes.append(f"PATH={env['PATH']}")
+        s.notes.append(check_bridge_alone(s, tools / "bin" / ETHERNET_BRIDGE, version))
 
     def build(s: Step) -> None:
         s.run(["cmake", "--preset", preset, f"-DFETCHCONTENT_SOURCE_DIR_VEHICLE_SIL={ROOT}"] + (args.cmake_arg or []),
@@ -883,6 +965,32 @@ def verify_command(args: argparse.Namespace) -> int:
         for command in (["check", "simulation.yaml"], ["run", "simulation.yaml"],
                         ["run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"]):
             s.run([launch] + command, cwd=project, timeout=300)
+
+    def connect(s: Step) -> None:
+        # check --connect on the template with an Ethernet network added: the launcher, with a PATH of the system's
+        # directories only, finds the bridge next to it in bin/ and runs its --describe with the arguments of the
+        # network. No adapter is opened (the target is a name the bridge is not asked to open).
+        text = (project / "simulation.yaml").read_text(encoding="utf-8")
+        added, n = re.subn(r"(?m)^networks:\n", "networks:\n  - name: ETH\n    kind: ethernet\n"
+                           "    external: { all_frames: true }\n", text, count=1)
+        if n != 1:
+            raise StepFailed("the template's simulation.yaml has no line `networks:` to add the network ETH under")
+        (project / "connect.yaml").write_text(added, encoding="utf-8")
+        p = s.run([launch, "check", "--json", "--connect", "ETH=vsil-verify0", "connect.yaml"], cwd=project,
+                  env=dict(os.environ, PATH=minimal_path()), check=False, capture=True, timeout=300)
+        try:
+            result = json.loads(p.stdout)
+        except json.JSONDecodeError:
+            raise StepFailed(f"check --connect wrote no JSON (exit code {p.returncode}): {p.stdout[:300]!r}") from None
+        errors = [f"{f.get('code')}: {f.get('message')}" for f in result.get("findings", [])
+                  if f.get("severity") == "error"]
+        if errors:
+            raise StepFailed("check --connect ETH=... with the archive's launcher: " + "; ".join(errors)[:600])
+        outside = next((n.get("outside") for n in result.get("networks", []) if n.get("name") == "ETH"), None) or {}
+        expected = (tools / "bin" / ETHERNET_BRIDGE).resolve()
+        if not outside.get("tool_path") or Path(outside["tool_path"]).resolve() != expected or not outside.get("command"):
+            raise StepFailed(f"check --connect does not take the bridge next to the launcher ({expected}): {outside}")
+        s.notes.append(f"check --connect ETH=...: {ETHERNET_BRIDGE} found next to the launcher, its --describe passed")
 
     def control(s: Step) -> None:
         # The launcher's control server through gRPC, with the archive's Python client: one write before the start,
@@ -904,7 +1012,7 @@ def verify_command(args: argparse.Namespace) -> int:
             verify_gui(s, tools, project, [need("bash", "the sh entry in MSYS2"), str(tools / "bin" / "vehicle-sil-gui")])
 
     ok = run_steps(args.tag, [("unpack", unpack), ("alone", alone), ("build", build), ("simulate", simulate),
-                              ("control", control), ("gui", gui)])
+                              ("connect", connect), ("control", control), ("gui", gui)])
     if ok and not args.keep:
         shutil.rmtree(work, ignore_errors=True)
     elif not ok:

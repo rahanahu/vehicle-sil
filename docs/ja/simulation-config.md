@@ -571,7 +571,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 - 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のアダプターは、pcap の名前で書きます。
 - 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
 - 先に空白があるときは、引数全体を引用符で囲みます（`--connect "ETH_EXT=vEthernet (A)"`）。
-- ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。
+- ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。ビルド済みのツールのアーカイブでは、`bin/` の `vehicle_sil_launch` の隣に `vehicle_sil_ethernet_bridge` があります。Vector XL の CAN のブリッジは入っていません（ビルドします。[bridges.md](bridges.md) の「ビルド」）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
 - 実機のバスは仮想時間を待ちません。`--connect` があり、速さが 1 でなければ、警告 `connect-not-real-time` です（`check` はファイルの `speed`、`run` は `--speed`、なければファイルの値）。`run --start-paused` には警告 `connect-start-paused` を出します。

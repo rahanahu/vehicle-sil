@@ -14,7 +14,9 @@
 > [!WARNING]
 > Windows の `npcap` は、本物の Npcap に対しては、手動で確認しただけです。確認したのは、仮想マシンの仮想 NIC と、その仮想マシンに渡した物理の USB のアダプター 1 つ（LAN につなぎ、相手は PC のネットワークスタック）です。回線の先の実機や別の PC、物理 NIC での大量のトラフィックは確認していません。テストは、同じ関数を持つフェイクのライブラリに対するものです。確認した範囲は「[確認したことと、確認していないこと](#確認したことと確認していないこと)」にあります。
 
-Vector XL の CAN のブリッジは [bridges.md](bridges.md) にあります。
+ビルド済みのツールのアーカイブ（[build.md](build.md) の「ビルド済みのツール」）には、`bin/` の `vehicle_sil_launch` の隣に `vehicle_sil_ethernet_bridge` が入っています。そのため、`PATH` を変えなくても `vehicle_sil_launch run --connect` がブリッジを見つけます。Npcap と libpcap はアーカイブに入っていません。リポジトリでビルドしたときのブリッジは `build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge` です。
+
+Vector XL の CAN のブリッジは [bridges.md](bridges.md) にあります。ビルド済みのツールのアーカイブには入っていないので、自分でビルドして、`vehicle_sil_launch` の隣か `PATH` の通ったディレクトリに置きます。
 
 ## 最初の接続
 

@@ -14,7 +14,9 @@
 > [!WARNING]
 > On Windows, `npcap` is verified against the real Npcap only by hand: on the virtual NIC of a virtual machine, and on one physical USB adapter passed through to that virtual machine, on a LAN with a computer's network stack as the peer. It is not verified with a device or a second computer on a cable, or with high traffic on a physical NIC. The tests run against a fake library that has the same functions. For what is verified, see "[Verified and not verified](#verified-and-not-verified)".
 
-For the Vector XL CAN Bridge, see [bridges.md](bridges.md).
+The prebuilt tools archive (see "[Prebuilt tools](build.md#prebuilt-tools)" in build.md) has `vehicle_sil_ethernet_bridge` in `bin/`, next to `vehicle_sil_launch`, so `vehicle_sil_launch run --connect` finds it without a change to `PATH`. Npcap and libpcap are not in the archive. In a build of the repository, the bridge is `build/<preset>/bridges/ethernet/vehicle_sil_ethernet_bridge`.
+
+For the Vector XL CAN Bridge, see [bridges.md](bridges.md). It is not in the prebuilt tools archive: build it yourself and put it next to `vehicle_sil_launch` or in a directory on `PATH`.
 
 ## First connection
 

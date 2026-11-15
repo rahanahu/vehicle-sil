@@ -142,12 +142,15 @@ The archive contains the items below. The `README.md` in the archive describes t
 | Item | Notes |
 |---|---|
 | `vehicle_sil_launch` | With the Control Server. |
+| `vehicle_sil_ethernet_bridge` | The Ethernet bridge ([ethernet-bridge.md](ethernet-bridge.md)), next to `vehicle_sil_launch`, where `vehicle_sil_launch run --connect` finds it. Its `npcap` (Windows) and `pcap` (Linux) backends need Npcap or libpcap, which the archive does not contain: install them yourself. |
 | GUI server and screens | — |
 | Python client of the Control API | With the gRPC stubs. |
 | GUI client library | A single ES module, and an npm package with types. |
 | Template for your own screen (`gui_starter/`) | Use it with `vehicle-sil-gui --web gui_starter simulation.yaml`. |
 | JSON Schema of the dashboard | — |
 | License notices | — |
+
+The Vector XL CAN Bridge is not in the archive, because it cannot be built without the Vector XL Driver Library (see "[Build](bridges.md#build)" in bridges.md).
 
 To build your own screen for the browser GUI, install `vehicle-sil-gui-client-<version>.tgz` from the releases page with `npm install <its URL or the file>`. You can then use the client library as `@vehicle-sil/gui-client` (see "Build your own screen" in [gui.md](gui.md#build-your-own-screen)). The same file is also in `client/` of the tools archive.
 
