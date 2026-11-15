@@ -1,0 +1,1178 @@
+# Running a simulation (`vehicle_sil_launch run`)
+
+[日本語](ja/simulation-run.md)
+
+This reference describes what `vehicle_sil_launch run <file>` does and in which order, when it aborts and what it outputs. It also covers `vehicle_sil_launch test`, which runs several scenarios in one go. For the list of arguments, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes).
+
+| To find | See |
+|---|---|
+| What `run` does and in which order | [How a run proceeds](#how-a-run-proceeds) |
+| When a run aborts, and how timeouts are measured | [Abort conditions and timeouts](#abort-conditions-and-timeouts) |
+| Whether ECU variables can be read and written (`control_link`) | [Connection to ECU variables](#connection-to-ecu-variables-control_link) |
+| `speed`, and how lateness behind real time is measured | [Running at a set speed](#running-at-a-set-speed-speed) |
+| The order in which participants are ended, Ctrl+C | [Stopping a run](#stopping-a-run), [Interrupting (Ctrl+C)](#interrupting-ctrlc) |
+| Which addresses participants listen on, Windows Firewall | [Listen addresses](#listen-addresses) |
+| Stderr, log files, the result table, the `code` of findings | [Output](#output) |
+| Exit codes | [Exit codes](#exit-codes) |
+| Keys of `run --json` | [JSON](#json-run---json) |
+| Running several scenarios on every variant | [`test`](#running-several-scenarios-vehicle_sil_launch-test) |
+
+## How a run proceeds
+
+| Stage | What `run` does |
+|---|---|
+| 1 | Runs the same check as `check`. |
+| 2 | Starts the registry inside this process. |
+| 3 | Runs the controller (participant name `SimulationController`) inside this process. |
+| 4 | Starts each participant that is not disabled as a process of its own, in configuration file order. |
+| 5 | Starts the simulation once all required participants have joined. |
+| 6 | When the simulation ends, ends all participants and writes the result. |
+
+Stage 1: If the check finds errors (with `--strict`, also warnings), `run` starts nothing, writes the check result and exits with code 1. For a configuration file with variants (`variants`), `run` checks the variant you select with `--variant <name>` and runs with that variant's executables, variable map and participants (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)). Without `--variant`, it is a usage error and nothing starts.
+
+Stage 2: The registry address is `registry_uri`; if that is not set, a free port on 127.0.0.1. The first line on stderr is that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
+
+Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
+
+Stage 4: `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
+
+Stage 5: Before the start, `run` waits for the connection to the ECUs that expose variables (see [Waiting before the start](#waiting-before-the-start); normally there is no wait). With `--control` and `--start-paused`, every participant pauses before it starts the step at time 0, and the run waits for a `resume`, `step` or `run_until` command (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)). If `stop_at_ms` is set, the simulation stops when virtual time reaches it. Otherwise it runs until a participant stops it, or until Ctrl+C.
+
+Stage 6: For the order in which the participants are ended, see [Stopping a run](#stopping-a-run).
+
+### Runs with a scenario (`--scenario`)
+
+With `--scenario <file>`, the check also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
+
+| Item | With `--scenario` |
+|---|---|
+| The controller's time step | The same as the default with a set speed (`time_step_ms`, or a time step such that every ECU step starts at a controller step). |
+| Values of parameters (`${name}`) | Can be overridden with `params` in the configuration file, `params` of the variant, and `--param <name>=<value>`. |
+| Scenario steps that use a variable the variant does not have (`absent: true`) | Skipped and shown in the result. |
+| Scenario steps that use variables of a participant the variant disables | Also skipped and shown in the result. |
+
+A skipped step has `at_ms` null. If every expect step is skipped, the check reports the warning `scenario-nothing-checked` (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)).
+
+## Abort conditions and timeouts
+
+### Before the start
+
+| What happens | What `run` does | Finding |
+|---|---|---|
+| The process of a required participant ends | Abandons the start without waiting for `start_timeout_ms`. | `ended-before-start` |
+| A required participant does not join within `start_timeout_ms` | Lists every participant that did not join and abandons the start. | `not-joined` |
+| After all have joined, the process of a required participant ends while the run waits for the start | Abandons the start at once. | `ended-before-start` |
+| After all have joined, a connection drops while the run waits for the start, with the process still running | Abandons the start at once. | `simulation-start` |
+| After all have joined, the limit for reaching the first step passes | Abandons the start; the message lists the participants that have not reached the first step and their states. | `simulation-start` |
+
+"Waits for the start" covers the wait for the ECUs that expose variables, and the pause before the step at time 0 with `--control` and `--start-paused`.
+
+### During the run
+
+| What happens | What `run` does | Finding |
+|---|---|---|
+| The process of a required participant ends with a nonzero exit code or by a signal | Aborts the simulation at once. | `participant-failed` |
+| A required participant leaves the simulation in the Error state | Aborts at once. | `participant-failed` |
+| A required participant leaves the simulation in another state | Aborts if the simulation has not ended within 5 seconds. | `participant-failed` |
+| A participant with `required: false` ends | Does not stop the simulation. | A warning for a nonzero exit code |
+| The run has not ended within the real time of `--timeout-ms` | Aborts. | `timeout` (error) |
+| Virtual time does not advance for 10 seconds although the simulation is not paused | Writes one line to stderr and keeps waiting. | None |
+| A participant stops the simulation before `stop_at_ms` | The run ends as it is. | `ended-before-stop-at` (note; not a failure, even with `--strict`) |
+
+Whether a participant has left the simulation is judged from the controller's view. The abort rules are the same as in `vehicle_sil_sim_controller` and `vehicle_sil::Simulation`. When the simulation is aborted, the other ECUs still end on their own (exit code 0). The start does not wait for participants with `required: false` either.
+
+While the simulation is paused, participant failures, stop requests and `--timeout-ms` are handled the same way.
+
+### How `start_timeout_ms` is measured
+
+`start_timeout_ms` limits the time until all required participants have joined.
+
+| Case | How it is measured |
+|---|---|
+| From all joined to the first step | The remainder of `start_timeout_ms` is the limit (at least the time spent waiting for ECUs that expose variables + 1 second). |
+| While paused before the step at time 0 with `--control` and `--start-paused` | Not counted. |
+| After the run advances from that pause | `start_timeout_ms` applies again as the limit. |
+| Until a required manual participant joins | No limit. |
+| After everyone has joined, until the manual participants are ready for the first step | No limit. |
+| Until the participants that `run` started have joined (in a run with manual participants) | `start_timeout_ms` is the limit. |
+| After the manual participants are ready | `start_timeout_ms` is the limit. |
+
+A manual participant is one that you start yourself (see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)).
+
+### How `--timeout-ms` is measured
+
+With `--timeout-ms <ms>`, if the simulation has not ended `<ms>` of real time after it started, `run` aborts it and reports an error (`timeout`). By default there is no limit. An ECU that hangs inside a step stops virtual time, and the run never ends even with `stop_at_ms`, so use this option in CI and similar settings.
+
+| Case | How it is measured |
+|---|---|
+| A normal run | From the start of the simulation. |
+| Time spent paused | Counted. |
+| `--control` and `--start-paused` | From when the run pauses before the step at time 0 (the time spent paused counts too). |
+| A run with a required manual participant | From when `run` starts waiting for the participants (see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
+
+If the limit passes while the run is still paused by `--control` and `--start-paused`, `run` executes the step at time 0 and then aborts; the `timeout` message says that the run was paused before the first step. If the limit passes after the run has advanced, the message says how many ms of that time the run was paused.
+
+### Message when virtual time stops advancing
+
+If virtual time does not advance for 10 seconds during a run that is not paused, `run` writes a line of this form:
+
+```text
+[vehicle_sil_launch] virtual time has not advanced for 10 s (at t=<ms> ms, not paused): ...
+```
+
+The line lists the possible causes (a participant on another computer lost its network, a debugger holds a process, a process hangs inside a step) and `--timeout-ms`. If the state continues, the line is written once more at 60 seconds and once at 10 minutes. When virtual time advances again, `run` writes `virtual time advances again: it stood still for <s> s at t=<ms> ms`.
+
+`run` does not abort; it keeps waiting. The line is not a finding (with `--events`, it is a `log` event). With a set speed, the time counts from the deadline of the time step; time spent waiting for the deadline at a slow speed does not count.
+
+When a network goes down, SIL Kit takes a long time to notice that the connection has dropped (more than ten minutes on Linux).
+
+## Connection to ECU variables (`control_link`)
+
+On top of the controller participant, `vehicle_sil_launch run` hosts the side that reads and writes ECU variables (`vehicle_sil::control::Hub` and `vehicle_sil::control_silkit::HubTransport`). An ECU built with `ecu_main` connects to it on its own, through SIL Kit publish/subscribe (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). Every ECU has `ecu.connected`, so an ECU that declares no variables connects too. You write nothing for this in the configuration file. gRPC is not used. For how it works and what it guarantees, see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit).
+
+The Hub inside `vehicle_sil_launch` uses this connection. With `run --control <address>` (only in builds with the Control Server), the Hub is exposed to clients (Python, CLI, GUI) as the gRPC Control API. For its use, see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher).
+
+Whether an ECU exposes variables shows in the `--describe` output of its executable (`control`: the transport and the version of the message format; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). So the check already finds ECUs that do not expose variables and ECUs with a different version.
+
+If the configuration file has `participants[].variables` (a variable map), that participant's variables are read and written with the names and values after mapping (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)). Scenarios and Control API clients see only the mapped names and values.
+
+### Connection state (`state`)
+
+Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started; later changes are not written back.
+
+| `state` | Meaning | Reading and writing variables | Finding |
+|---|---|---|---|
+| `connected` | `run` received hello, and a reply saying that the ECU can take commands | Possible | None |
+| `no_hello` | The `--describe` output says that the ECU exposes variables, but no hello (or reply) arrived in time | Not possible in this run | Warning `control-link-no-hello` (run finding) |
+| `version_mismatch` | The version of the message format differs from that of `vehicle_sil_launch` | Not possible in this run | Warning `control-link-version` |
+| `not_offered` | The ECU has variables, but its `--describe` output says that it does not expose them (`--no-control`, or an older vehicle-sil executable without `control`) | Not possible | Note `control-link-not-offered` (check finding) |
+| `none` | Nothing to connect to (an older vehicle-sil executable without variables, `describe: false`) | Not possible | None |
+
+- For `version_mismatch`, the version comes from the `--describe` output or from the received hello. If the `--describe` output reveals the mismatch, it is a check finding; if only the hello reveals it, it is a run finding.
+- `run` does not wait for a `not_offered` ECU.
+- A participant whose `--describe` output does not offer variables but that sends hello is `connected`.
+- The simulation runs in every state (with `--strict`, warnings are failures).
+
+### Waiting before the start
+
+Once all required participants have joined, they all wait before the first step. During that wait, `run` waits for hello and the reply "can take commands" from every ECU that meets all of these conditions:
+
+- It has variables.
+- Its `--describe` output says that it exposes them, with the same version as `vehicle_sil_launch`.
+- It is required and not disabled.
+
+Because of the order in which SIL Kit connects participants, hello has normally arrived before this wait starts, so there is normally no wait. `run` waits, for up to 5000 ms, only when an ECU that says it exposes variables has not sent hello. A Ctrl+C or a stop command during the wait ends it. If all participants joined just before the `start_timeout_ms` deadline, this wait can extend past `start_timeout_ms`.
+
+### Guarantees during the run
+
+When time is paused (`--start-paused`, `pause`, after a `step`), `run` has received the values and write results of every ECU step that started before the paused virtual time P. Those of the steps that start exactly at P arrive while the simulation is paused. If a message arrives later than this guarantee allows, `run` reports the warning `control-link-late-values`. This does not happen with ECUs built with `ecu_main`. The count is in `control_link.late_messages` of the result.
+
+A participant that joins after the start (`required: false`, a real-time `Peer` that you started yourself, a restart under the same name) can be written to once `run` has received its hello and then its reply "can take commands" (normally an instant later). Writes before that are not sent; they complete as Invalid at once. The same applies to writes to a participant that has started to leave the simulation (its lifecycle has started to stop, or it failed).
+
+### Traffic and authentication
+
+Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`.
+
+There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who can join the registry can write ECU variables, in the same way as they can send frames on the bus. By default, the registry listens only on 127.0.0.1.
+
+## Running at a set speed (`speed`)
+
+With `speed` (configuration file) or `run --speed`, the controller paces virtual time to real time at every time step (`time_step_ms`). With `speed: 1`, 1000 ms of virtual time takes at least 1000 ms of real time. Use a set speed to run together with devices that work in real time, or when a person operates the simulation while watching a screen.
+
+Pacing only adds waits, so the simulation never runs faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
+
+Real-time devices do not wait for the simulation. When the simulation falls behind real time, the devices see different results. That is why `run` measures lateness with the definitions below and reports it.
+
+### Definition of lateness
+
+| Term | Meaning |
+|---|---|
+| Deadline | The real time at which a time step (the controller step that starts at virtual time T) may start |
+| Lateness | The real time at which the time step actually started, minus its deadline (0 if negative) |
+| Late time step | A time step whose lateness exceeds `late_tolerance_ms` (default: 10 ms of real time) |
+| Slip | The lateness of a late time step (the total is `slipped_ms`) |
+
+The deadline is "base real time + (T − base virtual time) ÷ speed". The base is taken at the first time step and taken again at every resume. If the speed changes from one number to another during the run, the deadline of the next time step does not move. No time step starts before its deadline.
+
+A time step starts when the controller has released the previous time step and knows that every participant step that starts before this time step has finished. Lateness includes any delay in the controller itself waking up, because devices cannot tell the difference.
+
+After a late time step, the simulation does not try to catch up. That time step becomes the new base, and the simulation proceeds at the set speed from there. All later virtual time stays shifted back by the lateness. Lateness within the tolerance does not change the base, so the next time step makes it up naturally.
+
+Counting runs from the time step after the base was taken to the last time step (including the time step of `stop_at_ms`).
+
+| Case | How it is counted |
+|---|---|
+| A time step that is past its deadline but has not started yet | Counted with its lateness so far. |
+| The run ends by timeout, failure or stop while a participant stands still | That lateness stays in the result. |
+| Time spent paused | Not counted. |
+| While at maximum speed (`max`) | No time step is late. |
+| A time step that was already past its deadline when the speed was set to maximum | It keeps the lateness it had, and is counted once, when it starts (real time spent at maximum speed is not added to its lateness). |
+| The speed returns to a number before that time step starts | The deadline of that time step is "the time of the change − the kept lateness". |
+
+### What real-time devices see when the run falls behind
+
+If a time step is 490 ms late, every later message comes out 490 ms late. The period does not change (a 10 ms message still comes out every 10 ms). The simulation does not catch up, because catching up would release the backlog (about 49 periods of messages in this example) within a few ms, which would upset the receivers' period and timeout checks.
+
+The number of late time steps is the number of times lateness occurred. One slow step, however long, is 1 late time step. A simulation whose ECU steps never keep up with real time keeps slipping. `slipped_ms` and `actual_speed` show how far behind the whole run fell (the real time taken is never shorter than virtual time ÷ speed + `slipped_ms`).
+
+The lateness of a single time step (`max_late_ms`) can come out larger than it is. When a participant finishes a step and immediately enters the next one, the controller learns that the step finished only after the next step. The controller learns it late by that amount (at most the real time that participant takes for 1 step). The value never comes out smaller.
+
+So, for an ECU whose step computation repeatedly exceeds the real time available for a step (step size ÷ speed), the effective tolerance shrinks by the computation time of the next step. When the overestimated lateness exceeds the tolerance, the time step becomes late and the base is taken again, so from then on the run really is shifted by that amount. With such ECUs, set `late_tolerance_ms` to roughly "the time the devices can wait + the computation time of 1 ECU step".
+
+### Time steps and ECU steps
+
+Pacing happens only at time step boundaries. An ECU step that starts at virtual time T runs at the deadline of the first time step at or after T. Steps that start between time steps run together at the deadline of the next time step. They run later than the real time that corresponds to T, never earlier.
+
+This delay is at most "time step − (greatest common divisor of the time step and the ECU step size)". It is not counted as lateness. It is in `step_delay_ms` of `timing` in the result.
+
+| Time step | ECU step size | Maximum delay |
+|---|---|---|
+| 10 ms | 1 ms | 9 ms |
+| 10 ms | 15 ms | 5 ms |
+| 10 ms | A multiple of the time step | 0 |
+
+So, with a set speed and no `time_step_ms`, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes. The ECU step sizes are those that the check reads from the `--describe` output of the ECUs that are not disabled.
+
+| ECU step sizes | Time step |
+|---|---|
+| 10 ms and 5 ms | 5 ms |
+| 4 ms and 6 ms | 2 ms |
+| Only 20 ms | 10 ms |
+| A participant whose step size is unknown (`describe: false`) is present | 1 ms |
+| The greatest common divisor is not a multiple of 1 ms | 1 ms |
+
+If you set `time_step_ms`, that value is used. With a set speed, if ECU steps do not start at time step boundaries, the warning `coarse-time-step` is reported. The warning says by how many ms at most the steps are delayed and bunched together, and what value to write.
+
+| Case | When `coarse-time-step` is reported |
+|---|---|
+| `speed` is also in the configuration file | At `check` (`run` reports only that one) |
+| `run --speed` changed the speed | `run` decides with the changed speed. |
+| The run started at maximum speed and received a `speed` command | At that moment (the time step is set at the start and does not change during the run) |
+
+A finer time step means more time synchronizations. That is why the default at maximum speed stays 10 ms.
+
+### Lateness warnings and what to do
+
+If there is even 1 late time step, the warning `behind-real-time` is reported (a failure with `--strict`). The counts are in `timing` of the result, in the `time:` line of the human-readable output and in the `time` events of `--events`.
+
+When the run falls behind, lower the speed or look for the cause.
+
+| Cause | Fix |
+|---|---|
+| An ECU has a heavy computation in one step | Make that step lighter (a larger step size does not reduce lateness if a single step is heavy). |
+| Many ECUs with small steps cause many synchronizations | Increase the ECU step sizes and `time_step_ms`. |
+| You do not know which participant is slow | Disable the ECUs one at a time (`--disable`) and compare. |
+
+`vehicle_sil_launch` does not know which participant is slow, because SIL Kit does not tell the controller how long each participant's step took.
+
+The default `late_tolerance_ms` of 10 ms was chosen to be well below the timeouts of real-time devices and well above the jitter of OS timers. It is a length of real time and does not depend on the time step or the speed. Change it to match how long the devices can wait.
+
+### Pausing, stepping and changing speed
+
+Pause, single-step and change the speed during a run with stdin commands and with calls from Control Server (`--control`) clients (see [Stdin commands](simulation-events.md#stdin-commands-run---stdin-commands)).
+
+`run --start-paused` pauses at virtual time 0 once all participants have joined, and waits for `resume` or `step`. Use it with `--stdin-commands` or `--control`.
+
+| Options given with it | Where the run pauses |
+|---|---|
+| Only `--stdin-commands` | After it has executed the step at time 0. |
+| `--control` | Before the step at time 0. |
+
+## Stopping a run
+
+When the simulation ends (also after an abort and on Ctrl+C), `run` ends the participants in this order:
+
+1. Wait up to `stop_timeout_ms` for the required participants to end on their own (ecu_main executables end on their own when the simulation ends).
+2. Ask the participants that are still running to stop (Linux: SIGTERM to the participant's process group. Windows: Ctrl+Break to its process group). Participants with `required: false` are stopped here, without a warning. For a required participant, this is an error (`did-not-end`).
+3. Wait up to another `stop_timeout_ms` for the participants asked to stop, and the processes they started (process group; on Windows, job object), to end. Kill whatever remains, together with the processes it started (Linux: SIGKILL to the process group. Windows: terminate the job object).
+4. If a participant ended on its own but processes it started remain, end them and report a warning (`left-processes`).
+
+| Case | Difference |
+|---|---|
+| A participant that you start yourself (manual) | None of the items apply (see "How to stop" in [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
+| The simulation did not start | Item 1 is skipped and the order starts at item 2 (this is not an error of that participant). |
+| On Windows, `vehicle_sil_launch` has no console | Ctrl+Break cannot be sent, so `run` kills the participant at once instead of item 2 (the message says so). |
+
+An ecu_main executable that is asked to stop before the start ends at once (see [ecu-executable.md](ecu-executable.md)).
+
+Each participant runs in its own process group (on Windows, a process group and a job object). Ctrl+C in the terminal reaches only `vehicle_sil_launch`, not the participants. On Windows, when `vehicle_sil_launch` has no console (no console to share with the participants), the participants are started without opening a console window.
+
+### Closing the connection of `run` itself
+
+After ending the participants, `run` closes its own SIL Kit connections (the connection to ECU variables, the controller, the registry) and then writes the result. The deadline is 5 seconds plus the longer of `stop_timeout_ms` and 5 seconds. If the connections have not closed by then, `run` stops waiting, adds the warning `connection-not-closed`, writes the result and exits the process without closing them. The rules for the result and the exit code do not change.
+
+Another Ctrl+C or `stop` command also cuts this wait short. `run` then writes one line that says so and exits the same way. The user asked for this, so it is not a finding.
+
+## Interrupting (Ctrl+C)
+
+On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the console), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130.
+
+| When it arrives | What `run` does |
+|---|---|
+| During the check | Interrupts after the check has finished (nothing is started). |
+| Before the start | Stops the participants. |
+| After the simulation has ended, while waiting for participants to end on their own | Stops that wait and asks them to stop (item 2 of "Stopping a run"). |
+| The second time | Stops waiting and kills the remaining participants at once. |
+
+| Signal or event | Handling |
+|---|---|
+| A signal that the program which started `vehicle_sil_launch` set to be ignored (SIGHUP with `nohup`, for example) | Stays ignored. |
+| Ctrl+Z (SIGTSTP) in the terminal | Stops only `vehicle_sil_launch`. |
+| Closing the console on Windows | Windows ends the process within a few seconds. |
+
+On Ctrl+Z, the participants keep running because they are in other process groups; only the registry and the controller stop. When the console is closed on Windows, the job objects end the participants, but the result may not be written.
+
+When a program drives `vehicle_sil_launch`, pass `--stdin-commands`, then write `{"command":"stop"}` to stdin or close stdin. The run then stops in order, as on Ctrl+C (see [Programmatic use](simulation-events.md)). This also stops in order a `vehicle_sil_launch` on Windows without a console, which can receive neither signals nor Ctrl+Break. When the simulation stops, ecu_main executables end on their own. A participant that does not end on its own is killed at once instead of item 2 of "Stopping a run", because Ctrl+Break cannot be sent.
+
+## Leaving no participant behind
+
+Before it exits, `vehicle_sil_launch` ends every participant it started. Participants inherit no files or handles of `vehicle_sil_launch` other than stdin (empty), stdout and stderr (pipes that `vehicle_sil_launch` reads).
+
+| OS | When `vehicle_sil_launch` is killed (including SIGKILL and crashes) |
+|---|---|
+| Windows | The participants and the processes they started end. |
+| Linux | The participants receive SIGKILL, but processes they started can remain. |
+| POSIX systems other than Linux | Not supported (participants remain). |
+
+- Windows: each participant is in a job object, which ends the processes in it when its last handle closes. This holds however `vehicle_sil_launch` ends.
+- Linux: participants receive SIGKILL when `vehicle_sil_launch` ends (the parent-death signal). Processes started by a participant remain after a kill because items 3 and 4 of "Stopping a run" do not run.
+- Linux: processes that have left the participant's process group (by calling `setsid()` or similar) cannot be ended in any case.
+- POSIX systems other than Linux have no parent-death signal.
+
+## Listen addresses
+
+A SIL Kit participant listens for connections from other participants. The addresses it listens on depend on whether the host of the registry URI is a loopback address.
+
+| Host of the registry URI | Addresses participants listen on | Connections from other computers | Windows Firewall |
+|---|---|---|---|
+| A loopback address (always, in a run without `registry_uri`) | Loopback address only | Not possible. | Does not ask for permission to listen. |
+| A non-loopback address (`silkit://0.0.0.0:8500`, for example) | All addresses, as SIL Kit does by default | Possible. | See "Windows Firewall" below. |
+
+This table applies to the participants whose SIL Kit configuration vehicle-sil creates: ecu_main executables, programs that use `ParticipantRuntime` or `Simulation`, `vehicle_sil_can_bus_simulator`, the Vector XL CAN Bridge and the controller of `run`.
+
+When participants listen on loopback only, TCP uses `127.0.0.1` (`::1` if the URI uses `::1`). On systems other than Windows, they also listen on a local-domain socket in a temporary directory.
+
+With a non-loopback address, anyone who can connect to this computer can join the simulation, because SIL Kit has no authentication (note `registry-on-network`).
+
+The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`).
+
+### What counts as a loopback address
+
+| Form | Examples |
+|---|---|
+| An IPv4 address in `127.0.0.0/8` (any numeric form that `getaddrinfo()` reads) | `127.0.0.1`, `127.1` |
+| `::1` | `[::1]`, `[0:0:0:0:0:0:0:1]` |
+| `127.x.x.x` mapped to IPv6 | `[::ffff:127.0.0.1]` |
+| `localhost` (in any case) | `localhost`, `localhost.` |
+
+Any other name counts as non-loopback, without name resolution.
+
+### Windows Firewall
+
+When `registry_uri` is not a loopback address, Windows Firewall asks whether the registry (`vehicle_sil_launch`) and the participant programs may listen, because both listen on all addresses.
+
+Only `vehicle_sil_launch`, which hosts the registry, needs permission. Participant executables can join without it, because the participants connect out to the computer that runs the launcher. Participants that cannot connect to each other directly connect through the registry, which relays between them (see "SIL Kit versions that can be mixed" in [dependencies.md](dependencies.md#sil-kit-versions-that-can-be-mixed)).
+
+| Permission | What happens |
+|---|---|
+| `vehicle_sil_launch` is not allowed | ECUs that join from other computers fail after about 5 seconds. |
+| A participant on the computer that runs the launcher is not allowed | Each join from another computer takes about 5 seconds. |
+| A participant on the joining computer is not allowed | In the tested setups, it joins normally. |
+
+For the tested setups and the commands that grant permission, see "Firewall rules" and "Tested setups" in [Run on several computers](howto/multi-pc.md).
+
+### The URI printed for joining from another computer
+
+When `registry_uri` is not a loopback address, `run` writes a line with the URI for joining from other computers after the `registry at` line.
+
+```text
+[vehicle_sil_launch] from other computers, join at silkit://192.0.2.10:8500 (this computer's address): give it as --registry-uri to a participant started by hand on another computer ...
+```
+
+| Host of `registry_uri` | Address shown |
+|---|---|
+| `0.0.0.0` | The IPv4 addresses of this computer's active networks (except loopback and link-local `169.254.x.x`) |
+| `[::]` | The IPv6 addresses (except loopback and link-local) and, on Linux, the IPv4 addresses |
+| A specific address | That URI |
+
+- The address of the network with the default route comes first. If there are other addresses, the line adds that the first one is that address. This is because addresses of the virtual networks of WSL, Docker and virtual machines often cannot be reached from other computers.
+- On Linux, `[::]` also lists IPv4 addresses, because `[::]` also accepts IPv4 unless `net.ipv6.bindv6only` is `1`.
+- On Windows, `[::]` accepts IPv6 only, so the line adds that for IPv4 you write `silkit://0.0.0.0:<port>`.
+- If no address is found, the line says to look one up with `ipconfig` (Windows) or `ip addr`.
+
+### The environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK`
+
+| Value | Meaning |
+|---|---|
+| `1` | Listen on all addresses even if the registry URI is a loopback address. |
+| `0`, empty, unset | The rules above apply. |
+| Any other value | An error (the participant cannot be created and fails with a message that gives the variable's name and value). |
+
+`run` always passes this variable to the participants it starts: `1` if `registry_uri` is not a loopback address, otherwise `0`. It does not pass on the value from the environment of `vehicle_sil_launch` itself, and the controller does not use it. If that value differs from the one `run` passes, `run` reports the note `listen-variable-ignored`.
+
+Why `1` is passed: when `registry_uri` is `0.0.0.0` (or `[::]`), `run` gives the participants on this computer a URI with `127.0.0.1` (`[::1]`). With only that, they would listen on loopback only, and SIL Kit passes that address unchanged to the participants on other computers too. A participant that receives it tries it on its own loopback address. If another program listens on the same port there, the participant connects to that program, waits for a reply forever and fails to join. Listening on all addresses prevents this.
+
+For a participant that you start yourself (manual), the value to set appears in the command line that `run` prints and in `environment` of the `participant` event (`manual`), only when it is `1`. Also set `1` yourself for a participant that connects to the registry of another computer through a loopback address on that computer.
+
+### Participants with their own SIL Kit configuration
+
+| Participant | Addresses it listens on |
+|---|---|
+| A SIL Kit participant configuration is passed and has `Middleware.AcceptorUris` | As configured. |
+| A SIL Kit participant configuration is passed without `Middleware.AcceptorUris` | The rules above (vehicle-sil adds them to the configuration). |
+| A SIL Kit program that does not use vehicle-sil (a `describe: false` participant, for example) | As its own configuration says (all addresses if there is no `Middleware.AcceptorUris`). |
+
+Pass a SIL Kit participant configuration with `--silkit-config` of ecu_main, `vehicle_sil_can_bus_simulator --participant-configuration` and similar options (see "Passing a SIL Kit configuration file (`--silkit-config`)" in [ecu-executable.md](ecu-executable.md#passing-a-sil-kit-configuration-file---silkit-config)).
+
+## Output
+
+| Destination | Content |
+|---|---|
+| Stderr | Participant output and the progress of `vehicle_sil_launch` itself |
+| `--log-dir` files | Output per participant |
+| Stdout | Only the result (human-readable or `--json`; events with `--events`) |
+
+With `--events`, the lines that would go to stderr (participant lines and the progress of `vehicle_sil_launch`) go to stdout as events instead (see [Programmatic use](simulation-events.md)).
+
+### Stderr
+
+Each line of a participant's stdout and stderr goes to the stderr of `vehicle_sil_launch` with `[<participant name>] ` in front. The progress lines of `vehicle_sil_launch` itself start with `[vehicle_sil_launch] `. They report the registry URI, the URI for joining from other computers, the commands started, the start, virtual time not advancing, the end, and stops.
+
+| Line content | Handling |
+|---|---|
+| A line longer than 4096 bytes | Split between UTF-8 characters. |
+| Control characters (C0 except tab, DEL, C1 from U+0080 to U+009F) | Replaced with `?`. |
+| Bytes that are not UTF-8 | Replaced with `?`. |
+
+Participants must write UTF-8. The Windows console also shows the output as UTF-8, so characters in other code pages come out garbled.
+
+If the reader of stderr stops (a pipe that nobody reads), `vehicle_sil_launch` also stops where it writes.
+
+### Log files (`--log-dir`)
+
+With `--log-dir <dir>`, each participant's output is also written to `<dir>/<participant name>.log` (without `[name]`). The directory is created if it does not exist. `participants[].log` in the JSON names the file.
+
+Logs from a previous run are overwritten only where the names match. Logs of participants that are not in the current configuration remain.
+
+| Participant name | File name |
+|---|---|
+| Bytes other than ASCII letters, digits, `.`, `-` and `_` | Replaced with `_`. |
+| Windows device names (`NUL`, `CON`, `PRN`, `AUX`, `COM1`–`COM9`, `LPT1`–`LPT9`, also before a `.`) | `_` is appended, on every OS. |
+| Names that differ only in case | Treated as a collision; `-2` or similar is appended. |
+
+### Stdout
+
+Stdout gets only the result. The same result on the same computer gives the same output (it contains no times of day, durations, process IDs or registry URI). These values, which show how time progressed, differ from run to run:
+
+- The `time:` line of the human-readable output
+- `wall_ms`, `actual_speed` and `paused_ms` in `timing` of the JSON
+- The lateness counts in `timing` of the JSON (`late_steps`, `max_late_ms`, `slipped_ms`, `late_ms`)
+
+Line endings are LF on every OS. When writing to the Windows console, both `check` and `run` show the text as UTF-8 characters, whatever the console code page.
+
+### Human-readable result
+
+The human-readable result has these parts, in this order:
+
+| Order | Content |
+|---|---|
+| 1 | The check tables and the check findings |
+| 2 | The simulation line, which starts with `run:` |
+| 3 | The `time:` line (when a speed is set, or when there was a paced time step) |
+| 4 | The participant table (whether each is required, and how it ended) |
+| 5 | The run findings |
+| 6 | The result line (`passed:`, `failed:` or `interrupted:`, with the numbers of errors, warnings and notes from the check and the run together) |
+
+If the check has errors, the `nothing was started:` line follows the check tables and findings.
+
+<!-- vehicle_sil_launch run simulation.yaml -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+run: the simulation ran to stop_at_ms (1000 ms) and ended
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    yes       exit code 0
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+The `time:` line gives the speed, the overall actual speed (excluding pauses), the number of paced time steps and how many of them were later than the tolerance, the largest lateness, the total slip, and the time spent paused (if any). Here is the line from a run with `--speed 4`. Values between `<` and `>` differ from run to run. The time step follows the step size of Dashboard and becomes 5 ms, so there are 200 time steps.
+
+<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
+```text
+time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
+```
+
+The `ended` column of the participant table:
+
+| Shown | Meaning |
+|---|---|
+| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`) |
+| `signal <name>` | Ended by a signal (Linux; for example `signal SIGSEGV`) |
+| `stopped (SIGTERM), exit code <n>` | Ended after being asked to stop (`Ctrl+Break` on Windows) |
+| `killed` | Killed |
+| `not started` | Could not be started (or the run ended before it was started) |
+| `not started (disabled)` | A disabled participant (the `required` column shows `-`) |
+| `started by you (manual)` | A participant that you start yourself, which joined the simulation (`run` cannot know how it ended) |
+| `not joined (manual)` | A participant that you start yourself, which did not join |
+
+An example with a disabled participant. The check part is the same as the output of `check` (see [Disabling a participant](simulation-config.md#disabling-a-participant-enabled---disable---enable)).
+
+<!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->
+```text
+simulation.yaml: 2 participants (1 disabled), 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    -      disabled
+
+network    kind  participants
+J1939_CAN  can   Engine
+
+warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it [participant-disabled]
+
+run: the simulation ran to stop_at_ms (1000 ms) and ended
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    -         not started (disabled)
+
+passed: 0 errors, 1 warning, 1 note
+```
+
+### Run findings (`code`)
+
+| `code` | Severity | Meaning |
+|---|---|---|
+| `setup` | Error (exit code 3) | The registry cannot be started (the port of `registry_uri` is in use, for example), the controller cannot be created, or `--log-dir` cannot be written |
+| `start` | Error (warning for `required: false`) | A participant cannot be started |
+| `ended-before-start` | Error | A required participant ended before the simulation started |
+| `not-joined` | Error | The process of a required participant is running, but it did not join within `start_timeout_ms` |
+| `simulation-start` | Error | All required participants joined, but the simulation could not be started |
+| `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
+| `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
+| `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
+| `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
+| `connection-not-closed` | Warning | The SIL Kit connections of `run` itself did not close within the deadline (see [Stopping a run](#stopping-a-run)) after the participants were ended |
+| `timeout` | Error | The simulation did not end within the real time of `--timeout-ms`, so it was aborted |
+| `simulation` | Error | The simulation did not end normally (and the participant responsible is unknown) |
+| `ended-before-stop-at` | Note | A participant stopped the simulation before `stop_at_ms` |
+| `control-link-no-hello` | Warning | The hello of an ECU that should expose variables, or its reply that it can take commands, did not arrive before the start |
+| `control-link-dropped` | Warning | `vehicle_sil_launch` dropped messages of the connection to ECU variables |
+| `control-link-version` | Warning | The version of the message format in a received hello differs from that of `vehicle_sil_launch` |
+| `control-link-late-values` | Warning | Values or results of an ECU arrived later than the virtual-time guarantee allows |
+| `variable-map-not-applied` | Error | Some entries of the `variables` map in the configuration file do not match the variables that the ECU reported when it connected |
+| `before-start` | Error | An action to perform while waiting for the start failed |
+| `behind-real-time` | Warning | Some of the paced time steps were later than `late_tolerance_ms` |
+| `coarse-time-step` | Warning | A speed is set, and the controller's time step is coarser than the ECU steps |
+| `interrupted` | Note | The run was interrupted |
+
+Notes on individual codes:
+
+| `code` | Notes |
+|---|---|
+| `connection-not-closed` | Gives the time waited. The result is complete. |
+| `timeout` | In a run with a required manual participant, also reported when the simulation did not start (it names what the run was waiting for). |
+| `control-link-no-hello` | The message says whether the hello or the reply did not arrive (see [Connection state](#connection-state-state)). |
+| `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
+| `control-link-version` | When the version in the `--describe` output differs, it is a check finding with the same `code`, and the run does not repeat it. |
+| `control-link-late-values` | The ECU sends from outside its step (an error in hand-written communication code). |
+| `variable-map-not-applied` | Says which entries do not match, and why. |
+| `before-start` | The action is supplied by the code that calls `run` as a function (internal use). |
+| `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. |
+| `coarse-time-step` | Gives by how many ms at most ECU steps are delayed and run bunched together, and the value to write in `time_step_ms`. |
+
+`connection-not-closed` should not happen with any configuration, so it indicates a bug in `vehicle_sil_launch` or SIL Kit. Report it with the result and the output of `run`.
+
+`control-link-dropped` has 4 possible causes. The variables of the participant concerned can be missing or stale.
+
+- More participants expose variables than the limit (256).
+- An ECU built with a different vehicle-sil version is present.
+- Another program writes to the same topics (`vehicle_sil.control.*`).
+- The hello of a participant that joined during the run had not arrived yet.
+
+If `control-link-version` appears, build with the same vehicle-sil version.
+
+With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`) when the ECU connects. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
+
+When `before-start` appears, the simulation had started and was aborted at once.
+
+`behind-real-time` and `coarse-time-step` belong to no participant (see [Running at a set speed](#running-at-a-set-speed-speed)).
+
+## Exit codes
+
+These are the exit codes of `run`. For the full table that includes `check` and `test`, and for the list of usage errors, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes). The exit codes of `test` are also in [Running several scenarios](#running-several-scenarios-vehicle_sil_launch-test).
+
+| Exit code | Meaning | `result` of `--json` |
+|---|---|---|
+| 0 | The simulation ended normally and every required participant exited with 0 (with `--strict`, also no warnings) | `"passed"` |
+| 1 | Check errors; nothing was started | `"check_failed"` |
+| 1 | Run errors (a participant failed, the participants did not all join, a participant did not end when stopped, and so on) | `"failed"` |
+| 3 | The configuration file cannot be read (missing file, syntax error, unknown format version, and so on) | `"unreadable"` |
+| 3 | The registry or the controller cannot be set up (finding `setup`) | `"setup_failed"` |
+| 3 | The result cannot be written to stdout, or an unexpected failure of `vehicle_sil_launch` itself | |
+| 4 | Usage error | `"usage"` |
+| 130 | Interrupted (Ctrl+C, `{"command":"stop"}`, end of stdin, closed stdout, `Stop` from a Control Server client, and so on) | `"interrupted"` |
+
+For a missing file, the exit code depends on the kind of file.
+
+| Missing file | Exit code | Reason |
+|---|---|---|
+| The configuration file (`run nofile.yaml`) | 3 | The configuration file cannot be read, so the check cannot start. |
+| The `--scenario` file | 1 | It counts as a check error (`code` is `file`). |
+| A path given to `test --scenarios` | 4 | It is a usage error. |
+
+## JSON (`run --json`)
+
+One JSON object. The rules (key order, `null`, indentation, line breaks, how versions go up and how readers handle them) are the same as for the check JSON.
+
+| Key | Value |
+|---|---|
+| `vehicle_sil_run` | Format version (currently 1) |
+| `vehicle_sil` | vehicle-sil version of `vehicle_sil_launch` |
+| `file` | The configuration file (as given in the arguments) |
+| `result` | `"passed"`, `"failed"`, `"interrupted"`, `"check_failed"` (check errors; nothing was started), `"unreadable"`, `"setup_failed"`, `"usage"` |
+| `strict` | Whether `--strict` was given |
+| `errors`, `warnings`, `notes` | Counts for the check and the run together |
+| `simulation` | How the simulation ended (see the table below). `null` if nothing was started |
+| `interrupted_by` | The signal or key that interrupted the run (`"SIGINT"`, `"Ctrl+C"` and so on). `null` if the run was not interrupted |
+| `timing` | How time progressed (see the table below). `null` if nothing was started |
+| `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants |
+| `findings[]` | Run findings (same form as `findings[]` of the check) |
+| `check` | The check result (the same object as `check --json`) |
+| `scenario` | Only with `--scenario`: the scenario result (see "Output" in [scenario.md](scenario.md#output)) |
+
+The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`).
+
+Values of `simulation`:
+
+| Value | Meaning |
+|---|---|
+| `"reached_stop_at"` | Ran until `stop_at_ms` |
+| `"ended"` | A participant stopped it (with `--scenario`, also when the scenario ended and the launcher stopped it) |
+| `"aborted"` | Aborted (also by `--timeout-ms`) |
+| `"interrupted"` | Stopped by a stop request (Ctrl+C and similar) |
+| `"not_started"` | Did not start |
+
+In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null.
+
+Keys of `participants[]`:
+
+| Key | Value |
+|---|---|
+| `name` | Participant name |
+| `required` | `required` in the configuration file |
+| `enabled` | `false` for a disabled participant (`ended` is `"not_started"`, `log` is `null`) |
+| `manual` | `true` for a participant that you start yourself (`ended` is `"not_started"`, `exit_code` is `null`) |
+| `ended` | `"exited"`, `"stopped"`, `"killed"`, `"not_started"` |
+| `exit_code` | Exit code (`null` if the participant ended by a signal, was killed or was not started) |
+| `signal` | `"SIGSEGV"` and so on (`null` if none) |
+| `left_processes` | Whether processes it started were left behind |
+| `log` | The `--log-dir` file (`null` if none) |
+| `control_link` | State of the connection to ECU variables at the start (see the table below) |
+
+The simulation waits for the participants whose `required` and `enabled` are both `true`. For `manual`, see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual).
+
+Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):
+
+| Key | Value |
+|---|---|
+| `state` | `"connected"`, `"no_hello"`, `"version_mismatch"`, `"not_offered"`, `"none"` (`"none"` for a participant that was not started) |
+| `variables` | For `connected`, the number of variables the ECU exposes (otherwise `null`) |
+| `version` | For `version_mismatch`, the format version of the other side (otherwise `null`) |
+| `late_messages` | Number of messages received later than the guarantee allows (normally 0) |
+
+`variables` includes outputs such as `peer.` that are added when the ECU runs, so it can be larger than the count in `--describe`.
+
+Keys of `timing` (for the definitions of the counts, see [Running at a set speed](#running-at-a-set-speed-speed)):
+
+| Key | Value |
+|---|---|
+| `speed` | Speed at the end (a number or `"max"`) |
+| `time_step_ms` | The controller's time step (the value from the configuration file, or the default) |
+| `ecu_step_ms` | The smallest ECU step size (milliseconds) |
+| `step_delay_ms` | The largest amount by which ECU steps run later than the real time that corresponds to their virtual time, because the time step is coarser than the ECU steps (milliseconds) |
+| `late_tolerance_ms` | The lateness tolerance (the value from the configuration file, or the default) |
+| `sim_ms` | Virtual time reached (milliseconds; the time of the last time step that started) |
+| `wall_ms` | Real time taken (milliseconds, including time spent paused) |
+| `actual_speed` | Overall actual speed (`sim_ms` ÷ (`wall_ms` − `paused_ms`), 3 decimal places) |
+| `paced_steps` | Number of paced time steps (time steps compared with a deadline) |
+| `late_steps` | Of those, the number of time steps whose lateness exceeded `late_tolerance_ms` (the number of slips) |
+| `max_late_ms` | Largest lateness of the paced time steps (milliseconds, rounded up; includes lateness within the tolerance) |
+| `slipped_ms` | Total slip (the sum of the lateness of the late time steps; milliseconds, rounded up) |
+| `late_ms` | Lateness of a time step that was past its deadline and had not started when the run ended (milliseconds, rounded up; 0 if none) |
+| `paused_ms` | Real time spent paused (milliseconds) |
+
+The times in `timing` run from the start of the controller's first time step (virtual time 0) to the start of the last time step. Starting the participants, stopping them and the wait until a failure is noticed are not included. When the run ends with the next time step past its deadline, and at maximum speed, the times run up to the end of the run.
+
+| Key | Notes |
+|---|---|
+| `ecu_step_ms` | `null` when a participant's step size is unknown (`describe: false`), or when no ECU has a step. |
+| `step_delay_ms` | Meaningful when the run is paced. |
+| `step_delay_ms` | 0 means that every ECU step starts at a time step boundary. |
+| `step_delay_ms` | `null` when a participant's step size is unknown. |
+| `sim_ms` | In a run that ended by a participant failure or an abort, it varies by one time step from run to run. |
+| `actual_speed` | `null` if the run lasted less than 1 ms. |
+| `paced_steps` | Includes a last time step that was past its deadline and never started. |
+| `slipped_ms` | The simulation as a whole fell this far behind the set speed. |
+| `late_ms` | If not 0, the simulation ended while standing still (the lateness is included in `late_steps`, `max_late_ms` and `slipped_ms`). |
+
+`sim_ms` varies because the moment the failure or abort is noticed can fall before or after the start of the controller's next time step.
+
+<!-- vehicle_sil_launch run simulation.yaml --json -->
+```json
+{
+  "vehicle_sil_run": 1,
+  "vehicle_sil": "<version>",
+  "file": "simulation.yaml",
+  "result": "passed",
+  "strict": false,
+  "errors": 0,
+  "warnings": 0,
+  "notes": 0,
+  "simulation": "reached_stop_at",
+  "interrupted_by": null,
+  "timing": {
+    "speed": "max",
+    "time_step_ms": 10,
+    "ecu_step_ms": 5,
+    "step_delay_ms": 5,
+    "late_tolerance_ms": 10,
+    "sim_ms": 1000,
+    "wall_ms": <wall_ms>,
+    "actual_speed": <actual_speed>,
+    "paced_steps": 0,
+    "late_steps": 0,
+    "max_late_ms": 0,
+    "slipped_ms": 0,
+    "late_ms": 0,
+    "paused_ms": 0
+  },
+  "participants": [
+    {
+      "name": "Engine",
+      "required": true,
+      "enabled": true,
+      "manual": false,
+      "ended": "exited",
+      "exit_code": 0,
+      "signal": null,
+      "left_processes": false,
+      "log": null,
+      "control_link": {
+        "state": "connected",
+        "variables": 18,
+        "version": null,
+        "late_messages": 0
+      }
+    },
+    {
+      "name": "Dashboard",
+      "required": true,
+      "enabled": true,
+      "manual": false,
+      "ended": "exited",
+      "exit_code": 0,
+      "signal": null,
+      "left_processes": false,
+      "log": null,
+      "control_link": {
+        "state": "connected",
+        "variables": 18,
+        "version": null,
+        "late_messages": 0
+      }
+    }
+  ],
+  "findings": [],
+  "check": {
+    "vehicle_sil_check": 1,
+    "vehicle_sil": "<version>",
+    "file": "simulation.yaml",
+    "result": "passed",
+    "strict": false,
+    "errors": 0,
+    "warnings": 0,
+    "notes": 0,
+    "stop_at_ms": 1000,
+    "start_timeout_ms": 30000,
+    "stop_timeout_ms": 10000,
+    "registry_uri": null,
+    "participants": [
+      {
+        "name": "Engine",
+        "line": 11,
+        "command": [
+          "engine/vehicle_sil_engine_ecu"
+        ],
+        "describe": true,
+        "required": true,
+        "enabled": true,
+        "manual": false,
+        "role": "ecu",
+        "step_ms": 10,
+        "status": "described",
+        "reported": {
+          "vehicle_sil": "<version>",
+          "name": "Engine",
+          "step_ns": 10000000,
+          "networks": [
+            {
+              "name": "J1939_CAN",
+              "kind": "can",
+              "use": "j1939",
+              "nodes": [
+                {
+                  "address": 0,
+                  "j1939_name": "0x00000000FE000001",
+                  "arbitrary_address_capable": false
+                }
+              ],
+              "mac": null
+            }
+          ]
+        },
+        "variables": [
+          {
+            "name": "ecu.connected",
+            "type": "bool",
+            "causality": "input",
+            "unit": "",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+            "items": [],
+            "builtin": true
+          },
+          {
+            "name": "engine.throttle",
+            "type": "real",
+            "causality": "input",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "step": null,
+            "description": "accelerator pedal position",
+            "items": [],
+            "builtin": false
+          },
+          {
+            "name": "engine.speed",
+            "type": "integer",
+            "causality": "output",
+            "unit": "rpm",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "",
+            "items": [],
+            "builtin": false
+          }
+        ],
+        "control": {
+          "transport": "silkit",
+          "wire_version": 1
+        }
+      },
+      {
+        "name": "Dashboard",
+        "line": 14,
+        "command": [
+          "dashboard/vehicle_sil_dashboard_ecu"
+        ],
+        "describe": true,
+        "required": true,
+        "enabled": true,
+        "manual": false,
+        "role": "ecu",
+        "step_ms": 5,
+        "status": "described",
+        "reported": {
+          "vehicle_sil": "<version>",
+          "name": "Dashboard",
+          "step_ns": 5000000,
+          "networks": [
+            {
+              "name": "J1939_CAN",
+              "kind": "can",
+              "use": "j1939",
+              "nodes": [
+                {
+                  "address": 40,
+                  "j1939_name": null,
+                  "arbitrary_address_capable": false
+                }
+              ],
+              "mac": null
+            }
+          ]
+        },
+        "variables": [
+          {
+            "name": "ecu.connected",
+            "type": "bool",
+            "causality": "input",
+            "unit": "",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
+            "items": [],
+            "builtin": true
+          },
+          {
+            "name": "dashboard.engine_speed",
+            "type": "integer",
+            "causality": "output",
+            "unit": "rpm",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "the speed shown",
+            "items": [],
+            "builtin": false
+          },
+          {
+            "name": "dashboard.engine_lost",
+            "type": "bool",
+            "causality": "output",
+            "unit": "",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "no engine speed for more than 300 ms (it comes every 100 ms)",
+            "items": [],
+            "builtin": false
+          }
+        ],
+        "control": {
+          "transport": "silkit",
+          "wire_version": 1
+        }
+      }
+    ],
+    "networks": [
+      {
+        "name": "J1939_CAN",
+        "kind": "can",
+        "line": 8,
+        "participants": [
+          "Engine",
+          "Dashboard"
+        ]
+      }
+    ],
+    "findings": []
+  }
+}
+```
+
+The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>` and `<actual_speed>`).
+
+## Running several scenarios (`vehicle_sil_launch test`)
+
+`vehicle_sil_launch test <file> --scenarios <directory or files>...` runs the listed scenarios one at a time for each variant of the configuration file, and puts all the results in one table. It is meant for CI: one command and its exit code tell whether every scenario passes on every variant.
+
+```sh
+vehicle_sil_launch test simulation.yaml --scenarios scenarios/                      # every variant × the scenarios in the directory
+vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.yaml  # one variant × the listed files
+```
+
+### Which runs, in which order
+
+The runs are every variant × every scenario.
+
+| Item | Rule |
+|---|---|
+| Order | Variants in configuration file order; within each variant, scenarios in argument order. |
+| A configuration file without variants | Only the scenarios are listed. |
+| `--variant <name>` | Runs only that variant (repeatable; the order stays the configuration file order). |
+| One run | The same as `run <file> --variant <variant> --scenario <scenario> --speed max`. |
+| Speed | Maximum, whatever `speed` the configuration file sets. |
+| Between runs | The registry, the controller and the participant processes are created anew (no state carries over from the previous run). |
+| Concurrent runs | None. |
+
+### Selecting scenarios (`--scenarios`)
+
+Give `--scenarios` directories or files. You can list any number of them and repeat `--scenarios`. `--scenarios` reads every argument up to the next one that starts with `--` as a scenario, so put the configuration file before `--scenarios`, or after `--` (`test --scenarios scenarios/ -- simulation.yaml`).
+
+| Given | Scenarios run | Order |
+|---|---|---|
+| A directory | All files directly in it whose names end in `.yaml`, `.yml` or `.json` | File names compared as UTF-8 byte strings |
+| A file | That file, whatever its extension | The order given |
+
+- In a directory, the extension is not case-sensitive, and subdirectories are not entered.
+- The directory order is the same on every OS (upper case comes before lower case).
+- A scenario from a directory is shown in the table as `<directory as given>/<name>`.
+- Do not put YAML files that are not scenarios in the directory (if you do, that run fails the check).
+- File paths are relative to the current directory, like the configuration file.
+- A path that does not exist, or a directory with no scenario file, is a usage error (nothing runs).
+
+### Skipped runs, failed runs and interruption
+
+| Case | What `test` does |
+|---|---|
+| A run whose variant is not in the scenario's `only` | Does not run it and marks it `skipped`. |
+| Every run is `skipped` | After the table, writes one line with the warning `test-nothing-run` (`nothing was run: ...`). |
+| A run failed | Still carries out the remaining runs. |
+| `--fail-fast` is given and a run failed | Runs nothing after the first failure (the rest are `not run`). |
+| Ctrl+C (first) | Stops the current run in the same order as `run`, skips the remaining runs and writes the table up to that point (exit code 130). |
+| Ctrl+C (second) | As with `run`: ends the participants without waiting for them to end. |
+
+A run whose variant is not in `only` is the error `scenario-variant` with `run`, but `test` does not count it as a failure. If that run's configuration or scenario has other errors, it is a failure, not `skipped`.
+
+Every run is `skipped`, for example, when the variants selected with `--variant` are in no scenario's `only`. Then nothing has been checked. By default this passes (exit code 0); with `--strict`, it fails (exit code 1).
+
+### Accepted options
+
+| Option | In `test` |
+|---|---|
+| `--json`, `--strict`, `--describe-timeout-ms`, `--disable`, `--enable` | Accepted (applied the same way to every run). |
+| `--timeout-ms` | Accepted (the limit for each run). |
+| `--param <name>=<value>` | Applied only to scenarios that declare or use that parameter. |
+| `--speed`, `--log-dir`, `--events`, `--stdin-commands`, `--control`, `--manual` and other options only for `run` | Usage error. |
+| `--scenario` | Usage error. |
+
+If no scenario has the name given to `--param`, it is a usage error (nothing runs). This keeps a typo from being silently ignored.
+
+### How the configuration file is used
+
+`test` reads the configuration file before the first run. If it cannot be read, nothing runs and the exit code is 3. If the configuration file has check errors, every run fails (each run is checked on its own).
+
+`test` starts every participant itself. If the configuration of a variant to run has an enabled participant with `manual: true` (one that a person starts), every run would wait for a person. So `test` reports a usage error before the first run (exit code 4; the message names the participant).
+
+| Goal | How |
+|---|---|
+| Run without that participant | Disable it with `--disable <name>`. |
+| Run together with that participant | Run the scenarios one at a time with `run --scenario`. |
+
+If you disable the participant with `--disable`, a scenario with steps that use its variables fails the check of that run.
+
+### Output of `test`
+
+Stderr gets the same lines as with `run` (participant output, launcher lines). Before and after each run, these lines appear:
+
+```text
+[vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml
+[vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml: skipped (the scenario is only for medium (its only))
+```
+
+Stdout gets the following, in this order (no times of day, durations or process IDs):
+
+| Order | Content |
+|---|---|
+| 1 | The table, one line per run |
+| 2 | If a run failed, the command to rerun one run alone |
+| 3 | Findings for the whole `test` (if any) |
+| 4 | The result line |
+
+```text
+variant  scenario        result
+small    scn/idle.yaml   passed
+small    scn/turbo.yaml  skipped  the scenario is only for medium (its only)
+medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: not true at 100 ms: Engine.rpm ge 650, but it was 640 (its sample of 100 ms)
+medium   scn/turbo.yaml  passed   1 of 3 steps was skipped, 1 warning
+
+to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max --variant medium --scenario scn/idle.yaml
+
+FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
+```
+
+| `result` in the table | Meaning | Right column |
+|---|---|---|
+| `passed` | `run` passed for that run | The number of skipped steps, of `expect`s not checked and of warnings (only those present) |
+| `FAILED` | The check or the run failed (exit code 1 or 3 of `run`) | The first error (with its line, for a scenario error) and the number of the rest |
+| `skipped` | The scenario's `only` does not include this variant | The variants in `only` |
+| `interrupted` | The run was interrupted midway | The signal or key that interrupted it |
+| `not run` | Not run (interruption, `--fail-fast`, or the launcher's SIL Kit connection did not close after an earlier run) | The reason |
+
+- The "`expect`s not checked" of `passed` are the `expect`s next to `ramp` and `wave` (`1 expect was not checked`).
+- To see what the warnings of a `passed` run are, run it alone or read `runs[].run` in `--json`.
+- For a `FAILED` run that has only warnings under `--strict`, the right column shows the first warning.
+- A configuration file without variants gives no `variant` column.
+
+The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
+
+The last line is `passed`, `FAILED` or `interrupted`, followed by the counts of runs. The counts of `interrupted` and `not run` appear only when there are such runs.
+
+| Case | End of the last line |
+|---|---|
+| The remaining runs were not run because a connection did not close | `(the launcher's connection to the simulation did not close)` |
+| `--strict` was given | `(--strict)` |
+
+### Findings for the whole `test`
+
+Findings for the whole `test` are written after the table, one line each, as `<severity>: <configuration file>: <text> [<code>]` (in `--json`, in `findings[]`).
+
+| `code` | Severity | Meaning |
+|---|---|---|
+| `test-nothing-run` | Warning | No run was carried out (every run is `skipped`), so nothing was checked (a failure with `--strict`) |
+| `test-runs-left` | Error | Some runs were not carried out although `test` was not interrupted |
+
+`test-runs-left` appears when the launcher's own SIL Kit connection did not close after a run (that run has the warning `connection-not-closed`; see [Stopping a run](#stopping-a-run)). `test` then ends without starting another simulation in the same process. Select the `not run` runs with `--variant` and `--scenarios` and run them again.
+
+### Exit codes of `test`
+
+| Exit code | Meaning |
+|---|---|
+| 0 | No run failed and none was left out |
+| 1 | 1 or more runs failed |
+| 1 | Some runs were not carried out although `test` was not interrupted (`test-runs-left`) |
+| 1 | With `--strict`, no run was carried out (`test-nothing-run`) |
+| 3 | The configuration file cannot be read (nothing was run) |
+| 3 | The result cannot be written, or an unexpected failure of `vehicle_sil_launch` itself |
+| 4 | Usage error (nothing was run) |
+| 130 | Interrupted (130 even if a run failed before) |
+
+`skipped` does not count as a failure. Even if every run is `skipped`, the exit code is 0 without `--strict`. The error for a participant with `manual: true` in the configuration file is also 4.
+
+### JSON (`test --json`)
+
+One JSON object. The rules (key order, `null`, indentation, line breaks, how versions go up and how readers handle them) are the same as for the check JSON.
+
+| Key | Value |
+|---|---|
+| `vehicle_sil_test` | Format version (currently 1) |
+| `vehicle_sil` | vehicle-sil version of `vehicle_sil_launch` |
+| `file` | The configuration file (as given in the arguments) |
+| `result` | `"passed"`, `"failed"` (every case of exit code 1), `"interrupted"`, `"unreadable"`, `"usage"` |
+| `strict` | Whether `--strict` was given |
+| `variants` | The variants to run (in configuration file order). Empty for a configuration file without variants |
+| `scenarios` | The scenarios to run (names as shown in the table, in run order) |
+| `passed`, `failed`, `skipped`, `interrupted`, `not_run` | Number of runs with each result |
+| `runs[]` | Result per run (see the table below), in run order |
+| `findings[]` | Why nothing was run (when `result` is `"usage"` or `"unreadable"`), and the findings for the whole `test` (`test-nothing-run`, `test-runs-left`). Empty if there are none |
+
+`findings[]` has the same form as `findings[]` of the check.
+
+Keys of `runs[]`:
+
+| Key | Value |
+|---|---|
+| `variant` | The variant (`null` for a configuration file without variants) |
+| `scenario` | The scenario |
+| `result` | `"passed"`, `"failed"`, `"skipped"`, `"interrupted"`, `"not_run"` |
+| `reason` | The right column of the table (`null` if empty) |
+| `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
+
+`formats` and `features` of `version --json` have no entries for `test`.
+
+## See also
+
+- How to write the configuration file, and the list of arguments → [simulation-config.md](simulation-config.md)
+- The check and its findings → [simulation-check.md](simulation-check.md)
+- The events of `run --events`, and stdin commands → [simulation-events.md](simulation-events.md)
+- How to write scenarios → [scenario.md](scenario.md)
+- Reading and writing the variables of a running simulation from a program → [control-api.md](control-api.md)
+- How to run on several computers → [howto/multi-pc.md](howto/multi-pc.md)

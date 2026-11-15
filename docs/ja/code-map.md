@@ -1045,7 +1045,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 ### `scripts/`
 
-開発と CI のスクリプトです。一覧は [AGENTS.md](../../AGENTS.md) の「検証とスクリプト」にあります。
+開発と CI のスクリプトです。一覧は [AGENTS.md](../../AGENTS.md#verification-and-scripts) にあります。
 
 | テスト | 対象 |
 |---|---|

@@ -87,7 +87,7 @@ ThreadSanitizer のプリセットのテストは、誤検出とわかってい�
 
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
 
-コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](../../AGENTS.md) の「検証とスクリプト」）。
+コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](../../AGENTS.md#verification-and-scripts)）。
 
 ### Windows（MSYS2 UCRT64）
 

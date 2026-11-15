@@ -94,7 +94,7 @@ vehicle-sil/
 ├── gui/client/       GUI サーバーのクライアントのライブラリ（TypeScript）
 ├── gui/web/          サンプルの画面（Angular）
 ├── template/         ECU のプロジェクトのテンプレート（ビルド済みのツールをダウンロードする get_tools.py を含む）
-├── scripts/          開発と CI のスクリプト（verify.py、package.py など。AGENTS.md の「検証とスクリプト」）
+├── scripts/          開発と CI のスクリプト（verify.py、package.py など。AGENTS.md の "Verification and scripts"）
 ├── cmake/            依存の取り込み、テストの登録、境界の検査
 └── docs/
 ```
