@@ -43,6 +43,7 @@ Where scenario tests live:
 - `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
 - Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
 - The shared code is in `tests/integration/launcher_support.hpp`.
+- The `launch_run` scenarios are in `tests/launch/launch_run_<topic>.cpp`, one file for each topic. `main()` is in `launch_run_launcher.cpp`, and the code they share is in `launch_run_support.hpp`.
 
 Rules for areas (the directories directly under `tests/`):
 
@@ -369,6 +370,7 @@ What `simulation.*` checks:
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
+- `simulation.ecu_main_j1939_node*`: `--j1939-node` of `ecu_main()` gives the node the values of the line (also on a renamed network), the message for a line that applies to no node (exit code 3), a node added in a step keeps the values of the code; the usage errors of its value are in `simulation.ecu_main_refuses_bad_command_lines`
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -384,6 +386,7 @@ What `ecu_main.*` checks:
 - The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
 - `--local`
 - 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- 2 copies of the engine, the second with `--j1939-node` (`ecu_main.j1939_node`: the addresses in the monitoring output)
 - Usage, stop requests
 
 ### `core` / `lin`
@@ -1172,13 +1175,12 @@ No test compares the following. Keep them in sync by hand.
 
 ## Dependency direction
 
-In every diagram, an arrow means "links" (`target_link_libraries`), except the thick arrow (see the table). Do not create dependencies in the opposite direction.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
 
 | In the diagrams | Meaning |
 |---|---|
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
-| Thick arrow | No link of its own: the public headers include the other target's headers, and the link comes through another target's public link |
 | Node name | Target name (without `vehicle_sil::`) |
 
 ### Layers
@@ -1332,11 +1334,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1349,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `control`: the public headers of `launch` include headers of `control` (`hub.hpp`, `agent.hpp`, `variable_map.hpp`). `launch` gets `control` through the public link of `ecu`.
 - `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
 
 ### Vector XL CAN Bridge
@@ -2261,6 +2262,7 @@ Documentation to update:
 Tests:
 
 - `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
+- `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
 
 ### The SIL Kit transport and the start window
 

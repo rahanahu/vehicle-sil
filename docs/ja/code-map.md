@@ -43,6 +43,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 - シナリオの一覧は `CMakeLists.txt` の `SCENARIOS` です。
 - 中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。
 - 共通のコードは `tests/integration/launcher_support.hpp` にあります。
+- `launch_run` のシナリオは、題ごとに `tests/launch/launch_run_<題>.cpp` に分けてあります。`main()` は `launch_run_launcher.cpp` に、共通のコードは `launch_run_support.hpp` にあります。
 
 領域（`tests/` の直下のディレクトリ）のルール:
 
@@ -369,6 +370,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `Ecu::describe()`
 - 関数として呼んだ `ecu_main()` の引数と終了コード
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ追加する場面）、ない ECU の名前や当たらなかった行を始める前に拒否すること
+- `simulation.ecu_main_j1939_node*`: `ecu_main()` の `--j1939-node` が、行の値をノードに与えること（名前を替えたネットワークでも）、どのノードにも当たらない行のメッセージ（終了コード 3）、ステップの中で追加したノードがコードの値のままであること。値の使い方の誤りは `simulation.ecu_main_refuses_bad_command_lines`
 
 イーサネットのチャネル（`test_ethernet.cpp`）では、次のステップで受信すること、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、拒否するときの文言、`LocalBench` の参照を確認します。
 
@@ -384,6 +386,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `--describe` の JSON を [ecu-executable.md](ecu-executable.md) の例と、vehicle-sil のバージョンを除いてバイト単位で照合
 - `--local`
 - `vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU
+- エンジンの 2 つのコピー、2 つ目に `--j1939-node`（`ecu_main.j1939_node`。監視の出力のアドレス）
 - 使い方、停止の要求
 
 ### `core` / `lin`
@@ -1172,13 +1175,12 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 
 ## 依存の向き
 
-どの図でも、矢印は「リンクする」（`target_link_libraries`）です（太い矢印だけは違います。表を見てください）。逆向きの依存は作りません。
+どの図でも、矢印は「リンクする」（`target_link_libraries`）です。逆向きの依存は作りません。
 
 | 図の書き方 | 意味 |
 |---|---|
 | 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
 | 点線の矢印 | 非公開（`PRIVATE`）のリンク |
-| 太い矢印 | 自分のリンクはない。公開のヘッダーが相手のヘッダーを読み、リンクはほかのターゲットの公開のリンクから来る |
 | ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
 
 ### 全体の層
@@ -1332,11 +1334,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1349,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` と `control`: `launch` の公開のヘッダーは `control` のヘッダー（`hub.hpp`、`agent.hpp`、`variable_map.hpp`）を読みます。`launch` は `control` を `ecu` の公開のリンクから得ています。
 - `launch` と `ecu`: `launch` のソースは `ecu` の内部のヘッダー `vehicle_sil/ecu/detail/json_writer.hpp` も読みます。ランチャーは、`--describe` の出力と同じ書き手で JSON を書きます。
 
 ### Vector XL CAN Bridge
@@ -2261,6 +2262,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 テスト:
 
 - `^control\.wire_`: 1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと、sanitizer のプリセットで失敗します。
+- `^control\.wire_v1_`: 版 1 のバイト列（`tests/control/wire_v1_golden.hpp` に手で書いたもの）。版 1 を話す ECU は、このバイト列をそのまま送り、そのまま受けることを前提にしています。試験を通すためにバイト列を書き換えないでください。
 
 ### SIL Kit の上のトランスポートと開始前の窓
 
