@@ -469,6 +469,22 @@ required でない coordinated の participant が、この順になります。
 
 **上流への報告**: 未報告です。
 
+### SIL Kit: ほかの participant が抜ける間に参加すると、抜けた participant を待つ
+
+**内容**: participant が終わっても、registry がそれを知るのは、I/O スレッドがその接続の終わりを処理したときです。それより前に参加した participant は、終わった participant を既知の participant の一覧で受け取ります（`VAsioRegistry::SendKnownParticipants()`）。参加する側は、次の 3 つの方法を順に試します（`ConnectKnownParticipants.cpp`）。
+
+1. 直接つなぐ。すぐ失敗します。
+2. registry が中継する依頼で、相手からつないでもらう。registry は、そのときには宛先を消していて、依頼を返事なしに捨てます（`VAsioConnection::ReceiveRemoteParticipantConnectRequest_Registry()`、「Ignoring invalid RemoteParticipantConnectRequest」）。依頼した側は `Middleware.ConnectTimeoutSeconds` の間待ちます。
+3. registry を proxy にする。registry はこのメッセージも届けられず（「Unable to deliver proxy message」）、それを知らせません。依頼した側は、返事をさらに `ConnectTimeoutSeconds` の間待ちます。
+
+相手がもういないことは、参加する側に伝わりません。
+
+**影響**: participant が終わった直後に別の participant が参加すると（すぐ起動し直す ECU、1 つの registry で続けて行う実行）、まれに `CreateParticipant()` が、`ConnectTimeoutSeconds` の 2 倍（既定では 10 秒）の後に `Timeout while waiting for replies from known participants: <名前> (...) is waiting for reply` で失敗します。`ParticipantRuntime` のコンストラクターは、このエラーを投げます。もう一度試すと成功します。
+
+**対応**: いまはありません。パッチ 0005 が防ぐのは、registry が終わった participant のソケットをすでに閉じている間だけです。返事は来ないので、`ConnectTimeoutSeconds` を伸ばしても直りません。
+
+**上流への報告**: 未報告です。
+
 ## SIL Kit へのパッチ
 
 `patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを含みます。

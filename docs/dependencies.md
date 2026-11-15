@@ -469,6 +469,22 @@ A coordinated participant that is not required gets into this order. `LifecycleS
 
 **Reported upstream**: Not yet.
 
+### SIL Kit: a participant that joins while another one leaves waits for the one that left
+
+**Description**: When a participant ends, the registry learns of it only when its I/O thread handles the end of that connection. A participant that joins before that gets the participant that ended in its list of known participants (`VAsioRegistry::SendKnownParticipants()`). It then tries 3 ways to reach it (`ConnectKnownParticipants.cpp`):
+
+1. A direct connection. It fails at once.
+2. A connection that the other participant makes on a request relayed by the registry. The registry has removed the target by then and drops the request without an answer (`VAsioConnection::ReceiveRemoteParticipantConnectRequest_Registry()`, "Ignoring invalid RemoteParticipantConnectRequest"). The requester waits for `Middleware.ConnectTimeoutSeconds`.
+3. The registry as a proxy. The registry cannot deliver the message either ("Unable to deliver proxy message") and does not say so. The requester waits for a reply for another `ConnectTimeoutSeconds`.
+
+Nothing tells the joining participant that the other one is gone.
+
+**Impact**: Rarely, when a participant joins right after another one ended (an ECU that is started again at once, runs that follow each other at one registry), `CreateParticipant()` fails after twice `ConnectTimeoutSeconds` (10 seconds by default) with `Timeout while waiting for replies from known participants: <name> (...) is waiting for reply`. The constructor of `ParticipantRuntime` throws this error. A second attempt succeeds.
+
+**Handling**: None so far. Patch 0005 covers only the moment in which the registry has already closed the socket of the participant that ended. A longer `ConnectTimeoutSeconds` does not help, because the reply never comes.
+
+**Reported upstream**: Not yet.
+
 ## Patches to SIL Kit
 
 The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test.
