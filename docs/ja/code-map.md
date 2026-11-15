@@ -43,6 +43,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 - シナリオの一覧は `CMakeLists.txt` の `SCENARIOS` です。
 - 中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。
 - 共通のコードは `tests/integration/launcher_support.hpp` にあります。
+- `launch_run` のシナリオは、題ごとに `tests/launch/launch_run_<題>.cpp` に分けてあります。`main()` は `launch_run_launcher.cpp` に、共通のコードは `launch_run_support.hpp` にあります。
 
 領域（`tests/` の直下のディレクトリ）のルール:
 

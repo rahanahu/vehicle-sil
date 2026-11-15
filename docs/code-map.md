@@ -43,6 +43,7 @@ Where scenario tests live:
 - `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
 - Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
 - The shared code is in `tests/integration/launcher_support.hpp`.
+- The `launch_run` scenarios are in `tests/launch/launch_run_<topic>.cpp`, one file for each topic. `main()` is in `launch_run_launcher.cpp`, and the code they share is in `launch_run_support.hpp`.
 
 Rules for areas (the directories directly under `tests/`):
 
