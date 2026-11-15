@@ -6,6 +6,7 @@
 #   windows   the same for Windows x86_64 with MSYS2 UCRT64
 #   draft     once ci.yml has passed on the same commit: the template archive with both archives' SHA-256,
 #             SHA256SUMS, and the draft release (with the client library's npm package on its own)
+# Run by hand (workflow_dispatch), it is a rehearsal: the same files, no release.
 # Security: read-only token except in the draft job (contents: write, to create the release; actions: read, to
 # see ci.yml's runs), no other secrets,
 # actions pinned by commit hash (the tag in the comment). The tag is passed to the scripts through env, never
@@ -15,6 +16,9 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A rehearsal, from the Actions page: builds and checks every file of a release on the chosen commit, and makes
+  # no release (the steps that need the tag are skipped).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -77,6 +81,7 @@ jobs:
           restore-keys: ccache-package-linux-
       # The scripts need Python 3.11+; this Ubuntu has 3.10, so uv brings one.
       - name: The version and the tag agree
+        if: github.event_name == 'push'
         run: uv run --no-project --python 3.13 python scripts/package.py version --expect "$TAG"
       - name: Tools archive
         run: uv run --no-project --python 3.13 python scripts/package.py tools --tag release
@@ -142,6 +147,7 @@ jobs:
           key: ccache-package-windows-${{ github.sha }}
           restore-keys: ccache-package-windows-
       - name: The version and the tag agree
+        if: github.event_name == 'push'
         run: python scripts/package.py version --expect "$TAG"
       - name: Tools archive
         run: python scripts/package.py tools --tag release
@@ -185,6 +191,7 @@ jobs:
         run: cp build/gui-client/vehicle-sil-gui-client-*.tgz build/dist/
       # The release workflow builds and checks the archives only; the full tests are ci.yml's, on the same commit.
       - name: ci.yml passed on this commit
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -199,6 +206,7 @@ jobs:
       - name: Template archive and SHA256SUMS
         run: python3 scripts/package.py template
       - name: Draft release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
