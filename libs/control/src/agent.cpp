@@ -284,7 +284,9 @@ SubmitResult Agent::submit(Command command)
     {
         if (auto error = check(command.writes[i], pending.writes[i], pending.writes_parameter))
         {
-            return invalid(std::move(*error));
+            SubmitResult refused = invalid(std::move(*error));
+            refused.failed_write = static_cast<std::uint32_t>(i);
+            return refused;
         }
     }
     if (pending.writes_parameter && stepped_.load(std::memory_order_acquire))
@@ -400,7 +402,7 @@ void Agent::on_step_begin(SimTime now)
             if (late && command.late == LatePolicy::Reject)
             {
                 stats_.late.fetch_add(1, std::memory_order_relaxed);
-                push_result({command.seq, CommandStatus::Late, std::nullopt, true, "its time had passed"});
+                push_result({command.seq, CommandStatus::Late, std::nullopt, true, "its time had passed", 0U});
                 continue;
             }
             const auto key = command.at.value_or(now); // a command without a time sorts as the current step
@@ -454,17 +456,18 @@ void Agent::apply(Pending& command, SimTime now, bool late)
     if (command.writes_parameter && last_step_)
     {
         stats_.rejected.fetch_add(1, std::memory_order_relaxed);
-        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, "a parameter is writable only before the first step"});
+        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, "a parameter is writable only before the first step", 0U});
         return;
     }
     // The setters are called one after the other, and one that throws ends the command there:
     // the writes before it stay applied (a setter cannot be undone), it and the ones after it
-    // are not. The reason begins with its variable's name, as a refusal of submit() does, so
-    // that the writer can tell which writes took effect.
+    // are not. CommandResult::applied_writes says how many took effect; the reason also begins
+    // with the variable's name, as a refusal of submit() does.
     std::size_t at = 0;
     const auto rejected = [&](const std::string& why) {
         stats_.rejected.fetch_add(1, std::memory_order_relaxed);
-        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, infos_[command.writes[at].first].name + ": " + why});
+        push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, infos_[command.writes[at].first].name + ": " + why,
+                     static_cast<std::uint32_t>(at)});
     };
     try
     {
@@ -484,7 +487,7 @@ void Agent::apply(Pending& command, SimTime now, bool late)
         return;
     }
     stats_.applied.fetch_add(1, std::memory_order_relaxed);
-    push_result({command.seq, CommandStatus::Applied, now, late, {}});
+    push_result({command.seq, CommandStatus::Applied, now, late, {}, static_cast<std::uint32_t>(command.writes.size())});
 }
 
 void Agent::on_step_end(SimTime now)
@@ -555,7 +558,7 @@ void Agent::finish()
 {
     const auto cancel = [&](Pending& command) {
         stats_.cancelled.fetch_add(1, std::memory_order_relaxed);
-        push_result({command.seq, CommandStatus::Cancelled, std::nullopt, false, "the simulation ended"});
+        push_result({command.seq, CommandStatus::Cancelled, std::nullopt, false, "the simulation ended", 0U});
     };
     const std::lock_guard lock(finish_mutex_);
     finished_ = true;
