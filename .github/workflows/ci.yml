@@ -1,4 +1,4 @@
-# Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one with the thread
+# Checks of every push to main and, in part, of every pull request (the job `changes` below says which part): the C++ build and tests (Linux presets, one with the thread
 # sanitizer, one with the control server, and one of them also
 # with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "Verification and scripts"); on failure, its logs (build/logs) are kept as an artifact.
@@ -29,15 +29,24 @@ env:
   VEHICLE_SIL_TEST_TIMEOUT_SCALE: "3"
 
 jobs:
-  # A pull request that changes only Markdown files needs only the checks that read the documents: the links
-  # (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug), and the format
-  # of the GUI's READMEs (gui). A push to main runs everything.
+  # A pull request runs fewer jobs than a push to main, so that several open pull requests do not wait for
+  # runners. A push to main runs everything.
+  # - Only Markdown files changed: the checks that read the documents: the links (python), the examples that
+  #   the launcher's tests compare with the documents (linux-gcc-debug), and the format of the GUI's READMEs (gui).
+  # - Otherwise: linux-gcc-debug, linux-clang-tsan, linux-gcc-control, Windows and python. The presets
+  #   linux-gcc-release and linux-gcc-static and the oldest CMake are added when the pull request changes how
+  #   things are built (CMake files, patches, the submodule, the workflows): elsewhere they have failed only
+  #   together with a job of the first set, and main still runs them after the merge.
+  # - The gui job is left out when every changed file is C++ or its build (the list below): it builds no C++,
+  #   and the GUI server against the launcher runs in linux-gcc-control.
   changes:
-    name: changes (documents only?)
+    name: changes (which jobs?)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.look.outputs.docs_only }}
+      full: ${{ steps.look.outputs.full }}
+      gui: ${{ steps.look.outputs.gui }}
       presets: ${{ steps.look.outputs.presets }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,17 +59,29 @@ jobs:
         # The checkout of a pull request is its merge into the base: the first parent is the base.
         run: |
           docs_only=false
+          full=true
+          gui=true
           if [ "$EVENT" = pull_request ]; then
             files=$(git diff --name-only HEAD^1 HEAD)
             echo "$files"
-            if [ -n "$files" ] && ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+            if [ -n "$files" ]; then
+              if ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+              build='(^|/)CMakeLists\.txt$|\.cmake$|^cmake/|^CMakePresets\.json$|^patches/|^external/|^\.gitmodules$|^\.github/'
+              if ! grep -qE "$build" <<<"$files"; then full=false; fi
+              not_gui='^(libs|tests|bridges|tools|cmake|patches|external|template|docs)/|^examples/([^g]|g[^u]|gu[^i]|gui[^_])|(^|/)CMakeLists\.txt$|^CMakePresets\.json$'
+              if [ "$docs_only" = false ] && ! grep -qvE "$not_gui" <<<"$files"; then gui=false; fi
+            fi
           fi
           if [ "$docs_only" = true ]; then
             presets='["linux-gcc-debug"]'
-          else
+          elif [ "$full" = true ]; then
             presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
+          else
+            presets='["linux-gcc-debug", "linux-clang-tsan", "linux-gcc-control"]'
           fi
           echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
+          echo "full=$full" | tee -a "$GITHUB_OUTPUT"
+          echo "gui=$gui" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
 
   linux:
@@ -189,7 +210,7 @@ jobs:
   # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
   linux-oldest-cmake:
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full == 'true'
     name: linux (linux-gcc-release, CMake 3.21.7)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -319,6 +340,7 @@ jobs:
 
   gui:
     needs: changes
+    if: needs.changes.outputs.gui == 'true'
     name: gui (server, screen, examples)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
