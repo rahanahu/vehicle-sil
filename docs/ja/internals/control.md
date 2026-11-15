@@ -379,7 +379,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 - 範囲は実行ファイルの値で比べます（見せる範囲の端は積なので、10 進で書いた値から 1 ulp ずれうる。一覧に出す端は 15 桁に丸めた値）。
 - シナリオの照合も同じ判定を使います（`MappedSchema::in_range()` が `to_actual()` を呼ぶ）。
 - 適用されなかった対応の `name` と `from` への書き込みは、一覧を探す前に拒否します（`MappedSchema::not_writable()`）。読むのはそのままです。
-- ランチャーは、開始時に接続していた participant について、適用されなかった対応を実行の行で 1 回通知します（`RunControl::note_links()`）。
+- ランチャーは、適用されなかった対応を、実行の行と結果で 1 回通知します。開始時に接続していた participant は開始のとき（`RunControl::note_links()`。開始の窓が待たなかった participant は、開始の後の接続をもう一度見ます）、その後に接続した participant は実行の終わり（`RunControl::note_late_maps()`）です。
 - 直した `Command` は、その incarnation にだけ送信します（再起動なら捨てます）。
 - 操作の記録（`request`）は、クライアントが書いた名前と値のままです。
 

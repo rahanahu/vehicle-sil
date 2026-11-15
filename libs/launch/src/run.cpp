@@ -317,12 +317,13 @@ public:
         if (participants_.start_children(uri))
         {
             out_.event([](EventStream& e) { e.phase(Phase::Waiting); });
-            if (start_.wait_for_start(*controller))
+            if (start_.wait_for_start(*controller, *transport))
             {
                 ran = true;
                 scenario_.start(*controller, outcome_);
                 interrupts_at_end_ = watch_.watch(*controller);
                 control_.note_late_values(outcome_, *transport);
+                control_.note_late_maps(outcome_);
             }
         }
         // No time command from here on, also if the simulation did not start: a stop accepted from

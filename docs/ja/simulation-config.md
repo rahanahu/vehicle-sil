@@ -581,8 +581,8 @@ participants:
 | 項目 | 扱い |
 |---|---|
 | 反映 | 合わなかった対応は反映しません。 |
-| 通知 | そのときに、実行の行（`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`、イベントでは `log`）で通知します。 |
-| 実行の指摘 | 終わりに、`variable-map-not-applied`（エラー）にします。 |
+| 通知 | シミュレーションが始まったとき（Control Agent が始まった後に接続した場合は、実行の終わり）に、実行の行（`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`、イベントでは `log`）で通知します。 |
+| 実行の指摘 | 終わりに、`variable-map-not-applied`（エラー）にします。この指摘のために実行を止めることはしません。Control Agent がいつ接続しても、実行は最後まで進み、その後に失敗になります。 |
 | 読み出し | その実行の間、合わなかった対応の変数は、実行ファイルの名前と値のまま読めます。 |
 | 書き込み | その対応の名前（キーと `from`）への書き込みは拒否します。 |
 

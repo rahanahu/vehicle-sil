@@ -47,6 +47,17 @@ ControlLink RunControl::described_link(std::size_t i) const
                : ControlLink::VersionMismatch;
 }
 
+bool RunControl::offers_control(std::size_t i) const
+{
+    const auto& ecu = ctx_.check.participants[i].ecu;
+    if (!ctx_.config.participants[i].describe || !ecu || !ecu->description.control)
+    {
+        return false;
+    }
+    const auto& offer = *ecu->description.control;
+    return offer.transport == "silkit" && offer.wire_version == static_cast<int>(control::wire::kVersion);
+}
+
 std::vector<std::string> RunControl::expected_agents() const
 {
     std::vector<std::string> names;
@@ -57,7 +68,10 @@ std::vector<std::string> RunControl::expected_agents() const
         const bool used = ctx_.scenario != nullptr &&
                           std::any_of(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
                                       [&p](const ScenarioParticipant& s) { return s.name == p.name; });
-        if (p.enabled && (p.required || used) && described_link(i) == ControlLink::Connected)
+        // Also one without variables: its agent has what the launcher reads besides (the counters
+        // of its networks), and whether its link is in the result must not depend on when its
+        // hello came.
+        if (p.enabled && (p.required || used) && offers_control(i))
         {
             names.push_back(p.name);
         }
@@ -65,12 +79,37 @@ std::vector<std::string> RunControl::expected_agents() const
     return names;
 }
 
+void RunControl::say_map_problems(const ParticipantRun& run, bool late) const
+{
+    std::string problems;
+    for (const std::string& problem : run.variable_map_problems)
+    {
+        problems += (problems.empty() ? "" : "; ") + problem;
+    }
+    out_.say("participant '" + run.name + "': variables: " + std::to_string(run.variable_map_problems.size()) +
+             " of its mappings do not fit the variables its control agent announced" +
+             (late ? ", which connected after the simulation had started, and were not applied: "
+                   : " and are not applied: ") +
+             problems +
+             (late ? ". In this run those variables were read under the executable's names and values, and a write to "
+                     "a name of these mappings was refused"
+                   : ". In this run those variables are read under the executable's names and values, and a write to "
+                     "a name of these mappings is refused"));
+}
+
 void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStart>& start,
+                            const std::vector<control_silkit::LinkInfo>& now,
                             const std::function<bool(std::size_t)>& in_run) const
 {
     const std::optional<control_silkit::HelloReport> report =
         start ? std::optional<control_silkit::HelloReport>(start->report) : std::nullopt;
     const std::vector<control_silkit::LinkInfo> links = start ? start->links : std::vector<control_silkit::LinkInfo>{};
+    const std::vector<std::string> awaited = start ? expected_agents() : std::vector<std::string>{};
+    const auto find_link = [](const std::vector<control_silkit::LinkInfo>& in, const std::string& name) {
+        const auto found = std::find_if(in.begin(), in.end(),
+                                        [&name](const control_silkit::LinkInfo& l) { return l.participant == name; });
+        return found != in.end() ? &*found : nullptr;
+    };
     const control::Hub* hub = ctx_.options.hub != nullptr ? ctx_.options.hub : own_hub_.get();
     const std::vector<control::PeerInfo> peers = hub != nullptr ? hub->peers() : std::vector<control::PeerInfo>{};
     for (std::size_t i = 0; i < outcome.participants.size(); ++i)
@@ -81,15 +120,27 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
             continue;
         }
         const ControlLink described = described_link(i);
-        const auto link = std::find_if(links.begin(), links.end(),
-                                       [&run](const control_silkit::LinkInfo& l) { return l.participant == run.name; });
-        if (link != links.end() && link->state == control_silkit::LinkState::VersionMismatch)
+        // What the window saw comes first: an agent that has ended since was connected at the
+        // start all the same. The window waits only for the agents it knows of (expected_agents());
+        // the hello of another one (describe: false) can come after the window has looked, and
+        // without the look at the links as they are now, whether its link and what its variable
+        // map does not fit are in the result would depend on when its hello came.
+        const control_silkit::LinkInfo* link = find_link(links, run.name);
+        if ((link == nullptr || (link->state == control_silkit::LinkState::Connected && !link->ready)) &&
+            std::find(awaited.begin(), awaited.end(), run.name) == awaited.end())
+        {
+            if (const control_silkit::LinkInfo* later = find_link(now, run.name))
+            {
+                link = later;
+            }
+        }
+        if (link != nullptr && link->state == control_silkit::LinkState::VersionMismatch)
         {
             run.control = ControlLink::VersionMismatch;
             run.control_version = link->version;
             run.control_version_described = described == ControlLink::VersionMismatch;
         }
-        else if (link != links.end() && link->state == control_silkit::LinkState::Connected && link->ready)
+        else if (link != nullptr && link->state == control_silkit::LinkState::Connected && link->ready)
         {
             run.control = ControlLink::Connected;
             run.control_variables = link->variables;
@@ -102,15 +153,7 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
             if (!run.variable_map_problems.empty())
             {
                 // Said now, not only with the result: clients are reading and writing meanwhile.
-                std::string problems;
-                for (const std::string& problem : run.variable_map_problems)
-                {
-                    problems += (problems.empty() ? "" : "; ") + problem;
-                }
-                out_.say("participant '" + run.name + "': variables: " + std::to_string(run.variable_map_problems.size()) +
-                         " of its mappings do not fit the variables its control agent announced and are not applied: " +
-                         problems + ". In this run those variables are read under the executable's names and values, and "
-                         "a write to a name of these mappings is refused");
+                say_map_problems(run, false);
             }
         }
         else if (described == ControlLink::VersionMismatch)
@@ -126,11 +169,11 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
         // Awaited in vain: no hello, or a hello and no answer to the probe. Not one whose agent
         // said hello and ended in the window (it left), and not when the wait was cut short.
         else if (report && !report->cancelled &&
-                 (link == links.end() || (link->state == control_silkit::LinkState::Connected && !link->ready)) &&
+                 (link == nullptr || (link->state == control_silkit::LinkState::Connected && !link->ready)) &&
                  std::find(report->missing.begin(), report->missing.end(), run.name) != report->missing.end())
         {
             run.control = ControlLink::NoHello;
-            run.control_hello_seen = link != links.end();
+            run.control_hello_seen = link != nullptr;
         }
         out_.event([&run](EventStream& e) {
             e.control_link(run.name, control_link_name(run.control),
@@ -157,6 +200,27 @@ void RunControl::note_late_values(RunOutcome& outcome, control_silkit::HubTransp
                 run.control_late_messages = link.late_messages;
             }
         }
+    }
+}
+
+void RunControl::note_late_maps(RunOutcome& outcome) const
+{
+    const control::Hub* hub = ctx_.options.hub != nullptr ? ctx_.options.hub : own_hub_.get();
+    if (hub == nullptr)
+    {
+        return;
+    }
+    const std::vector<control::PeerInfo> peers = hub->peers();
+    for (ParticipantRun& run : outcome.participants)
+    {
+        const auto peer = std::find_if(peers.begin(), peers.end(),
+                                       [&run](const control::PeerInfo& p) { return p.participant == run.name; });
+        if (!run.variable_map_problems.empty() || peer == peers.end() || peer->map_problems.empty())
+        {
+            continue;
+        }
+        run.variable_map_problems = peer->map_problems;
+        say_map_problems(run, true);
     }
 }
 

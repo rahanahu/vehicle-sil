@@ -31,6 +31,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -285,6 +286,171 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     require(report.findings.size() == 2 && no_answer && dropped, "the two findings say what happened" + shown);
 }
 
+/// The window before the start waits for the agent of every ECU whose --describe offers one, also
+/// of an ECU without variables (the launcher reads the counters of its networks from it). Shown by
+/// what a wait in vain leaves: the ECU's --describe has no variables (not even the built-in ones of
+/// an ecu_main executable) and offers an agent, and it runs with --no-control behind the launcher's
+/// back.
+void an_ecu_without_variables_is_waited_for(const fs::path& ecu, const fs::path& dir)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+               yaml_quote(process::shown_path(ecu)) + "]\n";
+    fs::remove(dir / "Engine.behaviour");
+    std::ofstream(dir / "test-ecu-no-control") << "\n";
+    std::ofstream(dir / "test-ecu-no-variables") << "\n";
+    launch::RunOptions options;
+    options.control_hello_timeout = 300ms;
+    std::string lines;
+    options.write_line = [&](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    fs::remove(dir / "test-ecu-no-control");
+    fs::remove(dir / "test-ecu-no-variables");
+    const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
+    require(report.run.has_value() && report.result() == launch::RunResult::Passed,
+            "the run did not pass (the finding is a warning)" + shown);
+    const auto& engine = report.run->participants.at(0);
+    require(engine.control == launch::ControlLink::NoHello && !engine.control_hello_seen,
+            "Engine has no variables and was waited for: no_hello" + shown);
+    require(std::any_of(report.findings.begin(), report.findings.end(),
+                        [](const auto& f) { return f.code == "control-link-no-hello" && f.participant == "Engine"; }),
+            "the finding says that its hello did not come" + shown);
+}
+
+/// A run of one participant that does not describe itself (Body, describe: false) and has a
+/// variable map with an entry that does not fit what its agent announces. The window before the
+/// start does not wait for its hello (the launcher does not know that it has an agent), so the
+/// hello can come at any time. Here the ECU runs with --no-control behind the launcher's back and
+/// the hello under its name comes from this process, at the time the part wants:
+/// - `in_window`: in the window, after the launcher has looked at the links there (before_start
+///   runs right after that look), with the answer that the agent takes commands;
+/// - else: once the launcher has said that the simulation runs.
+/// Whenever it comes, the result has what does not fit, and the run fails for it.
+void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n  - name: Body\n    command: [" +
+               yaml_quote(process::shown_path(ecu)) +
+               ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n"
+               "    variables:\n      body.fill: { from: levle }\n      body.gain: gain\n";
+    fs::remove(dir / "Body.behaviour");
+    std::ofstream(dir / "test-ecu-no-control") << "\n";
+    namespace topics = control_silkit::detail;
+    namespace pubsub = SilKit::Services::PubSub;
+    const std::uint64_t session = 4712;
+    std::unique_ptr<SilKit::IParticipant> impostor;
+    pubsub::IDataPublisher* hello_out = nullptr;
+    pubsub::IDataPublisher* submitted_out = nullptr;
+    std::atomic<bool> answered{false};
+    control::Hub hub;
+    const auto say_hello = [&](const std::string& as, std::uint64_t with_session) {
+        control::wire::Hello hello;
+        hello.participant = as;
+        hello.session = with_session;
+        for (const char* name : {"level", "gain"})
+        {
+            control::VariableInfo variable;
+            variable.name = name;
+            hello.schema.push_back(variable);
+        }
+        control::wire::Bytes bytes;
+        std::string why;
+        require(control::wire::encode_hello(hello, bytes, why), why);
+        hello_out->Publish(topics::span_of(bytes));
+    };
+    const auto wait_for_peer = [&](const std::string& name) {
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            const auto peers = hub.peers();
+            if (std::any_of(peers.begin(), peers.end(), [&](const control::PeerInfo& p) { return p.participant == name; }))
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(2ms);
+        }
+        return false;
+    };
+    bool hello_arrived = false;
+    bool marker_arrived = false;
+    launch::RunOptions options;
+    options.hub = &hub;
+    if (in_window)
+    {
+        options.before_start = [&](control::Hub&) {
+            say_hello("Body", session);
+            hello_arrived = wait_for_peer("Body");
+            const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
+            while (!answered.load() && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(2ms);
+            }
+            // The answer is on its way to the launcher. A message sent after it arrives after it:
+            // once this second hello is there, the launcher has the answer.
+            say_hello("Marker", session + 1);
+            marker_arrived = wait_for_peer("Marker");
+        };
+    }
+    std::string lines;
+    options.write_line = [&](std::string_view line) {
+        lines += std::string(line) + "\n";
+        const std::string_view head = "[vehicle_sil_launch] registry at ";
+        if (line.substr(0, head.size()) == head && !impostor)
+        {
+            const std::string uri(line.substr(head.size()));
+            impostor = SilKit::CreateParticipant(
+                SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), "Impostor",
+                uri);
+            hello_out = impostor->CreateDataPublisher(topics::kHelloTopic, topics::spec(topics::kHelloTopic), 1);
+            submitted_out = impostor->CreateDataPublisher(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic), 0);
+            impostor->CreateDataSubscriber(
+                topics::kCommandTopic, topics::spec(topics::kCommandTopic),
+                [&](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                    const auto probe = control::wire::addressed(std::span<const std::uint8_t>(event.data.data(), event.data.size()));
+                    if (probe && probe->kind == control::wire::Kind::Probe && probe->session == session)
+                    {
+                        control::wire::Bytes bytes;
+                        control::wire::encode_session(control::wire::Kind::Ready, session, bytes);
+                        submitted_out->Publish(topics::span_of(bytes));
+                        answered.store(true);
+                    }
+                });
+        }
+        if (!in_window && line == "[vehicle_sil_launch] simulation running")
+        {
+            // After the launcher has looked at the links for the second time (after the start).
+            say_hello("Body", session);
+            hello_arrived = wait_for_peer("Body");
+        }
+    };
+    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    impostor.reset();
+    fs::remove(dir / "test-ecu-no-control");
+    const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
+    require(hello_arrived && (!in_window || (answered.load() && marker_arrived)), "the hello did not get to the hub" + shown);
+    require(report.run.has_value(), "the run did not start" + shown);
+    const auto& body = report.run->participants.at(0);
+    const std::vector<std::string> problems{"body.fill: the executable has no variable 'levle'"};
+    require(body.variable_map_problems == problems, "what does not fit is in the result" + shown);
+    require(body.control == (in_window ? launch::ControlLink::Connected : launch::ControlLink::None),
+            in_window ? "an agent that connected in the window is connected" + shown
+                      : "the link is as it was at the start" + shown);
+    const bool finding = std::any_of(report.findings.begin(), report.findings.end(), [](const auto& f) {
+        return f.code == "variable-map-not-applied" && f.participant == "Body";
+    });
+    require(finding && report.result() == launch::RunResult::Failed, "the run fails for the mapping" + shown);
+    const std::string line =
+        in_window ? "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
+                    "control agent announced and are not applied: body.fill: the executable has no variable 'levle'. In "
+                    "this run those variables are read under the executable's names and values, and a write to a name of "
+                    "these mappings is refused\n"
+                  : "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
+                    "control agent announced, which connected after the simulation had started, and were not applied: "
+                    "body.fill: the executable has no variable 'levle'. In this run those variables were read under the "
+                    "executable's names and values, and a write to a name of these mappings was refused\n";
+    require(lines.find(line) != std::string::npos, "the line of the run about the mapping" + shown);
+}
+
 /// The run of a configuration with an ECU (Engine) and, with `stuck`, a participant "Stuck" of this
 /// process that joins and never gets ready (its CommunicationReady is never completed), for the
 /// limits of the start and the hold before the first step (--start-paused with a control server:
@@ -505,6 +671,11 @@ int main(int argc, char** argv)
         {"a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short",
          [](const fs::path& ecu, const fs::path&, const fs::path& dir) { failing_start_with_a_stop(ecu, dir); }},
         {"a_hello_without_an_answer_and_what_is_no_message_are_reported", [](const fs::path& ecu, const fs::path&, const fs::path& dir) { hello_without_an_answer(ecu, dir); }},
+        {"an_ecu_without_variables_is_waited_for", [](const fs::path& ecu, const fs::path&, const fs::path& dir) { an_ecu_without_variables_is_waited_for(ecu, dir); }},
+        {"a_mapping_that_does_not_fit_is_reported_for_a_hello_after_the_look_in_the_window",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) { a_late_hello(ecu, dir, true); }},
+        {"a_mapping_that_does_not_fit_is_reported_for_a_hello_after_the_start",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) { a_late_hello(ecu, dir, false); }},
         {"the_start_is_limited_before_and_after_the_hold_but_not_in_it", the_start_is_limited_before_and_after_the_hold_but_not_in_it},
         {"the_ecus_wait_as_long_as_the_run_stands_still", the_ecus_wait_as_long_as_the_run_stands_still},
         {"timeout_counts_the_hold", timeout_counts_the_hold},

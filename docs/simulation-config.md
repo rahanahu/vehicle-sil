@@ -583,8 +583,8 @@ A `describe: false` participant can also have `variables`, but they cannot be co
 | Item | Handling |
 |---|---|
 | Applying | Mappings that do not match are not applied. |
-| Notification | At that moment, a line of the run reports it (`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`; with events, a `log` event). |
-| Run finding | At the end, `variable-map-not-applied` (an error). |
+| Notification | A line of the run reports it, at the start of the simulation or, if the Control Agent connected after the start, at the end of the run (`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`; with events, a `log` event). |
+| Run finding | At the end, `variable-map-not-applied` (an error). The run is not stopped for it: it runs to its end and then fails, whenever the Control Agent connected. |
 | Reads | For the rest of that run, the variables of mappings that do not match can be read under the executable's names, with the executable's values. |
 | Writes | Writes to the names of that mapping (the key and `from`) are rejected. |
 

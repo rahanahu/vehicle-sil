@@ -60,6 +60,9 @@
 // With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
+// With the file "test-ecu-no-variables" in its working directory, the --describe of every test ECU
+// there has no variables at all and offers its control agent (wire version 1): an executable
+// that is not built with ecu_main, whose ECUs always have the built-in variables.
 #include "spawn_sleeper.hpp"
 
 #include "vehicle_sil/core/participant_runtime.hpp"
@@ -441,6 +444,14 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "error: unknown argument \"--map-network\"\n");
             return 4;
         }
+    }
+    if (std::ifstream("test-ecu-no-variables") && describe)
+    {
+        std::printf("{\"vehicle_sil_ecu\": 1, \"vehicle_sil\": \"0.1.0\", \"name\": \"%s\", \"step_ns\": %lld, "
+                    "\"networks\": [], \"variables\": [], \"control\": {\"transport\": \"silkit\", \"wire_version\": 1}, "
+                    "\"features\": [\"map-network\"]}\n",
+                    name.c_str(), step * 1'000'000);
+        return 0;
     }
     if (std::ifstream("test-ecu-no-control") && !describe)
     {

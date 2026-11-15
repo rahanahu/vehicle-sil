@@ -139,7 +139,7 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 
 ### 接続の状態（`state`）
 
-接続の状態は participant ごとに 5 つで、結果の `participants[].control_link` と、イベント `control_link` に表示します。シミュレーションが始まった時点の状態で、後から変わっても書き直しません。
+接続の状態は participant ごとに 5 つで、結果の `participants[].control_link` と、イベント `control_link` に表示します。シミュレーションが始まった時点の状態で、後から変わっても書き直しません。`run` が hello を待たない participant（[始まる前の待ち](#始まる前の待ち)）では、始まった直後（全員が最初のステップに着いた時点）の状態です。
 
 | `state` | 意味 | 変数の読み書き | 指摘 |
 |---|---|---|---|
@@ -158,11 +158,12 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 
 必須の participant がそろうと、全員が最初のステップの前で待ちます。その間に `run` は、次の条件を全部満たす ECU の hello と、「コマンドを受け取れる」という返事を待ちます。
 
-- 変数がある。
-- `--describe` の出力で、`vehicle_sil_launch` と同じバージョンで公開すると言っている。
+- `--describe` の出力で、`vehicle_sil_launch` と同じバージョンの変数の接続を持つと言っている。変数がない ECU も含みます（`run` は、同じ接続でネットワークの送受信の数を読みます）。
 - 必須で、無効にしていない。
 
-SIL Kit が participant を接続する順序から、hello はこの待ちが始まる前に受信しているので、ふつうは待ちません。公開すると言っているのに来ない ECU がいるときだけ、最長 5000 ms 待ちます。待っている間に Ctrl+C か止めるコマンドが来れば、待つのをやめます。そろうのが `start_timeout_ms` の期限の間際だったときは、この待ちが `start_timeout_ms` の後に加わることがあります。
+`describe: false` の participant は待ちません。その participant が変数の接続を持つかどうかを、`run` は知る手段がないからです。hello が始まった後に届いた場合、`control_link` は `none` のままですが、`variables` の対応のうち合わないものは同じように指摘します（`variable-map-not-applied`）。
+
+SIL Kit が participant を接続する順序から、hello はこの待ちが始まる前に受信しているので、ふつうは待ちません。接続を持つと言っているのに hello が来ない ECU がいるときだけ、最長 5000 ms 待ちます。待っている間に Ctrl+C か止めるコマンドが来れば、待つのをやめます。そろうのが `start_timeout_ms` の期限の間際だったときは、この待ちが `start_timeout_ms` の後に加わることがあります。
 
 ### 実行中の保証
 
@@ -474,7 +475,7 @@ participant は UTF-8 で書いてください。Windows のコンソールに�
 - 止める要求、`--timeout-ms`、participant の失敗、participant が止めたことで終わった実行（終わった仮想時刻 `sim_ms` が違うので、数も違います）。
 - 仮想時間で動かない participant（実時間の `Peer`、ブリッジ）がフレームを出すネットワーク（受けた側の数が違います）。
 - 後から参加した participant（`manual`、`required: false`）と、起動し直した participant（数えるかどうかと理由が違います）。
-- 変数を宣言しない ECU の短い実行（その ECU の変数の接続がつながるのを `run` は待たないので、つながるのが遅れると `no-sample` か `no-control-link` になります）。
+- `describe: false` の participant がいる短い実行（その participant の変数の接続がつながるのを `run` は待たないので、つながるのが遅れると `no-sample` か `no-control-link` になります）。
 
 改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
 
@@ -656,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 
 `control-link-version` が出たら、同じバージョンの vehicle-sil でビルドします。
 
-`variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、接続した時点で実行の行（`log`）にも 1 回書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
+`variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、実行の行（`log`）にも 1 回書きます。始まった時点で接続している ECU は始まったときに、その後に接続した ECU は実行の終わりに書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
 
 `before-start` が出たとき、シミュレーションは始まっていて、すぐに中断しています。
 
