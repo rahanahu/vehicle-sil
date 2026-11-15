@@ -252,6 +252,12 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 445 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine          6         0
+J1939_CAN  Dashboard       0         6
+
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
@@ -320,6 +326,12 @@ line  step                                                result   at
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
+
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 205 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine          3         0
+J1939_CAN  Dashboard       0         3
 
 error: my_tests/response_time.yaml:5: expect Engine.engine.speed ge 1700 (within 200 ms): not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms) [scenario-failed]
 

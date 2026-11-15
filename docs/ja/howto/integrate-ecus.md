@@ -357,10 +357,16 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine         11         0
+J1939_CAN  Dashboard       0        11
+
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-終了コード 0 からわかるのは、すべての ECU が起動し、`stop_at_ms` まで動いて、終了コード 0 で終わったことだけです。ECU がメッセージを受信できたかどうかは、わかりません。手順 3 の `simulation.two-buses.yaml` を実行すると、2 つの ECU が別のバスにいるのに、同じ表が表示されて、終了コード 0 で終わります。
+終了コード 0 からわかるのは、すべての ECU が起動し、`stop_at_ms` まで動いて、終了コード 0 で終わったことだけです。メッセージが届いたかどうかは `traffic:` の行に出ます。上の結果では、`J1939_CAN` で Engine が送り、Dashboard が受けています。手順 3 の `simulation.two-buses.yaml` を実行すると、2 つの ECU が別のバスにいても終了コード 0 で終わりますが、`traffic:` の行は、`J1939_CAN` では誰も受けておらず、`VehicleCAN` では何も送られていないことを示します。
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml
@@ -374,6 +380,12 @@ participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
+traffic: J1939_CAN: 1 participant sent, 0 received (1 counted); VehicleCAN: nothing sent (1 counted) (steps before 1000 ms)
+
+network     participant  sent  received
+J1939_CAN   Engine         11         0
+VehicleCAN  Dashboard       0         0
+
 passed: 0 errors, 2 warnings, 0 notes
 ```
 
@@ -381,11 +393,12 @@ passed: 0 errors, 2 warnings, 0 notes
 
 | 方法 | 見るもの | 使える条件 |
 |---|---|---|
+| 結果の `traffic:` の行 | ネットワークごとに、J1939 のフレームを受けた participant がいるか | ECU が J1939（`j1939()`）を使っています。生の CAN、LIN、イーサネットは数えません。 |
 | ECU 自身の出力 | 標準エラーの `[<participant 名>]` で始まる行 | ECU が、受信した値を出力するように作ってあります。 |
 | `expect` のあるシナリオ | `run --scenario` の結果と終了コード | 受信した値を、ECU が変数として宣言しています。 |
 | GUI か Control API | 実行中の変数の値 | 受信した値を、ECU が変数として宣言しています。 |
 
-受信した値を出力も宣言もしない ECU では、受信したことを外から確認できません。確認が必要なら、ECU を作った人に、受信した値を変数として宣言してもらいます（[最初の ECU を作る](first-ecu.md) の「J1939 で通信させる」）。
+受信した値を出力も宣言もしない ECU では、外から確認できるのは J1939 のフレームが届いたこと（`traffic:` の行）だけで、値は確認できません。確認が必要なら、ECU を作った人に、受信した値を変数として宣言してもらいます（[最初の ECU を作る](first-ecu.md) の「J1939 で通信させる」）。
 
 ### ECU の出力で確認する
 
@@ -458,6 +471,12 @@ line  step                                                             result  a
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
+
+traffic: J1939_CAN: 1 participant sent, 0 received (1 counted); VehicleCAN: nothing sent (1 counted) (steps before 605 ms)
+
+network     participant  sent  received
+J1939_CAN   Engine          7         0
+VehicleCAN  Dashboard       0         0
 
 error: scenarios/engine_speed.yaml:8: expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms): not true at any time within 600 ms (from 0 ms to 600 ms): at the end Dashboard.dashboard.engine_speed ge 1700, but it was 0 (its sample of 600 ms) [scenario-failed]
 
