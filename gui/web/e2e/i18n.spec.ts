@@ -47,7 +47,7 @@ test('the run screen is in English: words, the status band, findings as they are
   // 照合: 所見の文はランチャーの英語のまま
   await choose(page, 'check-error.yaml', 'en');
   await expect(page.getByTestId('check-outcome')).toHaveText(
-    /Check: Has errors \(errors: \d+, warnings: \d+, notes: \d+\)/,
+    /Check: Failed \(errors: \d+, warnings: \d+, notes: \d+\)/,
   );
   const finding = page.getByTestId('check-card').getByTestId('finding').first();
   await expect(finding).toContainText('step-mismatch');
@@ -65,7 +65,7 @@ test('the run screen is in English: words, the status band, findings as they are
   await expect(page.getByTestId('outcome')).toContainText('Passed');
   await expect(
     page.getByRole('list', { name: 'Phase' }).locator('[aria-current="step"]'),
-  ).toHaveText(/Ended/);
+  ).toHaveText(/\bEnd\s*$/);
   await expect(page.getByTestId('status-Engine')).toContainText('Ended');
   await expect(page.getByTestId('sim-time')).toHaveText(/^\d+\.\d{3} s$/);
   await expect(page.getByTestId('log-count')).toHaveText(/^\s*\d+ lines?\b/);
