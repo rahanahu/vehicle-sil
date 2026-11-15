@@ -201,8 +201,8 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
 
 <!-- vehicle_sil_control peers -->
 ```text
-Dashboard  connected  18 variables  SIL Kit: ReadyToRun
-Engine     connected  18 variables  SIL Kit: ReadyToRun
+Dashboard  connected  22 variables  SIL Kit: ReadyToRun
+Engine     connected  22 variables  SIL Kit: ReadyToRun
 ```
 
 <!-- vehicle_sil_control time -->

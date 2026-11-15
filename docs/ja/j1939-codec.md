@@ -161,6 +161,8 @@ messages:
 
 生成したコードは `std` と `vehicle_sil` を `::` から書くので、それ以外の名前（`std`、`data`、`size_t` など）は使えます。
 
+`vehicle_sil::spy::Spy::watch<M>()` で見張るメッセージは、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state` という名前の信号も持てません（ほかの変数の名前になるため。そういう信号があると `watch()` がビルドできません）。[j1939-guide.md](j1939-guide.md#受信だけをする-participant) の「受信だけをする participant」を見てください。
+
 ### YAML の値の読み方
 
 | 書いたもの | 読み方 |

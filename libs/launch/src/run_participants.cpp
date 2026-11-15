@@ -51,9 +51,10 @@ std::string detail::shell_command_line(const std::string& executable, const std:
     const auto quoted = [](const std::string& word) {
 #ifdef _WIN32
         // CommandLineToArgvW and the C runtimes: backslashes are literal unless before a quote.
-        // Also in quotes: what cmd.exe would read as its own (&, |, <, >, ^); its %...% cannot be
-        // kept from it.
-        if (!word.empty() && word.find_first_of(" \t\"&|<>^") == std::string::npos)
+        // Also in quotes: what cmd.exe would read as its own (&, |, <, >, ^), and what PowerShell
+        // would (a,b unquoted is an array, given as two arguments; ';' ends a statement); cmd.exe's
+        // %...% cannot be kept from it.
+        if (!word.empty() && word.find_first_of(" \t\"&|<>^,;") == std::string::npos)
         {
             return word;
         }
@@ -150,6 +151,8 @@ std::vector<std::string> participant_arguments(const SimulationConfig& config, c
     // After the placeholders are replaced: a network's name with "{name}" in it stays as it is.
     const std::vector<std::string> renames = map_network_arguments(participant);
     arguments.insert(arguments.end(), renames.begin(), renames.end());
+    const std::vector<std::string> nodes = j1939_node_arguments(participant);
+    arguments.insert(arguments.end(), nodes.begin(), nodes.end());
     return arguments;
 }
 

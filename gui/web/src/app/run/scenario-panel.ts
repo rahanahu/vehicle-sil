@@ -2,6 +2,7 @@ import { Component, computed, inject, input } from '@angular/core';
 import { ScenarioStep, ScenarioView } from '@vehicle-sil/gui-client';
 import { LanguageChoice } from '../core/i18n/language-choice';
 import { scenarioOutcomeLabel, stepStateLabel } from './labels';
+import { TimelineView } from './timeline-view';
 
 /**
  * サーバーが配る時間の軸のページ（gui/timeline）で、実行の時間の軸のファイルを開くアドレス。言語は画面と同じ。
@@ -14,10 +15,12 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
 /**
  * シナリオの経過: 全体の合否と、手順の表（行、何をするか、状態、仮想時刻、失敗の理由）。手順は、ランチャーの
  * `scenario_step` の事象で進み、結果が出たら結果の手順（動かなかった手順を含む）になる。手順の文と理由は、
- * ランチャーの英語のまま出す。実行が時間の軸のファイルを残したら（終わった後）、それを開くリンクを出す。
+ * ランチャーの英語のまま出す。実行が時間の軸のファイルを残したら（終わった後）、それを開くリンクと、この画面の中に
+ * 出す部品（TimelineView）を出す。
  */
 @Component({
   selector: 'app-scenario-panel',
+  imports: [TimelineView],
   template: `
     @let s = scenario();
     <p
@@ -42,6 +45,9 @@ export const timelinePageUrl = (timelineUrl: string, language: string): string =
           >時間の軸</a
         >
       </p>
+    }
+    @if (s.timelineUrl) {
+      <app-timeline-view [timelineUrl]="s.timelineUrl" />
     }
     <p class="file">
       <code data-testid="scenario-file">{{ s.file }}</code>

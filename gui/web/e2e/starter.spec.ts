@@ -1,6 +1,7 @@
 // 自分の画面のひな形（examples/gui_starter）を、GUI サーバーの --web で配って通す。サンプルの画面を使わず、
 // クライアントのライブラリを 1 つにまとめたファイル（npm run build:client）だけで、つなぐ、照合、開始と停止、変数を
-// 見て書く、ができること。流し直すランチャーと偽の Control Server が相手。
+// 見て書く、シナリオの実行の時間の軸を要素 <vehicle-sil-timeline> で出す、ができること。流し直すランチャーと偽の
+// Control Server が相手。
 import { expect, test } from '@playwright/test';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,9 +13,11 @@ import {
   REPOSITORY,
   launchGuiServer,
 } from './support/gui-server';
+import { RUN_TIMEOUT } from './support/run-page';
 
 const CONTROL_FEATURES =
-  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server';
+  'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
+  'scenario,timeline';
 const BUNDLE = join(REPOSITORY, 'build', 'gui-client', 'vehicle-sil-gui-client.mjs');
 
 let server: GuiServer;
@@ -93,5 +96,40 @@ test('the starter screen checks, runs, shows a variable and writes it', async ({
   await expect(page.getByTestId('slider-value')).toHaveText('80 %');
   await expect(page.getByTestId('slider')).toHaveValue('80');
   await expect(page.getByTestId('slider-why')).toHaveText('(cannot write: ended)');
+  expect(errors).toEqual([]);
+});
+
+test('the starter screen shows the timeline of a scenario run with the element', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  await page.goto(server.url);
+  await expect(page.getByTestId('connection')).toHaveText('connection: open');
+  await expect(page.getByTestId('timeline-none')).toBeVisible();
+  // A scenario run started by another screen (here the API): the starter follows the session
+  const run = await page.request.post(new URL('api/run', server.url).href, {
+    headers: { Authorization: `Bearer ${server.token}`, Origin: new URL(server.url).origin },
+    data: { file: 'simulation.yaml', scenario: 'scenarios/fails.yaml' },
+  });
+  expect(run.status(), await run.text()).toBe(200);
+  const timeline = page.getByTestId('timeline');
+  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+    /^Step 2 failed at [\d.]+ ms$/,
+    { timeout: RUN_TIMEOUT },
+  );
+  await expect(page.getByTestId('timeline-none')).toBeHidden();
+  await expect(timeline.locator('#help')).toBeHidden();
+  await timeline.locator('#chart').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('timeline-cursor')).toHaveText(/^[\d.]+ ms$/);
+  const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];
+  if (shots) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.screenshot({ path: `${shots}/element-starter-light-1280.png`, fullPage: true });
+  }
   expect(errors).toEqual([]);
 });

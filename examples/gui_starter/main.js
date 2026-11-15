@@ -1,5 +1,6 @@
 // The smallest screen of your own: plain JavaScript with no build, using only the client library (@vehicle-sil/gui-client).
-// Connect, check a configuration file, start and stop a run, watch and write one variable, a slider and a lamp.
+// Connect, check a configuration file, start and stop a run, watch and write one variable, a slider and a lamp,
+// and the timeline of the last scenario run (the element <vehicle-sil-timeline>).
 // README.md explains how to use it.
 import {
   WriteError,
@@ -181,3 +182,19 @@ $('slider').onchange = () => {
   dragging = false;
   slider?.write(Number($('slider').value));
 };
+
+// Timeline: the element <vehicle-sil-timeline> (index.html loads it from the GUI server) draws the timeline of the
+// last scenario run that recorded one (session.scenario.timelineUrl). Its attributes, properties and events: docs/gui.md,
+// "Putting a timeline on your own screen".
+const timeline = $('timeline');
+timeline.token = token;
+timeline.addEventListener('cursorchange', (e) => {
+  show('timeline-cursor', e.detail.cursor === null ? '-' : `${e.detail.cursor.toFixed(1)} ms`);
+});
+client.session.session.subscribe((session) => {
+  const url = session?.scenario?.timelineUrl;
+  if (!url || timeline.src === `/${url}`) return;
+  timeline.src = `/${url}`; // relative to the server root, as the API
+  timeline.hidden = false;
+  $('timeline-none').hidden = true;
+});

@@ -152,9 +152,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "networks, participants, variants, params)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n");
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -473,7 +473,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -845,7 +845,7 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                                       "    bitrate: 1\n"
                                       "  - name: A\n    command: a\n    enabled: false\n")),
                "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
                "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
@@ -982,7 +982,7 @@ TEST_CASE(a_participant_has_a_role_that_only_the_check_reads)
                                  chosen)
                          .findings),
                "E 9 unknown-key: variant 'a': participant 'Spy': unknown key 'role': remove it, or use one of the keys here "
-               "(command, variables, network_names, enabled)\n");
+               "(command, variables, network_names, j1939_nodes, enabled)\n");
 }
 
 TEST_CASE(a_participant_started_by_hand_from_the_file_or_the_command_line)
@@ -1308,9 +1308,9 @@ TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)
                "participant of this variant only, list it there with enabled: false and write enabled: true here); the "
                "participants are Engine, Tool\n"
                "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'step_ms': remove it, or use one of the keys "
-               "here (command, variables, network_names, enabled)\n"
+               "here (command, variables, network_names, j1939_nodes, enabled)\n"
                "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'required': remove it, or use one of the keys "
-               "here (command, variables, network_names, enabled)\n"
+               "here (command, variables, network_names, j1939_nodes, enabled)\n"
                "E 18 value: variant 'd': participant 'Engine': enabled must be true or false, not 'maybe'\n"
                "E 18 launcher-argument: variant 'd': participant 'Engine': the command has '--name', but vehicle_sil_launch "
                "gives an ecu_main executable --name itself: remove it (or set describe: false for an executable not made with "
@@ -1727,5 +1727,377 @@ TEST_CASE(a_renamed_network_has_ascii_names_where_the_arguments_come_in_the_code
     CHECK(r.config->participants[0].valid);
     check_text(words(map_network_arguments(r.config->participants[0])),
                "[--map-network][\xE8\xBB\x8A\xE4\xB8\xA1""CAN=J1939_CAN][--map-network][Body=\xE8\xBB\x8A]");
+#endif
+}
+
+// --- j1939_nodes ---------------------------------------------------------------------------------
+
+namespace {
+
+/// The entries of the participant's j1939_nodes: "<network>=<settings>@<line> " each.
+std::string nodes_text(const ParticipantConfig& p)
+{
+    std::string out;
+    for (const J1939NodeEntry& e : p.j1939_nodes)
+    {
+        out += e.network + "=" + j1939::format_node_override(e.node) + "@" + std::to_string(e.line) + " ";
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(j1939_nodes_are_read_with_an_optional_from_and_hexadecimal_numbers)
+{
+    const ConfigRead r = read_config(with_networks(
+        "  - name: Engine\n"                                                                     // 7
+        "    command: engine\n"                                                                  // 8
+        "    j1939_nodes:\n"                                                                     // 9
+        "      - { network: VehicleCAN, from: 0x00, address: 0x01, identity_number: 2 }\n"      // 10
+        "      - network: BodyCAN\n"                                                             // 11
+        "        address: 254\n"                                                                 // 12
+        "        identity_number: 2097151\n"                                                     // 13
+        "        function_instance: 0x1F\n"                                                      // 14
+        "        ecu_instance: 7\n"                                                              // 15
+        "  - name: Gateway\n"                                                                    // 16
+        "    command: gateway\n"                                                                 // 17
+        "    j1939_nodes: [{ network: VehicleCAN, from: 0xfe, address: 0, identity_number: 0, function_instance: 0, "
+        "ecu_instance: 0 }, { network: BodyCAN, from: 0x21 }]\n"                                 // 18
+        // YAML 1.2 integers, as the schema's editors read them: 010 is ten, +1 one, 0o10 eight.
+        "  - name: Door\n"                                                                       // 19
+        "    command: door\n"                                                                    // 20
+        "    j1939_nodes: [{ network: VehicleCAN, from: 010, address: +1, identity_number: 0o10 }]\n")); // 21
+    check_text(lines(r.findings), "");
+    const ParticipantConfig& engine = r.config->participants[0];
+    const ParticipantConfig& gateway = r.config->participants[1];
+    CHECK(engine.valid && gateway.valid);
+    check_text(nodes_text(engine), "VehicleCAN=from:0x00,address:0x01,identity_number:2@10 "
+                                   "BodyCAN=address:254,identity_number:2097151,function_instance:31,ecu_instance:7@11 ");
+    check_text(nodes_text(gateway), "VehicleCAN=from:254,address:0x00,identity_number:0,function_instance:0,ecu_instance:0@18 "
+                                    "BodyCAN=from:0x21@18 ");
+    // run gives the entries that change something, in the file's order.
+    check_text(words(j1939_node_arguments(engine)),
+               "[--j1939-node][VehicleCAN=from:0x00,address:0x01,identity_number:2][--j1939-node]"
+               "[BodyCAN=address:254,identity_number:2097151,function_instance:31,ecu_instance:7]");
+    check_text(words(j1939_node_arguments(gateway)),
+               "[--j1939-node][VehicleCAN=from:254,address:0x00,identity_number:0,function_instance:0,ecu_instance:0]");
+    CHECK(j1939_node_arguments(r.config->participants[0]).size() == 4);
+    check_text(nodes_text(r.config->participants[2]), "VehicleCAN=from:0x0A,address:0x01,identity_number:8@21 ");
+}
+
+TEST_CASE(j1939_nodes_of_the_wrong_form_are_errors_and_the_participant_is_not_checked)
+{
+    const ConfigRead r = read_config(with_networks("  - name: A\n"                                               // 7
+                                                   "    command: a\n"                                            // 8
+                                                   "    j1939_nodes: { network: VehicleCAN }\n"                  // 9
+                                                   "  - name: B\n"                                               // 10
+                                                   "    command: b\n"                                            // 11
+                                                   "    j1939_nodes:\n"                                          // 12
+                                                   "      - VehicleCAN\n"                                        // 13
+                                                   "      - { address: 1 }\n"                                    // 14
+                                                   "      - { network: \"\", address: 1 }\n"                     // 15
+                                                   "      - { network: \"a=b\", address: 1 }\n"                  // 16
+                                                   "      - { network: \"-v\", address: 1 }\n"                   // 17
+                                                   "      - { network: VehicleCAN, adress: 1 }\n"                // 18
+                                                   "      - { network: VehicleCAN, address: 255 }\n"             // 19
+                                                   "      - { network: VehicleCAN, address: \"0x01\" }\n"        // 20
+                                                   "      - { network: VehicleCAN, identity_number: 0x200000 }\n" // 21
+                                                   "      - { network: VehicleCAN, function_instance: 32 }\n"    // 22
+                                                   "      - { network: VehicleCAN, ecu_instance: -1 }\n"         // 23
+                                                   "      - { network: VehicleCAN, from: 0X10 }\n"               // 24
+                                                   "      - { network: [VehicleCAN], address: 1 }\n"             // 25
+                                                   "      - { network: BodyCAN, address: 1 }\n"                  // 26
+                                                   "      - { network: BodyCAN, address: 0b11 }\n"               // 27
+                                                   "      - { network: BodyCAN, address: 1_0 }\n"                // 28
+                                                   "      - { network: BodyCAN, address: +0x10 }\n"              // 29
+                                                   "      - { network: BodyCAN, address: 0O10 }\n"               // 30
+                                                   "  - name: C\n"                                               // 31
+                                                   "    command: c\n"));
+    const std::string form = "{ network: VehicleCAN, from: 0x00, address: 0x01, identity_number: 2 }";
+    const std::string comma = "(run passes --j1939-node <network>=<settings>, which is split at the first '='): a network "
+                              "with j1939_nodes needs a name that has no '=' and does not start with '-'; change the name "
+                              "in networks\n";
+    check_text(lines(r.findings),
+               "E 9 value: participant 'A': j1939_nodes must be a list of the J1939 nodes to change, each with its network "
+               "and the settings to change (j1939_nodes: [" + form + "]), not a mapping\n"
+               "E 13 value: participant 'B': j1939_nodes: an entry must be a mapping with network and the settings to "
+               "change (" + form + "), not 'VehicleCAN'\n"
+               "E 14 missing-key: participant 'B': j1939_nodes: an entry has no network: add network: <the simulation's "
+               "name of the node's CAN network> (" + form + ")\n"
+               "E 15 value: participant 'B': j1939_nodes: network must be the simulation's name of the node's CAN network "
+               "(a name in networks), not the text \"\"\n"
+               "E 16 value: participant 'B': j1939_nodes: the network 'a=b' cannot be given to the executable " + comma +
+               "E 17 value: participant 'B': j1939_nodes: the network '-v' cannot be given to the executable " + comma +
+               "E 18 unknown-key: participant 'B': j1939_nodes: unknown key 'adress': did you mean 'address'? (the keys "
+               "here: network, from, address, identity_number, function_instance, ecu_instance)\n"
+               "E 19 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '255'\n"
+               "E 20 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not the text \"0x01\"\n"
+               "E 21 value: participant 'B': j1939_nodes: identity_number must be a number from 0 to 2097151 (decimal, or "
+               "0x.. in hexadecimal), not '0x200000'\n"
+               "E 22 value: participant 'B': j1939_nodes: function_instance must be a number from 0 to 31 (decimal, or "
+               "0x.. in hexadecimal), not '32'\n"
+               "E 23 value: participant 'B': j1939_nodes: ecu_instance must be a number from 0 to 7 (decimal, or 0x.. in "
+               "hexadecimal), not '-1'\n"
+               "E 24 value: participant 'B': j1939_nodes: from must be the address of the node in the executable's code, "
+               "a number from 0 to 254 (decimal, or 0x.. in hexadecimal; 254: a node that takes any free address), not "
+               "'0X10'\n"
+               "E 25 value: participant 'B': j1939_nodes: network must be the simulation's name of the node's CAN network "
+               "(a name in networks), not a list\n"
+               // Texts in YAML 1.2, as for the schema.
+               "E 27 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '0b11'\n"
+               "E 28 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '1_0'\n"
+               "E 29 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '+0x10'\n"
+               "E 30 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '0O10'\n");
+    CHECK(r.findings[3].participant == "B" && r.findings[4].network == "a=b" && r.findings[7].network == "VehicleCAN");
+    // Neither described nor started with values the file does not mean; the next entry is.
+    CHECK(!r.config->participants[0].valid && !r.config->participants[1].valid && r.config->participants[2].valid);
+    check_text(nodes_text(r.config->participants[1]), "BodyCAN=address:0x01@26 ");
+}
+
+TEST_CASE(j1939_nodes_name_a_can_network_of_the_simulation)
+{
+    const ConfigRead r = read_config(with_networks("  - name: Engine2\n"                                   // 7
+                                                   "    command: engine\n"                                 // 8
+                                                   "    network_names: { VehicleCAN: J1939_CAN }\n"        // 9
+                                                   "    j1939_nodes:\n"                                    // 10
+                                                   "      - { network: J1939_CAN, address: 1 }\n"          // 11
+                                                   "      - { network: VehicleCAM, from: 0, address: 1 }\n" // 12
+                                                   "      - { network: Body, address: 1 }\n"               // 13
+                                                   "      - { network: Wheel, address: 1 }\n"              // 14
+                                                   "      - { network: VehicleCAN, address: 1 }\n"));      // 15
+    check_text(lines(r.findings),
+               "E 11 j1939-node-undeclared: participant 'Engine2': j1939_nodes (line 11) names the network 'J1939_CAN', "
+               "which is the executable's name; network_names (line 9) calls it 'VehicleCAN' in the simulation: write "
+               "network: VehicleCAN\n"
+               "E 12 j1939-node-undeclared: participant 'Engine2': j1939_nodes (line 12) names the network 'VehicleCAM', "
+               "which is not in networks: network is the simulation's name of a CAN network (did you mean 'VehicleCAN'?)\n"
+               "E 13 j1939-node-undeclared: participant 'Engine2': j1939_nodes (line 13) names the network 'Body', which "
+               "is a lin network (line 5): j1939_nodes is for J1939 nodes on a CAN network\n"
+               "E 14 j1939-node-undeclared: participant 'Engine2': j1939_nodes (line 14) names the network 'Wheel', which "
+               "is not in networks: network is the simulation's name of a CAN network\n");
+    CHECK(r.findings[0].participant == "Engine2" && r.findings[0].network == "J1939_CAN");
+    CHECK(!r.config->participants[0].valid);
+    // The simulation's name of a renamed network, and a name that is both: no error.
+    const ConfigRead swapped = read_config(with_networks("  - name: A\n    command: a\n"
+                                                         "    network_names: { VehicleCAN: BodyCAN, BodyCAN: VehicleCAN }\n"
+                                                         "    j1939_nodes: [{ network: BodyCAN, address: 1 }]\n"));
+    check_text(lines(swapped.findings), "");
+}
+
+TEST_CASE(j1939_nodes_have_one_entry_per_node)
+{
+    const std::string file = with_networks("  - name: Engine2\n"                                             // 7
+                                           "    command: engine\n"                                           // 8
+                                           "    j1939_nodes:\n"                                              // 9
+                                           "      - { network: VehicleCAN, from: 0x00, address: 0x01 }\n"    // 10
+                                           "      - { network: BodyCAN, address: 0x05 }\n"                   // 11
+                                           "      - { network: VehicleCAN, from: 0, identity_number: 2 }\n"  // 12
+                                           "      - { network: BodyCAN, from: 0x21 }\n"                      // 13
+                                           "  - name: Gateway\n"                                             // 14
+                                           "    command: gateway\n"                                          // 15
+                                           "    j1939_nodes: [{ network: VehicleCAN, address: 0x01 }]\n",    // 16
+                                           "variants:\n"                                                     // 17
+                                           "  plain: {}\n"                                                   // 18
+                                           "  other:\n"                                                      // 19
+                                           "    participants:\n"                                             // 20
+                                           "      Gateway:\n"                                                // 21
+                                           "        j1939_nodes: [{ network: VehicleCAN, from: 0x00, address: 0x02 }]\n" // 22
+                                           "  twice:\n"                                                      // 23
+                                           "    participants:\n"                                             // 24
+                                           "      Gateway:\n"                                                // 25
+                                           "        j1939_nodes:\n"                                          // 26
+                                           "          - { network: BodyCAN, from: 0x10, address: 0x11 }\n"   // 27
+                                           "          - { network: BodyCAN, from: 16, address: 0x12 }\n"     // 28
+                                           "  mixed:\n"                                                      // 29
+                                           "    participants:\n"                                             // 30
+                                           "      Gateway:\n"                                                // 31
+                                           "        j1939_nodes:\n"                                          // 32
+                                           "          - { network: BodyCAN, address: 0x01 }\n"               // 33
+                                           "          - { network: BodyCAN, from: 0x00, identity_number: 2 }\n"); // 34
+    EnabledOverrides choice;
+    choice.variant = "plain";
+    const ConfigRead plain = read_config(file, choice);
+    // An entry that changes nothing (line 13) counts too. Every variant is checked; what the
+    // common part says is not said again for a variant.
+    const std::string findings =
+        "E 12 j1939-node-duplicate: participant 'Engine2': j1939_nodes has two entries (lines 10 and 12) for the node "
+        "that the executable's code puts at 0x00 on 'VehicleCAN': write its settings in one entry\n"
+        "E 13 j1939-node-duplicate: participant 'Engine2': j1939_nodes has an entry without from (line 11) for 'BodyCAN', "
+        "which stands for the only node of the executable there, and another entry for that network (line 13): give "
+        "every entry of this network a from (the address in the executable's code)\n"
+        // The common entry has no from and the variant's has one: two entries, not one in place of the other.
+        "E 22 j1939-node-duplicate: variant 'other': participant 'Gateway': j1939_nodes has an entry without from (line "
+        "16) for 'VehicleCAN', which stands for the only node of the executable there, and another entry for that "
+        "network (line 22): give every entry of this network a from (the address in the executable's code); an entry "
+        "of a variant replaces the common entry only if both have the same network and the same from (or both have no "
+        "from)\n"
+        "E 28 j1939-node-duplicate: variant 'twice': participant 'Gateway': j1939_nodes has two entries (lines 27 and 28) "
+        "for the node that the executable's code puts at 0x10 on 'BodyCAN': write its settings in one entry\n"
+        // The variant's own entries clash: said once, not again with the common ones laid under them.
+        "E 34 j1939-node-duplicate: variant 'mixed': participant 'Gateway': j1939_nodes has an entry without from (line "
+        "33) for 'BodyCAN', which stands for the only node of the executable there, and another entry for that network "
+        "(line 34): give every entry of this network a from (the address in the executable's code)\n";
+    check_text(lines(plain.findings), findings);
+    CHECK(!plain.config->participants[0].valid && plain.config->participants[1].valid);
+    choice.variant = "other";
+    const ConfigRead other = read_config(file, choice);
+    check_text(lines(other.findings), findings);
+    CHECK(!other.config->participants[1].valid);
+    choice.variant = "twice";
+    CHECK(!read_config(file, choice).config->participants[1].valid);
+}
+
+TEST_CASE(a_variant_lays_its_j1939_nodes_over_the_common_ones)
+{
+    const std::string file = with_networks("  - name: Engine2\n"                                                       // 7
+                                           "    command: engine\n"                                                     // 8
+                                           "    j1939_nodes:\n"                                                        // 9
+                                           "      - { network: VehicleCAN, from: 0x00, address: 0x01, identity_number: 2 }\n" // 10
+                                           "      - { network: BodyCAN, address: 0x05 }\n",                            // 11
+                                           "variants:\n"                                                               // 12
+                                           "  plain: {}\n"                                                             // 13
+                                           "  other:\n"                                                                // 14
+                                           "    participants:\n"                                                       // 15
+                                           "      Engine2:\n"                                                          // 16
+                                           "        j1939_nodes:\n"                                                    // 17
+                                           "          - { network: VehicleCAN, from: 0x00, address: 0x03 }\n"          // 18
+                                           "          - { network: VehicleCAN, from: 0x21, address: 0x22 }\n"          // 19
+                                           "          - { network: BodyCAN }\n");                                      // 20
+    EnabledOverrides choice;
+    choice.variant = "plain";
+    const ConfigRead plain = read_config(file, choice);
+    check_text(lines(plain.findings), "");
+    check_text(nodes_text(plain.config->participants[0]),
+               "VehicleCAN=from:0x00,address:0x01,identity_number:2@10 BodyCAN=address:0x05@11 ");
+    // The same node: the variant's entry whole (the common identity_number is not kept); a new node
+    // goes after them; an entry that changes nothing takes the common one away.
+    choice.variant = "other";
+    const ConfigRead other = read_config(file, choice);
+    check_text(lines(other.findings), "");
+    CHECK(other.config->participants[0].valid);
+    check_text(nodes_text(other.config->participants[0]),
+               "VehicleCAN=from:0x00,address:0x03@18 BodyCAN=@20 VehicleCAN=from:0x21,address:0x22@19 ");
+    check_text(words(j1939_node_arguments(other.config->participants[0])),
+               "[--j1939-node][VehicleCAN=from:0x00,address:0x03][--j1939-node][VehicleCAN=from:0x21,address:0x22]");
+}
+
+TEST_CASE(j1939_node_is_written_as_j1939_nodes_not_in_a_command)
+{
+    // An ecu_main command: the launcher gives the argument itself, and the message says what to write.
+    check_text(read(with_networks("  - name: A\n    command: [a, --j1939-node, \"VehicleCAN=from:0x00,address:0x01\"]\n"
+                                  "  - name: B\n    command: [b, \"--j1939-node=BodyCAN=address:254,identity_number:2\"]\n"
+                                  "  - name: C\n    command: [c, --j1939-node, VehicleCAN]\n")),
+               "E 8 launcher-argument: participant 'A': the command has '--j1939-node', but vehicle_sil_launch gives an "
+               "ecu_main executable --j1939-node itself, from the participant's j1939_nodes: remove it from the command "
+               "and write j1939_nodes: [{ network: VehicleCAN, from: 0x00, address: 0x01 }] for this participant\n"
+               "E 10 launcher-argument: participant 'B': the command has '--j1939-node=BodyCAN=address:254,identity_number:2', "
+               "but vehicle_sil_launch gives an ecu_main executable --j1939-node itself, from the participant's "
+               "j1939_nodes: remove it from the command and write j1939_nodes: [{ network: BodyCAN, address: 254, "
+               "identity_number: 2 }] for this participant\n"
+               "E 12 launcher-argument: participant 'C': the command has '--j1939-node', but vehicle_sil_launch gives an "
+               "ecu_main executable --j1939-node itself, from the participant's j1939_nodes: remove it from the command "
+               "and write the node in j1939_nodes for this participant\n");
+    // Any other command may have it, unless the entry has j1939_nodes that change something too:
+    // then run would give a node twice.
+    const std::string remote = "  - name: Remote\n"                                                                      // 7
+                               "    command: [remote, --registry-uri, \"{registry_uri}\", --j1939-node, \"VehicleCAN=address:0x05\"]\n" // 8
+                               "    describe: false\n";                                                                  // 9
+    check_text(read(with_networks(remote)), "");
+    const ConfigRead both = read_config(with_networks(remote + "    j1939_nodes: [{ network: VehicleCAN, from: 0x00, address: 0x01 }]\n")); // 10
+    check_text(lines(both.findings),
+               "E 8 launcher-argument: participant 'Remote': the command has --j1939-node, and the participant has "
+               "j1939_nodes, for which vehicle_sil_launch gives the executable --j1939-node itself (--j1939-node "
+               "VehicleCAN=from:0x00,address:0x01): remove --j1939-node from the command and write every node in "
+               "j1939_nodes\n"
+               "N 10 j1939-node-not-checked: participant 'Remote': j1939_nodes of a participant that is not described "
+               "(describe: false) is not checked; run starts it with --j1939-node VehicleCAN=from:0x00,address:0x01, which "
+               "only an ecu_main executable with \"j1939-node\" in its features takes\n");
+    CHECK(!both.config->participants[0].valid);
+    // An entry that changes nothing asks for no argument: no error and no note.
+    check_text(read(with_networks(remote + "    j1939_nodes: [{ network: VehicleCAN, from: 0x00 }]\n")), "");
+}
+
+TEST_CASE(the_note_of_j1939_nodes_that_are_not_checked_says_what_run_gives)
+{
+    const std::string file = with_networks("  - name: Far\n"                                                              // 7
+                                           "    command: [far, \"{registry_uri}\"]\n"                                     // 8
+                                           "    describe: false\n"                                                        // 9
+                                           "    j1939_nodes: [{ network: VehicleCAN, from: 0x00, address: 0x01 }, "
+                                           "{ network: BodyCAN, identity_number: 3 }]\n"                                  // 10
+                                           "  - name: Near\n"                                                             // 11
+                                           "    command: near\n",                                                         // 12
+                                           "variants:\n"                                                                  // 13
+                                           "  common: {}\n"                                                               // 14
+                                           "  none: { participants: { Far: { j1939_nodes: [{ network: VehicleCAN, from: 0 }, "
+                                           "{ network: BodyCAN }] } } }\n");                                               // 15
+    EnabledOverrides choice;
+    choice.variant = "common";
+    const ConfigRead common = read_config(file, choice);
+    check_text(lines(common.findings),
+               "N 10 j1939-node-not-checked: participant 'Far': j1939_nodes of a participant that is not described "
+               "(describe: false) is not checked; run starts it with --j1939-node VehicleCAN=from:0x00,address:0x01 "
+               "--j1939-node BodyCAN=identity_number:3, which only an ecu_main executable with \"j1939-node\" in its "
+               "features takes\n");
+    // The variant takes every entry away: nothing is given, and nothing is noted.
+    choice.variant = "none";
+    check_text(lines(read_config(file, choice).findings), "");
+    // A participant that is left out is given nothing either.
+    choice.variant = "common";
+    choice.disable = {"Far"};
+    check_text(lines(read_config(file, choice).findings), "");
+}
+
+TEST_CASE(j1939_node_arguments_leave_out_entries_that_change_nothing)
+{
+    ParticipantConfig p;
+    p.name = "Engine2";
+    p.j1939_nodes = {
+        J1939NodeEntry{{"VehicleCAN", j1939::NodeOverride{0x0A, 0xFE, 2097151, 31, 7}}, 3},
+        J1939NodeEntry{{"BodyCAN", j1939::NodeOverride{0x21, {}, {}, {}, {}}}, 4},
+        J1939NodeEntry{{"Body CAN", j1939::NodeOverride{{}, 0x00, {}, {}, {}}}, 5},
+        J1939NodeEntry{{"Other", j1939::NodeOverride{{}, {}, {}, {}, 0}}, 6},
+    };
+    // The settings in their fixed order: an address as 0x.. (254 in decimal), the others in decimal.
+    check_text(words(j1939_node_arguments(p)),
+               "[--j1939-node][VehicleCAN=from:0x0A,address:254,identity_number:2097151,function_instance:31,ecu_instance:7]"
+               "[--j1939-node][Body CAN=address:0x00][--j1939-node][Other=ecu_instance:0]");
+    // What an executable must say it takes: the settings of the entries that are given.
+    const std::vector<J1939NodeFeatureNeed> needs = required_j1939_node_features(p);
+    CHECK(needs.size() == 1 && needs[0].feature == "j1939-node" && needs[0].setting == "from" && needs[0].line == 3);
+    const J1939NodeSettingFeature table[] = {{"from", "j1939-node"}, {"ecu_instance", "j1939-node.ecu_instance"}};
+    const std::vector<J1939NodeFeatureNeed> more = required_j1939_node_features(p, table);
+    CHECK(more.size() == 2 && more[1].feature == "j1939-node.ecu_instance" && more[1].setting == "ecu_instance" &&
+          more[1].line == 3);
+    p.j1939_nodes.erase(p.j1939_nodes.begin());
+    CHECK(required_j1939_node_features(p, table).back().line == 6);
+    check_text(j1939_node_yaml(p.j1939_nodes[0]), "{ network: BodyCAN, from: 0x21 }");
+}
+
+TEST_CASE(j1939_nodes_have_ascii_names_where_the_arguments_come_in_the_code_page)
+{
+    // ecu_main on Windows refuses a --j1939-node that is not ASCII (its arguments are not UTF-8
+    // there), so the launcher of a Windows build says it before anything is started.
+    const std::string file = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
+                             "participants:\n  - name: A\n    command: a\n"
+                             "    j1939_nodes: [{ network: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, address: 1 }]\n"; // 7
+    const ConfigRead r = read_config(file);
+#ifdef _WIN32
+    check_text(lines(r.findings),
+               "E 7 j1939-node-not-ascii: participant 'A': j1939_nodes (line 7) names the network '\xE8\xBB\x8A\xE4\xB8\xA1"
+               "CAN', which has characters that are not ASCII, which an ECU executable on Windows does not take with "
+               "--j1939-node (its arguments arrive in the code page, not in UTF-8): use ASCII names for a network with "
+               "j1939_nodes (change the name in networks)\n");
+    CHECK(!r.config->participants[0].valid);
+#else
+    check_text(lines(r.findings), "");
+    CHECK(r.config->participants[0].valid);
+    check_text(words(j1939_node_arguments(r.config->participants[0])),
+               "[--j1939-node][\xE8\xBB\x8A\xE4\xB8\xA1""CAN=address:0x01]");
 #endif
 }

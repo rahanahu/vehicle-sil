@@ -9,11 +9,13 @@
 #include "vehicle_sil/control/variable_map.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
+#include "vehicle_sil/ecu/j1939_node_argument.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,8 +35,9 @@ inline constexpr std::string_view kControllerName = "SimulationController";
 
 /// The arguments that vehicle_sil_launch gives an ecu_main executable itself; its command must
 /// not have them (also not as "--name=..."). docs/ecu-executable.md has their meaning.
-/// --map-network is the one the file asks for (network_names); with describe: false, where a
-/// command may have the others, it must not be in the command beside network_names. The list is
+/// --map-network and --j1939-node are the ones the file asks for (network_names, j1939_nodes);
+/// with describe: false, where a command may have the others, they must not be in the command
+/// beside the key that gives them. The list is
 /// ecu_executable::kLauncherArguments (vehicle_sil/ecu/executable.hpp), which ecu_main's tests
 /// hold against its arguments.
 inline constexpr const auto& kLauncherArguments = ecu_executable::kLauncherArguments;
@@ -115,6 +118,18 @@ struct NetworkName
     friend bool operator==(const NetworkName&, const NetworkName&) = default;
 };
 
+/// One line of a participant's "j1939_nodes": other values for one J1939 node of its executable
+/// (ecu_executable::J1939NodeOverride: `network` is the simulation's name, `node.from` the address
+/// in the executable's code), and the line it is on. An entry that changes nothing
+/// (node.changes() is false: network and from only) is not given to the executable and not
+/// matched; a variant writes it over a common entry to take that away.
+struct J1939NodeEntry : ecu_executable::J1939NodeOverride
+{
+    std::size_t line = 0;
+
+    friend bool operator==(const J1939NodeEntry&, const J1939NodeEntry&) = default;
+};
+
 struct ParticipantConfig
 {
     /// The participant name (on SIL Kit); an ecu_main executable gets it with --name.
@@ -156,12 +171,18 @@ struct ParticipantConfig
     /// with a variant, the variant's lines laid over them. Only lines of the right form (the
     /// others are reported when reading). What they do: renamed_networks().
     std::vector<NetworkName> network_names{};
+    /// Its "j1939_nodes" as written (also the entries that change nothing), in the file's order;
+    /// with a variant, the variant's entries laid over them. Only entries of the right form (the
+    /// others are reported when reading). What run gives: j1939_node_arguments(); what the check
+    /// makes of them: seen_networks().
+    std::vector<J1939NodeEntry> j1939_nodes{};
     std::size_t line = 0;         ///< the line of the participant's entry
     std::size_t command_line = 0; ///< the line of its command (its entry's line if it has none)
     std::size_t step_line = 0;    ///< the line of step_ms (its entry's line if it has none)
     /// false if the entry cannot be described or compared (no name, no command, a duplicate or
     /// reserved name, a launcher argument or an unknown placeholder in the command, a describe
-    /// that is not true or false, an error in network_names; reported when reading). An unknown
+    /// that is not true or false, an error in network_names or j1939_nodes; reported when
+    /// reading). An unknown
     /// key or a bad step_ms or required does not make it invalid.
     bool valid = true;
 };
@@ -173,6 +194,53 @@ struct ParticipantConfig
 /// What run adds to the participant's arguments for its network_names: "--map-network",
 /// "<simulation's name>=<executable's name>" for each of renamed_networks(); empty without one.
 [[nodiscard]] std::vector<std::string> map_network_arguments(const ParticipantConfig& participant);
+
+/// What run adds to the participant's arguments for its j1939_nodes (after map_network_arguments()):
+/// "--j1939-node", ecu_executable::format_j1939_node_argument() of each entry that changes
+/// something, in the file's order; empty without one.
+[[nodiscard]] std::vector<std::string> j1939_node_arguments(const ParticipantConfig& participant);
+
+/// The settings of `node` as a configuration file writes them, for messages: "from: 0x00,
+/// address: 0x01, identity_number: 2" (the settings that are given, in the order of
+/// j1939::kNodeOverrideSettings; an address as j1939::node_override_address_text()).
+[[nodiscard]] std::string j1939_node_settings_yaml(const j1939::NodeOverride& node);
+/// One entry of j1939_nodes as a configuration file writes it, for messages:
+/// "{ network: VehicleCAN, from: 0x00, address: 0x01 }".
+[[nodiscard]] std::string j1939_node_yaml(const ecu_executable::J1939NodeOverride& entry);
+
+/// Which word of the features of an executable's --describe a setting of j1939_nodes needs. One
+/// row for each setting: a setting added later gets its own word ("j1939-node.<setting>"), so
+/// that an executable built before it is told apart from one that takes it.
+struct J1939NodeSettingFeature
+{
+    std::string_view setting; ///< as in j1939_nodes and --j1939-node: "from", "address", ...
+    std::string_view feature; ///< "j1939-node"
+};
+inline constexpr J1939NodeSettingFeature kJ1939NodeSettingFeatures[] = {
+    {"from", ecu_executable::kFeatureJ1939Node},
+    {"address", ecu_executable::kFeatureJ1939Node},
+    {"identity_number", ecu_executable::kFeatureJ1939Node},
+    {"function_instance", ecu_executable::kFeatureJ1939Node},
+    {"ecu_instance", ecu_executable::kFeatureJ1939Node},
+};
+
+/// A word of the features that the participant's j1939_nodes need, with the first setting and
+/// line that need it.
+struct J1939NodeFeatureNeed
+{
+    std::string feature;
+    std::string setting;
+    std::size_t line = 0;
+
+    friend bool operator==(const J1939NodeFeatureNeed&, const J1939NodeFeatureNeed&) = default;
+};
+
+/// The words of the features that the entries of the participant's j1939_nodes that change
+/// something need (`table`: setting -> word), each once, in the order of the entries and of the
+/// settings in an entry.
+[[nodiscard]] std::vector<J1939NodeFeatureNeed>
+required_j1939_node_features(const ParticipantConfig& participant,
+                             std::span<const J1939NodeSettingFeature> table = kJ1939NodeSettingFeatures);
 
 /// Where a parameter's value comes from; a later one replaces an earlier one of the same name.
 enum class ParamSource
@@ -220,10 +288,15 @@ struct VariantParticipant
     /// "network_names": laid over the common ones, line by line (by the simulation's name). A
     /// line whose two names are the same takes the common line away.
     std::vector<NetworkName> network_names{};
+    /// "j1939_nodes": laid over the common ones, entry by entry (by network and from, also when
+    /// both have no from): an entry takes the place of the common one whole. An entry that changes
+    /// nothing takes the common one away.
+    std::vector<J1939NodeEntry> j1939_nodes{};
     /// "enabled".
     std::optional<bool> enabled{};
-    /// false if its command or its network_names (with the common ones) has an error (reported
-    /// when reading): the participant cannot be described or started in this variant.
+    /// false if its command, its network_names or its j1939_nodes (with the common ones) has an
+    /// error (reported when reading): the participant cannot be described or started in this
+    /// variant.
     bool valid = true;
 };
 

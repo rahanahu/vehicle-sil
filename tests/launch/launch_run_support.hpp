@@ -584,3 +584,4 @@ void manual(const Options& o);
 // launch_run_networks.cpp
 void traffic(const Options& o);
 void network_names(const Options& o);
+void j1939_nodes(const Options& o);

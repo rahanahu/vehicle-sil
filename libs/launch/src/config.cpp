@@ -30,7 +30,7 @@ const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms
 /// variant can change gets its key here, a member of VariantParticipant (or VariantConfig), a
 /// branch in read_variant() and a line in apply_variant().
 const std::vector<std::string> kVariantKeys = {"participants", "params"};
-const std::vector<std::string> kVariantParticipantKeys = {"command", "variables", "network_names", "enabled"};
+const std::vector<std::string> kVariantParticipantKeys = {"command", "variables", "network_names", "j1939_nodes", "enabled"};
 constexpr const char* kVariantsForm =
     "variants: { small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: "
     "650 } } }";
@@ -42,11 +42,17 @@ constexpr const char* kSpeedMeaning =
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
 const std::vector<std::string> kParticipantKeys = {"name",    "command", "step_ms", "describe", "required",
                                                    "enabled", "manual",  "role",    "variables",
-                                                   "network_names"};
+                                                   "network_names", "j1939_nodes"};
+/// The keys of one entry of a participant's j1939_nodes (j1939::kNodeOverrideSettings after network).
+const std::vector<std::string> kJ1939NodeKeys = {"network",           "from",        "address", "identity_number",
+                                                 "function_instance", "ecu_instance"};
+/// An entry of j1939_nodes, in messages.
+constexpr const char* kJ1939NodeForm = "{ network: VehicleCAN, from: 0x00, address: 0x01, identity_number: 2 }";
 /// The form of network_names, in messages.
 constexpr const char* kNetworkNamesForm = "network_names: { <simulation's name>: <executable's name> }";
 /// true for the launcher of a Windows build: an executable it starts gets its arguments in the
-/// code page, and ecu_main refuses a --map-network that is not ASCII there (network-map-not-ascii).
+/// code page, and ecu_main refuses a --map-network or a --j1939-node that is not ASCII there
+/// (network-map-not-ascii, j1939-node-not-ascii).
 #ifdef _WIN32
 constexpr bool kArgumentsInCodePage = true;
 #else
@@ -199,6 +205,33 @@ void lay_network_names(std::vector<NetworkName>& names, const std::vector<Networ
             *same = entry;
         }
     }
+}
+
+/// Lays a variant's j1939_nodes over the common ones: an entry for the same node (the same network
+/// and the same from, or both without from) takes the place of the common entry whole (the
+/// settings are not mixed), a new one goes after them.
+void lay_j1939_nodes(std::vector<J1939NodeEntry>& entries, const std::vector<J1939NodeEntry>& over)
+{
+    for (const J1939NodeEntry& entry : over)
+    {
+        const auto same = std::find_if(entries.begin(), entries.end(), [&entry](const J1939NodeEntry& e) {
+            return e.network == entry.network && e.node.from == entry.node.from;
+        });
+        if (same == entries.end())
+        {
+            entries.push_back(entry);
+        }
+        else
+        {
+            *same = entry;
+        }
+    }
+}
+
+/// true if no byte of `text` is above 0x7F.
+bool all_ascii(const std::string& text)
+{
+    return std::all_of(text.begin(), text.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; });
 }
 
 /// The launcher argument that `argument` is (also "--name=x"), or "".
@@ -388,6 +421,7 @@ public:
             read_variants(variantsNode, config);
         }
         check_network_names(config);
+        check_j1939_nodes(config);
         return config;
     }
 
@@ -741,6 +775,10 @@ private:
                 {
                     usable = read_network_names(child, prefix, who, participant.network_names) && usable;
                 }
+                else if (key == "j1939_nodes")
+                {
+                    usable = read_j1939_nodes(child, prefix, who, participant.j1939_nodes) && usable;
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kParticipantKeys);
@@ -977,6 +1015,10 @@ private:
                 else if (key == "network_names")
                 {
                     change.valid = read_network_names(part, at, who, change.network_names) && change.valid;
+                }
+                else if (key == "j1939_nodes")
+                {
+                    change.valid = read_j1939_nodes(part, at, who, change.j1939_nodes) && change.valid;
                 }
                 else if (key == "enabled")
                 {
@@ -1229,6 +1271,430 @@ private:
                       "write every mapping in network_names (" + kNetworkNamesForm + ")",
                   who);
         }
+    }
+
+    // --- a participant's J1939 nodes ---
+
+    /// An unquoted whole number from 0 to `max`, written as YAML 1.2 (the core schema, as the schema's
+    /// editors read it) writes an integer: decimal with an optional sign (010 is ten), 0o.. in octal,
+    /// 0x.. in hexadecimal (a lower case x and o: 0X10 is a text there, as are 1_0 and 0b11); empty
+    /// if the value is not one.
+    std::optional<std::uint32_t> j1939_number(ryml::id_type node, std::uint32_t max) const
+    {
+        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
+        {
+            return std::nullopt;
+        }
+        std::string text = detail::to_string(tree_.val(node));
+        if (text.size() > 1 && (text[1] == 'X' || text[1] == 'O'))
+        {
+            return std::nullopt;
+        }
+        if (text.size() > 2 && text[0] == '0' && text[1] == 'o')
+        {
+            std::uint64_t octal = 0;
+            const char* end = text.data() + text.size();
+            const auto [ptr, ec] = std::from_chars(text.data() + 2, end, octal, 8);
+            return ec == std::errc{} && ptr == end && octal <= max ? std::optional(static_cast<std::uint32_t>(octal))
+                                                                   : std::nullopt;
+        }
+        if (text.size() > 1 && text[0] == '+')
+        {
+            if (!std::all_of(text.begin() + 1, text.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; }))
+            {
+                return std::nullopt; // +0x10 is a text in YAML
+            }
+            text.erase(0, 1);
+        }
+        std::int64_t value = 0;
+        if (read_integer(text, value))
+        {
+            return value >= 0 && value <= static_cast<std::int64_t>(max) ? std::optional(static_cast<std::uint32_t>(value))
+                                                                         : std::nullopt;
+        }
+        const Hex hex = read_hex(text);
+        if (hex.kind == Hex::Kind::Read && hex.magnitude <= max)
+        {
+            return static_cast<std::uint32_t>(hex.magnitude);
+        }
+        return std::nullopt;
+    }
+
+    /// Reads a "j1939_nodes" into `entries`: the entries of the right form, as written. false if one
+    /// is not (an error says which).
+    bool read_j1939_nodes(ryml::id_type node, const std::string& prefix, const std::string& who,
+                          std::vector<J1939NodeEntry>& entries)
+    {
+        if (!tree_.is_seq(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "j1939_nodes must be a list of the J1939 nodes to change, each with its network and the "
+                           "settings to change (j1939_nodes: [" + kJ1939NodeForm + "]), not " + shown_value(node),
+                  who);
+            return false;
+        }
+        bool ok = true;
+        for (auto item = tree_.first_child(node); item != ryml::NONE; item = tree_.next_sibling(item))
+        {
+            if (!tree_.is_map(item))
+            {
+                error("value", doc_.line(item),
+                      prefix + "j1939_nodes: an entry must be a mapping with network and the settings to change (" +
+                          kJ1939NodeForm + "), not " + shown_value(item),
+                      who);
+                ok = false;
+                continue;
+            }
+            if (auto entry = read_j1939_node(item, prefix + "j1939_nodes: ", who))
+            {
+                entries.push_back(std::move(*entry));
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    /// One entry of j1939_nodes, or empty (and an error) if it is not of the right form.
+    std::optional<J1939NodeEntry> read_j1939_node(ryml::id_type node, const std::string& prefix, const std::string& who)
+    {
+        J1939NodeEntry entry;
+        entry.line = doc_.line(node);
+        bool ok = true;
+        bool hasNetwork = false;
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string key = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, key, child, prefix))
+            {
+                ok = false;
+                continue;
+            }
+            if (key == "network")
+            {
+                hasNetwork = true;
+                if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+                {
+                    error("value", doc_.line(child),
+                          prefix + "network must be the simulation's name of the node's CAN network (a name in "
+                                   "networks), not " + shown_value(child),
+                          who);
+                    ok = false;
+                    continue;
+                }
+                entry.network = detail::to_string(tree_.val(child));
+                // run gives "--j1939-node <network>=<settings>", which the executable splits at the first '='.
+                if (entry.network.front() == '-' || entry.network.find('=') != std::string::npos)
+                {
+                    error("value", doc_.line(child),
+                          prefix + "the network '" + entry.network + "' cannot be given to the executable (run passes "
+                                   "--j1939-node <network>=<settings>, which is split at the first '='): a network with "
+                                   "j1939_nodes needs a name that has no '=' and does not start with '-'; change the "
+                                   "name in networks",
+                          who, entry.network);
+                    ok = false;
+                }
+                continue;
+            }
+            const auto setting = std::find(kJ1939NodeKeys.begin(), kJ1939NodeKeys.end(), key);
+            if (setting == kJ1939NodeKeys.end())
+            {
+                unknown_key(child, key, prefix, kJ1939NodeKeys);
+                ok = false;
+                continue;
+            }
+            // The ranges of j1939::NodeOverride; a value above one is refused, never cut.
+            const std::uint32_t max = key == "from" || key == "address" ? 254
+                                      : key == "identity_number"        ? 2097151
+                                      : key == "function_instance"      ? 31
+                                                                        : 7;
+            const auto value = j1939_number(child, max);
+            if (!value)
+            {
+                const std::string meaning =
+                    key == "from"      ? "the address of the node in the executable's code, "
+                    : key == "address" ? "the node's new address, "
+                                       : std::string{};
+                const std::string any = key == "from"      ? "; 254: a node that takes any free address"
+                                        : key == "address" ? "; 254: any free address"
+                                                           : std::string{};
+                error("value", doc_.line(child),
+                      prefix + key + " must be " + meaning + "a number from 0 to " + std::to_string(max) +
+                          " (decimal, or 0x.. in hexadecimal" + any + "), not " + shown_value(child),
+                      who, entry.network);
+                ok = false;
+                continue;
+            }
+            if (key == "from")
+            {
+                entry.node.from = static_cast<j1939::Address>(*value);
+            }
+            else if (key == "address")
+            {
+                entry.node.address = static_cast<j1939::Address>(*value);
+            }
+            else if (key == "identity_number")
+            {
+                entry.node.identity_number = *value;
+            }
+            else if (key == "function_instance")
+            {
+                entry.node.function_instance = static_cast<std::uint8_t>(*value);
+            }
+            else
+            {
+                entry.node.ecu_instance = static_cast<std::uint8_t>(*value);
+            }
+        }
+        if (!hasNetwork)
+        {
+            error("missing-key", entry.line,
+                  prefix + "an entry has no network: add network: <the simulation's name of the node's CAN network> (" +
+                      kJ1939NodeForm + ")",
+                  who);
+            ok = false;
+        }
+        return ok ? std::optional<J1939NodeEntry>(std::move(entry)) : std::nullopt;
+    }
+
+    /// "j1939_nodes: [{ network: VehicleCAN, from: 0x00, address: 0x01 }]" for the --j1939-node at
+    /// command[at] if its value can be read, else "the node in j1939_nodes".
+    static std::string written_j1939_nodes(const std::vector<std::string>& command, std::size_t at)
+    {
+        const std::string_view option = ecu_executable::kJ1939NodeArgument;
+        std::string value;
+        if (command[at].size() > option.size())
+        {
+            value = command[at].substr(option.size() + 1);
+        }
+        else if (at + 1 < command.size())
+        {
+            value = command[at + 1];
+        }
+        const ecu_executable::J1939NodeArgument read = ecu_executable::parse_j1939_node_argument(value);
+        if (!read.entry)
+        {
+            return "the node in j1939_nodes";
+        }
+        return "j1939_nodes: [" + j1939_node_yaml(*read.entry) + "]";
+    }
+
+    /// The rules of j1939_nodes that the file alone can tell, for the common part and for each
+    /// variant laid over it (also the variants that are not chosen), as check_network_names(): an
+    /// error makes the participant invalid (in that variant). What the common part says is not
+    /// said again for a variant.
+    void check_j1939_nodes(SimulationConfig& config)
+    {
+        std::vector<std::vector<Finding>> common(config.participants.size());
+        for (std::size_t i = 0; i < config.participants.size(); ++i)
+        {
+            ParticipantConfig& p = config.participants[i];
+            common[i] = j1939_node_findings(config, p, nullptr, nullptr);
+            for (const Finding& f : common[i])
+            {
+                add_with_prefix(f, participant_prefixes_[i]);
+            }
+            p.valid = p.valid && !has_error(common[i]);
+        }
+        for (VariantConfig& variant : config.variants)
+        {
+            for (VariantParticipant& change : variant.participants)
+            {
+                const auto base = std::find_if(config.participants.begin(), config.participants.end(),
+                                               [&change](const ParticipantConfig& p) { return p.name == change.name; });
+                if (base == config.participants.end() ||
+                    (change.j1939_nodes.empty() && change.network_names.empty() && !change.command))
+                {
+                    continue;
+                }
+                const auto i = static_cast<std::size_t>(base - config.participants.begin());
+                ParticipantConfig merged = *base;
+                if (change.command)
+                {
+                    merged.command = *change.command;
+                    merged.command_line = change.command_line;
+                }
+                lay_network_names(merged.network_names, change.network_names);
+                lay_j1939_nodes(merged.j1939_nodes, change.j1939_nodes);
+                std::vector<Finding> own = j1939_node_findings(config, merged, &*base, &change);
+                std::erase_if(own, [&](const Finding& f) {
+                    return std::find(common[i].begin(), common[i].end(), f) != common[i].end();
+                });
+                for (const Finding& f : own)
+                {
+                    add_with_prefix(f, "variant '" + variant.name + "': participant '" + change.name + "': ");
+                }
+                change.valid = change.valid && !has_error(own);
+            }
+        }
+    }
+
+    static bool has_error(const std::vector<Finding>& findings)
+    {
+        return std::any_of(findings.begin(), findings.end(), [](const Finding& f) { return f.severity == Severity::Error; });
+    }
+
+    void add_with_prefix(const Finding& f, const std::string& prefix)
+    {
+        add(f.severity, f.code, f.line, prefix + f.message, f.participant, f.network);
+    }
+
+    /// The findings of the participant's j1939_nodes (with a variant's laid over the common ones:
+    /// `common` and `change` are set), without the participant's prefix: each entry by itself, the
+    /// entries of a network together, and --j1939-node in a command beside them.
+    std::vector<Finding> j1939_node_findings(const SimulationConfig& config, const ParticipantConfig& participant,
+                                             const ParticipantConfig* common, const VariantParticipant* change) const
+    {
+        std::vector<Finding> out;
+        const std::string& who = participant.name;
+        const auto finding = [&](const char* code, std::size_t line, std::string message, const std::string& network) {
+            out.push_back(Finding{Severity::Error, code, std::move(message), line, who, network});
+        };
+        const auto of_variant = [change](const J1939NodeEntry& entry) {
+            return change != nullptr &&
+                   std::find(change->j1939_nodes.begin(), change->j1939_nodes.end(), entry) != change->j1939_nodes.end();
+        };
+        std::vector<std::string> canNetworks;
+        for (const NetworkConfig& network : config.networks)
+        {
+            if (network.valid && network.kind == NetworkKind::Can)
+            {
+                canNetworks.push_back(network.name);
+            }
+        }
+        const std::vector<NetworkName> renames = renamed_networks(participant);
+        for (const J1939NodeEntry& entry : participant.j1939_nodes)
+        {
+            const std::string at = "j1939_nodes (line " + std::to_string(entry.line) + ") names the network '" +
+                                   entry.network + "', which ";
+            const auto declared = std::find_if(config.networks.begin(), config.networks.end(),
+                                               [&entry](const NetworkConfig& n) { return n.name == entry.network; });
+            const auto renamed = std::find_if(renames.begin(), renames.end(),
+                                              [&entry](const NetworkName& n) { return n.from == entry.network; });
+            const bool simulationName = std::any_of(renames.begin(), renames.end(),
+                                                    [&entry](const NetworkName& n) { return n.name == entry.network; });
+            if (renamed != renames.end() && !simulationName)
+            {
+                finding("j1939-node-undeclared", entry.line,
+                        at + "is the executable's name; network_names (line " + std::to_string(renamed->line) +
+                            ") calls it '" + renamed->name + "' in the simulation: write network: " + renamed->name,
+                        entry.network);
+            }
+            else if (declared == config.networks.end())
+            {
+                const std::string guess = detail::closest(entry.network, canNetworks);
+                finding("j1939-node-undeclared", entry.line,
+                        at + "is not in networks: network is the simulation's name of a CAN network" +
+                            (guess.empty() ? std::string{} : " (did you mean '" + guess + "'?)"),
+                        entry.network);
+            }
+            else if (declared->valid && declared->kind != NetworkKind::Can)
+            {
+                finding("j1939-node-undeclared", entry.line,
+                        at + "is a " + to_string(declared->kind) + " network (line " + std::to_string(declared->line) +
+                            "): j1939_nodes is for J1939 nodes on a CAN network",
+                        entry.network);
+            }
+            if (kArgumentsInCodePage && entry.node.changes() && !all_ascii(entry.network))
+            {
+                finding("j1939-node-not-ascii", entry.line,
+                        at + "has characters that are not ASCII, which an ECU executable on Windows does not take with "
+                             "--j1939-node (its arguments arrive in the code page, not in UTF-8): use ASCII names for a "
+                             "network with j1939_nodes (change the name in networks)",
+                        entry.network);
+            }
+        }
+        // The entries of each network together: one entry for each node. The entries of a variant
+        // alone first (laying them over the common ones keeps the last of two for one node); a
+        // network where they clash is not looked at again with the common ones (one finding).
+        std::vector<std::string> said;
+        const auto clashes = [&](const std::vector<J1939NodeEntry>& entries, bool mixed) {
+            std::vector<std::string> networks;
+            for (const J1939NodeEntry& entry : entries)
+            {
+                if (std::find(networks.begin(), networks.end(), entry.network) == networks.end() &&
+                    std::find(said.begin(), said.end(), entry.network) == said.end())
+                {
+                    networks.push_back(entry.network);
+                }
+            }
+            for (const std::string& network : networks)
+            {
+                std::vector<const J1939NodeEntry*> on;
+                std::vector<j1939::NodeOverride> nodes;
+                for (const J1939NodeEntry& entry : entries)
+                {
+                    if (entry.network == network)
+                    {
+                        on.push_back(&entry);
+                        nodes.push_back(entry.node);
+                    }
+                }
+                const auto clash = j1939::find_node_override_clash(nodes);
+                if (!clash)
+                {
+                    continue;
+                }
+                said.push_back(network);
+                const J1939NodeEntry& a = *on[clash->first];
+                const J1939NodeEntry& b = *on[clash->second];
+                const std::string variantNote =
+                    mixed && of_variant(a) != of_variant(b)
+                        ? "; an entry of a variant replaces the common entry only if both have the same network and the "
+                          "same from (or both have no from)"
+                        : std::string{};
+                const std::size_t later = std::max(a.line, b.line);
+                if (clash->without_from)
+                {
+                    const J1939NodeEntry& bare = !a.node.from ? a : b;
+                    const J1939NodeEntry& other = &bare == &a ? b : a;
+                    finding("j1939-node-duplicate", later,
+                            "j1939_nodes has an entry without from (line " + std::to_string(bare.line) + ") for '" +
+                                network + "', which stands for the only node of the executable there, and another entry "
+                                "for that network (line " + std::to_string(other.line) +
+                                "): give every entry of this network a from (the address in the executable's code)" +
+                                variantNote,
+                            network);
+                }
+                else
+                {
+                    finding("j1939-node-duplicate", later,
+                            "j1939_nodes has two entries (lines " + std::to_string(std::min(a.line, b.line)) + " and " +
+                                std::to_string(later) + ") for the node that the executable's code puts at " +
+                                j1939::coded_address_text(*a.node.from) + " on '" + network +
+                                "': write its settings in one entry" + variantNote,
+                            network);
+                }
+            }
+        };
+        if (change != nullptr)
+        {
+            clashes(change->j1939_nodes, false);
+        }
+        clashes(participant.j1939_nodes, change != nullptr);
+        const std::vector<std::string> given = j1939_node_arguments(participant);
+        if (given.empty() || participant.describe)
+        {
+            return out;
+        }
+        const auto has_option = [](const std::vector<std::string>& words) {
+            return std::any_of(words.begin() + (words.empty() ? 0 : 1), words.end(), [](const std::string& word) {
+                return launcher_argument(word) == ecu_executable::kJ1939NodeArgument;
+            });
+        };
+        const bool commonGives = common != nullptr && !j1939_node_arguments(*common).empty();
+        if (has_option(participant.command) && !(commonGives && has_option(common->command)))
+        {
+            finding("launcher-argument", participant.command_line,
+                    "the command has --j1939-node, and the participant has j1939_nodes, for which vehicle_sil_launch "
+                    "gives the executable --j1939-node itself (" + join_words(given) + "): remove --j1939-node from the "
+                    "command and write every node in j1939_nodes",
+                    "");
+        }
+        return out;
     }
 
     /// The words with one space between them.
@@ -1495,7 +1961,18 @@ private:
             const std::string& argument = participant.command[i];
             if (participant.describe)
             {
-                if (const auto reserved = launcher_argument(argument); reserved == ecu_executable::kMapNetworkArgument)
+                const auto reserved = launcher_argument(argument);
+                if (reserved == ecu_executable::kJ1939NodeArgument)
+                {
+                    // The other launcher argument that the file asks for: say where it is written.
+                    error("launcher-argument", line,
+                          prefix + "the command has '" + argument + "', but vehicle_sil_launch gives an ecu_main "
+                                   "executable --j1939-node itself, from the participant's j1939_nodes: remove it from "
+                                   "the command and write " + written_j1939_nodes(participant.command, i) +
+                              " for this participant",
+                          who);
+                }
+                else if (reserved == ecu_executable::kMapNetworkArgument)
                 {
                     // The one launcher argument that the file asks for: say where it is written.
                     error("launcher-argument", line,
@@ -1720,6 +2197,7 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant)
             }
         }
         lay_network_names(p->network_names, change.network_names);
+        lay_j1939_nodes(p->j1939_nodes, change.j1939_nodes);
         if (change.enabled)
         {
             p->enabled = *change.enabled;
@@ -1854,7 +2332,120 @@ std::vector<std::string> map_network_arguments(const ParticipantConfig& particip
     return out;
 }
 
+std::vector<std::string> j1939_node_arguments(const ParticipantConfig& participant)
+{
+    std::vector<std::string> out;
+    for (const J1939NodeEntry& entry : participant.j1939_nodes)
+    {
+        if (entry.node.changes())
+        {
+            out.emplace_back(ecu_executable::kJ1939NodeArgument);
+            out.push_back(ecu_executable::format_j1939_node_argument(entry));
+        }
+    }
+    return out;
+}
+
+std::vector<J1939NodeFeatureNeed> required_j1939_node_features(const ParticipantConfig& participant,
+                                                               std::span<const J1939NodeSettingFeature> table)
+{
+    std::vector<J1939NodeFeatureNeed> out;
+    for (const J1939NodeEntry& entry : participant.j1939_nodes)
+    {
+        if (!entry.node.changes())
+        {
+            continue; // not given to the executable
+        }
+        const j1939::NodeOverride& n = entry.node;
+        const std::pair<std::string_view, bool> settings[] = {{"from", n.from.has_value()},
+                                                              {"address", n.address.has_value()},
+                                                              {"identity_number", n.identity_number.has_value()},
+                                                              {"function_instance", n.function_instance.has_value()},
+                                                              {"ecu_instance", n.ecu_instance.has_value()}};
+        for (const auto& [setting, given] : settings)
+        {
+            if (!given)
+            {
+                continue;
+            }
+            for (const J1939NodeSettingFeature& row : table)
+            {
+                if (row.setting == setting &&
+                    std::none_of(out.begin(), out.end(), [&row](const J1939NodeFeatureNeed& need) { return need.feature == row.feature; }))
+                {
+                    out.push_back(J1939NodeFeatureNeed{std::string(row.feature), std::string(setting), entry.line});
+                }
+            }
+        }
+    }
+    return out;
+}
+
+std::string j1939_node_settings_yaml(const j1939::NodeOverride& node)
+{
+    std::string out;
+    const auto add = [&out](const char* setting, const std::string& value) {
+        out += (out.empty() ? "" : ", ") + std::string(setting) + ": " + value;
+    };
+    if (node.from)
+    {
+        add("from", j1939::node_override_address_text(*node.from));
+    }
+    if (node.address)
+    {
+        add("address", j1939::node_override_address_text(*node.address));
+    }
+    if (node.identity_number)
+    {
+        add("identity_number", std::to_string(*node.identity_number));
+    }
+    if (node.function_instance)
+    {
+        add("function_instance", std::to_string(*node.function_instance));
+    }
+    if (node.ecu_instance)
+    {
+        add("ecu_instance", std::to_string(*node.ecu_instance));
+    }
+    return out;
+}
+
+std::string j1939_node_yaml(const ecu_executable::J1939NodeOverride& entry)
+{
+    const std::string settings = j1939_node_settings_yaml(entry.node);
+    return "{ network: " + entry.network + (settings.empty() ? std::string{} : ", " + settings) + " }";
+}
+
 namespace {
+
+/// The note "j1939-node-not-checked" of each participant of `config` (the chosen variant and the
+/// command line's choices applied) that is not described, is in the simulation, and has entries
+/// that change something: it says the arguments that run gives the executable in this run
+/// (j1939_node_arguments(), as detail::participant_arguments() adds them).
+void note_unchecked_j1939_nodes(const SimulationConfig& config, std::vector<Finding>& findings)
+{
+    for (const ParticipantConfig& p : config.participants)
+    {
+        const std::vector<std::string> given = j1939_node_arguments(p);
+        if (p.describe || !p.enabled || p.name.empty() || given.empty())
+        {
+            continue;
+        }
+        std::string text;
+        for (const std::string& word : given)
+        {
+            text += (text.empty() ? "" : " ") + word;
+        }
+        const auto first = std::find_if(p.j1939_nodes.begin(), p.j1939_nodes.end(),
+                                        [](const J1939NodeEntry& e) { return e.node.changes(); });
+        findings.push_back(Finding{
+            Severity::Note, "j1939-node-not-checked",
+            "participant '" + p.name + "': j1939_nodes of a participant that is not described (describe: false) is not "
+            "checked; run starts it with " + text + ", which only an ecu_main executable with \"j1939-node\" in its "
+            "features takes",
+            first->line, p.name, ""});
+    }
+}
 
 /// The note "network-map-not-checked" of each participant of `config` (the chosen variant and the
 /// command line's choices applied) that is not described, is in the simulation, and has lines that
@@ -2038,6 +2629,7 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
                 out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
             }
             note_unchecked_network_names(*out.config, out.findings);
+            note_unchecked_j1939_nodes(*out.config, out.findings);
             check_required(*out.config, out.findings);
         }
     }

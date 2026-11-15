@@ -11,6 +11,7 @@ upstream library is kept here as a `git format-patch` file named
 | SIL Kit | `sil-kit/0003` | Registry: a peer refused for its name does not remove the entry of the participant that has the name (relayed connections keep working); see "Patches to SIL Kit" in `docs/dependencies.md` |
 | SIL Kit | `sil-kit/0004` | Network simulation: the announcement of a simulated network is not lost when the simulator's subscriptions complete at the same moment (the simple CAN network simulator); see "Patches to SIL Kit" in `docs/dependencies.md` |
 | SIL Kit | `sil-kit/0005` | Registry: a participant whose connection is already closed is not advertised to a joining participant (the join no longer times out); see "Patches to SIL Kit" in `docs/dependencies.md` |
+| SIL Kit | `sil-kit/0006` | Lifecycle: a participant that entered Error while its start waited for replies or subscriptions stays in Error (a participant that the run does not require no longer takes part or holds the virtual time); see "Patches to SIL Kit" in `docs/dependencies.md` |
 
 `cmake/VehicleSilDependencies.cmake` copies a submodule that has patches into
 the build tree, applies the patches to the copy and builds the copy.

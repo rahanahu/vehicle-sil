@@ -31,6 +31,10 @@ constexpr std::pair<std::string_view, std::uint64_t j1939::NetworkStatistics::*>
     {names::kAddressViolations, &j1939::NetworkStatistics::address_violations},
     {names::kTransportAbortsSent, &j1939::NetworkStatistics::transport_aborts_sent},
     {names::kTransportAbortsReceived, &j1939::NetworkStatistics::transport_aborts_received},
+    {names::kTransportTimeouts, &j1939::NetworkStatistics::transport_timeouts},
+    {names::kTransportRejected, &j1939::NetworkStatistics::transport_rejected},
+    {names::kTransportBamDropped, &j1939::NetworkStatistics::transport_bam_dropped},
+    {names::kTransportBamReplaced, &j1939::NetworkStatistics::transport_bam_replaced},
 };
 
 // The enum outputs use the engine's values: keep them in step.
