@@ -396,15 +396,15 @@ def control_trouble(entries: list[dict]) -> list[dict]:
             ev.pop("variables", None)
             ev["state"] = state
             if state == "version_mismatch":
-                ev["version"] = 3
+                ev["version"] = 1
             if state in ("no_hello", "version_mismatch"):
                 message = (f"participant '{ev['name']}': it describes variables (--describe), but its control "
                            "agent did not say hello before the simulation started, so its variables cannot be "
                            "read or written in this run" if state == "no_hello" else
-                           f"participant '{ev['name']}': its control agent speaks version 3 of the control "
-                           "messages and this launcher versions 1 to 2, so its variables cannot be read or written "
-                           "in this run: use a vehicle_sil_launch that is at least as new as the vehicle-sil the ECU "
-                           "was built with")
+                           f"participant '{ev['name']}': its control agent speaks version 1 of the control "
+                           "messages and this launcher version 2, so its variables cannot be read or written in "
+                           "this run: the ECU is of an older vehicle-sil; build it again with the vehicle-sil of "
+                           "this vehicle_sil_launch")
                 warnings.append({"severity": "warning",
                                  "code": "control-link-no-hello" if state == "no_hello" else "control-link-version",
                                  "file": "<file>", "line": None, "participant": ev["name"], "network": None,
@@ -415,7 +415,7 @@ def control_trouble(entries: list[dict]) -> list[dict]:
                 if p["name"] in states and isinstance(p.get("control_link"), dict):
                     state = states[p["name"]]
                     p["control_link"] = {"state": state, "variables": None,
-                                         "version": 3 if state == "version_mismatch" else None,
+                                         "version": 1 if state == "version_mismatch" else None,
                                          "late_messages": p["control_link"].get("late_messages", 0)}
             r["findings"] = warnings + r["findings"]
             r["warnings"] += len(warnings)

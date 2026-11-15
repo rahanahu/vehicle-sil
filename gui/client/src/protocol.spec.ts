@@ -198,7 +198,7 @@ describe('the readers accept every example of gui/protocol', () => {
     });
     expect(links).toEqual([
       ['Engine', link('no_hello')],
-      ['Dashboard', link('version_mismatch', { version: 3 })],
+      ['Dashboard', link('version_mismatch', { version: 1 })],
       ['Gauge', link('not_offered')],
       ['Logger', link('none')],
     ]);

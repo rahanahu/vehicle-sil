@@ -10,7 +10,6 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_tests
     test_peer_agent.cpp
     test_variable_map.cpp
     test_wire.cpp
-    test_wire_v1_golden.cpp
     test_wire_v2.cpp
     test_wire_v2_golden.cpp
   LINK vehicle_sil::simulation)

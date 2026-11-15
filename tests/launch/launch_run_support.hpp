@@ -55,7 +55,6 @@ struct Options
 {
     fs::path launch;
     fs::path test_ecu;
-    fs::path version1_ecu; ///< tests/launch/version1_ecu.cpp
     fs::path helper;
     fs::path example_dir; ///< the example's directory in the build tree (simulation.yaml, engine/, dashboard/)
     fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
@@ -515,7 +514,6 @@ void no_console(const Options& o);
 void killed(const Options& o);
 void usage(const Options& o);
 void control(const Options& o);
-void control_version_1(const Options& o);
 void disabled(const Options& o);
 
 // launch_run_events.cpp

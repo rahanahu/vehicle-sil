@@ -15,7 +15,6 @@ Options parse(int argc, char** argv)
     Options o;
     o.launch = args.required("launch");
     o.test_ecu = args.required("test-ecu");
-    o.version1_ecu = args.required("version1-ecu");
     o.helper = args.required("helper");
     o.example_dir = args.required("example-dir");
     o.docs = args.required("docs");
@@ -43,7 +42,6 @@ int main(int argc, char** argv)
             {"busy_port", busy_port},
             {"check", check},
             {"control", control},
-            {"control_version_1", control_version_1},
             {"crash", crash},
             {"disabled", disabled},
             {"docs", docs},

@@ -448,7 +448,7 @@ int main(int argc, char** argv)
     if (std::ifstream("test-ecu-no-variables") && describe)
     {
         std::printf("{\"vehicle_sil_ecu\": 1, \"vehicle_sil\": \"0.1.0\", \"name\": \"%s\", \"step_ns\": %lld, "
-                    "\"networks\": [], \"variables\": [], \"control\": {\"transport\": \"silkit\", \"wire_version\": 1}, "
+                    "\"networks\": [], \"variables\": [], \"control\": {\"transport\": \"silkit\", \"wire_version\": 2}, "
                     "\"features\": [\"map-network\"]}\n",
                     name.c_str(), step * 1'000'000);
         return 0;

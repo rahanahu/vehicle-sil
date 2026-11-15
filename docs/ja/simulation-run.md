@@ -146,7 +146,7 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 |---|---|---|---|
 | `connected` | hello を受信し、コマンドを受け取れるという返事があった | できる | なし |
 | `no_hello` | `--describe` の出力では公開するのに、待っても hello（か返事）が来なかった | この実行ではできない | 警告 `control-link-no-hello`（実行の指摘） |
-| `version_mismatch` | ECU のメッセージの形式のバージョンを、`vehicle_sil_launch` が話せない（自分より新しい） | この実行ではできない | 警告 `control-link-version` |
+| `version_mismatch` | メッセージの形式のバージョンが `vehicle_sil_launch` と違う | この実行ではできない | 警告 `control-link-version` |
 | `not_offered` | 変数はあるが、`--describe` の出力では公開しない（`--no-control`、`control` のない古い vehicle-sil の実行ファイル） | できない | 注記 `control-link-not-offered`（照合の指摘） |
 | `none` | 接続するものがない（変数がない古い vehicle-sil の実行ファイル、`describe: false`） | できない | なし |
 
@@ -154,13 +154,13 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 - `not_offered` の ECU は待ちません。
 - `--describe` の出力では公開しないのに hello を受信した participant は、`connected` です。
 - どの状態でも、シミュレーションは動きます（`--strict` では警告が失敗です）。
-- `vehicle_sil_launch` は、自分と同じか古いバージョン（0.1.0 以降）の vehicle-sil でビルドした ECU の変数を読み書きできます。ランチャーより新しい vehicle-sil でビルドした ECU は保証しません。変数を使えないときは照合が `control-link-version` を出すので、ECU 以上のバージョンのランチャーを使ってください。
+- `vehicle_sil_launch` が変数を読み書きできるのは、メッセージの形式のバージョンが自分と同じ ECU の実行ファイルだけです。vehicle-sil 0.1.0 でビルドした ECU と新しいランチャー、新しい ECU と 0.1.0 のランチャーの組み合わせでは、ECU はシミュレーションに加わりますが、変数を読み書きできません。照合が `control-link-version` を出します。
 
 ### 始まる前の待ち
 
 必須の participant がそろうと、全員が最初のステップの前で待ちます。その間に `run` は、次の条件を全部満たす ECU の hello と、「コマンドを受け取れる」という返事を待ちます。
 
-- `--describe` の出力で、`vehicle_sil_launch` が話せるバージョン（自分と同じか古いもの）の変数の接続を持つと言っている。変数がない ECU も含みます（`run` は、同じ接続でネットワークの送受信の数を読みます）。
+- `--describe` の出力で、`vehicle_sil_launch` と同じバージョンの変数の接続を持つと言っている。変数がない ECU も含みます（`run` は、同じ接続でネットワークの送受信の数を読みます）。
 - 必須で、無効にしていない。
 
 `describe: false` の participant は待ちません。その participant が変数の接続を持つかどうかを、`run` は知る手段がないからです。hello が始まった後に届いた場合、`control_link` は `none` のままですが、`variables` の対応のうち合わないものは同じように指摘します（`variable-map-not-applied`）。
@@ -621,7 +621,7 @@ passed: 0 errors, 1 warning, 1 note
 | `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
 | `control-link-no-hello` | 警告 | 変数を公開するはずの ECU の hello か、コマンドを受け取れるという返事が、始まる前に来なかった |
 | `control-link-dropped` | 警告 | `vehicle_sil_launch` が、ECU の変数との接続のメッセージを捨てた |
-| `control-link-version` | 警告 | 受信した hello の、メッセージの形式のバージョンを `vehicle_sil_launch` が話せない |
+| `control-link-version` | 警告 | 受信した hello の、メッセージの形式のバージョンが `vehicle_sil_launch` と違う |
 | `control-link-late-values` | 警告 | ECU の値か結果を、仮想時刻の保証より遅れて受信した |
 | `variable-map-not-applied` | エラー | 設定ファイルの `variables` の対応のうち、ECU が接続のときに通知した変数に合わないものがあった |
 | `before-start` | エラー | 開始を待っている間にする処理が失敗した |
@@ -657,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 - 別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている。
 - 実行中に参加した participant の hello を、まだ受信していなかった。
 
-`control-link-version` が出たら、ECU をビルドした vehicle-sil 以上のバージョンの `vehicle_sil_launch` を使います。
+`control-link-version` が出たら、どちらが古いかが文に出ます。ECU のほうが古ければ `vehicle_sil_launch` の vehicle-sil でビルドし直し、新しければ ECU の vehicle-sil と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。
 
 `variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、実行の行（`log`）にも 1 回書きます。始まった時点で接続している ECU は始まったときに、その後に接続した ECU は実行の終わりに書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
 
@@ -1200,7 +1200,7 @@ vehicle-sil のリポジトリの `gui/timeline/timeline.html` は、時間の�
   |---|---|
   | `true` | ECU に入りました。手順は失敗しましたが、値は ECU に入っています。 |
   | `false` | ECU に入っていません。ECU かそのエージェントが断った、同じ `set` の中で断られた書き込みより後ろにある、送っていない、のどれかです。 |
-  | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。vehicle-sil 0.1.0 でビルドした ECU は、複数の書き込みの `set` がどこで止まったかを報告しません。 |
+  | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。 |
 
   ECU は、1 つの `set` の書き込みを順に適用し、setter が断った書き込みで止まります。そのため、断られた書き込みより前のものはもう入っていて（`true`）、断られたものとその後ろは入っていません（`false`）。ECU のエージェントが受け取った時点で断ったとき（名前、型、範囲の誤り）は、その `set` のその participant への書き込みは、どれも入っていません。
 - `point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点がこの書き込みです。何も送っていなければ `null` です。`applied` が `false` か `null` の点は、その系列の `not_applied_from` か、それより後ろにあります。

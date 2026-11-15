@@ -11,9 +11,8 @@
 // Every number is little endian. A text is its length (u32) and its bytes. Every message begins
 // with a header of 8 bytes: 'V' 'S' 'C' 'W', the version (u16), the kind (u8) and the revision
 // (u8). A variable, a write, a result and an event begin with their size (u32: the bytes that
-// follow). Beside that, version 2 differs from version 1 (wire_v1_golden.hpp, the same messages)
-// in two numbers: how many writes of a command took effect (in a result) and which write a
-// refusal names (in a submitted message), each 0xFFFFFFFF for "not said".
+// follow). How many writes of a command took effect (in a result) and which write a refusal names
+// (in a submitted message) are 0xFFFFFFFF for "not said".
 #pragma once
 
 #include "vehicle_sil/control/wire.hpp"
@@ -330,8 +329,7 @@ inline constexpr std::uint8_t kStep[] = {
 // ---------------------------------------------------------------------------------------------
 // Step (kind 4) split at kMinMessageBytes: a sample of kSplitValues integers (0, 1, 2, ...).
 // The first message holds kSplitFirstCount of them (2046 bytes: kSplitFirstHead, then the values
-// as 0x01 and an i64 each); the second holds the rest. Values are no elements: but for the
-// version, these are the bytes of version 1.
+// as 0x01 and an i64 each); the second holds the rest. Values are no elements.
 
 inline constexpr std::size_t kSplitMaxBytes = wire::kMinMessageBytes;
 inline constexpr std::uint32_t kSplitValues = 223;

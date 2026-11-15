@@ -62,11 +62,6 @@ struct HubTransport::State
     {
         std::shared_ptr<Sender> sender;
         std::uint64_t session = 0;
-        /// The version and revision of the format its hello has. Set before the hub knows the link
-        /// and never changed: this side writes to the agent in this version, and takes from it
-        /// only messages of this version.
-        std::uint16_t version = 0;
-        std::uint8_t revision = 0;
         control::ConnectionId connection = 0;
         LinkInfo info;
         bool open = true;   ///< guarded by Sender::mutex
@@ -202,16 +197,15 @@ struct HubTransport::State
     /// order does not rely on when SIL Kit writes what is published from one of its handlers).
     /// Also for a session that has ended already or was never connected: nothing waits here for
     /// that agent, and it need not wait either. An agent that does not know the answer ignores
-    /// it. In `version`, the one of the step message that was the last word: the session may have
-    /// no link to take the version from. On a receive handler (handler_mutex held), as a probe.
-    void answer_last_word(std::uint64_t session, std::uint16_t version)
+    /// it. On a receive handler (handler_mutex held), as a probe.
+    void answer_last_word(std::uint64_t session)
     {
         const std::lock_guard lock(sender->mutex);
         if (sender->closed)
         {
             return;
         }
-        wire::encode_session(wire::Kind::LastWordReceived, session, sender->bytes, version);
+        wire::encode_session(wire::Kind::LastWordReceived, session, sender->bytes);
         // Counted first: whoever receives the answer may look at the count at once (this does
         // not rely on when SIL Kit writes what is published from one of its handlers).
         n_last_words.fetch_add(1, std::memory_order_relaxed);
@@ -225,8 +219,7 @@ struct HubTransport::State
         {
             return;
         }
-        const wire::Error read = wire::decode_hello(span_of(event), hello);
-        if (const wire::Error& error = read)
+        if (const wire::Error error = wire::decode_hello(span_of(event), hello))
         {
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
             if (error.code == wire::ErrorCode::VersionMismatch && !hello.participant.empty())
@@ -278,11 +271,9 @@ struct HubTransport::State
         auto link = std::make_shared<Link>();
         link->sender = sender;
         link->session = hello.session;
-        link->version = read.version;
-        link->revision = read.revision;
         link->info.participant = hello.participant;
         link->info.state = LinkState::Connected;
-        link->info.version = read.version;
+        link->info.version = wire::kVersion;
         link->info.virtual_time = hello.virtual_time;
         link->info.step = hello.step;
         link->info.sample_period = hello.sample_period;
@@ -346,8 +337,7 @@ struct HubTransport::State
         {
             return;
         }
-        const wire::Error read = wire::decode_step(span_of(event), step);
-        if (read)
+        if (wire::decode_step(span_of(event), step))
         {
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -358,15 +348,8 @@ struct HubTransport::State
             count_unknown(step.session);
             if (step.final)
             {
-                answer_last_word(step.session, read.version);
+                answer_last_word(step.session);
             }
-            return;
-        }
-        if (read.version != link->version)
-        {
-            // Not what this agent's hello said it speaks: not taken (an agent never changes its
-            // version, so this is not its transport).
-            n_undecodable.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         n_messages.fetch_add(1, std::memory_order_relaxed);
@@ -400,7 +383,7 @@ struct HubTransport::State
         if (step.final)
         {
             end(link, "the participant's control agent has ended");
-            answer_last_word(step.session, read.version);
+            answer_last_word(step.session);
         }
     }
 
@@ -453,12 +436,7 @@ struct HubTransport::State
         }
         if (const auto ready = wire::addressed(span_of(event)); ready && ready->kind == wire::Kind::Ready)
         {
-            const auto link = find(ready->session);
-            if (link && ready->version != link->version)
-            {
-                n_undecodable.fetch_add(1, std::memory_order_relaxed); // as a step message of another version
-            }
-            else if (link)
+            if (const auto link = find(ready->session))
             {
                 {
                     const std::lock_guard lock(sender->mutex);
@@ -480,8 +458,7 @@ struct HubTransport::State
             }
             return;
         }
-        const wire::Error read = wire::decode_submitted(span_of(event), submitted);
-        if (read)
+        if (wire::decode_submitted(span_of(event), submitted))
         {
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -490,11 +467,6 @@ struct HubTransport::State
         if (!link)
         {
             count_unknown(submitted.session);
-            return;
-        }
-        if (read.version != link->version)
-        {
-            n_undecodable.fetch_add(1, std::memory_order_relaxed); // as a step message of another version
             return;
         }
         n_messages.fetch_add(1, std::memory_order_relaxed);
@@ -549,7 +521,7 @@ bool HubTransport::State::Link::send(const control::Command& command)
     {
         return false;
     }
-    if (!wire::encode_command(wire::CommandMessage{session, command}, sender->bytes, version))
+    if (!wire::encode_command(wire::CommandMessage{session, command}, sender->bytes))
     {
         return false; // too large for one message: not sent
     }
@@ -570,7 +542,7 @@ bool HubTransport::State::Link::probe()
     {
         return false;
     }
-    wire::encode_session(wire::Kind::Probe, session, sender->bytes, version);
+    wire::encode_session(wire::Kind::Probe, session, sender->bytes);
     sender->commands->Publish(detail::span_of(sender->bytes));
     return true;
 }
