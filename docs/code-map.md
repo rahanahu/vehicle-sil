@@ -1942,7 +1942,7 @@ Where to change:
 Code to update:
 
 - Copies in the GUI: `gui/server/src/vehicle_sil_gui/launcher.py`, `variables.py`
-- Copies in the GUI: `gui/client/src/client.ts`, `protocol.ts`
+- Copies in the GUI: `gui/client/src/client.ts`, `protocol/server.ts`
 - Copies in the GUI: `gui/web/src/app/run/speed-picker.ts`
 
 Tests:

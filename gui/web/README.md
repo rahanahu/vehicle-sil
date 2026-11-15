@@ -397,7 +397,7 @@ To pass locally while a translation is unfinished, add `--allow-untranslated` (C
 
 ### Types shared with the server
 
-- The shapes exchanged with the server are written only in the client library's `gui/client/src/protocol.ts`, as types and parsers (`read*`) (screens import them from `@vehicle-sil/gui-client`). The reference for the shapes is `gui/protocol/` (README and `examples/`).
+- The shapes exchanged with the server are written only in the client library's `gui/client/src/protocol/`, as types and parsers (`read*`): the shapes the launcher decides in `launcher.ts`, those the server decides in `server.ts`. Screens import them from `@vehicle-sil/gui-client`. The reference for the shapes is `gui/protocol/` (README and `examples/`).
 - Use received JSON only after it has gone through a parser (the library parses HTTP responses and WebSocket notifications). Ignore and pass on unknown fields, notifications and events.
 - Parse session summaries and launcher events part by part. If a part that comes from the launcher, or a part that the server shrank to a limit, cannot be read, do not discard the whole.
 - Set an unreadable part to its default (`null`, empty), add its name to `unreadable`, and show "Some parts cannot be shown" in the bar.

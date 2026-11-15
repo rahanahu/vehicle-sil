@@ -1942,7 +1942,7 @@ flowchart TD
 合わせて直すコード:
 
 - GUI のコピー: `gui/server/src/vehicle_sil_gui/launcher.py`、`variables.py`
-- GUI のコピー: `gui/client/src/client.ts`、`protocol.ts`
+- GUI のコピー: `gui/client/src/client.ts`、`protocol/server.ts`
 - GUI のコピー: `gui/web/src/app/run/speed-picker.ts`
 
 テスト:

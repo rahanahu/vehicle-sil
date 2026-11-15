@@ -753,7 +753,7 @@ The JSON files in `examples/` are produced by a server test (`gui/server/tests/t
 
 - The files kept are 1–2 per shape, plus those that the documentation and the tests of the screens and the library read. Other cases of the same shape (other error codes, runs that end differently) are checked inside the test, by their error code or how the exchange ends.
 - The test also fails if `examples/` holds a file that the test does not produce.
-- When you change a shape, rewrite the files with `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web`, and update the library's types and parsers (`gui/client/src/protocol.ts`) and their unit tests (which read the same files) to match.
+- When you change a shape, rewrite the files with `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web`, and update the library's types and parsers (`gui/client/src/protocol/`) and their unit tests (which read the same files) to match.
 - Process IDs, times, instances, paths of this computer, and numbers that change with each run are replaced with fixed values (`t_ms` is `seq × 10`).
 
 ## See also

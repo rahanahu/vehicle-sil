@@ -141,7 +141,7 @@ TEST_CASE(the_gui_takes_the_launchers_limits)
     same(value_in(client, "speed_max:", ",\n", limits), launch::kMaxSpeed, client + " speed_max", "launch::kMaxSpeed");
     same(value_in(client, "step_ms_max:", ",\n", limits), max_millis, client + " step_ms_max", "launch::kMaxMillis");
     same(value_in(client, "write_at_ms_max:", ",\n", limits), max_millis, client + " write_at_ms_max", "launch::kMaxMillis");
-    const std::string protocol = "gui/client/src/protocol.ts";
+    const std::string protocol = "gui/client/src/protocol/server.ts";
     same(value_in(protocol, "'step_ms_max', optional(number,", ")"), max_millis, protocol + " step_ms_max",
          "launch::kMaxMillis");
     same(value_in(protocol, "'write_at_ms_max', optional(number,", ")"), max_millis, protocol + " write_at_ms_max",
