@@ -332,13 +332,13 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 | CAN | `silkit_to_xl` | `xl_to_silkit` |
 
 - 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
-- `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
+- ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `xl_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
 - 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
 
-シミュレーションが動き、ブリッジがバスへフレームを送ったのに、そこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、ケーブルが抜けていればこの注意が出ます。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
+シミュレーションが動き、ブリッジがバスへフレームを送ったのに、実行が終わるまでにそこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、ケーブルが抜けていればこの注意が出ます。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
 
 ```text
-network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)): bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on
+network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
 ```
 
 バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。

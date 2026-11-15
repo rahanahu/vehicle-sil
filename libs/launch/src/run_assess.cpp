@@ -189,13 +189,14 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
         const bool can = o.tool == bridge_tool(NetworkKind::Can);
         out.push_back(Finding{
             Severity::Note, "connect-nothing-received",
-            "network '" + o.network + "': nothing came from a device on the real bus (" + o.target + "): " + o.participant +
+            "network '" + o.network + "': nothing came from a device on the real bus (" + o.target + ") before the run ended: " + o.participant +
                 " sent " + std::to_string(*o.to_outside) + (*o.to_outside == 1 ? " frame" : " frames") +
                 " there and got none from a device" +
                 (can ? std::string{} : std::string(" (frames that this computer sent do not count)")) +
                 ". If a device is meant to answer, check that it is on, " +
                 (can ? "its cable and termination, the bit rate, and that --connect names the channel it is on"
-                     : "its cable, and that --connect names the adapter it is on"),
+                     : "its cable, and that --connect names the adapter it is on") +
+                "; a short run can end before a device answers",
             bridge->line, bridge->name, o.network});
     }
     return out;

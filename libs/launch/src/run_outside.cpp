@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <limits>
 #include <set>
 
 namespace vehicle_sil::launch::detail {
@@ -68,7 +69,9 @@ std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::str
         const std::string_view digits = part.substr(equals + 1);
         std::uint64_t value = 0;
         const auto [at, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
-        if (digits.empty() || error != std::errc{} || at != digits.data() + digits.size() || !seen.insert(key).second)
+        // At most the largest signed 64-bit integer: the JSON forms write the counts as such.
+        if (digits.empty() || error != std::errc{} || at != digits.data() + digits.size() ||
+            value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || !seen.insert(key).second)
         {
             return std::nullopt;
         }

@@ -284,7 +284,7 @@ The bridges (`vehicle_sil_vector_xl_bridge`, `vehicle_sil_ethernet_bridge`) and 
 
 ## Statistics
 
-When the bridge ends, it prints the statistics on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. With `--stats-every-ms <ms>` it also prints the line while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line, and the tests hold them.
+When the bridge ends, it prints the statistics on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. With `--stats-every-ms <ms>` it also prints the line while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line, and the tests hold them. When `vehicle_sil_launch run --connect` starts the bridge, it passes `--stats-every-ms 1000` and reads the lines for its counts: the run's output does not show the lines while the bridge runs, and shows the last one once, when the bridge has ended (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)).
 
 ```
 stats silkit_to_xl=0 xl_to_silkit=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 xl_rejected=0 xl_queue_full=0 xl_tx_failures=0 silkit_tx_failures=0 xl_tx_dropped=0 xl_tx_unsent=0

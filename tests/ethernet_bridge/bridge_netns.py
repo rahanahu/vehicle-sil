@@ -872,12 +872,12 @@ def launch(world: World) -> None:
           f"the launcher started the bridge of PATH on va, with the ECU's MAC address as the filter:\n{started}")
     bridge_lines = "\n".join(e["line"] for e in events if e["event"] == "log" and e.get("source") == "bridge.ETH_EXT")
     check("<-> packet 'va' (network interface)" in bridge_lines, f"the bridge chose its default backend, packet:\n{bridge_lines}")
-    # The launcher reads the bridge's statistics lines: they are in its log, not in the events.
-    check("] stats " not in bridge_lines, f"the statistics lines are not log events:\n{bridge_lines}")
+    # The launcher reads the bridge's statistics lines (all in its log) and shows the last one, once.
     with open(os.path.join(world.work, "logs", "bridge.ETH_EXT.log"), encoding="utf-8") as f:
         logged = [line for line in f.read().splitlines() if "] stats " in line]
-    check(logged != [], "the bridge's log has its statistics lines")
-    stats = statistics(logged[-1])
+    check(logged != [] and [line for line in bridge_lines.splitlines() if "] stats " in line] == [logged[-1]],
+          f"the bridge's last statistics line is shown once:\n{bridge_lines}")
+    stats = statistics(bridge_lines)
     check(stats["silkit_to_ext"] >= 3 and stats["ext_to_silkit"] >= 3 and stats["loop_suspected"] == 0,
           f"the bridge forwarded the frames both ways: {stats}")
     check((stats["silkit_to_ext"], stats["ext_from_devices"]) == (outside[0]["to_outside"], outside[0]["from_outside"]),

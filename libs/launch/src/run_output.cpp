@@ -89,6 +89,7 @@ RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
     logs_.resize(ctx.config.participants.size());
     last_lines_.resize(ctx.config.participants.size());
     outside_.resize(ctx.config.participants.size());
+    last_statistics_.resize(ctx.config.participants.size());
     for (const ParticipantConfig& p : ctx.config.participants)
     {
         const auto outside = std::find_if(ctx.check.outside.begin(), ctx.check.outside.end(), [&p](const NetworkOutside& o) {
@@ -172,16 +173,23 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
     if (!ctx_.config.participants[index].for_network.empty())
     {
         last_lines_[index].add(line);
-        // The launcher's to read: the event "outside" and the result show its counts, not a line.
+        // The launcher's to read while the bridge runs: the event "outside" and the result show its
+        // counts; the last such line is shown once at the end (take_counts()).
         if (const auto counts = read_outside_counts(tools_[index], line))
         {
             if (const auto now = outside_[index].on_counts(*counts, std::chrono::steady_clock::now()))
             {
                 write_outside(index, *now);
             }
+            last_statistics_[index] = std::string(line);
             return;
         }
     }
+    show(index, line);
+}
+
+void RunOutput::show(std::size_t index, std::string_view line) const
+{
     if (ctx_.options.events != nullptr)
     {
         ctx_.options.events->log(ctx_.config.participants[index].name, printable(line));
@@ -216,6 +224,13 @@ std::optional<OutsideCounts> RunOutput::take_counts(std::size_t index)
     if (const auto counts = outside_[index].flush())
     {
         write_outside(index, *counts);
+    }
+    // The bridge's report for people: its last statistics line, with every count (its line at the
+    // stop, or the last while it ran if it was ended without one), once.
+    if (!last_statistics_[index].empty())
+    {
+        show(index, last_statistics_[index]);
+        last_statistics_[index].clear();
     }
     return outside_[index].last();
 }

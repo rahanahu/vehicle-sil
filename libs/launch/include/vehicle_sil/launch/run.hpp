@@ -673,7 +673,7 @@ struct OutsideCounts
 /// "[eth-bridge] "; a "\r" at its end does not count) with the keys of `tool`: silkit_to_ext and
 /// ext_from_devices of vehicle_sil_ethernet_bridge, silkit_to_xl and xl_to_silkit of
 /// vehicle_sil_vector_xl_bridge. Empty for any other line, for a line with a key twice, with a
-/// value that is not a decimal number of 64 bits or with a part of another form, for one without
+/// value that is not a decimal number up to 2^63 - 1 or with a part of another form, for one without
 /// either key (a bridge of another version), and for any other tool.
 [[nodiscard]] std::optional<OutsideCounts> read_outside_counts(std::string_view tool, std::string_view line);
 

@@ -277,11 +277,11 @@ With `--connect`, `run` reads the counts of each bridge from its statistics line
 | `to_outside` | The frames that the bridge sent to the bus so far (an integer) |
 | `from_outside` | The frames that came from a device on the bus so far (an integer) |
 
-- An `outside` is written when the counts of a network differ from those of its last `outside`, at most once a second for each network. Counts that change within the second are written when the second has passed.
+- An `outside` is written when the counts of a network differ from those of its last `outside`, at most once a second for each network. While the simulation runs, counts that change within the second are written when the second has passed; before it runs and while the participants end, they are written with the next counts that differ, or at the end.
 - The last `outside` of a network has the counts of that network in the result's `outside[]`. It comes before `result`, and it can come after the bridge's `ended` and after `phase` `stopping`.
 - No `outside` is written for a network whose bridge wrote no statistics line that `run` could read (its counts in the result are `null`).
 - Unlike `log`, `outside` is not dropped when the reader is slow.
-- The statistics lines that give the counts are not `log` events (the `--log-dir` file of the bridge has them).
+- The statistics lines that give the counts are not `log` events while the bridge runs (the `--log-dir` file of the bridge has them). The last one read is written once, as a `log` event of the bridge, after the last `outside` of that network and before `result`.
 
 A reader that does not know `outside` can ignore it (the result has the last counts).
 

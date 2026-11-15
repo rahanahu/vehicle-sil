@@ -46,8 +46,8 @@ TEST_CASE(read_outside_counts_takes_the_keys_of_each_bridge)
     // Without the tag, and with the "\r" of a Windows line end.
     CHECK(reads(kEth, "stats silkit_to_ext=1 ext_from_devices=0", 1, 0));
     CHECK(reads(kXl, "[bridge] stats silkit_to_xl=0 xl_to_silkit=0\r", 0, 0));
-    // The largest count of 64 bits, and leading zeros.
-    CHECK(reads(kEth, "stats silkit_to_ext=18446744073709551615 ext_from_devices=007", 18446744073709551615u, 7));
+    // The largest count that the JSON forms write (a signed 64-bit integer), and leading zeros.
+    CHECK(reads(kEth, "stats silkit_to_ext=9223372036854775807 ext_from_devices=007", 9223372036854775807u, 7));
 }
 
 TEST_CASE(read_outside_counts_refuses_any_other_line)
@@ -72,7 +72,9 @@ TEST_CASE(read_outside_counts_refuses_any_other_line)
     CHECK(refuses(kEth, "stats silkit_to_ext=1  ext_from_devices=1"));
     CHECK(refuses(kEth, "stats silkit_to_ext=1 ext_from_devices=1 "));
     CHECK(refuses(kEth, "stats silkit_to_ext=1 ext_from_devices=1\r\r"));
-    // More than 64 bits.
+    // More than a signed 64-bit integer, and more than 64 bits.
+    CHECK(refuses(kEth, "stats silkit_to_ext=9223372036854775808 ext_from_devices=1"));
+    CHECK(refuses(kEth, "stats silkit_to_ext=1 ext_from_devices=18446744073709551615"));
     CHECK(refuses(kEth, "stats silkit_to_ext=18446744073709551616 ext_from_devices=1"));
     // A key twice, also one that is not read.
     CHECK(refuses(kEth, "stats silkit_to_ext=1 ext_from_devices=1 silkit_to_ext=2"));

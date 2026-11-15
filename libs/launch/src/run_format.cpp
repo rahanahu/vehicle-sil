@@ -207,7 +207,8 @@ std::string format_run_text(const RunReport& report)
         out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")";
         if (o.to_outside && o.from_outside)
         {
-            out += ": " + std::to_string(*o.to_outside) + " frames out, " + std::to_string(*o.from_outside) + " from devices";
+            out += ": " + std::to_string(*o.to_outside) + (*o.to_outside == 1 ? " frame out, " : " frames out, ") +
+                   std::to_string(*o.from_outside) + " from devices";
         }
         out += "\n";
     }
