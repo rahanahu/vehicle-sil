@@ -135,6 +135,13 @@ export interface OperationPeer {
   late: boolean;
   /** Why it went wrong (English text from the ECU or the Control Server). */
   reason: string | null;
+  /**
+   * How many of this participant's writes took effect, counted from the first (its writes are those
+   * of the request for it, in order). null: not known.
+   */
+  appliedWrites: number | null;
+  /** Position (from 0) of the write that `reason` is about. null: none, or not known. */
+  failedWrite: number | null;
 }
 
 /** Result of a write (operation). */
@@ -305,6 +312,8 @@ const text = (value: unknown, fallback = '') => (typeof value === 'string' ? val
 const numberOrNull = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 const count = (value: unknown) => (typeof value === 'number' && value >= 0 ? value : 0);
+const positionOrNull = (value: unknown) =>
+  Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
 
 /** Reads `variables` of a summary. Unreadable parts are skipped as if absent (additions are compatible). */
 export function readVariables(value: unknown, session: number | null): VariablesState {
@@ -364,6 +373,8 @@ export function readOperation(value: unknown, session: number): OperationView | 
       appliedAtMs: numberOrNull(p['applied_at_ms']),
       late: p['late'] === true,
       reason: typeof p['reason'] === 'string' ? p['reason'] : null,
+      appliedWrites: positionOrNull(p['applied_writes']),
+      failedWrite: positionOrNull(p['failed_write']),
     };
   }
   return {

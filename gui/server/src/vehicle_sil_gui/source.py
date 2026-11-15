@@ -90,6 +90,8 @@ class TargetInfo:
     applied_at_ns: int | None = None
     late: bool = False
     reason: str = ""
+    applied_writes: int | None = None  # how many of the peer's writes took effect, from the first (None: not known)
+    failed_write: int | None = None  # the position of the write `reason` is about (None: none, or not known)
 
 
 @dataclass(frozen=True)

@@ -92,6 +92,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             got = await ws.until(is_values(1, paused=True, sim_ms=500))
             applied = next(m for m in ws.received if is_operation(seq, "applied")(m))
             assert applied["peers"]["Engine"]["applied_at_ms"] == 0
+            assert (applied["peers"]["Engine"]["applied_writes"], applied["peers"]["Engine"]["failed_write"]) == (1, None)
             engine = got[-1]["peers"]["Engine"]
             assert engine["values"] == {"engine.throttle": 50.0, "engine.speed": 1800}, engine
             assert 490 <= engine["sample_ms"] <= 500

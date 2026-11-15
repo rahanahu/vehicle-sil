@@ -536,7 +536,8 @@ class Variables:
         for t in op.targets:
             peers[t.peer] = {"state": t.status,
                              "applied_at_ms": None if t.applied_at_ns is None else t.applied_at_ns // NS_PER_MS,
-                             "late": t.late, "reason": self._clean(t.reason) if t.reason else None}
+                             "late": t.late, "reason": self._clean(t.reason) if t.reason else None,
+                             "applied_writes": t.applied_writes, "failed_write": t.failed_write}
         states = [p["state"] for p in peers.values()]
         if not op.done:
             state = "sent" if "sent" in states or not states else "queued"
@@ -804,7 +805,8 @@ class Variables:
             # (a screen that waits for the result of its write is told that none will come)
             state, reason = ("unknown", "the run ended before the result came") if self._closed else ("sent", None)
             entry = {"seq": seq, "state": state, "done": self._closed,
-                     "peers": {peer: {"state": state, "applied_at_ms": None, "late": False, "reason": reason}
+                     "peers": {peer: {"state": state, "applied_at_ms": None, "late": False, "reason": reason,
+                                      "applied_writes": None, "failed_write": None}
                                for peer in dict.fromkeys(w[0] for w in writes)}}
             self._keep_operation(entry)
             self._emit([{"type": "operation", "session": self.session_id, **entry}])
