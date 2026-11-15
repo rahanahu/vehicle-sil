@@ -819,6 +819,8 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 | `testkit::J1939Events` | 送信の要求、フレームの送出、転送の終わり、アドレスの変化を見る |
 | `testkit::FrameLog` | バス上のフレームを見る |
 
+`J1939Events` はネットワークごとに、`FrameLog` はタップごとに 1 つです。同じネットワークかタップに 2 つ目を作ると `std::logic_error` になるので、1 つ目を要る補助関数と共有します。
+
 記録と故障注入のツール（`testkit::J1939Events`、`FrameLog`、`faults`）は `vehicle_sil::testkit` にあり、使うときはそれをリンクします（`vehicle_sil::simulation` はリンクしません）。
 
 `LocalBench` の関数には、名前を渡します。

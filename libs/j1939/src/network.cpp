@@ -243,6 +243,12 @@ void Network::set_observer(Observer* observer)
     {
         return;
     }
+    if (observer != nullptr && observer_ != nullptr)
+    {
+        throw std::logic_error("vehicle_sil::j1939::Network: set_observer(): this Network already has an Observer (a "
+                               "Network has one); read the events from that Observer (one testkit::J1939Events per "
+                               "Network), or remove it first with set_observer(nullptr)");
+    }
     if (observer != nullptr && observer->network_ != nullptr)
     {
         // Taken from another network: only while that one is between steps too (it would

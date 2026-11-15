@@ -23,6 +23,7 @@ using namespace vehicle_sil::unit::j1939;
 using vehicle_sil::SimDuration;
 using vehicle_sil::SimTime;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 using vehicle_sil::j1939::AbortReason;
 using vehicle_sil::j1939::AddressState;
 using vehicle_sil::j1939::DropReason;
@@ -533,6 +534,41 @@ TEST_CASE(observer_is_set_outside_a_step_only)
     CHECK_EQ(rec.of(EventKind::MessageReceived).size(), 1u);
     bench.network.set_observer(nullptr);
     CHECK(bench.network.observer() == nullptr);
+}
+
+TEST_CASE(observer_a_network_has_one_and_refuses_a_second)
+{
+    // A second Observer does not replace the first one silently (the first would stop recording
+    // and a check that something did not happen would pass): it is refused, and the first one
+    // keeps watching. Removing the first one makes room for another.
+    Bench bench;
+    Recorder first;
+    Recorder second;
+    bench.add_node(kA);
+    bench.network.set_observer(&first);
+    CHECK(throws_with<std::logic_error>(
+        [&] { bench.network.set_observer(&second); },
+        "vehicle_sil::j1939::Network: set_observer(): this Network already has an Observer (a Network has one); read "
+        "the events from that Observer (one testkit::J1939Events per Network), or remove it first with "
+        "set_observer(nullptr)"));
+    CHECK(bench.network.observer() == &first);
+    bench.network.set_observer(&first); // the same one again: nothing changes
+    bench.inject(frame(6, kPgnPropB, kRemote, kGlobal, {1}));
+    bench.steps(2);
+    CHECK_EQ(first.of(EventKind::MessageReceived).size(), 1u);
+    CHECK(second.events.empty());
+    bench.network.set_observer(nullptr);
+    bench.network.set_observer(&second);
+    CHECK(bench.network.observer() == &second);
+    bench.inject(frame(6, kPgnPropB, kRemote, kGlobal, {2}));
+    bench.steps(2);
+    CHECK_EQ(first.of(EventKind::MessageReceived).size(), 1u);
+    CHECK_EQ(second.of(EventKind::MessageReceived).size(), 1u);
+    // An observer of another network does not leave it for a network that has one.
+    Bench other;
+    other.network.set_observer(&first);
+    CHECK(throws<std::logic_error>([&] { bench.network.set_observer(&first); }));
+    CHECK(other.network.observer() == &first);
 }
 
 namespace {
