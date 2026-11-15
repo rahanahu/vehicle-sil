@@ -3,7 +3,7 @@
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
 //
-// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), package.json (exports), README.md, LICENSE.
+// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), package.json (exports), README.md, README.ja.md, LICENSE.
 // Checked after it is made: Node imports the installed package, and the TypeScript example of
 // examples/gui_starter/README.md (and of README.ja.md) type-checks with the module resolutions nodenext and bundler.
 // Exit codes: 0 made, 1 failed, 2 usage error.
@@ -193,11 +193,13 @@ function main() {
     exports: { '.': { types: './types/index.d.ts', default: './dist/index.js' } },
     types: './types/index.d.ts',
     sideEffects: false,
-    files: ['dist', 'types'],
+    files: ['dist', 'types', 'README.ja.md'],
     engines: { node: '>=22' },
   };
   writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   cpSync(join(CLIENT, 'README.md'), join(packageDir, 'README.md'));
+  // README.md links to the Japanese edition, so it goes along.
+  cpSync(join(CLIENT, 'README.ja.md'), join(packageDir, 'README.ja.md'));
   cpSync(join(REPOSITORY, 'LICENSE'), join(packageDir, 'LICENSE'));
 
   const checkDir = join(args.out, 'check');
@@ -223,6 +225,7 @@ function main() {
   for (const needed of [
     'package.json',
     'README.md',
+    'README.ja.md',
     'LICENSE',
     'dist/index.js',
     'types/index.d.ts',
