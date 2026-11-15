@@ -1,8 +1,8 @@
-// vehicle-sil の GUI サーバーのクライアント（`@vehicle-sil/gui-client`）。公開するものは、ここに挙げたものだけ。
-// ここにないもの（各ファイルの中の関数や型、`internal.ts`）は、予告なく変わる。枠組み（Angular、RxJS など）に依らない。
-// 足すのは簡単、消すのは難しい: 使う人が出てから足す。
+// Client for the vehicle-sil GUI server (`@vehicle-sil/gui-client`). Only what this file exports is public.
+// Anything else (functions and types inside the other files, `internal.ts`) may change without notice. No dependency
+// on a framework (Angular, RxJS and so on). Adding is easy, removing is hard: add an export once someone needs it.
 
-// クライアント: 接続、セッションの写し、実行と時刻の操作、サーバーの情報
+// Client: connection, session copy, run and time control, server information
 export { DEFAULT_LIMITS, createClient } from './client';
 export type { ClientOptions, GuiClient } from './client';
 export type { ClientConnection, CloseInfo, ConnectionState } from './connection';
@@ -23,11 +23,11 @@ export {
   FEATURE_TIME_COMMANDS,
 } from './time';
 
-// トークン（サーバーが表示した URL の #token=）
+// Token (the #token= of the URL the server printed)
 export { TOKEN_STORAGE_KEY, takeToken } from './token';
 export type { TokenPlace } from './token';
 
-// ECU の変数
+// ECU variables
 export {
   HISTORY_MAX,
   HISTORY_TOTAL_MAX,
@@ -56,7 +56,7 @@ export type {
   WriteOptions,
 } from './variables';
 
-// 変数 1 つと部品 1 つのつながり（client.variables.bind）: 値の状態、書けるかどうか、書き込みの様子
+// Binding one variable to one widget (client.variables.bind): value state, whether it can be written, write status
 export { DROPPED_MESSAGE } from './variable-binding';
 export type { BindOptions, BoundVariable, VariableBinding } from './variable-binding';
 export { hasRange, isWriteError, valueCondition, writeBlock } from './variable-state';
@@ -69,16 +69,16 @@ export type {
   WriteValue,
 } from './variable-state';
 
-// 読める値
+// Read-only values
 export type { Readable } from './values';
 
-// 差し替えの口（WebSocket、HTTP）
+// Substitutable transports (WebSocket, HTTP)
 export { BATCH_MS, TRY_AGAIN_LATER, webSocketFactory } from './connection';
 export type { SocketFactory, SocketHandlers, SocketLike } from './connection';
 export { DEFAULT_TIMEOUT_MS, HttpError, errorMessage, fetchTransport } from './http';
 export type { FetchTransportOptions, HttpOutcome, HttpRequest, HttpTransport } from './http';
 
-// セッションの写しの形
+// Shape of the session copy
 export { phaseIndex, runOutcome } from './session-state';
 export type {
   CommandView,
@@ -92,7 +92,7 @@ export type {
   TimeView,
 } from './session-state';
 
-// サーバーの口の形（正本は gui/protocol/）と、口を自分で読む人のための読み取り
+// Shapes of the server API (gui/protocol/ is the authority), and parsers for those who read the API themselves
 export {
   FEATURE_SCENARIO,
   FEATURE_SCENARIO_CONTROL,

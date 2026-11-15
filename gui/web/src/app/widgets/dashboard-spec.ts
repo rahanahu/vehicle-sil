@@ -106,10 +106,11 @@ export type BuiltinLookup = (peer: string, name: string) => boolean | null;
 const UNKNOWN_BUILTIN: BuiltinLookup = () => null;
 
 /**
- * アプリが宣言した変数でない（vehicle-sil が付けた、監視の）変数か。見分け方はここ 1 か所だけ。
- * 照合の結果の `builtin` がわかればそれで決める。わからなければ、名前の前置きで分ける（`ecu.` と `peer.` は
- * 予約された名前、`j1939.<ネットワーク>.` は J1939 の統計とノード: docs/internals/control.md の「Peer の監視」）。
- * 実行中に足される監視の変数（`peer.`、`j1939.`）は照合の結果にないので、前置きで分かれる。
+ * Whether a variable is not one the application declared (a monitoring variable that vehicle-sil adds). This is the only
+ * place that tells them apart. When the check's `builtin` is known, it decides. Otherwise the name's prefix does
+ * (`ecu.` and `peer.` are reserved names, `j1939.<network>.` the J1939 statistics and nodes: "Peer monitoring" in
+ * docs/internals/control.md). The monitoring variables added during a run (`peer.`, `j1939.`) are not in the check's
+ * result, so the prefix decides for them.
  */
 export function isMonitoring(name: string, builtin: boolean | null = null): boolean {
   return builtin ?? MONITORING_PREFIXES.some((prefix) => name.startsWith(prefix));
@@ -123,13 +124,13 @@ function isConnection(variable: VariableInfo): boolean {
 }
 
 /**
- * 変数の既定の部品（docs/gui.md の「既定の部品」の表）。
- * - bool: 書ければスイッチ、読むだけならランプ。
- * - enum（列挙の項目がある）: 書ければ選択肢、読むだけなら値の表示（項目の名前）。
- * - integer、real: 書けて範囲が決まっていればスライダー、書けて範囲がなければ数値の入力、読むだけならグラフ。
- * - 知らない型: 値の表示。
- * 書けるかは `writable`（role が input か parameter）で決める。parameter も書ける部品になる（書けるのは最初の
- * ステップの前だけで、その後は部品が理由を出して操作を止める）。
+ * The default widget of a variable (the table in "Default widgets" in docs/gui.md).
+ * - bool: a switch if writable, a lamp if read-only.
+ * - enum (with enumerators): a select if writable, a value display (the enumerator's name) if read-only.
+ * - integer, real: a slider if writable with a range, a number input if writable without one, a chart if read-only.
+ * - an unknown type: a value display.
+ * `writable` (role input or parameter) decides whether it is writable. A parameter gets a writable widget too (it can
+ * be written only before the first step; after that the widget gives the reason and refuses).
  */
 export function defaultWidget(info: VariableInfo): WidgetKind {
   switch (info.type) {

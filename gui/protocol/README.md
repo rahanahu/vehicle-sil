@@ -1,302 +1,768 @@
 # gui/protocol
 
-GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の契約です。サンプルの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この口だけを使います。自分の画面や道具を作るときも、この文書と例に従えば、同じことができます（作り方は [docs/gui.md](../../docs/gui.md) の「自分の画面を作る」）。
+[日本語](README.ja.md)
 
-`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が、本物のランチャーの出力を録ったものを流し直すランチャー（`gui/server/tests/replay_launcher.py`）との実際のやりとりから作り、毎回照合します。ファイルに残すのは、形ごとに 1〜2 個と、文書や画面とライブラリの試験が読むものです。同じ形のほかの場合（ほかの誤りのコード、ほかの終わり方の実行）は、試験の中で、誤りのコードややりとりの終わり方を確かめます。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
+The public specification of the HTTP and WebSocket API of the GUI server (`gui/server`): request and response shapes, WebSocket messages, error `code`s and limits. The sample screens (`gui/web`) use only this API, through the client library (`gui/client`). Your own screens and tools can do the same by following this document and the examples.
 
-## 版と互換
+| To find | See |
+|---|---|
+| How new fields and events are handled | "Versioning and compatibility", "Rules for readers" |
+| How to send the token; the `Host` and `Origin` checks | "Authentication and Origin" |
+| Requests for check, start, stop and time commands | "HTTP" |
+| The `code` of a rejected request | "Error codes (`code`)" |
+| How to receive the progress of a run | "WebSocket (`ws`)", "Summary (`session`)" |
+| The list, values and writes of ECU variables | "ECU variables" |
+| Scenarios, recording actions, dashboard files | Their own sections |
+| How much the server keeps; request sizes | "Limits" |
 
-口の版は `vehicle_sil_gui`（今は 1）です。サーバーは `GET api/app` の応答、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+## Versioning and compatibility
 
-- **足すのは互換**: 欄、`type`、`code`、事象、要求、認証のメッセージの任意の欄を足しても、版は上げません。読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code`、値の集合が増えうる欄（`phase`、`state`、`result` など）の知らない値を、無視するか、そのまま通します。
-- **消す、意味を変えるのは版を上げる**: ここにある欄や要求を消す、型や意味を変える、送る順の決まりを変えるときは、`vehicle_sil_gui` を上げます。読む側は、知らない版の `api/app` と `hello` を読まずに、版が違うと知らせます。待っても直らないので、つなぎ直しません（ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まる）。
-- **読み飛ばすものと、受け直すもの**: 知らない `type`、欄、事象、値は、読み飛ばすか、そのまま通すだけです（足すのは互換なので）。一方、WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の芯（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、つなぎ直して `hello` から受け直します（要約が正。続けて起きるたびに、つなぎ直すまでの間を延ばす）。
-- **頼んだときだけ変わる形**: 前の形のままでは重いものは、クライアントが認証のメッセージで頼んだときだけ形を変えます（`session_without_check`）。頼まないクライアントには、いままでの形で送ります。
-- ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままで、その版（`hello` の事象の `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/simulation-events.md) の「機械から使う」）。
-- 誤りの `code` の名前は変えません（足すことはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。機械は `code` で分けます。
+The API version is `vehicle_sil_gui` (currently 1). The server writes it in the response of `GET api/app`, in the WebSocket `hello`, and in the line it prints when started with `--json`.
 
-## 認証と Origin
+| Change | Version | What a reader does |
+|---|---|---|
+| Add a field, `type`, `code`, event, request, or optional field of the authentication message | Unchanged | Ignores or passes on what it does not know |
+| Remove a field or request, change a type or meaning, change the rules on sending order | `vehicle_sil_gui` goes up | Does not read an `api/app` or `hello` of an unknown version, and reports the version mismatch |
 
-- サーバーは `127.0.0.1` だけで待ち、`Host` は `127.0.0.1:<port>`（開発のときは `--dev-origin` のホストも）だけを受け付けます。
-- トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。HTTP は `Authorization: Bearer <token>`、WebSocket は最初のメッセージ（`auth`）で送ります。サーバーが配る画面（サンプルの画面と、`--web` で配る自分の画面）は、開いた URL の `#token=` を読んで、すぐに URL から消します（クライアントのライブラリの `takeToken`）。トークンを URL の query やログに載せません（query のトークンは受け付けません）。
-- `POST` と WebSocket の握手は、`Origin` がサーバー自身（`http://127.0.0.1:<port>`。開発のときは `--dev-origin`）のものだけを受け付けます。ブラウザは自分で付けます。ブラウザの外（Node、Python など）から使うときは、サーバー自身の origin を `Origin` に書きます（`examples/gui_client/run.mjs`）。
-- CORS は許しません。別の origin のページからは使えません。
+- What a reader ignores or passes on: unknown fields, unknown `type`s, unknown events (`event`), unknown `code`s, and unknown values of fields whose set of values can grow (`phase`, `state`, `result` and others).
+- On a version mismatch, waiting does not help, so the client does not reconnect. The library stops, with a `ProtocolError` for `api/app` and with `session.incompatible` for `hello`.
+- **What is received again**: if a WebSocket message is not valid JSON, or the core fields of the `hello` or `session` summary (`id`, `state`, `launcher`, `stop`) cannot be read, the reader cannot tell what was lost. It reconnects and receives everything again from `hello`. The summary is the source of truth. Each time this happens again in a row, the wait before reconnecting grows.
+- **Shapes that change only on request**: where the old shape is too heavy, the shape changes only when the client asks for it in the authentication message (`session_without_check`). Clients that do not ask get the old shape.
+- Launcher events (the contents of `event`) have exactly the shape of the launcher's `run --events`. The launcher sets their version (`vehicle_sil_events` in the `hello` event; see [docs/simulation-events.md](../../docs/simulation-events.md)).
+- Error `code` names do not change (new ones may be added). `message` is a human-readable sentence, not localized, and its wording may change. Programs branch on `code`.
 
-## 使い方の例
+## Authentication and Origin
 
-- 画面を使わない最小のクライアント: [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上）。照合して実行を始め、事象を読み、終わりを待ちます。`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確かめます。
-- TypeScript のクライアントのライブラリ: [gui/client](../client/README.md)。接続、再接続、要約と事象の当て方、時刻の命令、ECU の変数（watch、書き込みと結果）を持ちます。
-- ECU の変数を読み書きする例: [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs)（ライブラリを使う）。
+| Check | What is accepted |
+|---|---|
+| Listen address | `127.0.0.1` only |
+| `Host` | `127.0.0.1:<port>` only (during development, also the host of `--dev-origin`) |
+| Token (HTTP) | `Authorization: Bearer <token>` |
+| Token (WebSocket) | The first message (`auth`) |
+| `Origin` (`POST` and the WebSocket handshake) | Only the server's own (`http://127.0.0.1:<port>`; during development, `--dev-origin`) |
+| CORS | Not allowed. Pages from another origin cannot use the API |
 
-## 考え方
+- The server creates a new token on every start. The token appears only after `#token=` in the URL that the server prints.
+- The screens the server serves (the sample screens and your own screen served with `--web`) read `#token=` from the URL they were opened with and remove it from the URL at once (`takeToken` in the client library).
+- Never put the token in a URL query or a log (a token in the query is not accepted).
+- The browser sets `Origin` itself. From outside a browser (Node, Python and others), set `Origin` to the server's own origin. For an example, see [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) in the repository (not included in the prebuilt tools archive).
 
-読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。ランチャーの事象は、ランチャーが書いた形のまま届きます。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。サーバーが形を確かめるのは、事象の一部の欄（下の `bad-event`）だけです。ほかの欄は、なくても型が違っても、そのまま通して要約に重ねます（`ws-loose-fields.json`）。読む側は要約と事象を部分ごとに読み、読めない部分だけを読み飛ばします。
+## Rules for readers
 
-- **要約が正**。実行の要約（下の「要約」）に、画面を作り直すのに要るものを全部入れます。画面は `hello` と `session` を受けたら、手元の状態をその要約で置き換えます。
-- 事象は届くたびに `event` で送ります。画面は `hello` の後に届いた事象を要約に当てて進めます。
-- つなぎ直したとき（`hello` の後）に再送するのは、log の行（`from_seq` 以後で、サーバーが覚えている分）だけです。段階や participant の事象は再送しません（要約に入っているので）。
-- サーバーが自分で持つ状態は、ランチャーから届いたものと、サーバーがランチャーにしたこと（起動、停止の依頼）だけです。
+A reader ignores and passes on unknown fields, unknown `type`s, unknown events (`event`) and unknown `code`s. It reads summaries and events part by part and skips only the parts it cannot read.
+
+The server sends launcher events in the shape the launcher wrote them.
+
+- `heartbeat` also passes through. Screens skip it. The server watches whether the launcher is alive and reports it in `launcher.silent_s` of the summary.
+- An unknown participant `state` (such as `failed`, added by the launcher) also passes through and is merged into the summary.
+- The server checks the shape of only some fields of an event (see `bad-event` below). Other fields pass through and are merged into the summary even if they are missing or of the wrong type (`ws-loose-fields.json`).
+
+How the summary and events relate:
+
+- **The summary is the source of truth.** The run summary ("Summary (`session`)" below) holds everything a screen needs to rebuild itself. When a screen receives `hello` or `session`, it replaces its local state with that summary.
+- The server sends each event as `event` as soon as the launcher writes it. A screen applies the events it receives after `hello` to the summary.
+- On reconnection (after `hello`), the server replays only log lines (from `from_seq` on, as far as it keeps them). Phase and participant events are not replayed; the summary holds them.
+- The only state the server holds itself is what it received from the launcher and what it did to the launcher (start, stop requests).
 
 ## HTTP
 
-どの `api/` にも `Authorization: Bearer <token>` が要ります（token は、サーバーが表示した URL の `#token=` の後ろ）。`Host` は `127.0.0.1:<port>`（開発のときは `--dev-origin` のホストも）だけを受け付けます。`POST` は `Origin` がサーバー自身（開発のときは `--dev-origin`）のものだけを受け付け、本文があれば `Content-Type: application/json` が要ります。応答は JSON で、失敗は `{"error": {"code", "message", "detail"}}` です（`code` は機械が読む名前で、下の表にあります。`message` は人向けの英語の 1 文で、直し方を含みます）。
+Every `api/` request has these conditions:
 
-| 要求 | 応答 | 例 |
+- It needs `Authorization: Bearer <token>` (the token is the part after `#token=` in the URL the server printed).
+- `Host` must be `127.0.0.1:<port>` (during development, also the host of `--dev-origin`).
+- A `POST` is accepted only with the server's own `Origin` (during development, `--dev-origin`). A body needs `Content-Type: application/json`.
+- Responses are JSON. A failure is `{"error": {"code", "message", "detail"}}`. `code` is the name programs read; see the table in "Error codes (`code`)" below. `message` is a human-readable sentence, not localized, that includes how to fix the problem.
+
+### Endpoints
+
+| Request | Response | Example |
 |---|---|---|
-| `GET api/app` | サーバーの版、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`: `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` など） | `app.json` |
-| `GET api/configs` | root の下の `.yaml` / `.yml`（`path` は root からの相対で `/` 区切り、`modified`、`size`、`simulation`: 先頭に `vehicle_sil_simulation` があるか）、`truncated` | `configs.json` |
-| `POST api/check` `{file, disable, manual, scenario}` | `{file, disable, manual, scenario, exit_code, check}`。`check` は `check --json` の結果そのまま。照合が失敗しても 200 | `check-*.json` |
-| `POST api/run` `{file, disable, manual, speed, start_paused, scenario}` | `{session}`（始めた実行の要約） | `run.json` |
-| `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
-| `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送った命令） | `time.json` |
-| `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
-| `GET api/session` | `{session}`（なければ `null`） | `session-*.json` |
-| `GET api/dashboard?file=<構成ファイル>` | 構成ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}`（下の「ダッシュボードのファイル」） | `dashboard*.json` |
-| `GET api/scenarios?file=<構成ファイル>` | 構成ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}`（下の「シナリオ」） | `scenarios.json` |
-| `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`。下の「操作の記録」） | `recording.json` |
+| `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
+| `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
+| `POST api/check` `{file, disable, manual, scenario}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, manual, speed, start_paused, scenario}` | `{session}` (the summary of the run it started) | `run.json` |
+| `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
+| `POST api/time` `{command, ms, value}` | `{session_id, command}` (the command sent to the launcher) | `time.json` |
+| `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
+| `GET api/session` | `{session}` (`null` if none) | `session-*.json` |
+| `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
+| `GET api/scenarios?file=<configuration file>` | The scenarios in `scenarios` next to the configuration file: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
+| `GET api/recording` | The applied writes of the current (last) run as scenario YAML: `{recording}` (`null` if there is no run) | `recording.json` |
 
-- `disable` と `manual` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。`-` で始まる名前は、ランチャーが引数の値として受け取れない（ランチャーの照合もそのような名前を断る）ので 400 `name-like-option` です（構成ファイルで名前を変える）。同じ名前を両方に書くと 400 `invalid-field` です（ランチャーも断ります）。
-- **自分で起動する participant**: `manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/simulation-config.md) の「participant を自分で起動する」。構成ファイルの `manual: true` は、照合の結果の `participants[].manual` に出ます）。`api/app` の `launcher.version.features` に `manual-participants` があるときだけ送ります（ないときは欄を省きます。送ると 400 `unsupported`）。起動するコマンドは、その participant の事象（`state` が `manual`）の `command`、`working_directory`、`command_line` で届き、要約の `participants` に残ります（例は `check-manual.json`、`ws-manual.json`）。registry がループバックのアドレスでない構成では、起動するときに設定する環境変数が、同じ事象の `environment`（`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`）で届き、同じく残ります。サーバーは中身を見ずに通します。
-- `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。`speed` の数の範囲は `limits.speed_min` から `limits.speed_max` まで（ランチャーと同じ）。`null` は構成ファイルの `speed` のまま（ランチャーに `--speed` を渡さない）です。
-- **時刻の命令**: `api/time` の本文は `{"command": "pause"}`、`{"command": "resume"}`、`{"command": "step", "ms": <1 から limits.step_ms_max の整数>}`、`{"command": "speed", "value": <"max" か speed と同じ範囲の数>}` のどれかです（ほかの欄は 400 `invalid-field`）。サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、応答を待たずに返します（止まっているランチャーで要求が固まらないように）。受け付けたかどうかと理由は、ランチャーの `command` の事象（`accepted`、`message`、`step` の実際に進む `ms`）で、効いたことは `time` の事象で届きます（要約の `last_command` と `time` にも残ります）。動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running`、その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。ランチャーが入力を読まずに詰まっているときも、要求は長くて約 2 秒で返ります（命令はランチャーの入力に残ります）。命令の意味（一時停止は刻みの境目で効く、ステップ送りは一時停止の間だけ、など）はランチャーの決まりです（[docs/simulation-events.md](../../docs/simulation-events.md) の「標準入力の命令」）。
-- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけているか動いている間、409 `already-running` です。応答の要約を、画面はその場で当てます（後から届く `session` も同じ内容です）。
-- **照合**: 同時の `api/check` は断らず、順に 1 つずつ実行します。待っている要求が多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も、participant 名を確かめるために同じ順番で照合することがあります。
-- **停止**: 本文は `{"force": 真偽}`（省略は `false`。本文なしで `Content-Type` もない要求も `false`）。`force: false` は「順に止める」（ランチャーの標準入力に `{"command":"stop"}`）で、すでに頼んであれば何もしません。`force: true` は「待たずに止める」（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回）で、すでに頼んであれば何もしません。どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。実行が始まりかけている間（`api/run` が応答する前）の停止は、ランチャーが起動したところで届けます（応答の要約は前の実行のもの。始まった実行の要約の `stop` に出ます）。止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` の事象で見えます。標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
-- **書き込み**: 下の「ECU の変数」。
-- **シナリオ**: 下の「シナリオ」。
-- **ダッシュボードのファイル**: 下の「ダッシュボードのファイル」。`file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
-- サーバーが終わり始めたら、`api/run`、`api/check`、`api/write` は 503 `shutting-down` です。
+- The `api/app` response holds the server version, `instance` (changes on every start), the root, `initial_file`, the launcher (`usable`, `problems`, the contents of `version --json`), whether variables can be read and written (`variables`: `available`, and `reason` if not), and the limits (`limits`). `limits` includes `speed_min`, `speed_max`, `step_ms_max`, and for variables `watches`, `watch_variables`, `watch_period_ms_min`, `watch_period_ms_max`, `writes_per_request`, `write_at_ms_max`, `write_timeout_s` and others.
+- Each file in `api/configs` has `path` (relative to the root, separated by `/`), `modified`, `size` and `simulation` (whether it starts with `vehicle_sil_simulation`). The list as a whole has `truncated`.
+- `check` in the `api/check` response is the result of `check --json` as is. The response is 200 even if the check fails.
+- For `api/write`, see "ECU variables" below; for `api/scenarios` and `scenario`, "Scenarios"; for `api/recording`, "Recording actions (`api/recording`)"; for `api/dashboard`, "Dashboard files". The `file` of `api/dashboard` goes through the same checks as for `api/check` (`invalid-path`, `outside-root`, `not-a-configuration`, `file-not-found`).
+- Once the server has begun to shut down, `api/run`, `api/check` and `api/write` return 503 `shutting-down`.
 
-## 誤りの `code`
+### `disable` and `manual`
 
-画面が見るコードです。名前は変えません（足すことはあります）。
+| What you send | Response |
+|---|---|
+| A participant name that is not in the check result of that file | 400 `unknown-participant` |
+| A name that starts with `-` | 400 `name-like-option` |
+| The same name in both `disable` and `manual` | 400 `invalid-field` |
+| `manual` when the launcher's `features` lack `manual-participants` | 400 `unsupported` |
 
-| HTTP | `code` | いつ |
+- The launcher cannot take a name that starts with `-` as the value of an argument (the launcher's check also rejects such names). Rename the participant in the configuration file.
+- The launcher also rejects a request with the same name in both.
+
+A participant in `manual` is passed to the launcher with `--manual`; the launcher does not start it and waits for it to join (see "Starting a participant yourself (`manual`, `--manual`)" in [docs/simulation-config.md](../../docs/simulation-config.md#starting-a-participant-yourself-manual---manual)).
+
+- `manual: true` in the configuration file appears in `participants[].manual` of the check result.
+- Send `manual` only when `launcher.version.features` of `api/app` has `manual-participants`. Otherwise, omit the field.
+- The command to start the participant arrives in that participant's event (`state` is `manual`) as `command`, `working_directory` and `command_line`, and stays in `participants` of the summary (examples: `check-manual.json`, `ws-manual.json`).
+- If the registry is not on a loopback address, the environment variables to set when starting arrive in `environment` of the same event (`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`) and stay in the summary too. The server passes them on without looking at them.
+
+### `speed` and `start_paused`
+
+Send a value for `speed` (`null`, `"max"` or a number) and `start_paused` (boolean) only when `launcher.version.features` of `api/app` has `speed` and `start-paused`, respectively. Otherwise, omit the field or send `null` / `false` (any other value gives 400 `unsupported`).
+
+- A numeric `speed` must be from `limits.speed_min` to `limits.speed_max` (the same as the launcher).
+- `null` keeps the `speed` of the configuration file (no `--speed` is passed to the launcher).
+
+### Check and start (`api/check`, `api/run`)
+
+- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `already-running` while a run is starting or running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
+- **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` may also run a check in the same queue, to confirm the participant names.
+
+### Stop (`api/stop`)
+
+The body is `{"force": boolean}`. If omitted, it is `false`; a request with no body and no `Content-Type` also means `false`.
+
+| `force` | What it does | If a stop is already requested |
 |---|---|---|
-| 400 | `invalid-json` | 本文が JSON のオブジェクトでない |
-| 400 | `invalid-field` | 欄の型か範囲が違う（`speed`、`start_paused`、`force`、`disable`、`manual`（`disable` と同じ名前も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値。`detail` に `{peer, name}`） |
-| 400 | `invalid-path` | `file` が root からの相対パスの文字列でない（空、長すぎる、`\`、NUL、`:`、対のないサロゲート） |
-| 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
-| 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
-| 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
-| 400 | `name-like-option` | `disable` か `manual` の名前が `-` で始まる（ランチャーに渡せない） |
-| 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその構成ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
-| 400 | `unsupported` | ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
-| 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |
-| 400 | `not-writable` | `api/write`: 出力の変数（`detail` に `{peer, name}`） |
-| 400 | `write-refused` | `api/write`: ランチャーの Control Server が断った（文言に理由） |
-| 401 | `unauthorized` | トークンがないか違う（`WWW-Authenticate: Bearer` つき） |
-| 403 | `forbidden-host` | `Host` が `127.0.0.1:<port>` でない |
-| 403 | `forbidden-origin` | `Origin` がサーバー自身でない（`POST` と WebSocket は `Origin` が要る） |
-| 403 | `cors-not-allowed` | `OPTIONS`（CORS は許さない） |
-| 404 | `file-not-found` | `file` が root の下にない |
-| 404 | `not-found` | そういう API や画面のファイルはない |
-| 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
-| 409 | `already-running` | 実行が始まりかけているか動いている |
-| 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
-| 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを回している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
-| 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
-| 409 | `variables-not-ready` | `api/write`: 変数の機能の状態が `ready` でない（文言に、要約の `variables.reason`） |
-| 413 | `too-large` | 本文が 64 KiB を超える |
-| 415 | `unsupported-media-type` | 本文があるのに `Content-Type: application/json` でない |
-| 500 | `internal` | サーバーの不具合（例はない。起きたら標準エラーを見る） |
-| 502 | `launcher-start` | ランチャーを起動できない |
-| 502 | `launcher-output` | `check --json` が照合の結果を書かなかった |
-| 502 | `write-failed` | `api/write`: 書き込みが Control Server に届かなかった（切れた） |
-| 503 | `launcher-unusable` | ランチャーが使えない（`api/app` の `launcher.problems` に理由） |
-| 503 | `check-busy` | 照合の待ちが多すぎるか、待ちが長すぎる |
-| 503 | `write-busy` | `api/write`: 前の書き込みが Control Server の答えを待っていて、順番が来なかった（送っていない） |
-| 503 | `shutting-down` | サーバーが終わろうとしている |
-| 503 | `too-many-connections` | WebSocket の数の上限（握手の応答） |
-| 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
-| 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に答えなかった。受け取られたかもしれない（送り直さない） |
+| `false` | Stops in order (`{"command":"stop"}` on the launcher's stdin) | Nothing |
+| `true` | Stops without waiting (`stop` twice if no stop was requested yet, once more if one was) | Nothing |
 
-例は `error-already-running.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json` です（ほかのコードは、GUI サーバーの試験の中で確かめます）。`error-invalid-watch.json` は WebSocket の `error` の例です。`stop.json`、`stop-force.json`、`stop-ended.json` は停止の応答、`time.json` は時刻の命令の応答です。
+- Both return the current summary instead of 409 when there is no run or the run has ended (calling them again gives the same result).
+- A stop while a run is starting (before `api/run` has responded) is delivered when the launcher has started. The summary in the response belongs to the previous run; the stop appears in `stop` of the summary of the run that started.
+- The progress of the stop shows in `stop` of the summary and in the launcher's `command` / `phase` events.
+- A launcher that does not read stdin does not stop this way (stopping the server stops it with a signal).
 
-## WebSocket（`ws`）
+### Time commands (`api/time`)
 
-つないだら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>, "session_without_check": true}` を送ります（`session` と `from_seq` は、再接続で持っている分を言うときだけ。0 以上の整数でなければ、ないものとして扱います。`session_without_check` は任意で、`true` なら、この接続への `session` の通知の要約から `check` の欄を省きます。`hello` の要約には入り、照合の結果は `check` の事象で届くので、手元の値を使い続けます。照合の結果は大きく、実行の間に変わらないためです。例は `ws-without-check.json`）。トークンが違えば `error`（`code: unauthorized`）の後に、5 秒以内に `auth` が届かなければそのまま、閉じるコード 4401 で閉じます（理由の文は `unauthorized` か `auth-timeout`）。サーバーが終わるときは 1001 で閉じます。握手の段の拒否（`Host`、`Origin`、`too-many-connections`）は、ブラウザの JavaScript からは理由が見えません（1006 になります）。画面は、握手に失敗したら `GET api/app` を 1 回呼んで理由を知ります。認証した接続は 32 本まで（それを超える握手は 503 `too-many-connections`。握手の後、認証までの間に埋まったときは、閉じるコード 1013、理由の文 `too-many-connections`）。認証前の接続は別に 16 本までで、あふれたら最も古い認証前の接続を、閉じるコード 1013（理由の文は `too-many-unauthenticated`）で閉じて場所を空けます。1013 で閉じられた画面は、つなぎ直します。
+The body is one of the following (any other field gives 400 `invalid-field`).
 
-認証の後に届くものは、この順です。
+| Body | Range |
+|---|---|
+| `{"command": "pause"}` | |
+| `{"command": "resume"}` | |
+| `{"command": "step", "ms": <integer>}` | 1 to `limits.step_ms_max` |
+| `{"command": "speed", "value": <"max" or a number>}` | Same range as `speed` |
 
-1. `hello`: `instance`、`session`（要約。なければ `null`）、`replay`（`from_seq`: 再送の始まり。`null` は最初から）。画面は状態をこの要約で作り直す。
-2. `dropped`（あれば）: `from_seq` 以後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
-3. `event`: 覚えている log の行のうち `from_seq` 以後のものを、`seq` の順に。
-4. `synced`: `{session, last_seq}`。再送の終わり。
-5. 以後は、届くたびに `event`、`session`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`。
+The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
-認証の後に画面が送れるのは、変数の `watch` と `unwatch` です（下の「ECU の変数」）。JSON のオブジェクトで `type` が文字列でないものは `error`（`code: invalid-message`）、知らない `type` は読み飛ばします。どちらでも接続は続きます。
+- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, and for `step` the actual `ms` it advances). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
+- If no run is running (it ended, it is starting, the launcher's input is closed), the response is 409 `not-running`.
+- If the launcher of that run (`version --json` at the start) lacks `time-commands` in `features`, the response is 400 `unsupported`.
+- Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
+- What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
 
-`session` の `id` が `hello` の要約と違う、または `from_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.from_seq` が `null`）。
+## Error codes (`code`)
 
-| `type` | 内容 | 例 |
+The codes that screens look at. The names do not change (new ones may be added).
+
+| HTTP | `code` | When |
 |---|---|---|
-| `hello` | 上の 1 | `ws-*.json` の最初 |
-| `event` | `{session, event}`。ランチャーの事象そのまま（サーバーが形を確かめて通したもの） | `ws-pass.json`、`ws-log-dropped.json`、`ws-time.json`（時刻の命令）、`ws-late.json`（遅れ） |
+| 400 | `invalid-json` | The body is not a JSON object |
+| 400 | `invalid-field` | A field has the wrong type or is out of range (which fields: below the table) |
+| 400 | `invalid-path` | `file` is not a path string relative to the root (empty, too long, `\`, NUL, `:`, unpaired surrogate) |
+| 400 | `outside-root` | Absolute path, `..`, symbolic link out of the root |
+| 400 | `not-a-configuration` | Not a regular `.yaml` / `.yml` file |
+| 400 | `unknown-participant` | A name in `disable` or `manual` is not in the check result |
+| 400 | `name-like-option` | A name in `disable` or `manual` starts with `-` (cannot be passed to the launcher) |
+| 400 | `scenario-not-listed` | `scenario` is not one of the scenarios that `api/scenarios` lists for that configuration file (no `scenarios`, a link, a file elsewhere) |
+| 400 | `unsupported` | Uses a feature the launcher does not have (which: below the table) |
+| 400 | `unknown-variable` | `api/write`: the participant or variable is not in the run's variable list (`detail` holds `{peer, name}`) |
+| 400 | `not-writable` | `api/write`: an output variable (`detail` holds `{peer, name}`) |
+| 400 | `write-refused` | `api/write`: the launcher's Control Server refused it (the message gives the reason) |
+| 401 | `unauthorized` | Missing or wrong token (with `WWW-Authenticate: Bearer`) |
+| 403 | `forbidden-host` | `Host` is not `127.0.0.1:<port>` |
+| 403 | `forbidden-origin` | `Origin` is not the server's own (`POST` and WebSocket need `Origin`) |
+| 403 | `cors-not-allowed` | `OPTIONS` (CORS is not allowed) |
+| 404 | `file-not-found` | `file` is not under the root |
+| 404 | `not-found` | No such API or screen file |
+| 405 | `method-not-allowed` | A method other than `GET` on a screen file |
+| 409 | `already-running` | A run is starting or running |
+| 409 | `not-running` | `api/time`, `api/write`: no run is running |
+| 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
+| 409 | `session-changed` | `api/write`: `session` differs from the id of the running run (a write sent while the run changed). Nothing is written. Example: `error-session-changed.json` |
+| 409 | `variables-not-ready` | `api/write`: the variable feature is not `ready` (the message includes `variables.reason` of the summary) |
+| 413 | `too-large` | The body exceeds 64 KiB |
+| 415 | `unsupported-media-type` | There is a body, but not `Content-Type: application/json` |
+| 500 | `internal` | A server bug (no example; if it happens, look at stderr) |
+| 502 | `launcher-start` | The launcher cannot be started |
+| 502 | `launcher-output` | `check --json` did not write a check result |
+| 502 | `write-failed` | `api/write`: the write did not reach the Control Server (disconnected) |
+| 503 | `launcher-unusable` | The launcher cannot be used (the reason is in `launcher.problems` of `api/app`) |
+| 503 | `check-busy` | Too many checks waiting, or waiting too long |
+| 503 | `write-busy` | `api/write`: an earlier write is waiting for the Control Server's response and this one did not get its turn (not sent) |
+| 503 | `shutting-down` | The server is shutting down |
+| 503 | `too-many-connections` | WebSocket connection limit (handshake response) |
+| 504 | `check-timeout` | The check did not finish within the time limit (it was stopped) |
+| 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
+
+- Fields covered by `invalid-field`: `speed`, `start_paused`, `force`, `disable`, `manual` (also the same name as in `disable`), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
+- Cases of `unsupported`: a value sent for `speed` / `start-paused` / `scenario` / `manual-participants` that the launcher does not have; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
+
+The example files. The GUI server's tests check the other codes.
+
+| File | Contents |
+|---|---|
+| `error-already-running.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json` | HTTP errors |
+| `error-invalid-watch.json` | WebSocket `error` |
+| `stop.json`, `stop-force.json`, `stop-ended.json` | Stop responses |
+| `time.json` | Time command response |
+
+## WebSocket (`ws`)
+
+### Authentication message
+
+After connecting, first send `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>, "session_without_check": true}`.
+
+| Field | Contents |
+|---|---|
+| `token` | The token from the URL the server printed |
+| `session`, `from_seq` | Send these only when reconnecting, to tell what you already have. A value that is not an integer of 0 or more counts as absent |
+| `session_without_check` | Optional. If `true`, the summaries in `session` notifications to this connection omit the `check` field |
+
+Even with `session_without_check`, the `hello` summary includes `check`, and the check result arrives in the `check` event, so the client keeps using its local value. The check result is large and does not change during a run. Example: `ws-without-check.json`.
+
+### Close codes and the connection limit
+
+| What happened | What the server does |
+|---|---|
+| Wrong token | `error` (`code: unauthorized`), then close code 4401 (reason text `unauthorized`) |
+| No `auth` within 5 seconds | Close code 4401 without an `error` (reason text `auth-timeout`) |
+| The server shuts down | Close code 1001 |
+| A handshake while 32 authenticated connections exist | 503 `too-many-connections` |
+| The 32 slots filled up between the handshake and authentication | Close code 1013 (reason text `too-many-connections`) |
+| More than 16 unauthenticated connections | Closes the oldest unauthenticated connection with close code 1013 (reason text `too-many-unauthenticated`) |
+
+- The 16 unauthenticated connections are counted separately from the 32 authenticated ones.
+- A screen closed with 1013 reconnects.
+- JavaScript in a browser cannot see the reason for a rejection at the handshake (`Host`, `Origin`, `too-many-connections`); it sees 1006. When the handshake fails, a screen calls `GET api/app` once to find the reason.
+
+### Messages after authentication
+
+After authentication, the server sends, in this order:
+
+1. `hello`: `instance`, `session` (the summary, or `null`), `replay` (`from_seq`: where the replay starts; `null` means from the beginning). The screen rebuilds its state from this summary.
+2. `dropped` (if any): the number of log lines from `from_seq` on that the server cannot send because it no longer keeps them (per source).
+3. `event`: the kept log lines from `from_seq` on, in `seq` order.
+4. `synced`: `{session, last_seq}`. The end of the replay.
+5. From then on, as things happen: `event`, `session`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
+
+If `session` differs from the `id` of the `hello` summary, or `from_seq` does not belong to the current session, the replay starts from the beginning (`replay.from_seq` is `null`).
+
+After authentication, a screen can send variable `watch` and `unwatch` messages ("ECU variables" below). A JSON object whose `type` is not a string gets an `error` (`code: invalid-message`); an unknown `type` is skipped. Either way, the connection stays open.
+
+### Message types
+
+| `type` | Contents | Example |
+|---|---|---|
+| `hello` | Item 1 above | The first message of `ws-*.json` |
+| `event` | `{session, event}`. The launcher event as is (after the server checked its shape) | `ws-pass.json`, `ws-log-dropped.json`, `ws-time.json` (time commands), `ws-late.json` (lateness) |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
-| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後）、ランチャーが黙ったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。`session_without_check` を頼んだ接続には `check` の欄がない | `ws-pass.json`、`ws-without-check.json` |
-| `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数（送らなかった `log_dropped` の数も、その source に足す）、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。source の名前は要約の `log` と同じです（65 個目からの source は `*`）。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
-| `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
-| `variables` | `{session, variables}`。その実行の変数の機能の状態か一覧（要約の `variables` と同じ形）。実行が始まった直後（その `session` の通知のすぐ後）と、変わったとき | `ws-variables.json`、`ws-variables-failed.json` |
-| `values` | `{id, session, sim_ms, paused, peers}`。watch している変数の最後の値（下の「ECU の変数」） | `ws-variables.json` |
-| `operation` | `{session, seq, state, done, peers}`。書き込みの結果が変わった（下の「ECU の変数」）。全部の接続へ。落とさない | `ws-variables.json` |
+| `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
+| `error` | `{session, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
+| `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
+| `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
+| `variables` | `{session, variables}`. The state or list of that run's variable feature (same shape as `variables` in the summary) | `ws-variables.json`, `ws-variables-failed.json` |
+| `values` | `{id, session, sim_ms, paused, peers}`. The last values of the watched variables ("ECU variables" below) | `ws-variables.json` |
+| `operation` | `{session, seq, state, done, peers}`. The result of a write changed ("ECU variables" below). Sent to every connection, never dropped | `ws-variables.json` |
 
-受け取りが遅い画面には、まず log の行、`log_dropped`、知らない事象を落とし（`dropped`）、`time` は最後の 1 つにまとめ、`heartbeat` は数えずに落とします。それでも追いつかないときだけ `resync` です。`values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables` と `operation` は落としません。
+The server sends `session` at these times. Connections that asked for `session_without_check` get it without the `check` field.
 
-### `error` の `code`（サーバーの知らせ）
+- When a run starts, and when a stop is requested.
+- When a run ends (`launcher.running` is `false` and `state` is `ended`; after the launcher's last event).
+- When the launcher stops writing anything (when `launcher.silent_s` changes), and when it starts writing again.
 
-| `code` | 意味 |
+The server sends `variables` right after a run starts (immediately after that `session` notification) and whenever it changes.
+
+The fields of `dropped` (the numbers in `ws-slow-client.json` are examples). A screen shows "N lines dropped here" at that position in that source's log.
+
+| Field | Contents |
 |---|---|
-| `unauthorized` | 認証の誤り（`session` は `null`。この後 4401 で閉じる） |
-| `invalid-message` | 画面が送ったものが、JSON のオブジェクトで `type` を持つものでない（`session` は `null`。その接続にだけ送る。接続は続く） |
-| `invalid-watch`、`too-many-watches` | `watch` の形か範囲が違う、接続の watch が上限を超えた（`session` は `null`、`detail.id` に watch の id。その接続にだけ送る。接続は続く） |
-| `launcher-output` | ランチャーが事象でない行を書いた（JSON のオブジェクトでない、`event` がない、`seq` が 0 から 2^53 までの整数でない）。`1e999` のような有限でない数を含む行も、ここに入る |
-| `bad-event` | 知っている事象の欄の型が違う（`t_ms` が 0 から 2^53 までの整数でない、`log_dropped` の `count` と `sources` の値が数でない、を含む）か、サーバーがその事象を中継できなかった。その事象は捨てる（中継も要約への反映もしない） |
-| `line-too-long` | 1 行が上限（16 MiB）を超えた。捨てる |
-| `seq-gap`、`seq-order` | `seq` が飛んだ、戻った |
-| `no-hello` | 最初の事象が `hello` でない |
-| `events-format` | `hello` の `vehicle_sil_events` が、このサーバーの読む版と違う |
-| `launcher-stderr` | ランチャーが標準エラーに書いた行。最初の 20 行はすぐに送る。それより後は最後の 30 行だけを、実行が終わったときに送る。間で落とした行があれば、その前に 1 つ（`detail.skipped`: 落とした行の数） |
-| `kept-limit` | 覚える量の上限を超えたので、要約に一部しか入れなかった（`detail.what`: `check`、`result`、`findings`、`participants`、または 4 KiB を超えた事象の種類 `phase`、`time`、`registry`、`command`、`participant`）。4 KiB を超えた事象は、大事な欄（下の「上限」）を残し、ほかの欄は入る分だけ入れて、入らない欄の名前を `omitted_fields` に書く。種類ごとに 1 回 |
-| `no-result` | ランチャーが `result` を書かずに終わった（`detail.exit_code`） |
-| `output-left-open` | ランチャーは終わったが、ランチャーが起動したプロセスが出力を開いたままなので、残りを読まずに終えた |
-| `stop-not-delivered` | 停止の命令をランチャーの標準入力に書けなかった |
-| `stop-escalated` | サーバーが終わるとき、ランチャーが時間内に止まらず、シグナルで止めるよう頼んだ |
-| `launcher-silent` | ランチャーのプロセスが動いているのに、結果の前に `--silent-after`（既定 5 秒）より長く 1 行も書かない（ランチャーは心拍 `heartbeat` を 1 秒ごとに書く）。止まっているかもしれない。黙るたびに 1 回（`detail.seconds`）。続く間は要約の `launcher.silent_s` が増え、また書いたら `null` に戻る |
+| `log` | Number of log lines per source. The counts of `log_dropped` events that were not sent are added to their source |
+| `at_least` | Sources whose count is only a lower bound (more may have been dropped) |
+| `events` | Number of other events |
+| `reason` | `not-kept`: the server no longer keeps them (before the replay). `slow-client`: the screen receives too slowly, and the server dropped them from what it was to send |
 
-## 要約（`session`）
+Source names are the same as in `log` of the summary (sources from the 65th on are `*`).
 
-| 欄 | 内容 |
+### Slow connections
+
+For a screen that receives slowly, the server does the following, in order:
+
+1. Drops log lines, `log_dropped` and unknown events (`dropped`).
+2. Collapses `time` into the last one, and drops `heartbeat` without counting.
+3. Only if it still cannot catch up: `resync`.
+
+`values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables` and `operation` are never dropped.
+
+### The `code` of `error` messages
+
+Notifications from the server.
+
+| `code` | Meaning |
 |---|---|
-| `id` | 実行の番号（サーバーの起動ごとに 1 から） |
-| `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定（`manual` は `api/run` で指定したものだけ。構成ファイルの `manual: true` は `check` にある）（`speed` の `null` は構成ファイルのまま。いまの速さは `time.speed`） |
-| `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
-| `state` | `running` か `ended`。`ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがある |
-| `launcher` | `{pid, running, exit_code, signal, silent_s}`。`running` はランチャーのプロセスが動いているか。止められるかどうかはこれで決める。終わったら `exit_code`（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`） |
-| `stop` | サーバーがランチャーに頼んだ停止: `none`、`requested`（順に止める）、`forced`（待たずに止める） |
-| `phase` | 最後の `phase` 事象の段階（まだなければ `null`） |
-| `last_seq`、`last_t_ms` | 最後に受け取った事象の `seq` と `t_ms` |
-| `time` | 最後の `time` 事象（そのまま。なければ `null`）。仮想時間 `sim_ms`、いまの速さ `speed`、一時停止 `paused`、実際の速さ `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`（古いランチャーは `sim_ms` だけ）。途中から開いた画面も、これで今の時刻の状態がわかる。大きすぎた欄があれば `omitted_fields` |
-| `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null`。`session_without_check` を頼んだ接続への `session` の通知には、この欄がない（`hello` と HTTP の応答にはある） |
-| `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
-| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など。`failed` の `reason` は、後で `ended` が来ても残る）。ランチャーの `control_link` 事象（変数を読み書きする口のつながり方）は、その participant の `control_link` の欄に、`name` を除いた欄のオブジェクト（`{"state", "variables"}` など。`state` の値はランチャーのまま）として重ねる（例は `ws-control-trouble.json`）。初めて現れた順。`required` と `enabled` は `check` を見る。`stop_requested` の事象が来た participant には、サーバーが `stop_requested: true` を付け、後の状態でも残す（止めるよう求めた後の終わりを、失敗と区別するため）。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える。例は `ws-large-fields.json`） |
-| `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |
-| `findings`、`findings_omitted` | `finding` 事象（`event`、`seq`、`t_ms` を除く）と、上限を超えて覚えていない数 |
-| `last_command` | 最後の `command` 事象から `event`、`t_ms` を除いたもの（`seq`、`command`、`source`、`accepted`、`message`、受け付けた `step` の `ms`。なければ `null`）。`seq` で、新しい答えか、前と同じ答えかがわかる。大きすぎた欄があれば `omitted_fields` |
-| `result` | `result` 事象の `result`（なければ `null`） |
-| `variables` | ECU の変数の機能の状態、participant ごとの変数、最近の操作（下の「ECU の変数」）。`hello` の要約と HTTP の応答にある。**`session` の通知の要約には、この欄がない**（大きく、めったに変わらないので、変わったときに `variables` の通知で送る。同じ実行の `session` の通知では、手元の値を使い続ける。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届く） |
-| `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数（サーバーが覚えずに落とした行と、ランチャーが読む側の遅さで書けなかった行。後者は `log_dropped` の `sources`）。`log_dropped` の事象は、名前の挙がった source の log の、来た位置に覚え（つなぎ直した画面にも同じ位置に届く。1 つの事象は 1 回だけ送る）、画面はそこに「ここで N 行が落ちた」を出す |
-| `problems`、`problems_omitted` | サーバーの知らせ（`error` と同じ `{code, message, detail}`）を起きた順に、と、上限を超えて覚えていない数 |
-| `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
+| `unauthorized` | Authentication error |
+| `invalid-message` | What the screen sent is not a JSON object with a `type` |
+| `invalid-watch`, `too-many-watches` | The shape or range of a `watch` is wrong; the connection's watches exceed the limit |
+| `launcher-output` | The launcher wrote a line that is not an event |
+| `bad-event` | A field of a known event has the wrong type, or the server could not relay the event |
+| `line-too-long` | A line exceeds the limit (16 MiB). It is discarded |
+| `seq-gap`, `seq-order` | `seq` skipped, or went back |
+| `no-hello` | The first event is not `hello` |
+| `events-format` | `vehicle_sil_events` in `hello` differs from the version this server reads |
+| `launcher-stderr` | A line the launcher wrote to stderr |
+| `kept-limit` | The amount kept exceeded its limit, so the summary holds only part |
+| `no-result` | The launcher exited without writing `result` (`detail.exit_code`) |
+| `output-left-open` | The launcher exited, but a process it started keeps its output open, so the server stopped reading the rest |
+| `stop-not-delivered` | The stop command could not be written to the launcher's stdin |
+| `stop-escalated` | While the server shut down, the launcher did not stop in time, and the server asked for it to be stopped with a signal |
+| `launcher-silent` | The launcher process is running but has written no line for longer than `--silent-after` (default 5 seconds) before its result |
 
-ランチャーが `result` を出さずに終わったときは、`launcher.running: false` と `exit_code`、`state: ended`、知らせの `no-result` になります。
+- `unauthorized`: `session` is `null`. The connection is then closed with 4401.
+- `invalid-message`: `session` is `null`. Sent only to that connection; the connection stays open.
+- `invalid-watch`, `too-many-watches`: `session` is `null` and `detail.id` holds the watch id. Sent only to that connection; the connection stays open.
+- `launcher-output`: a line that is not a JSON object, has no `event`, or whose `seq` is not an integer from 0 to 2^53. Lines that contain a non-finite number such as `1e999` also go here.
+- `bad-event`: includes a `t_ms` that is not an integer from 0 to 2^53, and a `count` or `sources` value of `log_dropped` that is not a number. The event is discarded (neither relayed nor applied to the summary).
+- `launcher-stderr`: the first 20 lines are sent at once. After that, only the last 30 lines are sent, when the run ends. If lines were dropped in between, one message comes before them (`detail.skipped`: the number of dropped lines).
+- `kept-limit`: `detail.what` is `check`, `result`, `findings`, `participants`, or the kind of an event that exceeded 4 KiB (`phase`, `time`, `registry`, `command`, `participant`). An event that exceeds 4 KiB keeps its required fields ("Limits" below), gets as many of the other fields as fit, and lists the names of the fields that did not fit in `omitted_fields`. Notified once per kind.
+- `launcher-silent`: the launcher writes a `heartbeat` every second, so it may be stuck. Sent once each time it falls silent (`detail.seconds`). While the silence lasts, `launcher.silent_s` in the summary grows; it returns to `null` when the launcher writes again.
 
-## ECU の変数
+## Summary (`session`)
 
-ランチャーが Control Server を持つとき（`api/app` の `variables.available`）、GUI サーバーは実行ごとにその Control Server につなぎ、ECU が宣言した変数を読み書きします。持たないランチャー、gRPC のない GUI サーバー、`--no-variables` では、`variables.state` が `off` で、理由が `reason` にあります。例は `ws-variables.json`（一覧、watch、始まる前の書き込み、ステップ送り、終わり）と `ws-variables-failed.json`（つながらない）です。
+| Field | Contents |
+|---|---|
+| `id` | The run number (from 1 for each server start) |
+| `file`, `disable`, `manual`, `speed`, `start_paused` | What was requested at the start |
+| `started_at`, `ended_at` | Times (UTC, ISO 8601). `ended_at` is `null` until the run ends |
+| `state` | `running` or `ended` |
+| `launcher` | `{pid, running, exit_code, signal, silent_s}` |
+| `stop` | The stop the server asked the launcher for: `none`, `requested` (stop in order), `forced` (stop without waiting) |
+| `phase` | The phase of the last `phase` event (`null` if none yet) |
+| `last_seq`, `last_t_ms` | `seq` and `t_ms` of the last event received |
+| `time` | The last `time` event (as is; `null` if none) |
+| `check` | `check` of the `check` event (the whole check result; `null` if none yet) |
+| `registry` | The last `registry` event without `event`, `seq` and `t_ms` (`null` if none) |
+| `participants` | The current state of each participant (in the order they first appeared) |
+| `participants_omitted` | Number of participant events not kept because the limit (256 participants) was exceeded |
+| `findings`, `findings_omitted` | `finding` events (without `event`, `seq` and `t_ms`), and the number not kept because the limit was exceeded |
+| `last_command` | The last `command` event without `event` and `t_ms` (`null` if none) |
+| `result` | `result` of the `result` event (`null` if none) |
+| `variables` | The state of the ECU variable feature, the variables of each participant, recent operations ("ECU variables" below) |
+| `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
+| `problems`, `problems_omitted` | The server's notifications (`{code, message, detail}`, as in `error`) in the order they happened, and the number not kept because the limit was exceeded |
+| `scenario` | The progress of the scenario run (`scenario` of `api/run`). `null` for a run without a scenario ("Scenarios" below) |
 
-### 状態と一覧（要約の `variables`、`variables` の通知）
+Notes on the fields:
+
+- **What was requested at the start**: `manual` holds only what `api/run` requested (`manual: true` in the configuration file is in `check`). A `speed` of `null` means the configuration file's speed; the current speed is `time.speed`.
+- **`state`**: `ended` means the launcher exited and its output has been read to the end (or cut off with `output-left-open`). In between (up to 2 seconds), `api/session` may show `launcher.running: false` together with `running`.
+- **`launcher`**: `running` tells whether the launcher process is running; it decides whether the run can be stopped. When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
+- **`time`**: virtual time `sim_ms`, current speed `speed`, `paused`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` (older launchers write only `sim_ms`). A screen opened midway learns the current time state from this.
+- **`check`**: includes `required`, `enabled` and `variables` of each participant. `session` notifications to a connection that asked for `session_without_check` lack this field (`hello` and HTTP responses have it).
+- **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, and `ms` of an accepted `step`. `seq` tells a new answer from the same answer as before.
+- **`omitted_fields`**: `time`, `registry`, `last_command` and each element of `participants` have an array `omitted_fields` with the names of the fields that were too large to keep. For a participant, a name disappears when a later event brings that field (example: `ws-large-fields.json`).
+- **`variables`**: present in the `hello` summary and in HTTP responses. **The summary in a `session` notification does not have this field.** It is large and rarely changes, so it comes in a `variables` notification when it changes. On a `session` notification for the same run, the client keeps using its local value. Right after a `session` notification for another run, that run's `variables` notification arrives.
+- **`log`**: dropped lines are the lines the server dropped instead of keeping, and the lines the launcher could not write because its reader was slow (the latter are `sources` of `log_dropped`). A `log_dropped` event is kept at the position where it arrived in the log of each source it names. A screen that reconnects receives it at the same position, and each event is sent only once. The screen shows "N lines dropped here" there.
+
+Each element of `participants` merges, per name, the fields of the `participant` events (without `event`, `seq` and `t_ms`): `name`, `state`, `pid`, `exit_code`, `signal` and others.
+
+- The `reason` of `failed` remains even if `ended` comes later.
+- The launcher's `control_link` events (the state of the connection of the API that reads and writes variables) are merged into that participant's `control_link` field, as an object of the event's fields without `name` (such as `{"state", "variables"}`; `state` keeps the launcher's values) (example: `ws-control-trouble.json`).
+- `required` and `enabled` are in `check`.
+- When a `stop_requested` event arrives for a participant, the server sets `stop_requested: true` on it and keeps it in later states. This tells an exit after a stop request from a failure.
+
+If the launcher exits without writing `result`, the summary has `launcher.running: false` with `exit_code`, `state: ended`, and the notification `no-result`.
+
+## ECU variables
+
+When the launcher has a Control Server (`variables.available` in `api/app`), the GUI server connects to it for each run and reads and writes the variables the ECUs declared. With a launcher without one, a GUI server without gRPC, or `--no-variables`, `variables.state` is `off` and `reason` gives the reason. Examples: `ws-variables.json` (list, watch, write before the start, stepping, end) and `ws-variables-failed.json` (cannot connect).
+
+### State and list (`variables` in the summary, the `variables` notification)
 
 `{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
-| 欄 | 内容 |
+| Field | Contents |
 |---|---|
-| `state` | `off`（この実行に変数はない）、`connecting`（Control Server につなぎに行っている。切れてつなぎ直している間も）、`ready`（読み書きできる）、`failed`（つながらなかった、断られた）、`ended`（実行が終わった。最後に読めた値が残っている）。値は増えることがあります |
-| `reason` | `off`、`connecting`、`failed` の理由（人向けの英語の文。なければ `null`）。`ended` では、実行の終わりより前に接続が切れていたとき（値が終わりのものより古いかもしれない）だけ |
-| `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも）。`connected` は、その ECU がいまつながっているか |
-| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum"}`。`type` は `bool`、`integer`、`real`、`enum`。`role` は `input`（実行中も書ける）、`parameter`（最初のステップの前だけ書ける）、`output`（読むだけ）。`writable` は `role` が `output` でないこと。`min`、`max`、`step`（編集の刻みの目安）、は数か `null`。`enum` は、`type` が `enum` のとき `[{"name", "value"}]`、ほかは `null` |
-| `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
-| `operations` | 操作（下の `operation` から `type` と `session` を除いたもの。サーバーが初めて見た順）。サーバーが覚えている未確定の操作の全部と、最後の 32 件です。途中から開いた画面と、つなぎ直した画面のため |
-| `operations_from_seq` | この番号（`seq`）以上の操作は、全部 `operations` に入っています（0 なら、サーバーが見た操作の全部）。`operations` になく、番号がこれより小さい操作は、確定しています（`operations_open_omitted` が 0 のとき）。その `operation` の通知は、もう届きません |
-| `operations_open_omitted` | サーバーが覚えきれなかった未確定の操作の数（ふつうは 0）。1 以上のとき、`operations` になく `operations_from_seq` より小さい番号の操作は、確定済みとは限りません |
+| `state` | The state of the variable feature (table below). Values may be added |
+| `reason` | The reason for `off`, `connecting` and `failed` (human-readable text, not localized; `null` if none) |
+| `peers` | `[{"name", "connected", "variables": [...]}]`. The participants the Control Server knows (also those without variables) |
+| `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum"}` |
+| `peers_omitted`, `variables_omitted` | Numbers of participants and variables left out because a limit was exceeded |
+| `operations` | Operations (`operation` below without `type` and `session`; in the order the server first saw them) |
+| `operations_from_seq` | Every operation with this number (`seq`) or higher is in `operations` (0 means every operation the server saw) |
+| `operations_open_omitted` | Number of open operations the server could not keep (normally 0) |
 
-結果を待っている操作があるクライアントは、つなぎ直した後の `hello`（か `api/session`）の要約で、次のように見分けます。`operations` にあれば、その状態（未確定なら、後で `operation` の通知が届きます）。なく、番号が `operations_from_seq` 以上なら、まだ届いていないだけです。なく、番号が `operations_from_seq` より小さければ、切れている間に確定していて、結果はもう届きません（`operations_open_omitted` が 1 以上なら、確定したかどうかもわかりません）。ライブラリは、この最後の場合を `no-answer` にします。
+| `state` | Meaning |
+|---|---|
+| `off` | This run has no variables |
+| `connecting` | Trying to connect to the Control Server (also while reconnecting after a disconnection) |
+| `ready` | Variables can be read and written |
+| `failed` | Could not connect, or was refused |
+| `ended` | The run ended. The last values read remain |
 
-participant がつながるたびに一覧が変わるので、`variables` の通知は、短い間の変化をまとめて送ります。
+- For `ended`, `reason` is set only if the connection dropped before the run ended (the values may be older than the end).
+- `peers[].connected` tells whether that ECU is connected now.
+- `type` is `bool`, `integer`, `real` or `enum`.
+- `role` is `input` (writable during the run), `parameter` (writable only before the first step) or `output` (read-only). `writable` means `role` is not `output`.
+- `min`, `max` and `step` (a hint for the editing increment) are numbers or `null`.
+- `enum` is `[{"name", "value"}]` when `type` is `enum`, otherwise `null`.
+- `operations` holds every open operation the server keeps and the last 32 operations. It serves screens opened midway and screens that reconnect.
+- The list changes each time a participant connects, so `variables` notifications collect changes over a short time and send them together.
 
-### 値（`watch`、`unwatch`、`values`）
+A client waiting for the result of an operation tells, from the summary in `hello` (or `api/session`) after reconnecting, what happened:
 
-画面は、認証の後に次を送ります。
+| In `operations`? | Number | State |
+|---|---|---|
+| Yes | | That state. If open, an `operation` notification follows later |
+| No | `operations_from_seq` or higher | It has not arrived yet |
+| No | Below `operations_from_seq` | It completed while disconnected, and its result (the `operation` notification) will not arrive |
 
-- `{"type": "watch", "id": <0 から 2^53 の整数>, "variables": "all" または [{"peer", "name"}, ...], "period_ms": <整数>}`: 変数の値を受け取り始めます。`id` は、その接続の中で watch を名指す番号で、同じ `id` をもう一度送ると置き換えます。`period_ms` は `limits.watch_period_ms_min`（20）から `limits.watch_period_ms_max` まで（省くと下限）。名前で挙げられる変数は `limits.watch_variables`（2000）個まで、接続ごとの watch は `limits.watches`（16）個までです。超えたものと形の違うものは、`error`（`invalid-watch`、`too-many-watches`）で、接続は続きます。**1 通は 256 KiB までで、これを超える 1 通を送ると、サーバーは `error` を返さずに接続を閉じます（閉じるコード 1009）。** 長い名前を多く挙げるときは、送る前に大きさを確かめ、超えるなら `"all"` を頼むか、watch を分けます（ライブラリは `"all"` に替えます）。同じものを送り直すと、また閉じられます。
-- `{"type": "unwatch", "id": <id>}`: やめます（ない `id` は何もしません）。接続が切れると、その接続の watch は全部なくなります（つなぎ直したら送り直します）。
+The last row holds when `operations_open_omitted` is 0. When it is 1 or more, it is not even known whether the operation completed. The library treats this last case as `no-answer`.
 
-watch は実行をまたいで続きます。実行がないとき、変数の状態が `ready` と `ended` のどちらでもないとき、いまの実行にない変数（その分だけ）には、何も届きません。いまの実行にない名前を挙げても誤りではありません（実行の前に watch できます）。
+### Values (`watch`, `unwatch`, `values`)
 
-サーバーは `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <値>}}}}` を送ります。
+After authentication, a screen sends:
 
-- watch の直後に 1 回、その後は `period_ms` ごとに、**前に送ったものから変わったときだけ**（値を読んだステップが進んだ、`sim_ms` か `paused` が変わった）。止まっている間は、値が変わらなければ届きません。実行が始まったとき、変数の状態か一覧が変わったとき（`variables` の通知）、実行が終わったときは、`period_ms` を待たずに送ります。ある実行の `values` は、その実行の `variables` の通知（か `hello`）より後に届きます。
-- `sample_ms` は、その participant の値を読んだステップの仮想時間です。値は、bool は真偽、整数と列挙は数、実数は数で、有限でない実数（NaN、無限大）は `null` です。2^53 を超える整数は、JSON の数として正確でないことがあります。まだ 1 回も値を読んでいない participant は `peers` にありません。
-- **`paused` と `sim_ms` と値は、1 回の読み取りのもの**です。サーバーは、watch している participant の値と仮想時間を、Control Server の 1 回の呼び出し（`GetSnapshot`。[docs/control-api.md](../../docs/control-api.md) の「時刻と値をまとめて読む」）で読み、`paused` はその応答の印（`consistent`）から決めます。
-  - `paused` が `true`: シミュレーションは `sim_ms` で止まっていて、値は、その時刻のものです。`sim_ms` より前に始まったステップの値は全部入っていて、`sim_ms` より後のステップの値は 1 つも入っていません。画面は、これを「止まっている時刻の値」として見せられます。
-  - ちょうど `sim_ms` に始まるステップの値は、入っているかどうか決まりません（止まっている間に、後から届くことがあります）。届いたら、同じ `sim_ms`、`paused` `true` で、値の違う通知がもう 1 回届きます（止まっている間、サーバーが読み直すのは、watch の `period_ms` と約 0.25 秒の長いほうの間隔です。間隔の長い watch では、その分だけ後になります）。入っているかは、participant ごとの `sample_ms` でわかります。
-  - `paused` が `false`: 動いている、終わっている、読む間に進んだ、のどれかで、値は最後の値です。`sim_ms` は、値と一緒に読んだ仮想時間で、値はそれより古くありません（値のほうが新しいことはあります）。まだ読んでいなければ、サーバーが最後に知った仮想時間です（わからなければ `null`）。
-  - この約束の前提と限り（Control Server のもの）: ECU が値をステップの中から送っているかぎりです（`ecu_main` で作った ECU はそうします。破れると、ランチャーが警告 `control-link-late-values` を出し、`true` でも値が欠けていることがあります）。「ステップの値」は、その時刻より前に ECU が読んだ最後の値です。実時間で動く participant（シミュレーションの時刻で動かないもの）の値には約束がなく、`paused` はその値を見ずに決まります。切れた participant の値は、最後の値のままです（`variables` の `connected` で見ます）。
-  - 1 つの watch の participant を別々の呼び出しで読んだとき（間隔の違う watch が同じ participant を見ているとき）は、どの participant も同じ時刻で止まっていると読めていて、その後のどの読み取りもその時刻で止まっていたときだけ `true` です。
-  - `api/time` で再開かステップ送りを送ると、サーバーは、それまでに読んだ値を「止まっている時刻の値」と扱うのをやめ、watch の次の間隔で読み直した結果で決め直します。通知が届くのは、その間隔で、前に送ったものと変わったときです（ランチャーがまだ命令を受け取っていなければ、同じ時刻で止まったままと読めるので、`false` の通知は届きません）。
-  - ほかのクライアントが Control Server に直接再開やステップ送りを頼んだときは、サーバーが次に読むか、時刻の知らせ（Control Server から約 0.1 秒ごと）で、止まっていた時刻より進んだ・終わったとわかるまで、止まっていた時刻の値が最後の通知のままです。わかった後は、値を読めなくても、watch の次の間隔で `false` の通知が届きます。
-  - watch している participant の値が、Control Server の 1 つの応答の上限（4 MiB）に入らないときは、入らなかった呼び出しの participant を半分ずつに分けて読みます（サーバーのログに警告を出します）。分けて読んでも、どの呼び出しも同じ時刻で止まっていると答えれば `true` です。1 つの participant の値だけで上限を超えるときは、その値を読みません（ログに警告。その participant が別のプロセスに替わるか、変数が変わるまで）。その participant を含む watch の `paused` は `false` のままです。
-  - 値を読めないこと（Control Server が期限までに答えない、など）が 3 回続くと、変数の状態は `ready` のまま、`reason` に理由が入った `variables` の通知が届きます（値は最後に読めたもの）。読めるようになると、`reason` は `null` に戻ります。
-  - 最初のステップの前で止まっている間（`start_paused`）は、`sim_ms` 0、`paused` `true` で、`peers` は空です。
-- 値は「最後の値」です。全部の値の列ではありません（速いシミュレーションでは、間のステップの値は届きません）。サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます。履歴はサーバーが持たないので、要る画面が自分で持ちます。
-- 実行が終わると、状態は `ended` になり、最後に読めた値が 1 回届きます（`paused` は `false`）。終わった後に始めた watch にも 1 回届きます。
+- `{"type": "watch", "id": <integer from 0 to 2^53>, "variables": "all" or [{"peer", "name"}, ...], "period_ms": <integer>}`: starts receiving the values of variables.
+- `{"type": "unwatch", "id": <id>}`: stops (an unknown `id` does nothing).
 
-### 書き込み（`api/write`、`operation`）
+| `watch` field | Contents |
+|---|---|
+| `id` | The number of the watch within the connection. Sending the same `id` again replaces it |
+| `variables` | `"all"` or the variables by name. Up to `limits.watch_variables` (2000) names |
+| `period_ms` | From `limits.watch_period_ms_min` (20) to `limits.watch_period_ms_max` (if omitted, the minimum) |
 
-`POST api/write` `{"session": <実行の id>, "writes": {"<peer>": {"<name>": <値>}}, "at_ms": <整数>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+- Each connection can have up to `limits.watches` (16) watches. Watches beyond that, and watches of the wrong shape, get an `error` (`invalid-watch`, `too-many-watches`); the connection stays open.
+- **A message can be up to 256 KiB. If a screen sends a larger message, the server closes the connection without an `error` (close code 1009).** If you list many long names, check the size before sending; if it is too large, ask for `"all"` or split the watch (the library switches to `"all"`). Sending the same message again gets the connection closed again.
+- When the connection drops, all its watches are gone (send them again after reconnecting).
+- A watch continues across runs. Nothing arrives while there is no run, while the variable state is neither `ready` nor `ended`, or for variables the current run does not have (only for those). Naming a variable the current run does not have is not an error (you can watch before the run).
 
-- `session`（必須）は、書き込みを向ける実行の id（要約の `id`）です。動いている実行の id と違えば、409 `session-changed` で断り、何も書きません。ある実行を見ながら送った書き込みが、その実行が終わって次が始まった後に届いても、次の実行に書かれないようにするためです。断られたら、いまの実行の変数を見てから書き直します。
-- `writes` の値は、変数の型に合わせます: `bool` は `true` / `false`、`integer` は整数（整数値の実数も可）、`real` は有限の数、`enum` は項目の値（数）か項目の名前（文字列）。`min` と `max` があれば、その範囲（両端を含む）。サーバーは、変数の一覧と照らして、合わないものを 400 で断ります（`invalid-field`、`unknown-variable`、`not-writable`。1 つでも合わなければ、全部を送りません）。1 回の要求は `limits.writes_per_request`（256）個までです。
-- `at_ms` は、反映する仮想時刻（0 から `limits.write_at_ms_max`）で、その時刻以後に始まる最初のステップで反映されます。省くと次のステップです。`late` は、届いたときにその時刻のステップがもう走っていたときの扱いで、`reject`（既定。反映せず、結果が `late`）か `apply`（次のステップで反映し、結果の `late` が `true`）です。
-- 1 回の要求の書き込みは、participant ごとに、同じステップでまとめて反映されます。要求は届いた順にランチャーへ渡します（1 つずつ）。
-- 最初のステップの前で止まっている間（`start_paused`）に書いたものは、時刻 0 のステップで反映されます（`parameter` も書けます）。一時停止してから書くときは、`at_ms` を止まっている時刻より後にします（その時刻のステップは、もう走った ECU があるため。ランチャーの決まり: [docs/control-api.md](../../docs/control-api.md)）。止まっている時刻そのもの（か、それより前）を指定した書き込みは、いったん `queued` になり、ECU の次のステップで `late` に確定します（`late: "apply"` なら、そのステップで反映されます）。
-- 応答は、ランチャーが操作を受け取ったところで返ります（番号だけ）。反映されたかは、`operation` の通知で届きます。応答より先に `operation` が届くことがあります。
+The server sends `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <value>}}}}`.
+
+**When values arrive**
+
+- Once right after the watch, then every `period_ms`, **only when something changed since the last one sent** (the step at which values were read advanced, or `sim_ms` or `paused` changed). While paused, nothing arrives unless a value changes.
+- When a run starts, when the variable state or list changes (the `variables` notification), and when a run ends, values are sent without waiting for `period_ms`.
+- The `values` of a run arrive after that run's `variables` notification (or `hello`).
+- When a run ends, the state becomes `ended` and the last values read arrive once (`paused` is `false`). A watch started after the end also receives them once.
+
+**Shape of the values**
+
+- `sample_ms` is the virtual time of the step in which that participant's values were read.
+- Values: bool as a boolean, integers and enums as numbers, reals as numbers; non-finite reals (NaN, infinity) are `null`. Integers above 2^53 may not be exact as JSON numbers.
+- A participant whose values have never been read is not in `peers`.
+- Values are "the last values", not the full series (in a fast simulation, the values of the steps in between do not arrive). The server reads from the launcher only the values of watched participants, at the requested rate. The server keeps no history; a screen that needs one keeps it.
+
+**`paused` and `sim_ms`**
+
+`paused`, `sim_ms` and the values come from **a single read**. The server reads the values and virtual time of the watched participants with one call to the Control Server (`GetSnapshot`; see "Read time and values together (`snapshot()`)" in [docs/control-api.md](../../docs/control-api.md#read-time-and-values-together-snapshot)) and sets `paused` from the flag in that response (`consistent`).
+
+| `paused` | Simulation | Values | `sim_ms` |
+|---|---|---|---|
+| `true` | Paused at `sim_ms` | The values at that time. A screen can show them as "the values at the paused time" | The paused time |
+| `false` | Running, ended, or advanced during the read | The last values | The virtual time read together with the values |
+
+- When `true`, the values of every step that started before `sim_ms` are included, and no value of a step after `sim_ms` is.
+- When `false`, the values are not older than `sim_ms` (they may be newer). If nothing has been read yet, `sim_ms` is the last virtual time the server knows (`null` if unknown).
+- While paused before the first step (`start_paused`), `sim_ms` is 0, `paused` is `true`, and `peers` is empty.
+
+Whether the values of a step that starts exactly at `sim_ms` are included is not defined (they may arrive later while paused). If they arrive, another notification comes with the same `sim_ms`, `paused` `true`, and different values. While paused, the server reads again at the longer of the watch's `period_ms` and about 0.25 seconds. For a watch with a long period, this comes correspondingly later. The per-participant `sample_ms` tells whether they are included.
+
+When `paused` becomes `true`, and when it changes back to `false`:
+
+- **Assumption (from the Control Server)**: this holds as long as the ECU sends its values from within its steps. ECUs built with `ecu_main` do. If the assumption breaks, the launcher issues the warning `control-link-late-values`, and values may be missing even when `true`.
+- "The values of a step" are the last values the ECU read before that time.
+- There is no guarantee for the values of a participant that runs in real time (not on simulation time); `paused` is decided without looking at its values.
+- The values of a disconnected participant stay at their last values (see `connected` in `variables`).
+- **Read with separate calls**: when the participants of one watch are read with separate calls (because watches with different periods look at the same participant), `paused` is `true` only if every participant was read as paused at the same time and every later read was paused at that time too.
+- **When resume or step was sent with `api/time`**: the server stops treating the values read so far as "the values at the paused time", and decides again from what it reads at the watch's next period. A notification arrives at that period if something changed since the last one sent. If the launcher has not yet received the command, the read still shows it paused at the same time, so no `false` notification arrives.
+- **When another client asked the Control Server directly to resume or step**: the values at the paused time stay as the last notification until the server learns that time has moved past the paused time or the run has ended, either by its next read or from a time notification (from the Control Server about every 0.1 seconds). Once it learns that, a `false` notification arrives at the watch's next period, even if the values cannot be read.
+
+When reading does not go well:
+
+- **The response does not fit the limit**: if the values of the watched participants do not fit the limit of one Control Server response (4 MiB), the server splits the participants of the call that did not fit into halves and reads them separately (with a warning in the server log). If every call answers that it is paused at the same time, `paused` is still `true`.
+- **One participant exceeds the limit**: if the values of one participant alone exceed the limit, the server does not read them (warning in the log; until that participant is replaced by another process or its variables change). `paused` stays `false` for watches that include that participant.
+- **Reads keep failing**: if reading values fails 3 times in a row (the Control Server does not answer before its deadline, for example), a `variables` notification arrives with the state still `ready` and the reason in `reason` (the values are the last ones read). When reading works again, `reason` returns to `null`.
+
+### Writes (`api/write`, `operation`)
+
+`POST api/write` `{"session": <run id>, "writes": {"<peer>": {"<name>": <value>}}, "at_ms": <integer>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+
+| Field | Contents |
+|---|---|
+| `session` (required) | The id of the run to write to (`id` of the summary) |
+| `writes` | Values that match the variables' types. Up to `limits.writes_per_request` (256) per request |
+| `at_ms` | The virtual time to apply at (0 to `limits.write_at_ms_max`). If omitted, the next step |
+| `late` | What to do if the step for that time has already run when the write arrives: `reject` (default) or `apply` |
+
+- **`session`**: if it differs from the id of the running run, the server rejects the request with 409 `session-changed` and writes nothing. This keeps a write made while looking at one run from being written to the next run if it arrives after the first run ended and the next started. When rejected, look at the variables of the current run before writing again.
+- **Values in `writes`**: `bool` is `true` / `false`; `integer` an integer (a real with an integral value is accepted); `real` a finite number; `enum` the value of an item (a number) or its name (a string). If `min` and `max` exist, the value must be within them (inclusive).
+- The server checks the writes against the variable list and rejects any that do not fit with 400 (`invalid-field`, `unknown-variable`, `not-writable`). If even one does not fit, none is sent.
+- **`at_ms`**: the write is applied in the first step that starts at or after that time.
+- **`late`**: with `reject`, the write is not applied and the result is `late`. With `apply`, it is applied in the next step and `late` in the result is `true`.
+- The writes of one request are applied together, per participant, in the same step. Requests are passed to the launcher in the order they arrive (one at a time).
+- The response returns when the launcher has received the operation (only its number). Whether it was applied arrives in an `operation` notification. The `operation` may arrive before the response.
+
+Writes while paused:
+
+- Writes made while paused before the first step (`start_paused`) are applied in the step at time 0 (`parameter` can be written too).
+- To write after pausing, set `at_ms` later than the paused time. Some ECUs have already run the step at that time (a launcher rule: [docs/control-api.md](../../docs/control-api.md)).
+- A write for the paused time itself (or earlier) becomes `queued` first and ends as `late` at the ECU's next step (with `late: "apply"`, it is applied in that step).
 
 `{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason"}}}`
 
-- participant ごとの `state`: 途中は `sent`（ランチャーが ECU へ送った）、`queued`（ECU が受け取った）、`disconnected`。確定は `applied`（`applied_at_ms` のステップで反映した）、`late`、`rejected`（ECU の setter が失敗した）、`cancelled`（反映の前にシミュレーションが終わった）、`invalid`（ECU が断った: 最初のステップの後の `parameter` など。`reason` に理由）、`busy`、`unknown`（反映されたかわからない）。
-- 全体の `state`: 途中は `sent`（まだ受け取っていない ECU がある）か `queued`。確定（`done` が `true`）したら、全部の participant が同じならその状態、違えば `mixed` です。確定した操作は変わりません。
-- 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。受け取りの遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（未確定の操作と、最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません（どれがそうかは、要約の `operations_from_seq` でわかります）。
-- 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったとき（要約の `operations_open_omitted`）も、その操作の変化が届けば `operation` で送り、確定しないまま実行が終われば、終わりに `unknown` を送ります（そのときは `peers` が空です）。実行が終わるのと同時にランチャーが受け取った書き込みは、応答で番号を返し、`unknown` で確定させて送ります。
-- GUI サーバーと Control Server の接続が切れている間に確定した操作と、Control Server が GUI サーバーへ送りきれなかった変化は、つながり直したとき（送りきれなかったと知ったとき）に読み直して送ります。
+The per-participant `state`:
 
-## シナリオ
+| `state` | Final? | Meaning |
+|---|---|---|
+| `sent` | No | The launcher sent it to the ECU |
+| `queued` | No | The ECU received it |
+| `disconnected` | No | |
+| `applied` | Yes | Applied in the step at `applied_at_ms` |
+| `late` | Yes | |
+| `rejected` | Yes | The ECU's setter failed |
+| `cancelled` | Yes | The simulation ended before it was applied |
+| `invalid` | Yes | The ECU refused it: a `parameter` after the first step, for example (the reason is in `reason`) |
+| `busy` | Yes | |
+| `unknown` | Yes | Unknown whether it was applied |
 
-ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/scenario.md)）を、画面から使う口です。ランチャーの `features` に `scenario` があるときだけ使えます。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
+- The overall `state`: while in progress, `sent` (some ECU has not received it yet) or `queued`. Once final (`done` is `true`), it is the participants' state if they all agree, otherwise `mixed`. A final operation does not change.
+- Each time the state changes, the server sends it to every connection (operations that other clients wrote directly to the Control Server arrive too).
+- `operation` is never dropped, even for a slow connection. But if that connection's queue overflows and a `resync` (sending everything again from `hello`) happens, only the operations in `operations` of the summary (the open ones and the last 32) arrive again. Results of operations that completed before that do not reach that connection (`operations_from_seq` of the summary tells which).
+- An operation that has not completed by the end of the run is completed by the server as `unknown` (`reason`: `the run ended before the result came`) and sent.
+- When there are more than 256 open operations and the server could not keep the old ones (`operations_open_omitted` in the summary), a change to such an operation is still sent as `operation` if it arrives. If the run ends without the operation completing, `unknown` is sent at the end (with empty `peers`).
+- A write that the launcher received at the moment the run ended gets its number in the response and is completed and sent as `unknown`.
+- Operations that completed while the connection between the GUI server and the Control Server was down, and changes the Control Server could not deliver to the GUI server, are read again and sent on reconnection (or when the server learns that delivery failed).
 
-- `GET api/scenarios?file=<構成ファイル>`: 構成ファイルの隣のディレクトリ `scenarios` の `.yaml` と `.yml`（名前の順。200 個まで）。`directory` はそのディレクトリ（root からの相対）、`found` はあるか、`scenarios` は `[{path, name, size}]`（`path` は root からの相対）。`file` は `api/check` と同じ検査を通ります。挙げないもの: `.` で始まる名前、サブディレクトリ、通常のファイルでないもの（シンボリックリンクを含む）、`:` や `\` を含む名前、255 文字を超える名前。`scenarios` か、その上のディレクトリ（root の下）がシンボリックリンクなら、`found` は `false` です。
-- `api/check` と `api/run` の `scenario`: 省くか `null` なら、なし。値は、その構成ファイルの `api/scenarios` の `path` のどれかだけで（サーバーが一覧を作り直して確かめます）、ほかは 400 `scenario-not-listed` です。サーバーは、それをランチャーに `--scenario` で渡します（ランチャーは root で動くので、root からの相対のまま。`-` で始まるものは `./` を付けます）。`api/check` の応答の `scenario` は、渡したシナリオです。
-- シナリオを回す実行は、止めた状態では始められません（`start_paused: true` は 400 `invalid-field`）。ランチャーの `features` に `scenario-control` があれば、変数を読めます（`--control` を付けます。書き込みはランチャーも断ります）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` がそう言います。どちらでも、シナリオの実行中の `api/write` は、サーバーが 409 `scenario-running` で断ります。時刻の命令（`api/time`）と停止は、ふつうの実行と同じです（ランチャーの標準入力に書くので、Control Server がシナリオの実行中にクライアントに断る `Pause`、`Step`、`SetSpeed` などとは別で、ランチャーは受け付けます）。
-- 事象 `scenario_step`（手順が始まった `running` と、決まったとき）は、ランチャーが書いたまま届きます（`index` が 1 以上の整数、`status` が文字列でないものは `bad-event`）。手順の所見（`scenario-failed` など）は、シナリオの `file` と `line` を持つ `finding` です。
-- 要約の `scenario`: `{file, name, step_count, steps, steps_omitted, status, over_at_ms}`。`file` は渡したシナリオ、`name` と `step_count` は照合の結果の `scenario` から、`steps` は届いた手順（`index` の順。手順ごとに最後の状態。`steps[]` の欄は事象と同じ。`text` と `message` は 1000 文字で切る。1000 手順まで、超えた数は `steps_omitted`）、`status` と `over_at_ms` は結果の `scenario` から（結果が来るまで `null`）。結果が来たら、`steps` は結果の手順（`not_run` を含む）になります。途中から開いた画面も、これで手順の表を作れます。
-- シナリオで止まった実行の結果の `simulation` は `ended` です（結果の `scenario` があることで、participant が止めた `ended` と区別します）。
+## Scenarios
 
-## 操作の記録（`api/recording`）
+The API for using the launcher's `run --scenario` and `check --scenario` ([docs/scenario.md](../../docs/scenario.md)) from a screen. Available only when the launcher's `features` have `scenario`. Examples: `scenarios.json`, `check-scenario.json`, `ws-scenario.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`.
 
-GUI サーバーは、実行ごとに、自分を通した書き込み（`api/write`。つないでいるどの画面からのものも、`api/write` を使う道具からのものも）のうち、反映されたもの（participant ごとの `operation` の `applied` と `applied_at_ms`）を覚えます。`GET api/recording` は、それをシナリオの YAML にして返します（いまの実行か、終わった直後の実行。次の実行を始めるまで）。**サーバーはファイルを書きません**。画面がブラウザの保存として渡し、置き場所は利用者が決めます。例は `recording.json` です。
+### Scenario list (`api/scenarios`)
+
+`GET api/scenarios?file=<configuration file>` returns the `.yaml` and `.yml` files in the directory `scenarios` next to the configuration file (sorted by name; up to 200). `file` goes through the same checks as for `api/check`.
+
+| Field | Contents |
+|---|---|
+| `directory` | That directory (relative to the root) |
+| `found` | Whether the directory exists |
+| `scenarios` | `[{path, name, size}]` (`path` relative to the root) |
+
+- Not listed: names that start with `.`, subdirectories, anything that is not a regular file (including symbolic links), names that contain `:` or `\`, names longer than 255 characters.
+- If `scenarios` or a directory above it (under the root) is a symbolic link, `found` is `false`.
+
+### `scenario` in check and run
+
+If `scenario` of `api/check` and `api/run` is omitted or `null`, there is no scenario.
+
+- The value must be one of the `path`s that `api/scenarios` returns for that configuration file (the server builds the list again to check). Anything else gives 400 `scenario-not-listed`.
+- The server passes it to the launcher with `--scenario`. The launcher runs in the root, so the path stays relative to the root (one that starts with `-` gets `./` in front).
+- `scenario` in the `api/check` response is the scenario that was passed.
+
+What you can do while a scenario runs:
+
+| Action | Handling |
+|---|---|
+| Start paused (`start_paused: true`) | 400 `invalid-field` |
+| Read variables | Possible if the launcher's `features` have `scenario-control` |
+| `api/write` | Rejected with 409 `scenario-running` |
+| Time commands (`api/time`) and stop | Same as for a normal run |
+
+- With `scenario-control`, the server adds `--control` (the launcher also rejects writes). Without it, the server does not add `--control`, the variable state is `off`, and `reason` gives the reason.
+- Time commands and stop are written to the launcher's stdin. This is separate from `Pause`, `Step`, `SetSpeed` and the other calls that the Control Server refuses from clients while a scenario runs; the launcher accepts them.
+
+### Scenario events and summary
+
+- `scenario_step` events (`running` when a step starts, and when its result is decided) arrive as the launcher wrote them (one whose `index` is not an integer of 1 or more, or whose `status` is not a string, is a `bad-event`).
+- Step findings (`scenario-failed` and others) are `finding`s that have the scenario's `file` and `line`.
+- The `simulation` of the result of a run stopped by a scenario is `ended` (the presence of `scenario` in the result tells it from an `ended` caused by a participant).
+
+`scenario` of the summary is `{file, name, step_count, steps, steps_omitted, status, over_at_ms}`. A screen opened midway can build the step table from it.
+
+| Field | Contents |
+|---|---|
+| `file` | The scenario that was passed |
+| `name`, `step_count` | From `scenario` of the check result |
+| `steps` | The steps that have arrived (in `index` order; the last state of each step) |
+| `steps_omitted` | Number of steps beyond 1000 |
+| `status`, `over_at_ms` | From `scenario` of the result (`null` until the result arrives) |
+
+- The fields of `steps[]` are the same as in the event. `text` and `message` are cut at 1000 characters.
+- Once the result arrives, `steps` becomes the steps of the result (including `not_run`).
+
+## Recording actions (`api/recording`)
+
+For each run, the GUI server keeps the writes made through it (`api/write`) that were applied (`applied` and `applied_at_ms` of each participant's `operation`). This covers writes from every connected screen and from tools that use `api/write`. `GET api/recording` returns them as scenario YAML (for the current run, or for the run that ended last, until the next run starts). **The server writes no file.** The screen hands the YAML to the browser to save, and the browser decides where. Example: `recording.json`.
 
 `{"recording": {"session_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
 
-- `available`: この実行で覚えているか（変数のない実行と、シナリオの実行では `false`。`reason` が理由）。`yaml` が `null` のときは、`reason` がその理由（まだ反映された書き込みがない、など）です。
-- `writes` は YAML に入れた値の数、`steps` は手順（`set`）の数、`omitted` は入れなかった値の数です。入れなかった理由は YAML の先頭のコメントに書きます（上限の 2000 個を超えた、participant の名前に `.` がある（シナリオでは最初の `.` までが participant の名前なので、名指せない））。
-- YAML の先頭のコメントは、何を記録したか、シナリオが最後の手順の時刻で終わること（ランチャーはそこでシミュレーションを止めます。記録した実行がそれより先まで走っていれば、その時刻も）、最後の手順の後も走らせたいときに足す手順の例（`expect` と `hold_for_ms`）を言います。
-- YAML は `vehicle_sil_scenario: 1`、`name`、`steps` で、手順は `at_ms`（反映したステップの仮想時刻）と `set` だけです。同じ時刻に反映された値は 1 つの `set` にまとめ、同じ変数の 2 つ目はその時刻の最後の値にします。変数は `<participant>.<変数名>`、列挙は項目の名前（いつも引用符つき。名前が 1 つに決まらなければ値）です。
-- 書き方: 変数の名前は、英字か `_` で始まり、英数字、`_`、`-`、`.` だけで `.` を含むときだけ引用符なし、ほかは二重引用符で、印字できる ASCII 以外の文字（改行、タブ、BOM、制御文字、ASCII でない文字）は `\uXXXX`（と `\UXXXXXXXX`）でエスケープします（`\xNN` は使いません。ランチャーの YAML の読み方は、`\xNN` を文字 U+00NN でなく 1 バイトとして読むため）。実数はいつも `.` を含めて書きます（`1.0`、`1.0e+20`。YAML 1.1 と 1.2 のどちらでも数として読める）。有限でない数は書きません。
-- 入れないもの: 時刻の操作（一時停止、ステップ送り）、反映されなかった書き込み（`late`、`rejected` など）、GUI サーバーを通さずに Control Server に直接書いたもの、期待する値（`expect`）。書き込んだ画面や道具の区別は持ちません（1 つの実行の全部の書き込みが 1 つのシナリオになります）。書き出した後で、エディターで足します。
+| Field | Contents |
+|---|---|
+| `available` | Whether this run is recorded (`false` for a run without variables and for a scenario run; `reason` gives the reason) |
+| `reason` | Why `available` is `false`, or why `yaml` is `null` (no applied writes yet, for example) |
+| `writes` | Number of values in the YAML |
+| `steps` | Number of steps (`set`) |
+| `omitted` | Number of values left out |
+| `yaml` | The scenario YAML (`null` if none) |
 
-## ダッシュボードのファイル
+- The comments at the top of the YAML give the reasons for values left out: either the limit of 2000 values was exceeded, or the participant name contains `.`. In a scenario, everything up to the first `.` is the participant name, so a participant whose name contains `.` cannot be addressed.
+- The comments at the top of the YAML also say what was recorded, that the scenario ends at the time of its last step, and give an example step (`expect` and `hold_for_ms`) to add if you want the run to continue after the last step. The launcher stops the simulation at the time of the last step. If the recorded run went further, the comments give that time too.
+- The YAML has `vehicle_sil_scenario: 1`, `name` and `steps`; each step has only `at_ms` (the virtual time of the step it was applied in) and `set`. Values applied at the same time go into one `set`; for a second write of the same variable, the last value at that time is kept.
+- Variables are written `<participant>.<variable name>`; enums as the item name (always quoted; the value if the name is ambiguous).
 
-`GET api/dashboard?file=<構成ファイル>` は、構成ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確かめて JSON で返します（書き方は [docs/gui.md](../../docs/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
+How the YAML is written:
 
-- `path`: ダッシュボードのファイル（root からの相対）。`found`: あるか。ないのは誤りではありません（画面は変数を自動で並べます）。
-- `errors`: 誤りの並び（`line` と `column` は 1 から、`at` はデータの中の場所 `sections[0].items[2].widget`、`message` は直し方を含む英語の 1 文）。1 つでもあれば `dashboard` は `null` です。最大 50 個。
-- `dashboard`: `{title, panels, sections}`。`panels` は `[{module, url}]`（`url` は画面の base からの相対で、モジュールを読み込む先。パスの部分ごとにパーセントエンコードしてある）。`sections` は `[{title, collapsed, items}]`、`items` はどれか 1 つの形: `{variable: {peer, name}, widget, label, options}`（`widget` と `label` は省けば `null`）、`{panel, label, options, variables: [{peer, name}]}`、`{auto}`。読む側は、知らない形の項目を読み飛ばします。
-- 変数があるか、部品が変数に合うかは、サーバーは確かめません（画面が、いまの変数の一覧で確かめます）。
-- 読み方の上限: 256 KiB、入れ子 16 段、値 50000 個、まとまり 200 個、項目は全部で 2000 個、パネルのモジュール 16 個、1 つの値（文字列、数）1024 文字。`widget` は名前の形（小文字の英字で始まる）だけを確かめ、どの部品があるかは画面が確かめます。YAML の別名（`*name`）、2 つ目の文書、YAML の型のタグ（`!!python/...` など）は誤りです。シンボリックリンクで root の外を指すファイルは読みません。
+- A variable name is unquoted only if it starts with a letter or `_`, contains only letters, digits, `_`, `-` and `.`, and contains a `.`; otherwise it is in double quotes.
+- Characters other than printable ASCII (newline, tab, BOM, control characters, non-ASCII characters) are escaped as `\uXXXX` (and `\UXXXXXXXX`). `\xNN` is not used, because the launcher's YAML reader reads `\xNN` as one byte, not as the character U+00NN.
+- Reals always contain `.` (`1.0`, `1.0e+20`; read as numbers by both YAML 1.1 and 1.2). Non-finite numbers are not written.
 
-**パネルのモジュール**: `GET panels/<key>/<root からの相対パス>` が、持ち込みのパネルの ES モジュールを `text/javascript`（`X-Content-Type-Options: nosniff`、ほかの応答と同じ CSP、`Cache-Control: no-store`）で返します。`<key>` は起動ごとの乱数で、`api/dashboard` の `url` にだけ入っています（ブラウザはモジュールの import にヘッダーを付けられないので、トークンの代わりに URL に入れます。トークンとは別の値で、知っていてもパネルのモジュールを読めるだけです）。返すのは、root の下の `panels` という名前のディレクトリ（どの場所のものでも。`panels` とその上のディレクトリがシンボリックリンクでないもの）の中の `.js` / `.mjs` の通常のファイル（1 MiB まで。リンクをたどった先も、その `panels` の中）だけで、`.` で始まる名前、`..`、`\`、`:`、NUL を含むパスと、`<key>` の違う要求は 404 です。`Host` と `Origin` の検査はほかと同じです。
+Not in the YAML. Add what you need in an editor after saving:
 
-## 上限
+- Time control (pause, step).
+- Writes that were not applied (`late`, `rejected` and others).
+- Writes made directly to the Control Server, not through the GUI server.
+- Expected values (`expect`).
+- Which screen or tool made a write (all writes of one run go into one scenario).
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`reason`、`stop_requested`、`control_link`、`phase` の段階の名前、`time` の `sim_ms`、`speed`、`paused`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`、`registry` の `uri`、`command` の `seq`、`command`、`accepted`、`ms`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。 ECU の変数: 一覧は participant 256 人、変数は全部で 10000 個まで（超えた分は `peers_omitted`、`variables_omitted` に数える。名前が 256 文字を超えるもの、列挙の項目が 256 個を超えるもの、知らない型のものも入れない）。単位、説明、列挙の項目の名前は 256 文字、理由の文は 500 文字で切ります。値は participant ごとに最後の 1 組だけ。操作は 256 件まで覚え（確定したものから忘れる）、要約には、覚えている未確定の操作の全部と最後の 32 件。watch は接続ごとに 16 個、名前で挙げる変数は 1 つに 2000 個、間隔は 20 ms から 60 秒。`api/write` は 1 回に 256 個、順番を待つ要求は 32 個まで（超えたら 503 `write-busy`）、Control Server の答えを待つのは 5 秒まで。画面が送る WebSocket のメッセージは 256 KiB まで。値を読むのにかける時間は、長くても全体の半分で、読み取りは 1 つずつです（1 回の呼び出しで、間隔の来た watch の participant をまとめて読みます。応答の上限に入らず分けたときだけ、1 回の読み取りで複数の呼び出しを同時に出します。読むのが遅いときは、頼まれたより遅くなります）。Control Server が、つないでから 10 秒たっても今の状態を送らなければ、つなぎ直します。
+## Dashboard files
+
+`GET api/dashboard?file=<configuration file>` reads `<name without extension>.dashboard.yaml` next to the configuration file, checks its shape, and returns it as JSON (for how to write it, see "Dashboard files" in [docs/gui.md](../../docs/gui.md#dashboard-files); the JSON Schema is [dashboard.schema.json](dashboard.schema.json)). It works without a run.
+
+| Field | Contents |
+|---|---|
+| `path` | The dashboard file (relative to the root) |
+| `found` | Whether the file exists. A missing file is not an error (the screen lays out the variables automatically) |
+| `errors` | The errors (up to 50). If there is any, `dashboard` is `null` |
+| `dashboard` | `{title, panels, sections}` |
+
+- `errors[]`: `line` and `column` count from 1, `at` is the location in the data (`sections[0].items[2].widget`), and `message` is a sentence, not localized, that includes how to fix the problem.
+- `panels` is `[{module, url}]`. `url` is relative to the screen's base and is where the module is loaded from (each path segment is percent-encoded).
+- `sections` is `[{title, collapsed, items}]`.
+- Each element of `items` has one of these shapes. A reader skips items of unknown shape.
+  - `{variable: {peer, name}, widget, label, options}` (`widget` and `label` are `null` if omitted)
+  - `{panel, label, options, variables: [{peer, name}]}`
+  - `{auto}`
+- The server does not check whether a variable exists or whether a widget fits it (the screen checks against the current variable list).
+- For `widget`, the server checks only the form of the name (starts with a lower-case letter); the screen checks which widgets exist.
+- YAML aliases (`*name`), a second document and YAML type tags (`!!python/...` and others) are errors. A file that is a symbolic link out of the root is not read.
+
+| What is read | Limit |
+|---|---|
+| File size | 256 KiB |
+| Nesting | 16 levels |
+| Values | 50000 |
+| Sections | 200 |
+| Items (in total) | 2000 |
+| Panel modules | 16 |
+| One value (string, number) | 1024 characters |
+
+### Panel modules
+
+`GET panels/<key>/<path relative to the root>` returns the ES module of a custom panel as `text/javascript` (with `X-Content-Type-Options: nosniff`, the same CSP as other responses, and `Cache-Control: no-store`).
+
+- `<key>` is a random value created at each start, and appears only in `url` of `api/dashboard`. A browser cannot add headers to a module import, so the key goes in the URL in place of the token. It is a different value from the token; knowing it lets you read panel modules and nothing else.
+- Only regular `.js` / `.mjs` files in a directory named `panels` under the root are returned (up to 1 MiB; a link must also resolve into that `panels`). `panels` may be anywhere under the root, as long as neither `panels` nor a directory above it is a symbolic link.
+- Paths with names that start with `.`, or that contain `..`, `\`, `:` or NUL, and requests with a wrong `<key>` get 404.
+- The `Host` and `Origin` checks are the same as elsewhere.
+
+## Limits
+
+What the server keeps is limited; whatever exceeds a limit is counted and reported.
+
+### Log limits
+
+| What | Limit | When exceeded |
+|---|---|---|
+| Log per source | The last 2000 lines and 1 MiB | Drops old lines and counts them |
+| Number of sources | 64 | Later sources share `*` |
+| Whole log | 16 MiB | |
+| One log line | 64 KiB | Not kept (still relayed) |
+
+### Summary limits
+
+| What | Limit | When exceeded |
+|---|---|---|
+| `check` | 4 MiB | `null` |
+| `result` | 4 MiB | Only short, non-nested fields (example: `ws-kept-limit.json`) |
+| `findings` | 1000 and 1 MiB | Counted in `findings_omitted` |
+| `participants` | 256 participants, 4 KiB each | Counted in `participants_omitted` |
+| `phase`, `time`, `registry`, `command` | 4 KiB each | Required fields are kept |
+| Unknown events | Not kept | Only relayed (screens that reconnect do not receive them) |
+
+Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is not kept.
+
+| What | Required fields |
+|---|---|
+| participant | `name`, `state`, `pid`, `exit_code`, `signal`, `reason`, `stop_requested`, `control_link` |
+| `phase` | The phase name |
+| `time` | `sim_ms`, `speed`, `paused`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
+| `registry` | `uri` |
+| `command` | `seq`, `command`, `accepted`, `ms` |
+
+### `problems`
+
+| What | Limit |
+|---|---|
+| Written by the launcher (except stderr) | 100 |
+| The server's own notifications (`kept-limit`, `no-result`, `output-left-open`, `stop-not-delivered`, `stop-escalated`, `launcher-silent`) | 50 more |
+| Stderr | The first 20 lines and the last 30 lines, in addition |
+
+### ECU variable limits
+
+| What | Limit | When exceeded |
+|---|---|---|
+| Participants in the list | 256 | Counted in `peers_omitted` |
+| Variables in the list (in total) | 10000 | Counted in `variables_omitted` |
+| Variable name | 256 characters | Not listed |
+| Enum items | 256 | Not listed |
+| Variables of an unknown type | | Not listed |
+| Unit, description, enum item name | 256 characters | Cut |
+| Reason text | 500 characters | Cut |
+| Values | Only the last set per participant | |
+| Operations kept | 256 | The completed ones are forgotten first |
+| Operations in the summary | Every open operation kept, and the last 32 | |
+
+### Watches, writes and WebSocket
+
+| What | Limit | When exceeded |
+|---|---|---|
+| Watches per connection | 16 | |
+| Variables named in one watch | 2000 | |
+| Watch period | 20 ms to 60 seconds | |
+| Values in one `api/write` | 256 | |
+| `api/write` requests waiting their turn | 32 | 503 `write-busy` |
+| Wait for the Control Server's response | 5 seconds | |
+| WebSocket message sent by a screen | 256 KiB | |
+
+### Time spent reading values
+
+- Reading values takes at most half of the time, and reads happen one at a time. If reading is slow, values come later than requested.
+- One call reads the participants of all watches whose period has come. Only when a response would not fit the limit and is split does one read issue several calls at once.
+- If the Control Server has not sent its current state 10 seconds after connecting, the server reconnects.
+
+## JSON in `examples/`
+
+The JSON files in `examples/` are produced by a server test (`gui/server/tests/test_protocol_examples.py`) from real exchanges with the replay launcher (`gui/server/tests/replay_launcher.py`), which replays recordings of the real launcher's output, and are checked on every run.
+
+- The files kept are 1–2 per shape, plus those that the documentation and the tests of the screens and the library read. Other cases of the same shape (other error codes, runs that end differently) are checked inside the test, by their error code or how the exchange ends.
+- The test also fails if `examples/` holds a file that the test does not produce.
+- When you change a shape, rewrite the files with `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web`, and update the library's types and parsers (`gui/client/src/protocol.ts`) and their unit tests (which read the same files) to match.
+- Process IDs, times, instances, paths of this computer, and numbers that change with each run are replaced with fixed values (`t_ms` is `seq × 10`).
+
+## See also
+
+| Goal | Document |
+|---|---|
+| Build your own screen | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) |
+| Use the API from TypeScript (connection, reconnection, applying events to the summary, time commands, watching ECU variables, writes and their results) | The client library [gui/client](../client/README.md) |
+| See a minimal client without a screen | [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs) in the repository (plain JavaScript, no dependencies, Node 22 or later) |
+| See an example that reads and writes ECU variables | [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs) in the repository (uses the library) |
+
+`run.mjs` checks, starts a run, reads the events and waits for the end. `scripts/verify-gui.py` runs it against the replay launcher. `examples/gui_client/` is not included in the prebuilt tools archive.

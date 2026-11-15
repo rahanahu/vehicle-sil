@@ -1,165 +1,357 @@
 # gui/web
 
-サンプルの画面（Angular、TypeScript）です。クライアントのライブラリ（`gui/client`）とその Angular の包みだけで作った参照のアプリで、ビルドした画面は Python の GUI サーバーが配信します（`--web` を付けないとき）。自分の画面を一から作るときは [docs/gui.md](../../docs/gui.md) の「自分の画面を作る」、この画面の部品を別の Angular のアプリへ写すときは同じ文書の「サンプルの部品を写して使う」を読みます。画面を使う人に Node.js は要りません。Node.js が要るのは、画面を開発、ビルドする人だけです。
+[日本語](README.ja.md)
 
-## 要るもの
+Reference for developing the sample screens (Angular, TypeScript): requirements, commands, directory layout, and coding rules (Angular style, layout, accessibility, internationalization, tests).
 
-- Node.js 24（`.nvmrc`）。`package.json` の `engines` は Node.js 24.15 以上の 24 と 26、npm 11.12.1 以上です。`.npmrc` の `engine-strict` により、範囲の外では `npm ci` が止まります。
-- npm（Node.js に付いてくるもの）。ほかのパッケージマネージャーは使いません。
-- [uv](https://docs.astral.sh/uv/)（GUI サーバー `gui/server` を動かす。開発と e2e の試験で使う）。
-- e2e の試験のブラウザ: `npx playwright install chromium --only-shell`（Playwright の版に合う Chromium をユーザーのキャッシュに入れる。管理者の権限は要らない）。
+The sample screens are a reference implementation built only on the client library (`gui/client`) and its Angular wrapper. The Python GUI server serves the built screens (when started without `--web`). Using the screens needs no Node.js; you need Node.js only to develop and build them.
 
-Windows でも同じコマンドで動かす想定です。Node.js は Windows 版を使います。`scripts/verify-web.py` は Windows の Python（python.org か MinGW のもの）で動かします。
+| To find                                       | See                                                             |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| What to install for development               | [Requirements](#requirements)                                   |
+| Commands to build, test and lint              | [Commands](#commands)                                           |
+| Running the screens on the development server | [Run on the development server](#run-on-the-development-server) |
+| What the end-to-end tests start               | [End-to-end tests](#end-to-end-tests)                           |
+| Which file is where                           | [Directories](#directories)                                     |
+| How to write the code                         | [Coding rules](#coding-rules)                                   |
+| Adding UI text, adding a language             | [Internationalization](#internationalization)                   |
 
-## コマンド
+For building your own screen from scratch, and for copying the widgets of these screens into another Angular app, see "See also" at the end.
 
-`gui/web/` で実行します。どれも終了コードで成否を返します。
+## Requirements
 
-| コマンド               | 内容                                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                                  |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）                  |
-| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                                  |
-| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                           |
-| `npm run test:client`  | クライアントのライブラリ（`../client`）の型の検査と単体試験（Vitest、Node。Angular も DOM もなし）                                                                    |
-| `npm run build:client` | クライアントのライブラリを 1 つの ESM のファイルにまとめる（`../../build/gui-client/vehicle-sil-gui-client.mjs`。esbuild は Angular のビルドの道具が持っているもの）  |
-| `npm run pack:client`  | クライアントのライブラリを npm のパッケージにする（`../../build/gui-client/vehicle-sil-gui-client-<版>.tgz`。型つき。作った後に入れて確かめる。`../client/pack.mjs`） |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする。`../client` も、その `eslint.config.js` で                                                                                |
-| `npm run format:check` | Prettier の書式の検査（`../client` も。設定は `../.prettierrc`）                                                                                                      |
-| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                               |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                            |
-| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る      |
-| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）            |
+| Requirement                      | Details and use                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------- |
+| Node.js                          | 24 (`.nvmrc`). `engines` in `package.json` allows 24 (24.15 or later) and 26          |
+| npm                              | 11.12.1 or later (the one that comes with Node.js). Do not use other package managers |
+| [uv](https://docs.astral.sh/uv/) | Runs the GUI server `gui/server` (used in development and in the end-to-end tests)    |
+| Browser for the end-to-end tests | Install it with `npx playwright install chromium --only-shell`                        |
 
-リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、ライブラリを 1 つにまとめる（`bundle`）、パッケージ（`package`）、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
+- `engine-strict` in `.npmrc` makes `npm ci` stop outside the `engines` range.
+- `npx playwright install chromium --only-shell` installs the Chromium that matches the Playwright version into the user's cache. It needs no administrator rights.
 
-開発のときは、2 つの端末で次のように動かします。GUI サーバーは、本物のランチャーの出力を録ったものを流し直すランチャー（`gui/server/tests/replay_launcher.py`。docs/gui.md の「開発」）を使い、`gui/server/tests/configs/` の構成ファイル（録ってあるもの）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
+The same commands are meant to work on Windows. Use the Windows build of Node.js. Run `scripts/verify-web.py` with a Windows Python (from python.org or MinGW).
+
+## Commands
+
+Run these in `gui/web/`. Each reports success or failure through its exit code.
+
+| Command                | What it does                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| `npm ci`               | Installs exactly what `package-lock.json` lists                                                    |
+| `npm start`            | Starts the development server (http://127.0.0.1:4200)                                              |
+| `npm run build`        | Production build (output in `dist/browser/`, license notices in `dist/3rdpartylicenses.txt`)       |
+| `npm test`             | Runs the unit tests (Vitest, jsdom) once and exits                                                 |
+| `npm run test:client`  | Type check and unit tests of the client library (`../client`) (Vitest, Node; no Angular, no DOM)   |
+| `npm run build:client` | Bundles the client library into one ESM file                                                       |
+| `npm run pack:client`  | Packs the client library as a typed npm package                                                    |
+| `npm run lint`         | ESLint (angular-eslint). Warnings also fail                                                        |
+| `npm run format:check` | Checks Prettier formatting (`../client` too; settings in `../.prettierrc`)                         |
+| `npm run e2e`          | Playwright. The GUI server serves `dist/browser/` and the API from the same origin                 |
+| `npm run e2e:dev`      | Playwright. Through the development server and its proxy (WebSocket too)                           |
+| `npm run e2e:real`     | Playwright. With the real launcher and the ecu_main example ECUs built next to it (`e2e/real/`)    |
+| `npm run i18n:extract` | Writes the text to translate to `build/i18n/messages.json` (`build/` at the top of the repository) |
+
+- `npm start` forwards `/api/` and `/ws` to the GUI server (127.0.0.1:8765) (`proxy.conf.mjs`; the port comes from the environment variable `GUI_PORT`).
+- `npm run build:client` writes `../../build/gui-client/vehicle-sil-gui-client.mjs`. It uses the esbuild that comes with the Angular build tools.
+- `npm run pack:client` writes `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz`, then installs it to check it (`../client/pack.mjs`).
+- `npm run lint` also lints `../client`, with that directory's `eslint.config.js`.
+- `npm run e2e` and `npm run e2e:real` need `npm run build` first.
+- `npm run e2e:real` takes the launcher from the environment variable `VEHICLE_SIL_GUI_LAUNCHER`.
+- `scripts/verify-web.py` compares and updates the translation files ("Internationalization" below).
+
+### Run everything (`scripts/verify-web.py`)
+
+Run `scripts/verify-web.py` from the top of the repository. It runs the following in order and prints only a summary:
+
+`npm ci`, formatting, lint, unit tests, unit tests of the client library, comparison of the translation files, build, bundling the library (`bundle`), the package (`package`), end-to-end tests.
+
+While you work on the end-to-end tests, narrow the run with these options:
+
+| Option                        | What it does                                                           |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `--skip-checks`               | Skips formatting, lint, unit tests and the translation file comparison |
+| `--e2e-grep <part of a name>` | Runs only the end-to-end tests whose names match                       |
+| `--e2e-repeat <count>`        | Repeats the end-to-end tests                                           |
+
+### Run on the development server
+
+Run these in 2 terminals:
 
 ```sh
 uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0.0.1:4200 \
-  --launcher ../server/tests/replay_launcher.py --root ../server/tests/configs   # GUI サーバー
-npm start                                                                     # 画面（127.0.0.1:4200）
+  --launcher ../server/tests/replay_launcher.py --root ../server/tests/configs   # GUI server
+npm start                                                                     # screens (127.0.0.1:4200)
 ```
 
-e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを流し直すランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは実行ごとに OS が選ぶ空いているポートで、開発サーバーも同じ）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。流し直すランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
+- The GUI server uses the replay launcher (`gui/server/tests/replay_launcher.py`; see "Development" in docs/gui.md), which replays recordings of the real launcher's output.
+- On the screen, you can choose the configuration files in `gui/server/tests/configs/` (the ones that have recordings).
+- In the browser, open the `dev_url` (with the token) that the server prints.
 
-## ディレクトリ
+### End-to-end tests
 
-| パス                                     | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `src/app/core/`                          | 画面をまたいで使うもの: トークン（`auth/`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、クライアントのライブラリの包み（`session/`）、画面の言語（`i18n/`）。サーバーとの間の型と読み取り、接続、セッションの状態はクライアントのライブラリ（`../client`、`@vehicle-sil/gui-client`）にある                                                                                                                                                                                                                                                                                                          |
-| `src/app/core/session/`                  | クライアントのライブラリの Angular の包み（読める値を signal にするだけ）: `gui-client.ts`（アプリ全体で 1 つのクライアントを作る。HTTP は HttpClient、`SOCKET_FACTORY`、`readableSignal`）、`server-connection.ts`（接続とセッションの写し）、`server-info.ts`（`api/app` と 1 回の要求）、`simulation-time.ts`（時刻）、`run-commands.ts`（開始と停止）、`ecu-variables.ts`（ECU の変数）                                                                                                                                                                                                                                           |
-| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める、経過時間。画面と同じ寿命。中身は包みの `RunCommands`）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `src/app/widgets/`                       | 変数の部品（値の表示、数値の入力、スライダー、スイッチ、ランプ、選択肢、グラフ）、部品と変数をつなぐ `variable-binding.ts`（中身はライブラリの `client.variables.bind`）、部品の枠 `variable-frame.ts`、ダッシュボードのデータと既定の部品、ダッシュボードのファイルからの組み立て `dashboard-spec.ts`、それを描く `dashboard-view.ts`、持ち込みのパネルを置く `panel-host.ts`。包みの公開の口だけを使う（自分で部品を足す人と同じ方法。docs/gui.md の「変数の画面と部品」）                                                                                                                                                          |
-| `src/app/variables/`                     | 変数の画面（`variables`）。自動のダッシュボードと絞り込み                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）。単体試験の部品（偽の WebSocket と HTTP、`gui/protocol/examples/` を読む関数）は `@vehicle-sil/gui-client/testing`                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `src/main.ts`、`src/start.ts`            | 起動。`main.ts` が言語を決めて翻訳を読み込み、それから `start.ts`（アプリ）を読み込む                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `src/locale/`                            | 翻訳ファイル（`messages.<言語>.json`）。ビルドで `locale/` に置かれる                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`before-start.spec.ts`（最初のステップの前）、`manual.spec.ts`（自分で起動する participant）、`scenario.spec.ts`（シナリオ）、`starter.spec.ts`（ひな形 `examples/gui_starter` を `--web` で配る）、`i18n.spec.ts`（英語の画面と言語の切り替え）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`variables.spec.ts` と `support/variables-page.ts`（変数の画面）、`shots.spec.ts`（写真）、`real/`（本物のランチャーで。`playwright.real.config.ts`） |
+The end-to-end tests start the GUI server themselves and stop it when they finish.
 
-## URL と CSP
+| Command                          | What it starts                         | Code that starts it          |
+| -------------------------------- | -------------------------------------- | ---------------------------- |
+| `npm run e2e`, `npm run e2e:dev` | The GUI server and the replay launcher | `e2e/support/gui-server.ts`  |
+| `npm run e2e:real`               | The GUI server and the real launcher   | `e2e/support/real-server.ts` |
 
-API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api/app`、`ws`）。`index.html` の `<base href>` からの相対になるので、`/` 以外のパスに置いても動きます。そのときは `ng build --base-href /gui/` でビルドします。WebSocket の URL は `document.baseURI` から作ります（クライアントのライブラリの `webSocketUrl`。`core/session/gui-client.ts` が `baseUrl` に `document.baseURI` を渡す）。
+- Each run uses free ports that the OS picks (the development server too).
+- For `npm run e2e:real`, `gui/server/tests/real_configs.py` writes the configuration files to a temporary directory. `scripts/verify-gui.py --launcher <path>` runs these end-to-end tests.
 
-本番のビルドは inline の script を出しません（`angular.json` で `inlineCritical: false`）。`script-src 'self'` の CSP で動きます。コンポーネントのスタイルは `<style>` で入るので、`style-src` には `'unsafe-inline'`（または nonce）が要ります。
+Set the environment variable `VEHICLE_SIL_GUI_SHOTS` to a directory to take screenshots.
 
-## 書き方の決まり
+| End-to-end test                                             | What it captures                                 |
+| ----------------------------------------------------------- | ------------------------------------------------ |
+| `npm run e2e:real`                                          | 4 states at 3 widths                             |
+| The replay launcher's end-to-end test (`e2e/shots.spec.ts`) | 6 states of the Run screen at 360 px and 1024 px |
 
-いまの Angular（22）の書き方にそろえます。どこに書いても誤りと言えるものは `npm run lint` で止まります。判断が要るもの（RxJS をどこで使うかなど）はここに書き、レビューで見ます。
+`e2e/shots.spec.ts` starts a new GUI server for each state, so earlier runs do not show. `VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` captures the English screens.
 
-### 置き方と命名
+## Directories
 
-- ファイル名と型の名前は `ng generate` の既定に合わせる（`ng g service telemetry` → `telemetry.ts` の `Telemetry`、`ng g component not-found` → `not-found/not-found.ts` の `NotFound`、`ng g pipe measure` → `measure-pipe.ts` の `MeasurePipe`）。
-- 画面ごとにディレクトリを作る（`src/app/<画面>/`）。画面をまたいで使うものは `src/app/core/` に置く。
-- 試験で探す要素には、役割（`getByRole`）で探せないときだけ `data-testid` を付ける。
+| Path                                     | Contents                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | The shell (toolbar, navigation, content area)                                    |
+| `src/app/app.routes.ts`, `navigation.ts` | Routes and navigation items                                                      |
+| `src/app/core/`                          | Things shared across screens ("`core/`" below)                                   |
+| `src/app/core/session/`                  | The Angular wrapper of the client library ("`core/session/`" below)              |
+| `src/app/run/`                           | The Run screen (`''`) ("`run/`" below)                                           |
+| `src/app/widgets/`                       | Variable widgets and dashboards ("`widgets/`" below)                             |
+| `src/app/variables/`                     | The Variables screen (`variables`). Automatic dashboard and filtering            |
+| `src/app/not-found/`                     | The screen for unknown routes                                                    |
+| `src/app/testing/`                       | A screen for tests (`/_test/layout`)                                             |
+| `src/theme.scss`, `src/styles.css`       | Material theme (light and dark), layout dimensions (CSS custom properties)       |
+| `src/main.ts`, `src/start.ts`            | Startup                                                                          |
+| `src/locale/`                            | Translation files (`messages.<language>.json`). The build puts them in `locale/` |
+| `public/`                                | Files served as they are (icons)                                                 |
+| `e2e/`                                   | Playwright tests ("`e2e/`" below)                                                |
 
-### Angular の書き方（lint で強制）
+- `src/main.ts` chooses the language and loads the translations, and only then loads `src/start.ts` (the app).
+- The screen in `src/app/testing/` is used by the layout end-to-end tests. It does not appear in the navigation. The helpers for unit tests (fake WebSocket and HTTP, functions that read `gui/protocol/examples/`) are in `@vehicle-sil/gui-client/testing`.
 
-- コンポーネントは standalone。依存は `inject()`。入出力と問い合わせは `input()`、`output()`、`model()`、`viewChild()`。`@HostBinding` の代わりに `host`。
-- テンプレートは `@if`、`@for`、`@switch`、`@defer`。`async` パイプを使わない（テンプレートが読むのは signal）。
-- zone.js は使わない（zoneless）。変更の検出は OnPush（既定）のまま。
-- 実験的、開発者プレビューの API を土台にしない。安定した代わりを使う。
-- guard、interceptor、resolver は関数で書く。経路の引数は `input()` で受け取る（`withComponentInputBinding`）。
+### `core/`
 
-### 状態の持ち場
+| Directory  | Contents                             |
+| ---------- | ------------------------------------ |
+| `auth/`    | Token                                |
+| `layout/`  | Width classes                        |
+| `format/`  | Formatting of measurements and paths |
+| `streams/` | Streams                              |
+| `session/` | Wrapper of the client library        |
+| `i18n/`    | Screen language                      |
 
-- 1 つの画面だけの状態は、そのコンポーネントの signal。
-- 機能ごとの状態とサーバーからの値は、その機能のサービス。サービスは読み取り専用の signal（`asReadonly()`）と、変えるためのメソッドだけを出す。
-- アプリ全体の状態（幅の区分など）は `core/` のサービス。
+The types and parsers for what passes between the screens and the server, the connection, and the session state are in the client library (`../client`, `@vehicle-sil/gui-client`).
 
-### signal と RxJS
+### `core/session/`
 
-- 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
-- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
-- ライブラリの状態は「読める値」（`get()` と `subscribe()`）。包みは `readableSignal`（`core/session/gui-client.ts`）で signal にする。ライブラリが足りないときは、包みで近道を作らず、ライブラリの公開の入口（`@vehicle-sil/gui-client`）に足す。本番のコードは `@vehicle-sil/gui-client/internal`（互換の約束の外）と `/testing` を import しない（lint で止まる。試験は使ってよい）。購読が投げたものは、Angular の `ErrorHandler` へ渡る。
-- 1 回の取得（`api/app`、`api/configs`）は、包みの Promise を返すメソッドを `resource` の loader で呼ぶ。照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てる（`run-page.ts` の `check`）。
-- RxJS は、時間とともに続く流れに演算子が要るときに使う（間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。再接続と待ち時間はライブラリの `Connection` が持つ（RxJS を使わない）。
-- 自分で通知を当てたい画面（毎秒数十回の値など）は、`ServerConnection.batches`（まとめて読んだ通知の Observable）を購読して自分の signal に当てる。接続や認証を画面ごとに持たない。
-- 変更を伴う要求（開始、停止、時刻の命令）は包みのメソッドで送る。応答（いまの要約）はライブラリがその場でセッションの写しに当てる。
-- 画面へ毎秒数十回を超えて送らない（間引きはサーバーの仕事）。グラフには固定長の履歴（`recentValues`）を使う。
+The wrapper only turns the library's `Readable` (read-only value) into signals.
+
+| File                   | Contents                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `gui-client.ts`        | Creates the one client of the app (HTTP through HttpClient, `SOCKET_FACTORY`, `readableSignal`) |
+| `server-connection.ts` | Connection and session copy                                                                     |
+| `server-info.ts`       | `api/app` and one-off requests                                                                  |
+| `simulation-time.ts`   | Time                                                                                            |
+| `run-commands.ts`      | Start and stop                                                                                  |
+| `ecu-variables.ts`     | ECU variables                                                                                   |
+
+### `run/`
+
+| File             | Contents                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `run-session.ts` | Actions (start, stop, stop without waiting, elapsed time). Has the same lifecycle as the screen; built on the wrapper's `RunCommands` |
+| `run-status.ts`  | The status bar that is always visible                                                                                                 |
+
+### `widgets/`
+
+The variable widgets are: value display, number input, slider, switch, lamp, choice and chart.
+
+| File                  | Contents                                                                         |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `variable-binding.ts` | Connects a widget to a variable (built on the library's `client.variables.bind`) |
+| `variable-frame.ts`   | The frame around a widget                                                        |
+| `dashboard-spec.ts`   | Dashboard data and default widgets, and building them from a dashboard file      |
+| `dashboard-view.ts`   | Shows dashboard data                                                             |
+| `panel-host.ts`       | Hosts custom panels                                                              |
+
+The code in this directory uses only the wrapper's public API (the same way you add a widget yourself; see "The Variables screen and widgets" in docs/gui.md).
+
+### `e2e/`
+
+| File                                             | Contents                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| `app.spec.ts`                                    | Serving and routing                                                 |
+| `run.spec.ts`                                    | The Run screen                                                      |
+| `before-start.spec.ts`                           | Before the first step                                               |
+| `manual.spec.ts`                                 | Participants you start yourself                                     |
+| `scenario.spec.ts`                               | Scenarios                                                           |
+| `starter.spec.ts`                                | Serving the screen template `examples/gui_starter` with `--web`     |
+| `i18n.spec.ts`                                   | The English screens and switching languages                         |
+| `layout.spec.ts`, `support/layout.ts`            | Layout                                                              |
+| `support/gui-server.ts`                          | Starting the GUI server                                             |
+| `support/run-page.ts`                            | Actions on the Run screen                                           |
+| `variables.spec.ts`, `support/variables-page.ts` | The Variables screen                                                |
+| `shots.spec.ts`                                  | Screenshots                                                         |
+| `real/`                                          | Tests that run with the real launcher (`playwright.real.config.ts`) |
+
+## URLs and CSP
+
+Write the API and WebSocket URLs without a leading `/` (`api/app`, `ws`). They are relative to `<base href>` of `index.html`, so the screens also work under a path other than `/`; build them with `ng build --base-href /gui/` in that case. The WebSocket URL is built from `document.baseURI` (`webSocketUrl` in the client library; `core/session/gui-client.ts` passes `document.baseURI` as `baseUrl`).
+
+The production build emits no inline scripts (`inlineCritical: false` in `angular.json`). It works with the CSP `script-src 'self'`. Component styles go in through `<style>`, so `style-src` needs `'unsafe-inline'` (or a nonce).
+
+## Coding rules
+
+Follow the style of current Angular (22). `npm run lint` stops whatever is an error wherever it is written. Rules that need judgment (where to use RxJS and so on) are written here and checked in review.
+
+### File layout and naming
+
+- File and type names follow the `ng generate` defaults (`ng g service telemetry` → `Telemetry` in `telemetry.ts`, `ng g component not-found` → `NotFound` in `not-found/not-found.ts`, `ng g pipe measure` → `MeasurePipe` in `measure-pipe.ts`).
+- Create a directory per screen (`src/app/<screen>/`). Put things shared across screens in `src/app/core/`.
+- Give an element that tests look for a `data-testid` only when it cannot be found by its role (`getByRole`).
+
+### Angular style (enforced by lint)
+
+- Components are standalone. Dependencies come from `inject()`. Inputs, outputs and queries use `input()`, `output()`, `model()` and `viewChild()`. Use `host` instead of `@HostBinding`.
+- Templates use `@if`, `@for`, `@switch` and `@defer`. Do not use the `async` pipe (templates read signals).
+- No zone.js (zoneless). Change detection stays OnPush (the default).
+- Do not build on experimental or developer-preview APIs. Use the stable alternatives.
+- Write guards, interceptors and resolvers as functions. Take route parameters with `input()` (`withComponentInputBinding`).
+
+### Where state lives
+
+| State                                          | Where it lives            |
+| ---------------------------------------------- | ------------------------- |
+| State of one screen only                       | Signals in that component |
+| State of a feature, and values from the server | That feature's service    |
+| App-wide state (width class and so on)         | A service in `core/`      |
+
+A service exposes only read-only signals (`asReadonly()`) and methods that change them.
+
+### Signals and RxJS
+
+**Where to use signals**:
+
+- State, values derived from it, and anything a template reads are signals (`signal`, `computed`, `linkedSignal`).
+
+**The library owns communication with the server**:
+
+- Only the client library (`@vehicle-sil/gui-client`) makes requests to the server and holds the connection.
+- Screens use the signals and methods of the wrappers in `core/session/` (`ServerConnection`, `ServerInfo`, `SimulationTime`, `RunCommands`, `EcuVariables`) and do not hold an `HttpClient` or WebSocket of their own. This keeps them on the same API you use to build your own screen (docs/howto/gui-screen.md).
+- The wrapper sends the library's HTTP requests with `HttpClient` (an interceptor adds the token).
+- The library's state is a `Readable` (`get()` and `subscribe()`). The wrapper turns it into a signal with `readableSignal` (`core/session/gui-client.ts`).
+- If the library lacks something, do not build a shortcut in the wrapper; add it to the library's public entry point (`@vehicle-sil/gui-client`).
+- Production code does not import `@vehicle-sil/gui-client/internal` (no compatibility guarantee) or `/testing` (lint stops it; tests may use them).
+- Whatever a subscription throws goes to Angular's `ErrorHandler`.
+
+**How to send requests**:
+
+- One-off fetches (`api/app`, `api/configs`): call the wrapper's Promise-returning method in the loader of a `resource`.
+- Check (`POST api/check`) is close to a read, so it is sent automatically from a signal. But it waits briefly to collect changes, waits for the previous check's response before sending the next, and discards stale responses (`check` in `run-page.ts`).
+- Requests that change something (start, stop, time commands) go through the wrapper's methods. The library applies the response (the current summary) to the session copy at once.
+
+**Where to use RxJS**:
+
+- Use RxJS when a stream that continues over time needs operators (thinning out, cancellation, combining several streams). Keep it inside a service and expose signals.
+- To a caller that needs the stream itself, expose an Observable whose name says it is a stream; the caller turns it into a signal with `toSignal` (`latestValue` and `recentValues` in `core/streams/stream-signals.ts`).
+- Reconnection and waits belong to the library's `Connection` (which does not use RxJS).
+- A screen that wants to apply notifications itself (values that arrive dozens of times a second, for example) subscribes to `ServerConnection.batches` (an Observable of notifications read in batches) and applies them to its own signals. Screens do not each hold their own connection or authentication.
+- Do not push more than a few dozen updates a second to a screen (thinning out is the server's job). Charts use a fixed-length history (`recentValues`).
 
 ```ts
-// よい: 流れはサービスの中の Observable、画面は signal で読む（画面が壊れると購読も止まる）
-readonly samples = this.server.batches.pipe(map(toSamples)); // サービス
-protected readonly latest = latestValue(this.telemetry.samples); // コンポーネント
+// good: the stream is an Observable inside the service; the screen reads a signal (the subscription stops when the screen is destroyed)
+readonly samples = this.server.batches.pipe(map(toSamples)); // service
+protected readonly latest = latestValue(this.telemetry.samples); // component
 ```
 
 ```ts
-// しない: ただの状態や 1 回の取得に RxJS を使う
+// avoid: RxJS for plain state or a one-off fetch
 readonly selected$ = new BehaviorSubject<string | null>(null); // → signal<string | null>(null)
 readonly configs = toSignal(inject(HttpClient).get<ConfigList>('api/configs')); // → resource({ loader: () => this.info.configs() })
 ```
 
-### effect
+### Effects
 
-- 状態の同期に使わない（「A が変わったら B に set する」は `computed` か `linkedSignal` で書く）。
-- 使ってよいのは signal の外の世界への反映だけ: ログ、`localStorage` への保存、外部のライブラリ。DOM を測る、描くは `afterRenderEffect`（シェルの `updateContentMargins` が見本）。
+- Do not use them to sync state ("when A changes, set B" is a `computed` or a `linkedSignal`).
+- Use them only to reflect signals into the world outside signals: logging, saving to `localStorage`, external libraries. To measure or draw the DOM, use `afterRenderEffect` (`updateContentMargins` in the shell is the model).
 
 ```ts
-effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外への反映だけ
+effect(() => localStorage.setItem('selected', this.selected() ?? '')); // reflects outward only
 ```
 
-### レイアウト
+### Layout
 
-- 並びは CSS で決める（grid、flex、`repeat(auto-fill, minmax(...))`、container query、`clamp()`、論理プロパティ）。JavaScript で寸法を計算しない。
-- 幅の区分は 3 つ: compact（600 px 未満、ナビゲーションは引き出し）、medium（1200 px 未満、アイコンの帯）、wide（文字つき）。境目は `core/layout/layout.ts` の `BREAKPOINTS` だけで決め、シェルが CSS の変数（`--app-breakpoint-*`）として渡す。寸法と間隔は `src/styles.css` のカスタムプロパティ。
-- 幅の区分を読むのはシェルだけ。画面と部品は、中身の領域（container `content`）や自分の幅（container query、auto-fill）で並びを変える。CSS に窓の幅の `@media` を書かない。`:host-context` で区分を読まない。
-- 区分が上がっても中身の領域は狭くならない（シェルが各区分の中身の幅を抑える）。
-- 色は Material のシステムトークン（`--mat-sys-*`）。明暗は OS の設定に、動きは `prefers-reduced-motion` に従う。
-- 画面を足したら `e2e/layout.spec.ts` の `ROUTES` に足す。8 つの幅（360、480、599、600、1024、1199、1200、1920）で、はみ出し（ページ、スクロールする要素、`main`、カード）、カードの重なり、ナビゲーションの形、キーボードを確かめる。
+- Arrange with CSS (grid, flex, `repeat(auto-fill, minmax(...))`, container queries, `clamp()`, logical properties). Do not compute dimensions in JavaScript.
+- There are the 3 width classes in the table below. Only `BREAKPOINTS` in `core/layout/layout.ts` sets the boundaries; the shell passes them as CSS variables (`--app-breakpoint-*`). Dimensions and spacing are custom properties in `src/styles.css`.
+- Only the shell reads the width class. Screens and widgets change their arrangement by the content area (container `content`) or by their own width (container queries, auto-fill). Do not write `@media` rules on the viewport width in CSS. Do not read the class with `:host-context`.
+- Moving up a class never makes the content area narrower (the shell limits the content width in each class).
+- Colors are Material system tokens (`--mat-sys-*`). Light and dark follow the OS setting; motion follows `prefers-reduced-motion`.
+- When you add a screen, add it to `ROUTES` in `e2e/layout.spec.ts`. The test checks 8 widths (360, 480, 599, 600, 1024, 1199, 1200, 1920) for overflow (page, scrolling elements, `main`, cards), overlapping cards, the form of the navigation, and the keyboard.
 
-### アクセシビリティ
+| Class   | Width         | Navigation  |
+| ------- | ------------- | ----------- |
+| compact | Below 600 px  | Drawer      |
+| medium  | Below 1200 px | Icon rail   |
+| wide    | Wider         | With labels |
 
-- 経路ごとに `title` を付ける（「画面名 - vehicle-sil」）。画面ごとに `h1` を 1 つ。
-- キーボードだけで全部を操作できる。Esc で引き出しを閉じる。
-- 色だけで状態を伝えない（文字や形も添える）。
-- 部品は Material のもの（ボタン、リスト、カードなど）を使う。速く変わる値に `aria-live` を付けない。
-- 状態の変わり目（実行の始まり、止めている、結果、異常終了、接続の切断）は `role="status"`、操作の誤りは `role="alert"` の領域で知らせる。領域は中身が変わる前から置いておく（中身がない間は見た目から消す）。
-- 押している最中に意味が変わってはいけない操作（開始と停止）は、別の要素にして、決まった位置にいつも置く。使えない方は消さずに `disabledInteractive` で押せなくし、フォーカスを受けたまま理由を `aria-describedby` で読ませる（同じ位置のボタンが、ダブルクリックや Enter の連打の途中で反対の操作に変わらない）。
-- 押せるようになったばかりの操作は、`ACTION_GUARD_MS`（800 ms、`run/run-status.ts`）の間は押しても何もしない（`core/streams/stream-signals.ts` の `settledAfter`。キーボードも同じ）。その間は薄く出す。e2e は `data-armed="true"` を待ってから押す（`support/run-page.ts` の `press`）。
-- フォーカスを持った要素が消えるとき（「待たずに止める…」を確かめた後など）は、反対の操作ではなく、いまの状態を言う要素（帯の結果の文）へフォーカスを移す。
+### Accessibility
 
-### 国際化
+- Give every route a `title` ("Screen name - vehicle-sil"). One `h1` per screen.
+- Everything can be operated with the keyboard alone. Esc closes the drawer.
+- Do not convey state by color alone (add text or shape).
+- Use Material components (buttons, lists, cards and others). Do not put `aria-live` on values that change quickly.
+- Announce state transitions (run started, paused, result, abnormal exit, connection lost) in a `role="status"` region, and errors of actions in a `role="alert"` region. Put the region in place before its content changes (hide it visually while it is empty).
+- Actions whose meaning must not change while being pressed (start and stop) are separate elements, always in fixed positions. Do not remove the unusable one: make it unclickable with `disabledInteractive`, keep it focusable, and have its reason read through `aria-describedby` (so a button in the same position never turns into the opposite action during a double click or repeated Enter).
+- An action that has become usable does nothing for the first `ACTION_GUARD_MS` (800 ms, `run/run-status.ts`) (`settledAfter` in `core/streams/stream-signals.ts`; the keyboard too). During that time it is shown faded. End-to-end tests wait for `data-armed="true"` before pressing (`press` in `support/run-page.ts`).
+- When the focused element disappears (after confirming "Stop without waiting…", for example), move the focus to the element that states the current state (the result text in the bar), not to the opposite action.
 
-画面の言葉は日本語を元にし（`angular.json` の `i18n.sourceLocale` は `ja`）、英語の訳を同じビルドに入れて出します。言語ごとにビルドを分けません（Python のパッケージに 1 つのディレクトリで入れて配信するため）。
+### Internationalization
 
-- 言語の決め方（`core/i18n/language.ts` の `chooseLanguage`）: 利用者が言語のメニューで選んだ言語（`localStorage` の `vehicle-sil-gui-language`）があれば、それ。なければ、ブラウザの言語（`navigator.languages`）を好みの順に見て、主な部分（`ja-JP` なら `ja`）が対応する言語の最初のもの。どれも対応しなければ英語。
-- 起動の順: `main.ts` が言語を決め、英語なら `locale/messages.en.json` を同じオリジンから読んで `loadTranslations` に渡し、`<html lang>` を合わせてから、`import()` で `start.ts`（アプリ）を読み込んで起動する。`$localize` は文を最初に評価したときに訳を決める（`run/labels.ts` の表のように、モジュールを読み込むときに評価するところがある）ので、アプリのモジュールを `main.ts` から静的に import しない。`LOCALE_ID` は選んだ言語（`Intl.ListFormat` などが従う）。日本語は元の言語なので、翻訳ファイルを読まない。
-- 言語を変えると、アプリを読み込み直す（訳は起動の前に決まる）。実行はサーバーの中で続き、画面はつなぎ直して受け直す。サーバーにない画面の値（まだ送っていない選択）は、`LanguageChoice.keep` で渡して `take` で受け取る（実行の画面は、選んだファイル、外した participant、速度、ログの出どころ）。フォーカスは言語のメニューに戻す。
-- 言語のメニューは、地球の絵と、いまの言語の名前（その言語自身の文字）を出す。名前には、どの言語でも「Language」を含める。メニューの項目は、その言語自身の文字で書き、`lang` を付ける。
-- 訳がない文（翻訳ファイルにない、`target` が `null` か空、置き場所が元の文と合わない）は、元の日本語の文で出る。id や空の文にはならない。翻訳ファイルを読めなければ、画面全体を日本語で出す。
-- テンプレートの文言には `i18n`（属性には `i18n-<属性>`）、TypeScript の文言には `$localize` を付ける。印のない文言は lint で止まる。id は抽出のときに作られるもの（元の文から決まる）を使う。
-- 文を連結して作らない（語順は言語で違う）。値は 1 つの文の中に置き場所（テンプレートの `{{ }}`、`$localize` の `${値}:名前:`）として入れる。数で語の形が変わる文（「N 行」）は、テンプレートでは ICU の `plural` で書く（日本語は `other` だけ。英語の訳が `one` を足す）。TypeScript では、数に左右されない書き方にする（「誤り: N」）。
-- 計測値は `measure` パイプ（`core/format/measure-pipe.ts`）で出す。桁区切りを入れず、小数の桁を決める。どの言語でも同じ書式で、locale の数値の書式に任せない。
-- ECU やランチャーが出す英語の文（所見、ログ）は訳さず、そのまま出す（`lang="en"` を付ける）。
-- 並べる語の区切りは `Intl.ListFormat`（`LOCALE_ID`）で作る。区切りや `:` を CSS の `content` で足さない（訳せない）。
+The screen text is written in Japanese (`i18n.sourceLocale` in `angular.json` is `ja`), and the English translation is served from the same build. There is no build per language (the Python package carries the screens in one directory and serves them).
 
-翻訳ファイル `src/locale/messages.<言語>.json` は、抽出した文ごとに元の文と訳を並べた JSON です（読み比べやすく、差分で見やすい）。`target` が `null` の文は「まだ訳していない」印です。`note` は、そのファイルについての説明です。
+#### How the language is chosen
+
+`chooseLanguage` in `core/i18n/language.ts` decides, in this order:
+
+| Order | Condition                                                                                    | Language                                                             |
+| ----- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 1     | A language chosen in the language menu exists (`vehicle-sil-gui-language` in `localStorage`) | That language                                                        |
+| 2     | The browser languages (`navigator.languages`) include a supported language                   | The first, in order of preference, whose primary subtag is supported |
+| 3     | None is supported                                                                            | English                                                              |
+
+The primary subtag of `ja-JP` is `ja`.
+
+#### Startup order
+
+1. `main.ts` chooses the language.
+2. For English, it fetches `locale/messages.en.json` from the same origin and passes it to `loadTranslations`. Japanese is the source language, so no translation file is loaded.
+3. It sets `<html lang>`.
+4. It loads `start.ts` (the app) with `import()` and starts it.
+
+`main.ts` does not import the app modules statically. `$localize` fixes the translation the first time a text is evaluated, and some text is evaluated when its module loads (the tables in `run/labels.ts`, for example). `LOCALE_ID` is the chosen language (`Intl.ListFormat` and others follow it).
+
+#### Switching languages
+
+- Changing the language reloads the app (translations are fixed before startup). The run continues in the server, and the screen reconnects and receives everything again.
+- Screen values the server does not have (choices not sent yet) are handed over with `LanguageChoice.keep` and picked up with `take` (on the Run screen: the chosen file, the disabled participants, the speed and the log source).
+- Focus returns to the language menu.
+- The language menu shows a globe and the name of the current language (in that language's own script). The name always includes "Language", in every language. The menu items are written in each language's own script and carry `lang`.
+
+#### Writing UI text
+
+- Mark template text with `i18n` (`i18n-<attribute>` for attributes) and TypeScript text with `$localize`. Lint stops unmarked text. Use the ids created at extraction (they derive from the source text).
+- Do not build sentences by concatenation (word order differs between languages). Put values into one sentence as placeholders (`{{ }}` in templates, `${value}:name:` in `$localize`).
+- Text whose wording depends on a number ("N lines"; in Japanese "N 行") uses ICU `plural` in templates (Japanese has only `other`; the English translation adds `one`). In TypeScript, write it so the number does not affect the wording ("errors: N"; in Japanese "誤り: N").
+- Show measurements with the `measure` pipe (`core/format/measure-pipe.ts`). It uses no thousands separator and fixes the number of decimals. The format is the same in every language; it does not rely on the locale's number format.
+- English text from the ECUs and the launcher (findings, logs) is not translated; show it as is (with `lang="en"`).
+- Build separators between listed words with `Intl.ListFormat` (`LOCALE_ID`). Do not add separators or `:` with CSS `content` (they cannot be translated).
+- Text without a translation (missing from the translation file, `target` `null` or empty, placeholders that do not match the source) shows in the Japanese source text. It never becomes an id or empty text. If the translation file cannot be loaded, the whole screen shows in Japanese.
+
+#### Translation files
+
+A translation file `src/locale/messages.<language>.json` is JSON that lists each extracted text with its source and translation (easy to compare side by side and to read in diffs). `target` `null` marks a text as "not translated yet". `note` describes the file.
 
 ```json
 {
@@ -175,47 +367,81 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 }
 ```
 
-`scripts/verify-web.py` の i18n の段は、文を抽出して各翻訳ファイルと比べます（`scripts/web_i18n.py`）。翻訳ファイルにない文、元の文が抽出と違うもの、空の訳、置き場所（`{$名前}`）や ICU の形が元の文と合わない訳があると失敗します。`target` が `null` の文（まだ訳していないと印を付けた文）も失敗にします。訳しかけの間だけ手元で通すには `--allow-untranslated` を付けます（CI では付けません）。もう抽出されない古い文は、一覧に出します（失敗にはしない）。
+The i18n stage of `scripts/verify-web.py` extracts the text and compares it with each translation file (`scripts/web_i18n.py`).
 
-文を足す、変える:
+| What it finds                                                                       | Handling               |
+| ----------------------------------------------------------------------------------- | ---------------------- |
+| Text missing from the translation file                                              | Fails                  |
+| Source text that differs from the extraction                                        | Fails                  |
+| Empty translation                                                                   | Fails                  |
+| Translation whose placeholders (`{$name}`) or ICU structure do not match the source | Fails                  |
+| Text with `target` `null` (marked as not translated yet)                            | Fails                  |
+| Old text that is no longer extracted                                                | Listed (does not fail) |
 
-1. 文言に印を付ける（上の決まり）。
-2. `scripts/verify-web.py --i18n-update` で翻訳ファイルを合わせる。新しい文は `"target": null` で入り、古い文は消える（消した文と訳を表示するので、言い回しを変えただけなら訳を使い回せる）。
-3. 各ファイルの `null` を訳に書き換える。`null` が残っている間は i18n の段が失敗する（訳しかけの間は、手元で `--allow-untranslated` を付けて回せる）。
-4. `scripts/verify-web.py --i18n-only` で確かめる。
+To pass locally while a translation is unfinished, add `--allow-untranslated` (CI does not).
 
-言語を足す:
+#### Add or change text
 
-1. `core/i18n/language.ts` の `LANGUAGES` に、コードとその言語自身の文字の名前を足す。
-2. `src/locale/messages.<コード>.json` を `{"locale": "<コード>", "note": "…", "translations": {}}` で作り、`scripts/verify-web.py --i18n-update` で文を入れて訳す。
-3. `en` 以外の言語なら、その locale のデータ（日付、複数形の規則）を `@angular/common/locales/<コード>` から `registerLocaleData` で登録する（日本語はビルドが、英語は Angular が持っている）。
-4. `e2e/i18n.spec.ts` のように、その言語で画面を確かめる。
+1. Mark the text ("Writing UI text" above).
+2. Update the translation files with `scripts/verify-web.py --i18n-update`. New text goes in with `"target": null`, and old text is removed (the removed texts and their translations are printed, so if you only reworded a text you can reuse its translation).
+3. Replace each `null` in each file with a translation. The i18n stage fails while any `null` remains (while a translation is unfinished, you can run locally with `--allow-untranslated`).
+4. Check with `scripts/verify-web.py --i18n-only`.
 
-### サーバーとの間の型
+#### Add a language
 
-- サーバーとの間でやりとりする形は、クライアントのライブラリの `gui/client/src/protocol.ts` にだけ、型と読み取り関数（`read*`）で書く（画面は `@vehicle-sil/gui-client` から import する）。形の正本は `gui/protocol/`（README と `examples/`）。届いた JSON は読み取り関数を通してから使う（ライブラリが HTTP の応答と WebSocket の通知を読む）。知らない欄、知らない通知と事象は無視して通す。
-- セッションの要約とランチャーの事象は、部分ごとに読む。ランチャーから来る部分やサーバーが上限で縮めた部分が読めなくても、全体を捨てない。読めない部分は既定の値（`null`、空）にして、その名前を `unreadable` に入れ、帯に「一部を表示できません」と出す。全体を読めないとするのは、要約の芯（`id`、`state`、`launcher`、`stop`）か事象の芯（`seq`、`event`）が読めないときだけ（`hello` と `session` なら、つなぎ直して受け直す）。
-- ライブラリの `protocol.spec.ts` が `gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。
+1. Add the code and the language's name in its own script to `LANGUAGES` in `core/i18n/language.ts`.
+2. Create `src/locale/messages.<code>.json` as `{"locale": "<code>", "note": "…", "translations": {}}`, fill in the text with `scripts/verify-web.py --i18n-update`, and translate it.
+3. For a language other than `en`, register its locale data (dates, plural rules) from `@angular/common/locales/<code>` with `registerLocaleData` (the build provides Japanese, and Angular includes English).
+4. Check the screens in that language, as `e2e/i18n.spec.ts` does.
 
-### 試験の書き方
+### Types shared with the server
 
-- 単体試験は TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
-- `resource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
-- WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、包みが `HttpClient` で送るので `HttpTestingController` で答える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`webSocketExamples`、`httpExamples`）。
-- 接続、セッションの写し、時刻と実行の操作の決まりは、ライブラリの試験（`gui/client/src/*.spec.ts`。Angular なし）で確かめる。包みの試験は、signal に写ること、トークン、画面の言葉だけを見る。
-- 「何かが起きないこと」を、決まった時間待ってから確かめない（遅いマシンで見落とす）。その時間が過ぎたとわかる後の出来事（後の事象、サーバーの要約の `last_seq` や `stop`）を待ってから確かめる。
-- e2e で起きるはずのことは、`expect` の待ちか `expect.poll` で待つ。決まった時間だけ眠って「進んだはず」としない。待ちの上限（設定ファイルの `timeout` と `expect.timeout`、`RUN_TIMEOUT`）には環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かる。上限を書くときは `scaled(ms)`（`e2e/support/timeouts.ts`）を通す。「起きないこと」を確かめる時間と、画面に与える時間（ガードの長さなど）には掛けない。
-- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと、本物のランチャーの出力を録ったものを流し直すランチャーを相手にする（構成ファイルと、送った命令で録りが決まる。録りのない操作は、流し直すランチャーが何を録ればよいかを言って終わる）。録ったものがいまの本物と合うかは `gui/server/tests/test_real_launcher.py` が比べる。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
-- 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。
+- The shapes exchanged with the server are written only in the client library's `gui/client/src/protocol.ts`, as types and parsers (`read*`) (screens import them from `@vehicle-sil/gui-client`). The reference for the shapes is `gui/protocol/` (README and `examples/`).
+- Use received JSON only after it has gone through a parser (the library parses HTTP responses and WebSocket notifications). Ignore and pass on unknown fields, notifications and events.
+- Parse session summaries and launcher events part by part. If a part that comes from the launcher, or a part that the server shrank to a limit, cannot be read, do not discard the whole.
+- Set an unreadable part to its default (`null`, empty), add its name to `unreadable`, and show "Some parts cannot be shown" in the bar.
+- Treat the whole as unreadable only when the core of a summary (`id`, `state`, `launcher`, `stop`) or of an event (`seq`, `event`) cannot be read (for `hello` and `session`, reconnect and receive again).
+- The library's `protocol.spec.ts` feeds it every example in `gui/protocol/examples/`. When the examples change, update the types and parsers to match.
 
-## アイコン
+### Writing tests
 
-`public/favicon.svg` が元です。`public/favicon.ico`（16、32、48 px）は SVG から ImageMagick で作り、SVG を変えたら作り直します。
+**Unit tests**:
+
+- Unit tests use TestBed. Replace `Layout` with a fake that has signals (jsdom has no `matchMedia`).
+- For a `resource`, make it send its request with `TestBed.tick()`, `flush` it with `HttpTestingController`, then `whenStable()` (`whenStable()` does not finish while a request has no response).
+- Replace the WebSocket with `FakeWebSockets` (`@vehicle-sil/gui-client/testing`) (`{ provide: SOCKET_FACTORY, useValue: fake.factory }`). The wrapper sends HTTP with `HttpClient`, so answer HTTP with `HttpTestingController`. Use Vitest's fake timers for time.
+- Feed the examples in `gui/protocol/examples/` instead of building server notifications (`webSocketExamples`, `httpExamples`).
+- The rules for the connection, the session copy, and time and run control are tested in the library's tests (`gui/client/src/*.spec.ts`; no Angular). Wrapper tests check only the conversion to signals, the token, and the screen text.
+- Do not check that "something does not happen" by waiting a fixed time (a slow machine misses it). Wait for a later occurrence that shows the time has passed (a later event, `last_seq` or `stop` in the server's summary), then check.
+
+**End-to-end tests**:
+
+- Wait for what should happen with the waiting `expect` or `expect.poll`. Do not sleep a fixed time and assume "it must have moved on".
+- Wait limits (`timeout` and `expect.timeout` in the configuration, `RUN_TIMEOUT`) are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE`. Pass a limit you write through `scaled(ms)` (`e2e/support/timeouts.ts`). Do not scale the time used to confirm that something does not happen, or the time given to the screen (such as the length of a guard).
+- Use `getByRole` first; `data-testid` is a fallback. For layout, see "Layout" above.
+- The tests run against the real GUI server and the replay launcher, which replays recordings of the real launcher's output. The configuration file and the commands sent decide the recording. For an action with no recording, the replay launcher says what to record and exits.
+- `gui/server/tests/test_real_launcher.py` compares the recordings with the current real launcher.
+- What happens only with the real launcher (the `--describe` output of the example ECUs, how the real launcher stops) is tested in `e2e/real/`.
+- Situations that are not in the recordings (disconnection, lines that keep coming while reading) are created by injecting notifications with `page.routeWebSocket`.
+- Check appearance and take screenshots at the size people actually see, without enlarging the window (to see what fits on the first screen).
+
+## Icons
+
+`public/favicon.svg` is the source. `public/favicon.ico` (16, 32, 48 px) is made from the SVG with ImageMagick; make it again when the SVG changes.
 
 ```sh
 cd public && magick -background none -density 384 favicon.svg -define icon:auto-resize=48,32,16 favicon.ico
 ```
 
-## 依存の導入スクリプト
+## Dependency install scripts
 
-`.npmrc` の `ignore-scripts=true` で、依存の導入スクリプト（`preinstall`、`install`、`postinstall`）を走らせません。いま入っている依存は、どれもビルド済みのバイナリを別のパッケージ（`optionalDependencies`）で持つので、スクリプトがなくても動きます。`npm run build` のように明示したスクリプトは走りますが、`prebuild` のような前後のスクリプトは走りません。前後のスクリプトを書かずに、1 つのスクリプトにまとめます。依存を足したら、導入スクリプトがなくても動くことを確かめます。
+`ignore-scripts=true` in `.npmrc` keeps the install scripts of dependencies (`preinstall`, `install`, `postinstall`) from running. Every dependency installed now ships its prebuilt binaries as separate packages (`optionalDependencies`), so it works without its scripts. Scripts you run explicitly, such as `npm run build`, do run, but pre and post scripts such as `prebuild` do not. Do not write pre and post scripts; put the steps into one script. When you add a dependency, check that it works without its install scripts.
+
+## See also
+
+| To find                                                       | Document                                                                              |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Building your own screen from scratch                         | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md)           |
+| Copying the widgets of these screens into another Angular app | "Copy the sample widgets" in [docs/gui.md](../../docs/gui.md#copy-the-sample-widgets) |
+| The public API of the client library                          | [gui/client](../client/README.md)                                                     |
+| The shapes of the server API                                  | [gui/protocol](../protocol/README.md)                                                 |
