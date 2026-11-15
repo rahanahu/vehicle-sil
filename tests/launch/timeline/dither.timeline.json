@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "dither",
@@ -167,11 +167,13 @@
             "compare": [
               {
                 "op": "ge",
-                "value": 67
+                "value": 67,
+                "tolerance": null
               },
               {
                 "op": "le",
-                "value": 73
+                "value": 73,
+                "tolerance": null
               }
             ]
           },
@@ -180,11 +182,13 @@
             "compare": [
               {
                 "op": "ge",
-                "value": 0.45
+                "value": 0.45,
+                "tolerance": null
               },
               {
                 "op": "le",
-                "value": 0.55
+                "value": 0.55,
+                "tolerance": null
               }
             ]
           }
@@ -199,6 +203,10 @@
       "source": "written",
       "encoding": "all",
       "columns": ["at_ms", "value", "base"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 50, 50],
         [10, 52, 50],
@@ -227,9 +235,11 @@
       "variable": "Body.level",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 21,
       "first_ms": 0,
       "last_ms": 200,
+      "not_applied_from": null,
       "points": [
         [0, 50],
         [10, 52],
@@ -255,6 +265,10 @@
       "source": "written",
       "encoding": "all",
       "columns": ["at_ms", "value", "base"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [30, 0.5348311458534407, 0.5],
         [40, 0.4504525469722368, 0.5],
@@ -280,9 +294,11 @@
       "variable": "Body.ratio",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 21,
       "first_ms": 0,
       "last_ms": 200,
+      "not_applied_from": null,
       "points": [
         [0, 0],
         [30, 0.5348311458534407],

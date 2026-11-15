@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "set, ramp and waves, with an expect beside",
@@ -144,7 +144,8 @@
             "compare": [
               {
                 "op": "eq",
-                "value": 150
+                "value": 150,
+                "tolerance": null
               }
             ]
           }
@@ -174,7 +175,8 @@
             "compare": [
               {
                 "op": "le",
-                "value": 400
+                "value": 400,
+                "tolerance": null
               }
             ]
           },
@@ -183,7 +185,8 @@
             "compare": [
               {
                 "op": "ge",
-                "value": 20
+                "value": 20,
+                "tolerance": null
               }
             ]
           }
@@ -243,7 +246,8 @@
             "compare": [
               {
                 "op": "ge",
-                "value": 380
+                "value": 380,
+                "tolerance": null
               }
             ]
           },
@@ -252,7 +256,8 @@
             "compare": [
               {
                 "op": "eq",
-                "value": 1
+                "value": 1,
+                "tolerance": null
               }
             ]
           }
@@ -266,6 +271,11 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 20],
         [20, 20],
@@ -296,9 +306,11 @@
       "variable": "Body.level",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 35,
       "first_ms": 0,
       "last_ms": 340,
+      "not_applied_from": null,
       "points": [
         [0, 20],
         [30, 22],
@@ -322,6 +334,11 @@
       "variable": "Door.lamp",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, true]
       ]
@@ -330,9 +347,11 @@
       "variable": "Body.body.speed",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 35,
       "first_ms": 0,
       "last_ms": 340,
+      "not_applied_from": null,
       "points": [
         [0, 50],
         [10, 100],
@@ -358,6 +377,11 @@
       "variable": "Door.ratio",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [20, 0],
         [30, 0.2],
@@ -371,6 +395,11 @@
       "variable": "Door.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [120, 50],
         [130, 53],
@@ -389,6 +418,11 @@
       "variable": "Door.mode",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [220, 0],
         [230, 0],
@@ -403,9 +437,11 @@
       "variable": "Door.mode",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 35,
       "first_ms": 0,
       "last_ms": 340,
+      "not_applied_from": null,
       "points": [
         [0, 0],
         [250, 2],

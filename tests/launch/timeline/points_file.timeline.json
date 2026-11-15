@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "points from a file, and a ramp from where they end",
@@ -65,6 +65,11 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 10],
         [10, 10],

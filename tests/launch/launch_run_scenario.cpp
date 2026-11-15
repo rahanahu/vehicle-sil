@@ -405,7 +405,8 @@ void scenario_dither(const Options& o)
                            "      \"step\": null,\n      \"from_ms\": 0,\n      \"to_ms\": null,\n      \"base\": null,\n"
                            "      \"base_source\": null,\n      \"shape\": {\n        \"type\": \"triangle\",\n        \"amplitude\": 2,\n"
                            "        \"period_ms\": 80\n      },\n") &&
-                contains(file, "      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50],\n"
+                contains(file, "      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"samples\": null,\n      \"first_ms\": null,\n"
+                               "      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": [\n        [0, 50, 50],\n"
                                "        [10, 51, 50],\n        [20, 52, 50],\n") &&
                 contains(file, "      \"shape\": null,\n      \"text\": \"Engine.engine.throttle none\"\n"),
             "the timeline of the example with a dither:\n" + file);
@@ -484,6 +485,13 @@ void scenario_dither(const Options& o)
         require(!events || contains(out, "\"inputs\":[],\"lines\":[]"),
                 "the lists are in the events, empty:\n" + out);
     }
+    // A scenario that cannot be read has no lists to give: both are null.
+    const fs::path copy = example_copy(o);
+    write_file(copy / "unreadable.yaml", "vehicle_sil_scenario: 1\nsteps: [\n");
+    const Captured unreadable = launch(o, {"check", "--json", "simulation.yaml", "--scenario", "unreadable.yaml"}, copy);
+    expect_code(unreadable, 1, "check --json --scenario unreadable.yaml");
+    require(contains(lf(unreadable.standard_output), "\n    \"inputs\": null,\n    \"lines\": null"),
+            "a scenario that cannot be read has null for its inputs and lines:\n" + lf(unreadable.standard_output));
 }
 
 /// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no

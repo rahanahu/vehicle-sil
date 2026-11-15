@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "a bool and an enum write are not applied, and another step writes at the same time",
@@ -127,6 +127,10 @@
       "variable": "Body.mode",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
       "not_applied_from": 1,
       "points": [
         [0, 0],
@@ -138,15 +142,21 @@
       "variable": "Body.mode",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 5,
       "first_ms": 0,
       "last_ms": 40,
+      "not_applied_from": null,
       "points": [[0, 0]]
     },
     {
       "variable": "Body.lamp",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
       "not_applied_from": 1,
       "points": [
         [0, false],
@@ -158,9 +168,11 @@
       "variable": "Body.lamp",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 5,
       "first_ms": 0,
       "last_ms": 40,
+      "not_applied_from": null,
       "points": [[0, false]]
     }
   ],

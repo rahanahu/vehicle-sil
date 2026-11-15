@@ -2605,9 +2605,10 @@ TEST_CASE(scenario_first_motion_without_a_base_takes_the_sample_the_controllers_
 }
 
 /// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
-/// makes it (the findings: those of the failed steps, as the run's).
+/// makes it (the findings: those of the failed steps, as the run's, then `findings`).
 std::string timeline_of(const std::string& text, SimDuration tick, const std::function<void(World&)>& setup = {},
-                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {}, const ScenarioContext& context = {})
+                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {}, const ScenarioContext& context = {},
+                        const std::vector<Finding>& findings = {})
 {
     ScenarioRead r = read_scenario(text, described, context);
     if (!r.scenario)
@@ -2627,7 +2628,7 @@ std::string timeline_of(const std::string& text, SimDuration tick, const std::fu
     run.file = "scenario.yaml";
     TimelineInput input;
     input.file = "simulation.yaml";
-    input.tick_ms = ms_of(at(tick));
+    input.time_step_ms = ms_of(at(tick));
     input.scenario = &s;
     input.run = &run;
     input.catalog = &described;
@@ -2639,6 +2640,7 @@ std::string timeline_of(const std::string& text, SimDuration tick, const std::fu
             input.findings.push_back(Finding{Severity::Error, step.code, step.text + ": " + step.message, step.line, "", "", "", run.file});
         }
     }
+    input.findings.insert(input.findings.end(), findings.begin(), findings.end());
     return format_timeline_json(input);
 }
 
@@ -2656,7 +2658,7 @@ std::string compared(const std::string& timeline)
             line.pop_back();
         }
         const bool left_out = std::ranges::any_of(
-            std::vector<std::string>{"  \"vehicle_sil\": ", "  \"file\": ", "  \"tick_ms\": ", "    \"file\": ", "    \"over_at_ms\": "},
+            std::vector<std::string>{"  \"vehicle_sil\": ", "  \"file\": ", "  \"time_step_ms\": ", "    \"file\": ", "    \"over_at_ms\": "},
             [&line](const std::string& start) { return line.rfind(start, 0) == 0; });
         if (!left_out)
         {
@@ -2760,9 +2762,14 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
     const std::string failed = timeline_of(fails, 30ms, door4, catalog(10ms, 4ms));
     CHECK(failed.find("    \"over_at_ms\": 30,\n    \"recorded_to_ms\": 15\n") != std::string::npos);
     CHECK(failed.find("      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-                      "      \"points\": [\n        [0, 10]\n      ]") != std::string::npos);
+                      "      \"columns\": [\"at_ms\", \"value\"],\n      \"samples\": null,\n      \"first_ms\": null,\n      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": [\n        [0, 10]\n      ]") != std::string::npos);
     CHECK(failed.find("      \"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"
-                      "      \"samples\": 2,\n      \"first_ms\": 0,\n      \"last_ms\": 10,\n      \"points\": [\n"
+                      "      \"columns\": [\"at_ms\", \"value\"],\n"
+                      "      \"samples\": 2,\n"
+                      "      \"first_ms\": 0,\n"
+                      "      \"last_ms\": 10,\n"
+                      "      \"not_applied_from\": null,\n"
+                      "      \"points\": [\n"
                       "        [0, 50],\n        [10, 100]\n      ]") != std::string::npos);
     CHECK(failed.find("      \"failed\": {\n        \"at_ms\": 15,\n        \"code\": \"scenario-failed\",\n        \"conditions\": [\n"
                       "          {\n            \"condition\": 0,\n            \"value\": 100,\n            \"sample_ms\": 10\n          }\n"
@@ -2849,6 +2856,11 @@ TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [0, 2],\n"
                "        [230, 71],\n"
@@ -2866,9 +2878,11 @@ TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
                "      \"variable\": \"Body.body.speed\",\n"
                "      \"source\": \"sampled\",\n"
                "      \"encoding\": \"changes\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
                "      \"samples\": 33,\n"
                "      \"first_ms\": 0,\n"
                "      \"last_ms\": 320,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [250, 770],\n"
                "        [260, 800],\n"
@@ -2978,6 +2992,28 @@ TEST_CASE(timeline_counts_the_samples_up_to_the_time_it_is_closed_at)
     CHECK(record.series()[0].samples.empty());
 }
 
+TEST_CASE(timeline_writes_every_key_of_a_late_values_finding)
+{
+    // Its code and severity, and null for what may differ from run to run: the file has the same
+    // keys in every finding.
+    const std::string timeline =
+        timeline_of(kHead + "  - set: { Body.level: 7 }\n", 10ms, {}, catalog(), {}, {},
+                    {Finding{Severity::Warning, "control-link-late-values", "participant 'Body': 3 messages came late", 0, "Body", "", "", ""},
+                     Finding{Severity::Warning, "behind-real-time", "the run fell behind real time", 0, "", "", "", ""}});
+    check_text(part(timeline, "  \"findings\": [", "  \"limits\""), "  \"findings\": [\n"
+                                                                    "    {\n"
+                                                                    "      \"severity\": \"warning\",\n"
+                                                                    "      \"code\": \"control-link-late-values\",\n"
+                                                                    "      \"file\": null,\n"
+                                                                    "      \"line\": null,\n"
+                                                                    "      \"participant\": null,\n"
+                                                                    "      \"network\": null,\n"
+                                                                    "      \"message\": null,\n"
+                                                                    "      \"detail\": null\n"
+                                                                    "    }\n"
+                                                                    "  ],\n");
+}
+
 TEST_CASE(timeline_marks_the_write_that_was_refused)
 {
     // A written point is what was sent. The write a step failed of is a point too, and the series
@@ -3020,6 +3056,10 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 3,\n"
                "      \"points\": [\n"
                "        [0, 7],\n"
@@ -3054,6 +3094,10 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 0,\n"
                "      \"points\": [\n"
                "        [0, 102]\n"
@@ -3115,6 +3159,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 1,\n"
                "      \"points\": [\n"
                "        [0, 5],\n"
@@ -3125,6 +3173,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.lamp\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 1,\n"
                "      \"points\": [\n"
                "        [0, false],\n"
@@ -3135,6 +3187,11 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.mode\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [20, 2]\n"
                "      ]\n"
@@ -3143,9 +3200,11 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.mode\",\n"
                "      \"source\": \"sampled\",\n"
                "      \"encoding\": \"changes\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
                "      \"samples\": 3,\n"
                "      \"first_ms\": 0,\n"
                "      \"last_ms\": 20,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [0, 0],\n"
                "        [20, 2]\n"
@@ -3155,6 +3214,11 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Door.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [20, 4]\n"
                "      ]\n"
@@ -3186,6 +3250,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 0,\n"
                "      \"points\": [\n"
                "        [20, 13]\n"
@@ -3195,6 +3263,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.mode\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 0,\n"
                "      \"points\": [\n"
                "        [20, 2]\n"
@@ -3234,6 +3306,11 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [0, 5]\n"
                "      ]\n"
@@ -3242,6 +3319,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.mode\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 0,\n"
                "      \"points\": [\n"
                "        [20, 2]\n"
@@ -3251,6 +3332,10 @@ TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
                "      \"variable\": \"Body.gain\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 0,\n"
                "      \"points\": [\n"
                "        [20, 3]\n"
@@ -3311,6 +3396,10 @@ TEST_CASE(timeline_marks_the_point_of_the_failed_write_among_points_of_one_time)
                "      \"variable\": \"Body.level\",\n"
                "      \"source\": \"written\",\n"
                "      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
                "      \"not_applied_from\": 1,\n"
                "      \"points\": [\n"
                "        [0, 5],\n"
@@ -3361,6 +3450,11 @@ TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_the
         "      \"variable\": \"Body.level\",\n"
         "      \"source\": \"written\",\n"
         "      \"encoding\": \"all\",\n"
+        "      \"columns\": [\"at_ms\", \"value\"],\n"
+        "      \"samples\": null,\n"
+        "      \"first_ms\": null,\n"
+        "      \"last_ms\": null,\n"
+        "      \"not_applied_from\": null,\n"
         "      \"points\": [\n"
         "        [0, 5]\n"
         "      ]\n"
@@ -3369,9 +3463,11 @@ TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_the
         "      \"variable\": \"Body.body.speed\",\n"
         "      \"source\": \"sampled\",\n"
         "      \"encoding\": \"changes\",\n"
+        "      \"columns\": [\"at_ms\", \"value\"],\n"
         "      \"samples\": 2,\n"
         "      \"first_ms\": 0,\n"
         "      \"last_ms\": 10,\n"
+        "      \"not_applied_from\": null,\n"
         "      \"points\": [\n"
         "        [0, 50]\n"
         "      ]\n"
@@ -3393,7 +3489,9 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
         std::istringstream in(part(timeline, "  \"series\": [", "  \"lines\""));
         for (std::string line; std::getline(in, line);)
         {
-            if (line.rfind("      \"not_applied_from\"", 0) == 0 || line.rfind("      \"last_ms\"", 0) == 0)
+            // (Those that have a value: every series has both, null where they do not apply.)
+            if ((line.rfind("      \"not_applied_from\"", 0) == 0 || line.rfind("      \"last_ms\"", 0) == 0) &&
+                !line.ends_with(": null,"))
             {
                 out += line.substr(6) + "\n";
             }
@@ -3462,9 +3560,17 @@ TEST_CASE(timeline_keeps_the_writes_of_the_times_before_a_motion_that_finds_no_b
     check_text(part(made, "  \"series\": [", "  \"lines\""),
                "  \"series\": [\n"
                "    {\n      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-               "      \"not_applied_from\": 0,\n      \"points\": [\n        [10, 3]\n      ]\n    },\n"
+               "      \"columns\": [\"at_ms\", \"value\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [10, 3]\n"
+               "      ]\n"
+               "    },\n"
                "    {\n      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-               "      \"points\": []\n    }\n  ],\n");
+               "      \"columns\": [\"at_ms\", \"value\"],\n      \"samples\": null,\n      \"first_ms\": null,\n      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": []\n    }\n  ],\n");
     CHECK(made.find("      \"status\": \"unfinished\",\n      \"start_ms\": 10,") != std::string::npos);
 }
 
@@ -3558,7 +3664,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
                    "the lines of a step that sent a part of its writes");
         check_text(step_lines_of(part_sent), "[0], [1], [], ");
         CHECK(part_sent.find("      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-                             "      \"points\": []\n") != std::string::npos);
+                             "      \"columns\": [\"at_ms\", \"value\"],\n      \"samples\": null,\n      \"first_ms\": null,\n      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": []\n") != std::string::npos);
     }
     // A run that never began has no lines, and says so with an empty list.
     const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n");
@@ -4007,8 +4113,8 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
     const auto series = [&file](const std::string& variable) {
         return part(file, "      \"variable\": \"" + variable + "\",\n      \"source\": \"written\",\n", "      \"points\"");
     };
-    CHECK(series("Body.ratio").find("not_applied_from") == std::string::npos);
-    CHECK(series("Door.level").find("not_applied_from") == std::string::npos);
+    CHECK(series("Body.ratio").find("      \"not_applied_from\": null,\n") != std::string::npos);
+    CHECK(series("Door.level").find("      \"not_applied_from\": null,\n") != std::string::npos);
     CHECK(series("Body.level").find("      \"not_applied_from\": 2,\n") != std::string::npos);
 }
 
@@ -4286,12 +4392,16 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
     check_text(part(made, "      \"variable\": \"Body.level\",\n      \"source\": \"written\"", "    },\n"),
                "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
                "      \"columns\": [\"at_ms\", \"value\", \"base\"],\n"
+               "      \"samples\": null,\n"
+               "      \"first_ms\": null,\n"
+               "      \"last_ms\": null,\n"
+               "      \"not_applied_from\": null,\n"
                "      \"points\": [\n"
                "        [30, 48, 50],\n        [40, 50, 50],\n        [50, 52, 50],\n        [60, 50, 50],\n        [70, 48, 50],\n"
                "        [80, 50, 50],\n        [90, 50, 50]\n      ]\n");
     // A file without a dither is as it was: two columns and no "columns".
     const std::string plain = timeline_of(kHead + "  - set: { Body.level: 50 }\n", 10ms);
-    CHECK(plain.find("\"columns\"") == std::string::npos && plain.find("        [0, 50]\n") != std::string::npos);
+    CHECK(plain.find("      \"columns\": [\"at_ms\", \"value\"],\n") != std::string::npos && plain.find("        [0, 50]\n") != std::string::npos);
     // A dither whose first write is refused was sent: it is a line, and the point is marked.
     const std::string refused = timeline_of(kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
                                                           "steps:\n  - at_ms: 20\n    set: { Body.level: 99 }\n"
@@ -4599,7 +4709,9 @@ TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_
     const std::string fine = timeline_of(failing, 10ms);
     CHECK(fine.find("    \"status\": \"failed\",") != std::string::npos);
     check_text(recorded(timeline_of(failing, 30ms)), recorded(fine), "with a controller step of 30 ms");
-    CHECK(fine.find("      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50]\n      ]\n") != std::string::npos);
+    CHECK(fine.find("      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"samples\": null,\n      \"first_ms\": null,\n"
+                    "      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": [\n        [0, 50, 50]\n      ]\n") !=
+          std::string::npos);
     // The same for a declared dither whose input gets its first value after the failure.
     const std::string declared = kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
                                                "steps:\n  - at_ms: 30\n    expect: { Body.level: 51 }\n"
