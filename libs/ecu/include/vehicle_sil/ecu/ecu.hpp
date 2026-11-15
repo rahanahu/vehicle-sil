@@ -640,6 +640,21 @@ private:
     std::vector<std::pair<std::size_t, NetworkDescription>> items_;
 };
 
+/// Ecu::describe() of an implementation: the description of the ECU `name` with its `step`
+/// (empty in real time), its `networks` and the variables it declared on `agent`. Leaves what
+/// whoever runs the ECU sets (control, features) empty. A field that every implementation fills
+/// the same way goes here.
+[[nodiscard]] inline EcuDescription ecu_description(std::string name, std::optional<SimDuration> step,
+                                                    NetworkList&& networks, const EcuAgent& agent)
+{
+    EcuDescription out;
+    out.name = std::move(name);
+    out.step = step;
+    out.networks = std::move(networks).networks();
+    out.variables = agent.variables();
+    return out;
+}
+
 } // namespace detail
 
 inline void Ecu::set_agent_options(control::AgentOptions options)
