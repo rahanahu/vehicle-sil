@@ -949,6 +949,52 @@ command "command":"pause","source":"control_server","accepted":false,"message":"
 )");
 }
 
+TEST_CASE(time_commands_note_the_first_that_changed_how_the_time_goes)
+{
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"NeverJoins"};
+    options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
+    SimulationController controller(options);
+    const auto command = [](const std::string& line) { return *parse_command(line); };
+    // Starting paused, a resume, a speed of 1, a stop and a refused command change nothing.
+    TimeCommands commands(true);
+    CHECK(commands.apply(command(R"({"command":"resume"})"), "stdin").accepted);
+    CHECK(commands.apply(command(R"({"command":"speed","value":1})"), "stdin").accepted);
+    CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").accepted);
+    CHECK(commands.apply(command(R"({"command":"stop"})"), "stdin").accepted);
+    commands.attach(controller, 10, std::nullopt);
+    CHECK(!commands.apply(command(R"({"command":"step","ms":10})"), "stdin").accepted); // not paused
+    CHECK(!commands.first_time_change());
+    // The first that does is kept, with where it was to stand still.
+    Command at;
+    at.name = "pause";
+    at.accepted = true;
+    at.at_ms = 25;
+    CHECK(commands.apply(at, "control_server").accepted);
+    CHECK(commands.apply(command(R"({"command":"speed","value":2})"), "stdin").accepted);
+    commands.detach();
+    const std::optional<TimeChange> first = commands.first_time_change();
+    CHECK(first && first->command == "pause" && first->source == "control_server" && first->sim_ms == 0);
+    CHECK(first->at_ms == std::optional<std::int64_t>(30) && !first->ms && !first->speed);
+    // A step, with how far it goes in whole steps.
+    TimeCommands stepped(true);
+    stepped.attach(controller, 10, std::nullopt);
+    CHECK(stepped.apply(command(R"({"command":"step","ms":25})"), "stdin").accepted);
+    stepped.detach();
+    const std::optional<TimeChange> step = stepped.first_time_change();
+    CHECK(step && step->command == "step" && step->ms == std::optional<std::int64_t>(30) && !step->at_ms);
+    // A speed before the controller: max, and any other than 1.
+    TimeCommands fastest(false);
+    CHECK(fastest.apply(command(R"({"command":"speed","value":"max"})"), "stdin").accepted);
+    const std::optional<TimeChange> max = fastest.first_time_change();
+    CHECK(max && max->command == "speed" && !max->speed && max->sim_ms == 0 && max->source == "stdin");
+    TimeCommands slower(false);
+    CHECK(slower.apply(command(R"({"command":"speed","value":0.5})"), "stdin").accepted);
+    CHECK(slower.first_time_change() && slower.first_time_change()->speed == std::optional<double>(0.5));
+}
+
 TEST_CASE(the_hold_before_the_start_ends_with_resume_step_or_run_until_a_give_up_or_the_detach)
 {
     vehicle_sil::unit::InProcessRegistry registry;

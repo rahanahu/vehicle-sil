@@ -114,12 +114,19 @@ if(NOT _bridge_netns_python)
   message(STATUS "vehicle-sil: no Python 3.11+ for ethernet_bridge.netns.* (tried: ${_bridge_netns_python_TRIED})")
   return()
 endif()
-foreach(_scenario tap packet pcap)
+# launch: vehicle_sil_launch run --connect starts the bridge itself, beside the ECU of the
+# integration tests.
+foreach(_scenario tap packet pcap launch)
+  set(_bridge_netns_more)
+  if(_scenario STREQUAL "launch")
+    set(_bridge_netns_more --launch $<TARGET_FILE:vehicle_sil_launch> --ecu $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_ecu>)
+  endif()
   add_test(NAME ethernet_bridge.netns.${_scenario}
     COMMAND "${_bridge_netns_python}" ${CMAKE_CURRENT_SOURCE_DIR}/bridge_netns.py --scenario ${_scenario}
             --bridge $<TARGET_FILE:vehicle_sil_ethernet_bridge>
             --peer $<TARGET_FILE:vehicle_sil_ethernet_bridge_it_peer>
-            --registry $<TARGET_FILE:sil-kit-registry>)
+            --registry $<TARGET_FILE:sil-kit-registry>
+            ${_bridge_netns_more})
   set_tests_properties(ethernet_bridge.netns.${_scenario}
     PROPERTIES LABELS "integration;ethernet_bridge" TIMEOUT 300 SKIP_RETURN_CODE 77)
 endforeach()

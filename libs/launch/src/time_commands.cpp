@@ -43,6 +43,8 @@ struct TimeCommands::State
     bool released = false;
     /// Called in detach() with the controller, before it goes (set_on_detach()).
     std::function<void(SimulationController&)> on_detach{};
+    /// The first accepted command that changed how the time goes (first_time_change()).
+    std::optional<TimeChange> first_change{};
 };
 
 namespace {
@@ -142,6 +144,16 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
     if (name == "stop")
     {
         return out;
+    }
+    // Before it takes effect: where the simulation stood when it came.
+    if (!s.first_change && (name == "pause" || name == "step" || name == "run_until" ||
+                            (name == "speed" && command.speed != std::optional<double>(1.0))))
+    {
+        const std::int64_t at =
+            c != nullptr ? std::chrono::duration_cast<std::chrono::milliseconds>(c->time_state().now.time_since_epoch()).count()
+                         : 0;
+        s.first_change = TimeChange{name, std::string(source), at, name == "step" ? out.ms : std::nullopt, out.at_ms,
+                                    name == "speed" ? command.speed : std::nullopt};
     }
     // What lets the simulation go on from 0: the hold ends with it, or (before the hold) there
     // is none. A pause (not at a later time) asks for it again.
@@ -293,6 +305,13 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
             return Hold::GaveUp;
         }
     }
+}
+
+std::optional<TimeChange> TimeCommands::first_time_change()
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    return s.first_change;
 }
 
 TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationController& controller, bool holding)>& f)

@@ -2134,6 +2134,49 @@ TEST_CASE(a_bridge_that_the_launcher_stopped_after_the_run_is_no_finding)
                "what it wrote\n");
 }
 
+TEST_CASE(a_time_command_in_a_connected_run_is_one_warning_about_the_first)
+{
+    RunOutcome o = connected_run(stopped_bridge(0));
+    o.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
+    check_text(lines(report_of(o).findings),
+               "W 0 connect-time-changed: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and the run took the time command 'pause' from stdin at 1200 ms: the simulation stood still while the "
+               "devices there went on in real time, so from then on they got the messages at the wrong times. It is the "
+               "first command of the run that paused, stepped or changed the speed (the command events show each one). To "
+               "pause, step or change the speed, run without --connect (on SIL Kit only); --strict makes this a failure, for "
+               "an automatic test\n");
+    CHECK(report_of(o).result() == RunResult::Passed);
+    CHECK(report_of(o, true).result() == RunResult::Failed);
+    // Known once the simulation is over: an event before the participants have ended.
+    CHECK(launch::detail::settled_findings(o).size() == 1);
+    // How each command is named, and what it did.
+    const auto said = [&o](TimeChange t) {
+        o.time_changed = std::move(t);
+        const std::vector<Finding> f = assess_run(o);
+        CHECK(f.size() == 1);
+        return f[0].message;
+    };
+    const auto contains = [](const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; };
+    CHECK(contains(said({"step", "control_server", 0, 50, std::nullopt, std::nullopt}),
+                   "the time command 'step 50 ms' from control_server at 0 ms: the simulation stood still while"));
+    CHECK(contains(said({"run_until", "control_server", 70, std::nullopt, 300, std::nullopt}),
+                   "the time command 'run_until 300 ms' from control_server at 70 ms: the simulation stood still while"));
+    CHECK(contains(said({"pause", "control_server", 70, std::nullopt, 500, std::nullopt}),
+                   "the time command 'pause at 500 ms' from control_server at 70 ms: the simulation stood still while"));
+    CHECK(contains(said({"speed", "stdin", 400, std::nullopt, std::nullopt, 2.5}),
+                   "the time command 'speed 2.5' from stdin at 400 ms: the simulation ran at speed 2.5 while the devices"));
+    CHECK(contains(said({"speed", "stdin", 400, std::nullopt, std::nullopt, std::nullopt}),
+                   "the time command 'speed max' from stdin at 400 ms: the simulation ran as fast as possible while"));
+    // Two networks: both named.
+    o.outside.push_back(RunOutside{"CAN", "virtual:1", "bridge.CAN", std::nullopt, std::nullopt});
+    CHECK(contains(said({"pause", "stdin", 0, std::nullopt, std::nullopt, std::nullopt}), "--connect connects ETH and CAN to a real bus"));
+    // Without --connect, or without such a command: nothing.
+    RunOutcome plain = passed_run();
+    plain.time_changed = TimeChange{"pause", "stdin", 1200, std::nullopt, std::nullopt, std::nullopt};
+    CHECK(assess_run(plain).empty());
+    CHECK(assess_run(connected_run(stopped_bridge(0))).empty());
+}
+
 TEST_CASE(the_outputs_of_a_connected_run_have_the_bridge_and_where_it_connects)
 {
     const RunOutcome o = connected_run(stopped_bridge(0));

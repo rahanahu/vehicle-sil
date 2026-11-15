@@ -25,7 +25,10 @@
 //                               hand: connect-failed, the simulation does not start.
 //   connect_speed               --speed 2 over the file's speed 1: connect-not-real-time; with
 //                               --strict nothing starts; --start-paused: connect-start-paused, and
-//                               it runs after a resume.
+//                               it runs after a resume (which is no connect-time-changed).
+//   connect_time_changed        paused while it runs, then a speed, a resume and a stop: one
+//                               warning connect-time-changed, about the pause; with --strict, a
+//                               speed command (written at once) fails the run after its end.
 #include "launch_run_support.hpp"
 
 #include <regex>
@@ -331,4 +334,50 @@ void connect_speed(const Options& base)
     require(contains(finding_in(lines, "connect-start-paused"), "with --start-paused, the devices there go on"),
             "the warning connect-start-paused:\n" + out_of(lines));
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "it ran to its end:\n" + lines.back());
+    // Starting paused and the resume do not change the time of a run that goes on in real time.
+    require(finding_in(lines, "connect-time-changed").empty(), "no connect-time-changed:\n" + out_of(lines));
+}
+
+void connect_time_changed(const Options& base)
+{
+    const Options o = connect_options(base);
+    const std::string code = "\"code\":\"connect-time-changed\"";
+    // Both networks connected, as connect_roundtrip: the check has no finding, so --strict fails on this one only.
+    // No stop_at_ms: the commands do not have to come within a time of the run; a stop ends it.
+    {
+        const fs::path dir = connect_dir(o, "time_changed", "", talker(o), {{"Talker", "talk CAN"}});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1",
+                           "sim.yaml"});
+        live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
+        live.write("{\"command\":\"pause\"}\n");
+        const std::string paused = live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        live.write("{\"command\":\"speed\",\"value\":2}\n{\"command\":\"resume\"}\n");
+        live.wait_for({"\"event\":\"time\"", "\"speed\":2,", "\"paused\":false,"});
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
+        // One finding, about the first command, at the time it came (not after where it stood still).
+        const std::vector<std::string> found = events_with(lines, {"\"event\":\"finding\"", code});
+        require(found.size() == 1, "one finding connect-time-changed:\n" + out_of(lines));
+        std::smatch match;
+        const bool named = std::regex_search(found[0], match,
+                                             std::regex("the time command 'pause' from stdin at ([0-9]+) ms: the simulation "
+                                                        "stood still while the devices there went on in real time"));
+        require(named && std::stoll(match[1].str()) <= std::stoll(value_of(paused, "sim_ms")),
+                "the finding names the pause and when it came:\n" + found[0] + "\n" + paused);
+        require(contains(lines.back(), "\"errors\":0,\"warnings\":1,"), "this warning only, no error:\n" + lines.back());
+    }
+    // With --strict the warning fails the run, after it has run to its end. The speed is written at
+    // once: a command before the simulation starts is kept and counts as well, so it cannot come too
+    // late; stop_at_ms leaves room for a slow reader all the same.
+    const fs::path dir = connect_dir(o, "time_changed_strict", "stop_at_ms: " + std::to_string(scaled_timeout(10s).count()) + "\n",
+                                     talker(o), {{"Talker", "talk CAN"}});
+    Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
+                       "CAN=virtual:1", "sim.yaml"});
+    live.write("{\"command\":\"speed\",\"value\":\"max\"}\n");
+    const auto [status, lines] = live.finish();
+    require(status && status->code == 1, "--strict: exit code " + code_text(status) + "\n" + out_of(lines));
+    require(contains(finding_in(lines, "connect-time-changed"), "the time command 'speed max' from stdin at ") &&
+                contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"failed\""),
+            "the run went to its end and failed on the warning:\n" + out_of(lines));
 }

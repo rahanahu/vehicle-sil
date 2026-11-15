@@ -449,7 +449,7 @@ What `launch_run.*` checks:
 - `launch_run.ethernet`: the check and scenario of the 2 ECUs of `examples/ethernet`
 - `launch_run.test_command`, `launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: the check of `simulation.live.yaml`, the example configuration file that runs until stopped, and a run that goes past 1000 ms before it is stopped
-- `launch_run.connect_*` (`launch_run_connect.cpp`): `run --connect` with the bridges of `connect_tools/` (the device `fake0` of the fake pcap library answers, the fake XL driver echoes on `virtual:1`): the bridges join before any ECU starts, the frames go both ways, a bridge that cannot start (`connect-failed`, seen by its process, not by the time limit), one that ends while the run waits for a participant started by hand, one killed or ended with exit code 0 while the simulation runs (`connect-lost`), and the speed warnings with `--strict` and `--start-paused`. Each waits for events or lines (no sleeps), and checks what must not happen in the whole output after the end
+- `launch_run.connect_*` (`launch_run_connect.cpp`): `run --connect` with the bridges of `connect_tools/` (the device `fake0` of the fake pcap library answers, the fake XL driver echoes on `virtual:1`): the bridges join before any ECU starts, the frames go both ways, a bridge that cannot start (`connect-failed`, seen by its process, not by the time limit), one that ends while the run waits for a participant started by hand, one killed or ended with exit code 0 while the simulation runs (`connect-lost`), the speed warnings with `--strict` and `--start-paused`, and `connect-time-changed` (one warning about the first pause of the run; with `--strict`, a speed command fails the run). Each waits for events or lines (no sleeps), and checks what must not happen in the whole output after the end
 
 What `process.*` checks:
 
@@ -506,7 +506,7 @@ Tests of the Ethernet Bridge (all platforms). The `unit` label is also set.
 | `ethernet_bridge.silkit_*` | Checks the real SIL Kit side with an in-process registry (on a free port) |
 | `ethernet_bridge.integration.*` (`integration` label) | Runs an executable linked with a fake external link as a process, and checks round trips, exit codes and shutdown |
 | `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library; `pcap-describe` checks `--describe`, and `pcap-launcher` starts the bridge with an ECU from a configuration file of `vehicle_sil_launch` |
-| `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable with TAP devices and veth in a namespace |
+| `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable, and `launch` (`vehicle_sil_launch run --connect` starting it), with TAP devices and veth in a namespace |
 
 `ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (frame orders in which the loop stops and in which it does not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
 
@@ -858,7 +858,7 @@ Implementation:
 | The forms of `--connect`, the bridges' arguments, `find_tool()` (next to the launcher, then `PATH`); the search of `PATH` that `find_tool()` and `find_executable()` share is `detail::find_on_path()` in `src/config.cpp` | `src/connect.cpp` |
 | `connections`: the bridges' lists read (`TargetReader`) and passed on with every key (`write_node()`), the lists the launcher makes, the text and the JSON. The bridges run through `run_tool()` of `src/check.cpp`, as their `--describe` | `src/connections.cpp` |
 | The check output | `src/check_format.cpp` |
-| `run --connect`: the bridges as participants of the run only, after those of the file (`detail::with_bridges()`). Where they are started first and waited for (`RunStart::wait_for_bridges()`), and where their end stops the run (`detail::stops_run()` in `look_at_children()`, `RunWatch::watch()` and `gone_before_start()`): `run.cpp`, `run_participants.cpp`, `run_start.cpp`, `run_watch.cpp`. Their findings `connect-failed` and `connect-lost`: `run_assess.cpp`; their last line: `RunOutput::on_line()` (the reader threads, under the output's lock) | `src/run_connect.cpp` |
+| `run --connect`: the bridges as participants of the run only, after those of the file (`detail::with_bridges()`). Where they are started first and waited for (`RunStart::wait_for_bridges()`), and where their end stops the run (`detail::stops_run()` in `look_at_children()`, `RunWatch::watch()` and `gone_before_start()`): `run.cpp`, `run_participants.cpp`, `run_start.cpp`, `run_watch.cpp`. Their findings `connect-failed` and `connect-lost`: `run_assess.cpp`; `connect-time-changed`: the first command that changed the time, noted by `TimeCommands::apply()` under its lock (the commands' threads), read by `RunWatch::settle()` after `detach()` (the main thread), judged in `run_assess.cpp`; their last line: `RunOutput::on_line()` (the reader threads, under the output's lock) | `src/run_connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
 | The overall flow of `run` | `src/run.cpp` |
 | The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |
@@ -1755,7 +1755,7 @@ Tests:
 
 - `core.time_gate_model_*`, `core.virtual_time_gate_*`, `core.*deadline_waiter*`
 - `^launch\.`
-- `launch_run.realtime`, `on_time`, `late`, `stall`, `speed_change`, `step_width`, `pause_step`, `paused_failures`, `time_usage`
+- `launch_run.realtime`, `on_time`, `late`, `stall`, `speed_change`, `step_width`, `pause_step`, `paused_failures`, `time_usage`, `connect_time_changed`
 
 ### Participants you start yourself
 

@@ -5,8 +5,9 @@ made in a network namespace of a user namespace (as tests/multi_host/two_hosts.p
 computers), with a SIL Kit registry and a SIL Kit peer (eth_bridge_it_peer --mode answer) inside.
 The "device outside" is this script, with packet sockets of its own.
 
-  bridge_netns.py --scenario <tap|packet|pcap> --bridge <vehicle_sil_ethernet_bridge>
+  bridge_netns.py --scenario <tap|packet|pcap|launch> --bridge <vehicle_sil_ethernet_bridge>
                   --peer <eth_bridge_it_peer> --registry <sil-kit-registry>
+                  [--launch <vehicle_sil_launch> --ecu <eth_bridge_it_ecu>]   (launch)
 
 tap     the bridge on a TAP device made before it starts: frames from a packet socket on the
         device reach the SIL Kit peer unchanged and its answers come back; a frame of another
@@ -32,7 +33,12 @@ pcap    the same veth pair with --backend pcap, which loads the libpcap of this 
         does not come back to it. --promiscuous, --list-interfaces. The messages for an interface
         that is missing, not Ethernet, down, and (with the capability dropped) not allowed to be
         opened. The link down and up: the monitor lines. The interface removed: exit code 1.
-Every scenario: no registry at --registry-uri: exit code 3 and where the bridge looked.
+launch  vehicle_sil_launch run --connect ETH_EXT=va starts the bridge itself (found on PATH, with
+        its default backend, packet) on one end of a veth pair; this script answers at the other
+        end. A scenario (--speed 1 --strict) expects 3 answers at the ECU eth_bridge_it_ecu; the
+        run passes without a finding, the bridge was given the ECU's MAC address as --src-mac, and
+        the launcher stopped it with exit code 0 at the end.
+Every scenario but launch: no registry at --registry-uri: exit code 3 and where the bridge looked.
 
 Exit code 77 (skipped), with the reason, where this cannot be made:
  - no user namespaces (not Linux; no unshare or ip; unprivileged user namespaces turned off): as
@@ -48,6 +54,7 @@ fails the test too.
 EtherType 0x88B5 is known to be free for local experiments (not checked against the standard).
 """
 import argparse
+import json
 import os
 import re
 import shutil
@@ -65,7 +72,7 @@ REGISTRY_PORT = 18500
 REGISTRY_URI = f"silkit://127.0.0.1:{REGISTRY_PORT}"
 NETWORK = "ETH_NETNS"
 
-PEER_MAC = bytes.fromhex("020000000001")  # the SIL Kit side
+PEER_MAC = bytes.fromhex("020000000001")  # the SIL Kit side (launch: the ECU eth_bridge_it_ecu)
 DEVICE_MAC = bytes.fromhex("020000000002")  # this script, outside
 OTHER_MAC = bytes.fromhex("020000000003")  # another program on the bridge's own interface
 BROADCAST = b"\xff" * 6
@@ -146,7 +153,8 @@ def outer(args: argparse.Namespace) -> None:
         skip_no_namespace("unshare -Urnm fails, so unprivileged user namespaces are turned off here (for example "
                           "kernel.apparmor_restrict_unprivileged_userns=1): " + (probe.stderr.strip() or f"exit {probe.returncode}"))
     run = subprocess.run(["unshare", "-Urnm", "--propagation", "private", sys.executable, os.path.abspath(__file__), "--inner",
-                          "--scenario", args.scenario, "--bridge", args.bridge, "--peer", args.peer, "--registry", args.registry],
+                          "--scenario", args.scenario, "--bridge", args.bridge, "--peer", args.peer, "--registry", args.registry,
+                          *(["--launch", args.launch, "--ecu", args.ecu] if args.scenario == "launch" else [])],
                          timeout=600 * SCALE)
     sys.exit(run.returncode)
 
@@ -154,11 +162,11 @@ def outer(args: argparse.Namespace) -> None:
 class Proc:
     """A program in the namespace, its output read line by line."""
 
-    def __init__(self, argv: list[str], cwd: str):
+    def __init__(self, argv: list[str], cwd: str, env: dict[str, str] | None = None):
         self.lines: list[str] = []
         self.lock = threading.Condition()
         self.p = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, start_new_session=True)
+                                  text=True, start_new_session=True, env=env)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
@@ -306,8 +314,8 @@ class World:
                 time.sleep(0.05)
         self.peer: Proc | None = None
 
-    def run(self, argv: list[str]) -> Proc:
-        p = Proc(argv, self.work)
+    def run(self, argv: list[str], env: dict[str, str] | None = None) -> Proc:
+        p = Proc(argv, self.work, env)
         self.procs.append(p)
         return p
 
@@ -732,6 +740,79 @@ def pcap(world: World) -> None:
     say("pcap: the interface removed while the bridge ran: FAIL and exit code 1")
 
 
+def launch(world: World) -> None:
+    make("ip", "link", "add", "va", "type", "veth", "peer", "name", "vb")
+    make("ip", "link", "set", "va", "up")
+    make("ip", "link", "set", "vb", "up")
+    far = Wire("vb")  # the device at the other end of the cable
+
+    # The device answers each frame of the ECU (eth_bridge_it_ecu.cpp: from PEER_MAC to DEVICE_MAC), to the ECU.
+    answered: list[bytes] = []
+    done = threading.Event()
+
+    def answer() -> None:
+        while not done.is_set():
+            got = far._receive(0.2)
+            if got is None:
+                continue
+            data, kind = got
+            if kind != PACKET_OUTGOING and data[:6] == DEVICE_MAC and data[6:12] == PEER_MAC and \
+                    data[12:14] == EXPERIMENTAL.to_bytes(2, "big"):
+                far.send(PEER_MAC + DEVICE_MAC + data[12:])
+                answered.append(data)
+
+    answering = threading.Thread(target=answer, daemon=True)
+    answering.start()
+
+    with open(os.path.join(world.work, "sim.yaml"), "w", encoding="utf-8") as f:
+        f.write("vehicle_sil_simulation: 1\n"
+                "stop_at_ms: 600000\n"
+                "speed: 1\n"
+                "late_tolerance_ms: 60000\n"  # a busy machine: --strict would fail on behind-real-time
+                "registry_uri: silkit://127.0.0.1:0\n"
+                "networks:\n"
+                "  - name: ETH_EXT\n"
+                "    kind: ethernet\n"
+                "participants:\n"
+                "  - name: Pinger\n"
+                f"    command: [{json.dumps(world.args.ecu)}]\n")
+    with open(os.path.join(world.work, "answers.yaml"), "w", encoding="utf-8") as f:
+        f.write("vehicle_sil_scenario: 1\n"
+                "steps:\n"
+                "  - expect: { Pinger.answers: { ge: 3 } }\n"
+                f"    within_ms: {int(WAIT * 1000)}\n")
+    # The launcher finds the bridge on PATH (it is not next to vehicle_sil_launch in the build).
+    env = dict(os.environ, PATH=os.path.dirname(world.bridge_path) + os.pathsep + os.environ.get("PATH", ""))
+    run = world.run([world.args.launch, "run", "--events", "--scenario", "answers.yaml", "--speed", "1", "--strict",
+                     "--connect", "ETH_EXT=va", "sim.yaml"], env)
+    code = run.wait(4 * WAIT)
+    done.set()
+    answering.join(5)
+    text = run.text()
+    events = [json.loads(line) for line in text.splitlines() if line.startswith("{\"event\":")]
+    results = [e["result"] for e in events if e["event"] == "result"]
+    check(code == 0 and len(results) == 1, f"the run passes (exit code 0, not {code}):\n{text}")
+    result = results[0]
+    check(result["result"] == "passed" and result["errors"] == 0 and result["warnings"] == 0 and result["notes"] == 0,
+          f"the run passes without a finding (--strict):\n{text}")
+    check(len(answered) >= 3, f"the ECU's frames reached the device at the other end ({len(answered)} answered):\n{text}")
+    check(result["outside"] == [{"network": "ETH_EXT", "target": "va", "participant": "bridge.ETH_EXT", "to_outside": None,
+                                 "from_outside": None}], f"the result says where ETH_EXT was connected:\n{result['outside']}")
+    bridge = [p for p in result["participants"] if p["name"] == "bridge.ETH_EXT"]
+    check(len(bridge) == 1 and bridge[0]["for_network"] == "ETH_EXT" and bridge[0]["ended"] == "stopped"
+          and bridge[0]["exit_code"] == 0, f"the launcher stopped the bridge at the end, with exit code 0:\n{bridge}")
+    started = [e for e in events if e["event"] == "participant" and e.get("name") == "bridge.ETH_EXT" and e["state"] == "started"]
+    check(len(started) == 1 and started[0]["command"][0] == world.bridge_path
+          and started[0]["command"][1:7] == ["--network", "ETH_EXT", "--interface", "va", "--src-mac", "02:00:00:00:00:01"],
+          f"the launcher started the bridge of PATH on va, with the ECU's MAC address as the filter:\n{started}")
+    bridge_lines = "\n".join(e["line"] for e in events if e["event"] == "log" and e.get("source") == "bridge.ETH_EXT")
+    check("<-> packet 'va' (network interface)" in bridge_lines, f"the bridge chose its default backend, packet:\n{bridge_lines}")
+    stats = statistics(bridge_lines)
+    check(stats["silkit_to_ext"] >= 3 and stats["ext_to_silkit"] >= 3 and stats["loop_suspected"] == 0,
+          f"the bridge forwarded the frames both ways: {stats}")
+    say(f"launch: run --connect ETH_EXT=va started the bridge, and the ECU got {len(answered)} answers from the device")
+
+
 def inner(args: argparse.Namespace) -> None:
     # As root of the user namespace. A /tmp of its own: SIL Kit's local-domain sockets are paths there.
     r = subprocess.run(["mount", "-t", "tmpfs", "none", "/tmp"], capture_output=True, text=True)
@@ -744,6 +825,8 @@ def inner(args: argparse.Namespace) -> None:
             tap(world)
         elif args.scenario == "packet":
             packet(world)
+        elif args.scenario == "launch":
+            launch(world)
         else:
             pcap(world)
     finally:
@@ -753,13 +836,18 @@ def inner(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--scenario", required=True, choices=("tap", "packet", "pcap"))
+    parser.add_argument("--scenario", required=True, choices=("tap", "packet", "pcap", "launch"))
     parser.add_argument("--bridge", required=True, help="vehicle_sil_ethernet_bridge")
     parser.add_argument("--peer", required=True, help="eth_bridge_it_peer")
     parser.add_argument("--registry", required=True, help="sil-kit-registry")
+    parser.add_argument("--launch", help="vehicle_sil_launch (launch)")
+    parser.add_argument("--ecu", help="eth_bridge_it_ecu (launch)")
     parser.add_argument("--inner", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.scenario == "launch" and not (args.launch and args.ecu):
+        parser.error("--scenario launch needs --launch and --ecu")
     args.bridge, args.peer, args.registry = (os.path.abspath(p) for p in (args.bridge, args.peer, args.registry))
+    args.launch, args.ecu = (os.path.abspath(p) if p else p for p in (args.launch, args.ecu))
     if args.inner:
         inner(args)
     else:

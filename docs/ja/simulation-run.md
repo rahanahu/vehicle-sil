@@ -286,6 +286,8 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
 
+`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。実行は `connect-time-changed` を警告します（[バスを外につなぐ](#バスを外につなぐ--connect)）。
+
 ## バスを外につなぐ（`--connect`）
 
 `run --connect <network>=<target>` は、このリポジトリのブリッジで、ネットワークを実機のバス（Ethernet のアダプター、Vector XL Driver Library の CAN チャンネル）につなぎます。まず、この PC で各ネットワークをどこにつなげるかを見て、出力の `--connect` の行を写します（[つなげる先の一覧](#つなげる先の一覧vehicle_sil_launch-connections)）。
@@ -318,7 +320,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 指摘の文は、ブリッジがどう終わったかと、ブリッジが理由を書いた行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行）を出します。強制終了されたブリッジと、そういう行を書かずに終わったブリッジでは、行を出しません（最後の行は `stopped` など、ほかのことだからです）。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
 
-実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、速さの命令は受け付けます。バスの機器は止まりません。
+実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
 
 バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。
 
@@ -800,6 +802,7 @@ passed: 0 errors, 1 warning, 1 note
 | `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
 | `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、シミュレーションを始めなかった。ファイルの participant を起動する前の失敗なら、それらも起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
 | `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた |
+| `connect-time-changed` | 警告 | `--connect` のある実行で、命令がシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も実機のバスの機器は動いていた（実行に 1 つ。最初のそういう命令について。[バスを外につなぐ](#バスを外につなぐ--connect)） |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
