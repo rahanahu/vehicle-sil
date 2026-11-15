@@ -21,6 +21,7 @@ using namespace std::chrono_literals;
 using vehicle_sil::SimDuration;
 using vehicle_sil::SimTime;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 namespace can = vehicle_sil::can;
 namespace j1939 = vehicle_sil::j1939;
 namespace testkit = vehicle_sil::testkit;
@@ -96,6 +97,22 @@ std::optional<SimTime> address_lost(const J1939Events& events)
 }
 
 } // namespace
+
+TEST_CASE(testkit_a_second_recorder_on_the_same_network_or_tap_is_refused)
+{
+    // Two recorders on one network (a helper's and the test's) would leave the first one empty,
+    // and a check that something did not happen would pass on it: the second one is refused.
+    LocalCan bus;
+    install_engine(bus, "engine", 10ms);
+    J1939Events events(bus.network("engine"));
+    FrameLog raw(bus.tap("engine"));
+    CHECK(throws_with<std::logic_error>([&] { J1939Events again(bus.network("engine")); },
+                                        "already has an Observer"));
+    CHECK(throws_with<std::logic_error>([&] { FrameLog again(bus.tap("engine")); }, "already has a TapListener"));
+    bus.run_until(at(100ms));
+    CHECK(events.count(EventKind::FrameSent) > 0);
+    CHECK(raw.count(FrameLog::Direction::Sent) > 0);
+}
 
 TEST_CASE(testkit_engine_stops_sending_when_its_address_is_lost)
 {

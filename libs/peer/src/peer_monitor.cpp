@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 #include "peer_monitor.hpp"
 
+#include "vehicle_sil/ecu/monitor_names.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,6 +18,20 @@ namespace {
 
 using control::Agent;
 using control::EventLevel;
+namespace names = monitor_names;
+
+/// The counters of a J1939 network, in the order of the outputs.
+constexpr std::pair<std::string_view, std::uint64_t j1939::NetworkStatistics::*> kCounters[] = {
+    {names::kFramesReceived, &j1939::NetworkStatistics::frames_received},
+    {names::kFramesSent, &j1939::NetworkStatistics::frames_sent},
+    {names::kSendFailures, &j1939::NetworkStatistics::send_failures},
+    {names::kSendQueueFull, &j1939::NetworkStatistics::send_queue_full},
+    {names::kReceiveOverflows, &j1939::NetworkStatistics::receive_overflows},
+    {names::kHeldDropped, &j1939::NetworkStatistics::held_dropped},
+    {names::kAddressViolations, &j1939::NetworkStatistics::address_violations},
+    {names::kTransportAbortsSent, &j1939::NetworkStatistics::transport_aborts_sent},
+    {names::kTransportAbortsReceived, &j1939::NetworkStatistics::transport_aborts_received},
+};
 
 // The enum outputs use the engine's values: keep them in step.
 static_assert(static_cast<int>(j1939::AddressState::Fixed) == 0 && static_cast<int>(j1939::AddressState::NotStarted) == 1
@@ -45,35 +62,37 @@ const char* state_name(j1939::AddressState state)
 /// The names add_monitoring() would register (to check them before anything changes).
 std::vector<std::string> monitoring_names(Peer& peer)
 {
-    std::vector<std::string> names{"peer.steps", "peer.speed", "peer.app_time_max_us"};
+    std::vector<std::string> out{std::string(names::kPeerSteps), std::string(names::kPeerSpeed),
+                                 std::string(names::kPeerAppTimeMaxUs)};
     for (const auto& name : peer.network_names())
     {
         // Looked up by the code's name, named by the simulation's (PeerOptions::network_names).
-        const std::string prefix = "j1939." + simulation_network_name(peer, name) + ".";
-        for (const char* field : {"bus_state", "frames_received", "frames_sent", "send_failures", "send_queue_full",
-                                  "receive_overflows", "held_dropped", "address_violations", "transport_aborts_sent",
-                                  "transport_aborts_received"})
+        const std::string& network = simulation_network_name(peer, name);
+        const std::string prefix = names::j1939_prefix(network);
+        out.push_back(prefix + std::string(names::kBusState));
+        for (const auto& [field, member] : kCounters)
         {
-            names.push_back(prefix + field);
+            out.push_back(prefix + std::string(field));
         }
         for (std::size_t i = 0; i < peer.network(name).node_count(); ++i)
         {
-            names.push_back(prefix + "node" + std::to_string(i) + ".address");
-            names.push_back(prefix + "node" + std::to_string(i) + ".address_state");
+            const std::string node_prefix = names::j1939_node_prefix(network, i) + ".";
+            out.push_back(node_prefix + std::string(names::kNodeAddress));
+            out.push_back(node_prefix + std::string(names::kNodeAddressState));
         }
     }
-    return names;
+    return out;
 }
 
 /// Registers the outputs that monitoring_names() lists.
 void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<PeerMonitor>& m)
 {
-    agent.output("peer.steps", [m] { return m->steps; }, {.description = "Steps run"});
-    agent.output("peer.speed", [m] { return m->speed(); },
+    agent.output(std::string(names::kPeerSteps), [m] { return m->steps; }, {.description = "Steps run"});
+    agent.output(std::string(names::kPeerSpeed), [m] { return m->speed(); },
                  {.unit = "s/s",
                   .description = "Simulation seconds per wall-clock second since the previous sample (0 at the first sample; "
                                  "includes the time the simulation stood still)"});
-    agent.output("peer.app_time_max_us", [m] { return std::exchange(m->app_us_max, 0.0); },
+    agent.output(std::string(names::kPeerAppTimeMaxUs), [m] { return std::exchange(m->app_us_max, 0.0); },
                  {.unit = "us",
                   .description = "Longest application and LIN stage of a step since the previous sample (without the "
                                  "J1939 handling and the commands applied before it)"});
@@ -81,30 +100,24 @@ void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<PeerMonitor>
     {
         auto& network = peer.network(name);
         // As in monitoring_names(): also the events of the nodes (PeerMonitor::after_step()).
-        const std::string prefix = "j1939." + simulation_network_name(peer, name) + ".";
-        agent.output_enum(prefix + "bus_state",
+        const std::string& simulation = simulation_network_name(peer, name);
+        const std::string prefix = names::j1939_prefix(simulation);
+        agent.output_enum(prefix + std::string(names::kBusState),
                           [&network] { return network.bus_state() ? static_cast<int>(*network.bus_state()) : -1; },
                           {{"unknown", -1}, {"error_active", 0}, {"error_passive", 1}, {"bus_off", 2}},
                           {.description = "Error state of the CAN controller"});
-        const auto counter = [&](const char* field, std::uint64_t j1939::NetworkStatistics::*member) {
-            agent.output(prefix + field, [&network, member] { return network.statistics().*member; });
-        };
-        counter("frames_received", &j1939::NetworkStatistics::frames_received);
-        counter("frames_sent", &j1939::NetworkStatistics::frames_sent);
-        counter("send_failures", &j1939::NetworkStatistics::send_failures);
-        counter("send_queue_full", &j1939::NetworkStatistics::send_queue_full);
-        counter("receive_overflows", &j1939::NetworkStatistics::receive_overflows);
-        counter("held_dropped", &j1939::NetworkStatistics::held_dropped);
-        counter("address_violations", &j1939::NetworkStatistics::address_violations);
-        counter("transport_aborts_sent", &j1939::NetworkStatistics::transport_aborts_sent);
-        counter("transport_aborts_received", &j1939::NetworkStatistics::transport_aborts_received);
+        for (const auto& [field, member] : kCounters)
+        {
+            agent.output(prefix + std::string(field), [&network, member] { return network.statistics().*member; });
+        }
         for (std::size_t i = 0; i < network.node_count(); ++i)
         {
             auto& node = network.node(i);
-            const std::string node_prefix = prefix + "node" + std::to_string(i);
+            const std::string node_prefix = names::j1939_node_prefix(simulation, i);
             m->nodes.push_back({node_prefix, &node, node.address_state(), node.address()});
-            agent.output(node_prefix + ".address", [&node] { return static_cast<int>(node.address()); });
-            agent.output_enum(node_prefix + ".address_state", [&node] { return static_cast<int>(node.address_state()); },
+            agent.output(node_prefix + "." + std::string(names::kNodeAddress),
+                         [&node] { return static_cast<int>(node.address()); });
+            agent.output_enum(node_prefix + "." + std::string(names::kNodeAddressState), [&node] { return static_cast<int>(node.address_state()); },
                               {{"fixed", 0}, {"not_started", 1}, {"claiming", 2}, {"claimed", 3}, {"cannot_claim", 4}});
         }
     }
@@ -157,7 +170,7 @@ std::shared_ptr<PeerMonitor> add_peer_monitoring(Peer& peer, Agent& agent, const
                 for (const auto& network : peer.network_names())
                 {
                     const std::string& simulation = simulation_network_name(peer, network);
-                    if (simulation != network && name.rfind("j1939." + simulation + ".", 0) == 0)
+                    if (simulation != network && name.starts_with(monitor_names::j1939_prefix(simulation)))
                     {
                         renamed = "; the monitoring outputs of the network \"" + network + "\" have its name in the "
                                   "simulation, \"" + simulation + "\" (network_names, --map-network)";

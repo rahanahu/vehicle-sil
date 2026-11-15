@@ -167,6 +167,9 @@ class Normalizer:
             value = value.replace(f"pid {self.pid_in_log(value)}", "pid 10099") if "pid " in value else value
             value = re.sub(r'"t_ms":\s*\d+', '"t_ms":0', value)  # a raw line in a problem's detail
             value = re.sub(r"127\.0\.0\.1:(?!8765\b)\d+", "127.0.0.1:8510", value)  # a run's control server
+            # The file a scenario run's timeline is written to (in the server's temporary directory)
+            value = re.sub(r"\S*vehicle-sil-gui-timelines-[^/\\]+[/\\][0-9a-f]+\.timeline\.json",
+                           "/path/to/vehicle-sil-gui-timelines/run.timeline.json", value)
             assert self.token not in value, "the token must not appear in any response"
         return value
 
@@ -626,7 +629,9 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
             await sock.until(is_ended)
             check_example("ws-scenario", ws("A run with a scenario whose second step fails: scenario_step events as "
                                             "the steps run and end, the finding scenario-failed with the scenario's "
-                                            "file and line, the run's end; the summary's scenario keeps the steps.",
+                                            "file and line, the timeline file (--timeline: the launcher has the "
+                                            "feature timeline), the run's end; the summary's scenario keeps the "
+                                            "steps, and has timeline_url at the end.",
                                             sock.sent, sock.received), gui)
         run_async(talk, gui)
     # At speed 0.001 its second step runs for minutes: the scenario still runs when the write comes, however slow

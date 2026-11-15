@@ -44,6 +44,9 @@ SCENARIO_STEP_EVENT = "scenario_step"
 # leaves them for the user, writes the command to start them with (the participant event of state `manual`), and
 # waits for them to join.
 FEATURE_MANUAL = "manual-participants"
+# A scenario run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --scenario
+# --timeline <file> writes what the scenario wrote and saw to that file after the run.
+FEATURE_TIMELINE = "timeline"
 
 
 class LauncherNotFound(Exception):
@@ -283,13 +286,16 @@ def scenario_argument(relative: str) -> str:
 
 def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
                 start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None,
-                manual: list[str] = ()) -> list[str]:
+                manual: list[str] = (), timeline: Path | None = None) -> list[str]:
     """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
     127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
-    event and in the list of processes). scenario, disable, manual: as check_command's."""
+    event and in the list of processes). scenario, disable, manual: as check_command's. timeline: the file that
+    the launcher writes the scenario's timeline to (only with a scenario, and a launcher with FEATURE_TIMELINE)."""
     argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
     if scenario is not None:
         argv += ["--scenario", scenario_argument(scenario)]
+        if timeline is not None:
+            argv += ["--timeline", str(timeline)]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     argv += _participant_arguments(disable, manual)

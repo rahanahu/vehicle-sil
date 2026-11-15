@@ -1,7 +1,8 @@
 /**
  * The shapes the launcher decides: `vehicle_sil_launch check --json`, `run --json` and the events of `run --events`.
  * The GUI server passes them on unchanged (in the session summary, the `launcher` notification and api/check), so their
- * versions are the launcher's. Rules of the parsers: read.ts.
+ * versions are the launcher's. Rules of the parsers: read.ts. Every object these parsers return keeps the launcher's
+ * object in `raw` (FromLauncher), so a key that the types do not name still reaches screens and panels.
  */
 
 import {
@@ -23,6 +24,7 @@ import {
   soft,
   string,
   version,
+  withRaw,
 } from './read';
 
 /**
@@ -34,13 +36,34 @@ export type Speed = null | number | 'max';
 export const readSpeed: Reader<Speed> = (value, path) =>
   value === null || value === 'max' ? value : number(value, path);
 
+/**
+ * A JSON object as the launcher wrote it. The library neither checks nor interprets its values: check the type of a
+ * value before using it, and insert it into a page as text, never as HTML.
+ */
+export type LauncherFields = Readonly<Record<string, unknown>>;
+
+/**
+ * What every object read from the launcher's output has besides its typed fields. The typed fields follow the
+ * launcher's format versions (`vehicle_sil_check`, `vehicle_sil_run`, `vehicle_sil_events`), not the version of this
+ * library; a key that the launcher adds is in `raw` without a new version of the library.
+ */
+export interface FromLauncher {
+  /**
+   * The object the fields were read from, with every key, including those this type does not name (for the finding of
+   * a finding event, the step of a scenario_step event and the link of a control_link event: the event). Set by the
+   * parsers of this library, read-only and not enumerable (JSON.stringify, Object.keys, deep equality and spreading
+   * `{...x}` leave it out); absent on an object built by hand.
+   */
+  readonly raw?: LauncherFields;
+}
+
 // --- Launcher: check (same shape as check --json) ------------------------------------------------
 
 /** Severity of a finding. An unknown severity is treated as an error (severityRank). */
 export type Severity = Open<'error' | 'warning' | 'note'>;
 
 /** A finding of the check or the run. message and detail are shown in English, unchanged. */
-export interface Finding {
+export interface Finding extends FromLauncher {
   severity: Severity;
   code: string;
   file: string | null;
@@ -59,7 +82,7 @@ export function severityRank(severity: Severity): number {
 /** Reads a finding. With u, part by part (if the severity and text cannot be read, the finding is unreadable). */
 export const readFinding = (value: unknown, path: string, u?: Unreadable): Finding => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     severity: field(f, path, 'severity', string),
     code: field(f, path, 'code', lenient(string, '', u)),
     file: field(f, path, 'file', soft(nullable(string), null, u)),
@@ -68,11 +91,11 @@ export const readFinding = (value: unknown, path: string, u?: Unreadable): Findi
     network: field(f, path, 'network', soft(nullable(string), null, u)),
     message: field(f, path, 'message', string),
     detail: field(f, path, 'detail', soft(nullable(string), null, u)),
-  };
+  });
 };
 
 /** A variable the ECU declared about itself (so panels can be drawn before the run). */
-export interface Variable {
+export interface Variable extends FromLauncher {
   name: string;
   type: Open<'bool' | 'integer' | 'real' | 'enum'>;
   causality: Open<'input' | 'output' | 'parameter'>;
@@ -88,7 +111,7 @@ export interface Variable {
 
 const readVariable: Reader<Variable> = (value, path) => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     name: field(f, path, 'name', string),
     type: field(f, path, 'type', string),
     causality: field(f, path, 'causality', string),
@@ -96,7 +119,7 @@ const readVariable: Reader<Variable> = (value, path) => {
     min: field(f, path, 'min', optional(nullable(number), null)),
     max: field(f, path, 'max', optional(nullable(number), null)),
     builtin: field(f, path, 'builtin', optional(nullable(boolean), null)),
-  };
+  });
 };
 
 // --- Launcher: scenarios (docs/scenario.md) -----------------------------------------------------
@@ -127,7 +150,7 @@ export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'
 /**
  * One scenario step (the `scenario_step` event, `scenario.steps[]` of the result, `scenario.steps[]` of the summary).
  */
-export interface ScenarioStep {
+export interface ScenarioStep extends FromLauncher {
   /** From 1. */
   index: number;
   /** Line in the scenario file. */
@@ -147,24 +170,25 @@ export interface ScenarioStep {
   message: string | null;
 }
 
-const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): ScenarioStep => ({
-  index: field(f, path, 'index', integer),
-  line: field(f, path, 'line', soft(nullable(integer), null, u)),
-  kind: field(f, path, 'kind', lenient(string, '', u)),
-  text: field(f, path, 'text', lenient(string, '', u)),
-  status: field(f, path, 'status', string),
-  start_ms: field(f, path, 'start_ms', soft(nullable(number), null, u)),
-  at_ms: field(f, path, 'at_ms', soft(nullable(number), null, u)),
-  end_ms: field(f, path, 'end_ms', soft(nullable(number), null, u)),
-  code: field(f, path, 'code', soft(nullable(string), null, u)),
-  message: field(f, path, 'message', soft(nullable(string), null, u)),
-});
+const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): ScenarioStep =>
+  withRaw(f, {
+    index: field(f, path, 'index', integer),
+    line: field(f, path, 'line', soft(nullable(integer), null, u)),
+    kind: field(f, path, 'kind', lenient(string, '', u)),
+    text: field(f, path, 'text', lenient(string, '', u)),
+    status: field(f, path, 'status', string),
+    start_ms: field(f, path, 'start_ms', soft(nullable(number), null, u)),
+    at_ms: field(f, path, 'at_ms', soft(nullable(number), null, u)),
+    end_ms: field(f, path, 'end_ms', soft(nullable(number), null, u)),
+    code: field(f, path, 'code', soft(nullable(string), null, u)),
+    message: field(f, path, 'message', soft(nullable(string), null, u)),
+  });
 
 export const readScenarioStep = (value: unknown, path: string, u?: Unreadable): ScenarioStep =>
   readScenarioStepFields(object(value, path), path, u);
 
 /** `scenario` of the check result (only with `--scenario`). */
-export interface CheckScenario {
+export interface CheckScenario extends FromLauncher {
   /** The scenario file (as passed to the launcher). */
   file: string;
   name: string | null;
@@ -174,15 +198,15 @@ export interface CheckScenario {
 
 const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckScenario => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     steps: field(f, path, 'steps', lenient(integer, 0, u)),
-  };
+  });
 };
 
 /** `scenario` of the run result (only with `--scenario`). */
-export interface ScenarioResult {
+export interface ScenarioResult extends FromLauncher {
   file: string;
   name: string | null;
   status: ScenarioStatus;
@@ -193,7 +217,7 @@ export interface ScenarioResult {
 
 const readScenarioResult = (value: unknown, path: string, u?: Unreadable): ScenarioResult => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     file: field(f, path, 'file', lenient(string, '', u)),
     name: field(f, path, 'name', soft(nullable(string), null, u)),
     status: field(f, path, 'status', lenient(string, '', u)),
@@ -204,12 +228,15 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
       'steps',
       items((v, p) => readScenarioStep(v, p, u), u),
     ),
-  };
+  });
 };
 
 export type CheckStatus = Open<'described' | 'not_checked' | 'failed' | 'skipped' | 'disabled'>;
 
-export interface CheckParticipant {
+/** What a participant is for (`role` in the configuration file, "Test participants and bridges" in docs/simulation-config.md). */
+export type ParticipantRole = Open<'ecu' | 'test' | 'bridge'>;
+
+export interface CheckParticipant extends FromLauncher {
   /** null if unreadable. */
   name: string | null;
   line: number | null;
@@ -226,11 +253,13 @@ export interface CheckParticipant {
   variables: Variable[] | null;
   /** How the ECU declared it exposes its variables. null if not declared, not checked, or from an older launcher. */
   control: ControlOffer | null;
+  /** What the participant is for. null from an older launcher that does not write it (absent on an object built by hand). */
+  role?: ParticipantRole | null;
 }
 
 const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): CheckParticipant => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     name: field(f, path, 'name', nullable(string)),
     line: field(f, path, 'line', soft(nullable(integer), null, u)),
     required: field(f, path, 'required', lenient(nullable(boolean), null, u)),
@@ -254,10 +283,11 @@ const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): Che
         u,
       ),
     ),
-  };
+    role: field(f, path, 'role', soft(nullable(string), null, u)),
+  });
 };
 
-export interface CheckNetwork {
+export interface CheckNetwork extends FromLauncher {
   name: string | null;
   kind: string | null;
   /** Participant names in use (in configuration file order). */
@@ -266,17 +296,17 @@ export interface CheckNetwork {
 
 const readCheckNetwork = (value: unknown, path: string, u?: Unreadable): CheckNetwork => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     name: field(f, path, 'name', lenient(nullable(string), null, u)),
     kind: field(f, path, 'kind', lenient(nullable(string), null, u)),
     participants: field(f, path, 'participants', items(string, u)),
-  };
+  });
 };
 
 export type CheckOutcome = Open<'passed' | 'failed' | 'unreadable' | 'usage'>;
 
 /** Result of `vehicle_sil_launch check --json` (format version 1). */
-export interface CheckResult {
+export interface CheckResult extends FromLauncher {
   file: string | null;
   result: CheckOutcome;
   errors: number;
@@ -294,7 +324,7 @@ export interface CheckResult {
 export const readCheckResult = (value: unknown, path: string, u?: Unreadable): CheckResult => {
   const f = object(value, path);
   version(f, path, 'vehicle_sil_check', 1, u);
-  return {
+  return withRaw(f, {
     file: field(f, path, 'file', soft(nullable(string), null, u)),
     result: field(f, path, 'result', lenient(string, '', u)),
     errors: field(f, path, 'errors', lenient(integer, 0, u)),
@@ -329,12 +359,12 @@ export const readCheckResult = (value: unknown, path: string, u?: Unreadable): C
         u,
       ),
     ),
-  };
+  });
 };
 
 // --- Launcher: run result (same shape as run --json) ---------------------------------------------
 
-export interface RunParticipant {
+export interface RunParticipant extends FromLauncher {
   name: string;
   required: boolean;
   enabled: boolean;
@@ -349,6 +379,11 @@ export interface RunParticipant {
   left_processes: boolean;
   /** State of the connection to the ECU's variables at the start (null from older launchers, which do not write it). */
   control_link: ControlLink | null;
+  /**
+   * The file the participant's output was written to (`--log-dir`). null without `--log-dir`, for a participant that
+   * was not started, or from an older launcher (absent on an object built by hand).
+   */
+  log?: string | null;
 }
 
 /**
@@ -375,7 +410,7 @@ export const CONTROL_SUMMARY_KEY = 'control_link';
 export const CONTROL_CHECK_KEY = 'control';
 
 /** How the ECU declared it exposes its variables (participants[].control of the check). */
-export interface ControlOffer {
+export interface ControlOffer extends FromLauncher {
   /** Transport (silkit for now). */
   transport: string;
   /** Format version of the messages. */
@@ -384,17 +419,17 @@ export interface ControlOffer {
 
 const readControlOffer = (value: unknown, path: string, u?: Unreadable): ControlOffer => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     transport: field(f, path, 'transport', lenient(string, '', u)),
     wire_version: field(f, path, 'wire_version', soft(nullable(integer), null, u)),
-  };
+  });
 };
 
 /**
  * The launcher's control_link event and result (and control_link of a participant in the summary): how a participant's
  * variable interface is connected.
  */
-export interface ControlLink {
+export interface ControlLink extends FromLauncher {
   state: ControlState;
   /** connected: number of variables the ECU exposes. */
   variables: number | null;
@@ -406,17 +441,17 @@ export interface ControlLink {
 
 export const readControlLink = (value: unknown, path: string, u?: Unreadable): ControlLink => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     state: field(f, path, 'state', string),
     variables: field(f, path, 'variables', soft(nullable(integer), null, u)),
     version: field(f, path, 'version', soft(nullable(integer), null, u)),
     late_messages: field(f, path, 'late_messages', soft(nullable(integer), null, u)),
-  };
+  });
 };
 
 const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunParticipant => {
   const f = object(value, path);
-  return {
+  return withRaw(f, {
     name: field(f, path, 'name', string),
     required: field(f, path, 'required', lenient(boolean, true, u)),
     enabled: field(f, path, 'enabled', lenient(boolean, true, u)),
@@ -435,7 +470,8 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
         u,
       ),
     ),
-  };
+    log: field(f, path, 'log', soft(nullable(string), null, u)),
+  });
 };
 
 /** Name of the run result (`result.result` of the `result` event). */
@@ -448,7 +484,7 @@ export type RunResultName = Open<
  * docs/simulation-run.md). null in the result when nothing was started, or from an older launcher. Each field is null
  * when it is missing or cannot be read.
  */
-export interface RunTiming {
+export interface RunTiming extends FromLauncher {
   /** Speed at the end. */
   speed: Speed;
   /** The controller's time step (ms). A step command is rounded up to a multiple of it. */
@@ -473,7 +509,7 @@ export interface RunTiming {
 const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming => {
   const f = object(value, path);
   const count = (key: string) => field(f, path, key, soft(nullable(number), null, u));
-  return {
+  return withRaw(f, {
     speed: field(f, path, 'speed', soft(readSpeed, null, u)),
     time_step_ms: count('time_step_ms'),
     ecu_step_ms: count('ecu_step_ms'),
@@ -488,11 +524,134 @@ const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming 
     slipped_ms: count('slipped_ms'),
     late_ms: count('late_ms'),
     paused_ms: count('paused_ms'),
-  };
+  });
+};
+
+// The traffic of the run result: "Network traffic (`traffic:`)" in docs/simulation-run.md. The words of not_counted
+// and reason may change, so they are plain strings.
+
+/** A participant of the run that the launcher does not know to be on a network (or on any network). */
+export interface TrafficUnplaced extends FromLauncher {
+  participant: string;
+  /** Why (for example no-control-link, no-counters). */
+  reason: string;
+}
+
+const readTrafficUnplaced = (value: unknown, path: string, u?: Unreadable): TrafficUnplaced => {
+  const f = object(value, path);
+  return withRaw(f, {
+    participant: field(f, path, 'participant', string),
+    reason: field(f, path, 'reason', lenient(string, '', u)),
+  });
+};
+
+/** The counts of one participant on one network. */
+export interface TrafficParticipant extends FromLauncher {
+  name: string;
+  counted: boolean;
+  /** Why it was not counted (for example no-control-link, restarted, real-time); null when counted. */
+  not_counted: string | null;
+  /** Whether it runs in virtual time; null if its connection to the ECU variables did not connect. */
+  virtual_time: boolean | null;
+  /** Virtual time of the step whose counts were read (ms); null when not counted. */
+  at_ms: number | null;
+  /** Frames the port accepted for sending; null when not counted. */
+  frames_sent: number | null;
+  /** J1939 frames of other participants that the port delivered; null when not counted. */
+  frames_received: number | null;
+}
+
+const readTrafficParticipant = (
+  value: unknown,
+  path: string,
+  u?: Unreadable,
+): TrafficParticipant => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    counted: field(f, path, 'counted', lenient(boolean, false, u)),
+    not_counted: field(f, path, 'not_counted', soft(nullable(string), null, u)),
+    virtual_time: field(f, path, 'virtual_time', soft(nullable(boolean), null, u)),
+    at_ms: field(f, path, 'at_ms', soft(nullable(number), null, u)),
+    frames_sent: field(f, path, 'frames_sent', soft(nullable(integer), null, u)),
+    frames_received: field(f, path, 'frames_received', soft(nullable(integer), null, u)),
+  });
+};
+
+/** The traffic on one network of the configuration file. */
+export interface TrafficNetwork extends FromLauncher {
+  /** The simulation's name of the network. */
+  name: string;
+  kind: string | null;
+  /** Number of counted participants. */
+  counted: number;
+  /** How many counted participants sent one frame or more. */
+  senders: number;
+  /** How many counted participants received one frame or more. */
+  receivers: number;
+  /** true: sent frames arrived; false: a counted participant sent and none received them; null: cannot be decided. */
+  delivered: boolean | null;
+  /** Participants that may be on this network without the launcher knowing. */
+  unplaced: TrafficUnplaced[];
+  /** The participants known to be on the network, in configuration file order. */
+  participants: TrafficParticipant[];
+}
+
+const readTrafficNetwork = (value: unknown, path: string, u?: Unreadable): TrafficNetwork => {
+  const f = object(value, path);
+  return withRaw(f, {
+    name: field(f, path, 'name', string),
+    kind: field(f, path, 'kind', soft(nullable(string), null, u)),
+    counted: field(f, path, 'counted', lenient(integer, 0, u)),
+    senders: field(f, path, 'senders', lenient(integer, 0, u)),
+    receivers: field(f, path, 'receivers', lenient(integer, 0, u)),
+    delivered: field(f, path, 'delivered', soft(nullable(boolean), null, u)),
+    unplaced: field(
+      f,
+      path,
+      'unplaced',
+      items((v, p) => readTrafficUnplaced(v, p, u), u),
+    ),
+    participants: field(
+      f,
+      path,
+      'participants',
+      items((v, p) => readTrafficParticipant(v, p, u), u),
+    ),
+  });
+};
+
+/** `traffic` of the run result: whether J1939 frames arrived on each network. */
+export interface RunTraffic extends FromLauncher {
+  /** The virtual time at which the run ended; the counts are from steps that started before it (ms). */
+  before_ms: number | null;
+  /** Participants of the run that the launcher knows on no network. */
+  unplaced: TrafficUnplaced[];
+  /** Every network of the configuration file, in its order. */
+  networks: TrafficNetwork[];
+}
+
+const readRunTraffic = (value: unknown, path: string, u?: Unreadable): RunTraffic => {
+  const f = object(value, path);
+  return withRaw(f, {
+    before_ms: field(f, path, 'before_ms', soft(nullable(number), null, u)),
+    unplaced: field(
+      f,
+      path,
+      'unplaced',
+      items((v, p) => readTrafficUnplaced(v, p, u), u),
+    ),
+    networks: field(
+      f,
+      path,
+      'networks',
+      items((v, p) => readTrafficNetwork(v, p, u), u),
+    ),
+  });
 };
 
 /** Result of `vehicle_sil_launch run --json` (format version 1). */
-export interface RunResult {
+export interface RunResult extends FromLauncher {
   file: string | null;
   result: RunResultName;
   errors: number;
@@ -507,6 +666,11 @@ export interface RunResult {
   check: CheckResult | null;
   /** Result of the scenario (only for a run with `--scenario`; null otherwise). */
   scenario: ScenarioResult | null;
+  /**
+   * Whether J1939 frames arrived on each network. null if the simulation did not start, from an older launcher, or in
+   * a result the server shrank (absent on an object built by hand).
+   */
+  traffic?: RunTraffic | null;
 }
 
 /**
@@ -517,7 +681,7 @@ export interface RunResult {
 export const readRunResult = (value: unknown, path: string, u?: Unreadable): RunResult => {
   const f = object(value, path);
   version(f, path, 'vehicle_sil_run', 1, u);
-  return {
+  return withRaw(f, {
     file: field(f, path, 'file', soft(nullable(string), null, u)),
     result: field(f, path, 'result', lenient(string, '', u)),
     errors: field(f, path, 'errors', lenient(integer, 0, u)),
@@ -567,7 +731,17 @@ export const readRunResult = (value: unknown, path: string, u?: Unreadable): Run
         u,
       ),
     ),
-  };
+    traffic: field(
+      f,
+      path,
+      'traffic',
+      soft(
+        nullable((v, p) => readRunTraffic(v, p, u)),
+        null,
+        u,
+      ),
+    ),
+  });
 };
 
 // --- Launcher: progress events (one line of run --events) ----------------------------------------
@@ -589,7 +763,7 @@ export type ParticipantState = Open<
   | 'killed'
 >;
 
-interface EventBase {
+interface EventBase extends FromLauncher {
   seq: number;
   /** Real time since the launcher started (ms). Some events lack it (the server passes them through without it). */
   t_ms: number | null;
@@ -742,7 +916,7 @@ export const readLauncherEvent = (
     u,
   );
   if (event && u && u.parts.length > 0) event.unreadable = u.parts;
-  return event;
+  return event && withRaw(f, event);
 };
 
 function readEventFields(

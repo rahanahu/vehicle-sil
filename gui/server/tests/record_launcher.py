@@ -10,6 +10,9 @@ ecu_main example's executables, which are built next to the launcher: build/<pre
 --examples), writes the commands of its script to the launcher's standard input when its output says so, and
 writes what came back to recordings/<case>.jsonl (--out: another directory). Without cases, every case.
 
+A case with --timeline <timeline> has the launcher write its timeline file into the copy; the recording holds the
+file (a timeline_file entry, before the line that names the file) and the mark <timeline> for its name.
+
 What changes from run to run is replaced with a fixed mark: the copy's directory (<root>), the pids ("<pid>"), the
 registry's port (silkit://127.0.0.1:8500), the control server's address (<control>), times (no seq, no t_ms, the
 time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall_ms 1000, paused_ms 500 when it
@@ -158,8 +161,12 @@ class Recorder:
         credentials.write_text(f"operator gui {self.token}\n")
         credentials.chmod(0o600)
 
+    def timeline_path(self, case: Case) -> Path:
+        return self.root / ".timelines" / f"{case.name}.timeline.json"
+
     def record(self, case: Case) -> tuple[dict, list[dict]]:
-        argv = [str(self.root / ".control-credentials") if a == "<credentials>" else a for a in case.argv]
+        argv = [str(self.root / ".control-credentials") if a == "<credentials>" else
+                str(self.timeline_path(case)) if a == "<timeline>" else a for a in case.argv]
         proc = subprocess.Popen([str(self.launcher), *argv], cwd=self.root, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         lines: list[tuple[float, str, str]] = []  # (time, "out" | "err" | "send", text)
@@ -228,11 +235,15 @@ class Recorder:
                 m.wait()
         for r in readers:
             r.join(5)
-        return self.normalize(case, lines, code)
+        timeline = None
+        if "<timeline>" in case.argv and self.timeline_path(case).is_file():
+            timeline = json.loads(self.timeline_path(case).read_text(encoding="utf-8"))
+        return self.normalize(case, lines, code, timeline)
 
     # ---- the marks
 
-    def normalize(self, case: Case, lines: list[tuple[float, str, str]], code: int) -> tuple[dict, list[dict]]:
+    def normalize(self, case: Case, lines: list[tuple[float, str, str]], code: int,
+                  timeline: object = None) -> tuple[dict, list[dict]]:
         file = case.argv[case.argv.index("--") + 1] if "--" in case.argv else None
         scenario = case.argv[case.argv.index("--scenario") + 1] if "--scenario" in case.argv else None
         registry = control = None
@@ -251,6 +262,10 @@ class Recorder:
                     pids.add(e["pid"])
 
         def text_marks(s: str) -> str:
+            if "<timeline>" in case.argv:
+                for path in sorted({str(self.timeline_path(case).resolve()), str(self.timeline_path(case))},
+                                   key=len, reverse=True):
+                    s = s.replace(path, "<timeline>")
             for path in sorted({str(self.root.resolve()), str(self.root), str(self.examples.resolve()),
                                 str(self.examples)}, key=len, reverse=True):
                 s = s.replace(path, "<root>")
@@ -338,6 +353,15 @@ class Recorder:
                 entries.append({"out": marks(e)})
         if printed is not None:
             entries.insert(0, {"print": marks(printed)})
+        if timeline is not None:
+            # Where the file was whole: before the first line that names it (the launcher writes the file, then
+            # says so), else before the result
+            def names_it(e: dict) -> bool:
+                return "<timeline>" in json.dumps(e.get("out", e.get("err", "")), ensure_ascii=False) and \
+                    e.get("out", {}).get("event") != "hello"
+            at = next((i for i, e in enumerate(entries) if names_it(e) or e.get("out", {}).get("event") == "result"),
+                      len(entries))
+            entries.insert(at, {"timeline_file": marks(timeline)})
         if not entries or "hang" not in entries[-1]:
             entries.append({"exit": code})
         head = {"vehicle_sil_recording": FORMAT, "case": case.name, "about": case.about,
@@ -410,6 +434,8 @@ def text_sha256(path: Path) -> str:
 def needs(case: Case) -> set[str]:
     """The launcher's features (version --json) that a case uses."""
     out = set()
+    if "--timeline" in case.argv:
+        out.add("timeline")
     if "--control" in case.argv:
         out.add("control-server")
         if "--scenario" in case.argv:
@@ -512,6 +538,8 @@ def outline(entries: list[dict], unsure: frozenset = frozenset()) -> list:
             out.append(("exit", e["exit"]))
     out += sorted(group, key=lambda g: str(g[2][0]))
     out.append(("commands", tuple(e["send"] for e in entries if "send" in e)))
+    written = next((e["timeline_file"] for e in entries if "timeline_file" in e), None)
+    out.append(("timeline file", tuple(sorted(written)) if isinstance(written, dict) else None))
     out.append(("standard error", any("err" in e for e in entries)))
     return out
 
@@ -732,6 +760,12 @@ def runs() -> list[Case]:
                  extra=("--scenario", "scenarios/fails.yaml")),
         run_case("run-scenario-passes", "simulation.yaml", "a scenario that passes",
                  extra=("--scenario", "scenarios/throttle.yaml")),
+        # As the GUI server starts a scenario run with a launcher that has the feature timeline
+        run_case("run-scenario-fails-timeline", "simulation.yaml",
+                 "a scenario whose second step fails, with its timeline file",
+                 extra=("--scenario", "scenarios/fails.yaml", "--timeline", "<timeline>")),
+        run_case("run-scenario-passes-timeline", "simulation.yaml", "a scenario that passes, with its timeline file",
+                 extra=("--scenario", "scenarios/throttle.yaml", "--timeline", "<timeline>")),
         run_case("run-simulation-paused", "simulation.yaml", "started paused, then resumed",
                  ("until", paused(0)), ("send", RESUME), extra=("--start-paused",)),
         run_case("run-manual-stop", "simulation.yaml", "a participant that the user starts never joins: stopped",
