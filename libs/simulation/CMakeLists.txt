@@ -13,4 +13,8 @@ target_include_directories(vehicle_sil_simulation PUBLIC $<BUILD_INTERFACE:${CMA
 target_link_libraries(vehicle_sil_simulation PUBLIC vehicle_sil::ecu vehicle_sil::peer vehicle_sil::local)
 # ecu_main() offers the ECU's variables to the simulation over SIL Kit (no gRPC in an ECU).
 target_link_libraries(vehicle_sil_simulation PRIVATE vehicle_sil::control_silkit)
+if(WIN32)
+  # CommandLineToArgvW: ecu_main() reads --map-network from the wide command line.
+  target_link_libraries(vehicle_sil_simulation PRIVATE shell32)
+endif()
 vehicle_sil_target_defaults(vehicle_sil_simulation)

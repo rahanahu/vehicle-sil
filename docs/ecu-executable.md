@@ -53,6 +53,7 @@ The last word that `last_word_wait` waits on tells the launcher about cancelled 
 | `--start-timeout-ms <ms>` | Only with `--registry-uri`. How long to wait from joining until the simulation starts (an integer of 1 or more; default 30000). |
 | `--no-control` | With `--registry-uri`, does not expose the ECU's variables to the simulation (see [Exposing variables](#exposing-variables---registry-uri)). |
 | `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit participant configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |
+| `--map-network <simulation name>=<executable name>` | Only with `--registry-uri`. Connects the network that the ECU's code created as `<executable name>` to the SIL Kit network `<simulation name>` (see [Renaming networks](#renaming-networks---map-network)). |
 | `--local --run-for-ms <ms>` | Runs this ECU alone on in-process virtual buses for `<ms>` milliseconds of virtual time (an integer of 1 or more). |
 | `--name <name>` | Participant name used instead of `EcuMainOptions::name` (ASCII or UTF-8). |
 | `--help` (`-h`) | Writes the usage to stdout and exits with 0. |
@@ -71,6 +72,7 @@ Exactly one of `--describe`, `--registry-uri` and `--local` is required. Notes o
 | `--no-control` | With `--local`, it changes nothing. |
 | `--silkit-config` | With `--describe`, the file is only read and checked (an error gives exit code 3). |
 | `--silkit-config` | Not allowed with `--local` (exit code 4). |
+| `--map-network` | Give it once for each network, as many times as needed. |
 | `--local` | Use it to try the ECU on its own. |
 | `--name` | Also changes `name` in `--describe`. |
 | `--name` | Only the name changes. The J1939 NAME, the addresses and the variable names stay the same. |
@@ -85,7 +87,7 @@ The exit codes are the same as those of the other tools.
 |---|---|
 | 0 | Done (`--describe` wrote the JSON, the `--registry-uri` simulation ended, `--local` ran for the full time) |
 | 1 | The ECU failed while running (an exception in a step; `SimulationError`) |
-| 3 | Setup failed (an exception in the constructor of `App`, an error in `EcuMainOptions`, the registry cannot be reached, the simulation does not start, stdout cannot be written) |
+| 3 | Setup failed (an exception in the constructor of `App`, an error in `EcuMainOptions`, the registry cannot be reached, the simulation does not start, stdout cannot be written, the ECU has no network with the executable name of a `--map-network`) |
 | 4 | Usage error |
 | 130 | Under `--registry-uri`, the ECU was asked to stop (see [When asked to stop](#when-asked-to-stop---registry-uri)) |
 
@@ -99,7 +101,9 @@ The following give exit code 4. The ECU starts nothing and writes the usage to s
 | `--name`, `--registry-uri`, `--run-for-ms` or `--start-timeout-ms` without a value | The value also counts as missing when the next argument starts with `--`. |
 | An empty value | |
 | A `--name` that is neither ASCII nor UTF-8 | For example, a name in a Windows code page. The message shows the bytes in hexadecimal. |
-| An argument given twice | |
+| An argument given twice | `--map-network` is an exception (see [Renaming networks](#renaming-networks---map-network)). |
+| An error in the value of `--map-network` | See [Renaming networks](#renaming-networks---map-network). |
+| `--map-network` without `--registry-uri` | |
 | `--local` without `--run-for-ms`, or `--run-for-ms` without `--local` | |
 | `--start-timeout-ms` without `--registry-uri` | |
 | A `--run-for-ms` or `--start-timeout-ms` that is not an integer, is 0 or exceeds 10^12 | |
@@ -271,6 +275,38 @@ Decide the result of the simulation by the exit code of the controller, not by t
 
 If the controller process goes away without a result, stop all ECUs (they do not end by themselves). Also stop ECUs that are still running some time after the controller ended (when the registry has gone away, for example). First ask them to stop with SIGTERM (Ctrl+Break on Windows; see "When asked to stop" above), and kill those that still do not end.
 
+### Renaming networks (`--map-network`)
+
+When a network name in the ECU's code differs from the name that the simulation uses, `--map-network` connects the network to the simulation's name without a rebuild.
+
+```sh
+engine_ecu --registry-uri silkit://localhost:8500 --map-network VehicleCAN=J1939_CAN
+```
+
+The value is `<simulation name>=<executable name>`, in that direction. In the example, the network that the code created with `j1939("J1939_CAN")` connects to the SIL Kit network `VehicleCAN`. The value is split at the first `=`, so the executable name can contain `=` and the simulation name cannot.
+
+| Item | Rule |
+|---|---|
+| What is renamed | A name, not a call. `j1939()` and `can()` with the same name are both renamed, and the networks of `lin_master()`, `lin_slave()` and `ethernet()` the same way. Networks that are not listed keep the code's name. A mapping onto the same name (`CAN=CAN`) changes nothing. |
+| What changes | Only the name of the SIL Kit network and the names in the monitoring output of `Peer` (the variables that start with `j1939.<simulation name>.`, and the text of the node state events). |
+| What keeps the code's name | The names that the code sees (`ecu.network("J1939_CAN")` and the like), the names of the SIL Kit controllers and `networks[].name` in `--describe`. |
+| `--describe` and `--local` | Not allowed with either (exit code 4). The `--describe` output does not depend on the arguments: an executable that accepts `--map-network` lists `"map-network"` in `features` (see [Keys](#keys)). Under `--local`, the monitoring output uses the code's names. |
+
+Values that give exit code 4: no `=`, an empty name on either side, the same simulation name twice, the same executable name twice, a value that is neither ASCII nor UTF-8, and on Windows a value with a non-ASCII character.
+
+Cases that give exit code 3, each reported in one line before the simulation starts:
+
+| Case | Notes |
+|---|---|
+| The ECU has no network with the executable name | The message lists the ECU's networks. |
+| After renaming, 2 networks of the ECU have the same name | For example `--map-network B=A` when the code has both `A` and `B`. A swap (`--map-network B=A --map-network A=B`) is allowed. |
+| The configuration of `--silkit-config` sets `Network` for a controller (`CanControllers`, `LinControllers`, `EthernetControllers`) | SIL Kit prefers the `Network` of the configuration, so it would be unclear which name applies. A `--map-network` that renames nothing is not refused. A vehicle-sil build that uses a SIL Kit not built from source cannot read the configuration, so it refuses a renaming `--map-network` together with `--silkit-config`, whatever the configuration contains (the same holds for `PeerOptions::network_names` with a participant configuration). |
+| The ECU declares a variable with the name of a renamed monitoring output | For example `j1939.VehicleCAN.bus_state`. |
+
+On Windows (MinGW), give the networks you rename ASCII names; a `--map-network` with a non-ASCII character gives exit code 4. Windows converts arguments to the code page and replaces the characters that the code page lacks with `?` or a similar character, so the converted value would put the ECU on a network of another name without an error. `ecu_main` checks this argument alone against the command line before the conversion (when `main()` passes its `argc` and `argv` unchanged). On Linux, names can be ASCII or UTF-8 (other byte sequences give exit code 4).
+
+A program that does not use `ecu_main` passes the same mapping (simulation name to code name) in `SilKitOptions::network_names` (`Simulation`) or `PeerOptions::network_names` (`Peer`). In a `Simulation` with several ECUs in one process, the mapping applies to all of them, and an ECU without a network of that name is left as it is (only `ecu_main` treats a missing name as an error). The name given to `Peer::j1939(name, port)` (a port the caller created) cannot be mapped (`std::invalid_argument`): the port does not connect to a SIL Kit network, so there is nothing to rename.
+
 ## Requirements for ECU authors
 
 When you run several ECUs with `vehicle_sil_launch`, each ECU executable must meet these requirements. A requirement that is not met shows up as a finding or in the launcher's output.
@@ -318,6 +354,7 @@ The `std::invalid_argument` of `input()` and the like is the same for `Peer` and
 | `mac` of `networks` | Ethernet only. The ECU's own address passed to `ethernet()` (`eth::ChannelOptions::mac`). |
 | `nodes` of `networks` | J1939 only. The values given when each node was added (`NodeOptions`), in the order the nodes were added. |
 | `variables` | The `control::VariableInfo` of the variables. |
+| `control`, `features` | Empty when `Ecu::describe()` returns. `ecu_main` fills them in for `--describe` (`control`: see [Exposing variables](#exposing-variables---registry-uri); `features`: see [Keys](#keys)). |
 
 **`networks`**: In the order in which `j1939()`, `can()`, `lin_master()`, `lin_slave()` and `ethernet()` were called, across kinds. One call is one element. If the same ECU has `j1939()` and `can()` with the same name, the same CAN network appears twice (because there are 2 controllers). Each element has `name`, `use` (`NetworkUse`: `Raw`, `J1939`, `LinMaster`, `LinSlave`, `Ethernet`), `kind()` (the `NetworkKind` that follows from `use`: `Can`, `Lin`, `Ethernet`), `nodes` and `mac`.
 
@@ -370,8 +407,9 @@ The first key, `vehicle_sil_ecu`, is the format version.
 | The meaning of a key changes, or a key is removed | Goes up. |
 | A key is added | Does not go up. |
 | A key that takes fixed values (`kind`, `use`, `type`, `causality`) gets a new value | Does not go up. |
+| `features` gets a new name | Does not go up. |
 
-A reader rejects an unknown version and ignores unknown keys. An unknown value of a key that takes fixed values is an error for that ECU (the `vehicle_sil_launch check` finding `describe-unknown-value`; checking of the other participants continues). This happens when an old `vehicle_sil_launch` reads an ECU from a newer vehicle-sil.
+A reader rejects an unknown version and ignores unknown keys. An unknown value of a key that takes fixed values is an error for that ECU (the `vehicle_sil_launch check` finding `describe-unknown-value`; checking of the other participants continues). This happens when an old `vehicle_sil_launch` reads an ECU from a newer vehicle-sil. `features` is not a key that takes fixed values but an open list: a reader ignores the names it does not know.
 
 `vehicle_sil` is the version of vehicle-sil that the ECU was built with (the version of the CMake project). Use it to find version differences when you run executables built separately in one simulation.
 
@@ -405,6 +443,7 @@ A reader rejects an unknown version and ignores unknown keys. An unknown value o
 | `control` | How this executable exposes its variables to the simulation under `--registry-uri`. `null` if it does not (`--no-control`) |
 | `control.transport` | The transport. Currently only `"silkit"` (SIL Kit publish/subscribe) |
 | `control.wire_version` | The message format version (an integer) |
+| `features` | Array of the names (strings) of the arguments and behaviors that this executable accepts from the program that starts it. `"map-network"`: it accepts `--map-network`. An `ecu_main` executable writes the same list whatever its arguments |
 
 How to read JSON in which a key is missing:
 
@@ -412,6 +451,7 @@ How to read JSON in which a key is missing:
 |---|---|
 | `networks[].mac` | The JSON of an ECU from an earlier version. Read it as `null`. |
 | `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
+| `features` | The JSON of an ECU from an earlier version. Read it as an empty array. |
 
 Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
 
@@ -480,7 +520,10 @@ Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_
   "control": {
     "transport": "silkit",
     "wire_version": 1
-  }
+  },
+  "features": [
+    "map-network"
+  ]
 }
 ```
 

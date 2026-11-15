@@ -233,6 +233,8 @@ With `PeerOptions::monitor` (enabled by default), the `Peer` adds the following 
 
 When a node's address state or address changes, the `Peer` emits an event. Its text is `j1939.N.node<i>: <state> at address <a>`, with the state named as in the enum. cannot_claim is a Warning.
 
+N is the name of the network in the simulation. For a network renamed with `PeerOptions::network_names` (`--map-network` of an ECU executable; see "Renaming networks" in [ecu-executable.md](../ecu-executable.md#renaming-networks---map-network)), both the variables and the text of the events use the new name, so the networks of every executable appear under the same names in the GUI and the Control API. A network without a mapping, and every network in a `--local` run, uses the code's name.
+
 Monitoring covers the networks and nodes that exist when the schema is fixed (by the first of: creating the transport `control_silkit::AgentTransport`, the first `submit()`, `start()`).
 
 | Condition | What happens |

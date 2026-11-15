@@ -112,6 +112,50 @@ Peer::Peer(PeerOptions options) :
   agent_("vehicle_sil::Peer \"" + options.participant + "\": ", [this](control::Agent& agent) { bind_agent(agent); }),
   options_(std::move(options))
 {
+    const std::string who = "vehicle_sil::Peer \"" + options_.participant + "\": ";
+    for (const auto& [simulation, code] : options_.network_names)
+    {
+        if (simulation.empty() || code.empty())
+        {
+            throw std::invalid_argument(who + "network_names has an entry with an empty name (\"" + simulation +
+                                        "\" -> \"" + code + "\"): give the network's name in the simulation and "
+                                        "the name this ECU's code gives it");
+        }
+        for (const auto& [otherSimulation, otherCode] : options_.network_names)
+        {
+            if (otherCode == code && otherSimulation < simulation)
+            {
+                throw std::invalid_argument(who + "network_names gives the network \"" + code +
+                                            "\" of this ECU's code two names in the simulation, \"" + otherSimulation +
+                                            "\" and \"" + simulation +
+                                            "\", but a network of an ECU is on one bus: keep one of the two entries");
+            }
+        }
+        if (simulation != code)
+        {
+            simulation_names_.emplace(code, simulation);
+        }
+    }
+    if (!simulation_names_.empty())
+    {
+        if (!can_read_controller_networks(options_.participant_configuration))
+        {
+            throw std::invalid_argument(who + "network_names renames networks, and there is a SIL Kit participant "
+                                        "configuration, which this build of vehicle-sil cannot read (it was built "
+                                        "against a SIL Kit that is not built from source): a controller that the "
+                                        "configuration puts on a Network would stay there unnoticed. Leave the "
+                                        "participant configuration out, or leave network_names out and name the "
+                                        "networks in the configuration");
+        }
+        if (const auto configured = configured_controller_networks(options_.participant_configuration); !configured.empty())
+        {
+            throw std::invalid_argument(who + "network_names renames networks, and the SIL Kit participant configuration "
+                                        "puts a controller on a network itself (" + configured.front() +
+                                        "): SIL Kit would use the configuration's network, whatever network_names says. "
+                                        "Remove Network from the controllers of the configuration, or leave "
+                                        "network_names out and name the networks there");
+        }
+    }
     ParticipantRuntimeOptions runtimeOptions;
     runtimeOptions.participant_name = options_.participant;
     runtimeOptions.registry_uri = options_.registry_uri;
@@ -185,8 +229,8 @@ Peer::Peer(PeerOptions options) :
             catch (const std::exception& e)
             {
                 // Not out of a SIL Kit handler: the participant goes to Error instead.
-                runtime_->report_failure("vehicle_sil::Peer: starting the CAN controller of the network \"" + network +
-                                         "\" failed: " + e.what());
+                runtime_->report_failure("vehicle_sil::Peer: starting the CAN controller of the network " +
+                                         network_text(network) + " failed: " + e.what());
             }
         };
         for (auto& c : channels_)
@@ -209,8 +253,8 @@ Peer::Peer(PeerOptions options) :
             catch (const std::exception& error)
             {
                 // As for CAN: the participant goes to Error.
-                runtime_->report_failure("vehicle_sil::Peer: starting the Ethernet controller of the network \"" +
-                                         e->name + "\" failed: " + error.what());
+                runtime_->report_failure("vehicle_sil::Peer: starting the Ethernet controller of the network " +
+                                         network_text(e->name) + " failed: " + error.what());
             }
         }
         for (auto& node : lin_)
@@ -229,8 +273,8 @@ Peer::Peer(PeerOptions options) :
             catch (const std::exception& e)
             {
                 // As for CAN: the participant goes to Error, and the other nodes are still initialised.
-                runtime_->report_failure("vehicle_sil::Peer: initialising the LIN controller of the network \"" +
-                                         node->name + "\" failed: " + e.what());
+                runtime_->report_failure("vehicle_sil::Peer: initialising the LIN controller of the network " +
+                                         network_text(node->name) + " failed: " + e.what());
             }
         }
     });
@@ -266,6 +310,54 @@ void Peer::require_virtual_time(const char* what) const
     {
         throw std::logic_error(std::string("vehicle_sil::Peer: ") + what + " needs virtual time (LIN runs on virtual time only)");
     }
+}
+
+const std::string& Peer::simulation_name(const std::string& network) const
+{
+    const auto renamed = simulation_names_.find(network);
+    return renamed == simulation_names_.end() ? network : renamed->second;
+}
+
+std::string Peer::network_text(const std::string& network) const
+{
+    const std::string& simulation = simulation_name(network);
+    return "\"" + network + "\"" + (simulation == network ? std::string() : " (\"" + simulation + "\" in the simulation)");
+}
+
+std::string Peer::call_text(const std::string& call, const std::string& network) const
+{
+    const std::string& simulation = simulation_name(network);
+    return call + (simulation == network ? std::string() : " (the network \"" + simulation + "\" of the simulation)");
+}
+
+void Peer::require_own_simulation_name(const std::string& network, const std::string& call) const
+{
+    if (simulation_names_.empty())
+    {
+        return; // without other names, two names of the code are two names of the simulation
+    }
+    const std::string& simulation = simulation_name(network);
+    const auto check = [&](const auto& items) {
+        for (const auto& item : items)
+        {
+            if (item->name != network && simulation_name(item->name) == simulation)
+            {
+                // One of the two has an entry, and the other is named like the entry's simulation name.
+                const std::string& renamed = simulation == network ? item->name : network;
+                throw std::invalid_argument(
+                    "vehicle_sil::Peer \"" + options_.participant + "\": " + call + ": network_names makes the network \"" +
+                    renamed + "\" of this ECU's code the network \"" + simulation +
+                    "\" of the simulation, and the code has a network it names \"" + simulation +
+                    "\" itself, so two networks of the ECU would be one bus. Give the code's \"" + simulation +
+                    "\" another name in the simulation as well (one more entry of network_names; for an ECU "
+                    "executable --map-network <simulation's name>=" + simulation + ")");
+            }
+        }
+    };
+    check(channels_);
+    check(raw_channels_);
+    check(lin_);
+    check(ethernet_);
 }
 
 Peer::Channel& Peer::add_channel(std::string name)
@@ -313,9 +405,11 @@ void Peer::require_can_name(const std::string& network, const char* what) const
     {
         refuse_other_kind(std::string(what) + "(\"" + network + "\")", network, *other, NetworkKind::Can);
     }
+    const std::string call = std::string(what) + "(\"" + network + "\")";
+    require_own_simulation_name(network, call);
     if (network_check_ && !network.empty())
     {
-        network_check_(network, NetworkKind::Can, std::string(what) + "(\"" + network + "\")");
+        network_check_(simulation_name(network), NetworkKind::Can, call_text(call, network));
     }
 }
 
@@ -356,7 +450,7 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
     Channel& c = add_channel(network_name);
     try
     {
-        auto* canController = runtime_->participant().CreateCanController(controller, network_name);
+        auto* canController = runtime_->participant().CreateCanController(controller, simulation_name(network_name));
         options.port.real_time_clock = options_.virtual_time ? nullptr : clock_;
         c.silkit_port = std::make_unique<can::SilKitCanPort>(*canController, options.port);
         c.controller = std::move(controller);
@@ -384,6 +478,16 @@ j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j
     if (!port)
     {
         throw std::invalid_argument("vehicle_sil::Peer: no port");
+    }
+    if (simulation_names_.contains(name))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer \"" + options_.participant + "\": j1939(\"" + name +
+                                    "\") on a port of the caller's: network_names says that \"" + name + "\" is \"" +
+                                    simulation_name(name) +
+                                    "\" in the simulation, but a network on a port that the caller made is on no SIL "
+                                    "Kit network that could have another name. Remove the entry \"" +
+                                    simulation_name(name) + "\" -> \"" + name + "\" from network_names (--map-network " +
+                                    simulation_name(name) + "=" + name + ")");
     }
     require_can_name(name, "j1939");
     Channel& c = add_channel(std::move(name));
@@ -453,7 +557,7 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
     RawCan& r = *raw_channels_.back();
     try
     {
-        auto* canController = runtime_->participant().CreateCanController(controller, network);
+        auto* canController = runtime_->participant().CreateCanController(controller, simulation_name(network));
         can::SilKitCanPortOptions portOptions;
         portOptions.real_time_clock = options_.virtual_time ? nullptr : clock_;
         r.port = std::make_unique<can::SilKitCanPort>(*canController, portOptions);
@@ -523,6 +627,38 @@ std::optional<NetworkKind> network_kind(const Peer& peer, std::string_view netwo
     return std::nullopt;
 }
 
+std::optional<NetworkKind> simulation_network_kind(const Peer& peer, std::string_view network)
+{
+    const auto has = [&](const auto& items) {
+        for (const auto& item : items)
+        {
+            if (peer.simulation_name(item->name) == network)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (has(peer.channels_) || has(peer.raw_channels_))
+    {
+        return NetworkKind::Can;
+    }
+    if (has(peer.lin_))
+    {
+        return NetworkKind::Lin;
+    }
+    if (has(peer.ethernet_))
+    {
+        return NetworkKind::Ethernet;
+    }
+    return std::nullopt;
+}
+
+const std::string& simulation_network_name(const Peer& peer, const std::string& network)
+{
+    return peer.simulation_name(network);
+}
+
 } // namespace detail
 
 void Peer::require_lin_name(const std::string& network, const char* what) const
@@ -543,9 +679,10 @@ void Peer::require_lin_name(const std::string& network, const char* what) const
                                     "\" (the LIN controller is named like its network); rename that controller "
                                     "(J1939ChannelOptions::controller_name) or the LIN network");
     }
+    require_own_simulation_name(network, call);
     if (network_check_)
     {
-        network_check_(network, NetworkKind::Lin, call);
+        network_check_(simulation_name(network), NetworkKind::Lin, call_text(call, network));
     }
 }
 
@@ -554,7 +691,7 @@ Peer::LinNode& Peer::add_lin_node(const std::string& network, lin::LinRole role)
     auto node = std::make_unique<LinNode>();
     node->name = network;
     node->order = added_++;
-    auto* controller = runtime_->participant().CreateLinController(network, network);
+    auto* controller = runtime_->participant().CreateLinController(network, simulation_name(network));
     node->port = std::make_unique<lin::SilKitLinPort>(*controller, role);
     node->gate = std::make_unique<detail::GatedLinPort>(*node->port, agent_.connection(), role);
     lin_.push_back(std::move(node));
@@ -620,9 +757,10 @@ void Peer::require_ethernet_name(const std::string& network) const
                                     "\" (the Ethernet controller is named like its network); rename that controller "
                                     "(J1939ChannelOptions::controller_name) or the Ethernet network");
     }
+    require_own_simulation_name(network, call);
     if (network_check_)
     {
-        network_check_(network, NetworkKind::Ethernet, call);
+        network_check_(simulation_name(network), NetworkKind::Ethernet, call_text(call, network));
     }
 }
 
@@ -645,7 +783,7 @@ eth::Channel& Peer::add_ethernet(const std::string& network, eth::ChannelOptions
     Ethernet& e = *ethernet_.back();
     try
     {
-        auto* controller = runtime_->participant().CreateEthernetController(network, network);
+        auto* controller = runtime_->participant().CreateEthernetController(network, simulation_name(network));
         eth::SilKitEthPortOptions portOptions;
         // Room for receive_capacity frames in every step whenever they arrive, and an
         // acknowledgement for each frame of a step.

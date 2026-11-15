@@ -157,10 +157,11 @@ struct Probe
 };
 
 /// The description as ecu_main() writes it: the executable offers the ECU's variables over SIL
-/// Kit (unless --no-control).
+/// Kit (unless --no-control) and takes --map-network.
 vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
 {
     description.control = vehicle_sil::ControlOffer{"silkit", 1};
+    description.features = {"map-network"};
     return description;
 }
 
@@ -324,6 +325,42 @@ TEST_CASE(ecu_main_refuses_bad_command_lines)
         {{"--local", "--run-for-ms", "10", "--silkit-config", "a.yaml"},
          "--silkit-config is for --registry-uri: --local runs the ECU on local virtual buses, without SIL Kit; leave "
          "--silkit-config out"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network"},
+         "--map-network needs <simulation's name>=<executable's name> after it (e.g. --map-network VehicleCAN=J1939_CAN)"},
+        {{"--map-network", "--registry-uri", "silkit://localhost:8500"},
+         "--map-network needs <simulation's name>=<executable's name> after it (e.g. --map-network VehicleCAN=J1939_CAN), "
+         "not the option \"--registry-uri\""},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "VehicleCAN"},
+         "--map-network needs <simulation's name>=<executable's name>, not \"VehicleCAN\" (e.g. --map-network "
+         "VehicleCAN=J1939_CAN: the network that the ECU's code names J1939_CAN is VehicleCAN in the simulation)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "=CAN"},
+         "--map-network \"=CAN\" has an empty name: it needs the simulation's name before the first '=' and the "
+         "executable's name after it (e.g. --map-network VehicleCAN=J1939_CAN: the network that the ECU's code names "
+         "J1939_CAN is VehicleCAN in the simulation)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "VehicleCAN="},
+         "--map-network \"VehicleCAN=\" has an empty name: it needs the simulation's name before the first '=' and the "
+         "executable's name after it (e.g. --map-network VehicleCAN=J1939_CAN: the network that the ECU's code names "
+         "J1939_CAN is VehicleCAN in the simulation)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", ""},
+         "--map-network needs <simulation's name>=<executable's name>, not \"\" (e.g. --map-network "
+         "VehicleCAN=J1939_CAN: the network that the ECU's code names J1939_CAN is VehicleCAN in the simulation)"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "VehicleCAN=CAN", "--map-network", "VehicleCAN=CAN2"},
+         "--map-network gives the simulation's network \"VehicleCAN\" twice (\"VehicleCAN=CAN\" and "
+         "\"VehicleCAN=CAN2\"): one network of the simulation is one network of the ECU; keep one of the two"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "VehicleCAN=CAN", "--map-network", "BodyCAN=CAN"},
+         "--map-network gives the executable's network \"CAN\" two names in the simulation (\"VehicleCAN=CAN\" and "
+         "\"BodyCAN=CAN\"): a network of an ECU is on one bus; keep one of the two"},
+        {{"--registry-uri", "silkit://localhost:8500", "--map-network", "\x83G=CAN"},
+         "--map-network needs ASCII or UTF-8 text, not the bytes 83 47 3D 43 41 4E (names in another encoding, e.g. a "
+         "Windows code page)"},
+        {{"--describe", "--map-network", "VehicleCAN=CAN"},
+         "--map-network is for --registry-uri: --describe says what the ECU's code names its networks, whatever a "
+         "simulation calls them; leave --map-network out"},
+        {{"--local", "--run-for-ms", "10", "--map-network", "VehicleCAN=CAN"},
+         "--map-network is for --registry-uri: --local runs the ECU alone on local virtual buses, where there is no other "
+         "name for a network; leave --map-network out"},
+        {{"--map-network=VehicleCAN=CAN", "--describe"},
+         "unknown argument \"--map-network=VehicleCAN=CAN\" (write the value after a space: --map-network VehicleCAN=CAN)"},
     };
     for (const auto& c : cases)
     {
@@ -376,6 +413,12 @@ TEST_CASE(ecu_main_describe_writes_the_json_of_the_ecu)
     CHECK_EQ(probe.made, 1);
     CHECK_EQ(probe.steps, 0); // nothing ran
     require(contains(r.out, "\"name\": \"Engine\",\n  \"step_ns\": 10000000,\n"), "name and step", r);
+    // The executable says that it takes --map-network, last and whatever else is given.
+    const std::string features = "  \"features\": [\n    \"map-network\"\n  ]\n}\n";
+    require(r.out.size() > features.size() && r.out.compare(r.out.size() - features.size(), features.size(), features) == 0,
+            "the features", r);
+    const Result quiet = call({"--describe", "--no-control", "--name", "Other"});
+    require(quiet.code == 0 && contains(quiet.out, "  \"control\": null,\n" + features), "the features without control", quiet);
 }
 
 TEST_CASE(ecu_main_name_replaces_the_ecus_name)
@@ -969,11 +1012,11 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
     // --describe too), and once.
     // --describe says whether the executable offers the variables: not with --no-control.
     const Result described = call({"--describe", "--no-control"});
-    require(described.code == 0 && contains(described.out, "\"variables\"") && contains(described.out, "  \"control\": null\n"),
+    require(described.code == 0 && contains(described.out, "\"variables\"") && contains(described.out, "  \"control\": null,\n"),
             "--describe --no-control", described);
     const Result offering = call({"--describe"});
     require(offering.code == 0 &&
-                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 1\n  }\n"),
+                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 1\n  },\n"),
             "--describe says that the variables are offered", offering);
     const Result local = call({"--local", "--run-for-ms", "20", "--no-control"});
     require(local.code == 0, "--local --no-control", local);
@@ -982,4 +1025,100 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
     const Result help = call({"--help"});
     require(contains(help.out, "[--no-control]") && contains(help.out, "  --no-control            with --registry-uri: do not offer"),
             "the usage has --no-control", help);
+}
+
+TEST_CASE(ecu_main_map_network_renames_the_networks_of_the_run)
+{
+    vehicle_sil::Simulation registry(vehicle_sil::SilKitOptions{});
+    const std::string uri = registry.registry_uri();
+    const auto two_networks = [](Ecu& ecu) {
+        static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
+        static_cast<void>(ecu.lin_slave("BODY_LIN"));
+    };
+    // The set-up passes with the names of the ECU's networks after the '=' (also a name that
+    // has '=' in it after the first one, and a name that stays): the ECU joins, and nobody starts
+    // the simulation.
+    for (const auto& maps : std::vector<std::vector<std::string>>{
+             {"--map-network", "VehicleCAN=CAN"},
+             {"--map-network", "VehicleCAN=CAN", "--map-network", "BodyLIN=BODY_LIN"},
+             {"--map-network", "CAN=CAN"}})
+    {
+        std::vector<std::string> args{"--registry-uri", uri, "--start-timeout-ms", "300"};
+        args.insert(args.end(), maps.begin(), maps.end());
+        const Result r = call_with(args, two_networks);
+        require(r.code == 3 && r.err.rfind("error: Engine: the simulation did not start: ", 0) == 0, "it joined and gave up", r);
+    }
+    {
+        const Result r = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--map-network", "Vehicle=CAN=A=B"},
+                                   [](Ecu& ecu) { ecu.j1939("CAN=A=B"); });
+        require(r.code == 3 && r.err.rfind("error: Engine: the simulation did not start: ", 0) == 0,
+                "split at the first '='", r);
+    }
+    // A name after the '=' that the ECU does not have: a mistake of the command line that only
+    // the set-up shows. Exit code 3, with the ECU's networks.
+    const Result unused = call_with({"--registry-uri", uri, "--map-network", "VehicleCAN=CAM", "--map-network", "BodyLIN=BODY_LIN"},
+                                    two_networks);
+    require(unused.code == 3 && lines(unused.err) == 1, "exit 3, one line", unused);
+    require(unused.err ==
+                "error: Engine: --map-network VehicleCAN=CAM: the ECU has no network 'CAM' (its networks: 'CAN' (j1939), "
+                "'BODY_LIN' (lin_slave)): after the '=' goes the name that the ECU's code gives the network; correct it, or "
+                "leave this --map-network out\n",
+            "the name the ECU does not have", unused);
+    const Result none = call_with({"--registry-uri", uri, "--map-network", "VehicleCAN=CAN"}, [](Ecu&) {});
+    require(none.code == 3 && contains(none.err, "the ECU has no network 'CAN' (its networks: none): "), "an ECU without networks", none);
+    // The other name reaches the ECU's participant: its monitoring outputs are named with it, so
+    // a variable of the ECU with that name clashes (and with the code's name it does not).
+    static double x = 0.0;
+    const auto with_variable = [](const char* name) {
+        return [name](Ecu& ecu) {
+            static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
+            ecu.input(name, &x);
+        };
+    };
+    const Result clash = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--map-network", "VehicleCAN=CAN"},
+                                   with_variable("j1939.VehicleCAN.bus_state"));
+    require(clash.code == 3 &&
+                contains(clash.err, "the ECU declares a variable 'j1939.VehicleCAN.bus_state', the name of a monitoring "
+                                    "output of the peer") &&
+                contains(clash.err, "the monitoring outputs of the network \"CAN\" have its name in the simulation, "
+                                    "\"VehicleCAN\" (network_names, --map-network)"),
+            "the monitoring outputs have the simulation's name", clash);
+    const Result free = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--map-network", "VehicleCAN=CAN"},
+                                  with_variable("j1939.CAN.bus_state"));
+    require(free.code == 3 && free.err.rfind("error: Engine: the simulation did not start: ", 0) == 0,
+            "the code's name is free", free);
+    // Two networks of the ECU that would be one in the simulation: the set-up fails.
+    const Result one_bus = call_with({"--registry-uri", uri, "--map-network", "BODY_LIN=CAN"}, two_networks);
+    require(one_bus.code == 3 && contains(one_bus.err, "so two networks of the ECU would be one bus"), "one bus", one_bus);
+}
+
+TEST_CASE(ecu_main_map_network_refuses_a_silkit_configuration_that_names_a_network)
+{
+    // SIL Kit would put the controller on the configuration's network: said before anything
+    // connects (nothing listens at this URI), with the option and the file.
+    const ConfigurationFiles files;
+    const std::string file =
+        files.write("engine.silkit.yaml", "CanControllers:\n  - Name: CAN\n    Network: PowertrainCAN\n");
+    const std::string nowhere = "silkit://127.0.0.1:9";
+    const Result both = call({"--registry-uri", nowhere, "--silkit-config", file, "--map-network", "VehicleCAN=CAN"});
+    require(both.code == 3 && lines(both.err) == 1, "exit 3, one line", both);
+    require(both.err == "error: Engine: --silkit-config \"" + file +
+                            "\": the configuration puts a controller on a network itself (CanControllers[0] (Name \"CAN\"): "
+                            "Network \"PowertrainCAN\"), and --map-network renames networks: SIL Kit would use the "
+                            "configuration's network, whatever --map-network says. Remove Network from the controllers of "
+                            "the configuration, or leave --map-network out and name the networks there\n",
+            "the configuration's network", both);
+    // Without --map-network (or with one that changes nothing), the configuration is as before:
+    // the failure is the registry's.
+    for (const auto& args : std::vector<std::vector<std::string>>{
+             {"--registry-uri", nowhere, "--silkit-config", file},
+             {"--registry-uri", nowhere, "--silkit-config", file, "--map-network", "CAN=CAN"}})
+    {
+        const Result r = call(args);
+        require(r.code == 3 && r.err.rfind("error: Engine: cannot join the simulation at ", 0) == 0, "the registry's failure", r);
+    }
+    // A controller without a Network is no obstacle.
+    const std::string unnamed = files.write("unnamed.silkit.yaml", "CanControllers:\n  - Name: CAN\n");
+    const Result fine = call({"--registry-uri", nowhere, "--silkit-config", unnamed, "--map-network", "VehicleCAN=CAN"});
+    require(fine.code == 3 && fine.err.rfind("error: Engine: cannot join the simulation at ", 0) == 0, "no Network, no refusal", fine);
 }

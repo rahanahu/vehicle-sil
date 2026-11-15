@@ -1390,6 +1390,7 @@ These tests read the sources' `#include` lines and similar, and check the bounda
 | `j1939_parts.boundary` | `libs/j1939/parts` uses only the engine's public API and the toolbox, and links only `vehicle_sil::j1939` and other protocol parts |
 | `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary`, `simulation.boundary`, `j1939_codec.boundary`, `param_service.boundary` | The sources of that directory do not use the engine's internals (`cmake/VehicleSilCheckJ1939Parts.cmake`) |
 | `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
+| `peer.controllers_are_made_on_the_simulation_name` | In `libs/`, only `libs/peer/src/peer.cpp` creates SIL Kit bus controllers, and every call creates one on a network whose name went through `simulation_name()` (`cmake/VehicleSilCheckControllerNetworks.cmake`) |
 | `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |
 | `j1939_codec.independent_of_the_engine` | The only vehicle-sil header that `codec.hpp` includes is `j1939/types.hpp` (the value types); it does not include `Network` or `Node` |
 | `eth_link.boundary` | `libs/eth_link` includes no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
@@ -1414,6 +1415,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | `vehicle_sil_launch test` | [Running several scenarios](#running-several-scenarios) |
 | Launcher | `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` | [Launcher limits](#launcher-limits) |
 | ECU | The `--describe` JSON | [The `--describe` JSON](#the---describe-json) |
+| ECU | Where SIL Kit controllers are created, `--map-network` | [Network name mapping](#network-name-mapping) |
 | ECU | `ecu_main` arguments and exit codes | [`ecu_main` arguments and exit codes](#ecu_main-arguments-and-exit-codes) |
 | ECU | `ecu.connected` | [Disconnecting an ECU from the bus](#disconnecting-an-ecu-from-the-bus) |
 | ECU | `NetworkKind`, `NetworkUse` | [Add a network kind or use](#add-a-network-kind-or-use) |
@@ -1854,6 +1856,29 @@ Code to update:
 
 - `read_description()`, which reads the JSON (`libs/launch/src/describe_read.cpp`)
 - The format version `kEcuDescriptionFormat` (`ecu/describe.hpp`)
+
+### Network name mapping
+
+Where to change:
+
+- The code that creates SIL Kit controllers (`libs/peer/src/peer.cpp`, also when you add a network use)
+- The network name mapping (`PeerOptions::network_names`, `SilKitOptions::network_names`, `--map-network`)
+
+Rules:
+
+- Create every controller on the network named by `Peer::simulation_name(<code name>)`, the only function that looks up the mapping. `peer.controllers_are_made_on_the_simulation_name` (`cmake/VehicleSilCheckControllerNetworks.cmake`) reads the lines with `Create(Can|Lin|Ethernet|Flexray)Controller(` in `libs/` to confirm this.
+- The names of the monitoring output (`libs/peer/src/peer_monitor.cpp`) go through the same function.
+- Only `ecu_main` treats an unused mapping as an error. `Peer` and `Simulation` do not, because the same mapping can be given to several ECUs.
+
+Documentation to update:
+
+- "[Renaming networks (`--map-network`)](ecu-executable.md#renaming-networks---map-network)" in [ecu-executable.md](ecu-executable.md)
+- "[Peer monitoring](internals/control.md#peer-monitoring)" in [internals/control.md](internals/control.md)
+
+Tests:
+
+- `speak_on()` and `hear_on()` in `tests/simulation/test_network_kinds.cpp`: for each network use, a renamed network reaches only the simulation's name, on SIL Kit. Add a new network use here.
+- `peer.controllers_are_made_on_the_simulation_name`
 
 ### `ecu_main` arguments and exit codes
 

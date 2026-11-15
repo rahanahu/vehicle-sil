@@ -9,7 +9,8 @@
 //   local     --local --run-for-ms runs one ECU alone (the dashboard receives nothing)
 //   silkit    a sil-kit-registry, vehicle_sil_sim_controller and both ECUs with --registry-uri:
 //             the dashboard shows the engine's speed; every process exits 0
-//   usage     without arguments: the usage and exit code 4
+//   usage     without arguments: the usage and exit code 4; on Windows also a --map-network that is
+//             not ASCII: exit code 4
 //   signal    a stop request (POSIX SIGTERM, Windows Ctrl+Break) to an ECU with --registry-uri:
 //             before the start it ends at once; while the simulation runs it stops the simulation
 //             in order (the controller of this test sees it shut down) and ends; exit code 130
@@ -217,6 +218,18 @@ void usage(const Options& o)
                       0) == 0,
             "engine without arguments wrote:\n" + out);
     log("CHECK engine without arguments: usage and exit code 4 -> ok");
+#ifdef _WIN32
+    // A name that is not ASCII reaches main() in the code page (as "??CAN" where the code page has
+    // no such characters): refused from the wide command line, before anything connects.
+    const std::string renamed = "\xE8\xBB\x8A\xE4\xB8\xA1" "CAN=J1939_CAN";
+    const auto [mapCode, mapWritten] =
+        run(o, o.engine, {"--registry-uri", "silkit://localhost:8500", "--map-network", renamed}, "engine-map-not-ascii");
+    const std::string mapOut = lf(mapWritten);
+    require(mapCode == 4, "engine with a --map-network that is not ASCII exited " + std::to_string(mapCode) + ":\n" + mapOut);
+    require(mapOut.rfind("error: Engine: --map-network \"" + renamed + "\" has characters that are not ASCII: on Windows", 0) == 0,
+            "engine with a --map-network that is not ASCII wrote:\n" + mapOut);
+    log("CHECK engine with a --map-network that is not ASCII (Windows): exit code 4 -> ok");
+#endif
 }
 
 /// The engine with --registry-uri `uri` in a process group of its own, its lines collected.

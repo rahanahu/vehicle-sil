@@ -8,6 +8,7 @@
 #include "vehicle_sil/ecu/ecu.hpp"
 
 #include <chrono>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -44,6 +45,14 @@ struct SilKitOptions
     /// or dynamic simulation steps is std::invalid_argument from add_ecu() or the start. For a
     /// file: participant_configuration_from_file() (vehicle_sil/core/participant_runtime.hpp).
     std::string participant_configuration = "{}";
+    /// Other names for the networks of the ECUs of this process, where the simulation calls a
+    /// network differently from their code: the simulation's name -> the name the code gives
+    /// (as PeerOptions::network_names, which every ECU here gets). {{"VehicleCAN", "J1939_CAN"}}:
+    /// what an ECU makes with j1939("J1939_CAN") is on the SIL Kit network "VehicleCAN". The code
+    /// keeps its names; an ECU without a network of an entry is not touched by it. On the local
+    /// virtual buses (no SilKitOptions) there is nothing to rename. std::invalid_argument from
+    /// add_ecu() or from the call that makes a network, as PeerOptions::network_names says.
+    std::map<std::string, std::string> network_names{};
 };
 
 /// A run failed. what(): "<ecu>: <why>" of each ECU (or other participant) that failed,

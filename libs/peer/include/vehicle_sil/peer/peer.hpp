@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -46,14 +47,23 @@ struct PeerMonitor;
 void set_virtual_time_end(Peer& peer, SimTime end);
 
 /// For vehicle_sil::Simulation only, which checks the network names across the peers of its
-/// process: before the peer makes a CAN or LIN network, it calls `check` with the network's
-/// name, its kind and the call (e.g. `lin_slave("LIN1")`); `check` refuses it by throwing. Only
-/// before start() (std::logic_error).
+/// process: before the peer makes a CAN, LIN or Ethernet network, it calls `check` with the
+/// network's name in the simulation (PeerOptions::network_names; without an entry, the name the
+/// code gives), its kind and the call (e.g. `lin_slave("LIN1")`, with the simulation's name after
+/// it if that is another); `check` refuses it by throwing. Only before start() (std::logic_error).
 void set_network_check(Peer& peer,
                        std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
 
-/// The kind of the network named `network` of `peer`, if it has one.
+/// The kind of the network that the code of `peer` names `network`, if it has one.
 [[nodiscard]] std::optional<NetworkKind> network_kind(const Peer& peer, std::string_view network);
+
+/// The kind of the network of `peer` whose name in the simulation is `network`
+/// (PeerOptions::network_names), if it has one.
+[[nodiscard]] std::optional<NetworkKind> simulation_network_kind(const Peer& peer, std::string_view network);
+
+/// The name in the simulation of the network that the code of `peer` names `network`
+/// (PeerOptions::network_names); `network` itself without an entry for it.
+[[nodiscard]] const std::string& simulation_network_name(const Peer& peer, const std::string& network);
 
 } // namespace detail
 
@@ -80,6 +90,22 @@ struct PeerOptions
     /// Real time: the clock of the driver and the ports. nullptr: the peer uses a
     /// SteadyRealTimeClock of its own. Must outlive the peer.
     can::RealTimeClock* real_time_clock = nullptr;
+    /// Other names for the networks, where the simulation calls a network differently from this
+    /// ECU's code: the simulation's name -> the name the code gives (j1939(), can(), lin_master(),
+    /// lin_slave(), ethernet()). {{"VehicleCAN", "J1939_CAN"}}: what the code makes with
+    /// j1939("J1939_CAN") is on the SIL Kit network "VehicleCAN". Only the SIL Kit network and the
+    /// names of the monitoring outputs below change: the code still says "J1939_CAN" everywhere
+    /// (network(), describe(), the controller's name). A network without an entry keeps its name;
+    /// an entry whose two names are the same changes nothing; an entry for a network the ECU does
+    /// not have is not looked at (the same options may serve several ECUs). An ECU executable
+    /// takes these as --map-network (ecu_main()).
+    /// std::invalid_argument from the constructor for an empty name, for one name of the code
+    /// under two names of the simulation, and, with an entry that changes a name, for a
+    /// participant_configuration that gives a controller a Network (SIL Kit would use that one;
+    /// any participant_configuration in a build that cannot read it, i.e. without rapidyaml);
+    /// from the call that makes a network if two networks of the ECU would be one in the
+    /// simulation, and from j1939(name, port) for a name with an entry (nothing to rename).
+    std::map<std::string, std::string> network_names{};
     /// With a control agent (Ecu::input(), output(), agent()): it also gets the peer's monitoring
     /// outputs, after the ECU's variables, when its schema is completed (control::Agent::
     /// complete_schema(): by a transport such as control_silkit::AgentTransport, the first submit()
@@ -90,7 +116,7 @@ struct PeerOptions
     ///   sample: 0 at the first one, and low after the simulation stood still),
     ///   peer.app_time_max_us (the longest application-and-LIN stage since then, without the
     ///   J1939 handling and the writes applied before it);
-    ///   for each J1939 network N: j1939.N.bus_state (-1 unknown, 0 error active, 1 error
+    ///   for each J1939 network N (its name in the simulation, see network_names): j1939.N.bus_state (-1 unknown, 0 error active, 1 error
     ///   passive, 2 bus off) and the counters j1939.N.frames_received, frames_sent,
     ///   send_failures, send_queue_full, receive_overflows, held_dropped, address_violations,
     ///   transport_aborts_sent, transport_aborts_received;
@@ -275,6 +301,8 @@ private:
     friend void detail::set_network_check(
         Peer& peer, std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
     friend std::optional<NetworkKind> detail::network_kind(const Peer& peer, std::string_view network);
+    friend std::optional<NetworkKind> detail::simulation_network_kind(const Peer& peer, std::string_view network);
+    friend const std::string& detail::simulation_network_name(const Peer& peer, const std::string& network);
 
     struct Channel;
     struct RawCan;
@@ -326,6 +354,21 @@ private:
     /// controller like its Ethernet network (ethernet_).
     [[nodiscard]] bool controller_is_used(const std::string& controller) const;
     void require_virtual_time(const char* what) const;
+    /// The one place that turns the name the code gives a network into its name in the simulation
+    /// (PeerOptions::network_names): `network` itself without an entry for it. Every SIL Kit
+    /// controller is made on simulation_name(<the code's name>), and the monitoring outputs are
+    /// named with it (the test peer.controllers_are_made_on_the_simulation_name reads the sources).
+    [[nodiscard]] const std::string& simulation_name(const std::string& network) const;
+    /// `"<network>"`, and ` ("<name>" in the simulation)` after it if that is another name.
+    [[nodiscard]] std::string network_text(const std::string& network) const;
+    /// `call`, and ` (the network "<name>" of the simulation)` after it if the network that the
+    /// code names `network` has another name there.
+    [[nodiscard]] std::string call_text(const std::string& call, const std::string& network) const;
+    /// std::invalid_argument for the call `call` that makes the network `network` if a network of
+    /// this peer that the code names differently has the same name in the simulation: whatever
+    /// their kinds and whichever was made first, the two would be one bus (and one name of the
+    /// monitoring outputs).
+    void require_own_simulation_name(const std::string& network, const std::string& call) const;
     Channel& add_channel(std::string name);
     [[nodiscard]] Channel& channel(std::string_view name) const;
     void run_application(SimTime now);
@@ -349,6 +392,9 @@ private:
     std::vector<std::unique_ptr<LinNode>> lin_;
     /// The Ethernet channels (Ecu::ethernet()), in the order added.
     std::vector<std::unique_ptr<Ethernet>> ethernet_;
+    /// PeerOptions::network_names the other way round (the code's name -> the simulation's),
+    /// without the entries whose two names are the same.
+    std::map<std::string, std::string> simulation_names_;
     /// detail::set_network_check(); empty: none.
     std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> network_check_;
     std::vector<std::function<void(SimTime)>> step_functions_;

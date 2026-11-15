@@ -138,6 +138,8 @@ A peer that runs together with coordinated participants must do one of these:
 
 For how received messages are handled, the determinism of J1939 and LIN, and the constraints on LIN step sizes, see [internals/virtual-time.md](internals/virtual-time.md) and [internals/lin.md](internals/lin.md). You can also do without `Peer` and run your code from a step handler of `ParticipantRuntime` (`bind_host()`; see the LIN example in `examples/lin`).
 
+When a network has another name in the simulation than in the code, set `options.network_names = {{"VehicleCAN", "J1939_CAN1"}};` (simulation name to code name) to match them without changing the code. Only the name of the SIL Kit network and the names of the monitoring output change. For the rules, see "Renaming networks" in [ecu-executable.md](ecu-executable.md#renaming-networks---map-network) (an ECU executable takes `--map-network`).
+
 ## Simulate CAN bus arbitration and transmission time
 
 SIL Kit's standard CAN delivers each frame to every participant with the time at which it was sent. To reproduce arbitration and transmission time in virtual time, add the simple CAN Network Simulator as a participant. The peers' code stays the same.

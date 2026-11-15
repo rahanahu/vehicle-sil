@@ -53,6 +53,7 @@ int main(int argc, char** argv)
 | `--start-timeout-ms <ms>` | `--registry-uri` のときだけ使えます。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。 |
 | `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションに公開しません（[変数を公開する](#変数を公開する--registry-uri)）。 |
 | `--silkit-config <file>` | `--registry-uri` のとき、この participant に SIL Kit の設定ファイル（YAML か JSON）を渡します（[SIL Kit の設定ファイルを渡す](#sil-kit-の設定ファイルを渡す--silkit-config)）。 |
+| `--map-network <シミュレーションの名前>=<実行ファイルの名前>` | `--registry-uri` のときだけ使えます。ECU のコードが `<実行ファイルの名前>` で作ったネットワークを、SIL Kit のネットワーク `<シミュレーションの名前>` につなぎます（[ネットワークの名前を替える](#ネットワークの名前を替える--map-network)）。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。 |
 | `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。 |
 | `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。 |
@@ -71,6 +72,7 @@ int main(int argc, char** argv)
 | `--no-control` | `--local` に付けても何も変わりません。 |
 | `--silkit-config` | `--describe` に付けると、ファイルを読んで確認するだけです（エラーは終了コード 3）。 |
 | `--silkit-config` | `--local` には付けられません（終了コード 4）。 |
+| `--map-network` | ネットワークごとに 1 回ずつ、何回でも書けます。 |
 | `--local` | ECU を単体で確認するときに使います。 |
 | `--name` | `--describe` の `name` にも反映されます。 |
 | `--name` | 変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。 |
@@ -85,7 +87,7 @@ int main(int argc, char** argv)
 |---|---|
 | 0 | 終わった（`--describe` は JSON を書いた。`--registry-uri` はシミュレーションが終わった。`--local` は時間まで動いた） |
 | 1 | 実行中に ECU が失敗した（ステップの例外。`SimulationError`） |
-| 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` のエラー、registry に接続できない、シミュレーションが始まらない、標準出力に書けない） |
+| 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` のエラー、registry に接続できない、シミュレーションが始まらない、標準出力に書けない、`--map-network` の実行ファイルの名前のネットワークを ECU が持たない） |
 | 4 | 引数のエラー |
 | 130 | `--registry-uri` で、停止を求められた（[止まるよう求められたとき](#止まるよう求められたとき--registry-uri)） |
 
@@ -99,7 +101,9 @@ int main(int argc, char** argv)
 | 値のない `--name`、`--registry-uri`、`--run-for-ms`、`--start-timeout-ms` | 次が `--` で始まる引数のときも、値がないとみなします。 |
 | 空の値 | |
 | ASCII でも UTF-8 でもない `--name` | Windows のコードページの名前などで、メッセージにバイト列を 16 進で表示します。 |
-| 同じ引数の 2 回目 | |
+| 同じ引数の 2 回目 | `--map-network` は別です（[ネットワークの名前を替える](#ネットワークの名前を替える--map-network)）。 |
+| `--map-network` の値のエラー | [ネットワークの名前を替える](#ネットワークの名前を替える--map-network) にあります。 |
+| `--registry-uri` のない `--map-network` | |
 | `--run-for-ms` のない `--local`、`--local` のない `--run-for-ms` | |
 | `--registry-uri` のない `--start-timeout-ms` | |
 | 整数でない、0 の、または 10^12 を超える `--run-for-ms` と `--start-timeout-ms` | |
@@ -271,6 +275,38 @@ coordinated の participant が止まると、シミュレーション全体が�
 
 controller のプロセスが結果を出さずにいなくなったら、すべての ECU を止めます（ECU は自分では終わりません）。controller が終わった後もしばらく動いている ECU（registry がいなくなった場合など）も止めます。まず SIGTERM（Windows: Ctrl+Break）で停止を求め（上の「止まるよう求められたとき」）、それでも終わらなければ強制終了します。
 
+### ネットワークの名前を替える（`--map-network`）
+
+ECU のコードが付けたネットワークの名前が、シミュレーションでの名前と違うときに、ビルドし直さずに合わせます。
+
+```sh
+engine_ecu --registry-uri silkit://localhost:8500 --map-network VehicleCAN=J1939_CAN
+```
+
+値の向きは `<シミュレーションの名前>=<実行ファイルの名前>` です。上の例では、コードが `j1939("J1939_CAN")` で作ったネットワークが、SIL Kit のネットワーク `VehicleCAN` につながります。値は最初の `=` で分けます（実行ファイルの名前は `=` を含められます。シミュレーションの名前は含められません）。
+
+| 項目 | ルール |
+|---|---|
+| 替わる単位 | 名前ごとに効きます。同じ名前の `j1939()` と `can()` は両方替わります。`lin_master()`、`lin_slave()`、`ethernet()` のネットワークも同じです。書いていないネットワークは、コードの名前のままです。2 つの名前が同じもの（`CAN=CAN`）は、何も替えません。 |
+| 替わるもの | SIL Kit のネットワークの名前と、`Peer` の監視の出力の名前（`j1939.<シミュレーションの名前>.` で始まる変数と、ノードの状態のイベントの本文）だけです。 |
+| コードの名前のままのもの | コードから見える名前（`ecu.network("J1939_CAN")` など）、SIL Kit のコントローラーの名前、`--describe` の `networks[].name` です。 |
+| `--describe` と `--local` | どちらにも付けられません（終了コード 4）。`--describe` の出力は引数で変わりません。`--map-network` を受け取れる実行ファイルは、`features` に `"map-network"` を出します（[キー](#キー)）。`--local` での監視の出力は、コードの名前です。 |
+
+終了コード 4 になる値: `=` がない、どちらかの名前が空、同じシミュレーションの名前を 2 回、同じ実行ファイルの名前を 2 回、ASCII でも UTF-8 でもない値、Windows では ASCII でない文字のある値。
+
+終了コード 3 になる場合は次のとおりです。どれも、シミュレーションが始まる前に 1 行で伝えます。
+
+| 場合 | 補足 |
+|---|---|
+| 実行ファイルの名前のネットワークを、ECU が持たない | メッセージに、ECU のネットワークを並べます。 |
+| 替えた後で、ECU の 2 つのネットワークが同じ名前になる | たとえば、コードが `A` と `B` の両方を持つときの `--map-network B=A` です。入れ替え（`--map-network B=A --map-network A=B`）は書けます。 |
+| `--silkit-config` の設定が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`）に `Network` を書いている | SIL Kit は設定の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えない `--map-network` だけなら拒否しません。ソースからビルドしていない SIL Kit を使う vehicle-sil のビルドは、設定を読めないので、名前を替える `--map-network` と `--silkit-config` の併用を、設定の内容によらず拒否します（`PeerOptions::network_names` と participant の設定も同じです）。 |
+| ECU が、替えた後の監視の出力と同じ名前の変数を宣言している | たとえば `j1939.VehicleCAN.bus_state` です。 |
+
+Windows（MinGW）では、名前を替えるネットワークに ASCII の名前を使います。ASCII でない文字のある `--map-network` は終了コード 4 です。Windows の引数はコードページに変換されて届き、コードページにない文字は `?` や似た文字に置き換わるので、そのまま読むと、エラーなしに別の名前のネットワークに載ってしまいます。`ecu_main` は、この引数だけを変換前のコマンドラインで確認します（`main()` の `argc` と `argv` をそのまま渡したとき）。Linux では、ASCII か UTF-8 の名前を書けます（どちらでもないバイト列は終了コード 4）。
+
+`ecu_main` を使わないプログラムは、`SilKitOptions::network_names`（`Simulation`）か `PeerOptions::network_names`（`Peer`）に、同じ向き（シミュレーションの名前 → コードの名前）で渡します。1 つのプロセスに複数の ECU を載せた `Simulation` では、全部の ECU に同じ対応が効き、その名前のネットワークを持たない ECU には何もしません（持たない名前をエラーにするのは `ecu_main` だけです）。`Peer::j1939(name, port)`（呼び出し側が作ったポート）の名前には対応を書けません（`std::invalid_argument`。SIL Kit のネットワークにつながないので、替えるものがありません）。
+
 ## ECU を作る人に依頼すること
 
 `vehicle_sil_launch` で複数の ECU を動かすとき、ECU の実行ファイルに求めることです。守らないと起きることは、ランチャーの指摘か表示に現れます。
@@ -318,6 +354,7 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 | `networks` の `mac` | イーサネットだけ。`ethernet()` に渡した自分のアドレス（`eth::ChannelOptions::mac`）。 |
 | `networks` の `nodes` | J1939 だけ。ノードを追加した順に、追加したときの値（`NodeOptions`）。 |
 | `variables` | 変数の `control::VariableInfo`。 |
+| `control`、`features` | `Ecu::describe()` は空のまま返します。`ecu_main` が `--describe` のときに入れます（`control` は [変数を公開する](#変数を公開する--registry-uri)、`features` は [キー](#キー)）。 |
 
 **`networks`**: `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つの要素です。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`、`Ethernet`）、`kind()`（`use` から決まる `NetworkKind`: `Can`、`Lin`、`Ethernet`）、`nodes`、`mac` です。
 
@@ -370,8 +407,9 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 | キーの意味が変わる、キーがなくなる | 上がります。 |
 | キーが増える | 上がりません。 |
 | 決まった値をとるキー（`kind`、`use`、`type`、`causality`）に値が増える | 上がりません。 |
+| `features` に名前が増える | 上がりません。 |
 
-読む側は、知らないバージョンを拒否し、知らないキーは無視します。決まった値をとるキーの知らない値は、その ECU のエラーにします（`vehicle_sil_launch check` の指摘 `describe-unknown-value`。ほかの participant の照合は続けます）。新しい vehicle-sil の ECU を古い `vehicle_sil_launch` で読むと、そうなります。
+読む側は、知らないバージョンを拒否し、知らないキーは無視します。決まった値をとるキーの知らない値は、その ECU のエラーにします（`vehicle_sil_launch check` の指摘 `describe-unknown-value`。ほかの participant の照合は続けます）。新しい vehicle-sil の ECU を古い `vehicle_sil_launch` で読むと、そうなります。`features` は決まった値をとるキーではなく、開いた一覧です。読む側は、知らない名前を無視します。
 
 `vehicle_sil` は、ECU をビルドした vehicle-sil のバージョン（CMake のプロジェクトのバージョン）です。別々にビルドした実行ファイルを 1 つのシミュレーションで動かすときに、バージョンの違いを見つけるのに使います。
 
@@ -405,6 +443,7 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 | `control` | この実行ファイルが `--registry-uri` のときに変数をシミュレーションに公開するなら、その方法。公開しない（`--no-control`）なら `null` |
 | `control.transport` | トランスポート。今は `"silkit"`（SIL Kit の publish/subscribe）だけ |
 | `control.wire_version` | メッセージの形式のバージョン（整数） |
+| `features` | この実行ファイルが、起動する側から受け取れる引数や動きの名前の配列（文字列）。`"map-network"` は `--map-network` を受け取ります。`ecu_main` の実行ファイルは、どの引数で呼んでも同じ一覧を出します |
 
 キーのない JSON の読み方は次のとおりです。
 
@@ -412,6 +451,7 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 |---|---|
 | `networks[].mac` | 前のバージョンの ECU の JSON です。`null` として読みます。 |
 | `control` | このキーができる前の vehicle-sil でビルドした実行ファイルです。`null` と同じに扱います。 |
+| `features` | 前のバージョンの ECU の JSON です。空の配列として読みます。 |
 
 `variables[].builtin` は、画面などが、アプリの変数と分けて表示するのに使います。`control.wire_version` が `vehicle_sil_launch` のバージョンと違えば、変数を読み書きできません。
 
@@ -480,7 +520,10 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
   "control": {
     "transport": "silkit",
     "wire_version": 1
-  }
+  },
+  "features": [
+    "map-network"
+  ]
 }
 ```
 
