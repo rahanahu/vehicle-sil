@@ -8,7 +8,7 @@
   "tick_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
-    "name": "a bool and an enum write are not applied",
+    "name": "a bool and an enum write are not applied, and another step writes at the same time",
     "status": "failed",
     "over_at_ms": 50,
     "recorded_to_ms": 40
@@ -73,8 +73,8 @@
     {
       "index": 2,
       "line": 9,
-      "kind": "wave",
-      "text": "wave Body.mode points (2, hold) (1, hold) over 40 ms; Body.lamp points (true, hold) (false, hold) over 40 ms",
+      "kind": "set",
+      "text": "set Body.mode = auto (2); Body.lamp = true",
       "status": "failed",
       "start_ms": 40,
       "at_ms": 40,
@@ -105,6 +105,21 @@
         ],
         "write": 0
       }
+    },
+    {
+      "index": 3,
+      "line": 11,
+      "kind": "set",
+      "text": "set Body.mode = on (1); Body.lamp = false",
+      "status": "unfinished",
+      "start_ms": 40,
+      "at_ms": null,
+      "end_ms": null,
+      "code": null,
+      "message": null,
+      "lines": [4, 5],
+      "watch": null,
+      "failed": null
     }
   ],
   "series": [
@@ -116,7 +131,7 @@
       "points": [
         [0, 0],
         [40, 2],
-        [60, 1]
+        [40, 1]
       ]
     },
     {
@@ -136,7 +151,7 @@
       "points": [
         [0, false],
         [40, true],
-        [60, false]
+        [40, false]
       ]
     },
     {
@@ -176,35 +191,51 @@
     },
     {
       "variable": "Body.mode",
-      "kind": "wave",
+      "kind": "set",
       "line": 9,
       "step": 2,
       "from_ms": 40,
-      "to_ms": 80,
-      "base": null,
-      "base_source": null,
-      "shape": {
-        "type": "points",
-        "points": 2,
-        "interpolate": "hold"
-      },
-      "text": "Body.mode points (2, hold) (1, hold) over 40 ms"
+      "to_ms": 40,
+      "base": 2,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.mode = auto (2)"
     },
     {
       "variable": "Body.lamp",
-      "kind": "wave",
+      "kind": "set",
       "line": 9,
       "step": 2,
       "from_ms": 40,
-      "to_ms": 80,
-      "base": null,
-      "base_source": null,
-      "shape": {
-        "type": "points",
-        "points": 2,
-        "interpolate": "hold"
-      },
-      "text": "Body.lamp points (true, hold) (false, hold) over 40 ms"
+      "to_ms": 40,
+      "base": true,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.lamp = true"
+    },
+    {
+      "variable": "Body.mode",
+      "kind": "set",
+      "line": 11,
+      "step": 3,
+      "from_ms": 40,
+      "to_ms": 40,
+      "base": 1,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.mode = on (1)"
+    },
+    {
+      "variable": "Body.lamp",
+      "kind": "set",
+      "line": 11,
+      "step": 3,
+      "from_ms": 40,
+      "to_ms": 40,
+      "base": false,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.lamp = false"
     }
   ],
   "findings": [
@@ -215,7 +246,7 @@
       "line": 9,
       "participant": null,
       "network": null,
-      "message": "wave Body.mode points (2, hold) (1, hold) over 40 ms; Body.lamp points (true, hold) (false, hold) over 40 ms: the write for 40 ms was not applied by participant 'Body': the ECU rejected it (mode: auto is not allowed now); none of the 2 writes of that command was applied",
+      "message": "set Body.mode = auto (2); Body.lamp = true: the write for 40 ms was not applied by participant 'Body': the ECU rejected it (mode: auto is not allowed now); none of the 2 writes of that command was applied",
       "detail": null
     }
   ],

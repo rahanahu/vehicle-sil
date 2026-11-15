@@ -67,6 +67,7 @@
       "encoding": "all",
       "points": [
         [0, 5],
+        [7990, 80.81],
         [8000, 80.905],
         [8010, 81]
       ]
@@ -110,9 +111,9 @@
       {
         "variable": "Body.level",
         "source": "written",
-        "dropped": 799,
+        "dropped": 798,
         "dropped_from_ms": 10,
-        "dropped_before_ms": 8000
+        "dropped_before_ms": 7990
       }
     ]
   }

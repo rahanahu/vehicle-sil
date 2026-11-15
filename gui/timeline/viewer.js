@@ -230,6 +230,10 @@
         /** For points of the failed step's writes: point index -> applied (true, false, or null: not known). */
         applied: null,
         notAppliedFrom: Number.isInteger(s.not_applied_from) ? s.not_applied_from : null,
+        /** written: a dither writes it too (the series has columns). */
+        dithered: Array.isArray(s.columns),
+        /** written: whether the file says the point before not_applied_from is in the ECU (see appliedBefore). */
+        beforeApplied: false,
         firstMs: isNum(s.first_ms) ? s.first_ms : null,
         lastMs: isNum(s.last_ms) ? s.last_ms : null,
         samples: Number.isInteger(s.samples) ? s.samples : null,
@@ -343,6 +347,7 @@
     const writes = (f && Array.isArray(f.writes) ? f.writes : []).map((w, i) => {
       if (!isObject(w)) return null;
       const info = byName.get(w.variable);
+      const point = Number.isInteger(w.point) ? w.point : null;
       return {
         variable: w.variable,
         at: isNum(w.at_ms) ? w.at_ms : null,
@@ -351,8 +356,17 @@
           w.value === null || w.value === undefined
             ? 'not computed'
             : fmtValue(w.value, info && info.info, true),
-        point: Number.isInteger(w.point) ? w.point : null,
+        point,
         applied: w.applied === true ? true : w.applied === false ? false : null,
+        // point null: nothing was sent, or the point went at the file's limits (then limits.dropped names the
+        // variable's written series).
+        pointDropped:
+          point === null &&
+          isObject(tl.limits) &&
+          Array.isArray(tl.limits.dropped) &&
+          tl.limits.dropped.some(
+            (d) => isObject(d) && d.variable === w.variable && d.source === 'written',
+          ),
         cause: f.write === i,
       };
     });
@@ -366,6 +380,38 @@
       conditions,
       writes: known,
     };
+  }
+
+  /**
+   * Whether the file says that the point before not_applied_from of v's written series is in the ECU, so that the
+   * ECU kept that value after the writes it did not apply. In a run that did not pass, a point before
+   * not_applied_from may not have been applied (the run ended before its result was looked at), so only these say
+   * so: the point is a write of the failed step with applied true; the run passed; or every line of the variable
+   * that the point can be of is of a step that passed (a step passes only when its writes were applied), and no
+   * dither writes the variable (a dither's write is no step's).
+   */
+  function appliedBefore(v, tl) {
+    const series = v.written;
+    const naf = series.notAppliedFrom;
+    if (naf === null || naf < 1 || naf > series.t.length) return false;
+    const i = naf - 1;
+    if (series.applied && series.applied.get(i) === true) return true;
+    if (tl.scenario.status === 'passed') return true;
+    if (series.dithered || v.lines.some((l) => l.kind === 'dither')) return false;
+    const t = series.t[i];
+    const of = v.lines.filter(
+      (l) =>
+        isNum(l.from_ms) &&
+        l.from_ms <= t &&
+        (l.to_ms === null || (isNum(l.to_ms) && t <= l.to_ms)),
+    );
+    return (
+      of.length > 0 &&
+      of.every((l) => {
+        const step = tl.steps.find((s) => isObject(s) && s.index === l.step);
+        return step !== undefined && step.status === 'passed';
+      })
+    );
   }
 
   /** Builds everything the page draws from a file that readTimeline() accepted. */
@@ -472,11 +518,13 @@
           at: w.at ?? failure.at,
           value: w.value,
           applied: w.applied,
-          sent: w.point !== null,
+          sent: w.point !== null || w.pointDropped,
           cause: w.cause,
         });
       }
     }
+
+    for (const v of vars) if (v.written) v.written.beforeApplied = appliedBefore(v, tl);
 
     // The time range of the whole run: the record, and the steps and lines that the run decided.
     let end = recordedTo ?? 0;
@@ -593,12 +641,19 @@
 
   /**
    * The value the ECU kept from the first point of not_applied_from on, while it is known: up to the first point
-   * that is not 'not-applied'. Returns { from, to, v } or null (no such point, or not known from the start).
+   * that is not 'not-applied'. Returns { from, to, v } or null (no such point, not known from the start, or the
+   * file does not say that the value before was applied: beforeApplied).
    */
   function keptValue(series, end) {
     const naf = series.notAppliedFrom;
     const n = series.t.length;
-    if (naf === null || naf < 1 || naf >= n || pointState(series, naf) !== 'not-applied')
+    if (
+      naf === null ||
+      naf < 1 ||
+      naf >= n ||
+      series.beforeApplied !== true ||
+      pointState(series, naf) !== 'not-applied'
+    )
       return null;
     let to = Math.max(end ?? series.t[n - 1], series.t[n - 1]);
     for (let i = naf + 1; i < n; i++) {
@@ -613,7 +668,8 @@
   /**
    * The segments of a series held from each point to the next: { from, to, v, base, state }.
    * state: 'sent' (or 'seen'); 'not-applied' and 'not-known' (from not_applied_from on, see pointState); 'held'
-   * (the value that stayed in the ECU after a write it did not apply, while that is known); 'alone' (a point
+   * (the value that stayed in the ECU after a write it did not apply, while that is known and where the file says
+   * it was applied: keptValue); 'alone' (a point
    * inside an interval whose points were dropped: not held). `end` is where the last point stops (the end of the
    * record, or last_ms of a sampled series). v is undefined for a value that is not of the variable's type.
    */
@@ -700,7 +756,9 @@
    *   { value }                                a value sent or seen (undefined: not of the variable's type);
    *   { missing: true }                        inside the interval `gap` whose points were dropped at the limits;
    *   { value, state: 'not-applied', kept }    sent, and the ECU did not apply it. kept: { value } that the ECU
-   *                                            has (value undefined: from before the record), or null: not known;
+   *                                            has (value undefined: from before the record); { lastSent }: the
+   *                                            value sent before, which the file does not say was applied; or
+   *                                            null: not known;
    *   { value, state: 'not-known' }            sent, and whether the ECU applied it is not known.
    */
   function valueAt(series, t, end, gap) {
@@ -725,11 +783,11 @@
       const naf = series.notAppliedFrom;
       let known = true;
       for (let i = naf; i <= lo && known; i++) known = pointState(series, i) === 'not-applied';
-      return {
-        value: series.v[lo],
-        state,
-        kept: !known ? null : { value: naf > 0 ? series.v[naf - 1] : undefined },
-      };
+      let kept = null;
+      if (known && naf === 0) kept = { value: undefined };
+      else if (known && series.beforeApplied === true) kept = { value: series.v[naf - 1] };
+      else if (known) kept = { lastSent: series.v[naf - 1] };
+      return { value: series.v[lo], state, kept };
     }
     return { value: series.v[lo] };
   }
@@ -741,6 +799,11 @@
     const value = `${word} ${fmtValue(at.value, info)}`;
     if (at.state === 'not-known') return `${value} (not known whether the ECU applied it)`;
     if (at.state !== 'not-applied') return value;
+    if (at.kept !== null && 'lastSent' in at.kept)
+      return (
+        `${value} (not applied; the ECU keeps what it had: the last value sent before is ` +
+        `${fmtValue(at.kept.lastSent, info)}, and the file does not say whether it was applied)`
+      );
     const has =
       at.kept === null
         ? 'a value that is not known'
@@ -752,7 +815,8 @@
 
   /**
    * The words of the table of a failed step's writes, from what the file says of each write: applied, point (null:
-   * not sent) and whether it is the cause. Returns { heading, explain, cause(write) }.
+   * not sent, or its point was dropped at the limits) and whether it is the cause. Returns { heading, explain,
+   * cause(write) }.
    */
   function writeWords(f) {
     const at = f.writes.length && f.writes[0].at !== null ? f.writes[0].at : f.at;
@@ -767,7 +831,12 @@
       .filter(Boolean)
       .join(' ');
     const cause = (w) => {
-      if (w.point === null) return w.cause ? 'not sent: the cause of the failure' : 'not sent';
+      if (w.point === null && w.pointDropped) {
+        const dropped = "its point was dropped at the file's limits";
+        return w.cause ? `the cause of the failure; ${dropped}` : dropped;
+      }
+      if (w.point === null && w.applied === false)
+        return w.cause ? 'not sent: the cause of the failure' : 'not sent';
       return w.cause ? 'the cause of the failure' : '';
     };
     return { heading: `Writes for ${fmtMs(at)}`, explain, cause };
@@ -1731,7 +1800,7 @@
   const STATE_TITLES = {
     'not-applied': 'Sent, and the ECU did not apply it',
     'not-known': 'Sent; not known whether the ECU applied it',
-    held: 'The value that stayed in the ECU: the writes after it were not applied',
+    held: 'The value that stayed in the ECU: it was applied, and the writes after it were not',
   };
 
   function drawNumberSeries(svg, segs, scale, y, cls) {
@@ -1785,13 +1854,19 @@
   }
 
   function drawStateBand(svg, segs, scale, y0, height, cls, kind, info, marked) {
+    let before = null; // the last rect of the row: { from, y, x1 }
     for (const { seg, y, height: rh } of stateBandLayout(decimate(segs, scale), y0, height)) {
       // A value that is not of the variable's type is not drawn (the lane's note names it).
       if (seg.v === undefined) continue;
-      const x0 = Math.max(-1, scale.x(seg.from));
+      let x0 = Math.max(-1, scale.x(seg.from));
+      // Points of one time (a write sent after one that was refused) go side by side in the order sent, so that
+      // a later one does not cover the one before, and past the mark of a failed write at that time (10 px wide).
+      if (before && before.y === y && before.from === seg.from)
+        x0 = Math.max(x0, before.x1, marked.has(seg.from) ? scale.x(seg.from) + 6 : -Infinity);
       const x1 = Math.min(scale.width + 1, scale.x(seg.to));
       // A point at the end of the record (or alone in a gap) still gets a visible width.
       const w = Math.max(seg.to === seg.from || unapplied(seg.state) ? 3 : 0.5, x1 - x0);
+      before = { from: seg.from, y, x1: x0 + w };
       let fill;
       if (seg.v === null) fill = 'null';
       else if (seg.min !== seg.max) fill = 'mixed';

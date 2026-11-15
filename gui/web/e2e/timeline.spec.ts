@@ -152,33 +152,45 @@ test('timeline page: a refused write says which writes are in the ECU and which 
 test('timeline page: a bool and an enum write that the ECU did not apply stay visible', async ({
   page,
 }) => {
+  // As the launcher writes it: the refused write, the one another step sent after it, and the value the ECU
+  // kept are all at 40 ms, the end of the record.
   const problems = await serve(page);
   await page.goto(`${ORIGIN}/timeline.html?src=tests/fixtures/state_not_applied.timeline.json`);
   await page.getByRole('button', { name: 'Whole run' }).click();
-  for (const [name, title, kept] of [
-    ['Body.mode', 'Sent, and the ECU did not apply it: auto (2) at 40 ms', 'off (0)'],
-    ['Body.lamp', 'Sent, and the ECU did not apply it: true at 40 ms', 'false'],
+  for (const [name, title, later, kept] of [
+    ['Body.mode', 'Sent, and the ECU did not apply it: auto (2) at 40 ms', 'on (1)', 'off (0)'],
+    ['Body.lamp', 'Sent, and the ECU did not apply it: true at 40 ms', 'false', 'false'],
   ]) {
     const where = lane(page, name);
     const notApplied = where.locator('rect.state.sent.not-applied');
     await expect(notApplied).toHaveCount(1);
     await expect(notApplied.locator('title')).toHaveText(title);
-    expect(await onTopAtCentre(notApplied), `${name}: covered at its centre`).toBe(true);
-    // The value the ECU kept is drawn too, but under it, not on it.
+    // The mark of the failed write is on it and says the same.
+    const mark = where.locator('g.mark.write');
+    await expect(mark.locator('title')).toHaveText(
+      /: not applied \(the cause of the failure\)$|: not applied$/,
+    );
+    expect(await onTopAtCentre(mark.locator('rect')), `${name}: the mark is covered`).toBe(true);
+    // The point sent after it, at the same time: beside them, not under them.
+    const notKnown = where.locator('rect.state.sent.not-known');
+    await expect(notKnown.locator('title')).toHaveText(
+      `Sent; not known whether the ECU applied it: ${later} at 40 ms`,
+    );
+    expect(await onTopAtCentre(notKnown), `${name}: the later point is covered`).toBe(true);
+    // The value the ECU kept (step 1 set it and passed) is drawn too, but under them, not on them.
     await expect(where.locator('rect.state.held title')).toHaveText(
-      new RegExp(`: ${kept.replace(/[()]/g, '\\$&')} from 40 ms to 60 ms$`),
+      new RegExp(`: ${kept.replace(/[()]/g, '\\$&')} from 40 ms to 40 ms$`),
     );
-    // The point sent after it: not known whether the ECU applied it.
-    await expect(where.locator('rect.state.sent.not-known title')).toHaveText(
-      /^Sent; not known whether the ECU applied it: .* at 60 ms$/,
-    );
+    // Too narrow for words.
+    await expect(where.locator('.state-label.not-applied, .state-label.not-known')).toHaveCount(0);
     await expect(where.locator('.legend')).toContainText('not applied');
     await expect(where.locator('.legend')).toContainText('kept in the ECU');
   }
-  const mode = lane(page, 'Body.mode');
-  await hoverAt(page, mode, 50);
-  await expect(mode.locator('.readout')).toHaveText(
-    /^sent auto \(2\) \(not applied; the ECU has off \(0\)\)/,
+  // The read-out at 40 ms has the last point of that time.
+  await page.locator('#chart').focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+  await expect(lane(page, 'Body.mode').locator('.readout')).toHaveText(
+    /^sent on \(1\) \(not known whether the ECU applied it\)/,
   );
   expect(problems).toEqual([]);
 });
@@ -202,7 +214,9 @@ test('timeline page: a write whose result is not known is drawn and worded as no
   await expect(level.locator('path.series.not-known title')).toHaveText(
     'Sent; not known whether the ECU applied it',
   );
-  await hoverAt(page, level, 50);
+  // The point is at 40 ms, the end of the record: the arrow keys land on it exactly.
+  await page.locator('#chart').focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
   await expect(level.locator('.readout')).toHaveText(
     /^sent 13 \(not known whether the ECU applied it\)/,
   );

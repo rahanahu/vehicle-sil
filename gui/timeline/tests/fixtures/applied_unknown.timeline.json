@@ -10,8 +10,8 @@
     "file": "scenario.yaml",
     "name": "no result comes for a write",
     "status": "failed",
-    "over_at_ms": 70,
-    "recorded_to_ms": 60
+    "over_at_ms": 50,
+    "recorded_to_ms": 40
   },
   "variables": [
     {
