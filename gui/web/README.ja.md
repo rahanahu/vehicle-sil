@@ -397,12 +397,12 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 ### サーバーとの間の型
 
-- サーバーとの間でやりとりする形は、クライアントのライブラリの `gui/client/src/protocol.ts` にだけ、型と読み取り関数（`read*`）で書く（画面は `@vehicle-sil/gui-client` から import する）。形のリファレンスは `gui/protocol/`（README と `examples/`）。
+- サーバーとの間でやりとりする形は、クライアントのライブラリの `gui/client/src/protocol/` にだけ、型と読み取り関数（`read*`）で書く。ランチャーが決める形は `launcher.ts`、サーバーが決める形は `server.ts` に置く。画面は `@vehicle-sil/gui-client` から import する。形のリファレンスは `gui/protocol/`（README と `examples/`）。
 - 届いた JSON は、読み取り関数を通してから使う（ライブラリが HTTP のレスポンスと WebSocket の通知を読む）。知らないフィールド、知らない通知とイベントは無視して通す。
 - セッションの要約とランチャーのイベントは、部分ごとに読む。ランチャーから来る部分やサーバーが上限で縮めた部分が読めなくても、全体を捨てない。
 - 読めない部分は既定の値（`null`、空）にして、その名前を `unreadable` に入れ、帯に「一部を表示できません」と表示する。
 - 全体を読めないとするのは、要約の芯（`id`、`state`、`launcher`、`stop`）かイベントの芯（`seq`、`event`）が読めないときだけ（`hello` と `session` なら、再接続して受け直す）。
-- ライブラリの `protocol.spec.ts` が、`gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。
+- ライブラリの `protocol.spec.ts` が、`gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。`protocol/launcher.spec.ts` は、ランチャーのオブジェクトのキーのうち読み取り関数が返さないものを一覧にしている。ランチャーがキーを足すと、そのキーを読むか一覧に足すまで落ちる。
 
 ### テストの書き方
 
