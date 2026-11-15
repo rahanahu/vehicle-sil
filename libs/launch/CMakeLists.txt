@@ -10,10 +10,12 @@ endif()
 
 add_library(vehicle_sil_launch_lib STATIC
   src/check.cpp
+  src/check_connect.cpp
   src/check_format.cpp
   src/check_networks.cpp
   src/check_rules.cpp
   src/config.cpp
+  src/connect.cpp
   src/describe_read.cpp
   src/events.cpp
   src/host_addresses.cpp

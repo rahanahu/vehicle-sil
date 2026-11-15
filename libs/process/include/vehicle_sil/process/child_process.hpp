@@ -30,6 +30,10 @@ namespace vehicle_sil::process {
 /// can mix '/' and '\\'): for messages, so that one path reads the same everywhere.
 [[nodiscard]] std::string shown_path(const std::filesystem::path& path);
 
+/// The absolute path of the executable of this process (Linux: /proc/self/exe, Windows:
+/// GetModuleFileNameW), or an empty path if the system does not say.
+[[nodiscard]] std::filesystem::path current_executable();
+
 /// A process could not be started: because of the executable (missing, not executable, not a
 /// program for this system), or because the system refused (pipes, the Windows job object).
 class StartError : public std::runtime_error

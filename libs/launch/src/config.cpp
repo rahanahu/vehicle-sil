@@ -794,7 +794,9 @@ private:
     {
         error("unknown-key", doc_.line(node),
               what + ": where a network is connected is not written in the file, since it differs from PC to PC: "
-                     "remove connect (the keys here: " + join(keys) + ")",
+                     "remove connect, and give it when you start: vehicle_sil_launch check --connect " +
+                  (network.empty() ? std::string("<network>") : network) +
+                  "=<target> <file> (the keys here: " + join(keys) + ")",
               "", network);
     }
 
@@ -2873,29 +2875,26 @@ std::filesystem::path resolve_executable(std::string_view executable, const std:
     return path;
 }
 
-FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir)
+namespace detail {
+
+bool is_runnable_file(const std::filesystem::path& path)
 {
-    FoundExecutable found{resolve_executable(executable, base_dir), false};
     std::error_code ec;
-    const auto runnable = [&ec](const std::filesystem::path& candidate) {
-        if (!std::filesystem::is_regular_file(candidate, ec))
-        {
-            return false;
-        }
-#ifndef _WIN32
-        const auto perms = std::filesystem::status(candidate, ec).permissions();
-        return (perms & (std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
-                         std::filesystem::perms::others_exec)) != std::filesystem::perms::none;
-#else
-        return true;
-#endif
-    };
-    // Next to the file only an executable file counts (a data file of the same name does not
-    // hide the program on PATH).
-    if (runnable(found.path) || executable.empty() || executable.find_first_of("/\\") != std::string_view::npos)
+    if (!std::filesystem::is_regular_file(path, ec))
     {
-        return found;
+        return false;
     }
+#ifndef _WIN32
+    const auto perms = std::filesystem::status(path, ec).permissions();
+    return (perms & (std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+                     std::filesystem::perms::others_exec)) != std::filesystem::perms::none;
+#else
+    return true;
+#endif
+}
+
+std::optional<std::filesystem::path> find_on_path(std::string_view name)
+{
 #ifdef _WIN32
     const wchar_t* variable = _wgetenv(L"PATH");
     const std::wstring list = variable != nullptr ? variable : L"";
@@ -2915,11 +2914,30 @@ FoundExecutable find_executable(std::string_view executable, const std::filesyst
         {
             continue; // a relative entry would depend on the directory the launcher runs in
         }
-        const std::filesystem::path candidate = resolve_executable(executable, directory);
-        if (runnable(candidate))
+        std::filesystem::path candidate = resolve_executable(name, directory);
+        if (is_runnable_file(candidate))
         {
-            return FoundExecutable{candidate, true};
+            return candidate;
         }
+    }
+    return std::nullopt;
+}
+
+} // namespace detail
+
+FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir)
+{
+    FoundExecutable found{resolve_executable(executable, base_dir), false};
+    // Next to the file only an executable file counts (a data file of the same name does not
+    // hide the program on PATH).
+    if (detail::is_runnable_file(found.path) || executable.empty() ||
+        executable.find_first_of("/\\") != std::string_view::npos)
+    {
+        return found;
+    }
+    if (auto onPath = detail::find_on_path(executable))
+    {
+        return FoundExecutable{std::move(*onPath), true};
     }
     return found;
 }

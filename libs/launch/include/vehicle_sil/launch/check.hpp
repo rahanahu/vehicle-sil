@@ -7,11 +7,13 @@
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -214,11 +216,64 @@ j1939_nodes_unsupported(const ParticipantConfig& participant, const ReportedEcu&
 /// with J1939 nodes on a use other than j1939 is not checked for them (read_description()
 /// refuses it). A disabled
 /// participant (ParticipantConfig::enabled, whatever its result) is not on any network and holds
-/// back no rule: the rules are about the simulation without it. Findings in a fixed order:
-/// participants in the file's order, then networks in the file's order.
+/// back no rule: the rules are about the simulation without it. `outside`: the networks that
+/// --connect connects to a real bus (NetworkOutside::network); on each, the bridge counts as a
+/// participant once an ECU is on it, a test participant with J1939 nodes is warned about as on a
+/// network with a bridge, and an enabled role: bridge participant is a loop (connect-loop, or
+/// connect-maybe-loop with describe: false). Findings in a fixed order: participants in the file's
+/// order, then networks in the file's order.
 [[nodiscard]] std::vector<Finding> check_participants(const SimulationConfig& config,
                                                       const std::vector<ParticipantResult>& results,
-                                                      std::string_view launcher_version);
+                                                      std::string_view launcher_version,
+                                                      std::span<const std::string> outside = {});
+
+/// A network that --connect connects to a real bus, as the check made it out.
+struct NetworkOutside
+{
+    std::string network;
+    std::string tool;                ///< bridge_tool()
+    std::filesystem::path tool_path; ///< find_tool(); empty: not found (or not looked for)
+    std::string target;              ///< as given
+    std::string participant;         ///< bridge_participant()
+    /// bridge_arguments(): what a run gives the bridge. Empty if an error of the check is about
+    /// connecting this network (a connect-* error), or if the frames that pass are not known (a
+    /// participant has no description).
+    std::optional<std::vector<std::string>> arguments{};
+
+    friend bool operator==(const NetworkOutside&, const NetworkOutside&) = default;
+};
+
+/// What check_connections() uses to look for a bridge and to ask it --describe.
+struct ConnectTools
+{
+    /// Where the tool of that name is (find_tool()), or empty.
+    std::function<std::optional<std::filesystem::path>(std::string_view)> find;
+    /// The first place `find` looks (CheckOptions::tool_directory), for the message when it finds nothing.
+    std::filesystem::path launcher_dir{};
+    /// One run of the tool with the arguments (bridge_arguments() and --describe --name <bridge>).
+    std::function<DescribeRun(const std::filesystem::path&, const std::vector<std::string>&)> describe;
+};
+
+/// The findings of the --connect requests and the networks they connect (in the order of the
+/// file's networks; a request with kNoTarget connects nothing). In this order for each request:
+/// connect-network (no such network), connect-kind (LIN), connect-target (its form),
+/// connect-name-taken (a participant of the file has the bridge's name), connect-filter (an
+/// Ethernet network without external.ethertypes or all_frames whose ECUs' MAC addresses are not
+/// all known; the default filter passes the frames of the ECUs only, not of participants with
+/// role: test), connect-tool-missing, connect-tool-failed (its --describe failed, or it described
+/// another name or network); the bridge's --describe runs only if nothing else is wrong with the
+/// request and every enabled participant was described. Then connect-not-real-time once, if a
+/// network is connected and the file's speed is not 1. Without `tools` (only the file is read)
+/// neither the tools nor the participants' descriptions are looked at: only the requests' form and
+/// names. NetworkOutside::arguments is empty for a network with an error here; check_file() also
+/// empties it for one with an error of check_participants() (connect-loop).
+struct ConnectCheck
+{
+    std::vector<Finding> findings;
+    std::vector<NetworkOutside> outside;
+};
+[[nodiscard]] ConnectCheck check_connections(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
+                                             const std::vector<ConnectRequest>& requests, const ConnectTools* tools);
 
 /// The scenario that was checked with the configuration (--scenario).
 struct ScenarioCheck
@@ -252,6 +307,8 @@ struct CheckReport
     std::vector<Finding> findings{};               ///< in the order of sort_findings()
     /// --scenario: the scenario file; its findings are in `findings`, with Finding::file set.
     std::optional<ScenarioCheck> scenario{};
+    /// --connect: the networks connected to a real bus (check_connections()); empty without it.
+    std::vector<NetworkOutside> outside{};
     /// --strict: a warning fails the check too (a note never does).
     bool strict = false;
     /// The command line was wrong (format_json(): result "usage"; the findings say why; `file` stays
@@ -306,6 +363,10 @@ struct CheckOptions
     /// Only read the file: no executable is looked for or run, and no scenario is read. The
     /// report has the file's findings, its variants and the overrides' usage errors.
     bool file_only = false;
+    /// --connect <network>=<target>, each network once (CheckReport::outside).
+    std::vector<ConnectRequest> connect{};
+    /// Where the launcher is: the first place to look for a bridge (find_tool()); empty: PATH only.
+    std::filesystem::path tool_directory{};
 };
 
 /// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each

@@ -162,7 +162,8 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    connect: eth0\n    nam: x\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'connect': where a network is connected is not written in the "
-               "file, since it differs from PC to PC: remove connect (the keys here: name, kind, external)\n"
+               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check "
+               "--connect N=<target> <file> (the keys here: name, kind, external)\n"
                "E 6 unknown-key: network 'N': unknown key 'nam': did you mean 'name'? (the keys here: name, kind, "
                "external)\n");
 }
@@ -382,7 +383,8 @@ TEST_CASE(external_of_the_wrong_form_is_an_error_and_says_what_to_write)
                "E 8 unknown-key: network 'ETH1': external: unknown key 'bitrate': it is for a can network, and this one "
                "is ethernet (the keys here: ethertypes, all_frames)\n"
                "E 8 unknown-key: network 'ETH1': external.connect: where a network is connected is not written in the "
-               "file, since it differs from PC to PC: remove connect (the keys here: ethertypes, all_frames)\n"
+               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check "
+               "--connect ETH1=<target> <file> (the keys here: ethertypes, all_frames)\n"
                "E 11 duplicate-key: network 'ETH2': external: 'all_frames' appears twice (first at line 11); keep one of "
                "them\n");
     // A network whose kind cannot be read: its external is not read.

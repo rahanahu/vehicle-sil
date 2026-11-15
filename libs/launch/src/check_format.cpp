@@ -9,6 +9,7 @@
 #include "seen_ecu.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <system_error>
 #include <cctype>
@@ -203,7 +204,12 @@ std::string detail::check_text_body(const CheckReport& report)
         {
             out += table(rows) + "\n";
         }
+        // The column "outside" only with --connect: a report without it is as it was before.
         rows = {{"network", "kind", "participants"}};
+        if (!report.outside.empty())
+        {
+            rows.front().emplace_back("outside");
+        }
         for (const auto& network : config.networks)
         {
             std::string users;
@@ -215,6 +221,12 @@ std::string detail::check_text_body(const CheckReport& report)
                 }
             }
             rows.push_back({network.name, network.valid ? to_string(network.kind) : "-", users.empty() ? "-" : users});
+            if (!report.outside.empty())
+            {
+                const auto outside = std::find_if(report.outside.begin(), report.outside.end(),
+                                                  [&](const NetworkOutside& o) { return o.network == network.name; });
+                rows.back().push_back(outside != report.outside.end() ? outside->target : "-");
+            }
         }
         if (!config.networks.empty())
         {
@@ -760,6 +772,34 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
             }
             w.end_array();
+            // Only on a network that --connect connects: the output of a check without it does not
+            // depend on the tools this computer has.
+            const auto outside = std::find_if(report.outside.begin(), report.outside.end(),
+                                              [&](const NetworkOutside& o) { return o.network == network.name; });
+            if (outside != report.outside.end())
+            {
+                w.begin_object("outside");
+                w.string("tool", outside->tool);
+                optional_text("tool_path", outside->tool_path.empty() ? std::string{} : process::shown_path(outside->tool_path));
+                w.string("target", outside->target);
+                w.string("participant", outside->participant);
+                // null: an error is about connecting the network (a command it would refuse).
+                if (outside->arguments)
+                {
+                    w.begin_array("command");
+                    w.string({}, outside->tool);
+                    for (const std::string& argument : *outside->arguments)
+                    {
+                        w.string({}, argument);
+                    }
+                    w.end_array();
+                }
+                else
+                {
+                    w.null("command");
+                }
+                w.end_object();
+            }
             w.end_object();
         }
     }

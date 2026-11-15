@@ -81,7 +81,7 @@ using namespace vehicle_sil;
 
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
-    "                                [--describe-timeout-ms <ms>]\n"
+    "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -155,6 +155,12 @@ constexpr const char* kUsage =
     "                              with --start-paused and --control, from when it stands still before the start);\n"
     "                              test: each run\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
+    "  --connect <network>=<target> check: the network <network> of <file> is to be connected to a real bus at\n"
+    "                              <target>: an Ethernet adapter (vehicle_sil_ethernet_bridge --list-interfaces),\n"
+    "                              or virtual:<n> or physical:<n> for a CAN channel (vehicle_sil_vector_xl_bridge\n"
+    "                              --list-channels); none: SIL Kit only. The check finds the network's bridge (next\n"
+    "                              to vehicle_sil_launch or on PATH) and asks it --describe. Repeatable, each\n"
+    "                              network once. run does not connect a bus yet\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
     "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not\n"
@@ -834,7 +840,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
-                 a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" ||
+                 a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -914,6 +920,29 @@ Common common(const cli::Args& args, const std::string& command)
     {
         throw cli::UsageError("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
     }
+    for (const std::string& given : args.all("connect"))
+    {
+        std::optional<launch::ConnectRequest> request = launch::parse_connect(given);
+        if (!request)
+        {
+            throw cli::UsageError("--connect " + given +
+                                  ": write --connect <network>=<target>, the network as the file names it, e.g. --connect "
+                                  "\"ETH_EXT=vEthernet (A)\" (none as the target: SIL Kit only)");
+        }
+        for (const launch::ConnectRequest& before : c.options.connect)
+        {
+            if (before.network == request->network)
+            {
+                throw cli::UsageError("--connect " + request->network + " is given twice (" + before.target + " and " +
+                                      request->target + "): connect each network once");
+            }
+        }
+        c.options.connect.push_back(std::move(*request));
+    }
+    if (!c.options.connect.empty())
+    {
+        c.options.tool_directory = process::current_executable().parent_path();
+    }
     if (args.has("scenario"))
     {
         c.options.scenario_shown = args.str("scenario", "");
@@ -950,6 +979,10 @@ int check(const cli::Args& args)
 
 int run(const cli::Args& args, launch::EventStream* events)
 {
+    if (args.has("connect"))
+    {
+        throw cli::UsageError("--connect is for check in this build: run does not connect a bus outside yet");
+    }
     const Common c = common(args, "run");
     if (args.has("log-dir") && args.str("log-dir", "").empty())
     {
@@ -1168,6 +1201,11 @@ int test(const cli::Args& args)
     {
         throw cli::UsageError("--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>");
     }
+    if (args.has("connect"))
+    {
+        throw cli::UsageError("--connect is not for test: test runs each scenario as fast as possible, and a real bus does "
+                              "not wait for the virtual time");
+    }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
     {
@@ -1343,13 +1381,13 @@ int main(int argc, char** argv)
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
-                               {"disable", "enable", "manual", "param", "variant", "scenarios"})
+                               {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
                                 "timeline"},
                                {"json", "strict", "events", "stdin-commands", "start-paused"},
-                               {"disable", "enable", "manual", "param"});
+                               {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file>, test <file> or version", json, command, file, stream);

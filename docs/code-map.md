@@ -438,6 +438,7 @@ What `launch_cli.*` checks:
 
 - Byte-for-byte comparison with the examples in [docs/simulation-config.md](simulation-config.md)
 - An executable whose `--describe` fails, `--strict`, an unreadable file, argument errors
+- `launch_cli.connect`: `check --connect` with the two bridges (their `main()` on the fake pcap library and the fake XL driver) copied under their real names into `connect_tools/` of the build directory: found on `PATH` and next to a copy of `vehicle_sil_launch`, not in the working directory; `networks[].outside`; a bridge that refuses its arguments; `run --connect` and `test --connect` refused
 
 What `launch_run.*` checks:
 
@@ -818,7 +819,7 @@ The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_lau
 
 | Name | Location |
 |---|---|
-| `ChildProcess`, `run_captured()` | `process/child_process.hpp` |
+| `ChildProcess`, `run_captured()`, `current_executable()` (the path of this process's executable) | `process/child_process.hpp` |
 | `Process` | `process/process.hpp` |
 
 - Tests: `tests/process`
@@ -832,6 +833,7 @@ Public headers:
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
+| `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, and `find_tool()`, where the launcher looks for a bridge | `launch/connect.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
@@ -849,6 +851,8 @@ Implementation:
 | An ECU as the simulation sees it (`SeenEcu`): what its executable described, with the participant's entry applied. The check, `run` and the scenario read a description only through it (its name, step, networks, variables, control offer, features) | `src/seen_ecu.hpp`, `src/seen_ecu.cpp` (with `seen_variables()`) |
 | The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
+| The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
+| The forms of `--connect`, the bridges' arguments, `find_tool()` (next to the launcher, then `PATH`); the search of `PATH` that `find_tool()` and `find_executable()` share is `detail::find_on_path()` in `src/config.cpp` | `src/connect.cpp` |
 | The check output | `src/check_format.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
 | The overall flow of `run` | `src/run.cpp` |

@@ -476,6 +476,12 @@ struct FoundExecutable
                                                            std::string_view registry_uri, std::string_view name);
 
 namespace detail {
+/// `path` is a regular file that can be run (POSIX: one with an execute permission).
+[[nodiscard]] bool is_runnable_file(const std::filesystem::path& path);
+/// The first directory of PATH that has `name` as a runnable file (resolve_executable(): on
+/// Windows also with ".exe"). Relative entries of PATH are skipped: they would depend on the
+/// directory the launcher runs in. Shared by find_executable() and find_tool() (connect.hpp).
+[[nodiscard]] std::optional<std::filesystem::path> find_on_path(std::string_view name);
 /// The number of single-character edits between `a` and `b` (for "did you mean").
 [[nodiscard]] std::size_t edit_distance(std::string_view a, std::string_view b);
 /// The candidate closest to `word` if it is close enough to be a typing error, or "".

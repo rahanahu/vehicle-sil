@@ -15,6 +15,10 @@
 //   usage       command lines that are wrong (exit 4, the message) and --help (exit 0)
 //   enabled     a disabled participant whose executable does not exist (exit 0, --strict too),
 //               --enable and --disable, and the names they must have (exit 4)
+//   connect     --connect with the bridges of this repository (on fake libraries) under their real
+//               names: found on PATH and next to the launcher, not in the working directory or the
+//               configuration file's; the networks' "outside" in the JSON; a bridge that refuses
+//               its arguments; the command lines that are wrong (exit 4)
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
@@ -23,6 +27,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -47,6 +52,7 @@ struct Options
     fs::path example_dir; ///< the example's directory in the build tree (simulation.yaml, engine/, dashboard/)
     fs::path example_config; ///< examples/ecu_main/simulation.yaml in the source tree
     fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
+    fs::path connect_tools; ///< vehicle_sil_launch and the two bridges under their names
     fs::path work_dir;
     std::string scenario;
 };
@@ -61,6 +67,7 @@ Options parse(int argc, char** argv)
     o.example_dir = args.required("example-dir");
     o.example_config = args.required("example-config");
     o.docs = args.required("docs");
+    o.connect_tools = args.required("connect-tools");
     o.work_dir = args.required("work-dir");
     o.scenario = args.required("scenario");
     return o;
@@ -707,6 +714,231 @@ void enabled(const Options& o)
     log("CHECK enabled: false, --disable and --enable -> ok");
 }
 
+/// PATH of this process (and so of the processes it starts) set to `value` until it ends.
+class PathSetting
+{
+public:
+    explicit PathSetting(const std::string& value)
+    {
+#ifdef _WIN32
+        const wchar_t* old = _wgetenv(L"PATH");
+        old_ = old != nullptr ? old : L"";
+        _wputenv_s(L"PATH", vehicle_sil::process::path_from_utf8(value).wstring().c_str());
+#else
+        const char* old = std::getenv("PATH");
+        old_ = old != nullptr ? old : "";
+        setenv("PATH", value.c_str(), 1);
+#endif
+    }
+    ~PathSetting()
+    {
+#ifdef _WIN32
+        _wputenv_s(L"PATH", old_.c_str());
+#else
+        setenv("PATH", old_.c_str(), 1);
+#endif
+    }
+    PathSetting(const PathSetting&) = delete;
+    PathSetting& operator=(const PathSetting&) = delete;
+
+private:
+#ifdef _WIN32
+    std::wstring old_;
+#else
+    std::string old_;
+#endif
+};
+
+#ifdef _WIN32
+constexpr const char* kExe = ".exe";
+#else
+constexpr const char* kExe = "";
+#endif
+
+/// PATH without the bridges: empty, but on Windows the directories of PATH with the MinGW
+/// runtime DLLs, which the executables of a build that links them dynamically need to start.
+std::string runtime_path()
+{
+#ifdef _WIN32
+    const wchar_t* variable = _wgetenv(L"PATH");
+    const std::wstring list = variable != nullptr ? variable : L"";
+    std::string out;
+    std::size_t begin = 0;
+    while (begin <= list.size())
+    {
+        const std::size_t end = std::min(list.find(L';', begin), list.size());
+        const fs::path directory(list.substr(begin, end - begin));
+        begin = end + 1;
+        std::error_code ec;
+        if (!directory.empty() && (fs::exists(directory / "libstdc++-6.dll", ec) || fs::exists(directory / "libwinpthread-1.dll", ec)))
+        {
+            out += (out.empty() ? "" : ";") + vehicle_sil::process::utf8_from_path(directory);
+        }
+    }
+    return out;
+#else
+    return "";
+#endif
+}
+
+void connect(const Options& o)
+{
+    const std::string helper = yaml_quote(shown_path(o.helper));
+    const auto described = [&](const std::string& name, const std::string& network) {
+        return "[" + helper + ", --out, '{\"vehicle_sil_ecu\": 1, \"name\": \"" + name +
+               "\", \"step_ns\": 1000000, \"networks\": [" + network + "]}']";
+    };
+    const std::string text =
+        "vehicle_sil_simulation: 1\n"
+        "speed: 1\n"
+        "networks:\n"
+        "  - name: ETH_EXT\n"
+        "    kind: ethernet\n"
+        "  - name: J1939_CAN1\n"
+        "    kind: can\n"
+        "    external:\n"
+        "      bitrate: 250000\n"
+        "participants:\n"
+        "  - name: Camera\n"
+        "    command: " + described("Camera", "{\"name\": \"ETH_EXT\", \"kind\": \"ethernet\", \"use\": \"ethernet\", "
+                                              "\"nodes\": [], \"mac\": \"02:00:00:00:00:01\"}") + "\n"
+        "  - name: Engine\n"
+        "    command: " + described("Engine", "{\"name\": \"J1939_CAN1\", \"kind\": \"can\", \"use\": \"raw\", \"nodes\": []}") +
+        "\n";
+    const fs::path config = o.work_dir / "connect.yaml";
+    write_file(config, text);
+    const std::vector<std::string> both{"check", "--json", "--connect", "ETH_EXT=eth0", "--connect", "J1939_CAN1=virtual:1",
+                                        shown_path(config)};
+    const std::string tools = shown_path(o.connect_tools);
+    // `found`: the directory the bridges were found in as the JSON shows it (where the path of
+    // the launcher itself is read from the system, it may be another spelling of the directory).
+    const auto expect_outside = [&](const Captured& run, const std::string& what, const std::string& found) {
+        expect_code(run, 0, what);
+        for (const std::string& part : std::vector<std::string>{
+                 "        \"tool_path\": \"" + found + "/vehicle_sil_ethernet_bridge" + kExe + "\",\n"
+              "        \"target\": \"eth0\",\n",
+              "        \"tool_path\": \"" + found + "/vehicle_sil_vector_xl_bridge" + kExe + "\",\n"
+              "        \"target\": \"virtual:1\",\n",
+              "      \"outside\": {\n"
+              "        \"tool\": \"vehicle_sil_ethernet_bridge\",\n",
+              "        \"participant\": \"bridge.ETH_EXT\",\n"
+              "        \"command\": [\n"
+              "          \"vehicle_sil_ethernet_bridge\",\n"
+              "          \"--network\",\n"
+              "          \"ETH_EXT\",\n"
+              "          \"--interface\",\n"
+              "          \"eth0\",\n"
+              "          \"--src-mac\",\n"
+              "          \"02:00:00:00:00:01\"\n"
+              "        ]\n",
+              "        \"participant\": \"bridge.J1939_CAN1\",\n"
+              "        \"command\": [\n"
+              "          \"vehicle_sil_vector_xl_bridge\",\n"
+              "          \"--network\",\n"
+              "          \"J1939_CAN1\",\n"
+              "          \"--xl-target\",\n"
+              "          \"virtual\",\n"
+              "          \"--xl-channel\",\n"
+              "          \"1\",\n"
+              "          \"--bitrate\",\n"
+              "          \"250000\"\n"
+              "        ]\n"})
+        {
+            require(contains(run.standard_output, part), what + ": the JSON has not\n" + part + "--- it is ---\n" +
+                                                              run.standard_output);
+        }
+        // The bridge is on each network: one ECU there is no single participant.
+        require(!contains(run.standard_output, "single-participant"), what + ": " + run.standard_output);
+    };
+    {
+        // On PATH (the launcher's own directory has no bridge).
+#ifdef _WIN32
+        const std::string runtime = runtime_path();
+        const std::string native = vehicle_sil::process::utf8_from_path(o.connect_tools);
+        const PathSetting path(runtime.empty() ? native : native + ";" + runtime);
+#else
+        const PathSetting path(tools);
+#endif
+        expect_outside(launch(o, both), "check --connect with the bridges on PATH", tools);
+        // The table for people has the column "outside".
+        const Captured table = launch(o, {"check", "--connect", "ETH_EXT=eth0", shown_path(config)});
+        expect_code(table, 0, "check --connect (text)");
+        require(contains(lf(table.standard_output), "network     kind      participants  outside\n"
+                                                    "ETH_EXT     ethernet  Camera        eth0\n"
+                                                    "J1939_CAN1  can       Engine        -\n"),
+                "check --connect wrote:\n" + table.standard_output);
+        // A bridge that refuses what the launcher gives it: the bridge's own words.
+        std::string low = text;
+        replace_all(low, "bitrate: 250000", "bitrate: 5000");
+        const fs::path refused = o.work_dir / "connect-5000.yaml";
+        write_file(refused, low);
+        const Captured failed = launch(o, {"check", "--connect", "J1939_CAN1=virtual:1", shown_path(refused)});
+        expect_code(failed, 1, "check --connect with a bit rate the XL bridge refuses");
+        require(contains(failed.standard_output, "[connect-tool-failed]") &&
+                    contains(failed.standard_output, "--bitrate must be between 15000 and 1000000 bit/s"),
+                "check --connect with bitrate 5000 wrote:\n" + failed.standard_output);
+        // none: SIL Kit only, as without --connect.
+        const Captured none = launch(o, {"check", "--json", "--connect", "ETH_EXT=none", shown_path(config)});
+        expect_code(none, 0, "check --connect ETH_EXT=none");
+        require(!contains(none.standard_output, "\"outside\"") && contains(none.standard_output, "single-participant"),
+                "check --connect ETH_EXT=none wrote:\n" + none.standard_output);
+    }
+    {
+        // Next to the launcher, without the bridges on PATH.
+        const PathSetting path(runtime_path());
+        const Captured beside = vehicle_sil::process::run_captured(o.connect_tools / ("vehicle_sil_launch" + std::string(kExe)),
+                                                                   both, vehicle_sil::process::CaptureOptions{120s});
+        // The directory as the system names this launcher's (/proc/self/exe resolves symbolic links).
+        std::error_code ec;
+        const fs::path canonical = fs::canonical(o.connect_tools, ec);
+        const std::string found = shown_path(o.connect_tools);
+        const std::string resolved = ec ? found : shown_path(canonical);
+        expect_outside(beside, "check --connect with the bridges next to the launcher",
+                       contains(beside.standard_output, "\"tool_path\": \"" + found + "/") ? found : resolved);
+        // Neither next to this launcher nor on PATH: copies in the configuration file's directory,
+        // which is the working directory too, are not run.
+        for (const char* tool : {"vehicle_sil_ethernet_bridge", "vehicle_sil_vector_xl_bridge"})
+        {
+            fs::copy_file(o.connect_tools / (tool + std::string(kExe)), o.work_dir / (tool + std::string(kExe)),
+                          fs::copy_options::overwrite_existing);
+        }
+        const Captured missing = vehicle_sil::process::run_captured(
+            o.launch, {"check", "--connect", "ETH_EXT=eth0", "--connect", "J1939_CAN1=virtual:1", "connect.yaml"},
+            vehicle_sil::process::CaptureOptions{120s, 1u << 20, o.work_dir});
+        expect_code(missing, 1, "check --connect without the bridges");
+        const std::string launcherDir = shown_path(o.launch.parent_path());
+        require(contains(missing.standard_output, "--connect needs vehicle_sil_ethernet_bridge, which is neither next to "
+                                                  "vehicle_sil_launch (" + launcherDir + ") nor on PATH") &&
+                    contains(missing.standard_output, "--connect needs vehicle_sil_vector_xl_bridge, which is neither next to "
+                                                      "vehicle_sil_launch (" + launcherDir + ") nor on PATH"),
+                "check --connect without the bridges wrote:\n" + missing.standard_output);
+    }
+    log("CHECK --connect: the bridges on PATH and next to the launcher, not in the working directory -> ok");
+
+    const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
+        const Captured run = launch(o, args);
+        expect_code(run, 4, "vehicle_sil_launch " + error);
+        require(lf(run.standard_error).rfind("error: " + error + "\n", 0) == 0,
+                "for the error '" + error + "' vehicle_sil_launch wrote:\n" + run.standard_error);
+    };
+    expect_usage({"check", "--connect", "ETH_EXT", shown_path(config)},
+                 "--connect ETH_EXT: write --connect <network>=<target>, the network as the file names it, e.g. --connect "
+                 "\"ETH_EXT=vEthernet (A)\" (none as the target: SIL Kit only)");
+    expect_usage({"check", "--connect", "ETH_EXT=eth0", "--connect", "ETH_EXT=eth1", shown_path(config)},
+                 "--connect ETH_EXT is given twice (eth0 and eth1): connect each network once");
+    expect_usage({"run", "--connect", "ETH_EXT=eth0", shown_path(config)},
+                 "--connect is for check in this build: run does not connect a bus outside yet");
+    expect_usage({"test", shown_path(config), "--connect", "ETH_EXT=eth0", "--scenarios", shown_path(o.work_dir)},
+                 "--connect is not for test: test runs each scenario as fast as possible, and a real bus does not wait for "
+                 "the virtual time");
+    // The value after --connect is not the file.
+    const Captured json = launch(o, {"run", "--json", "--connect", "ETH_EXT=eth0", shown_path(config)});
+    expect_code(json, 4, "vehicle_sil_launch run --json --connect");
+    require(contains(json.standard_output, "\n  \"file\": " + json_string(shown_path(config)) + ",\n"),
+            "run --json --connect wrote:\n" + json.standard_output);
+    log("CHECK --connect usage errors: exit code 4 and the message -> ok");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -742,6 +974,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "enabled")
         {
             enabled(o);
+        }
+        else if (o.scenario == "connect")
+        {
+            connect(o);
         }
         else
         {

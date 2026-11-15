@@ -2939,3 +2939,483 @@ TEST_CASE(a_configuration_without_j1939_nodes_checks_as_before)
     s.results[1].ecu->description.networks[0].nodes = {node(0x00, kEngineName)};
     CHECK(s.check().find("each node needs its own NAME; this file cannot change them") != std::string::npos);
 }
+
+// --- --connect ------------------------------------------------------------------------------
+
+namespace {
+
+NetworkDescription on_ethernet(const std::string& name, std::optional<eth::MacAddress> mac)
+{
+    return NetworkDescription{name, NetworkUse::Ethernet, {}, mac};
+}
+
+eth::MacAddress mac_of(std::uint8_t last) { return eth::MacAddress{{0x02, 0, 0, 0, 0, last}}; }
+
+/// An Ethernet network ETH (line 3) with Camera (MAC ...:01), a CAN network CAN1 (line 5) with
+/// Engine, and a LIN network BODY (line 7).
+Setup connect_setup()
+{
+    Setup s;
+    s.network("ETH", NetworkKind::Ethernet, 3).network("CAN1", NetworkKind::Can, 5).network("BODY", NetworkKind::Lin, 7);
+    s.described(participant("Camera", 10), ecu("Camera", 10ms, {on_ethernet("ETH", mac_of(1))}));
+    s.described(participant("Engine", 13), ecu("Engine", 10ms, {NetworkDescription{"CAN1", NetworkUse::Raw, {}}}));
+    s.config.speed = 1.0;
+    return s;
+}
+
+/// What a bridge of this repository writes for --describe (bridges/common/src/describe.cpp).
+std::string bridge_description(const std::string& name, const std::string& network, const std::string& kind)
+{
+    return R"({"vehicle_sil_ecu": 1, "vehicle_sil": "1.0.0", "name": ")" + name + R"(", "step_ns": null, "networks": [)" +
+           R"({"name": ")" + network + R"(", "kind": ")" + kind + R"(", "use": ")" + (kind == "can" ? "raw" : "ethernet") +
+           R"(", "nodes": [], "mac": null}], "variables": [], "control": null, "features": []})";
+}
+
+/// Tools that are found in /tools and answer --describe as the bridges of this repository do;
+/// each run is kept.
+struct FakeTools
+{
+    std::vector<std::string> missing;   ///< tools that are not found
+    std::optional<DescribeRun> answer;  ///< instead of the right description
+    std::vector<std::string> runs;      ///< "<tool path> <arguments>"
+    ConnectTools tools()
+    {
+        ConnectTools t;
+        t.launcher_dir = "/opt/vsil/bin";
+        t.find = [this](std::string_view name) -> std::optional<std::filesystem::path> {
+            if (std::find(missing.begin(), missing.end(), name) != missing.end())
+            {
+                return std::nullopt;
+            }
+            return std::filesystem::path("/tools") / std::string(name);
+        };
+        t.describe = [this](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
+            std::string line = tool.generic_string();
+            for (const std::string& a : arguments)
+            {
+                line += " " + a;
+            }
+            runs.push_back(line);
+            DescribeRun run;
+            run.command_text = tool.filename().generic_string() + " ...";
+            run.timeout = 10000ms;
+            if (answer)
+            {
+                return *answer;
+            }
+            const std::string network = arguments.at(1);
+            const bool can = tool.filename() == "vehicle_sil_vector_xl_bridge";
+            run.exit_code = 0;
+            run.standard_output = bridge_description(arguments.back(), network, can ? "can" : "ethernet");
+            return run;
+        };
+        return t;
+    }
+};
+
+std::string connect_lines(const Setup& s, const std::vector<ConnectRequest>& requests, FakeTools& fake, bool with_tools = true)
+{
+    const ConnectTools tools = fake.tools();
+    return lines(check_connections(s.config, s.results, requests, with_tools ? &tools : nullptr).findings);
+}
+
+std::string outside_text(const ConnectCheck& check)
+{
+    std::string out;
+    for (const NetworkOutside& o : check.outside)
+    {
+        out += o.network + " " + o.tool + " [" + o.tool_path.generic_string() + "] " + o.target + " " + o.participant + ":";
+        if (!o.arguments)
+        {
+            out += " (no command)";
+        }
+        for (const std::string& a : o.arguments.value_or(std::vector<std::string>{}))
+        {
+            out += " " + a;
+        }
+        out += "\n";
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(check_connections_finds_the_bridges_and_asks_them_describe)
+{
+    const Setup s = connect_setup();
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check =
+        check_connections(s.config, s.results, {{"CAN1", "physical:2"}, {"ETH", "vEthernet (A)"}}, &tools);
+    check_text(lines(check.findings), "");
+    // In the file's order, whatever the order of the requests.
+    check_text(outside_text(check),
+               "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] vEthernet (A) bridge.ETH: --network "
+               "ETH --interface vEthernet (A) --src-mac 02:00:00:00:00:01\n"
+               "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] physical:2 bridge.CAN1: --network "
+               "CAN1 --xl-target physical --xl-channel 2\n");
+    check_text(fake.runs.at(0) + "\n" + fake.runs.at(1) + "\n",
+               "/tools/vehicle_sil_ethernet_bridge --network ETH --interface vEthernet (A) --src-mac 02:00:00:00:00:01 "
+               "--describe --name bridge.ETH\n"
+               "/tools/vehicle_sil_vector_xl_bridge --network CAN1 --xl-target physical --xl-channel 2 --describe --name "
+               "bridge.CAN1\n");
+}
+
+TEST_CASE(check_connections_without_a_target_connects_nothing)
+{
+    Setup s = connect_setup();
+    s.config.speed.reset();
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check = check_connections(s.config, s.results, {{"ETH", "none"}, {"CAN1", "none"}, {"BODY", "none"}}, &tools);
+    check_text(lines(check.findings), "");
+    CHECK(check.outside.empty() && fake.runs.empty());
+}
+
+TEST_CASE(check_connections_names_what_is_wrong_with_a_request)
+{
+    Setup s = connect_setup();
+    s.config.networks.push_back(NetworkConfig{"A=B", NetworkKind::Can, 9, true});
+    // Disabled, but a --enable would take it in: the name is taken.
+    s.config.participants.push_back(participant("bridge.CAN1", 16, std::nullopt, false));
+    s.config.participants.back().enabled = false;
+    s.results.push_back(ParticipantResult{ParticipantStatus::Disabled, std::nullopt});
+    FakeTools fake;
+    check_text(connect_lines(s, {{"ETX", "eth0"}, {"A", "B=physical:1"}, {"BODY", "x"}, {"CAN1", "usb:1"}}, fake),
+               "E 0 connect-network: --connect names the network 'ETX', which the file does not have: did you mean 'ETH'? "
+               "(the networks: ETH, CAN1, BODY, A=B)\n"
+               "E 0 connect-network: --connect names the network 'A', which the file does not have: the network 'A=B' has "
+               "'=' in its name, and --connect takes the network's name up to the first '=': rename the network (a name "
+               "without '=')\n"
+               "E 5 connect-target: network 'CAN1': --connect CAN1=usb:1: a CAN target is virtual:<n> or physical:<n>, "
+               "with the channel number <n> from 1: give a channel that vehicle_sil_vector_xl_bridge --list-channels "
+               "lists, as virtual:<n> or physical:<n>, or none for SIL Kit only\n"
+               "E 16 connect-name-taken: participant 'bridge.CAN1' has the name that --connect CAN1 gives the bridge of "
+               "the network: rename the participant\n"
+               "E 7 connect-kind: network 'BODY': it is lin: there is no bridge for LIN, so it runs on SIL Kit only: leave "
+               "--connect BODY out (or give BODY=none)\n");
+    // No tool is run for a network with an error.
+    CHECK(fake.runs.empty());
+    check_text(connect_lines(s, {{"ETH", "eth0\t\xFF"}}, fake),
+               "E 3 connect-target: network 'ETH': --connect ETH=eth0\\x09\\xFF: the target is not UTF-8 text: give an "
+               "adapter that vehicle_sil_ethernet_bridge --list-interfaces lists, or none for SIL Kit only\n");
+    Setup empty;
+    check_text(connect_lines(empty, {{"ETH", "eth0"}}, fake),
+               "E 0 connect-network: --connect names the network 'ETH', which the file does not have: the file has no "
+               "networks\n");
+}
+
+TEST_CASE(check_connections_needs_a_filter_for_every_participant_on_an_ethernet_network)
+{
+    FakeTools fake;
+    Setup s = connect_setup();
+    s.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
+    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and "
+               "Display reports no MAC address on it: write external: { ethertypes: [0x88b5] } (the EtherTypes to pass, "
+               "also for participants with role: test) or external: { all_frames: true } for the network, or give each "
+               "ECU on it a MAC address (eth::ChannelOptions::mac)\n");
+    // describe: false: its network is not known.
+    Setup unknown = connect_setup();
+    unknown.unchecked("Logger", 16);
+    check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and "
+               "Logger has describe: false, so the check cannot see whether it is on it and with which address: write "
+               "external: { ethertypes: [0x88b5] } (the EtherTypes to pass, also for participants with role: test) or "
+               "external: { all_frames: true } for the network\n");
+    // One with role: bridge (connect-loop is about it) or role: test does not count.
+    unknown.config.participants.back().role = ParticipantRole::Bridge;
+    check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake), "");
+    unknown.config.participants.back().role = ParticipantRole::Test;
+    check_text(connect_lines(unknown, {{"ETH", "eth0"}}, fake), "");
+    // No ECU reports one.
+    Setup alone = connect_setup();
+    alone.results[0].ecu->description.networks = {NetworkDescription{"CAN1", NetworkUse::Raw, {}}};
+    CHECK(connect_lines(alone, {{"ETH", "eth0"}}, fake).find("and no ECU on it reports a MAC address: write") !=
+          std::string::npos);
+    // Only the ECUs' frames go out: a participant for testing with a MAC address is left out of
+    // --src-mac, and one that is alone on the network is no ECU.
+    Setup tested = connect_setup();
+    tested.described(with_role(participant("Stim", 16), ParticipantRole::Test),
+                     ecu("Stim", 10ms, {on_ethernet("ETH", mac_of(0x99))}));
+    tested.described(with_role(participant("Spy", 19), ParticipantRole::Test), ecu("Spy", 10ms, {on_ethernet("ETH", std::nullopt)}));
+    {
+        const ConnectTools tools = fake.tools();
+        const ConnectCheck check = check_connections(tested.config, tested.results, {{"ETH", "eth0"}}, &tools);
+        check_text(lines(check.findings), "");
+        check_text(outside_text(check), "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 "
+                                        "bridge.ETH: --network ETH --interface eth0 --src-mac 02:00:00:00:00:01\n");
+    }
+    tested.results[0].ecu->description.networks.clear();
+    check_text(connect_lines(tested, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-filter: network 'ETH': without external.ethertypes or external.all_frames, the bridge of "
+               "--connect passes only the frames of the MAC addresses that the ECUs on the network report (not those of "
+               "participants with role: test), and no ECU on it reports a MAC address (only participants with role: test "
+               "do): write external: { ethertypes: [0x88b5] } (the EtherTypes to pass, also for participants with role: "
+               "test) or external: { all_frames: true } for the network\n");
+    // A participant without a description: its error comes first, and with the frames that pass
+    // not known, the bridge is not asked (it would refuse a command without a filter).
+    s.results.back() = ParticipantResult{ParticipantStatus::Failed, std::nullopt};
+    fake.runs.clear();
+    {
+        const ConnectTools tools = fake.tools();
+        const ConnectCheck check = check_connections(s.config, s.results, {{"ETH", "eth0"}}, &tools);
+        check_text(lines(check.findings), "");
+        CHECK(fake.runs.empty());
+        check_text(outside_text(check),
+                   "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: (no command)\n");
+    }
+    // With ethertypes or all_frames, the participants' addresses do not matter.
+    Setup typed = connect_setup();
+    typed.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
+    typed.config.networks[0].external = NetworkExternal{2, std::nullopt, {0x88b5}, false};
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check = check_connections(typed.config, typed.results, {{"ETH", "eth0"}}, &tools);
+    check_text(lines(check.findings), "");
+    check_text(outside_text(check), "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: "
+                                    "--network ETH --interface eth0 --ethertype 0x88b5\n");
+}
+
+TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
+{
+    Setup s = connect_setup();
+    FakeTools fake;
+    fake.missing = {"vehicle_sil_vector_xl_bridge"};
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-missing: network 'CAN1': --connect needs vehicle_sil_vector_xl_bridge, which is neither "
+               "next to vehicle_sil_launch (/opt/vsil/bin) nor on PATH: build it with the Vector XL Driver Library "
+               "(docs/bridges.md) and put it next to vehicle_sil_launch, or its directory on PATH\n");
+    fake.missing.clear();
+    DescribeRun refused;
+    refused.command_text = "vehicle_sil_vector_xl_bridge --network CAN1 ...";
+    refused.exit_code = 2;
+    refused.standard_error = "error: --bitrate must be between 15000 and 1000000 bit/s\r\nRun 'vehicle_sil_vector_xl_bridge "
+                             "--help' for the options.\n\n";
+    fake.answer = refused;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': vehicle_sil_vector_xl_bridge --network CAN1 ... ended with exit "
+               "code 2: error: --bitrate must be between 15000 and 1000000 bit/s: the bridge does "
+               "not take what --connect gives it; correct the target or external of the network as the line says, or use "
+               "the bridge built with the vehicle-sil of vehicle_sil_launch\n");
+    // Without an "error:" line: the last line.
+    refused.standard_error = "starting\nboom\n";
+    fake.answer = refused;
+    CHECK(connect_lines(s, {{"CAN1", "virtual:1"}}, fake).find("ended with exit code 2: boom: the bridge") != std::string::npos);
+    DescribeRun slow;
+    slow.command_text = "x";
+    slow.timeout = 10000ms;
+    fake.answer = slow;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': x did not end within 10000 ms: the bridge answers --describe at "
+               "once; use the bridge built with the vehicle-sil of vehicle_sil_launch\n");
+    DescribeRun other;
+    other.command_text = "x";
+    other.exit_code = 0;
+    other.standard_output = bridge_description("VectorXlBridge", "J1939_CAN1", "can");
+    fake.answer = other;
+    check_text(connect_lines(s, {{"CAN1", "virtual:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': x described itself as 'VectorXlBridge' on J1939_CAN1 (can), not "
+               "as 'bridge.CAN1' on CAN1 (can): use the bridge built with the vehicle-sil of vehicle_sil_launch\n");
+    other.standard_output = "hello";
+    fake.answer = other;
+    CHECK(connect_lines(s, {{"CAN1", "virtual:1"}}, fake).rfind("E 5 connect-tool-failed: network 'CAN1': x wrote no "
+                                                               "description that vehicle_sil_launch reads (",
+                                                               0) == 0);
+}
+
+TEST_CASE(check_connections_warns_when_the_file_does_not_run_in_real_time)
+{
+    Setup s = connect_setup();
+    s.config.speed.reset();
+    FakeTools fake;
+    check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake),
+               "W 0 connect-not-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the "
+               "virtual time, and the file runs as fast as possible (no speed): write speed: 1 in the file\n");
+    s.config.speed = 2.0;
+    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
+               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and the file runs at speed 2: write speed: 1 in the file\n");
+}
+
+TEST_CASE(check_connections_without_tools_reads_only_the_requests)
+{
+    Setup s = connect_setup();
+    s.described(participant("Display", 16), ecu("Display", 10ms, {on_ethernet("ETH", std::nullopt)}));
+    FakeTools fake;
+    fake.missing = {"vehicle_sil_ethernet_bridge"};
+    check_text(connect_lines(s, {{"ETH", "eth0"}, {"BODY", "x"}}, fake, false),
+               "E 7 connect-kind: network 'BODY': it is lin: there is no bridge for LIN, so it runs on SIL Kit only: leave "
+               "--connect BODY out (or give BODY=none)\n");
+    CHECK(fake.runs.empty());
+}
+
+TEST_CASE(a_connected_network_has_its_bridge_on_it)
+{
+    Setup s = connect_setup();
+    const std::vector<std::string> outside{"ETH", "CAN1"};
+    // Camera alone on ETH and Engine alone on CAN1: the bridges are on them too.
+    check_text(lines(check_participants(s.config, s.results, "1.0.0")),
+               "W 3 single-participant: network 'ETH': only Camera is on it, so what it sends there reaches no one: add the "
+               "other participants of this network, or remove it\n"
+               "W 5 single-participant: network 'CAN1': only Engine is on it, so what it sends there reaches no one: add "
+               "the other participants of this network, or remove it\n"
+               "W 7 unused-network: network 'BODY': no participant uses it: remove it, or check the network names in the "
+               "ECUs\n");
+    check_text(lines(check_participants(s.config, s.results, "1.0.0", outside)),
+               "W 7 unused-network: network 'BODY': no participant uses it: remove it, or check the network names in the "
+               "ECUs\n");
+    // A network that no participant is on stays unused.
+    s.results[0].ecu->description.networks.clear();
+    CHECK(lines(check_participants(s.config, s.results, "1.0.0", outside)).find("W 3 unused-network: network 'ETH'") !=
+          std::string::npos);
+}
+
+TEST_CASE(a_test_participant_with_j1939_nodes_on_a_connected_network_is_a_warning)
+{
+    constexpr std::uint64_t kToolName = 0x80000000FE000080; // arbitrary address capable, Manufacturer Code 0x7F0
+    Setup s = good_pair();
+    s.described(with_role(participant("Tool", 12), ParticipantRole::Test),
+                ecu("Tool", 10ms, {on_j1939("J1939_CAN", {node(0x80, kToolName)})}));
+    check_text(s.check(), "");
+    const std::vector<std::string> outside{"J1939_CAN"};
+    check_text(lines(check_participants(s.config, s.results, "1.0.0", outside)),
+               "W 12 test-participant-talks-on-bridged-network: participant 'Tool': it has role: test and J1939 nodes on "
+               "network 'J1939_CAN', and --connect connects that network to a real bus: what it sends there goes out on "
+               "the real bus too, its address claims among it, and a real ECU with the same address fights it for the "
+               "address: let it only listen there (no J1939 nodes), or do not connect the network in runs with it (leave "
+               "--connect J1939_CAN out)\n");
+}
+
+TEST_CASE(a_role_bridge_participant_on_a_connected_network_is_a_loop)
+{
+    Setup s = connect_setup();
+    s.described(with_role(participant("EthBridge", 16), ParticipantRole::Bridge),
+                ecu("EthBridge", std::nullopt, {on_ethernet("ETH", std::nullopt)}));
+    const std::vector<std::string> outside{"ETH"};
+    CHECK(lines(check_participants(s.config, s.results, "1.0.0", outside))
+              .rfind("E 16 connect-loop: participant 'EthBridge': it has role: bridge and carries network 'ETH' to a real "
+                     "bus, and --connect connects the network too: frames would go round between the two bridges: leave "
+                     "one of the two bridges out (--disable EthBridge, or leave --connect ETH out)\n",
+                     0) == 0);
+    // On another network: no loop.
+    const std::vector<std::string> can{"CAN1"};
+    CHECK(lines(check_participants(s.config, s.results, "1.0.0", can)).find("connect-") == std::string::npos);
+    // Disabled: not in the simulation.
+    Setup off = s;
+    off.config.participants.back().enabled = false;
+    off.results.back() = ParticipantResult{ParticipantStatus::Disabled, std::nullopt};
+    CHECK(lines(check_participants(off.config, off.results, "1.0.0", outside)).find("connect-") == std::string::npos);
+    // describe: false: it may carry it.
+    Setup maybe = connect_setup();
+    maybe.unchecked("Gateway", 16);
+    maybe.config.participants.back().role = ParticipantRole::Bridge;
+    maybe.config.participants.back().role_written = true;
+    check_text(lines(check_participants(maybe.config, maybe.results, "1.0.0", outside)),
+               "N 16 not-checked: participant 'Gateway': not checked (describe: false): vehicle_sil_launch cannot compare "
+               "its name, step and networks with this file\n"
+               "W 16 connect-maybe-loop: participant 'Gateway': it has role: bridge and describe: false, so the check "
+               "cannot see whether it carries network 'ETH', which --connect connects to a real bus: if it does, frames go "
+               "round between the two bridges: leave one of the two bridges out (--disable Gateway, or leave --connect "
+               "ETH out)\n"
+               "N 5 single-participant: network 'CAN1': only Engine is on it, so what it sends there reaches no one "
+               "(participants with describe: false are not counted): add the other participants of this network, or "
+               "remove it\n"
+               "N 7 unused-network: network 'BODY': no participant uses it (participants with describe: false are not "
+               "counted): remove it, or check the network names in the ECUs\n");
+}
+
+TEST_CASE(the_outputs_show_where_a_network_is_connected)
+{
+    const Setup s = connect_setup();
+    CheckReport r;
+    r.file = "simulation.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    const std::string plainText = format_text(r);
+    const std::string plainJson = format_json(r);
+    CHECK(plainText.find("outside") == std::string::npos && plainJson.find("\"outside\"") == std::string::npos);
+    NetworkOutside eth{"ETH",
+                       "vehicle_sil_ethernet_bridge",
+                       "/opt/vsil/bin/vehicle_sil_ethernet_bridge",
+                       "vEthernet (A)",
+                       "bridge.ETH",
+                       std::vector<std::string>{"--network", "ETH", "--interface", "vEthernet (A)", "--src-mac",
+                                                "02:00:00:00:00:01"}};
+    // Not found, and so no command (connect-tool-missing).
+    NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", {}, "physical:2", "bridge.CAN1", std::nullopt};
+    r.outside = {eth, can};
+    const std::string text = format_text(r);
+    CHECK(text.find("network  kind      participants  outside\n"
+                    "ETH      ethernet  Camera        vEthernet (A)\n"
+                    "CAN1     can       Engine        physical:2\n"
+                    "BODY     lin       -             -\n") != std::string::npos);
+    const std::string json = format_json(r);
+    CHECK(json.find("      \"participants\": [\n"
+                    "        \"Camera\"\n"
+                    "      ],\n"
+                    "      \"outside\": {\n"
+                    "        \"tool\": \"vehicle_sil_ethernet_bridge\",\n"
+                    "        \"tool_path\": \"/opt/vsil/bin/vehicle_sil_ethernet_bridge\",\n"
+                    "        \"target\": \"vEthernet (A)\",\n"
+                    "        \"participant\": \"bridge.ETH\",\n"
+                    "        \"command\": [\n"
+                    "          \"vehicle_sil_ethernet_bridge\",\n"
+                    "          \"--network\",\n"
+                    "          \"ETH\",\n"
+                    "          \"--interface\",\n"
+                    "          \"vEthernet (A)\",\n"
+                    "          \"--src-mac\",\n"
+                    "          \"02:00:00:00:00:01\"\n"
+                    "        ]\n"
+                    "      }\n"
+                    "    },\n") != std::string::npos);
+    CHECK(json.find("        \"tool_path\": null,\n        \"target\": \"physical:2\",\n        \"participant\": "
+                    "\"bridge.CAN1\",\n        \"command\": null\n      }\n") != std::string::npos);
+    // A network that is not connected has no "outside".
+    CHECK(json.find("\"name\": \"BODY\",\n      \"kind\": \"lin\",\n      \"line\": 7,\n      \"participants\": []\n    }") !=
+          std::string::npos);
+}
+
+TEST_CASE(check_connections_says_when_windows_does_not_start_a_bridge_for_a_dll)
+{
+    // Windows ends an executable whose DLL is missing (0xC0000135) or of another version
+    // (0xC0000139) before main(), with nothing on stderr; the exit codes are checked on every system.
+    Setup s = connect_setup();
+    FakeTools fake;
+    DescribeRun missing;
+    missing.command_text = "vehicle_sil_vector_xl_bridge ...";
+    missing.exit_code = static_cast<int>(0xC0000135u);
+    fake.answer = missing;
+    check_text(connect_lines(s, {{"CAN1", "physical:1"}}, fake),
+               "E 5 connect-tool-failed: network 'CAN1': vehicle_sil_vector_xl_bridge ... could not start (exit status "
+               "0xC0000135): Windows did not find a DLL that it needs: vehicle_sil_vector_xl_bridge needs vxlapi64.dll of "
+               "the Vector XL Driver Library: install the library, or put vxlapi64.dll next to the bridge; for another "
+               "DLL, put that DLL, of the version the executable was built with, next to the executable or in a folder on "
+               "PATH; to check without the real bus on this computer, leave --connect CAN1 out\n");
+    DescribeRun old;
+    old.command_text = "vehicle_sil_ethernet_bridge ...";
+    old.exit_code = static_cast<int>(0xC0000139u);
+    fake.answer = old;
+    check_text(connect_lines(s, {{"ETH", "eth0"}}, fake),
+               "E 3 connect-tool-failed: network 'ETH': vehicle_sil_ethernet_bridge ... could not start (exit status "
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing): put that DLL, of "
+               "the version the executable was built with, next to the executable or in a folder on PATH; to check "
+               "without the real bus on this computer, leave --connect ETH out\n");
+}
+
+TEST_CASE(check_connections_gives_no_command_for_a_network_with_an_error)
+{
+    Setup s = connect_setup();
+    FakeTools fake;
+    const ConnectTools tools = fake.tools();
+    const ConnectCheck check = check_connections(s.config, s.results, {{"CAN1", "usb:1"}, {"ETH", "eth0"}}, &tools);
+    CHECK(lines(check.findings).rfind("E 5 connect-target: ", 0) == 0);
+    check_text(outside_text(check),
+               "ETH vehicle_sil_ethernet_bridge [/tools/vehicle_sil_ethernet_bridge] eth0 bridge.ETH: --network ETH "
+               "--interface eth0 --src-mac 02:00:00:00:00:01\n"
+               "CAN1 vehicle_sil_vector_xl_bridge [/tools/vehicle_sil_vector_xl_bridge] usb:1 bridge.CAN1: (no command)\n");
+}

@@ -60,6 +60,36 @@ std::string utf8_from_path(const std::filesystem::path& path)
     return std::string(text.begin(), text.end());
 }
 
+std::filesystem::path current_executable()
+{
+#ifdef _WIN32
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;)
+    {
+        const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length == 0)
+        {
+            return {};
+        }
+        // A path that fills the buffer may be cut off (ERROR_INSUFFICIENT_BUFFER): try a larger one.
+        if (length < buffer.size())
+        {
+            buffer.resize(length);
+            return std::filesystem::path(buffer);
+        }
+        if (buffer.size() >= 32768) // the longest path Windows has
+        {
+            return {};
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+#else
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec || path.is_relative() ? std::filesystem::path() : path;
+#endif
+}
+
 #ifdef _WIN32
 
 using detail::Handle;
