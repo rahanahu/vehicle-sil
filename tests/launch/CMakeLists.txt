@@ -12,11 +12,13 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_events.cpp
     test_run.cpp
     test_scenario.cpp
+    test_scenario_line.cpp
     test_shared_values.cpp
     test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
-       vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)
+       vehicle_sil_cli # the other tools' exit codes and durations (test_shared_values.cpp)
+       vehicle_sil::signal) # the shapes as the launcher makes them (test_scenario_line.cpp: scenario_shapes.hpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
@@ -157,6 +159,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       realtime
       scenario
       scenario_disconnect
+      scenario_dither
       scenario_each_write
       scenario_expect_beside
       scenario_failures
@@ -176,6 +179,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       test_command
       test_interrupt
       time_usage
+      timeline
       timeout
       traffic
       usage

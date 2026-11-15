@@ -239,13 +239,16 @@ def copy_schemas(target: Path, into: Path) -> None:
 def report(target: Path, plat: str, what: str) -> None:
     bin_dir = target / "bin"
     print(f"get_tools: vehicle-sil {VERSION} tools {what} in {target}")
-    print("get_tools: put their bin directory on PATH, in each new shell:")
-    if plat.startswith("windows"):
-        print(f"  MSYS2 shell:        export PATH=\"$(cygpath -u '{bin_dir}'):$PATH\"")
+    if not plat.startswith("windows"):
+        print("get_tools: put their bin directory on PATH, in each new shell:")
+        print(f"  export PATH=\"{bin_dir}:$PATH\"")
+    elif os.environ.get("MSYSTEM"):  # run from an MSYS2 shell (MSYS2 sets MSYSTEM, e.g. UCRT64)
+        print("get_tools: put their bin directory on PATH, in each new MSYS2 shell:")
+        print(f"  export PATH=\"$(cygpath -u '{bin_dir}'):$PATH\"")
+    else:  # Command Prompt or PowerShell: which one cannot be told, so both, named
+        print("get_tools: put their bin directory on PATH, in each new shell, with the line of your shell:")
         print(f"  Command Prompt:     set \"PATH={bin_dir};%PATH%\"")
         print(f"  PowerShell:         $env:PATH = \"{bin_dir};$env:PATH\"")
-    else:
-        print(f"  export PATH=\"{bin_dir}:$PATH\"")
 
 
 if __name__ == "__main__":

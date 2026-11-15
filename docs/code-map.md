@@ -280,11 +280,14 @@ What they check in the engine:
 - Resolution of a hidden address conflict
 - Real-time behavior on SIL Kit without time synchronization
 - The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
+- `j1939.seat_*`: the listener seat, an internal interface of the engine (what it hears, its order against the `Observer`, handlers and timers, that it is read-only, that having it or not changes no trace)
+- `j1939.sniffer_*`: `TransferSniffer`, with the rules on hand-written frames and agreement with the receiving node of an engine that got the same frames (transfers between engines, fault injection with a fixed seed); `j1939.sniffer_boundary` checks that it does not depend on `Network`
+- `j1939.listener_*`: `Listener`: what it overhears from exchanges between engines matches the receiver, transmissions of nodes of the same `Network` are not passed, how node addresses are handled, the order of handlers, that it is read-only, construction and destruction; `j1939.sniffer_boundary` also checks that `listener.cpp` uses no engine internals other than the seat
 
 Virtual bus and SIL Kit give the same result:
 
 - With an in-process registry, the trace of the same scenario is the same on the virtual bus and on SIL Kit (also with the simple CAN Network Simulator)
-- `j1939_silkit.listen_only_participants_*`: adding listen-only participants (raw CAN, a `Network` without nodes, various step sizes) does not change a single line of each ECU's received data, the frames passed to its port, or its transmit acknowledgements and statistics
+- `j1939_silkit.listen_only_participants_*`: adding listen-only participants (raw CAN, a `Network` without nodes, the same with a `Listener`, various step sizes) does not change a single line of each ECU's received data, the frames passed to its port, or its transmit acknowledgements and statistics
 - In the same test, the listen-only participants send nothing (on both the virtual bus and SIL Kit)
 
 Protocol parts (`j1939_parts.*`):
@@ -623,8 +626,14 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | `Name` | `j1939/name.hpp` |
 | `Subscription`, `Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
+| `TransferSniffer` (follows the transfers between other ECUs from the frames; does not depend on `Network`) | `j1939/transfer_sniffer.hpp` |
+| `Listener`, `ListenerSubscription` (hears the messages of other participants, whatever their destination; the subscription holds a handler registration and removes it when destroyed) | `j1939/listener.hpp` |
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
+| Transfer sniffer | `src/transfer_sniffer.cpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
+| Listener seat (internal interface) | `src/frame_seat.hpp` |
+| `Listener`, which sits in the seat | `src/listener.cpp` |
 
 - Tests: `tests/j1939`
 - `ctest -R`: `^j1939\.`, `^j1939_silkit\.`
@@ -771,6 +780,7 @@ Public headers:
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
+| `TimelineRecord`, the record of `run --timeline`; `format_timeline_json()`, which writes the file | `launch/timeline.hpp` |
 
 Implementation:
 
@@ -994,14 +1004,15 @@ All of them are registered only in a build with the Control Server, and only whe
 |---|---|
 | `schema/simulation.schema.json` | Configuration file |
 | `schema/scenario.schema.json` | Scenario |
+| `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
 | `gui/protocol/dashboard.schema.json` | Dashboard |
 
-The schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
+The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
 
 | Where the copies are | Details |
 |---|---|
 | `template/schema/` | Copies of the 3 schemas |
-| `schema/` in the tools archive | The same 3 (`template/get_tools.py` copies them to the project's `schema/`) |
+| `schema/` in the tools archive | The same 3 and `timeline.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
 | Build directory | Copied at configure time when the examples are built (top-level `CMakeLists.txt`) |
 
 Line 1 of an example YAML file copied to the build directory points to the schema copied there.
@@ -1018,6 +1029,7 @@ What `test_schemas.py` checks:
 - The template's copies are identical
 - Line 1 of the example and template YAML files points to a schema
 - A schema copy exists where line 1 of an example copied to the build directory points
+- The reference timeline files (`tests/launch/timeline/`) and the timeline file of an example run pass the timeline schema, and malformed files fail it
 
 This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `mingw-w64-ucrt-x86_64-python-jsonschema` of MSYS2). Without them, configure prints the reason and does not register the test. CI confirms that `schema.files_and_launcher` is registered in `linux-gcc-debug`.
 
@@ -1403,6 +1415,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
 | Launcher | `variants`, `params`, `--variant`, `--param`, `only` | [Variants and scenario parameters](#variants-and-scenario-parameters) |
 | Launcher | `run --scenario`, `check --scenario`, waveforms | [Scenarios](#scenarios) |
+| Launcher | `run --scenario --timeline` | [Timeline files](#timeline-files) |
 | Launcher | `vehicle_sil_launch test` | [Running several scenarios](#running-several-scenarios) |
 | Launcher | `traffic` in the run result | [Run traffic](#run-traffic-traffic) |
 | Launcher | `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` | [Launcher limits](#launcher-limits) |
@@ -1704,17 +1717,22 @@ Where to change:
 | Reading and checking | `libs/launch/src/scenario.cpp` |
 | Advancing the steps | `libs/launch/src/scenario_run.cpp` |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
+| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
 | The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/launch/src/run_samples.cpp` |
+| Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
+| The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario.cpp` |
+| The writes of a dither in the engine | In `scenario_run.cpp`: `submit()` (one write per ECU step while no motion runs; it belongs to no step, and writes for the same time are combined into one request), `place()` (places the dither on the line), `fail_grid()` (when such a write is refused, fails the first step not yet decided). The contract is "Dithers" in the comment of `ScenarioEngine` |
 
 Documentation to update:
 
 - [scenario.md](scenario.md): the format, times, how values are seen, writes, results, the table of finding codes, the output
 - [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` (`launch_run.scenario` compares it byte for byte)
 - [scenario.md](scenario.md): the blocks of `<!-- throttle_mistakes.yaml -->` and `<!-- throttle_response.yaml -->`
+- [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->` (`launch_run.scenario_dither` compares it)
 - [howto/scenario-tests.md](howto/scenario-tests.md): the files, output and exit codes that the guide shows (`launch_run.scenario_guide` runs them in the guide's order and compares)
 - [simulation-config.md](simulation-config.md): the table of arguments
 - [simulation-events.md](simulation-events.md): the `scenario_step` event, `scenario` of `features`
@@ -1724,6 +1742,8 @@ Example files:
 
 - The example file that is compared is `examples/ecu_main/scenarios/throttle_step.yaml`.
 - The `wave` example is `examples/ecu_main/scenarios/throttle_wave.yaml`, and `launch_run.scenario_wave` runs it.
+- The `dither` example is `examples/ecu_main/scenarios/throttle_dither.yaml`, and `launch_run.scenario_dither` runs it.
+- The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
 - The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
 - For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
 
@@ -1732,7 +1752,11 @@ Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.
 - Only virtual time decides results. Real-time waits and timeouts do not decide a result.
 - The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
 - Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
+- The line of each input (the value that the scenario placed, and the `ramp` or `wave` moving it now) is `Line` in `libs/launch/src/scenario_line.hpp`. The start value of a motion without `from` or `around` is read from the line in step order, before the writes at the step's time are sent (`place()` in `scenario_run.cpp`).
+- One function, `motion_number()`, gives the values of a motion before rounding. The value to write is made in one place, `Line::written()` of the line, which adds the dither and then rounds to the type. The engine's `submit_one()` calls it. Code that you add to compute values calls the same function.
 - Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
+- `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
+- Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
 - In controller step P, only the samples and results of steps that started before P are looked at. Those from P on are handled in the next step, even if they have already been received.
 - A write at time T is queued while the controller step before T is held (time 0 is the start window).
 - In a run with a scenario, the controller's time step does not depend on the speed (`fine` of `detail::plan_time_step()`).
@@ -1751,15 +1775,55 @@ Tests:
 
 - `^launch\.scenario_`: with a fake ECU model, the result is the same when the receive order changes
 - `launch.scenario_wave_*`: waveform values, values after the waveform ends, findings
+- `launch.scenario_line_*` (`tests/launch/test_scenario_line.cpp`): the input lines alone
+- `launch.scenario_dither_*`, `launch.timeline_has_the_dithers_*` (the reference is `tests/launch/timeline/dither.yaml`)
 - `launch.scenario_expect_beside_*`: the interval of an `expect` beside `ramp` and `wave`, the order in which steps are decided, skipping only the `expect` by variant
 - `^signal\.`
 - `launch_run.scenario`
 - `launch_run.scenario_wave`: the time at which the ECU saw the waveform, passing with a different time step, the warning and `undersampled: ok`
 - `launch_run.scenario_expect_beside`: the sample that failed an `expect` beside `ramp` or `wave`, `expect_skipped`
+- `launch_run.scenario_dither`: a real ECU, out of range, the example `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: the same result as fast as possible, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
+
+### Timeline files
+
+`run --scenario --timeline` (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
+Where to change:
+
+| What | Location |
+|---|---|
+| The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which `scenario.cpp` fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| The file format | `format_timeline_json()` in `timeline.cpp` |
+| One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
+| Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
+| The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
+| The argument | `tools/launch/main.cpp` |
+
+What to update together:
+
+- `schema/timeline.schema.json`
+- "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)
+- The reference files `tests/launch/timeline/*.timeline.json`. Do not edit them by hand; the `README.md` in that directory says how to write them again and which keys are not compared.
+
+Rules:
+
+- Recording happens only on the scenario thread (and in `begin()` on the thread of the start window). Nothing is recorded inside the Hub's tap.
+- Without a recorder (no `--timeline`), the engine and the output of `run` do not change at all.
+- The file holds only what virtual time decides (no real time, process IDs or lateness counts).
+- Keys and values are only ever added, and readers must be able to ignore what they do not know (the schema does not close values with `enum`).
+- The reference scenarios use no `sine`, `chirp` or `lag`. Their last bit can differ between C libraries, so they cannot be compared byte for byte.
+
+Tests:
+
+- `launch.timeline_*`: independence from the time step, steps that change with the time step, the reference files, the limits, how samples are counted, which writes of a failed `set` were applied and which point each is, a run that ended partway
+- `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
+- `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
+- `schema.files_and_launcher`
 
 ### Running several scenarios
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import os
 import re
 import shutil
 import subprocess
@@ -59,8 +60,9 @@ def zip_archive(path: Path, top: str, extra: list[str] | None = None) -> Path:
     return path
 
 
-def get_tools(script: Path, *args: str | Path) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-I", str(script), *map(str, args)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+def get_tools(script: Path, *args: str | Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-I", str(script), *map(str, args)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env)
 
 
 def test_fetch(tmp: Path) -> None:
@@ -99,6 +101,33 @@ def test_fetch(tmp: Path) -> None:
     p =get_tools(GET_TOOLS, "--platform", "linux-x86_64", "--dir", tmp / "tools-wrong", "--archive", wrong,
                   "--sha256", sha256(wrong))
     check(p.returncode == 1 and "VERSION" in p.stderr, f"another version inside: exit code 1 ({p.returncode}: {p.stderr})")
+
+
+def test_path_lines(tmp: Path) -> None:
+    """The PATH lines: on Windows, only the MSYS2 shell's line when run from one (MSYSTEM is set), else the lines of
+    Command Prompt and PowerShell, named; on Linux, the export line whatever MSYSTEM says. A second run (the tools
+    already there) prints the same lines."""
+    without = {k: v for k, v in os.environ.items() if k != "MSYSTEM"}
+    msys = {**without, "MSYSTEM": "UCRT64"}
+    windows = zip_archive(tmp / f"{WINDOWS}.zip", WINDOWS)
+    linux = tar_archive(tmp / f"{LINUX}.tar.gz", LINUX)
+    cases = [  # (platform, archive, environment, lines that must be there, lines that must not)
+        ("windows-x86_64", windows, msys, ["in each new MSYS2 shell:", "export PATH=\"$(cygpath -u '"],
+         ["Command Prompt:", "PowerShell:"]),
+        ("windows-x86_64", windows, without, ["with the line of your shell:", "Command Prompt:     set \"PATH=",
+                                              "PowerShell:         $env:PATH = \""], ["MSYS2", "cygpath", "export"]),
+        ("linux-x86_64", linux, msys, ["in each new shell:", "export PATH=\""],
+         ["MSYS2", "cygpath", "Command Prompt:", "PowerShell:"]),
+    ]
+    for i, (plat, archive, env, want, unwanted) in enumerate(cases):
+        tools = tmp / f"tools-{i}"
+        for run in ("unpacked", "already there"):
+            p = get_tools(GET_TOOLS, "--platform", plat, "--dir", tools, "--archive", archive,
+                          "--sha256", sha256(archive), env=env)
+            what = f"{plat}, MSYSTEM {env.get('MSYSTEM', 'unset')}, {run}"
+            check(p.returncode == 0 and run in p.stdout, f"{what}: exit code 0 ({p.returncode}: {p.stderr})")
+            check(all(w in p.stdout for w in want) and not any(u in p.stdout for u in unwanted),
+                  f"{what}: prints {want} and none of {unwanted} ({p.stdout})")
 
 
 def test_broken(tmp: Path) -> None:
@@ -340,7 +369,7 @@ def test_changelog() -> None:
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        for test in (test_fetch, test_broken, test_unsafe, test_template_archive, test_schemas):
+        for test in (test_fetch, test_path_lines, test_broken, test_unsafe, test_template_archive, test_schemas):
             d = Path(tmp) / test.__name__
             d.mkdir()
             test(d)

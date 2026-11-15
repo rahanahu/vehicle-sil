@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Put a small dither on the throttle (the top-level "inputs" and the step "dither"; the format:
+# docs/scenario.md): the value the engine gets is what the steps put on the throttle plus the dither.
+# The exit code is 0 if every step passed:
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_dither.yaml
+vehicle_sil_scenario: 1
+name: throttle dither
+inputs:
+  # 2 % up and down, every 80 ms. The engine takes its inputs every 10 ms: 8 values per period.
+  Engine.engine.throttle:
+    dither: { triangle: { amplitude: 2, period_ms: 80 } }
+steps:
+  # 50 % with the dither on it: 48 % to 52 % from here on.
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1750 } }
+    timeout_ms: 500
+  - expect: { Engine.engine.throttle: { ge: 48, le: 52 }, Engine.engine.speed: { near: 1800, tolerance: 100 } }
+    hold_for_ms: 200
+  # The ramp moves what the dither is on; the dither stays.
+  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 300 } }
+    expect: { Engine.engine.throttle: { ge: 48, le: 82 } }
+  - expect: { Engine.engine.speed: { near: 2400, tolerance: 100 } }
+    within_ms: 500
+  # Take the dither off: the throttle is written once more, at the 80 % of the ramp, and stays.
+  - dither: { Engine.engine.throttle: none }
+  - expect: { Engine.engine.throttle: 80 }
+    within_ms: 50
+  - expect: { Engine.engine.throttle: 80 }
+    hold_for_ms: 100

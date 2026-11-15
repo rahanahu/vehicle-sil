@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# A scenario of the timeline references (see README.md here): the engine runs it against the model
+# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+vehicle_sil_scenario: 1
+name: a wait runs out
+steps:
+  - set: { Body.level: 5, Door.level: 1 }
+  - wait_until: { Body.body.speed: { ge: 1000 }, Door.level: 1 }
+    timeout_ms: 100
+  - set: { Body.level: 0 }

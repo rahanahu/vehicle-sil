@@ -126,6 +126,7 @@ A scenario is written in YAML (or in JSON, if the file starts with `{`). Keep it
 | `name` | No | The name of the scenario. The output shows it. |
 | `only` | No | The list of variants on which this scenario runs (`only: [small, medium]`). Without it, the scenario runs on every variant. See [Limiting a scenario to variants](#limiting-a-scenario-to-variants-only). |
 | `params` | No | Default values of parameters (name → value). Use a parameter by writing `${name}` where a step takes a value. See [Parameters](#parameters-params-name). |
+| `inputs` | No | Declarations per input (variable → `{ dither: <waveform> }`). Overlays a fine dither on the input from the start of the scenario. See [Overlaying a dither](#overlaying-a-dither-dither). |
 | `steps` | Yes | The list of steps (at least 1). They run in order from the top. |
 
 ### Step keys
@@ -137,6 +138,7 @@ A step has one action and a time. Only `ramp` and `wave` can also have an `expec
 | `set` | `set: { <variable>: <value>, ... }` | Sets the values. |
 | `ramp` | `ramp: { <variable>: { to: <value>, over_ms: <ms>, from: <value> }, ... }` | Moves the value along a straight line over `over_ms`. `from` is optional. |
 | `wave` | `wave: { <variable>: { <waveform>: { ... }, around: <value>, for_ms: <ms> }, ... }` | Moves the value in a given waveform (`sine`, `square` and others). See [Waveforms](#waveforms-wave). |
+| `dither` | `dither: { <variable>: { <waveform>: { ... } }, ... }`, `dither: { <variable>: none }` | Changes the dither overlaid on the input from the step's time. `none` removes it. See [Overlaying a dither](#overlaying-a-dither-dither). |
 | `wait_until` | `wait_until: { <variable>: <condition>, ... }` | Waits until the condition holds. |
 | `expect` | `expect: { <variable>: <condition>, ... }` | Checks that the condition holds at the step's time. |
 
@@ -148,7 +150,7 @@ A step has one action and a time. Only `ramp` and `wave` can also have an `expec
 | `within_ms: <ms>` | `expect` | The step passes if the condition holds at least once within this time. The scenario moves to the next step as soon as it holds. |
 | `hold_for_ms: <ms>` | `expect` | Checks that the condition holds for the whole of this time. |
 | `expect: { <variable>: <condition>, ... }` | `ramp`, `wave` | Checks that the condition holds all the time the value moves (from the step's time to its end). |
-| `undersampled: ok` | `wave` | The check does not report the step's waveform even if it is finer than the ECU step. |
+| `undersampled: ok` | `wave`, `dither` | The check does not report the step's waveform even if it is finer than the ECU step. |
 
 A step with neither `at_ms` nor `after_ms` is the same as `after_ms: 0`.
 
@@ -221,7 +223,7 @@ The time T of a step is `at_ms`, or the end of the previous step plus `after_ms`
 
 | Step | Ends at | Known before the run |
 |---|---|---|
-| `set`, `expect` (at one point) | T | Yes. |
+| `set`, `dither`, `expect` (at one point) | T | Yes. |
 | `ramp` | T + the longest `over_ms` | Yes. |
 | `wave` | T + the duration of the longest waveform | Yes. |
 | `expect` with `hold_for_ms` | T + `hold_for_ms` | Yes. |
@@ -277,13 +279,17 @@ A `set` is a write stamped with time T. Each ECU applies it at the start of its 
 | One `set` with several variables of the same participant | They are applied together in the same ECU step. |
 | When `ramp` writes | For each variable, at T, T + step, T + 2 steps, … (in steps of that ECU), it writes the value on the line from `from` to `to`. At T + `over_ms`, it writes `to`. |
 | Start value of `ramp` (without `from`) | The last value the scenario wrote to that variable. |
-| Start value of a variable the scenario has not written yet | The value of the latest sample. |
+| Start value of a variable the scenario has not written yet | The value of the latest sample. Which sample it is, and whether there is one yet, depends on the controller's time step, because a write at T is sent in a time step before T (see "End of the record (`recorded_to_ms`)" in [simulation-run.md](simulation-run.md#end-of-the-record-recorded_to_ms)). For a result that does not depend on the time step, write `from`. |
 | Neither a written value nor a sample | The step fails (write `from`). |
 | Another writer (such as the ECU itself) changed the value after the scenario wrote it | The start value does not change. |
 | When the result of a write is checked | At the controller step after the ECU step that applies it. |
 | A write that was not applied (the ECU's setter rejected it, the target is not connected, and so on) | The step fails. |
+| One `set` with several variables, and the ECU's setter rejects one of them | The step fails. **The variables before the rejected one in that `set` are already written and stay written.** The rejected one and the ones after it are not written. The message names them, and the timeline file marks each write (see "File format" in [simulation-run.md](simulation-run.md#file-format)). |
+| A write of a `dither` while no motion runs | A write that belongs to no step is made once per ECU step (see [Overlaying a dither](#overlaying-a-dither-dither)). Writes for the same time and the same participant are combined into one write. If it is refused, the first step whose result is not yet decided fails (`scenario-write`). As with one `set`, the inputs of that participant before the rejected one are already written. |
 
 A write is never too late for the ECU step at its time. The launcher holds each controller step with the time gate, and lets time advance only after it has handed the ECUs every write up to the next time step. It hands over the writes for time 0 while all participants wait before the first simulation step.
+
+When a `dither` write that belongs to no step is refused, the message says which input's dither wrote which value and when. It says that the value is out of range only when the ECU's Agent refused the write for that reason. For other refusals (not connected, too many commands, an exception in the setter and so on), it gives the participant's answer and its reason. When a setter of the ECU rejected one input of a combined write, the message names that input and lists the inputs before it, which the ECU had already written. When it is not known which input of a combined write caused the refusal (too many commands, or an ECU that does not name the variable in its reason, for example), the message names the participant and lists every input and value of that write.
 
 ## Waveforms (`wave`)
 
@@ -341,7 +347,7 @@ For each variable, write one waveform, and beside it the duration (`for_ms`) and
 | | `bounces` | This or `for_ms` beside the waveform | How many times the value returns to the original value. |
 | | `seed` | No | With it, each change shifts earlier or later by up to 1/4 of `interval_ms`. |
 | | `from` | No | The original value. Not for bool, where it is the opposite of `to`. |
-| `points` | `[[<ms>, <value>], ...]` | Yes | The table of times (ms from the start of the step, ascending) and values. |
+| `points` | `[[<ms>, <value>], ...]` or a CSV file (`{ file: <path>, value: <column> }`, see [Reading points from a CSV file](#reading-points-from-a-csv-file)) | Yes | The table of times (ms from the start of the step, ascending) and values. |
 
 A bool `square` takes neither `low` and `high` nor `amplitude`: its values are `false` and `true`.
 
@@ -411,6 +417,28 @@ The range (`min`, `max`) is checked at these points:
 
 `vehicle_sil::signal` ([`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)) has functions that do the same calculation. You can use them in your own C++ code.
 
+### Reading points from a CSV file
+
+Instead of a table, `points` can name a CSV file and one of its columns. Use this to play a recorded column of values into an input.
+The example below is line 15 of [examples/ecu_main/scenarios/throttle_trace.yaml](../examples/ecu_main/scenarios/throttle_trace.yaml). It plays the column `throttle` of `throttle_trace.csv`, in the same directory, at the times (ms) in the first column.
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+| Key | Required | Meaning |
+|---|---|---|
+| `file` | Yes | The CSV file, as a path from the directory of the scenario file, with `/` between directories. An absolute path, a path with `..` and a path with `\` are errors: a scenario reads only files in its own directory and below. |
+| `value` | Yes | The name of the value column. |
+| `time` | No | The name of the time column. Without it, the first column. |
+| `time_unit` | No | The unit of the times: `ms` (the default) or `s`. Either way, a time is counted from the start of the step and must come to a whole number of ms (`0.25` in `s` is 250 ms). |
+
+- The first row of the CSV file holds the column names, and each row below it is one point. Cells are separated by `,` and can be enclosed in `"` (a `"` inside is written `""`). The file is UTF-8; a leading BOM, CRLF line ends and empty lines are fine. Every row has as many cells as the first row.
+- The points go through the same checks as `[[<ms>, <value>], ...]` and give the same values: ascending times, values that fit the type and the range, `interpolate` beside `points`, and the warnings for points finer than the ECU step. A value cell is a number. For bool, write `true`, `false`, `1` or `0`; for enum, an item name or its value. Integer values can also be hexadecimal (`0x3C`).
+- Different columns of one file can feed different variables. The check reads each file once. A file can have up to 100000 value rows and up to 16 MiB.
+- `file`, `value`, `time` and `time_unit` can contain `${name}`, so one scenario can play different recordings.
+- Errors about the file, the path or the columns are `scenario-points-file`. An error in a cell is the same as in `[[<ms>, <value>], ...]`: `value` for a time and `scenario-value` for a value. The finding points at the `file` line of the scenario, and its message gives the row and the column in the CSV file (cells are cut at 20 characters). For each `points`, only the first cell error is reported.
+
 ### Waveforms finer than the ECU step
 
 An ECU takes its inputs once per ECU step. A waveform finer than that does not reach the ECU as written. The check (`check --scenario`, and the start of `run --scenario`) compares the waveform with the step size of the target ECU and reports, as a warning, what the ECU will actually see. Because it is a warning, the run can go ahead. With `--strict`, the check fails.
@@ -457,6 +485,46 @@ For `hold` `points`, the check warns when the value of a point never reaches the
 - The write of the second-to-last point is applied in the same ECU step as the end write (the same rule as for a short `pulse`).
 
 Anything that cannot run at all is an error, not a warning: a period or width of 0 or less, `noise` without `seed`, `points` whose times are not in ascending order, a waveform that does not fit the type (`sine` on a bool, for example), and values out of range.
+
+## Overlaying a dither (`dither`)
+
+`dither` overlays an endless waveform centered on 0 on an input.
+The value written to the ECU is **the value that the steps placed on the input (the base), plus the dither at that time, rounded to the variable's type**.
+The base is the value of a `set`, or the value of a `ramp` or `wave` at that time. The dither stays on while the base moves.
+
+```yaml
+vehicle_sil_scenario: 1
+inputs:
+  Engine.engine.throttle:
+    dither: { triangle: { amplitude: 2, period_ms: 40 } }   # stays on to the end of the scenario
+steps:
+  - set: { Engine.engine.throttle: 50 }                     # moves between 48 and 52
+  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 1000 } }   # the base moves; the dither goes on
+  - after_ms: 500
+    dither: { Engine.engine.throttle: none }                # removes it and writes the base (80) once
+  - after_ms: 500
+    dither: { Engine.engine.throttle: { noise: { amplitude: 1, hold_ms: 10, seed: 7 } } }
+```
+
+A dither can be written in 2 places (a runnable example is [examples/ecu_main/scenarios/throttle_dither.yaml](../examples/ecu_main/scenarios/throttle_dither.yaml)):
+
+- **Top-level `inputs`**: `inputs: { <variable>: { dither: <waveform> } }`. The dither is on from the start of the scenario.
+- **The `dither` step**: `dither: { <variable>: <waveform> }` changes the dither from the step's time, and `dither: { <variable>: none }` removes it. The step takes no time (it ends at T). The word that removes a dither is `none`, not `off`, because some YAML tools read `off` as `false`.
+
+The waveforms are `sine`, `triangle`, `sawtooth`, `square` with `amplitude`, and `noise`, written as in `wave`. Their keys are those of the same waveforms in `wave`, and numeric positions can hold `${name}`. `for_ms` (a dither has no end) and `around` (the center is the base) cannot be written. Waveforms with a duration (`pulse`, `lag`, `chatter`, `points`, `chirp`) and `square` with `low` and `high` are errors. Only integer and real inputs can take a dither.
+
+- **Base**: a dither is applied only after a step has placed a value on the input. An input that is only declared gets no writes until its first `set`, `ramp` or `wave`. A `dither` step on an input without a base passes without writing (its result time is T).
+- **The dither is a function of virtual time itself.** It counts from virtual time 0, not from the time of the `dither` step: a `triangle` with a 40 ms period peaks at 10, 50, 90 ms, … whenever it is placed. To shift it, write `phase_deg`. `noise` is built from `seed`, the variable name and the time, as in `wave`.
+- **Added, then rounded**: on an integer input, the dither is added to the base before rounding. With a dither of +0.2 in the middle of a `ramp` from 10 to 11 (at 10.4), the sum is 10.6 and 11 is written. The next motion without `from` or `around` starts from the base without the dither (rounded to the type).
+- **When values are written**:
+  - The writes of `set`, `ramp` and `wave` happen at the same times as without a dither, with the dither added. During a motion (from T to its end), only the motion's writes are made.
+  - While no motion runs, base + dither is written once at each ECU step time of that ECU (0, step, 2 × step, …). If a step writes at that time, that write carries the dither and nothing is added.
+  - A `dither` step writes once at T on an input with a base: the base when it removes the dither, or base + the new dither when it changes it. Writes of other steps at the same time also use the dither placed last at that time.
+  - A `set` at a time between ECU steps, and the end value of a motion that ends between ECU steps, are applied in the next ECU step, before the dither write of that step's time (so the dither write is the value of that step).
+- **Inputs without a dither do not change.** How often and what is written to them does not depend on whether other inputs have a dither. A `dither` on an input that acts once per write (a request input, for example) writes it at every ECU step.
+- **Range**: if base + dither leaves the variable's range, the ECU refuses the write and the scenario fails (values are never clamped silently). The check warns when the written base ± the amplitude can leave the range (`scenario-dither-range`, see [Check](#check-check---scenario-start-of-run---scenario)).
+- **Variants**: if the variable of a `dither` step does not exist in the variant, the whole step is skipped, as with other steps. If an input declared in `inputs` does not exist, only that declaration is not used, and the note `scenario-input-skipped` says so.
+- The warnings for a dither finer than the ECU step (`scenario-wave-*`) are the same as for `wave`. To silence them, write `undersampled: ok` on the input in `inputs` or in the `dither` step.
 
 ## Checking values during a ramp or wave
 
@@ -638,13 +706,19 @@ When one step fails, the scenario ends there. Steps that had started become `unf
 
 The failure reported is the first one the launcher learned of, which is not always the first in virtual time. At each controller step P, the launcher looks first at the results of earlier writes, then at the samples before P, then at the writes up to the next time step. A write that is rejected at once (out of range, for example) is detected when the launcher sends the writes for one time step ahead. Such a write can be reported before a condition that fails on a sample of an earlier time, and changing the time step can swap the two.
 
+If a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, **the first step whose result is not yet decided** fails (`scenario-write`). Two things then depend on the controller's time step. For a result that does not, keep the amplitude within the range (the check warning `scenario-dither-range` says where it can leave it).
+
+- **Which step fails**: this depends on how far the launcher had decided the steps when it sent the refused write. Example: with `expect`s at 30 ms and 60 ms and a refused write at 50 ms, a time step of 10 ms has already decided the 30 ms `expect`, so the 60 ms step fails; with a time step of 30 ms, the 30 ms step fails. The time of the failure (`at`) and the message are the same.
+- **Writes in the time step that decides the last step**: the scenario ends when all its steps are decided, and sends no writes after that. In the example above, if the only step is the 30 ms `expect`, with a time step of 10 ms the scenario passes before the 50 ms write is sent, and with a time step of 30 ms it sends that write and fails. The scenario does not wait at its end for the results of writes that belong to no step.
+
 ### The `at` of a step
 
 The `at` of each step (`at_ms` in JSON) is the virtual time at which the step's result was decided.
 
 | Step | `at` |
 |---|---|
-| `set` | The ECU step that applied the value |
+| `set`, and a `dither` that wrote | The ECU step that applied the value |
+| A `dither` that wrote nothing | T |
 | `ramp`, `wave` | The end |
 | `expect` at one point | T |
 | `wait_until`, `within_ms` | The time of the sample on which the condition held |
@@ -775,16 +849,29 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `unknown-key`, `duplicate-key`, `missing-key`, `value` | Error | An error in the shape of keys and values (2 actions in one step, `wait_until` without `timeout_ms`, `near` without `tolerance`, and so on). |
 | `scenario-variable` | Error | A variable is not of the form `<participant>.<variable name>`, the participant or the variable does not exist, or the participant cannot be used (it is disabled, has `describe: false`, runs in real time, or does not expose variables). |
 | `scenario-not-writable` | Error | The step writes to an output, or writes a Parameter other than with a `set` at time 0. |
-| `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. |
+| `scenario-value` | Error | A value does not fit the type, the range or the enum items. A `ramp` or a magnitude comparison is used on a non-numeric variable. The waveform of a `wave` does not fit the variable's type, or `around` ± `amplitude` is out of range. A `dither` is written on a bool or enum variable. |
 | `scenario-param` | Error | `${name}` has no value, or `${...}` is in a key, in a variable name or in part of a value. (A `--param` with a name that is not in the scenario is the usage error `usage`.) |
 | `scenario-variant` | Error | The scenario's `only` does not include the selected variant, or a name in `only` is not a variant of the configuration file. |
 | `scenario-time` | Error | `at_ms` is before the end of the previous step, `at_ms` comes after a wait step, or the durations of the steps add up to more than the time limit (1000000000000 ms). |
-| `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). |
+| `scenario-wave-undersampled`, `scenario-wave-duty` | Warning | A `wave` or `dither` is finer than the step of the target ECU (see [Waveforms finer than the ECU step](#waveforms-finer-than-the-ecu-step)). A `dither` with an amplitude below 0.5 on an integer input also gives `scenario-wave-undersampled` (see below). |
 | `scenario-wave-coarse`, `scenario-wave-not-checked` | Note | See the same section. |
+| `scenario-dither-range` | Warning | A `dither` may take an input out of its range (an estimate from the text; see below). |
+| `scenario-dither-unused` | Warning | An input with a `dither` declared in `inputs` gets no value from any step that runs (no `set`, `ramp` or `wave`; skipped steps do not count), so the dither is never written. |
+| `scenario-input-skipped` | Note | An input declared in `inputs` is a variable with `absent: true` or a variable of a participant that the variant disables, so the declaration is not used. |
+| `scenario-points-file` | Error | The CSV file of `points` (see [Reading points from a CSV file](#reading-points-from-a-csv-file)) is not under the scenario's directory, does not exist, cannot be read, is empty or is not UTF-8, a row has a different number of cells than there are columns, or there are too many rows. The `value` or `time` column does not exist or its name appears twice. |
 | `scenario-nothing-checked` | Warning | Every checking step (`expect`, `wait_until`, and `expect` beside `ramp` and `wave`) is skipped, so the scenario checks nothing. |
 | `scenario-step-skipped` | Note | The step uses a variable with `absent: true` or a variable of a participant that the variant disables, so it is skipped in the run. If only the `expect` beside a `ramp` or `wave` uses it, only that `expect` is skipped. |
 
+How the check judges a `dither`:
+
+- `scenario-dither-range` is **an estimate from the text**, one per dither. It looks at the values that steps place on the input while that dither is on (as written: the value of `set`, `from` and `to` of `ramp`, `around` ± `amplitude` of `wave`, and so on), and at the value at which the input stays when a `dither` step is placed. Which dither is on is followed in the order of the steps: a value after the dither was removed or before it was changed is not paired with it, and skipped steps do not count. The check adds the amplitude to each value and subtracts it, rounds integers as the run does, and warns if the result is out of range. A `noise` with `gaussian` is estimated at 3 times its amplitude (the standard deviation), and the message says "about".
+- Times are not taken into account, so **a warning can remain where the run does not fail**: when the peaks of the dither and of the `wave` under it do not come at the same time, or when a `gaussian` value does not reach 3 times the amplitude. The run then passes, but with `--strict` the check fails. No key silences this warning. Lower the amplitude, move the value away from the end of the range, or remove the dither with `dither: { <variable>: none }` before that value.
+- Conversely, the check does not look at values that are not known until the run, such as those of a `wave` without `around`, so a run can fail without a warning.
+- A `dither` with an amplitude below 0.5 on an integer input gives `scenario-wave-undersampled`, because rounding returns the original integer value. If the value under the dither is at the end of the range, so that an amplitude of 0.5 would leave the range, the message does not suggest 0.5 or more; it says to move the value away from the end.
+
 ## Output
+
+With `--timeline <file>`, `run --scenario` also writes the values that the scenario wrote and saw to a JSON file, in virtual-time order: the interval each step watched, the values at a failure, and the value series (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
 
 ### Human-readable output
 
@@ -801,6 +888,17 @@ The check lists every error; it does not stop at the first one. The exit code is
 - If `expect`s beside steps are not checked, the result line ends with `, <n> expect not checked`.
 - A skipped step has `-` as its time in the table, and its line during the run has no ` at <time> ms`.
 
+In a scenario with a `dither` (it has `inputs`, or a `dither` step that runs), the check part is followed by a list of what is placed on the inputs. The output of other scenarios does not change, and the list also appears in the check part at the start of `run`. The list has only the inputs on which a `dither` is placed or removed: it is there to show what comes under each dither, so the writes of other inputs are left out. It has one row per item, in the order of the `inputs` declarations and then the steps. `from` and `to` are the times of the text: `?` after a wait step, and `-` as the `to` of a `dither` without an end. The `from` of a declared dither is `first write`: it is applied from the first write to that input, so the text does not give its time. This is the list for [examples/ecu_main/scenarios/throttle_dither.yaml](../examples/ecu_main/scenarios/throttle_dither.yaml):
+
+<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->
+```text
+input                   from         to    what                                                line
+Engine.engine.throttle  first write  -     dither triangle amplitude 2 period 80 ms            10
+Engine.engine.throttle  0 ms         0 ms  set = 50                                            14
+Engine.engine.throttle  ?            ?     ramp to 80 over 300 ms (after the wait of line 16)  21
+Engine.engine.throttle  ?            -     dither none (after the wait of line 16)             26
+```
+
 ### `check --json` and the `check` of `run --json`
 
 `scenario` is present only with `--scenario`.
@@ -813,8 +911,17 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from` |
 | `skipped_steps` | Only if any | The number of steps to be skipped |
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
+| `inputs`, `lines` | Only in a scenario with a `dither` | See the next table. The `scenario` of `run --json` has the same keys |
 
 `value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant` and `command_line`.
+
+Keys of a scenario with a `dither`:
+
+| Key | Meaning |
+|---|---|
+| `inputs[]` | For each input declared in `inputs`: `variable`, `line` (the line of that input) and `dither` (`shape` and `text`, written as the same keys of `lines[]` below). Declarations that the variant does not use are left out. |
+| `lines[]` | The list of what the text places on the inputs (the same rows as the human-readable list: only inputs on which a `dither` is placed or removed). Keys with the same names as in `lines[]` of the `--timeline` file have the same meaning and are written the same way (see "Input lines" in [simulation-run.md](simulation-run.md#input-lines-lines), which records what happened in the run): `variable`, `kind` (`dither`, `set`, `ramp`, `wave`), `line`, `step` (the step's `index`; null for an `inputs` declaration), `from_ms`, `to_ms`, `shape` (null for `set` and `none`) and `text` (with the variable). There is no `base` or `base_source`, because they are not known until the run. The keys that only the check has are `time_source` and `after_line`. |
+| `lines[].time_source` | Where `from_ms` and `to_ms` come from, and whether the text gives them. `text`: the times of the text (`to_ms` is null only for a `dither` without an end, as in the timeline). `after_wait`: after a wait step, so not known before the run (both are null, and `after_line` is the line of that wait step). `first_write`: a dither declared in `inputs`, applied from the first write to that input (`from_ms` is null). |
 
 ### The `scenario` of `run --json`
 
@@ -827,6 +934,7 @@ The check lists every error; it does not stop at the first one. The exit code is
 | `over_at_ms` | The controller step at which the scenario ended (for `passed` and `failed`; null otherwise). |
 | `skipped_steps` | The number of skipped steps. The key is present only if there is at least 1. |
 | `unchecked_expects` | The number of `expect`s beside `ramp` and `wave` that were not checked. The key is present only if there is at least 1. |
+| `inputs[]`, `lines[]` | Only in a scenario with a `dither`: the dithers declared in `inputs` and the list of what the text places on the inputs (the same as in `check --json` above; known before the run). |
 | `steps[]` | The result of each step (next table). |
 
 A step counted in `unchecked_expects` did run, so it is not counted in `skipped_steps`.
@@ -835,7 +943,7 @@ A step counted in `unchecked_expects` did run, so it is not counted in `skipped_
 |---|---|
 | `index` | The number of the step, from 1. |
 | `line` | The line in the scenario file. |
-| `kind` | One of `set`, `ramp`, `wave`, `expect` and `wait_until`. |
+| `kind` | One of `set`, `ramp`, `wave`, `dither`, `expect` and `wait_until`. |
 | `text` | The text of the step. |
 | `status` | The result of the step (next table). |
 | `start_ms` | The time of the step. |
@@ -971,6 +1079,8 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario` | `check --scenario` and `run --scenario` | Scenarios cannot be used. |
 | `scenario-wave` | The `wave` step | `wave` is an unknown-key error. |
 | `scenario-motion-expect` | `expect` beside `ramp` and `wave` | An error that the step has 2 actions. |
+| `scenario-points-file` | `points` from a CSV file | An error in the shape of `points`. |
+| `timeline` | `run --scenario --timeline <file>` | `--timeline` is a usage error. |
 | `scenario-control` | `--scenario` together with `--control` | The two cannot be combined. Only builds with the Control Server have this name. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.

@@ -280,11 +280,14 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 隠れていたアドレスの衝突の解決
 - 時刻同期なしの SIL Kit での実時間の動作
 - ツールキット（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
+- `j1939.seat_*`: エンジンの内部の口である聞き役の席（聞こえるもの、`Observer`、ハンドラー、タイマーとの順、読み取り専用であること、席の有無で記録が変わらないこと）
+- `j1939.sniffer_*`: `TransferSniffer` の、手で書いたフレームでの決まりと、同じフレームを受けたエンジンの受信側のノードとの一致（エンジンどうしの転送、種を固定した故障注入）。`j1939.sniffer_boundary` は `Network` に依らないことを検査する
+- `j1939.listener_*`: `Listener` の、エンジンどうしのやり取りを横から聞いた結果が受け手と一致すること、同じ `Network` のノードの送信が渡らないこと、ノードのアドレスの扱い、ハンドラーの順、読み取り専用であること、生成と破棄。`j1939.sniffer_boundary` は `listener.cpp` がエンジンの内部を席のほかに使わないことも検査する
 
 仮想バスと SIL Kit の一致:
 
 - プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（簡易 CAN Network Simulator ありでも）
-- `j1939_silkit.listen_only_participants_*`: 受信だけをする participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
+- `j1939_silkit.listen_only_participants_*`: 受信だけをする participant（生の CAN、ノードのない `Network`、それに `Listener` を付けたもの。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
 - 同じテストで、受信だけをする participant が何も送信しないこと（仮想バスと SIL Kit の両方で）
 
 プロトコルのコンポーネント（`j1939_parts.*`）:
@@ -623,8 +626,14 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Name` | `j1939/name.hpp` |
 | `Subscription`、`Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
+| `TransferSniffer`（ほかの ECU どうしの転送をフレームから追う。`Network` に依らない） | `j1939/transfer_sniffer.hpp` |
+| `Listener`、`ListenerSubscription`（ほかの participant のメッセージを、宛先が誰でも聞く。ハンドラーの登録を持って、壊れると外す） | `j1939/listener.hpp` |
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
+| 盗み聞き | `src/transfer_sniffer.cpp` |
+| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
+| 聞き役の席（内部の口） | `src/frame_seat.hpp` |
+| 席に座る `Listener` | `src/listener.cpp` |
 
 - テスト: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
@@ -771,6 +780,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
+| `run --timeline` の記録 `TimelineRecord` と、ファイルを作る `format_timeline_json()` | `launch/timeline.hpp` |
 
 実装:
 
@@ -994,14 +1004,15 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `schema/simulation.schema.json` | 設定ファイル |
 | `schema/scenario.schema.json` | シナリオ |
+| `schema/timeline.schema.json` | `run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ツールのアーカイブの `schema/` に入れ、テンプレートの `template/schema/` には置かない |
 | `gui/protocol/dashboard.schema.json` | ダッシュボード |
 
-スキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と `scenario.cpp` です。
+設定ファイルとシナリオのスキーマは、エディターの補完と検査のためのもので、ランチャーは読みません。ランチャーが読むコードは `libs/launch/src/config.cpp` と `scenario.cpp` です。
 
 | コピーの場所 | 内容 |
 |---|---|
 | `template/schema/` | 3 つのスキーマのコピー |
-| ツールのアーカイブの `schema/` | 同じ 3 つ（`template/get_tools.py` が、プロジェクトの `schema/` にコピーする） |
+| ツールのアーカイブの `schema/` | 同じ 3 つと `timeline.schema.json`（`template/get_tools.py` が、全部をプロジェクトの `schema/` にコピーする） |
 | ビルドのディレクトリ | 例をビルドするとき、configure のときにコピーする（最上位の `CMakeLists.txt`） |
 
 ビルドのディレクトリにコピーされた例の YAML の 1 行目は、そこにコピーされたスキーマを指します。
@@ -1018,6 +1029,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - テンプレートのコピーが同じである
 - 例とテンプレートの YAML の 1 行目がスキーマを指す
 - ビルドのディレクトリにコピーされた例の 1 行目の先に、スキーマのコピーがある
+- 時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）と例の実行の出力がスキーマに通り、エラーのある形が落ちる
 
 このテストには、PyYAML と jsonschema のある Python が必要です（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`）。なければ、configure のときに理由を表示して登録しません。CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確認します。
 
@@ -1403,6 +1415,7 @@ flowchart TD
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
 | ランチャー | `variants`、`params`、`--variant`、`--param`、`only` | [機種とシナリオのパラメーター](#機種とシナリオのパラメーター) |
 | ランチャー | `run --scenario`、`check --scenario`、波形 | [シナリオ](#シナリオ) |
+| ランチャー | `run --scenario --timeline` | [時間の軸のファイル](#時間の軸のファイル) |
 | ランチャー | `vehicle_sil_launch test` | [シナリオをまとめて実行する](#シナリオをまとめて実行する) |
 | ランチャー | 実行の結果の `traffic` | [実行の送受信](#実行の送受信traffic) |
 | ランチャー | `kMaxMillis`、`kMinSpeed`、`kMaxSpeed` | [ランチャーの上限](#ランチャーの上限) |
@@ -1704,17 +1717,22 @@ flowchart TD
 | 読み方と照合 | `libs/launch/src/scenario.cpp` |
 | 手順を進める処理 | `libs/launch/src/scenario_run.cpp` |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/launch/src/scenario_shapes.cpp` |
+| `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`、パスの検査とセルの意味は `scenario.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
 | 全サンプルを受け取る tap | `control::Hub::set_values_tap()` |
 | 実行の tap（シナリオは、ここからサンプルを取り出す） | `libs/launch/src/run_samples.cpp` の `RunSamples` |
+| `dither` の読み手（最上位の `inputs`、手順） | `scenario.cpp` の `read_inputs()`、`read_dither()`、`read_overlay()`。波形の中身は、`wave` と同じ `read_shape()` で読む（`read_wave_of()` と共用） |
+| 指摘 `scenario-dither-*` と、出力の一覧（`Scenario::lines`） | `scenario.cpp` の `note_lines()` と `check_dithers()` |
+| エンジンの揺れの書き込み | `scenario_run.cpp` の `submit()`（動きのない間の、ECU のステップごとの書き込み。手順のものでない書き込みで、同じ時刻の分を 1 つの要求にまとめる）、`place()`（揺れを線に置く）、`fail_grid()`（その書き込みが断られたとき、まだ決まっていない最初の手順を失敗にする）。約束は `ScenarioEngine` のコメントの「Dithers」 |
 
 合わせて直すドキュメント:
 
 - [scenario.md](scenario.md): 形式、時刻、値の見え方、書き込み、結果、指摘の `code` の表、出力
 - [scenario.md](scenario.md): `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロック（`launch_run.scenario` がバイト単位で照合）
 - [scenario.md](scenario.md): `<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->` のブロック
+- [scenario.md](scenario.md): `<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->` の後のブロック（`launch_run.scenario_dither` が照合）
 - [howto/scenario-tests.md](howto/scenario-tests.md): ガイドが載せているファイル、出力、終了コード（`launch_run.scenario_guide` が、ガイドの順に実行して照合）
 - [simulation-config.md](simulation-config.md): 引数の表
 - [simulation-events.md](simulation-events.md): イベント `scenario_step`、`features` の `scenario`
@@ -1724,6 +1742,8 @@ flowchart TD
 
 - 照合する例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml` です。
 - `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、`launch_run.scenario_wave` が実行します。
+- `dither` の例は `examples/ecu_main/scenarios/throttle_dither.yaml` で、`launch_run.scenario_dither` が実行します。
+- CSV ファイルの `points` の例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv` で、`launch_run.scenario_wave` が実行します。
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
 
@@ -1732,7 +1752,11 @@ flowchart TD
 - 判定に使うのは仮想時刻だけです。実時間の待ちと時間切れで、結果を決めません。
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
 - 乱数は、種、変数の名前、時刻から作ります（`scenario_shapes.cpp` の `seed_of_variable()`）。整数だけの計算で、どの OS でも同じです。
+- 入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は、`libs/launch/src/scenario_line.hpp` の `Line` です。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読みます（`scenario_run.cpp` の `place()`）。
+- 動きの値を出す関数は `motion_number()`（丸める前）の 1 つで、書く値は、線の `Line::written()` の 1 か所で、揺れ（`dither`）を足してから型に丸めます。エンジンの `submit_one()` はこれを呼びます。値を出す所を追加するときも、同じ関数を呼びます。
 - ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は、`scenario.cpp` の `seen_between()` のルール 1 つに従います。
+- `read_scenario()` は、`ScenarioContext::read_file` のほかにファイルに触りません（`check.cpp` と `test.cpp` が `files_beside()` を渡します）。
+- 点を足す口（文面と CSV ファイル）は `read_points()` の 1 つで、同じ照合を通ります。
 - controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見ます。P 以降のものは、受信していても次のステップで扱います。
 - 時刻 T の書き込みは、T より前の controller のステップを止めている間に積みます（時刻 0 は開始前の窓）。
 - シナリオのある実行の controller のタイムステップは、速度によりません（`detail::plan_time_step()` の `fine`）。
@@ -1751,15 +1775,55 @@ flowchart TD
 
 - `^launch\.scenario_`: 偽の ECU のモデルで、受信の順を変えても結果が同じ
 - `launch.scenario_wave_*`: 波形の値、終わった後の値、指摘
+- `launch.scenario_line_*`（`tests/launch/test_scenario_line.cpp`）: 線だけのテスト
+- `launch.scenario_dither_*`、`launch.timeline_has_the_dithers_*`（基準は `tests/launch/timeline/dither.yaml`）
 - `launch.scenario_expect_beside_*`: `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけスキップすること
 - `^signal\.`
 - `launch_run.scenario`
 - `launch_run.scenario_wave`: 波形を ECU が見た時刻、タイムステップを変えても通ること、警告と `undersampled: ok`
 - `launch_run.scenario_expect_beside`: 横の `expect` が外れたサンプル、`expect_skipped`
+- `launch_run.scenario_dither`: 本物の ECU、範囲の外、例 `examples/ecu_main/scenarios/throttle_dither.yaml`
 - `launch_run.scenario_same`: 最速、等速、遅い ECU、一時停止で同じ結果。書き込みが反映されたステップを、ECU が報告する
 - `launch_run.scenario_failures`
 - `core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`
 - `control.control_hub_tap_*`
+
+### 時間の軸のファイル
+
+`run --scenario --timeline` です（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。
+
+変える場所:
+
+| 内容 | 場所 |
+|---|---|
+| 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
+| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身は `scenario.cpp` が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
+| ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
+| 1 行に 1 点 | `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
+| ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
+| 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
+| 引数 | `tools/launch/main.cpp` |
+
+合わせて直すもの:
+
+- `schema/timeline.schema.json`
+- [simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」
+- 基準のファイル `tests/launch/timeline/*.timeline.json`。手で直しません。作り直し方と比べないキーは、そのディレクトリの `README.md` にあります。
+
+守ること:
+
+- 記録は、シナリオのスレッド（と、始まる前の窓のスレッドの `begin()`）でだけ行います。Hub の tap の中では何もしません。
+- 記録の口がない（`--timeline` なし）とき、エンジンの動きと `run` の出力は 1 つも変わりません。
+- ファイルに入れるのは、仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数を入れません）。
+- キーと値は足すだけにし、読む側が知らないものを無視できる形を保ちます（スキーマは値を `enum` で閉じません）。
+- 基準のシナリオには `sine`、`chirp`、`lag` を入れません。最後のビットが C ライブラリで違いうるので、バイト単位で比べられません。
+
+テスト:
+
+- `launch.timeline_*`: タイムステップによらないこと、タイムステップで変わる手順、基準のファイル、上限、サンプルの数え方、失敗した `set` のどの書き込みが入ったかと、それぞれの点、途中で終わった実行
+- `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
+- `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
+- `schema.files_and_launcher`
 
 ### シナリオをまとめて実行する
 

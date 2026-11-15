@@ -1,0 +1,125 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "points from a file, and a ramp from where they end",
+    "status": "passed",
+    "over_at_ms": 90,
+    "recorded_to_ms": 80
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "wave",
+      "text": "wave Body.level points from points_file.csv column level (3, hold) over 50 ms",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 50,
+      "end_ms": 50,
+      "code": null,
+      "message": null,
+      "lines": [0],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "ramp",
+      "text": "ramp Body.level to 0 over 30 ms",
+      "status": "passed",
+      "start_ms": 50,
+      "at_ms": 80,
+      "end_ms": 80,
+      "code": null,
+      "message": null,
+      "lines": [1],
+      "watch": null,
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 10],
+        [10, 10],
+        [20, 30],
+        [30, 30],
+        [40, 30],
+        [50, 60],
+        [50, 60],
+        [60, 40],
+        [70, 20],
+        [80, 0]
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "wave",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 50,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "points",
+        "points": 3,
+        "interpolate": "hold",
+        "file": "points_file.csv",
+        "value": "level",
+        "time": "t_ms"
+      },
+      "text": "Body.level points from points_file.csv column level (3, hold) over 50 ms"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "ramp",
+      "line": 8,
+      "step": 2,
+      "from_ms": 50,
+      "to_ms": 80,
+      "base": 60,
+      "base_source": "line",
+      "shape": {
+        "type": "ramp",
+        "to": 0,
+        "over_ms": 30
+      },
+      "text": "Body.level to 0 over 30 ms"
+    }
+  ],
+  "findings": [],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}
