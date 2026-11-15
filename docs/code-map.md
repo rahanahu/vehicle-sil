@@ -819,7 +819,9 @@ Public headers:
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `run_file()`, `TimeCommands` | `launch/run.hpp` |
+| `run_file()` | `launch/run.hpp` |
+| `TimeCommands` | `launch/time_commands.hpp` |
+| `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |

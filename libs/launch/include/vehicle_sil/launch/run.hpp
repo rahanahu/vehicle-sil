@@ -10,7 +10,9 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/time_commands.hpp"
 #include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/launch/traffic.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <atomic>
@@ -183,103 +185,6 @@ struct RunTiming
     [[nodiscard]] std::optional<double> actual_speed() const;
 };
 
-/// Why a participant's frames on a network were not counted (TrafficParticipant).
-enum class TrafficNotCounted
-{
-    None,          ///< counted
-    NoControlLink, ///< no control agent of it said hello: nothing came from it
-    Restarted,     ///< more than one process ran under its name: its counters began again
-    RealTime,      ///< it does not run in virtual time (or its samples are far ahead of the run's time)
-    NoCounters,    ///< its control agent has no J1939 counters for the network (another use of it)
-    Mapped,        ///< the entry's `variables` map the counters: their values are not the executable's
-    NoSample,      ///< no sample of a step before the end came
-};
-/// "no-control-link", "restarted", "real-time", "no-counters", "mapped", "no-sample" (the
-/// result's "not_counted"); None: "".
-[[nodiscard]] const char* traffic_not_counted_name(TrafficNotCounted why);
-
-/// One participant on one network: the J1939 frames it had sent and received there, as its last
-/// step that began before the run's end said (RunTraffic).
-struct TrafficParticipant
-{
-    std::string name;
-    TrafficNotCounted not_counted = TrafficNotCounted::NoControlLink;
-    /// Whether it runs in virtual time; empty if no control agent of it said hello.
-    std::optional<bool> virtual_time{};
-    /// Counted only: the start of the step the numbers are of, and the numbers. `frames_sent`:
-    /// the frames the port had accepted before that step (not: that were on the bus);
-    /// `frames_received`: the J1939 frames of other participants taken from the port.
-    std::optional<SimTime> at{};
-    std::optional<std::int64_t> frames_sent{};
-    std::optional<std::int64_t> frames_received{};
-    [[nodiscard]] bool counted() const { return not_counted == TrafficNotCounted::None; }
-};
-
-/// Why the launcher cannot say whether a participant of the run is on a network (TrafficUnplaced).
-enum class TrafficUnplacedReason
-{
-    /// No control agent of it had said hello when the run ended. It has none (a tool, a bridge,
-    /// --no-control), or its hello did not come in this run: the two cannot be told apart.
-    NoControlLink,
-    /// Its control agent has no J1939 counters for the network (for a network of the
-    /// configuration, in RunTraffic::unplaced). The same in every run of the configuration.
-    NoCounters,
-};
-/// "no-control-link", "no-counters" (the result's "reason").
-[[nodiscard]] const char* traffic_unplaced_reason_name(TrafficUnplacedReason why);
-
-/// A participant of the run without --describe that may be on a network without the launcher
-/// knowing: only J1939 counters place such a participant, and it may use a network in a way
-/// that has none (raw CAN, LIN, Ethernet).
-struct TrafficUnplaced
-{
-    std::string name;
-    TrafficUnplacedReason reason = TrafficUnplacedReason::NoControlLink;
-    [[nodiscard]] bool operator==(const TrafficUnplaced&) const = default;
-};
-
-/// One network of the configuration and the participants the launcher knows to be on it.
-struct TrafficNetwork
-{
-    std::string name;
-    std::string kind; ///< "can", "lin", "ethernet"
-    std::vector<TrafficParticipant> participants{}; ///< in the order of the configuration; may be empty
-    /// The participants of the run that may be on it without the launcher knowing, in the order
-    /// of the configuration: those without --describe that are not in `participants`. One that
-    /// its counters place on another network is here too (it may use this one as raw CAN).
-    std::vector<TrafficUnplaced> unplaced{};
-    /// How many of `participants` were counted, and how many of those had sent and had received a frame.
-    [[nodiscard]] std::size_t counted() const;
-    [[nodiscard]] std::size_t senders() const;
-    [[nodiscard]] std::size_t receivers() const;
-    /// Whether what was sent arrived, as far as the counters say. true: a counted participant
-    /// sent, and another counted participant received (a participant's own frames are not in its
-    /// frames_received). false: a counted participant sent, no counted participant received,
-    /// every participant known to be on the network is counted, and `unplaced` is empty. Empty
-    /// (cannot be said): nobody is counted, nobody sent, the one sender is the one receiver (it
-    /// heard someone the launcher does not count), or no counted participant received while one
-    /// on the network is not counted or `unplaced` is not empty (one of those may have).
-    [[nodiscard]] std::optional<bool> delivered() const;
-};
-
-/// What went over the networks of a run that started: per network of the configuration, the
-/// participants of the run that are known to be on it (a `describe: true` participant: what
-/// --describe says, under the simulation's names; another one: the networks its control agent has
-/// J1939 counters for), each with its counters. A participant's numbers are those of its
-/// last step that began before `before_ms`: the samples of the steps from then on come or do not
-/// come before the run is over, so they are left out, and a run that ends at the same virtual
-/// time with the same steps has the same numbers.
-struct RunTraffic
-{
-    std::int64_t before_ms = 0; ///< the run's end (RunTiming::sim_ms)
-    std::vector<TrafficNetwork> per_network{}; ///< in the order of the configuration
-    /// The participants of the run that the launcher knows on no network (`describe: false`, and
-    /// no control agent with J1939 counters for a network of the configuration: a bridge, a
-    /// tool), in the order of the configuration, each with the reason. They are in the
-    /// `unplaced` of every network.
-    std::vector<TrafficUnplaced> unplaced{};
-};
-
 /// What a run saw.
 struct RunOutcome
 {
@@ -418,97 +323,6 @@ struct RunReport
 /// (`message`): the form of the command's result (`run`: "vehicle_sil_run"; else the check's),
 /// result "unreadable", one finding with the code "internal".
 [[nodiscard]] std::string format_internal_error_json(bool run, const std::string& message);
-
-/// The time commands (pause, resume, step, run_until, speed) on their way to the simulation's time
-/// gate, from every source: the reader of standard input (`run --stdin-commands`) and the threads
-/// of a control server (`run --control`). Thread safe. The commands of all sources go through one
-/// mutex: each is decided, written as a command event and done before the next, so the order of
-/// the command events is the order in which they took effect. apply() never waits for the run or
-/// the reader of the events: only for this object's mutex and the gate's (neither is held while
-/// something waits).
-///
-/// Before the run attaches its controller (the check, the start), what the commands ask for is
-/// kept and given to the controller when it is attached. While attached, each command goes to the
-/// gate at once. Once detached (the simulation is over, or did not start), commands are refused.
-///
-/// The hold (run --start-paused with a control server): in the start window, before anyone's
-/// step at 0, the run waits in hold_before_start() until a resume, step or run_until command is
-/// accepted; until then the simulation stands still at 0 before its first step, so what a client
-/// writes then takes effect in the steps at 0. The commands accepted before the window count:
-/// the run holds only if it is to stand still at 0 when the window opens (start paused, or a
-/// pause since, and no resume, step, run_until or pause at a later time after that). A step or
-/// run_until before the window is done from 0 without a hold, as if it had come in the hold.
-class TimeCommands
-{
-public:
-    /// `start_paused`: run --start-paused (a step is accepted before anything has been paused).
-    /// `events`: where apply() writes the command events (may be null).
-    explicit TimeCommands(bool start_paused = false, EventStream* events = nullptr);
-    ~TimeCommands();
-    TimeCommands(const TimeCommands&) = delete;
-    TimeCommands& operator=(const TimeCommands&) = delete;
-
-    /// Decides whether the time command (Command::is_time()) can be done now; writes its command
-    /// event (`source`) with that answer (and, for step, how far the simulation goes: "ms" rounded
-    /// up to whole steps of the controller; for run_until and pause with at_ms, where it will stand
-    /// still: "at_ms" rounded up the same way), then does it. The event comes before what the
-    /// command changes. Returns the command as written. Refused: a step while not paused, a step,
-    /// run_until or pause with at_ms before the controller is attached, any command once detached,
-    /// a speed out of the range of parse_speed(), a step or at_ms out of 1 to kMaxMillis (at_ms
-    /// from 0). A "stop" (a control server's) is only decided and written here (refused once
-    /// detached); the caller asks the run to stop.
-    Command apply(const Command& command, std::string_view source);
-    /// As apply(command, source), and if the command is accepted, `accepted` is called before
-    /// apply() returns, under this object's mutex (short, must not wait): before any later
-    /// command and before detach(). A control server's stop asks the run to stop there, so that
-    /// a stop that is accepted reaches the run before the simulation is over.
-    Command apply(const Command& command, std::string_view source, const std::function<void()>& accepted);
-
-    /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
-    /// made with `step_ms`); first it is given the speed (`speed`, or the last speed command) and
-    /// the pause (start paused, or the last pause or resume command, and the steps since). detach():
-    /// before the controller goes; the commands are refused from then on, a hold ends and
-    /// wait_paused() returns.
-    void attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed);
-    void detach();
-    /// `f` is called in detach() with the controller (if one is attached), under this object's
-    /// mutex, before it goes: the last look at it (short, must not wait). Set before the run.
-    void set_on_detach(std::function<void(SimulationController& controller)> f);
-
-    /// How hold_before_start() ended.
-    enum class Hold
-    {
-        None,     ///< nothing was held: the commands before it let the simulation go on (see above)
-        Released, ///< a resume, step or run_until command was accepted
-        GaveUp,   ///< `give_up()` was true, or detach() was called
-    };
-    /// The hold, on the thread of the start window: waits until a resume, step or run_until
-    /// command has been accepted, `give_up()` is true or detach() is called. `on_hold` is called
-    /// once when the hold begins (not for Hold::None), `give_up` every `poll`; both without this
-    /// object's mutex.
-    Hold hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
-                           const std::function<void()>& on_hold = {});
-
-    /// Where the run stands, for a control server.
-    enum class Stage
-    {
-        SettingUp, ///< before attach(): the check, the start of the registry and the controller
-        Attached,  ///< the controller takes the commands (also before its start and in the hold)
-        Detached,  ///< the simulation is over, or did not start
-    };
-    /// While attached, calls `f` with the controller and whether the run holds before its first
-    /// step, under this object's mutex (`f` must be short and must not wait). Returns the stage.
-    Stage inspect(const std::function<void(SimulationController& controller, bool holding)>& f);
-
-    /// Waits up to `timeout` until the simulation stands still: the time it stands at (0 in the
-    /// hold), or empty on the timeout, once detached and once the controller's lifecycle has ended
-    /// (as SimulationController::wait_until_paused()).
-    std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout);
-
-private:
-    struct State;
-    std::unique_ptr<State> state_;
-};
 
 /// Where the run's control server listens (RunOptions::serve_control).
 struct ControlServerInfo
