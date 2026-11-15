@@ -231,8 +231,10 @@ private:
 ///   broadcast or connection that the Network or the Listener followed was lost for a packet
 ///   that was repeated, out of order or missing before a later one came, for the same sender's
 ///   next announcement, or for lack of a place, and every message handed to the watchers has
-///   the receiver's bytes. It does not say that every transfer came to its end (see "Not seen by
-///   it"). transport_rejected counts the broadcasts the Network did not start to assemble (a
+///   the receiver's bytes. It does not say on which side a frame was lost: a broadcast packet
+///   that the sender never put on the bus counts too (transport_bam_dropped or
+///   transport_bam_replaced). Nor does it say that every transfer came to its end (see "Not seen
+///   by it"). transport_rejected counts the broadcasts the Network did not start to assemble (a
 ///   malformed announcement, no free session) and the connections a node of this participant
 ///   refused (busy with another group, too large, malformed, no free session).
 /// - "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
