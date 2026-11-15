@@ -611,7 +611,7 @@
               "number",
               "null"
             ],
-            "description": "Of a set its value. Of a ramp or a wave what it starts from or swings around, written as a point of a series is (a number the step names is written as it is); null if the shape has its values itself, or if no base was known (the step then failed with a write)."
+            "description": "Of a set its value. Of a ramp or a wave what it starts from or swings around, written as a point of a series is (a number the step names is written as it is); null if the shape has its values itself."
           },
           "base_source": {
             "type": [

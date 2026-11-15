@@ -1154,7 +1154,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | `variable` | The variable |
 | `kind`, `line`, `step` | The kind of step that placed it (`set`, `ramp`, `wave`), the line in the scenario file, and the step's `index` |
 | `from_ms`, `to_ms` | The step's time and the end of the motion as written (`from_ms` + the duration). The same value for `set`. If the run ended first, points exist only up to `recorded_to_ms` |
-| `base` | For `set`, the value written. For `ramp` and `wave`, the start value or the center of the swing (`from` and `around` in [scenario.md](scenario.md)). Written the same way as the series points (a number that the step wrote stays as written). `null` for shapes that carry their own values (`square` with `low` and `high`, `points` that start at 0 ms, and so on) and for a motion that failed because no start value was found |
+| `base` | For `set`, the value written. For `ramp` and `wave`, the start value or the center of the swing (`from` and `around` in [scenario.md](scenario.md)). Written the same way as the series points (a number that the step wrote stays as written). `null` for shapes that carry their own values (`square` with `low` and `high`, `points` that start at 0 ms, and so on) |
 | `base_source` | Where `base` came from (see the table below). `null` if `base` is `null` |
 | `shape` | The shape of `ramp` and `wave`: `type` (`ramp` or the waveform name) and the keys and values written in the step (after parameters are applied). `null` for `set` |
 | `text` | One line for people (this variable's part of the step's `text`) |

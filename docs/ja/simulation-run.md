@@ -1154,7 +1154,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `variable` | 変数 |
 | `kind`、`line`、`step` | 置いた手順の種類（`set`、`ramp`、`wave`）、シナリオのファイルの行、手順の `index` |
 | `from_ms`、`to_ms` | 手順の時刻と、動きの終わり（文面のとおり: `from_ms` + 長さ）。`set` は同じ値。実行が先に終わったとき、点があるのは `recorded_to_ms` まで |
-| `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）と、始まりの値が見つからずに失敗した動きでは `null` |
+| `base` | `set` は書いた値。`ramp` と `wave` は、始まりの値、または振れの中心（[scenario.md](scenario.md) の `from` と `around`）。書き方は系列の点と同じ（手順が書いた数は、そのまま）。値を自分で持つ形（`low` と `high` の `square`、0 ms から始まる `points` など）では `null` |
 | `base_source` | `base` の出どころ（下の表）。`base` が `null` なら `null` |
 | `shape` | `ramp` と `wave` の形: `type`（`ramp`、または波形の名前）と、手順に書いたキーと値（パラメーターを当てた後）。`set` は `null` |
 | `text` | 人向けの 1 行（手順の `text` の、この変数の分） |
