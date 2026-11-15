@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// TimeCommands (run.hpp): the time commands of a run (pause, resume, step, run_until, speed), from
-// before the simulation is set up until it is over.
+// TimeCommands (time_commands.hpp): the time commands of a run (pause, resume, step, run_until,
+// speed), from before the simulation is set up until it is over.
 //
 // State and lock: everything is in TimeCommands::State, guarded by its mutex. Any thread applies
 // a command (the thread that reads the commands, a control server's); the run's main thread
@@ -9,7 +9,7 @@
 // Taken while that mutex is held: the event stream's (the "command" event), the controller's
 // gate's (pause, resume, run_until, set_speed, time_state) and whatever on_detach takes.
 // hold_before_start() calls on_hold and give_up without it.
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/time_commands.hpp"
 
 #include "vehicle_sil/launch/events.hpp"
 

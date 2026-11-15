@@ -825,7 +825,9 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `run_file()`、`TimeCommands` | `launch/run.hpp` |
+| `run_file()` | `launch/run.hpp` |
+| `TimeCommands` | `launch/time_commands.hpp` |
+| `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
