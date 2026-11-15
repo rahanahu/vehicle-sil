@@ -165,7 +165,12 @@ std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit:
 {
     return detail::create_participant_retrying(
         [&] { return SilKit::CreateParticipant(config, name, registry_uri); }, name, name_in_use_wait,
-        [](std::string_view text) { std::cerr << "vehicle_sil: " << text << '\n'; });
+        [](std::string_view text) {
+            // One write: output of other threads (SIL Kit's log, the ECU) does not land inside the line.
+            std::string line = "vehicle_sil: ";
+            line.append(text).push_back('\n');
+            std::cerr << line;
+        });
 }
 
 ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
