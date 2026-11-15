@@ -1,108 +1,63 @@
 /* The look of <vehicle-sil-timeline> (viewer.js), inside its shadow root: nothing here reaches the page around it,
    and the page's CSS does not reach in. bundle.js puts this file into vehicle-sil-timeline.js.
-   The colours are custom properties on the element: a page changes them on the element itself, e.g.
-   vehicle-sil-timeline { --bad: #b00020; }  (docs/gui.md lists them). The attributes theme, compact and hide are
-   read here; the element's script reads compact too, for the sizes of the lanes. */
+   The colours: each is a public custom property --vst-<name> that a page sets on the element or on any element
+   around it (:root, for example), else the default below. They are read here into private --_<name> and never set
+   under their public names, so that a value from an ancestor reaches in (docs/gui.md lists them). light-dark()
+   picks the light or dark colour by the element's color-scheme: theme="light" and theme="dark" set it, theme="auto"
+   (no attribute) leaves the one it inherits from the page. The attributes theme, compact and hide are read here;
+   the element's script reads compact too, for the sizes of the lanes. */
 :host {
-  --bg: #f7f7f5;
-  --panel: #ffffff;
-  --fg: #1b1d20;
-  --muted: #5c636b;
-  --border: #d7dadd;
-  --grid: #e9ebed;
-  --sent: #1f5fc4;
-  --seen: #0b7c70;
-  --base: #8a5cc2;
-  --ok: #1b7a39;
-  --ok-fill: rgba(27, 122, 57, 0.12);
-  --bad: #c42525;
-  --bad-fill: rgba(196, 37, 37, 0.13);
-  --bad-bg: #fdf0ef;
-  --warn: #995400;
-  --warn-fill: rgba(214, 138, 0, 0.16);
-  --warn-bg: #fdf6e8;
-  --ok-bg: #eef7f0;
-  --neutral: #737a83;
-  --neutral-fill: rgba(115, 122, 131, 0.14);
-  --unrecorded: rgba(110, 110, 110, 0.1);
-  --true: #1f5fc4;
-  --e0: #dfe6f3;
-  --e1: #e7dff3;
-  --e2: #dff0ea;
-  --cursor: #3b3f45;
-  --selection: rgba(31, 95, 196, 0.15);
+  --_bg: var(--vst-bg, light-dark(#f7f7f5, #131518));
+  --_panel: var(--vst-panel, light-dark(#ffffff, #1b1e22));
+  --_fg: var(--vst-fg, light-dark(#1b1d20, #e4e6e9));
+  --_muted: var(--vst-muted, light-dark(#5c636b, #9aa1aa));
+  --_border: var(--vst-border, light-dark(#d7dadd, #343940));
+  --_grid: var(--vst-grid, light-dark(#e9ebed, #262a2f));
+  --_sent: var(--vst-sent, light-dark(#1f5fc4, #79a8ff));
+  --_seen: var(--vst-seen, light-dark(#0b7c70, #3cc4b1));
+  --_base: var(--vst-base, light-dark(#8a5cc2, #b89af0));
+  --_ok: var(--vst-ok, light-dark(#1b7a39, #5cc97c));
+  --_ok-fill: var(--vst-ok-fill, light-dark(rgba(27, 122, 57, 0.12), rgba(92, 201, 124, 0.14)));
+  --_bad: var(--vst-bad, light-dark(#c42525, #ff6f6f));
+  --_bad-fill: var(--vst-bad-fill, light-dark(rgba(196, 37, 37, 0.13), rgba(255, 111, 111, 0.16)));
+  --_bad-bg: var(--vst-bad-bg, light-dark(#fdf0ef, #2c1a1b));
+  --_warn: var(--vst-warn, light-dark(#995400, #f0b04a));
+  --_warn-fill: var(--vst-warn-fill, light-dark(rgba(214, 138, 0, 0.16), rgba(240, 176, 74, 0.16)));
+  --_warn-bg: var(--vst-warn-bg, light-dark(#fdf6e8, #2a2317));
+  --_ok-bg: var(--vst-ok-bg, light-dark(#eef7f0, #18261c));
+  --_neutral: var(--vst-neutral, light-dark(#737a83, #8d949d));
+  --_neutral-fill: var(
+    --vst-neutral-fill,
+    light-dark(rgba(115, 122, 131, 0.14), rgba(141, 148, 157, 0.16))
+  );
+  --_unrecorded: var(
+    --vst-unrecorded,
+    light-dark(rgba(110, 110, 110, 0.1), rgba(160, 160, 160, 0.08))
+  );
+  --_true: var(--vst-true, light-dark(#1f5fc4, #79a8ff));
+  --_e0: var(--vst-e0, light-dark(#dfe6f3, #263248));
+  --_e1: var(--vst-e1, light-dark(#e7dff3, #33284a));
+  --_e2: var(--vst-e2, light-dark(#dff0ea, #1f3a33));
+  --_cursor: var(--vst-cursor, light-dark(#3b3f45, #c9cdd2));
+  --_selection: var(
+    --vst-selection,
+    light-dark(rgba(31, 95, 196, 0.15), rgba(121, 168, 255, 0.18))
+  );
 
   display: block;
   overflow: auto;
-  color-scheme: light;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--_bg);
+  color: var(--_fg);
   font:
     14px/1.45 system-ui,
     -apple-system,
     'Segoe UI',
     sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  :host(:not([theme='light'])) {
-    --bg: #131518;
-    --panel: #1b1e22;
-    --fg: #e4e6e9;
-    --muted: #9aa1aa;
-    --border: #343940;
-    --grid: #262a2f;
-    --sent: #79a8ff;
-    --seen: #3cc4b1;
-    --base: #b89af0;
-    --ok: #5cc97c;
-    --ok-fill: rgba(92, 201, 124, 0.14);
-    --bad: #ff6f6f;
-    --bad-fill: rgba(255, 111, 111, 0.16);
-    --bad-bg: #2c1a1b;
-    --warn: #f0b04a;
-    --warn-fill: rgba(240, 176, 74, 0.16);
-    --warn-bg: #2a2317;
-    --ok-bg: #18261c;
-    --neutral: #8d949d;
-    --neutral-fill: rgba(141, 148, 157, 0.16);
-    --unrecorded: rgba(160, 160, 160, 0.08);
-    --true: #79a8ff;
-    --e0: #263248;
-    --e1: #33284a;
-    --e2: #1f3a33;
-    --cursor: #c9cdd2;
-    --selection: rgba(121, 168, 255, 0.18);
-    color-scheme: dark;
-  }
+:host([theme='light']) {
+  color-scheme: light;
 }
 :host([theme='dark']) {
-  --bg: #131518;
-  --panel: #1b1e22;
-  --fg: #e4e6e9;
-  --muted: #9aa1aa;
-  --border: #343940;
-  --grid: #262a2f;
-  --sent: #79a8ff;
-  --seen: #3cc4b1;
-  --base: #b89af0;
-  --ok: #5cc97c;
-  --ok-fill: rgba(92, 201, 124, 0.14);
-  --bad: #ff6f6f;
-  --bad-fill: rgba(255, 111, 111, 0.16);
-  --bad-bg: #2c1a1b;
-  --warn: #f0b04a;
-  --warn-fill: rgba(240, 176, 74, 0.16);
-  --warn-bg: #2a2317;
-  --ok-bg: #18261c;
-  --neutral: #8d949d;
-  --neutral-fill: rgba(141, 148, 157, 0.16);
-  --unrecorded: rgba(160, 160, 160, 0.08);
-  --true: #79a8ff;
-  --e0: #263248;
-  --e1: #33284a;
-  --e2: #1f3a33;
-  --cursor: #c9cdd2;
-  --selection: rgba(121, 168, 255, 0.18);
   color-scheme: dark;
 }
 :host([hidden]) {
@@ -145,21 +100,22 @@ code,
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 0.92em;
 }
-h1 {
+/* The element's title is an h2, so that it sits under the h1 of the page around it; its parts use h3 and h4 */
+h2 {
   font-size: 1.35rem;
   margin: 0 0 6px;
   overflow-wrap: anywhere;
 }
-h2 {
+h3 {
   font-size: 1.1rem;
   margin: 0 0 4px;
 }
-h3 {
+h4 {
   font-size: 0.95rem;
   margin: 10px 0 4px;
 }
 .muted {
-  color: var(--muted);
+  color: var(--_muted);
 }
 .small {
   font-size: 0.85rem;
@@ -187,26 +143,26 @@ h3 {
 }
 button {
   font: inherit;
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--border);
+  color: var(--_fg);
+  background: var(--_panel);
+  border: 1px solid var(--_border);
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
 }
 button:hover {
-  border-color: var(--muted);
+  border-color: var(--_muted);
 }
 button:focus-visible,
 #chart:focus-visible {
-  outline: 2px solid var(--sent);
+  outline: 2px solid var(--_sent);
   outline-offset: 2px;
 }
 button.link {
   border: none;
   background: none;
   padding: 0;
-  color: var(--sent);
+  color: var(--_sent);
   text-decoration: underline;
 }
 .badge {
@@ -218,46 +174,46 @@ button.link {
   white-space: nowrap;
 }
 .st-passed {
-  color: var(--ok);
+  color: var(--_ok);
 }
 .st-failed {
-  color: var(--bad);
+  color: var(--_bad);
 }
 .st-incomplete,
 .st-unfinished {
-  color: var(--warn);
+  color: var(--_warn);
 }
 .st-not_run,
 .st-skipped,
 .st-unknown {
-  color: var(--neutral);
+  color: var(--_neutral);
 }
 .banner {
-  border: 1px solid var(--border);
+  border: 1px solid var(--_border);
   border-left-width: 5px;
   border-radius: 6px;
   padding: 10px 14px;
   margin: 0 0 10px;
-  background: var(--panel);
+  background: var(--_panel);
   overflow-wrap: anywhere;
 }
 .banner.bad {
-  border-color: var(--bad);
-  background: var(--bad-bg);
+  border-color: var(--_bad);
+  background: var(--_bad-bg);
 }
-.banner.bad h2 {
-  color: var(--bad);
+.banner.bad h3 {
+  color: var(--_bad);
 }
 .banner.ok {
-  border-color: var(--ok);
-  background: var(--ok-bg);
+  border-color: var(--_ok);
+  background: var(--_ok-bg);
 }
-.banner.ok h2 {
-  color: var(--ok);
+.banner.ok h3 {
+  color: var(--_ok);
 }
 .banner.warn {
-  border-color: var(--warn);
-  background: var(--warn-bg);
+  border-color: var(--_warn);
+  background: var(--_warn-bg);
 }
 .banner p {
   margin: 4px 0;
@@ -284,11 +240,11 @@ td {
   text-align: left;
   vertical-align: top;
   padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--_border);
 }
 th {
   font-weight: 600;
-  color: var(--muted);
+  color: var(--_muted);
 }
 td.num {
   white-space: nowrap;
@@ -297,22 +253,22 @@ td.num {
 table.writes {
   width: auto;
   max-width: 100%;
-  background: var(--panel);
+  background: var(--_panel);
 }
 tr.cause td {
   font-weight: 600;
 }
 tr.failed-row td {
-  background: var(--bad-fill);
+  background: var(--_bad-fill);
 }
 .applied-true {
-  color: var(--ok);
+  color: var(--_ok);
 }
 .applied-false {
-  color: var(--bad);
+  color: var(--_bad);
 }
 .applied-null {
-  color: var(--warn);
+  color: var(--_warn);
 }
 .table-wrap {
   overflow-x: auto;
@@ -335,30 +291,30 @@ summary {
   margin-right: auto;
 }
 .chip {
-  border: 1px solid var(--border);
+  border: 1px solid var(--_border);
   border-radius: 12px;
   padding: 1px 8px;
   cursor: pointer;
 }
 #chart {
   container-type: inline-size;
-  border: 1px solid var(--border);
+  border: 1px solid var(--_border);
   border-radius: 6px;
-  background: var(--panel);
+  background: var(--_panel);
 }
 .lane {
   display: grid;
   grid-template-columns: 200px 1fr;
-  border-bottom: 1px solid var(--grid);
+  border-bottom: 1px solid var(--_grid);
 }
 .lane-head {
   padding: 4px 8px;
-  border-right: 1px solid var(--grid);
+  border-right: 1px solid var(--_grid);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .lane.failing .lane-head {
-  box-shadow: inset 4px 0 0 var(--bad);
+  box-shadow: inset 4px 0 0 var(--_bad);
 }
 .lane-plot {
   min-width: 0;
@@ -368,15 +324,15 @@ summary {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--panel);
+  background: var(--_panel);
 }
 .group {
   padding: 4px 8px;
   font-weight: 600;
   font-size: 0.85rem;
-  color: var(--muted);
-  background: var(--bg);
-  border-bottom: 1px solid var(--grid);
+  color: var(--_muted);
+  background: var(--_bg);
+  border-bottom: 1px solid var(--_grid);
 }
 @container (max-width: 719px) {
   :host(:not([compact])) .lane {
@@ -390,7 +346,7 @@ summary {
   font-weight: 600;
 }
 .var-name.failing {
-  color: var(--bad);
+  color: var(--_bad);
 }
 .legend {
   display: flex;
@@ -405,37 +361,37 @@ summary {
   height: 0;
   margin-right: 4px;
   vertical-align: middle;
-  border-top: 2px solid var(--sent);
+  border-top: 2px solid var(--_sent);
 }
 .key.seen::before {
-  border-top: 1.5px solid var(--seen);
+  border-top: 1.5px solid var(--_seen);
 }
 .key.base::before {
-  border-top: 1.5px dashed var(--base);
+  border-top: 1.5px dashed var(--_base);
 }
 .key.not-applied::before {
-  border-top: 2px dashed var(--bad);
+  border-top: 2px dashed var(--_bad);
 }
 .key.not-known::before {
-  border-top: 2px dotted var(--warn);
+  border-top: 2px dotted var(--_warn);
 }
 .key.held::before {
-  border-top: 4px solid var(--neutral);
+  border-top: 4px solid var(--_neutral);
 }
 .readout {
-  color: var(--fg);
+  color: var(--_fg);
   font-variant-numeric: tabular-nums;
   min-height: 1.45em;
   overflow-wrap: anywhere;
 }
 .note {
-  color: var(--warn);
+  color: var(--_warn);
 }
 #error {
-  border: 1px solid var(--bad);
+  border: 1px solid var(--_bad);
   border-left-width: 5px;
   border-radius: 6px;
-  background: var(--bad-bg);
+  background: var(--_bad-bg);
   padding: 10px 14px;
   margin: 0 0 12px;
   overflow-wrap: anywhere;
@@ -448,62 +404,62 @@ svg.plot {
   user-select: none;
 }
 svg text {
-  fill: var(--fg);
+  fill: var(--_fg);
   font-size: 11px;
   font-family: system-ui, sans-serif;
 }
 .tick {
-  stroke: var(--muted);
+  stroke: var(--_muted);
 }
 .tick-label,
 .range-label,
 .empty-label {
-  fill: var(--muted);
+  fill: var(--_muted);
 }
 .range-label,
 .tick-label,
 .state-label,
 .mark text {
   paint-order: stroke;
-  stroke: var(--panel);
+  stroke: var(--_panel);
   stroke-width: 3px;
   stroke-linejoin: round;
 }
 .unrecorded {
-  fill: var(--unrecorded);
+  fill: var(--_unrecorded);
 }
 .dropped {
-  fill: var(--warn-fill);
-  stroke: var(--warn);
+  fill: var(--_warn-fill);
+  stroke: var(--_warn);
   stroke-dasharray: 3 3;
 }
 .cursor {
-  stroke: var(--cursor);
+  stroke: var(--_cursor);
   stroke-width: 1;
   pointer-events: none;
 }
 .selection {
-  fill: var(--selection);
+  fill: var(--_selection);
 }
 .fail-line {
-  stroke: var(--bad);
+  stroke: var(--_bad);
   stroke-width: 1.5;
   stroke-dasharray: 5 3;
   pointer-events: none;
 }
 .step .bar {
-  fill: var(--neutral-fill);
+  fill: var(--_neutral-fill);
   stroke: currentColor;
 }
 .step.st-passed .bar {
-  fill: var(--ok-fill);
+  fill: var(--_ok-fill);
 }
 .step.st-failed .bar {
-  fill: var(--bad-fill);
+  fill: var(--_bad-fill);
   stroke-width: 2;
 }
 .step.st-unfinished .bar {
-  fill: var(--warn-fill);
+  fill: var(--_warn-fill);
   stroke-dasharray: 4 2;
 }
 .step .marker {
@@ -528,7 +484,7 @@ svg text {
   stroke-width: 1;
 }
 .step.st-unknown {
-  color: var(--fg);
+  color: var(--_fg);
 }
 .step-label {
   font-weight: 600;
@@ -539,87 +495,87 @@ svg text {
   stroke-linejoin: round;
 }
 .series.sent {
-  stroke: var(--sent);
+  stroke: var(--_sent);
 }
 .series.seen {
-  stroke: var(--seen);
+  stroke: var(--_seen);
   stroke-width: 1.25;
 }
 .series.held {
-  stroke: var(--neutral);
+  stroke: var(--_neutral);
   stroke-width: 4;
   opacity: 0.6;
 }
 .series.not-applied {
-  stroke: var(--bad);
+  stroke: var(--_bad);
   stroke-dasharray: 4 3;
   stroke-width: 1.5;
 }
 .series.not-known {
-  stroke: var(--warn);
+  stroke: var(--_warn);
   stroke-dasharray: 1 3;
   stroke-linecap: round;
   stroke-width: 2;
 }
 .series.base {
-  stroke: var(--base);
+  stroke: var(--_base);
   stroke-width: 1;
   stroke-dasharray: 4 2;
 }
 .pt.sent {
-  fill: var(--sent);
+  fill: var(--_sent);
 }
 .pt.seen {
-  fill: var(--seen);
+  fill: var(--_seen);
 }
 .pt.not-applied {
-  fill: var(--panel);
-  stroke: var(--bad);
+  fill: var(--_panel);
+  stroke: var(--_bad);
   stroke-width: 1.5;
 }
 .pt.not-known {
-  fill: var(--panel);
-  stroke: var(--warn);
+  fill: var(--_panel);
+  stroke: var(--_warn);
   stroke-width: 1.5;
 }
 .state {
-  stroke: var(--panel);
+  stroke: var(--_panel);
   stroke-width: 0.5;
 }
 .state.v-true {
-  fill: var(--true);
+  fill: var(--_true);
   opacity: 0.75;
 }
 .state.v-false {
-  fill: var(--grid);
+  fill: var(--_grid);
 }
 .state.v-null,
 .state.v-mixed {
-  fill: var(--neutral-fill);
+  fill: var(--_neutral-fill);
 }
 .state.v-e0 {
-  fill: var(--e0);
+  fill: var(--_e0);
 }
 .state.v-e1 {
-  fill: var(--e1);
+  fill: var(--_e1);
 }
 .state.v-e2 {
-  fill: var(--e2);
+  fill: var(--_e2);
 }
 .state.not-applied {
-  fill: var(--bad-fill);
-  stroke: var(--bad);
+  fill: var(--_bad-fill);
+  stroke: var(--_bad);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
 .state.not-known {
-  fill: var(--warn-fill);
-  stroke: var(--warn);
+  fill: var(--_warn-fill);
+  stroke: var(--_warn);
   stroke-width: 1.5;
   stroke-dasharray: 1.5 2.5;
 }
 .state.held {
-  fill: var(--neutral);
+  fill: var(--_neutral);
   opacity: 0.6;
   stroke: none;
 }
@@ -627,23 +583,23 @@ svg text {
   pointer-events: none;
 }
 .band .allowed {
-  fill: var(--neutral-fill);
+  fill: var(--_neutral-fill);
 }
 .band.ok .allowed {
-  fill: var(--ok-fill);
+  fill: var(--_ok-fill);
 }
 .band.bad .allowed {
-  fill: var(--bad-fill);
+  fill: var(--_bad-fill);
 }
 .band .threshold {
-  stroke: var(--neutral);
+  stroke: var(--_neutral);
   stroke-dasharray: 5 3;
 }
 .band.ok .threshold {
-  stroke: var(--ok);
+  stroke: var(--_ok);
 }
 .band.bad .threshold {
-  stroke: var(--bad);
+  stroke: var(--_bad);
 }
 .band .threshold.limit {
   stroke-width: 0.75;
@@ -651,22 +607,22 @@ svg text {
 }
 .band .expect-box {
   fill: none;
-  stroke: var(--neutral);
+  stroke: var(--_neutral);
   stroke-width: 1.5;
 }
 .band.ok .expect-box {
-  stroke: var(--ok);
+  stroke: var(--_ok);
 }
 .band.bad .expect-box {
-  stroke: var(--bad);
+  stroke: var(--_bad);
   stroke-width: 2;
 }
 .expect-label {
   font-size: 10px;
 }
 .mark circle {
-  fill: var(--bad);
-  stroke: var(--panel);
+  fill: var(--_bad);
+  stroke: var(--_panel);
   stroke-width: 1.5;
 }
 .mark text {
@@ -674,26 +630,26 @@ svg text {
   pointer-events: none;
 }
 .mark.bad text {
-  fill: var(--bad);
+  fill: var(--_bad);
 }
 .mark.ok text {
-  fill: var(--ok);
+  fill: var(--_ok);
 }
 .mark.warn text {
-  fill: var(--warn);
+  fill: var(--_warn);
 }
 .mark.write rect {
-  fill: var(--panel);
+  fill: var(--_panel);
   stroke-width: 1.5;
 }
 .mark.write.ok rect {
-  stroke: var(--ok);
+  stroke: var(--_ok);
 }
 .mark.write.bad rect {
-  stroke: var(--bad);
+  stroke: var(--_bad);
 }
 .mark.write.warn rect {
-  stroke: var(--warn);
+  stroke: var(--_warn);
 }
 .mark.write.cause rect {
   stroke-width: 3;
@@ -703,28 +659,28 @@ svg text {
 }
 .line-mark rect,
 .line-mark path {
-  fill: var(--neutral-fill);
-  stroke: var(--neutral);
+  fill: var(--_neutral-fill);
+  stroke: var(--_neutral);
 }
 .line-mark.line-set path {
-  fill: var(--sent);
+  fill: var(--_sent);
   stroke: none;
 }
 .line-mark.line-dither rect {
   fill: none;
-  stroke: var(--base);
+  stroke: var(--_base);
   stroke-dasharray: 2 2;
 }
 .line-mark.line-dither path {
   fill: none;
-  stroke: var(--base);
+  stroke: var(--_base);
 }
 .line-mark.line-unknown line {
-  stroke: var(--fg);
+  stroke: var(--_fg);
 }
 .line-mark text {
   font-size: 9px;
-  fill: var(--muted);
+  fill: var(--_muted);
 }
 /* the step chosen on the chart or in the table (the property step) */
 .step.selected .bar,
@@ -736,7 +692,7 @@ svg text {
   font-weight: 700;
 }
 tr.selected td {
-  background: var(--selection);
+  background: var(--_selection);
 }
 .var-label {
   font-weight: 600;

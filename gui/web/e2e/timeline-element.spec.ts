@@ -122,10 +122,10 @@ test('timeline element: the plain example shows its file with one script and one
   const problems = await serve(page);
   await page.goto(`${ORIGIN}/example.html`);
   const el = page.locator('vehicle-sil-timeline');
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText(
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText(
     'the expect beside a ramp fails at a sample',
   );
-  await expect(el.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(el.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     'Step 2 failed at 140 ms',
   );
   await expect(el.locator('#facts')).toContainText('timeline file run.timeline.json');
@@ -338,7 +338,7 @@ test('timeline element: src with a token and headers; data before src; errors sa
   );
   await page.goto(`${ORIGIN}/test.html`);
   const el = page.locator('#t');
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText('Scenario timeline');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('Scenario timeline');
 
   await set(page, 't', { src: '/api/timeline/1' });
   await expect(el.getByRole('alert')).toContainText(
@@ -354,13 +354,13 @@ test('timeline element: src with a token and headers; data before src; errors sa
     sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
     document.querySelector('vehicle-sil-timeline')!.reload();
   });
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText('an ECU refuses a write');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('an ECU refuses a write');
   expect(asked.at(-1)).toMatchObject({ authorization: 'Bearer secret' });
   // The property comes first, with more headers
   await set(page, 't', { token: 'other', headers: { 'X-Screen': 'mine' } });
   await expect(el.getByRole('alert')).toContainText('HTTP 401');
   await set(page, 't', { token: 'secret' });
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText('an ECU refuses a write');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('an ECU refuses a write');
   expect(asked.at(-1)).toMatchObject({ authorization: 'Bearer secret', 'x-screen': 'mine' });
 
   // data is shown instead of src while it is set
@@ -368,7 +368,7 @@ test('timeline element: src with a token and headers; data before src; errors sa
   await set(page, 't', { data });
   await expect(el.getByTestId('passed')).toBeVisible();
   await set(page, 't', { data: null });
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText('an ECU refuses a write');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('an ECU refuses a write');
   const before = asked.length;
   await page.evaluate(() => document.querySelector('vehicle-sil-timeline')!.reload());
   await expect.poll(() => asked.length).toBe(before + 1);
@@ -390,7 +390,7 @@ test('timeline element: src with a token and headers; data before src; errors sa
   await expect(el.getByRole('alert')).toContainText('could not be loaded');
   expect((await events(page)).slice(told).map(([, type]) => type)).toEqual(['error']);
   await set(page, 't', { src: '/api/timeline/1' });
-  await expect(el.getByRole('heading', { level: 1 })).toHaveText('an ECU refuses a write');
+  await expect(el.getByRole('heading', { level: 2 })).toHaveText('an ECU refuses a write');
 
   // A file it cannot read, and an address on another server
   await set(page, 't', { data: '{"vehicle_sil_timeline": 2}', fileName: 'next.json' });
@@ -421,7 +421,7 @@ test("timeline element: the page's CSS does not reach in, its CSS does not leak 
     '',
     `button { color: rgb(255, 0, 0) !important; }
      .lane { display: none; }
-     #t { --bad: rgb(1, 2, 3); }`,
+     body { --vst-bad: rgb(1, 2, 3); }`,
   );
   await page.goto(`${ORIGIN}/test.html`);
   const el = page.locator('#t');
@@ -433,10 +433,29 @@ test("timeline element: the page's CSS does not reach in, its CSS does not leak 
   await expect(el.locator('#chart .lane').first()).toBeVisible();
   // The element's .muted is grey; the page's .muted is the page's own
   await expect(page.locator('#outside')).toHaveCSS('color', 'rgb(0, 0, 0)');
-  // A colour set on the element from outside
-  await expect(el.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveCSS(
+  // A colour set on an element around it reaches in
+  await expect(el.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveCSS(
     'color',
     'rgb(1, 2, 3)',
+  );
+  // theme="auto" takes the page's color-scheme: none declared is light, even with a dark browser
+  const light = 'rgb(247, 247, 245)';
+  const dark = 'rgb(19, 21, 24)';
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(el).toHaveCSS('background-color', light);
+  await page.evaluate(() => (document.documentElement.style.colorScheme = 'light dark'));
+  await expect(el).toHaveCSS('background-color', dark);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(el).toHaveCSS('background-color', light);
+  // theme="dark" in a light page; a page's two colours in one property
+  await page.evaluate(() => {
+    document.getElementById('t')!.setAttribute('theme', 'dark');
+    document.body.style.setProperty('--vst-bad', 'light-dark(rgb(1, 2, 3), rgb(4, 5, 6))');
+  });
+  await expect(el).toHaveCSS('background-color', dark);
+  await expect(el.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveCSS(
+    'color',
+    'rgb(4, 5, 6)',
   );
   expect(problems).toEqual([]);
 });
@@ -562,7 +581,7 @@ test('timeline element: settings it cannot use are said: in the console, and nam
   await expect(el.locator('#chart-note')).toBeHidden();
   expect(problems).toEqual([
     '<vehicle-sil-timeline>: cursor="12ms" is not a number, so it is ignored. Write a number, such as 120.',
-    '<vehicle-sil-timeline>: theme="blue" is not light, dark or auto, so the colours follow the browser (auto).',
+    '<vehicle-sil-timeline>: theme="blue" is not light, dark or auto, so the colours follow the page (auto).',
     '<vehicle-sil-timeline>: hide has "nothing", which is not a part, so it is ignored. ' +
       'The parts: header, summary, toolbar, help, steps, readout, legend, tables.',
     '<vehicle-sil-timeline>: from (200) is not before to (100), so the view does not change. ' +

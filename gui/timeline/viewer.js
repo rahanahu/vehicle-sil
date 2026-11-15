@@ -1209,7 +1209,7 @@
         h(
           'div',
           { class: 'banner bad', 'data-testid': 'failure' },
-          h('h2', { text: t('failure.heading', { step: step.index, at: fmtMs(f.at) }) }),
+          h('h3', { text: t('failure.heading', { step: step.index, at: fmtMs(f.at) }) }),
           h('p', { class: 'muted small', text: `${where} · ${step.text}` }),
           f.message
             ? h('p', { class: 'message', 'data-testid': 'failure-message', text: f.message })
@@ -1225,7 +1225,7 @@
         h(
           'div',
           { class: 'banner ok', 'data-testid': 'passed' },
-          h('h2', { text: t('passed.heading', { count: n }) }),
+          h('h3', { text: t('passed.heading', { count: n }) }),
           skipped ? h('p', { text: t('passed.skipped', { count: skipped }) }) : null,
         ),
       );
@@ -1240,7 +1240,7 @@
         h(
           'div',
           { class: 'banner warn', 'data-testid': 'not-decided' },
-          h('h2', { text: t('notDecided.heading', { status: statusWord(m.status) }) }),
+          h('h3', { text: t('notDecided.heading', { status: statusWord(m.status) }) }),
           h('p', { text }),
           ...m.findings
             .filter((x) => x.severity === 'error' && typeof x.message === 'string')
@@ -1287,7 +1287,7 @@
     return h(
       'div',
       {},
-      h('h3', { text: t('conditions.heading') }),
+      h('h4', { text: t('conditions.heading') }),
       h(
         'ul',
         { 'data-testid': 'failed-conditions' },
@@ -1317,7 +1317,7 @@
     return h(
       'div',
       {},
-      h('h3', { text: words.heading }),
+      h('h4', { text: words.heading }),
       h('p', { class: 'muted small', 'data-testid': 'failed-writes-explained' }, words.explain),
       h(
         'table',
@@ -2600,7 +2600,7 @@
         h(
           'div',
           {},
-          h('h1', { id: 'title', 'data-text': 'page.title' }),
+          h('h2', { id: 'title', 'data-text': 'page.title' }),
           h('div', { id: 'facts', class: 'small' }),
         ),
         h('slot', { name: 'actions' }),

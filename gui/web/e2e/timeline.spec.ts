@@ -103,11 +103,13 @@ test('timeline page: opens a failed run from ?src= on the failure, with its step
   const problems = await serve(page);
   await page.goto(`${ORIGIN}/timeline.html?src=data/fails_beside.timeline.json`);
 
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+  // The page's own h1; the element's title is an h2 under it
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Scenario timeline');
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(
     'the expect beside a ramp fails at a sample',
   );
   const failure = page.getByTestId('failure');
-  await expect(failure.getByRole('heading', { level: 2 })).toHaveText('Step 2 failed at 140 ms');
+  await expect(failure.getByRole('heading', { level: 3 })).toHaveText('Step 2 failed at 140 ms');
   // The launcher's sentence as it is, and the condition with its value
   await expect(page.getByTestId('failure-message')).toHaveText(
     'not true during the ramp (from 50 ms to 250 ms): at 140 ms Body.body.speed le 200, but it was 210 (its sample of 140 ms)',
@@ -136,10 +138,10 @@ test('timeline page: a refused write says which writes are in the ECU and which 
   const problems = await serve(page);
   await page.goto(`${ORIGIN}/timeline.html`);
   await page.locator('#file').setInputFiles(join(REFERENCES, 'write_refused.timeline.json'));
-  await expect(page.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(page.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     'Step 2 failed at 40 ms',
   );
-  await expect(page.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
+  await expect(page.getByTestId('failure').getByRole('heading', { level: 4 })).toHaveText(
     'Writes for 40 ms',
   );
   // The launcher says the ECU rejected the write: the page does not say it never reached the ECU.
@@ -250,13 +252,13 @@ test('timeline page: a file is opened with the keyboard alone, and data in the p
   const chooser = page.waitForEvent('filechooser');
   await page.keyboard.press('Enter');
   await (await chooser).setFiles(join(FIXTURES, 'dropped_ramp.timeline.json'));
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(
     'a long ramp loses points at the limits',
   );
   await expect(page.locator('#facts')).toContainText('timeline file dropped_ramp.timeline.json');
 
   await page.goto(`${ORIGIN}/embedded.html`);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(
     'a name with </script><b>tags</b> & more',
   );
   expect(await page.locator('b').count()).toBe(0);
@@ -278,7 +280,7 @@ test('timeline page: text from the file stays text, and files it cannot read are
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(data)),
   });
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(evil);
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText(evil);
   await expect(page.getByTestId('failure-message')).toHaveText(evil);
   await expect(page.locator('#facts')).toContainText('timeline file evil.timeline.json');
   expect(
@@ -298,7 +300,7 @@ test('timeline page: text from the file stays text, and files it cannot read are
   );
   // Nothing of the file before is left to be taken for this one
   await expect(page.locator('#view')).toBeHidden();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Scenario timeline');
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText('Scenario timeline');
   await expect(page.locator('#facts')).toBeEmpty();
 
   await page.goto(
@@ -318,7 +320,7 @@ test('timeline page: ?lang=ja shows it in Japanese, and a long read-out is shown
     `${ORIGIN}/timeline.html?src=tests/fixtures/state_not_applied.timeline.json&lang=ja`,
   );
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
-  await expect(page.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+  await expect(page.getByTestId('failure').getByRole('heading', { level: 3 })).toHaveText(
     /^手順 \d+ が [\d.]+ ms で失敗しました$/,
   );
   await expect(page.getByRole('button', { name: 'ファイルを開く' })).toBeVisible();

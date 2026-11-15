@@ -309,7 +309,7 @@
     'warn.hide': ({ value, known }) =>
       `<vehicle-sil-timeline>: hide has "${value}", which is not a part, so it is ignored. The parts: ${known}.`,
     'warn.theme': ({ value }) =>
-      `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the browser (auto).`,
+      `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the page (auto).`,
   };
 
   const ja = {
@@ -610,7 +610,7 @@
     'warn.hide': ({ value, known }) =>
       `<vehicle-sil-timeline>: hide の「${value}」は部分の名前でないので、使いません。部分: ${known}。`,
     'warn.theme': ({ value }) =>
-      `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はブラウザーに従います（auto）。`,
+      `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はページに従います（auto）。`,
   };
 
   const MESSAGES = { en, ja };
