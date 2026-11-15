@@ -222,6 +222,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -319,6 +320,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -340,6 +342,7 @@
               "status": "disabled",
               "reported": null,
               "variables": null,
+              "network_map": null,
               "control": null
             }
           ],
@@ -871,6 +874,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -968,6 +972,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -989,6 +994,7 @@
               "status": "disabled",
               "reported": null,
               "variables": null,
+              "network_map": null,
               "control": null
             }
           ],
@@ -1482,6 +1488,7 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1579,6 +1586,7 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -1600,6 +1608,7 @@
                 "status": "disabled",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
                 "control": null
               }
             ],
@@ -1774,6 +1783,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1871,6 +1881,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -1892,6 +1903,7 @@
               "status": "disabled",
               "reported": null,
               "variables": null,
+              "network_map": null,
               "control": null
             }
           ],
@@ -2244,6 +2256,7 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -2341,6 +2354,7 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 1
@@ -2362,6 +2376,7 @@
                 "status": "disabled",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
                 "control": null
               }
             ],

@@ -2749,7 +2749,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
     // the step's end (85 ms); the last step passed at 150 ms, and that is where the file ends.
     const std::string passed = timeline_of(passes, 20ms, door4, catalog(10ms, 4ms));
     check_text(part(passed, "        \"mode\": \"during\",", "        \"conditions\""),
-               "        \"mode\": \"during\",\n        \"from_ms\": 35,\n        \"until_ms\": 88,\n");
+               "        \"mode\": \"during\",\n        \"from_ms\": 35,\n        \"to_ms\": 88,\n");
     CHECK(passed.find("      \"start_ms\": 35,\n      \"at_ms\": 85,\n      \"end_ms\": 85,\n") != std::string::npos);
     check_text(part(passed, "  \"scenario\": {", "  \"variables\""),
                "  \"scenario\": {\n    \"file\": \"scenario.yaml\",\n    \"name\": null,\n    \"status\": \"passed\",\n"
@@ -4285,7 +4285,7 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
     // of, before the dither and the rounding. Also for the points after the dither was taken off.
     check_text(part(made, "      \"variable\": \"Body.level\",\n      \"source\": \"written\"", "    },\n"),
                "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-               "      \"columns\": [\"t_ms\", \"value\", \"base\"],\n"
+               "      \"columns\": [\"at_ms\", \"value\", \"base\"],\n"
                "      \"points\": [\n"
                "        [30, 48, 50],\n        [40, 50, 50],\n        [50, 52, 50],\n        [60, 50, 50],\n        [70, 48, 50],\n"
                "        [80, 50, 50],\n        [90, 50, 50]\n      ]\n");
@@ -4599,7 +4599,7 @@ TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_
     const std::string fine = timeline_of(failing, 10ms);
     CHECK(fine.find("    \"status\": \"failed\",") != std::string::npos);
     check_text(recorded(timeline_of(failing, 30ms)), recorded(fine), "with a controller step of 30 ms");
-    CHECK(fine.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50]\n      ]\n") != std::string::npos);
+    CHECK(fine.find("      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50]\n      ]\n") != std::string::npos);
     // The same for a declared dither whose input gets its first value after the failure.
     const std::string declared = kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
                                                "steps:\n  - at_ms: 30\n    expect: { Body.level: 51 }\n"
@@ -4612,5 +4612,5 @@ TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_
                                         "  - dither: { Body.level: { square: { amplitude: 2, period_ms: 40 } } }\n";
     const std::string timedOut = timeline_of(waiting, 10ms);
     check_text(recorded(timeline_of(waiting, 30ms)), recorded(timedOut), "a dither step after a wait that runs out");
-    CHECK(timedOut.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n") != std::string::npos);
+    CHECK(timedOut.find("      \"columns\": [\"at_ms\", \"value\", \"base\"],\n") != std::string::npos);
 }

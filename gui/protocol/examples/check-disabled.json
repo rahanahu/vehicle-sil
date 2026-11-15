@@ -125,6 +125,7 @@
               "builtin": false
             }
           ],
+          "network_map": null,
           "control": {
             "transport": "silkit",
             "wire_version": 1
@@ -145,6 +146,7 @@
           "status": "disabled",
           "reported": null,
           "variables": null,
+          "network_map": null,
           "control": null
         },
         {
@@ -163,6 +165,7 @@
           "status": "not_checked",
           "reported": null,
           "variables": null,
+          "network_map": null,
           "control": null
         }
       ],

@@ -160,7 +160,7 @@
       "watch": {
         "mode": "at",
         "from_ms": 200,
-        "until_ms": null,
+        "to_ms": null,
         "conditions": [
           {
             "variable": "Body.level",
@@ -198,7 +198,7 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
-      "columns": ["t_ms", "value", "base"],
+      "columns": ["at_ms", "value", "base"],
       "points": [
         [0, 50, 50],
         [10, 52, 50],
@@ -254,7 +254,7 @@
       "variable": "Body.ratio",
       "source": "written",
       "encoding": "all",
-      "columns": ["t_ms", "value", "base"],
+      "columns": ["at_ms", "value", "base"],
       "points": [
         [30, 0.5348311458534407, 0.5],
         [40, 0.4504525469722368, 0.5],

@@ -894,7 +894,7 @@ TEST_CASE(the_json_report)
                "          {\n"
                "            \"name\": \"Brake\",\n"
                "            \"counted\": false,\n"
-               "            \"not_counted\": \"no-control-link\",\n"
+               "            \"not_counted\": \"no_control_link\",\n"
                "            \"virtual_time\": null,\n"
                "            \"at_ms\": null,\n"
                "            \"frames_sent\": null,\n"
@@ -959,7 +959,7 @@ TEST_CASE(the_json_report)
                    traffic_not_counted_name(TrafficNotCounted::NoCounters) + "," +
                    traffic_not_counted_name(TrafficNotCounted::Mapped) + "," +
                    traffic_not_counted_name(TrafficNotCounted::NoSample),
-               ",no-control-link,restarted,real-time,no-counters,mapped,no-sample");
+               ",no_control_link,restarted,real_time,no_counters,mapped,no_sample");
     // What a machine reads of a network: true, false, and "cannot be said".
     RunOutcome heard = passed_run();
     const auto counted = [](const char* name, std::int64_t sent, std::int64_t received) {
@@ -987,11 +987,11 @@ TEST_CASE(the_json_report)
         return indent + "{\n" + indent + "  \"participant\": \"" + name + "\",\n" + indent + "  \"reason\": \"" + reason +
                "\"\n" + indent + "}";
     };
-    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no-control-link") + ",\n" +
-                        entry("      ", "Tool", "no-counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
+    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no_control_link") + ",\n" +
+                        entry("      ", "Tool", "no_counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
     CHECK(unplaced.find("        \"delivered\": null,\n        \"unplaced\": [\n" +
-                        entry("          ", "Bridge", "no-control-link") + ",\n" + entry("          ", "Tool", "no-counters") +
-                        ",\n" + entry("          ", "Gateway", "no-counters") + "\n        ],\n        \"participants\": []\n") !=
+                        entry("          ", "Bridge", "no_control_link") + ",\n" + entry("          ", "Tool", "no_counters") +
+                        ",\n" + entry("          ", "Gateway", "no_counters") + "\n        ],\n        \"participants\": []\n") !=
           std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));

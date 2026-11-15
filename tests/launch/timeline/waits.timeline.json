@@ -85,7 +85,7 @@
       "watch": {
         "mode": "once",
         "from_ms": 0,
-        "until_ms": 200,
+        "to_ms": 200,
         "conditions": [
           {
             "variable": "Body.body.speed",
@@ -130,7 +130,7 @@
       "watch": {
         "mode": "once",
         "from_ms": 80,
-        "until_ms": 580,
+        "to_ms": 580,
         "conditions": [
           {
             "variable": "Body.body.speed",
@@ -170,7 +170,7 @@
       "watch": {
         "mode": "always",
         "from_ms": 110,
-        "until_ms": 140,
+        "to_ms": 140,
         "conditions": [
           {
             "variable": "Body.body.speed",

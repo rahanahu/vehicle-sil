@@ -72,7 +72,7 @@
       "watch": {
         "mode": "during",
         "from_ms": 50,
-        "until_ms": 250,
+        "to_ms": 250,
         "conditions": [
           {
             "variable": "Body.body.speed",
@@ -123,7 +123,7 @@
       "watch": {
         "mode": "at",
         "from_ms": null,
-        "until_ms": null,
+        "to_ms": null,
         "conditions": [
           {
             "variable": "Body.level",

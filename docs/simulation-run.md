@@ -476,7 +476,7 @@ The network traffic counts (the `traffic:` line and table of the human-readable 
 - A run that ended by a stop request, `--timeout-ms`, a participant's failure or a participant that stopped the simulation (the virtual time at which it ended, `sim_ms`, differs, and so do the counts).
 - A network on which a participant that does not run in virtual time (a real-time `Peer`, a bridge) sends frames (the receivers' counts differ).
 - A participant that joined later (`manual`, `required: false`), or one that was started again (whether it is counted, and why not, differ).
-- A short run with a `describe: false` participant (`run` does not wait for the connection to that participant's variables, so if it connects late, the participant is `no-sample` or `no-control-link`).
+- A short run with a `describe: false` participant (`run` does not wait for the connection to that participant's variables, so if it connects late, the participant is `no_sample` or `no_control_link`).
 
 Line endings are LF on every OS. When writing to the Windows console, both `check` and `run` show the text as UTF-8 characters, whatever the console code page.
 
@@ -587,19 +587,19 @@ When the simulation started, the result shows after the participant table whethe
 
 | Shown at the right | `not_counted` in the JSON | Meaning |
 |---|---|---|
-| `not counted: no control link` | `"no-control-link"` | Its connection to ECU variables did not connect (`--no-control`, or an executable without one) |
+| `not counted: no control link` | `"no_control_link"` | Its connection to ECU variables did not connect (`--no-control`, or an executable without one) |
 | `not counted: restarted` | `"restarted"` | A process with the same name was started again (its counts start again from 0) |
-| `not counted: real time` | `"real-time"` | It does not run in virtual time (the times of its values are not the simulation's). This includes a participant that reports virtual time but whose values ran more than 64 controller time steps ahead |
-| `not counted: no J1939 counters` | `"no-counters"` | It has no counters for that network (it uses the network as raw CAN, LIN or Ethernet) |
+| `not counted: real time` | `"real_time"` | It does not run in virtual time (the times of its values are not the simulation's). This includes a participant that reports virtual time but whose values ran more than 64 controller time steps ahead |
+| `not counted: no J1939 counters` | `"no_counters"` | It has no counters for that network (it uses the network as raw CAN, LIN or Ethernet) |
 | `not counted: counters mapped by variables` | `"mapped"` | The configuration's `variables` maps one of its counters (its values differ from the executable's) |
-| `not counted: no sample before the end` | `"no-sample"` | No value of a step before the end arrived |
+| `not counted: no sample before the end` | `"no_sample"` | No value of a step before the end arrived |
 
 - An unplaced participant has `-` as its counts and one of two reasons at the right of its row:
 
 | Shown at the right | `reason` in the JSON | Meaning |
 |---|---|---|
-| `unplaced: no control link` | `"no-control-link"` | No connection to its ECU variables had connected when the run ended. Either it has none (a logger, a bridge, another tool, `--no-control`), which is the same in every run, or its connection came too late in this run (`run` does not wait for the connection of a `describe: false` participant). The launcher cannot tell these apart. If the participant has a connection, a longer run places it |
-| `unplaced: no J1939 counters` | `"no-counters"` | Its connection to ECU variables has no counters for the network (in the row with `-` as the network: for any network of the configuration file). This is the same in every run of the configuration |
+| `unplaced: no control link` | `"no_control_link"` | No connection to its ECU variables had connected when the run ended. Either it has none (a logger, a bridge, another tool, `--no-control`), which is the same in every run, or its connection came too late in this run (`run` does not wait for the connection of a `describe: false` participant). The launcher cannot tell these apart. If the participant has a connection, a longer run places it |
+| `unplaced: no J1939 counters` | `"no_counters"` | Its connection to ECU variables has no counters for the network (in the row with `-` as the network: for any network of the configuration file). This is the same in every run of the configuration |
 
 ### Run findings (`code`)
 
@@ -720,7 +720,7 @@ Values of `simulation`:
 | `"interrupted"` | Stopped by a stop request (Ctrl+C and similar) |
 | `"not_started"` | Did not start |
 
-In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
+In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments, and `null` without it (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
 
 Keys of `participants[]`:
 
@@ -790,7 +790,7 @@ Keys of `traffic`:
 | Key | Value |
 |---|---|
 | `before_ms` | The virtual time at which the run ended (`timing.sim_ms`). The counts are from steps that started before it |
-| `unplaced[]` | The participants of the run that the launcher knows on no network (see "[Network traffic](#network-traffic-traffic)"), in configuration file order: `participant` (its name), `reason` (`"no-control-link"` or `"no-counters"`; the table of reasons is in the same section). `[]` if there are none. Each of them is also in `unplaced` of every network |
+| `unplaced[]` | The participants of the run that the launcher knows on no network (see "[Network traffic](#network-traffic-traffic)"), in configuration file order: `participant` (its name), `reason` (`"no_control_link"` or `"no_counters"`; the table of reasons is in the same section). `[]` if there are none. Each of them is also in `unplaced` of every network |
 | `networks[]` | Every network of the configuration file, in its order: `name` (the simulation's name), `kind`, `counted` (the number of counted participants), `senders` (how many of them sent one frame or more), `receivers` (how many of them received one or more), `delivered` and `unplaced` (see below) |
 | `networks[].delivered` | Whether sent frames arrived. `true`: a counted participant sent, and another counted participant received. `false`: a counted participant sent, no counted participant received, every participant known to be on the network was counted, and the network's `unplaced` is empty. `null`: unknown (no counted participant, nobody sent, the only sender is the only receiver (it received the frames of a participant that the launcher does not count), or no counted participant received while a participant that was not counted is on the network or the network's `unplaced` is not empty) |
 | `networks[].unplaced[]` | The participants of the run that may be on this network without the launcher knowing (`describe: false`, and no counters for this network), in configuration file order: `participant`, `reason` (as in `unplaced` above). `[]` if there are none. A participant that its counters place on another network is listed here and not in the `unplaced` of `traffic` |
@@ -984,6 +984,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
             "builtin": false
           }
         ],
+        "network_map": null,
         "control": {
           "transport": "silkit",
           "wire_version": 1
@@ -1060,6 +1061,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
             "builtin": false
           }
         ],
+        "network_map": null,
         "control": {
           "transport": "silkit",
           "wire_version": 1
@@ -1092,7 +1094,7 @@ With `--timeline <file>`, `run --scenario` writes the values that the scenario w
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event with `--events`). In the result of `run --json` and `--events`, `scenario.timeline` holds the file name (as given in the arguments). **Without `--timeline`, nothing in the output of a run changes.**
+- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event with `--events`). In the result of `run --json` and `--events`, `scenario.timeline` holds the file name (as given in the arguments), and `null` without `--timeline`. **Without `--timeline`, nothing else in the output of a run changes.**
 - The file is opened before anything is started (missing directories are created). If it cannot be opened, the run ends with the error `setup` (exit code 3) and starts nothing. If the file cannot be written after the run (a full disk, for example), the error is `timeline-write`. The scenario result (`scenario.status`) does not change, but the finding is an error, so the run fails even when the scenario passed (exit code 1).
 - If points were dropped at the limits, the `timeline:` line adds the number of dropped points, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
 - The file is written whether the scenario passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
@@ -1133,15 +1135,15 @@ The `lines` of a step is an array of the positions (from 0) in the top-level `li
 
 The `watch` of a step is the condition that the step checks (`null` for a step without a condition).
 
-| `mode` | Step | What it looks at | `until_ms` |
+| `mode` | Step | What it looks at | `to_ms` |
 |---|---|---|---|
 | `at` | `expect` at one point in time | The value at `from_ms` | `null` |
-| `always` | `expect` with `hold_for_ms` | The value at `from_ms` and every sample up to `until_ms` | The step's time + `hold_for_ms` |
+| `always` | `expect` with `hold_for_ms` | The value at `from_ms` and every sample up to `to_ms` | The step's time + `hold_for_ms` |
 | `once` | `expect` with `within_ms`, `wait_until` | The value at `from_ms` and the samples after it. The time at which the condition held is the step's `at_ms` | The wait limit |
-| `during` | `expect` beside `ramp` and `wave` | Only the samples with times from `from_ms` to `until_ms` | The ECU step in which the final value enters the ECU (it can be after the step's `end_ms`; see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
+| `during` | `expect` beside `ramp` and `wave` | Only the samples with times from `from_ms` to `to_ms` | The ECU step in which the final value enters the ECU (it can be after the step's `end_ms`; see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
 
 - `watch.conditions[]` has one entry per variable: `variable` and `compare[]` (`op` is `eq`, `ne`, `ge`, `le`, `gt`, `lt` or `near`; `value`; `tolerance` for `near`).
-- For a step that the scenario never reached (`not_run`), `from_ms` and `until_ms` are `null`.
+- For a step that the scenario never reached (`not_run`), `from_ms` and `to_ms` are `null`.
 
 The `failed` of a failed step holds what failed, as numbers (`null` for other steps; the text for people is in `message`).
 
@@ -1226,14 +1228,14 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 | `written` | Every write that the scenario sent. A point is `[time, value]`, where the time is when the write takes effect. **These are the values sent; they did not necessarily reach the ECU** (see `not_applied_from` below) | `all` |
 | `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points |
 
-- **The `written` series of an input on which the scenario places a `dither` has 3 columns**, and the series has `"columns": ["t_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). The points of a series without `columns` are `[time, value]`. A reader takes the columns by the names in `columns`.
+- **The `written` series of an input on which the scenario places a `dither` has 3 columns**, and the series has `"columns": ["at_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). The points of a series without `columns` are `[time, value]`. A reader takes the columns by the names in `columns`.
 
   ```json
   {
     "variable": "Engine.engine.throttle",
     "source": "written",
     "encoding": "all",
-    "columns": ["t_ms", "value", "base"],
+    "columns": ["at_ms", "value", "base"],
     "points": [
       [0, 50, 50],
       [10, 52, 50],
@@ -1532,7 +1534,7 @@ Keys of `runs[]`:
 | `reason` | The right column of the table (`null` if empty) |
 | `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
 
-`formats` and `features` of `version --json` have no entries for `test`.
+`formats` of `version --json` has the version of this JSON as `test`; `features` has no entry for `test`.
 
 ## See also
 

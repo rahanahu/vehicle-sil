@@ -85,7 +85,7 @@
       "watch": {
         "mode": "once",
         "from_ms": 0,
-        "until_ms": 100,
+        "to_ms": 100,
         "conditions": [
           {
             "variable": "Body.body.speed",

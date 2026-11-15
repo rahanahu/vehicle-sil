@@ -323,7 +323,7 @@ void variants(const Options& o)
             "the scenario that is not for the variant:\n" + lf(other.standard_output));
     const Captured mine = launch(o, {"check", "sim.yaml", "--variant", "medium", "--scenario", "only.yaml", "--json"}, dir);
     expect_code(mine, 0, "check a scenario that is only for this variant");
-    require(contains(lf(mine.standard_output), "\"steps\": 1,\n    \"only\": [\n      \"medium\"\n    ]\n"),
+    require(contains(lf(mine.standard_output), "\"steps\": 1,\n    \"only\": [\n      \"medium\"\n    ],\n"),
             "the check's JSON has only:\n" + lf(mine.standard_output));
     log("CHECK --param's errors, a variant's command, and only -> ok");
 

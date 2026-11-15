@@ -405,7 +405,7 @@ void scenario_dither(const Options& o)
                            "      \"step\": null,\n      \"from_ms\": 0,\n      \"to_ms\": null,\n      \"base\": null,\n"
                            "      \"base_source\": null,\n      \"shape\": {\n        \"type\": \"triangle\",\n        \"amplitude\": 2,\n"
                            "        \"period_ms\": 80\n      },\n") &&
-                contains(file, "      \"columns\": [\"t_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50],\n"
+                contains(file, "      \"columns\": [\"at_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50],\n"
                                "        [10, 51, 50],\n        [20, 52, 50],\n") &&
                 contains(file, "      \"shape\": null,\n      \"text\": \"Engine.engine.throttle none\"\n"),
             "the timeline of the example with a dither:\n" + file);
@@ -460,8 +460,8 @@ void scenario_dither(const Options& o)
                                         "<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->") +
                          "\n"),
             "the lines in the output of run --scenario scenarios/throttle_dither.yaml:\n" + lf(ran.standard_output));
-    // A scenario without a dither has none of it: not in the check, not in the run's result, not
-    // in its events, and no list in the output for people (whose text the test "scenario"
+    // A scenario without a dither has none of it: empty lists in the check, in the run's result
+    // and in its events, and no list in the output for people (whose text the test "scenario"
     // compares with docs/scenario.md).
     const std::vector<std::vector<std::string>> without = {
         {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"},
@@ -477,6 +477,12 @@ void scenario_dither(const Options& o)
         // (Keys that only the lists have: other parts of the result have "inputs" and "timing" of their own.)
         require(!contains(out, "\"after_line\"") && !contains(out, "\"dither\"") && !contains(out, "first_write") && !contains(out, "\ninput "),
                 "a scenario without a dither has no inputs and no lines (" + args[0] + " " + args[1] + "):\n" + out);
+        const bool json = args[1] == "--json";
+        const bool events = args[1] == "--events";
+        require(!json || contains(out, "\n    \"inputs\": [],\n    \"lines\": []"),
+                "the lists are there, empty (" + args[0] + " " + args[1] + "):\n" + out);
+        require(!events || contains(out, "\"inputs\":[],\"lines\":[]"),
+                "the lists are in the events, empty:\n" + out);
     }
 }
 

@@ -85,7 +85,7 @@ struct ScenarioRun
     std::optional<SimTime> over_at{};
     /// Scenario::has_dither, and then what the scenario's "inputs" declare
     /// (scenario_inputs_text()) and Scenario::lines: what the text puts on the inputs, known
-    /// before the run. The outputs have them only then.
+    /// before the run. Empty without a dither.
     bool has_dither = false;
     std::vector<ScenarioLineText> inputs{};
     std::vector<ScenarioLineText> lines{};

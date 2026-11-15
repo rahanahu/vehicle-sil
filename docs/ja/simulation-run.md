@@ -476,7 +476,7 @@ participant は UTF-8 で書いてください。Windows のコンソールに�
 - 止める要求、`--timeout-ms`、participant の失敗、participant が止めたことで終わった実行（終わった仮想時刻 `sim_ms` が違うので、数も違います）。
 - 仮想時間で動かない participant（実時間の `Peer`、ブリッジ）がフレームを出すネットワーク（受けた側の数が違います）。
 - 後から参加した participant（`manual`、`required: false`）と、起動し直した participant（数えるかどうかと理由が違います）。
-- `describe: false` の participant がいる短い実行（その participant の変数の接続がつながるのを `run` は待たないので、つながるのが遅れると `no-sample` か `no-control-link` になります）。
+- `describe: false` の participant がいる短い実行（その participant の変数の接続がつながるのを `run` は待たないので、つながるのが遅れると `no_sample` か `no_control_link` になります）。
 
 改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
 
@@ -587,19 +587,19 @@ passed: 0 errors, 1 warning, 1 note
 
 | 行の右の表示 | JSON の `not_counted` | 意味 |
 |---|---|---|
-| `not counted: no control link` | `"no-control-link"` | 変数の接続がつながらなかった（`--no-control`、変数の接続のない実行ファイル） |
+| `not counted: no control link` | `"no_control_link"` | 変数の接続がつながらなかった（`--no-control`、変数の接続のない実行ファイル） |
 | `not counted: restarted` | `"restarted"` | 同じ名前のプロセスが起動し直された（数が 0 からやり直しになるため） |
-| `not counted: real time` | `"real-time"` | 仮想時間で動いていない（値の時刻がシミュレーションの時刻と別のため。仮想時間で動くと申告していても、値の時刻が controller のタイムステップで 64 個より先に進んだものを含みます） |
-| `not counted: no J1939 counters` | `"no-counters"` | そのネットワークの数を持たない（生の CAN、LIN、イーサネットとして使っている） |
+| `not counted: real time` | `"real_time"` | 仮想時間で動いていない（値の時刻がシミュレーションの時刻と別のため。仮想時間で動くと申告していても、値の時刻が controller のタイムステップで 64 個より先に進んだものを含みます） |
+| `not counted: no J1939 counters` | `"no_counters"` | そのネットワークの数を持たない（生の CAN、LIN、イーサネットとして使っている） |
 | `not counted: counters mapped by variables` | `"mapped"` | 設定の `variables` が、その数の出力に対応を当てている（値が実行ファイルのものと違うため） |
-| `not counted: no sample before the end` | `"no-sample"` | 終わりより前のステップの値が 1 つも届かなかった |
+| `not counted: no sample before the end` | `"no_sample"` | 終わりより前のステップの値が 1 つも届かなかった |
 
 - 居場所がわからない participant は、数が `-` で、行の右に 2 つの理由のどちらかがあります。
 
 | 行の右の表示 | JSON の `reason` | 意味 |
 |---|---|---|
-| `unplaced: no control link` | `"no-control-link"` | 実行が終わるまでに、変数の接続がつながらなかった。変数の接続を持たない（ロガー、ブリッジ、ほかのツール、`--no-control`。どの実行でも同じ）か、今回の実行では接続が間に合わなかった（`run` は、`describe: false` の participant の接続を待ちません）かのどちらかです。ランチャーには、この 2 つを区別できません。変数の接続を持つ participant なら、実行を長くすれば居場所がわかります |
-| `unplaced: no J1939 counters` | `"no-counters"` | 変数の接続が、そのネットワークの数を持たない（ネットワークが `-` の行では、設定ファイルのどのネットワークの数も持たない）。その構成では、どの実行でも同じです |
+| `unplaced: no control link` | `"no_control_link"` | 実行が終わるまでに、変数の接続がつながらなかった。変数の接続を持たない（ロガー、ブリッジ、ほかのツール、`--no-control`。どの実行でも同じ）か、今回の実行では接続が間に合わなかった（`run` は、`describe: false` の participant の接続を待ちません）かのどちらかです。ランチャーには、この 2 つを区別できません。変数の接続を持つ participant なら、実行を長くすれば居場所がわかります |
+| `unplaced: no J1939 counters` | `"no_counters"` | 変数の接続が、そのネットワークの数を持たない（ネットワークが `-` の行では、設定ファイルのどのネットワークの数も持たない）。その構成では、どの実行でも同じです |
 
 ### 実行の指摘（`code`）
 
@@ -720,7 +720,7 @@ passed: 0 errors, 1 warning, 1 note
 | `"interrupted"` | 止める要求（Ctrl+C など）で止めた |
 | `"not_started"` | 始まらなかった |
 
-`--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。
+`--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります。付けなければ `null` です（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。
 
 `participants[]` のキー:
 
@@ -790,7 +790,7 @@ passed: 0 errors, 1 warning, 1 note
 | キー | 値 |
 |---|---|
 | `before_ms` | 実行が終わった仮想時刻（`timing.sim_ms`）。数は、これより前に始まったステップのものです |
-| `unplaced[]` | 実行にいて、ランチャーがどのネットワークにいるかを 1 つも知らない participant（「[ネットワークの送受信](#ネットワークの送受信traffic)」）。設定ファイルの順。`participant`（名前）、`reason`（`"no-control-link"` か `"no-counters"`。理由の表は同じ節）。いなければ `[]`。ここにいる participant は、どのネットワークの `unplaced` にもいます |
+| `unplaced[]` | 実行にいて、ランチャーがどのネットワークにいるかを 1 つも知らない participant（「[ネットワークの送受信](#ネットワークの送受信traffic)」）。設定ファイルの順。`participant`（名前）、`reason`（`"no_control_link"` か `"no_counters"`。理由の表は同じ節）。いなければ `[]`。ここにいる participant は、どのネットワークの `unplaced` にもいます |
 | `networks[]` | 設定ファイルのネットワークの全部（その順）。`name`（シミュレーションでの名前）、`kind`、`counted`（数えた participant の数）、`senders`（そのうち 1 つ以上送ったものの数）、`receivers`（そのうち 1 つ以上受けたものの数）、`delivered` と `unplaced`（下） |
 | `networks[].delivered` | 送ったフレームが届いたか。`true`: 数えた participant が送り、数えた別の participant が受けた。`false`: 数えた participant が送ったのに、数えた participant が誰も受けていない（そのネットワークにいるとわかっている participant は全部数えていて、そのネットワークの `unplaced` が空）。`null`: わからない（数えた participant がいない、誰も送っていない、ただ 1 つの送り手がただ 1 つの受け手（ランチャーが数えない participant のフレームを受けた）、または、数えた participant が誰も受けていないが、数えなかった participant がそのネットワークにいるか、そのネットワークの `unplaced` が空でない） |
 | `networks[].unplaced[]` | 実行にいて、ランチャーが知らないまま、このネットワークにいるかもしれない participant（`describe: false` で、このネットワークの数を持たないもの）。設定ファイルの順。`participant`、`reason`（上の `unplaced` と同じ）。いなければ `[]`。数でほかのネットワークにいるとわかった participant は、ここには載り、`traffic` の `unplaced` には載りません |
@@ -984,6 +984,7 @@ passed: 0 errors, 1 warning, 1 note
             "builtin": false
           }
         ],
+        "network_map": null,
         "control": {
           "transport": "silkit",
           "wire_version": 1
@@ -1060,6 +1061,7 @@ passed: 0 errors, 1 warning, 1 note
             "builtin": false
           }
         ],
+        "network_map": null,
         "control": {
           "transport": "silkit",
           "wire_version": 1
@@ -1092,7 +1094,7 @@ passed: 0 errors, 1 warning, 1 note
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`--events` では `log` のイベント）。`run --json` と `--events` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入ります。**`--timeline` を付けない実行の出力は、何も変わりません。**
+- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`--events` では `log` のイベント）。`run --json` と `--events` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入り、`--timeline` がなければ `null` です。**`--timeline` を付けない実行の出力は、ほかに何も変わりません。**
 - ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければエラー `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、エラー `timeline-write` です。シナリオの結果（`scenario.status`）は変わりませんが、エラーの指摘なので、シナリオが通っていても実行は失敗です（終了コード 1）。
 - 上限で点を捨てたときは、`timeline:` の行に捨てた点の数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
 - シナリオが通っても、失敗しても、途中で終わっても書きます。照合のエラーで何も起動しなかったときは書きません。
@@ -1133,15 +1135,15 @@ vehicle-sil のリポジトリの `gui/timeline/timeline.html` は、時間の�
 
 手順の `watch` は、その手順が見る条件です（条件のない手順では `null`）。
 
-| `mode` | 手順 | 見るもの | `until_ms` |
+| `mode` | 手順 | 見るもの | `to_ms` |
 |---|---|---|---|
 | `at` | その時点の `expect` | `from_ms` の時刻の値 | `null` |
-| `always` | `hold_for_ms` つきの `expect` | `from_ms` の値と、`until_ms` までの全部のサンプル | 手順の時刻 + `hold_for_ms` |
+| `always` | `hold_for_ms` つきの `expect` | `from_ms` の値と、`to_ms` までの全部のサンプル | 手順の時刻 + `hold_for_ms` |
 | `once` | `within_ms` つきの `expect`、`wait_until` | `from_ms` の値と、その後のサンプル。成り立った時刻は手順の `at_ms` | 待つ上限 |
-| `during` | `ramp` と `wave` の横の `expect` | 時刻が `from_ms` から `until_ms` までのサンプルだけ | 終わりの値が ECU に入るステップ（手順の `end_ms` より後のことがある。[scenario.md](scenario.md) の「動かしている間ずっと確認する」） |
+| `during` | `ramp` と `wave` の横の `expect` | 時刻が `from_ms` から `to_ms` までのサンプルだけ | 終わりの値が ECU に入るステップ（手順の `end_ms` より後のことがある。[scenario.md](scenario.md) の「動かしている間ずっと確認する」） |
 
 - `watch.conditions[]` は変数ごとで、`variable` と `compare[]`（`op` は `eq`、`ne`、`ge`、`le`、`gt`、`lt`、`near`。`value`。`near` には `tolerance`）です。
-- シナリオが届かなかった手順（`not_run`）の `from_ms` と `until_ms` は `null` です。
+- シナリオが届かなかった手順（`not_run`）の `from_ms` と `to_ms` は `null` です。
 
 失敗した手順の `failed` は、失敗の中身を数で持ちます（ほかの手順では `null`。人向けの文は `message`）。
 
@@ -1226,14 +1228,14 @@ vehicle-sil のリポジトリの `gui/timeline/timeline.html` は、時間の�
 | `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻。**送った値で、ECU に入ったとは限りません**（下の `not_applied_from`） | `all` |
 | `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ |
 
-- **シナリオが `dither` を置く入力の `written` の系列は 3 列**で、系列に `"columns": ["t_ms", "value", "base"]` があります。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。3 列になるのは、シナリオの文面がその入力に揺れを置くとき（`inputs` の宣言か、その機種で実行する、波形を書いた手順 `dither`）で、揺れを置く前の点も、外した後の点も、全部の点が 3 列です。実行がその手順まで進んだかどうかにはよりません（列の数は controller のタイムステップで変わりません）。`columns` のない系列の点は `[時刻, 値]` です。読む側は、`columns` の名前で列を取ります。
+- **シナリオが `dither` を置く入力の `written` の系列は 3 列**で、系列に `"columns": ["at_ms", "value", "base"]` があります。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。3 列になるのは、シナリオの文面がその入力に揺れを置くとき（`inputs` の宣言か、その機種で実行する、波形を書いた手順 `dither`）で、揺れを置く前の点も、外した後の点も、全部の点が 3 列です。実行がその手順まで進んだかどうかにはよりません（列の数は controller のタイムステップで変わりません）。`columns` のない系列の点は `[時刻, 値]` です。読む側は、`columns` の名前で列を取ります。
 
   ```json
   {
     "variable": "Engine.engine.throttle",
     "source": "written",
     "encoding": "all",
-    "columns": ["t_ms", "value", "base"],
+    "columns": ["at_ms", "value", "base"],
     "points": [
       [0, 50, 50],
       [10, 52, 50],
@@ -1532,7 +1534,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `reason` | 表の右の列（なければ `null`） |
 | `run` | その組の `run --json` と同じオブジェクト（`skipped` と `not_run` では `null`） |
 
-`version --json` の `formats` と `features` には、`test` の項目はありません。
+`version --json` の `formats` の `test` が、この JSON のバージョンです。`features` には `test` の項目はありません。
 
 ## 関連するドキュメント
 

@@ -939,7 +939,7 @@ class TimelineSchema(unittest.TestCase):
             # A dither: a line of no step and without an end, and the columns of its input's points.
             "a line of no step that has no end": lambda d: d["lines"][0].update(kind="dither", step=None, to_ms=None, base=None,
                                                                               base_source=None),
-            "the columns of a series": lambda d: d["series"][0].update(columns=["t_ms", "value", "base"]),
+            "the columns of a series": lambda d: d["series"][0].update(columns=["at_ms", "value", "base"]),
             # Writes that failed without one of them known as the reason, and whether one was applied not known.
             "the writes of a failed step": lambda d: failed_step(d)["failed"].update(
                 write=None, writes=[{"variable": "Body.ratio", "at_ms": 20, "value": 0.6, "point": 2, "applied": None},
@@ -990,7 +990,7 @@ class TimelineOfARun(unittest.TestCase):
         self.assertEqual([(line["step"], line["to_ms"], line["shape"] is None) for line in dithers],
                          [(None, None, False), (6, None, True)])
         throttle = next(s for s in data["series"] if s["source"] == "written")
-        self.assertEqual(throttle["columns"], ["t_ms", "value", "base"])
+        self.assertEqual(throttle["columns"], ["at_ms", "value", "base"])
         self.assertTrue(all(len(point) == 3 for point in throttle["points"]))
 
 

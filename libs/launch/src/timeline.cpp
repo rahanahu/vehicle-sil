@@ -186,7 +186,7 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
     // The times of a step that has its time; a step the scenario did not get to has none.
     const bool timed = watch && run.start;
     write_ms(w, "from_ms", timed ? std::optional<SimTime>(watch->from) : std::nullopt);
-    write_ms(w, "until_ms", timed ? watch->until : std::nullopt);
+    write_ms(w, "to_ms", timed ? watch->until : std::nullopt);
     w.begin_array("conditions");
     for (const ScenarioCondition& condition : step.conditions)
     {
@@ -295,7 +295,7 @@ void write_series(JsonWriter& w, const TimelineInput& input)
             {
                 // A dither was on the input: every point with what it was made of.
                 w.begin_array_on_one_line("columns");
-                w.string({}, "t_ms");
+                w.string({}, "at_ms");
                 w.string({}, "value");
                 w.string({}, "base");
                 w.end_array();

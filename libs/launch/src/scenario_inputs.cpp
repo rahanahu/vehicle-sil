@@ -205,8 +205,8 @@ void Reader::check_dithers()
         // Among the findings of the steps, which are in the order of the file.
         std::stable_sort(findings_.begin(), findings_.end(), [](const Finding& x, const Finding& y) { return x.line < y.line; });
     }
-    // The list of the lines is for a scenario with a dither: another one's outputs are as
-    // they were. It has the inputs that a dither is ever put on or taken off: what is under
+    // The list of the lines is for a scenario with a dither: another one's output for people is
+    // as it was, and its JSON has the lists empty. It has the inputs that a dither is ever put on or taken off: what is under
     // the dithers, not every write of the scenario.
     std::set<std::size_t> listed;
     for (const Dither& dither : dithers_)

@@ -15,12 +15,12 @@ const char* traffic_not_counted_name(TrafficNotCounted why)
     switch (why)
     {
     case TrafficNotCounted::None: return "";
-    case TrafficNotCounted::NoControlLink: return "no-control-link";
+    case TrafficNotCounted::NoControlLink: return "no_control_link";
     case TrafficNotCounted::Restarted: return "restarted";
-    case TrafficNotCounted::RealTime: return "real-time";
-    case TrafficNotCounted::NoCounters: return "no-counters";
+    case TrafficNotCounted::RealTime: return "real_time";
+    case TrafficNotCounted::NoCounters: return "no_counters";
     case TrafficNotCounted::Mapped: return "mapped";
-    case TrafficNotCounted::NoSample: return "no-sample";
+    case TrafficNotCounted::NoSample: return "no_sample";
     }
     return "";
 }
@@ -29,8 +29,8 @@ const char* traffic_unplaced_reason_name(TrafficUnplacedReason why)
 {
     switch (why)
     {
-    case TrafficUnplacedReason::NoControlLink: return "no-control-link";
-    case TrafficUnplacedReason::NoCounters: return "no-counters";
+    case TrafficUnplacedReason::NoControlLink: return "no_control_link";
+    case TrafficUnplacedReason::NoCounters: return "no_counters";
     }
     return "";
 }

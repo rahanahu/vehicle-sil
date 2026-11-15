@@ -1214,6 +1214,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
           "builtin": false
         }
       ],
+      "network_map": null,
       "control": null
     },
     {
@@ -1258,6 +1259,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
         ]
       },
       "variables": [],
+      "network_map": null,
       "control": null
     },
     {
@@ -1275,6 +1277,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "status": "failed",
       "reported": null,
       "variables": null,
+      "network_map": null,
       "control": null
     }
   ],
@@ -1333,7 +1336,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
 )");
     // A description without "variables" (an older ECU): not known.
     r.participants[1].ecu->variables_reported = false;
-    CHECK(format_json(r).find("\n        ]\n      },\n      \"variables\": null,\n      \"control\": null\n    },\n    {\n      \"name\": \"Cluster") !=
+    CHECK(format_json(r).find("\n        ]\n      },\n      \"variables\": null,\n      \"network_map\": null,\n      \"control\": null\n    },\n    {\n      \"name\": \"Cluster") !=
           std::string::npos);
 }
 
@@ -1639,6 +1642,7 @@ TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_
           "map": null
         }
       ],
+      "network_map": null,
 )");
     // An entry without variables has no "variable_map" (the key says that the entry has a map).
     r.config->participants[0].variables.clear();
@@ -1719,7 +1723,7 @@ TEST_CASE(the_reports_show_a_disabled_participant)
                     "      \"role\": \"ecu\",\n      \"step_ms\": 10,\n      \"status\": \"described\",\n") != std::string::npos);
     CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n"
                     "      \"role\": \"ecu\",\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n"
-                    "      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") != std::string::npos);
+                    "      \"reported\": null,\n      \"variables\": null,\n      \"network_map\": null,\n      \"control\": null\n") != std::string::npos);
     CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
 }
 
@@ -2113,7 +2117,7 @@ TEST_CASE(the_reports_show_both_names_of_a_renamed_network)
                     "VehicleCAN  can   Engine, Dashboard\n"
                     "Body        lin   Engine\n") != std::string::npos);
     // For programs: "reported" is what the executable said, under its names; network_map has the
-    // lines as written (also the one that renames nothing), only for an entry that has some; the
+    // lines as written (also the one that renames nothing), null for an entry that has none; the
     // networks' participants are under the simulation's names.
     const std::string json = format_json(r);
     CHECK(json.find("        \"networks\": [\n"
@@ -2142,12 +2146,18 @@ TEST_CASE(the_reports_show_both_names_of_a_renamed_network)
                     "      ],\n") != std::string::npos);
     CHECK(json.find("      \"name\": \"VehicleCAN\",\n      \"kind\": \"can\",\n      \"line\": 3,\n      \"participants\": [\n"
                     "        \"Engine\",\n        \"Dashboard\"\n      ]") != std::string::npos);
-    // An entry without network_names has no such key: its JSON is what it was.
-    std::size_t count = 0;
-    for (auto at = json.find("\"network_map\""); at != std::string::npos; at = json.find("\"network_map\"", at + 1))
-    {
-        ++count;
-    }
-    CHECK_EQ(count, std::size_t{2});
-    CHECK(format_json(mixed_report()).find("network_map") == std::string::npos);
+    // An entry without network_names has the key, null: every participant has it.
+    const auto count = [](const std::string& in, const std::string& what) {
+        std::size_t n = 0;
+        for (auto at = in.find(what); at != std::string::npos; at = in.find(what, at + 1))
+        {
+            ++n;
+        }
+        return n;
+    };
+    CHECK_EQ(count(json, "\"network_map\": ["), std::size_t{2});
+    CHECK_EQ(count(json, "\"network_map\""), r.config->participants.size());
+    const std::string mixed = format_json(mixed_report());
+    CHECK(count(mixed, "\"network_map\": null") > 0);
+    CHECK_EQ(count(mixed, "\"network_map\": null"), count(mixed, "\"network_map\""));
 }

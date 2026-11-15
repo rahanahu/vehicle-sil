@@ -888,7 +888,7 @@ failed: 5 errors, 0 warnings, 0 notes
 - 合否の行には、確認しない横の `expect` があれば、末尾に `, <n> expect not checked` が付きます。
 - スキップした手順は、表の時刻が `-` で、実行中の行に ` at <時刻> ms` が付きません。
 
-`dither` のあるシナリオ（`inputs` があるか、実行する手順 `dither` がある）では、照合の部分に、入力に置くものの一覧が続きます（ほかのシナリオの出力は変わりません。`run` の出力でも、最初の照合の部分に出ます）。載るのは、`dither` を置くか外す入力だけです（揺れの下に何が来るかを見るための一覧で、ほかの入力の書き込みは載りません）。`inputs` の宣言、手順の順で、入力ごとに 1 行です。`from` と `to` は文面の時刻で、待つ手順の後ろは `?`、終わりのない `dither` の `to` は `-` です。宣言した揺れの `from` は `first write`（その入力への最初の書き込みから乗る。時刻は文面で決まらない）です。例は [examples/ecu_main/scenarios/throttle_dither.yaml](../../examples/ecu_main/scenarios/throttle_dither.yaml) の一覧です。
+`dither` のあるシナリオ（`inputs` があるか、実行する手順 `dither` がある）では、照合の部分に、入力に置くものの一覧が続きます（ほかのシナリオの人向けの出力は変わりません。`run` の出力でも、最初の照合の部分に出ます）。載るのは、`dither` を置くか外す入力だけです（揺れの下に何が来るかを見るための一覧で、ほかの入力の書き込みは載りません）。`inputs` の宣言、手順の順で、入力ごとに 1 行です。`from` と `to` は文面の時刻で、待つ手順の後ろは `?`、終わりのない `dither` の `to` は `-` です。宣言した揺れの `from` は `first write`（その入力への最初の書き込みから乗る。時刻は文面で決まらない）です。例は [examples/ecu_main/scenarios/throttle_dither.yaml](../../examples/ecu_main/scenarios/throttle_dither.yaml) の一覧です。
 
 <!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->
 ```text
@@ -911,11 +911,11 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from` |
 | `skipped_steps` | あるときだけ | スキップする手順の数 |
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
-| `inputs`、`lines` | `dither` のあるシナリオだけ | 次の表。`run --json` の `scenario` にも同じものがあります |
+| `inputs`、`lines` | いつも（`dither` のないシナリオでは空の配列。シナリオを読めなかったときは `null`） | 次の表。`run --json` の `scenario` にも同じものがあります |
 
 `params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line` のどれかです。
 
-`dither` のあるシナリオのキー:
+`dither` についてのキー:
 
 | キー | 意味 |
 |---|---|
@@ -934,7 +934,8 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `over_at_ms` | シナリオが終わった controller のステップです（`passed` と `failed`。ほかは null）。 |
 | `skipped_steps` | スキップした手順の数です（1 つ以上あるときだけ、このキーがあります）。 |
 | `unchecked_expects` | 確認しなかった、`ramp` と `wave` の横の `expect` の数です（1 つ以上あるときだけ、このキーがあります）。 |
-| `inputs[]`、`lines[]` | `dither` のあるシナリオでだけあります。`inputs` に宣言した揺れと、文面が入力に置くものの一覧です（上の `check --json` の表と同じ。実行の前にわかること）。 |
+| `inputs[]`、`lines[]` | `inputs` に宣言した揺れと、文面が入力に置くものの一覧です（上の `check --json` の表と同じ。実行の前にわかること）。`dither` のないシナリオでは空です。 |
+| `timeline` | `--timeline` のファイルの名前（引数のとおり）。`--timeline` がなければ `null` です。 |
 | `steps[]` | 手順ごとの結果です（次の表）。 |
 
 `unchecked_expects` に数えた手順は、動いたので `skipped_steps` には入りません。
@@ -1020,7 +1021,10 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
         "code": null,
         "message": null
       }
-    ]
+    ],
+    "inputs": [],
+    "lines": [],
+    "timeline": null
   }
 ```
 

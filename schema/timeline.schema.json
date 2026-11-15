@@ -245,7 +245,7 @@
           },
           "status": {
             "type": "string",
-            "description": "\"passed\", \"failed\", \"unfinished\", \"not_run\" or \"skipped\"."
+            "description": "\"passed\", \"failed\", \"unfinished\", \"not_run\" or \"skipped\". The points that a step whose status is \"passed\" wrote were applied by the ECU: a step that writes (set, ramp, wave, dither) passes only once the ECU has applied every write of it (a dither's writes after its first are no step's)."
           },
           "start_ms": {
             "type": [
@@ -303,13 +303,13 @@
             "required": [
               "mode",
               "from_ms",
-              "until_ms",
+              "to_ms",
               "conditions"
             ],
             "properties": {
               "mode": {
                 "type": "string",
-                "description": "\"at\": the values at from_ms (until_ms is null). \"always\": at from_ms and at every sample until until_ms (hold_for_ms). \"once\": at from_ms or at some sample until until_ms (within_ms, wait_until; when it became true is the step's at_ms). \"during\": at every sample of a time from from_ms to until_ms, and no value from before (the expect beside a ramp or a wave; until_ms is the ECU step that applies the end value, which may be later than the step's end_ms)."
+                "description": "\"at\": the values at from_ms (to_ms is null). \"always\": at from_ms and at every sample until to_ms (hold_for_ms). \"once\": at from_ms or at some sample until to_ms (within_ms, wait_until; when it became true is the step's at_ms). \"during\": at every sample of a time from from_ms to to_ms, and no value from before (the expect beside a ramp or a wave; to_ms is the ECU step that applies the end value, which may be later than the step's end_ms)."
               },
               "from_ms": {
                 "type": [
@@ -318,7 +318,7 @@
                 ],
                 "description": "Where the watch begins: the step's time. null if the scenario did not get to the step."
               },
-              "until_ms": {
+              "to_ms": {
                 "type": [
                   "number",
                   "null"
@@ -541,14 +541,14 @@
           },
           "columns": {
             "type": "array",
-            "description": "written, only for an input that the scenario puts a dither on (its inputs, or a dither step with a shape that runs in this configuration; whether the run got to it does not matter): what a point is, [\"t_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [t_ms, value]. A reader takes the columns it knows by name.",
+            "description": "written, only for an input that the scenario puts a dither on (its inputs, or a dither step with a shape that runs in this configuration; whether the run got to it does not matter): what a point is, [\"at_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [at_ms, value]. A reader takes the columns it knows by name.",
             "items": {
               "type": "string"
             }
           },
           "points": {
             "type": "array",
-            "description": "[t_ms, value], one per line of the file. t_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null. With columns, every point has what columns says.",
+            "description": "[at_ms, value], one per line of the file. at_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null. With columns, every point has what columns says.",
             "items": {
               "type": "array",
               "minItems": 2,

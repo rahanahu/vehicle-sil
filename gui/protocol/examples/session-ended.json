@@ -146,6 +146,7 @@
                 "builtin": false
               }
             ],
+            "network_map": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -243,6 +244,7 @@
                 "builtin": false
               }
             ],
+            "network_map": null,
             "control": {
               "transport": "silkit",
               "wire_version": 1
@@ -264,6 +266,7 @@
             "status": "not_checked",
             "reported": null,
             "variables": null,
+            "network_map": null,
             "control": null
           }
         ],
@@ -443,7 +446,7 @@
           "unplaced": [
             {
               "participant": "Logger",
-              "reason": "no-control-link"
+              "reason": "no_control_link"
             }
           ],
           "networks": [
@@ -457,7 +460,7 @@
               "unplaced": [
                 {
                   "participant": "Logger",
-                  "reason": "no-control-link"
+                  "reason": "no_control_link"
                 }
               ],
               "participants": [
@@ -590,6 +593,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -687,6 +691,7 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 1
@@ -708,6 +713,7 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
               "control": null
             }
           ],

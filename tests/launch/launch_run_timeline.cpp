@@ -46,7 +46,7 @@ void timeline(const Options& o)
             "the written values:\n" + file);
     require(contains(file, "      \"variable\": \"Body.level\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"),
             "the sampled values:\n" + file);
-    require(contains(file, "        \"mode\": \"during\",\n        \"from_ms\": 100,\n        \"until_ms\": 200,\n"),
+    require(contains(file, "        \"mode\": \"during\",\n        \"from_ms\": 100,\n        \"to_ms\": 200,\n"),
             "the watch beside the wave:\n" + file);
     // The lines of the inputs: the wave has its values itself, so no base.
     require(contains(file, "      \"variable\": \"Body.level\",\n      \"kind\": \"wave\",\n      \"line\": 5,\n      \"step\": 2,\n"
@@ -62,10 +62,11 @@ void timeline(const Options& o)
     require(!contains(lf(without.standard_error), "timeline"), "no word of a timeline without --timeline:\n" + lf(without.standard_error));
     const Captured json = launch(o, with({"--json", "--timeline", "second.json"}), dir);
     expect_code(json, 0, "run --json --timeline");
-    require(contains(lf(json.standard_output), "\n    ],\n    \"timeline\": \"second.json\"\n  }\n}\n"),
+    require(contains(lf(json.standard_output), "\n    \"lines\": [],\n    \"timeline\": \"second.json\"\n  }\n}\n"),
             "the result names the timeline, last in its scenario:\n" + lf(json.standard_output));
     const Captured jsonWithout = launch(o, with({"--json"}), dir);
-    require(!contains(lf(jsonWithout.standard_output), "\"timeline\""), "no timeline in the result without --timeline");
+    require(contains(lf(jsonWithout.standard_output), "\n    \"lines\": [],\n    \"timeline\": null\n  }\n}\n"),
+            "the timeline of the result is null without --timeline:\n" + lf(jsonWithout.standard_output));
     // The same run gives the same file: nothing of the wall clock is in it, also at a speed.
     expect_text(read_text(dir / "second.json"), file, "the timeline of a second run");
     expect_code(launch(o, with({"--speed", "4", "--timeline", "third.json"}), dir), 0, "run --speed 4 --timeline");

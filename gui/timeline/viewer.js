@@ -178,11 +178,11 @@
     let vi = 1;
     let bi = -1;
     if (Array.isArray(s.columns)) {
-      ti = s.columns.indexOf('t_ms');
+      ti = s.columns.indexOf('at_ms');
       vi = s.columns.indexOf('value');
       bi = s.columns.indexOf('base');
       if (ti < 0 || vi < 0) {
-        return { note: `${what} is not drawn: its "columns" have no "t_ms" or "value".` };
+        return { note: `${what} is not drawn: its "columns" have no "at_ms" or "value".` };
       }
     }
     const t = [];
@@ -258,7 +258,7 @@
 
   /**
    * The bands that conditions put on a variable's lane. A band covers the samples the condition looks at:
-   * at: the instant from_ms; always and during: from_ms to until_ms, but not past the failure of the step or the
+   * at: the instant from_ms; always and during: from_ms to to_ms, but not past the failure of the step or the
    * end of the record (`recordedTo`), since no sample was looked at after them; once: from_ms to the time it held
    * (passed) or to the limit, with a thin line on to the limit. `until` is the end the scenario gave.
    */
@@ -289,11 +289,11 @@
         return;
       }
       const from = w.from_ms;
-      let to = isNum(w.until_ms) ? w.until_ms : from;
+      let to = isNum(w.to_ms) ? w.to_ms : from;
       let limit = null;
       const until = to;
       if (w.mode === 'once') {
-        limit = isNum(w.until_ms) ? w.until_ms : null;
+        limit = isNum(w.to_ms) ? w.to_ms : null;
         if (step.status === 'passed' && isNum(step.at_ms)) to = step.at_ms;
         else if (step.status === 'failed' && isObject(step.failed) && isNum(step.failed.at_ms))
           to = step.failed.at_ms;
@@ -1378,7 +1378,7 @@
 
   function showStep(st) {
     const from = st.start_ms;
-    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.until_ms : null].filter(isNum);
+    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.to_ms : null].filter(isNum);
     const to = Math.max(from, ...ends);
     const pad = Math.max((to - from) * 0.25, (state.model.tick ?? 1) * 3);
     setView([
@@ -1517,9 +1517,9 @@
       const limit =
         isObject(st.watch) &&
         st.watch.mode === 'once' &&
-        isNum(st.watch.until_ms) &&
-        st.watch.until_ms > end
-          ? st.watch.until_ms
+        isNum(st.watch.to_ms) &&
+        st.watch.to_ms > end
+          ? st.watch.to_ms
           : null;
       if ((limit ?? end) < scale.t0 || start > scale.t1) continue;
       const label = `#${st.index} ${st.kind}`;

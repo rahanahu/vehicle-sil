@@ -686,14 +686,14 @@ void detail::write_scenario_json(vehicle_sil::json::JsonWriter& w, std::string_v
         w.end_object();
     }
     w.end_array();
-    if (scenario.has_dither)
+    // Empty for a scenario without a dither (ScenarioRun::has_dither).
+    write_scenario_lines_json(w, scenario.inputs, scenario.lines);
+    if (timeline.empty())
     {
-        // Only for a scenario with a dither: another one's result is as it was.
-        write_scenario_lines_json(w, scenario.inputs, scenario.lines);
+        w.null("timeline"); // without --timeline
     }
-    if (!timeline.empty())
+    else
     {
-        // Only with --timeline: a result without it is as it was before timelines.
         w.string("timeline", timeline);
     }
     w.end_object();
