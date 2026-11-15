@@ -2256,6 +2256,7 @@ Documentation to update:
 Tests:
 
 - `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
+- `^control\.wire_v1_`: the bytes of version 1, written out by hand in `tests/control/wire_v1_golden.hpp`. ECUs that speak version 1 send and expect exactly these bytes: do not change them to make a test pass.
 
 ### The SIL Kit transport and the start window
 
