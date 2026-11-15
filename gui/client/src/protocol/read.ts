@@ -1,7 +1,9 @@
 /**
  * Building blocks of the parsers in launcher.ts and server.ts: the error, the readers of single values, and reading
  * part by part (Unreadable). All parsers follow these rules:
- * - Unknown fields are ignored. Unknown events and unknown notifications become null and are skipped.
+ * - Unknown fields are not read. The parsers of the launcher's objects (launcher.ts) keep the object they read in
+ *   `raw` (withRaw), so a screen can still find them there; the other parsers ignore them. Unknown events and
+ *   unknown notifications become null and are skipped.
  * - Fields whose set of values may grow (phase, state, result and so on) pass unknown values through as strings.
  * - Data of the wrong shape (missing field, wrong type, unknown format version) throws ProtocolError.
  * - Exception: the session summary and launcher events are read part by part (readSessionSummary, readServerMessage).
@@ -173,4 +175,18 @@ export function record<T>(read: Reader<T>): Reader<Record<string, T>> {
     Object.fromEntries(
       Object.entries(object(value, path)).map(([key, item]) => [key, read(item, `${path}.${key}`)]),
     );
+}
+
+/**
+ * Gives read the object its fields were read from, as `raw`: read-only, and not enumerable, so that JSON.stringify,
+ * Object.keys and deep equality see the same fields as before (spreading `{...read}` does not copy it). Returns read.
+ */
+export function withRaw<T extends object>(raw: Fields, read: T): T {
+  Object.defineProperty(read, 'raw', {
+    value: raw,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return read;
 }
