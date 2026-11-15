@@ -1009,6 +1009,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `simulation.two-buses.yaml` | `networks` に `VehicleCAN` を追加したもの |
 | `simulation.fixed.yaml` | 表示の ECU を、`examples/ecu_main` のものに差し替えたもの |
 | `simulation.network-names.yaml` | `simulation.yaml` の表示の ECU に `network_names` を足したもの |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` に、`j1939_nodes` で変えた 2 つ目のエンジンの ECU を足したもの |
 | `scenarios/engine_speed.yaml` | シナリオ |
 
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと、作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います。

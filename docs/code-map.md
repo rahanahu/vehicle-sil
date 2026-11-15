@@ -1009,6 +1009,7 @@ The comments at the top of the files are not in the guide's blocks. The line num
 | `simulation.two-buses.yaml` | `VehicleCAN` added to `networks` |
 | `simulation.fixed.yaml` | The dashboard ECU replaced with the one of `examples/ecu_main` |
 | `simulation.network-names.yaml` | `simulation.yaml` with `network_names` on the dashboard ECU |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` with a second engine ECU, changed with `j1939_nodes` |
 | `scenarios/engine_speed.yaml` | Scenario |
 
 - Build: with `VEHICLE_SIL_BUILD_EXAMPLES`, the executable and the YAML files go to `build/<preset>/examples/integrate_ecus/`. The engine and the rebuilt dashboard ECU are used from the neighboring `examples/ecu_main/` through relative paths.

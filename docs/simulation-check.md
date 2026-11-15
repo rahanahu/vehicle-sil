@@ -306,6 +306,8 @@ warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove 
 failed: 3 errors, 1 warning, 0 notes
 ```
 
+`name-conflict` goes away with the `j1939_nodes` entry that it gives, written under `Engine2`. For the steps, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
+
 ### JSON (`--json`)
 
 The output is one JSON object. It follows the same rules as the `--describe` JSON: a fixed key order, every key written even without a value, an indent of 2 spaces, and LF line endings even on Windows. A missing value is `null` (never an empty string), and a missing array is an empty array.

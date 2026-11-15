@@ -28,6 +28,7 @@ cd build/linux-gcc-control/examples/integrate_ecus
 | `simulation.two-buses.yaml` | `networks` に、表示の ECU が使うネットワーク名を追加したものです。 | 3、5 |
 | `simulation.fixed.yaml` | 表示の ECU を、作り直したものに差し替えたものです。 | 4、5 |
 | `scenarios/engine_speed.yaml` | 表示の ECU が回転数を受信することを確認するシナリオです。 | 5 |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` に、エンジンの ECU の 2 つ目を足したものです。 | [同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる) |
 | `../ecu_main/engine/vehicle_sil_engine_ecu` | エンジンの ECU です。 | 2〜5 |
 | `dashboard_v1/vehicle_sil_dashboard_v1_ecu` | 最初に受け取った表示の ECU です。 | 2、3 |
 | `../ecu_main/dashboard/vehicle_sil_dashboard_ecu` | 作り直した表示の ECU です。 | 4、5 |
@@ -62,7 +63,7 @@ cd build/linux-gcc-control/examples/integrate_ecus
 
 ## 手順 1: 名前を決めて伝える
 
-ECU を作り始める前に、次の表のものを決めて、ECU を作る人の全員に伝えます。迷ったときの選び方は、[作り始める前に決めること](design-choices.md) にあります。どれも ECU のコードに書く値なので、実行ファイルを受け取った後で合わなければ、作り直しになります。
+ECU を作り始める前に、次の表のものを決めて、ECU を作る人の全員に伝えます。迷ったときの選び方は、[作り始める前に決めること](design-choices.md) にあります。どれも ECU のコードに書く値なので、実行ファイルを受け取った後で合わなければ、作り直しになります。例外が 2 つあり、作り直さずに済みます。ネットワーク名は `network_names` で対応させられます（下）。同じ実行ファイルの 2 つ目は、`j1939_nodes` で別の J1939 のアドレスと NAME にできます（[同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる)）。
 
 | 決めるもの | ルール | 合わないときの指摘のコード |
 |---|---|---|
@@ -321,7 +322,7 @@ passed: 0 errors, 0 warnings, 0 notes
 |---|---|---|
 | ネットワーク名が ECU の間で違う（`network_names` で対応させない） | 手順 1 で決めた名前と違う ECU を作った人 | `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前を、決めた名前に変えます。 |
 | ネットワークの種類が違う | 決めた種類と違う ECU を作った人 | 決めた種類のバスに接続するように変えます。 |
-| J1939 のアドレスか NAME が重なる | 手順 1 の一覧と違う ECU を作った人 | ノードのアドレスか NAME を、一覧の値に変えます。 |
+| J1939 のアドレスか NAME が重なり、指摘の文が「this file cannot change them」と言う（実行ファイルが `j1939_nodes` を受け取れない、またはコードが 1 つのアドレスに 2 つのノードを置く） | 手順 1 の一覧と違う ECU を作った人 | ノードのアドレスか NAME を、一覧の値に変えます。 |
 | ステップ幅が、伝えてもらった値と違う | その ECU を作った人 | どちらの値が正しいかを確認し、ECU が違うなら直します。 |
 | `--describe` が失敗する | その ECU を作った人 | 指摘に付いている標準エラーの末尾を渡して、原因を調べてもらいます。 |
 
@@ -678,18 +679,69 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 
 ## 同じ ECU を 2 つ載せる
 
-同じ実行ファイルを 2 つの participant として並べると、participant 名は `--name` で変わりますが、J1939 の NAME、アドレス、変数名は同じままです。同じネットワークにいれば、`check` が `name-conflict` を報告し、片方に別のアドレスと identity number を与える `j1939_nodes` の行を示します。その行を設定ファイルに書きます（[simulation-config.md](../simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」）。前の vehicle-sil で作った実行ファイルで `j1939_nodes` を受け取れないときは、ECU を作った人に作り直してもらうか、下のように NAME とアドレスを引数で受け取れるようにしてもらいます。
+同じ実行ファイルを 2 つの participant として並べると、participant 名は `--name` で変わり、変数もそれぞれのものになります。J1939 のアドレスと NAME は ECU のコードの値なので、2 つが重なります。`check` が `name-conflict` を報告し、片方に別のアドレスと identity number を与える `j1939_nodes` の行を示します。その行を設定ファイルに書きます。ECU は作り直しません。
+
+`simulation.second-engine.yaml` は、`simulation.fixed.yaml` に 2 つ目のエンジンの ECU（`Engine2`）を足したものです。どちらのエンジンも、コードではノードを 0x00 に置きます。行を書く前の `check` の participant の表では `J1939_CAN (j1939 0x00)` です。
+
+行は 2 つ目の participant にだけ書きます。`address` と `identity_number` は新しい値で、1 つ目はコードの値のままです。
+
+<!-- examples/integrate_ecus/simulation.second-engine.yaml: the participant Engine2 -->
+```yaml
+  - name: Engine2
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+    j1939_nodes: [{ network: J1939_CAN, address: 0x01, identity_number: 2 }]
+```
+
+```sh
+vehicle_sil_launch check simulation.second-engine.yaml
+```
+
+### 2 つ目を確かめる
+
+`J1939_CAN (j1939 0x01<-0x00)` は、`Engine2` の新しいアドレスと、コードのアドレスです。注記 `j1939-node-changed` が、変わるものを並べます。終了コードは 0 です。
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.second-engine.yaml -->
+```text
+simulation.second-engine.yaml: 3 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Engine2      10 ms  J1939_CAN (j1939 0x01<-0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Engine2, Dashboard
+
+note: simulation.second-engine.yaml:16: participant 'Engine2': j1939_nodes changes its nodes: on 'J1939_CAN', the node at 0x00 in its code is at 0x01, with the NAME 0x00000000FE000002 (0x00000000FE000001 in its code). Only Engine2 changes, and the check cannot see who relies on the old values: an ECU whose code has 0x00 written in it for Engine2 (as a destination, or to tell senders apart) still uses 0x00, and Engine2's own code may still have 0x00 in a filter or in the data it sends, and an ECU that looks Engine2 up by its whole NAME 0x00000000FE000001 does not find it; if messages do not reach Engine2 or are taken for another ECU's, the author of that code has to change it [j1939-node-changed]
+
+passed: 0 errors, 0 warnings, 1 note
+```
+
+| 知っておくこと | 内容 |
+|---|---|
+| `from` | ECU のコードのアドレス（`j1939_nodes` なしで表が示すもの）で、新しいアドレスではありません。ECU がそのネットワークにノードを 1 つだけ持つなら省けます。ノードが 2 つ以上あるときと、ECU を作った人がノードを動かしてもそのアドレスに行を留めたいときに書きます。 |
+| 何も変えない行 | `{ network: J1939_CAN, from: 0x00 }` は、機種の中で共通の行を消します。 |
+| 変わらないもの | ほかの ECU がコードに持つ、この ECU のアドレスと NAME の全体です。注記 `j1939-node-changed` が participant ごとに言います。 |
+| 例の表示の ECU | 表示の ECU は回転数を PGN で受け取り、送り主のアドレスを見ません。だから 2 つのエンジンの回転数をどちらも受け取り、後に届いた値を表示します。エンジンを見分けるには、表示の ECU が送り主のアドレスか NAME を見る必要があり、それはコードの変更です。 |
+| 実行ファイルが `j1939_nodes` を受け取れない | `check` が `j1939-node-unsupported` を報告します。`vehicle_sil_launch version` が示す vehicle-sil で作り直してもらいます。 |
+
+キーと決まりの全部は、[simulation-config.md](../simulation-config.md#j1939-のアドレスと-name-を合わせるj1939_nodes) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」にあります。
+
+### `j1939_nodes` で足りないとき
+
+`j1939_nodes` が変えるのは、ECU が組み立てのときに追加するノードの、アドレス、identity number、function instance、ECU instance です。NAME のほかの欄（製品を表す欄）、ノードの数、この ECU がコードに持つほかの ECU のアドレスと NAME を変えるには、ECU に独自の引数が要ります。
 
 | すること | 担当 | 内容 |
 |---|---|---|
 | ECU に独自の引数を追加する | ECU を作った人 | `main()` で独自の引数を `argv` から取り出し、残りを `ecu_main()` に渡します（[ecu-executable.md](../ecu-executable.md) の「`ecu_main`」）。 |
 | 引数を設定ファイルに書く | 設定ファイルを書く人 | `command` の、実行ファイルの後ろに書きます。 |
 
-設定ファイルは、たとえば次のようになります。`--address` と `--identity-number` は、ECU を作った人が決める引数の例です。例のエンジンの ECU には、この引数はありません。
+設定ファイルは、たとえば次のようになります。`--peer-address` は、ECU を作った人が決める引数の例です。例のエンジンの ECU には、この引数はありません。
 
 ```yaml
   - name: Engine2
-    command: [engine/vehicle_sil_engine_ecu, --address, "0x01", --identity-number, "2"]
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu, --peer-address, "0x28"]
 ```
 
 | 知っておくこと | 内容 |

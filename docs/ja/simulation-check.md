@@ -306,6 +306,8 @@ warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove 
 failed: 3 errors, 1 warning, 0 notes
 ```
 
+`name-conflict` は、示された `j1939_nodes` の行を `Engine2` に書くとなくなります。手順は [複数の ECU をつないで動かす](howto/integrate-ecus.md#同じ-ecu-を-2-つ載せる) の「同じ ECU を 2 つ載せる」にあります。
+
 ### JSON（`--json`）
 
 1 つの JSON のオブジェクトです。形は `--describe` の JSON と同じルールです（キーの順は固定、値がなくてもキーを省かない、字下げは空白 2 つ、改行は Windows でも LF）。値のないものは `null` で（空の文字列にしません）、配列は空の配列です。
