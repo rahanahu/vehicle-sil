@@ -1080,9 +1080,9 @@ The `failed` of a failed step holds what failed, as numbers (`null` for other st
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).
 - "Changed" in `changes` means that the written text differs (`0` and `-0` differ; consecutive `null`s are the same).
 - If a `written` series has `not_applied_from`, the points from that index (from 0) on were sent but did not reach the ECU. Do not draw them as if the value changed. These points did not reach the ECU:
-  - The point of the refused write (the same point as `failed.write.point` of the failed step) and the points after it, whether the agent refused the write at once or the ECU refused it in its step.
+  - The point of the refused write (the same point as `failed.write.point` of the failed step) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step.
   - Points whose time is after `scenario.over_at_ms` (no ECU advanced to that time).
-- In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the run ended before the scenario confirmed (writes whose results it had not yet seen; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied.
+- In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied.
 
 ### Input lines (`lines[]`)
 
@@ -1139,7 +1139,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Ended partway (`incomplete`) | The time of the last sample seen (0 if none was seen). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is set) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
-- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
+- The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the ECU's Agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.
 - For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `tick_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.
