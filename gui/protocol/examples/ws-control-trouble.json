@@ -1005,8 +1005,14 @@
           "traffic": {
             "before_ms": 1000,
             "unplaced": [
-              "Gauge",
-              "Logger"
+              {
+                "participant": "Gauge",
+                "reason": "no-control-link"
+              },
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
             ],
             "networks": [
               {
@@ -1016,6 +1022,16 @@
                 "senders": 1,
                 "receivers": 1,
                 "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Gauge",
+                    "reason": "no-control-link"
+                  },
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
                 "participants": [
                   {
                     "name": "Engine",
@@ -1875,8 +1891,14 @@
           "traffic": {
             "before_ms": 1000,
             "unplaced": [
-              "Gauge",
-              "Logger"
+              {
+                "participant": "Gauge",
+                "reason": "no-control-link"
+              },
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
             ],
             "networks": [
               {
@@ -1886,6 +1908,16 @@
                 "senders": 1,
                 "receivers": 1,
                 "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Gauge",
+                    "reason": "no-control-link"
+                  },
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
                 "participants": [
                   {
                     "name": "Engine",

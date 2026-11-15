@@ -1824,7 +1824,7 @@ Rules:
 - Keep no queue for `traffic`: no state that overflows while nobody takes anything out.
 - The counts are the values of "the last step that started before the end time", so that the output does not depend on whether later samples arrived.
 - Find the counters by the names that the Agent reported (`PeerInfo::sources`), and do not count those that a map applies to.
-- Do not state the line as ratios (a participant that only receives is normal). `delivered` is `false` only when the counts alone settle it: every participant of the run that may be on the network is counted, so an unplaced participant (`RunTraffic::unplaced`: the launcher knows none of its networks) makes it `null`, and the line then gives numbers, not `nothing sent`.
+- Do not state the line as ratios (a participant that only receives is normal). `delivered` is `false` only when the counts alone settle it: every participant of the run that may be on the network is counted. A participant without `--describe` may be on every network for which it has no counters (`TrafficNetwork::unplaced`; the counters say where it is, not where it is not), so it makes `delivered` of those networks `null`, and the line then gives numbers, not `nothing sent`. `RunTraffic::unplaced` lists those that are known on no network. Each entry has one of two reasons: no hello by the end of the run (which may differ from run to run), or no counters (which does not).
 - Do not change the samples passed to the scenario (everything that the tap received after the scenario started, from the Agents of that moment; no limit; `RunSamples::scenario_begins()`).
 
 Tests:

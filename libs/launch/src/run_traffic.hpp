@@ -124,8 +124,9 @@ struct TrafficSeen
 };
 
 /// The result: every network of the plan with the participants known to be on it (`seen` in the
-/// order of plan.participants), each counted or with the reason why not, and the participants of
-/// the run that are known to be on none (RunTraffic::unplaced).
+/// order of plan.participants), each counted or with the reason why not, the participants of
+/// the run that may be on it without the launcher knowing (TrafficNetwork::unplaced), and those
+/// that are known to be on no network (RunTraffic::unplaced).
 [[nodiscard]] RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>& seen, std::int64_t end_ms);
 
 } // namespace vehicle_sil::launch::detail

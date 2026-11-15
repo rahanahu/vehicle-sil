@@ -447,7 +447,10 @@
           "traffic": {
             "before_ms": 1000,
             "unplaced": [
-              "Logger"
+              {
+                "participant": "Logger",
+                "reason": "no-control-link"
+              }
             ],
             "networks": [
               {
@@ -457,6 +460,12 @@
                 "senders": 1,
                 "receivers": 1,
                 "delivered": true,
+                "unplaced": [
+                  {
+                    "participant": "Logger",
+                    "reason": "no-control-link"
+                  }
+                ],
                 "participants": [
                   {
                     "name": "Engine",

@@ -5600,7 +5600,7 @@ void traffic(const Options& o)
     // Four of them send a frame in each of the 19 steps before the one at 190 ms.
     expect_text(traffic_part(mix.standard_output),
                 "traffic: BUS: 3 participants sent, 3 received (3 counted, 2 not counted); Empty: not counted (no participant "
-                "known to be on it) (steps before 200 ms)\n"
+                "known to be on it, 2 unplaced) (steps before 200 ms)\n"
                 "\n"
                 "network  participant  sent  received\n"
                 "BUS      A              19        76\n"
@@ -5608,7 +5608,10 @@ void traffic(const Options& o)
                 "BUS      Raw             -         -  not counted: no J1939 counters\n"
                 "BUS      Door            -         -  not counted: counters mapped by variables\n"
                 "BUS      Tool           19        76\n"
-                "Empty    -               -         -  no participant known to be on it\n",
+                "Empty    -               -         -  no participant known to be on it\n"
+                // Without --describe, the counters say where a participant is, not where it is not.
+                "Empty    Door            -         -  unplaced: no J1939 counters\n"
+                "Empty    Tool            -         -  unplaced: no J1939 counters\n",
                 "the traffic of ECUs that are counted and not counted");
     for (int again = 0; again < 3; ++again)
     {
@@ -5641,6 +5644,7 @@ void traffic(const Options& o)
                 "        \"senders\": 3,\n"
                 "        \"receivers\": 3,\n"
                 "        \"delivered\": true,\n"
+                "        \"unplaced\": [],\n"
                 "        \"participants\": [\n" +
                     member("A", "", counted) + ",\n" + member("B", "", counted) + ",\n" + member("Raw", "no-counters", not_counted) +
                     ",\n" + member("Door", "mapped", not_counted) + ",\n" + member("Tool", "", counted) +
@@ -5654,6 +5658,10 @@ void traffic(const Options& o)
                     "        \"senders\": 0,\n"
                     "        \"receivers\": 0,\n"
                     "        \"delivered\": null,\n"
+                    "        \"unplaced\": [\n"
+                    "          {\n            \"participant\": \"Door\",\n            \"reason\": \"no-counters\"\n          },\n"
+                    "          {\n            \"participant\": \"Tool\",\n            \"reason\": \"no-counters\"\n          }\n"
+                    "        ],\n"
                     "        \"participants\": []\n"
                     "      }\n"
                     "    ]\n"
@@ -5670,12 +5678,12 @@ void traffic(const Options& o)
     fs::remove(mixed / "test-ecu-no-control");
     expect_code(unknown, 0, "run with participants the launcher knows nothing of");
     expect_text(traffic_part(unknown.standard_output),
-                "traffic: BUS: not counted (no participant known to be on it) (steps before 100 ms)\n"
+                "traffic: BUS: not counted (no participant known to be on it, 2 unplaced) (steps before 100 ms)\n"
                 "\n"
                 "network  participant  sent  received\n"
                 "BUS      -               -         -  no participant known to be on it\n"
-                "-        Door            -         -  unplaced: its networks are not known\n"
-                "-        Tool            -         -  unplaced: its networks are not known\n",
+                "-        Door            -         -  unplaced: no control link\n"
+                "-        Tool            -         -  unplaced: no control link\n",
                 "the traffic of a network with participants the launcher knows nothing of");
 
     // A sender that nobody counted heard, and a bridge that the launcher knows on no network (no
@@ -5694,18 +5702,54 @@ void traffic(const Options& o)
                 "\n"
                 "network  participant  sent  received\n"
                 "BUS      A              19         0\n"
-                "-        Bridge          -         -  unplaced: its networks are not known\n",
+                "-        Bridge          -         -  unplaced: no control link\n",
                 "the traffic with a bridge the launcher knows on no network");
     const Captured bridged_json = launch(o, {"run", "bridged.yaml", "--json"}, mixed);
     expect_code(bridged_json, 0, "run with a bridge --json");
-    require(contains(bridged_json.standard_output, "    \"unplaced\": [\n      \"Bridge\"\n    ],\n") &&
-                contains(bridged_json.standard_output, "        \"delivered\": null,\n"),
+    require(contains(bridged_json.standard_output,
+                     "    \"unplaced\": [\n      {\n        \"participant\": \"Bridge\",\n"
+                     "        \"reason\": \"no-control-link\"\n      }\n    ],\n") &&
+                contains(bridged_json.standard_output,
+                         "        \"delivered\": null,\n        \"unplaced\": [\n          {\n"
+                         "            \"participant\": \"Bridge\",\n            \"reason\": \"no-control-link\"\n          }\n"
+                         "        ],\n"),
             "the JSON's traffic with a bridge:\n" + bridged_json.standard_output);
     const Captured alone_json = launch(o, {"run", "bridged.yaml", "--json", "--disable", "Bridge"}, mixed);
     expect_code(alone_json, 0, "run without the bridge --json");
     require(contains(alone_json.standard_output, "    \"unplaced\": [],\n") &&
-                contains(alone_json.standard_output, "        \"delivered\": false,\n"),
+                contains(alone_json.standard_output, "        \"delivered\": false,\n        \"unplaced\": [],\n"),
             "the JSON's traffic without the bridge:\n" + alone_json.standard_output);
+
+    // A gateway without --describe: its control agent has J1939 counters for CAN_A, and it hears
+    // CAN_B as raw CAN. The counters place it on CAN_A; they do not say that it is not on CAN_B,
+    // so the result does not say that the sender's frames there did not arrive.
+    write_file(mixed / "Sender.behaviour", "j1939 CAN_B 30\n");
+    write_file(mixed / "Gateway.behaviour", "j1939 CAN_A 31 hear CAN_B\n");
+    write_file(mixed / "gateway.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks:\n  - { name: CAN_A, kind: can }\n"
+                                       "  - { name: CAN_B, kind: can }\n"
+                                       "participants:\n  - name: Sender\n    command: [" + ecu(o) + "]\n"
+                                       "  - name: Gateway\n    command: [" + ecu(o) + undescribed);
+    const Captured gateway = launch(o, {"run", "gateway.yaml"}, mixed);
+    expect_code(gateway, 0, "run with a gateway");
+    expect_text(traffic_part(gateway.standard_output),
+                "traffic: CAN_A: 1 participant sent, 0 received (1 counted); CAN_B: 1 participant sent, 0 received (1 counted, "
+                "1 unplaced) (steps before 200 ms)\n"
+                "\n"
+                "network  participant  sent  received\n"
+                "CAN_A    Gateway        19         0\n"
+                "CAN_B    Sender         19         0\n"
+                "CAN_B    Gateway         -         -  unplaced: no J1939 counters\n",
+                "the traffic with a gateway that its counters place on one of its two networks");
+    require(fs::exists(mixed / "Gateway.heard"), "the gateway heard no frame on CAN_B");
+    const Captured gateway_json = launch(o, {"run", "gateway.yaml", "--json"}, mixed);
+    expect_code(gateway_json, 0, "run with a gateway --json");
+    require(contains(gateway_json.standard_output, "    \"unplaced\": [],\n    \"networks\": [\n") &&
+                contains(gateway_json.standard_output, "        \"delivered\": false,\n        \"unplaced\": [],\n") &&
+                contains(gateway_json.standard_output,
+                         "        \"delivered\": null,\n        \"unplaced\": [\n          {\n"
+                         "            \"participant\": \"Gateway\",\n            \"reason\": \"no-counters\"\n          }\n"
+                         "        ],\n"),
+            "the JSON's traffic with a gateway:\n" + gateway_json.standard_output);
 
     // A run that did not start has none.
     const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"

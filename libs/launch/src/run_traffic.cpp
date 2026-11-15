@@ -25,6 +25,16 @@ const char* traffic_not_counted_name(TrafficNotCounted why)
     return "";
 }
 
+const char* traffic_unplaced_reason_name(TrafficUnplacedReason why)
+{
+    switch (why)
+    {
+    case TrafficUnplacedReason::NoControlLink: return "no-control-link";
+    case TrafficUnplacedReason::NoCounters: return "no-counters";
+    }
+    return "";
+}
+
 std::size_t TrafficNetwork::counted() const
 {
     return static_cast<std::size_t>(
@@ -70,9 +80,9 @@ std::optional<bool> TrafficNetwork::delivered() const
     {
         return std::nullopt; // the one sender heard someone the launcher does not count
     }
-    // No counted participant received. One that is not counted, or one of the run that the
-    // launcher does not know to be on any network, may have.
-    return counted() < participants.size() || unplaced > 0 ? std::nullopt : std::optional<bool>(false);
+    // No counted participant received. One that is not counted, or one of the run that may be on
+    // the network without the launcher knowing, may have.
+    return counted() < participants.size() || !unplaced.empty() ? std::nullopt : std::optional<bool>(false);
 }
 
 namespace detail {
@@ -284,38 +294,43 @@ RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>
 {
     RunTraffic out;
     out.before_ms = end_ms;
-    // Of a participant without --describe whose agent has no counters for a network of the file,
-    // the launcher knows no network: it may be on any of them.
+    // --describe says where a participant is. Without it, the J1939 counters of its control agent
+    // say where it is, and nothing says where it is not: it may use any other network in a way
+    // that has no counters.
+    const auto has_counters = [](const TrafficSeen& c, const std::string& network) {
+        return c.hello && std::any_of(c.schema.counters.begin(), c.schema.counters.end(),
+                                      [&network](const TrafficColumns& n) { return n.network == network; });
+    };
     for (std::size_t i = 0; i < plan.participants.size(); ++i)
     {
         const TrafficPlan::Participant& p = plan.participants[i];
         const TrafficSeen& c = seen[i];
-        const bool placed = p.described || (c.hello && std::any_of(plan.buses.begin(), plan.buses.end(), [&c](const TrafficPlan::Network& n) {
-                                                return std::any_of(c.schema.counters.begin(), c.schema.counters.end(),
-                                                                   [&n](const TrafficColumns& columns) { return columns.network == n.name; });
-                                            }));
-        if (p.in_run && !placed)
+        const bool placed = std::any_of(plan.buses.begin(), plan.buses.end(),
+                                        [&](const TrafficPlan::Network& n) { return has_counters(c, n.name); });
+        if (p.in_run && !p.described && !placed)
         {
-            out.unplaced.push_back(p.name);
+            out.unplaced.push_back({p.name, c.hello ? TrafficUnplacedReason::NoCounters : TrafficUnplacedReason::NoControlLink});
         }
     }
     for (const TrafficPlan::Network& network : plan.buses)
     {
-        TrafficNetwork counted{network.name, network.kind, {}, out.unplaced.size()};
+        TrafficNetwork counted{network.name, network.kind, {}, {}};
         for (std::size_t i = 0; i < plan.participants.size(); ++i)
         {
             const TrafficPlan::Participant& p = plan.participants[i];
             const TrafficSeen& c = seen[i];
-            // --describe says where it is; without it, the counters its agent has.
-            const bool on = p.in_run &&
-                            (p.described ? std::find(p.on.begin(), p.on.end(), network.name) != p.on.end()
-                                         : c.hello && std::any_of(c.schema.counters.begin(), c.schema.counters.end(),
-                                                                  [&network](const TrafficColumns& n) {
-                                                                      return n.network == network.name;
-                                                                  }));
-            if (on)
+            if (!p.in_run)
+            {
+                continue;
+            }
+            if (p.described ? std::find(p.on.begin(), p.on.end(), network.name) != p.on.end() : has_counters(c, network.name))
             {
                 counted.participants.push_back(row(p.name, c, network.name));
+            }
+            else if (!p.described)
+            {
+                counted.unplaced.push_back(
+                    {p.name, c.hello ? TrafficUnplacedReason::NoCounters : TrafficUnplacedReason::NoControlLink});
             }
         }
         // Also one that nobody is known to be on: it is in the file, and frames may go over it.
