@@ -156,7 +156,7 @@ Linux では `--backend packet`（か `pcap`）とネットワークインター
 | `check` | `--describe --name EthBridge` |
 | `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
 
-- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がそれを報告します）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、終了コード 0 で終わります。インターフェースを開かず、pcap のライブラリを読み込まず、SIL Kit にもつながないので、Npcap や libpcap のない PC でも `check` が通ります。`--registry-uri` は要りません（書いてあっても使いません）。
+- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がブリッジの文を添えて `describe-failed` として報告します。ランチャーが `--name` を足すので、`command` に `--participant` も `--name` も書きません）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、終了コード 0 で終わります。インターフェースを開かず、pcap のライブラリを読み込まず、SIL Kit にもつながないので、Npcap や libpcap のない PC でも `check` が通ります。`--registry-uri` は要りません（書いてあっても使いません）。
 - JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "ethernet"`、`"use": "ethernet"`、`"mac": null`）、空の変数、`"control": null`、空の `features` が入ります。
 - そのため `check` は、ブリッジがどのネットワークを中継するかを知っています。`networks` にないネットワークは、ECU と同じに報告します（`unknown-network`）。自分の MAC アドレスを持たないブリッジは、注記 `ethernet-mac-unknown` の対象になりません。
 - URI はランチャーが渡すので、`registry_uri` のポートは 0 でもかまいません。
@@ -387,6 +387,7 @@ cannot open /dev/net/tun: No such file or directory. The kernel's TUN/TAP driver
 no interface 'eth9' for --backend packet. Interfaces here: lo, enp3s0, vsil0 (run --list-interfaces).
 interface 'lo' is not Ethernet (link type 772): --backend packet carries Ethernet frames only. Choose an Ethernet interface (run --list-interfaces).
 cannot open a packet socket on 'enp3s0': Operation not permitted. A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.
+interface 'wlp2s0' does not accept promiscuous mode (Operation not supported), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says so).
 ```
 
 #### 同じ PC の OS のネットワークスタックと通信する
@@ -877,7 +878,7 @@ packet ソケットと pcap のライブラリは、オプションに `promiscu
 - タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。
 - 同じインターフェースの別のソケットが送信したフレームを、SIL Kit 側の相手が受信する。
 - ブリッジが送信したフレームがブリッジに戻らない。
-- プロミスキャス（`--promiscuous` と既定）が、インターフェースの promiscuity を、動いている間だけ上げる。
+- `--promiscuous` のプロミスキャスが、インターフェースの promiscuity を、動いている間だけ上げる。既定と `--no-promiscuous` は、ここでは本物のカーネルで確かめていない（モードの選び方は単体試験が確かめる）。
 - リンクの up と down の監視の行。
 - OS のスタックが送信した UDP（veth の向こうの端からと、ブリッジのインターフェース自身から）を、SIL Kit 側の相手がそのまま受信し、`ext_checksum_incomplete` に数えられ、警告が 1 回だけ出る。
 - 警告のとおりに `ethtool -K <名前> tx off` をすると、数も警告も出ない。

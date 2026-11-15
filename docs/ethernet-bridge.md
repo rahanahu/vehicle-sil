@@ -156,7 +156,7 @@ On Linux, write `--backend packet` (or `pcap`) and the name of the network inter
 | `check` | `--describe --name EthBridge` |
 | `run` | `--name EthBridge --registry-uri <URI> --start-timeout-ms <ms>` |
 
-- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0. It does not open the interface, load the pcap library or connect to SIL Kit, so `check` works on a computer without Npcap or libpcap. `--registry-uri` is not needed; if it is given, it is not used.
+- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports as `describe-failed` with the bridge's message; do not write `--participant` or `--name` in `command`, because the launcher adds `--name`), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0. It does not open the interface, load the pcap library or connect to SIL Kit, so `check` works on a computer without Npcap or libpcap. `--registry-uri` is not needed; if it is given, it is not used.
 - The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "ethernet"`, `"use": "ethernet"` and `"mac": null`, no variables, `"control": null` and an empty `features` list.
 - `check` therefore knows which network the bridge carries. A network that is not in `networks` is reported as for an ECU (`unknown-network`). The bridge, which has no MAC address of its own, does not cause the note `ethernet-mac-unknown`.
 - Because the URI comes from the launcher, `registry_uri` may have port 0.
@@ -387,6 +387,7 @@ The messages when the interface cannot be opened (exit code 3):
 no interface 'eth9' for --backend packet. Interfaces here: lo, enp3s0, vsil0 (run --list-interfaces).
 interface 'lo' is not Ethernet (link type 772): --backend packet carries Ethernet frames only. Choose an Ethernet interface (run --list-interfaces).
 cannot open a packet socket on 'enp3s0': Operation not permitted. A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.
+interface 'wlp2s0' does not accept promiscuous mode (Operation not supported), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says so).
 ```
 
 #### Talking to the network stack of the same computer
@@ -877,7 +878,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 - Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
 - A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
 - Frames that the bridge sends do not come back to the bridge.
-- Promiscuous mode (`--promiscuous`, and the default) raises the promiscuity of the interface only while the bridge runs.
+- Promiscuous mode with `--promiscuous` raises the promiscuity of the interface only while the bridge runs. The default and `--no-promiscuous` are not checked on the real kernel here (the unit tests cover how the bridge chooses the mode).
 - Health lines for the link going up and down.
 - UDP sent by the OS stack (from the other end of the veth pair and from the bridge's own interface) is received unchanged by a peer on the SIL Kit side, counted in `ext_checksum_incomplete`, and warned about once only.
 - After `ethtool -K <name> tx off` as the warning says, there is neither a count nor a warning.

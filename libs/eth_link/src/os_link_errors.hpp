@@ -35,6 +35,9 @@ inline constexpr std::size_t kMaxInterfaceNameBytes = 15;
 /// program's path for the setcap command, or empty if unknown.
 [[nodiscard]] LinkError packet_open_failed(std::string_view name, int error, std::string_view step,
                                            std::string_view executable);
+/// --backend packet with --promiscuous: the interface `name` did not take promiscuous mode
+/// (setsockopt(PACKET_ADD_MEMBERSHIP) failed with `error`).
+[[nodiscard]] LinkError packet_promiscuous_refused(std::string_view name, int error);
 /// open("/dev/net/tun") failed with `error`.
 [[nodiscard]] LinkError tun_open_failed(int error);
 /// Attaching to the existing interface `name` as a TAP device failed with `error`.

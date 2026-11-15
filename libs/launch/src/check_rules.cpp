@@ -12,6 +12,7 @@
 #include "vehicle_sil/json/json_writer.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -28,6 +29,20 @@ using detail::hex2;
 using detail::step_text;
 
 std::string participant_prefix(const std::string& name) { return "participant '" + name + "': "; }
+
+/// The exit status with which Windows ends a process before main() when a DLL that the executable
+/// imports is missing (STATUS_DLL_NOT_FOUND) or lacks a function it imports
+/// (STATUS_ENTRYPOINT_NOT_FOUND). No other system gives these exit codes, so they are checked
+/// everywhere.
+constexpr std::uint32_t kStatusDllNotFound = 0xC0000135u;
+constexpr std::uint32_t kStatusEntryPointNotFound = 0xC0000139u;
+
+std::string status_hex(std::uint32_t code)
+{
+    char hex[16];
+    std::snprintf(hex, sizeof(hex), "0x%08X", static_cast<unsigned>(code));
+    return hex;
+}
 
 /// "0x80 (128)".
 std::string address_text(j1939::Address address) { return hex2(address) + " (" + std::to_string(address) + ")"; }
@@ -157,28 +172,55 @@ DescribeOutcome interpret_describe(const ParticipantConfig& participant, const D
     {
         std::string ended;
         std::string hint;
+        const bool bridge = participant.role == ParticipantRole::Bridge;
+        const auto code = static_cast<std::uint32_t>(*run.exit_code);
         if (run.signal)
         {
             ended = "was ended by the signal " + std::to_string(*run.signal);
             hint = "it crashed or was killed while it built the ECU: fix the ECU (its standard error may say where)";
         }
+        else if (code == kStatusDllNotFound || code == kStatusEntryPointNotFound)
+        {
+            // Windows did not start it: the same for an ECU and a bridge, and nothing on its
+            // standard error says which DLL.
+            ended = "could not start (exit status " + status_hex(code) +
+                    (code == kStatusDllNotFound ? "): Windows did not find a DLL that it needs"
+                                                : "): a DLL that it needs is of another version (a function in it is "
+                                                  "missing)");
+            hint = "put that DLL, of the version the executable was built with, next to the executable or in a folder on "
+                   "PATH";
+            if (bridge)
+            {
+                hint += "; if this computer does not use the bridge, leave it out with vehicle_sil_launch --disable " +
+                        participant.name;
+            }
+        }
 #ifdef _WIN32
-        else if (const auto code = static_cast<std::uint32_t>(*run.exit_code); code >= 0xC0000000u)
+        else if (code >= 0xC0000000u)
         {
             // A Windows exception code, such as 0xC0000005.
-            char hex[16];
-            std::snprintf(hex, sizeof(hex), "0x%08X", static_cast<unsigned>(code));
-            ended = std::string("ended with the exception code ") + hex;
+            ended = "ended with the exception code " + status_hex(code);
             hint = "it crashed while it built the ECU: fix the ECU (its standard error may say where)";
         }
 #endif
         else
         {
             ended = "ended with exit code " + std::to_string(*run.exit_code);
-            hint = *run.exit_code == ecu_executable::kExitUsage
-                       ? "it did not take --describe or --name: if it is not made with ecu_main, set describe: false"
-                       : "its set-up failed (see its standard error): fix the ECU, or set describe: false if it is not "
-                         "made with ecu_main";
+            if (*run.exit_code != ecu_executable::kExitUsage)
+            {
+                hint = "its set-up failed (see its standard error): fix the ECU, or set describe: false if it is not "
+                       "made with ecu_main";
+            }
+            else if (bridge)
+            {
+                // A bridge takes --describe and --name: exit code 4 is about the rest of its command.
+                hint = "the bridge refused its arguments (its standard error says why): fix the command; "
+                       "vehicle_sil_launch adds --name itself, so do not write --participant or --name in the command";
+            }
+            else
+            {
+                hint = "it did not take --describe or --name: if it is not made with ecu_main, set describe: false";
+            }
         }
         return finding("describe-failed", run.command_text + " " + ended + "; " + hint,
                        stderr_detail(run.standard_error, run.error_truncated));

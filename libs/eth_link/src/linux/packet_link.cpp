@@ -90,7 +90,7 @@ protected:
                 const int error = errno;
                 if (options_.promiscuous == Promiscuous::On)
                 {
-                    throw packet_open_failed(name(), error, "promiscuous mode", {});
+                    throw packet_promiscuous_refused(name(), error);
                 }
                 add_start_warning(promiscuous_refused_warning(name(), error_text(error)));
             }

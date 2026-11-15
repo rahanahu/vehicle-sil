@@ -81,6 +81,16 @@ TEST_CASE(os_link_error_packet_socket_other_failures_name_the_step)
     CHECK_TEXT(error.what(), "cannot open a packet socket on 'enp3s0' (bind): " + error_text(ENOMEM) + ".");
 }
 
+TEST_CASE(os_link_error_packet_promiscuous_refused_tells_how_to_go_on)
+{
+    const auto error = packet_promiscuous_refused("wlp2s0", EOPNOTSUPP);
+    CHECK(error.kind() == LinkErrorKind::Other);
+    CHECK_TEXT(error.what(), "interface 'wlp2s0' does not accept promiscuous mode (" + error_text(EOPNOTSUPP) +
+                                 "), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without "
+                                 "it (it then says so).");
+    CHECK(packet_promiscuous_refused("wlp2s0", EPERM).kind() == LinkErrorKind::PermissionDenied);
+}
+
 TEST_CASE(os_link_error_tun_device_file)
 {
     const auto denied = tun_open_failed(EACCES);

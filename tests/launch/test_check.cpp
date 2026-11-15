@@ -1484,6 +1484,53 @@ TEST_CASE(a_run_ended_by_a_signal_or_an_exception_says_so)
 #endif
 }
 
+TEST_CASE(a_bridge_that_refused_its_arguments_is_told_to_fix_its_command)
+{
+    DescribeRun refused = run(4, "", "error: EthBridge: --name and --participant are the same option: give one of them\n");
+    refused.command_text = "vehicle_sil_ethernet_bridge --participant EthBridge --describe --name EthBridge";
+    const auto bridge = with_role(participant("EthBridge", 6), ParticipantRole::Bridge);
+    check_text(lines({*interpret_describe(bridge, refused).error}),
+               "E 7 describe-failed: participant 'EthBridge': vehicle_sil_ethernet_bridge --participant EthBridge "
+               "--describe --name EthBridge ended with exit code 4; the bridge refused its arguments (its standard error "
+               "says why): fix the command; vehicle_sil_launch adds --name itself, so do not write --participant or "
+               "--name in the command\n"
+               "  | the end of its standard error:\nerror: EthBridge: --name and --participant are the same option: give "
+               "one of them\n");
+    // Another exit code of a bridge, and exit code 4 of an ECU (role: ecu), keep their words.
+    const auto message = [](const ParticipantConfig& p, int code) { return interpret_describe(p, run(code)).error->message; };
+    CHECK(message(bridge, 3).find("its set-up failed (see its standard error)") != std::string::npos);
+    CHECK(message(with_role(participant("Engine", 6), ParticipantRole::Ecu), 4)
+              .find("it did not take --describe or --name: if it is not made with ecu_main, set describe: false") !=
+          std::string::npos);
+}
+
+TEST_CASE(a_run_that_windows_could_not_start_for_a_dll_says_so)
+{
+    // Windows ends such a process before main() with these exit statuses; no other system gives
+    // them, so the words are the same on every system.
+    const auto error = [](const ParticipantConfig& p, unsigned code) {
+        return interpret_describe(p, run(static_cast<int>(code))).error->message;
+    };
+    const auto engine = participant("Engine", 6);
+    check_text(error(engine, 0xC0000135u),
+               "participant 'Engine': engine/engine_ecu --describe --name Engine could not start (exit status "
+               "0xC0000135): Windows did not find a DLL that it needs; put that DLL, of the version the executable was "
+               "built with, next to the executable or in a folder on PATH");
+    check_text(error(engine, 0xC0000139u),
+               "participant 'Engine': engine/engine_ecu --describe --name Engine could not start (exit status "
+               "0xC0000139): a DLL that it needs is of another version (a function in it is missing); put that DLL, of "
+               "the version the executable was built with, next to the executable or in a folder on PATH");
+    const auto bridge = with_role(participant("XlBridge", 6), ParticipantRole::Bridge);
+    check_text(error(bridge, 0xC0000135u),
+               "participant 'XlBridge': engine/engine_ecu --describe --name Engine could not start (exit status "
+               "0xC0000135): Windows did not find a DLL that it needs; put that DLL, of the version the executable was "
+               "built with, next to the executable or in a folder on PATH; if this computer does not use the bridge, "
+               "leave it out with vehicle_sil_launch --disable XlBridge");
+    const auto finding = *interpret_describe(bridge, run(static_cast<int>(0xC0000139u))).error;
+    CHECK(finding.code == "describe-failed");
+    CHECK(finding.message.find("--disable XlBridge") != std::string::npos);
+}
+
 TEST_CASE(a_start_the_system_refused_is_not_blamed_on_the_executable)
 {
     DescribeRun refused = run(std::nullopt);

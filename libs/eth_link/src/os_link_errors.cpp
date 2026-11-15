@@ -86,6 +86,14 @@ LinkError packet_open_failed(std::string_view name, int error, std::string_view 
             "cannot open a packet socket on " + quoted(name) + " (" + std::string(step) + "): " + error_text(error) + "."};
 }
 
+LinkError packet_promiscuous_refused(std::string_view name, int error)
+{
+    return {is_permission(error) ? LinkErrorKind::PermissionDenied : LinkErrorKind::Other,
+            "interface " + quoted(name) + " does not accept promiscuous mode (" + error_text(error) +
+                "), and --promiscuous asks for it: leave out --promiscuous to let the bridge run without it (it then says "
+                "so)."};
+}
+
 LinkError tun_open_failed(int error)
 {
     const std::string what = "cannot open /dev/net/tun: " + error_text(error) + ". ";

@@ -85,11 +85,11 @@
 | `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` があります。 | `step_ms` を削除するか、`ecu_main` の実行ファイルなら `describe: true` にします。 |
 | `executable` | エラー | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない、のどれかです。 | `command` のパスを直すか、実行ファイルを置きます。 |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけました（その場所を表示します）。 | 表示された場所が、意図した実行ファイルかを確認します。 |
-| `not-required-ecu` | エラー | `role: bridge` でない `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。 |
+| `not-required-ecu` | エラー | `role: bridge` でない `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。`role: bridge` は、自分で参加するブリッジのためのものです。`ecu_main` で作った ECU は、`role: bridge` を付けても、`required: false` では始まりません。 |
 | `no-required-participant` | エラー | 無効にしていない participant がどれも `required: false` か、すべてを無効にしました（シミュレーションが待つ participant がない）。 | 必須（`required: true`）の participant を、1 つ以上有効にします。 |
 | `describe-start` | エラー | 実行ファイルを起動できません。 | そのファイルが、この PC で動く実行ファイルかを確認します。 |
 | `describe-timeout` | エラー | `--describe` が時間内に終わりません。 | ECU の組み立ての中で待っている処理（接続、入力）を直すか、`--describe-timeout-ms` を長くします。 |
-| `describe-failed` | エラー | `--describe` の終了コードが 0 ではありません（4 は、ecu_main でない実行ファイルの見込みが高い）。 | 添えられた標準エラーの原因を直すか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
+| `describe-failed` | エラー | `--describe` の終了コードが 0 ではありません。4 は、ecu_main でない実行ファイルの見込みが高い。`role: bridge` の participant では、ブリッジが引数を断ったことを表します。Windows の終了状態 `0xC0000135` か `0xC0000139` は、要る DLL がない（または版が合わない）ため、実行ファイルが起動できなかったことを表します。 | 添えられた標準エラーの原因を直すか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。ブリッジなら `command` を直します（ランチャーが `--name` を足すので、`--participant` も `--name` も書きません）。DLL がないなら、実行ファイルの隣か `PATH` のフォルダーに置きます。この PC で使わないブリッジは `--disable <name>` で外せます。 |
 | `describe-output` | エラー | `--describe` の出力が、`--describe` の JSON ではありません。 | ほかのものが標準出力に書かないようにするか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
 | `describe-version` | エラー | `--describe` の出力の形式のバージョン（`vehicle_sil_ecu`）を読めません。 | 指摘の文が言うほう（ECU か `vehicle_sil_launch`）を、新しくします。 |
 | `describe-unknown-value` | エラー | `--describe` の出力の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値があります（新しい vehicle-sil の ECU）。 | `vehicle_sil_launch` を、ECU と同じか、それより新しい vehicle-sil のものにします。 |

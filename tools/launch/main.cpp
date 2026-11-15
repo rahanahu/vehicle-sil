@@ -1269,7 +1269,13 @@ int version(const std::vector<std::string>& arguments)
 
 int main(int argc, char** argv)
 {
-#ifndef _WIN32
+#ifdef _WIN32
+    // No message box of Windows for a participant whose DLL is missing: the children inherit the
+    // mode, so such a participant ends at once (check reports it) instead of waiting for someone
+    // to close the box until its time runs out.
+    // (SetErrorMode() returns the mode before, which is kept.)
+    SetErrorMode(SetErrorMode(SEM_FAILCRITICALERRORS) | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+#else
     // SIGCHLD ignored by whoever started the launcher (SIG_IGN is inherited) would make the system
     // reap the participants itself, and their exit codes would be lost.
     std::signal(SIGCHLD, SIG_DFL);

@@ -123,9 +123,9 @@ participants:
 
 The network (`VehicleCAN`) must be in `networks` with `kind: can`. `check` adds `--describe --name XlBridge`, and `run` adds `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` (so `registry_uri` may have port 0).
 
-- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0, without opening the XL driver or connecting to SIL Kit. `--registry-uri` is not needed; if it is given, it is not used.
+- With `--describe`, the bridge checks its arguments as for a run (an error is exit code 4, which `check` reports as `describe-failed` with the bridge's message; do not write `--participant` or `--name` in `command`, because the launcher adds `--name`), writes the JSON that an ecu_main executable writes for `--describe` (see "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)) and exits with code 0, without opening the XL driver or connecting to SIL Kit. `--registry-uri` is not needed; if it is given, it is not used.
 - The JSON has the participant name, `"step_ns": null` (the bridge runs in real time), the network of `--network` with `"kind": "can"` and `"use": "raw"`, no variables, `"control": null` and an empty `features` list. `check` therefore knows which network the bridge carries (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)).
-- The executable needs `vxlapi64.dll` to start at all, also for `--describe`: Windows loads it with the executable (the build copies it next to the executable when it finds it).
+- The executable needs `vxlapi64.dll` to start at all, also for `--describe`: Windows loads it with the executable (the build copies it next to the executable when it finds it). On a computer without it, `check` reports `describe-failed`: the bridge could not start because a DLL it needs was not found. Leave the bridge out there with `--disable XlBridge`.
 - `required: false`: the simulation does not wait for the bridge (see "[Startup order](#startup-order)"), and when the run ends, the launcher asks the bridge to stop.
 
 ## Exit codes
