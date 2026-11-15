@@ -58,6 +58,13 @@ public:
     /// required one or bridge (stops_run()) among them (or -1).
     int look_at_children(bool before_start);
 
+    /// When the watch has found the simulation over (not aborted, not interrupted): notes the
+    /// processes that have ended since the last look, and marks each bridge whose process has ended
+    /// by itself (ParticipantRun::ended_with_run). The watch looks only every poll, and not once
+    /// the simulation stops: a bridge that ended in that last moment is caught here, before the
+    /// launcher asks the rest to stop.
+    void note_bridges_ended_with_run();
+
     /// for_network: copies the line of each bridge's output that says most (RunOutput::last_line())
     /// into the result. After end_children(), which has read their output to the end.
     void note_last_lines();

@@ -122,10 +122,12 @@ inline std::string control_version_fix(std::int64_t version)
                : "the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one";
 }
 
-/// The line of a tool's output that says why it failed, from its lines one at a time: the last
-/// that starts with "error:" (the bridges write the usage hint after it), else the last that is
-/// not empty; without "\r", and cut after 300 bytes. check uses it on a bridge's --describe, run on
-/// the lines of the bridges it starts.
+/// The line of a tool's output that says why it failed, from its lines one at a time. A line that
+/// says so starts with "error:" (an argument the bridges refuse; they write the usage hint after it)
+/// or "FAIL" (a bridge that cannot set up, or fails while it runs; it writes what it did since, its
+/// statistics and "stopped" after it), after the tag a bridge puts first ("[eth-bridge] ",
+/// "[bridge] "). Without "\r", and cut after 300 bytes. check uses it on a bridge's --describe
+/// (text()), run on the lines of the bridges it starts (failure()).
 class LastLine
 {
 public:
@@ -133,9 +135,18 @@ public:
     {
         std::string text(line);
         std::erase(text, '\r');
-        if (text.rfind("error:", 0) == 0)
+        std::string_view body = text;
+        if (body.size() > 2 && body.front() == '[')
         {
-            error_ = text;
+            if (const auto close = body.find("] "); close != std::string_view::npos && close > 1 &&
+                                                    body.substr(1, close - 1).find(' ') == std::string_view::npos)
+            {
+                body.remove_prefix(close + 2);
+            }
+        }
+        if (body.rfind("error:", 0) == 0 || body.rfind("FAIL", 0) == 0)
+        {
+            failure_ = text;
         }
         if (!text.empty())
         {
@@ -143,15 +154,18 @@ public:
         }
     }
 
-    [[nodiscard]] std::string text() const
-    {
-        const std::string& why = error_.empty() ? last_ : error_;
-        return why.size() > 300 ? why.substr(0, 300) + "..." : why;
-    }
+    /// The last line that says why it failed, or else the last line that is not empty.
+    [[nodiscard]] std::string text() const { return cut(failure_.empty() ? last_ : failure_); }
+
+    /// The last line that says why it failed, or "" (a tool that was killed, or ended without
+    /// saying why: its last line would be about something else).
+    [[nodiscard]] std::string failure() const { return cut(failure_); }
 
 private:
+    static std::string cut(const std::string& line) { return line.size() > 300 ? line.substr(0, 300) + "..." : line; }
+
     std::string last_;
-    std::string error_;
+    std::string failure_;
 };
 
 } // namespace vehicle_sil::launch::detail

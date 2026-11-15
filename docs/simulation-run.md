@@ -302,12 +302,13 @@ A bridge is not a participant of the file. It appears in the result (`participan
 
 | What happens to a bridge | What `run` does | Finding |
 |---|---|---|
-| It cannot be started, ends, or leaves the simulation before the simulation starts (also while the run waits for a participant you start yourself, or stands still before its first step with `--start-paused`) | Starts nothing more and ends what it started. | `connect-failed` |
+| It cannot be started, ends, or leaves the simulation before the simulation starts (also while the run waits for a participant you start yourself, or stands still before its first step with `--start-paused` and `--control`) | Starts nothing more and ends what it started. | `connect-failed` |
 | It does not run in SIL Kit within `start_timeout_ms` | The same. | `connect-failed` |
-| It ends while the simulation runs (also with exit code 0, and also while the simulation is paused) | Aborts the simulation at once. | `connect-lost` |
-| It ends by itself after the simulation has ended | The same as for a participant with `required: false`. | A warning for a nonzero exit code |
+| It ends while the simulation runs (also with exit code 0, while the simulation is paused, and at time 0 of `--start-paused` without `--control`) | Aborts the simulation at once. | `connect-lost` |
+| It has ended by itself when the simulation ends, before `run` asks it to stop | Ends the run as usual. | `connect-lost` |
+| It ends by itself after the launcher aborted the simulation for another reason (SIL Kit tells the bridges of the abort too) | Nothing more: the other finding says why. | None (`participants[]` has how it ended) |
 
-The messages say how the bridge ended and quote its last line (the last line that starts with `error:`, or else the last line it wrote). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
+The messages say how the bridge ended and quote the line in which it said why: its last line that starts with `error:` or `FAIL`, after its tag such as `[eth-bridge]`. A bridge that was killed, or ended without such a line, has none quoted (its last line would be about something else, such as `stopped`). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
 
 A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step and speed commands during the run are accepted; the devices on the bus do not stop.
 
@@ -648,8 +649,8 @@ When the simulation started, the result shows after the participant table whethe
 | `not-joined` | Error | The process of a required participant is running, but it did not join within `start_timeout_ms` |
 | `simulation-start` | Error | All required participants joined, but the simulation could not be started |
 | `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
-| `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so nothing else was started (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
-| `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted |
+| `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so the simulation was not started; if it failed before the participants of the file were started, they were not (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
+| `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
 | `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
@@ -674,7 +675,7 @@ Notes on individual codes:
 | `code` | Notes |
 |---|---|
 | `connection-not-closed` | Gives the time waited. The result is complete. |
-| `connect-failed`, `connect-lost` | Give the network, the target, how the bridge ended and its last line. They take the place of `start`, `ended-before-start`, `not-joined`, `participant-failed` and `exit-code` for the bridge. `connect-failed` names the command that lists what the bridge can open (`vehicle_sil_ethernet_bridge --list-interfaces`, `vehicle_sil_vector_xl_bridge --list-channels`). |
+| `connect-failed`, `connect-lost` | Give the network, the target, how the bridge ended and the line in which it said why (see [Connecting a bus outside](#connecting-a-bus-outside---connect)). They take the place of `start`, `ended-before-start`, `not-joined`, `participant-failed` and `exit-code` for the bridge. `connect-failed` names the command that lists what the bridge can open (`vehicle_sil_ethernet_bridge --list-interfaces`, `vehicle_sil_vector_xl_bridge --list-channels`). |
 | `timeout` | In a run with a required manual participant, also reported when the simulation did not start (it names what the run was waiting for). |
 | `control-link-no-hello` | The message says whether the hello or the reply did not arrive (see [Connection state](#connection-state-state)). |
 | `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |

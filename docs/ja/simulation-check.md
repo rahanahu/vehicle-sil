@@ -174,7 +174,7 @@
 | `single-participant` | `--connect` でつなぐネットワークでは出ません。ブリッジを participant として数えます。participant のいないつなぐネットワークは、今までどおり `unused-network` です。 |
 | `connect-*` | `--connect` のときだけです（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。照合だけの誤りと警告で、照合はアダプターもチャンネルも開きません。`run` の照合にもあるので、警告は何かを起こす前に `run --strict` を失敗させます。ブリッジを動かしてからの `run` の指摘は `connect-failed` と `connect-lost` です（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。 |
 | `connect-filter` | 説明を読めない participant（`failed`、`skipped`）がいる間は出しません。先にその誤りを直します。無効の participant と、`role: bridge`、`role: test` の participant は数えません。既定の絞り込みが通すのは ECU のフレームだけです。 |
-| `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`error:` で始まる最後の行、なければ最後の行）を出します。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがなく、有効な participant の説明をすべて読めたときだけです（読めないと、通すフレームが決まらないため）。終了状態 `0xC0000135`、`0xC0000139`（DLL のために Windows がブリッジを起動しなかった）は、そう言います。`vehicle_sil_vector_xl_bridge` では、文が `vxlapi64.dll` を名指しします。 |
+| `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行、なければ最後の行）を出します。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがなく、有効な participant の説明をすべて読めたときだけです（読めないと、通すフレームが決まらないため）。終了状態 `0xC0000135`、`0xC0000139`（DLL のために Windows がブリッジを起動しなかった）は、そう言います。`vehicle_sil_vector_xl_bridge` では、文が `vxlapi64.dll` を名指しします。 |
 | `coarse-time-step` | `run` の指摘と同じ文です（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
 | `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
 | `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |

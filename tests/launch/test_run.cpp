@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/launch/run.hpp"
 
+#include "check_words.hpp"
 #include "run_close.hpp"
 #include "run_notes.hpp"
 #include "run_start_limit.hpp"
@@ -1982,7 +1983,7 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     const RunReport r = report_of(o);
     check_text(lines(r.findings),
                "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH ended before "
-               "the simulation started (its process exited with code 3; its last line: [eth-bridge] FAIL: no such "
+               "the simulation started (its process exited with code 3; it wrote: [eth-bridge] FAIL: no such "
                "interface: eth0), so nothing else was started. Check that eth0 is there and free on this computer "
                "(vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can open), or give --connect ETH=none "
                "to run the network on SIL Kit only\n");
@@ -2018,7 +2019,8 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     o.participants[1] = participant("Brake", 7);
     check_text(lines(report_of(o).findings),
                "E 3 connect-failed: network 'ETH' could not be connected to the real bus (eth0): bridge.ETH did not run in "
-               "SIL Kit within 30000 ms (start_timeout_ms; it wrote nothing), so nothing else was started. Check that eth0 "
+               "SIL Kit within 30000 ms (start_timeout_ms; it wrote no line that says why), so nothing else was started. Check "
+               "that eth0 "
                "is there and free on this computer (vehicle_sil_ethernet_bridge --list-interfaces lists what the bridge can "
                "open), or give --connect ETH=none to run the network on SIL Kit only\n");
     // It left the simulation before the start while its process ran (the launcher stopped it).
@@ -2029,7 +2031,10 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
     CHECK(lines(report_of(o).findings).find("bridge.ETH ended before the simulation started (it left the simulation (state "
-                                            "Error); it wrote nothing)") != std::string::npos);
+                                            "Error); it wrote no line that says why)") != std::string::npos);
+    // After the participants of the file were started (it ended while the run waited for the start).
+    o.participants[0] = exited(participant("Engine", 5), 0);
+    CHECK(lines(report_of(o).findings).find("), so the simulation was not started. Check that eth0 ") != std::string::npos);
 }
 
 TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_its_exit_code)
@@ -2039,7 +2044,7 @@ TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_
         ParticipantRun gone;
         gone.ending = Ending::Exited;
         gone.exit = ExitStatus{code, std::nullopt};
-        gone.last_line = "[eth-bridge] stopped";
+        gone.last_line = "[eth-bridge] FAIL: interface eth0 went down";
         RunOutcome o = connected_run(gone);
         o.simulation = SimulationEnd::Aborted;
         o.failed_participant = "bridge.ETH";
@@ -2047,11 +2052,72 @@ TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_
         check_text(lines(r.findings),
                    "E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost while the simulation "
                    "was running: bridge.ETH ended (its process exited with code " + std::to_string(code) +
-                       "; its last line: [eth-bridge] stopped), so the launcher aborted the simulation. The devices on the "
+                       "; it wrote: [eth-bridge] FAIL: interface eth0 went down), so the launcher aborted the simulation. The devices on the "
                        "bus missed what came after; the lines [bridge.ETH] above show what the bridge wrote\n");
         CHECK(r.result() == RunResult::Failed);
         CHECK(launch::detail::settled_findings(o).empty());
     }
+}
+
+TEST_CASE(a_bridge_that_had_ended_when_the_simulation_ended_is_connect_lost)
+{
+    ParticipantRun gone;
+    gone.ending = Ending::Exited;
+    gone.exit = ExitStatus{0, std::nullopt};
+    gone.ended_with_run = true;
+    const RunReport r = report_of(connected_run(gone));
+    check_text(lines(r.findings),
+               "E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost at about the time the "
+               "simulation ended: bridge.ETH ended (its process exited with code 0; it wrote no line that says why) before "
+               "the launcher asked it to stop. The devices on the bus may have missed the last frames; the lines "
+               "[bridge.ETH] above show what the bridge wrote\n");
+    CHECK(r.result() == RunResult::Failed);
+}
+
+TEST_CASE(a_bridge_that_follows_an_abort_for_another_participant_is_no_finding)
+{
+    // Engine failed; SIL Kit told the bridge of the abort, and it ended by itself with 1 before the
+    // launcher asked it to stop. Its end is in the result as it was, without a finding.
+    ParticipantRun followed;
+    followed.ending = Ending::Exited;
+    followed.exit = ExitStatus{1, std::nullopt};
+    followed.last_line = "[eth-bridge] FAIL: SIL Kit participant left Running (state Shutdown)";
+    RunOutcome o = connected_run(followed);
+    o.simulation = SimulationEnd::Aborted;
+    o.participants[0] = exited(participant("Engine", 5), 7);
+    o.failed_participant = "Engine";
+    const RunReport r = report_of(o);
+    CHECK(lines(r.findings).find("bridge.ETH") == std::string::npos);
+    CHECK(lines(r.findings).find("participant-failed") != std::string::npos);
+    CHECK(format_run_json(r).find("\"for_network\": \"ETH\",\n      \"ended\": \"exited\",\n      \"exit_code\": 1,") !=
+          std::string::npos);
+}
+
+TEST_CASE(the_line_of_a_bridge_that_says_why_it_ended)
+{
+    const auto failure = [](std::initializer_list<const char*> lines) {
+        launch::detail::LastLine last;
+        for (const char* line : lines)
+        {
+            last.add(line);
+        }
+        return last.failure();
+    };
+    // A failure while it ran: what it writes after the FAIL line is not why.
+    check_text(failure({"[eth-bridge] bridging SIL Kit network 'ETH' (participant bridge.ETH) <-> pcap 'eth0'; Ctrl+C to stop",
+                        "[eth-bridge] FAIL: reading from 'eth0' failed: the interface went down\r",
+                        "[eth-bridge] stopping", "[eth-bridge] stats silkit_to_ext=12 ext_to_silkit=11", "[eth-bridge] stopped"}),
+               "[eth-bridge] FAIL: reading from 'eth0' failed: the interface went down");
+    // Killed: no line says why (not its start line).
+    check_text(failure({"[eth-bridge] bridging SIL Kit network 'ETH' (participant bridge.ETH) <-> pcap 'eth0'; Ctrl+C to stop"}),
+               "");
+    // It could not set up.
+    check_text(failure({"[bridge] FAIL setup: no physical CAN channel 9; available: 1=\"Channel 1\""}),
+               "[bridge] FAIL setup: no physical CAN channel 9; available: 1=\"Channel 1\"");
+    // An argument it refuses (no tag), and a tag that is not one (a space in it) does not hide the word.
+    check_text(failure({"error: --interface must not be empty", "Run 'vehicle_sil_ethernet_bridge --help' for the options."}),
+               "error: --interface must not be empty");
+    check_text(failure({"[not a tag] FAIL"}), "");
 }
 
 TEST_CASE(a_bridge_that_the_launcher_stopped_after_the_run_is_no_finding)

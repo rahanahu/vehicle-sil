@@ -103,9 +103,14 @@ struct ParticipantRun
     /// for_network); "" for a participant of the file. If it ends before the simulation is over,
     /// the run fails (connect-failed before the start, connect-lost after it).
     std::string for_network{};
-    /// for_network: the line of its output that says most about how it ended (detail::LastLine),
-    /// once its output is read to the end; "" before, and if it wrote nothing.
+    /// for_network: its last line that says why it failed (one that starts with "error:" or "FAIL"
+    /// after its tag; detail::LastLine::failure()), once its output is read to the end; "" before,
+    /// and if it wrote none (it was killed, say).
     std::string last_line{};
+    /// for_network: its process had ended by itself when the watch found the simulation over (not
+    /// aborted, not interrupted), before the launcher asked it to stop: the bus was not connected
+    /// for the last moments of the run (connect-lost).
+    bool ended_with_run = false;
     std::size_t line = 0; ///< its entry in the configuration file (a bridge's: its network's)
     /// Why it could not be started (Ending::NotStarted), or "".
     std::string start_error{};

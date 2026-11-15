@@ -338,6 +338,10 @@ public:
                 scenario_.start(*controller, outcome_);
                 const RunWatch::Watched watched = watch_.watch(*controller);
                 interrupts_at_end_ = watch_.settle(*controller, watched);
+                if (outcome_.simulation != SimulationEnd::Aborted && outcome_.interrupted_by.empty())
+                {
+                    participants_.note_bridges_ended_with_run();
+                }
                 control_.note_late_values(outcome_, *transport);
                 control_.note_late_maps(outcome_);
             }

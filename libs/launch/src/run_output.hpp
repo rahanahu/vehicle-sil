@@ -76,8 +76,8 @@ public:
     /// also kept for last_line().
     void on_line(std::size_t index, std::string_view line);
 
-    /// The line of what the bridge `index` (ParticipantConfig::for_network) wrote that says most
-    /// about how it ended (detail::LastLine), or "". Takes the lock.
+    /// The last line of the bridge `index` (ParticipantConfig::for_network) that says why it failed
+    /// (detail::LastLine::failure()), or "". Takes the lock.
     [[nodiscard]] std::string last_line(std::size_t index);
 
 private:

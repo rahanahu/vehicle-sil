@@ -267,7 +267,7 @@ void connect_no_adapter(const Options& base)
     const std::string failed = finding_in(lines, "connect-failed");
     require(contains(failed, "could not be connected to the real bus (") &&
                 contains(failed, " ended before the simulation started (its process exited with code ") &&
-                contains(failed, "; its last line: ") && contains(failed, "so nothing else was started"),
+                contains(failed, "; it wrote: ") && contains(failed, "so nothing else was started"),
             "the finding connect-failed has how the bridge ended and its line:\n" + out_of(lines));
     // The launcher saw a bridge's process end while it waited (not the time limit).
     require(!contains(failed, "within 120000 ms") &&
@@ -297,7 +297,8 @@ void connect_dies_while_waiting(const Options& base)
     end_process(pid, true);
     const auto [status, lines] = live.finish();
     require(status && status->code == 1, "exit code " + code_text(status) + "\n" + out_of(lines));
-    require(contains(finding_in(lines, "connect-failed"), "bridge.ETH_EXT ended before the simulation started"),
+    require(contains(finding_in(lines, "connect-failed"), "bridge.ETH_EXT ended before the simulation started") &&
+                contains(finding_in(lines, "connect-failed"), "so the simulation was not started"),
             "the finding connect-failed:\n" + out_of(lines));
     require(events_with(lines, {"\"phase\":\"running\""}).empty() && contains(lines.back(), "\"simulation\":\"not_started\""),
             "the simulation did not start:\n" + out_of(lines));

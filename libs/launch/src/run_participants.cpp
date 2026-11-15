@@ -417,6 +417,18 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
     }
 }
 
+void RunParticipants::note_bridges_ended_with_run()
+{
+    static_cast<void>(look_at_children(false));
+    for (ParticipantRun& run : outcome_.participants)
+    {
+        if (stops_run(run) && run.exit && ended_by_itself(run))
+        {
+            run.ended_with_run = true;
+        }
+    }
+}
+
 void RunParticipants::note_last_lines()
 {
     for (std::size_t i = 0; i < outcome_.participants.size(); ++i)

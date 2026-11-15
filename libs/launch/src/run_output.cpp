@@ -173,7 +173,7 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
 std::string RunOutput::last_line(std::size_t index)
 {
     const std::lock_guard lock(mutex_);
-    return last_lines_[index].text();
+    return last_lines_[index].failure();
 }
 
 } // namespace detail

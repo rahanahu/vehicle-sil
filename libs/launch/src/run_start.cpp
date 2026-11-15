@@ -361,6 +361,8 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
     }
     if (why.empty())
     {
+        // The "joined" of a bridge whose state came between the two looks of the last round.
+        notes_.note_joined(controller, outcome_);
         return true;
     }
     const ParticipantRun& run = outcome_.participants[failed];

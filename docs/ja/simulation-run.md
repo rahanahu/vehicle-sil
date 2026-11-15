@@ -302,12 +302,13 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 | ブリッジに起きたこと | `run` がすること | 指摘 |
 |---|---|---|
-| シミュレーションが始まる前に、起動できない、終わった、シミュレーションから抜けた（手で起動する participant を待つ間と、`--start-paused` で最初のステップの前に止まっている間も） | それ以上は起動せず、起動したものを終わらせます。 | `connect-failed` |
+| シミュレーションが始まる前に、起動できない、終わった、シミュレーションから抜けた（手で起動する participant を待つ間と、`--start-paused` と `--control` で最初のステップの前に止まっている間も） | それ以上は起動せず、起動したものを終わらせます。 | `connect-failed` |
 | `start_timeout_ms` の間に SIL Kit の中で動き出さない | 同じです。 | `connect-failed` |
-| シミュレーションの実行中に終わった（終了コード 0 でも、一時停止中でも） | すぐにシミュレーションを中断します。 | `connect-lost` |
-| シミュレーションが終わった後に、自分で終わった | `required: false` の participant と同じです。 | 0 でない終了コードは警告 |
+| シミュレーションの実行中に終わった（終了コード 0 でも、一時停止中でも、`--control` のない `--start-paused` の時刻 0 で止まっている間でも） | すぐにシミュレーションを中断します。 | `connect-lost` |
+| シミュレーションが終わったとき、`run` が止まるよう頼む前に、もう自分で終わっていた | いつもどおり実行を終えます。 | `connect-lost` |
+| ほかの理由でランチャーがシミュレーションを中止した後に、自分で終わった（中止は SIL Kit からブリッジにも届きます） | それ以上は何もしません。理由はほかの指摘が言います。 | なし（`participants[]` に終わり方があります） |
 
-指摘の文は、ブリッジがどう終わったかと、その最後の行（`error:` で始まる最後の行、なければ最後に書いた行）を出します。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
+指摘の文は、ブリッジがどう終わったかと、ブリッジが理由を書いた行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行）を出します。強制終了されたブリッジと、そういう行を書かずに終わったブリッジでは、行を出しません（最後の行は `stopped` など、ほかのことだからです）。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
 
 実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、速さの命令は受け付けます。バスの機器は止まりません。
 
@@ -648,8 +649,8 @@ passed: 0 errors, 1 warning, 1 note
 | `not-joined` | エラー | 必須の participant が、プロセスは動いているのに `start_timeout_ms` の間に参加しなかった |
 | `simulation-start` | エラー | 必須の participant がそろったのに、シミュレーションを始められなかった |
 | `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
-| `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、ほかは起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
-| `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した |
+| `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、シミュレーションを始めなかった。ファイルの participant を起動する前の失敗なら、それらも起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
+| `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
@@ -674,7 +675,7 @@ passed: 0 errors, 1 warning, 1 note
 | `code` | 補足 |
 |---|---|
 | `connection-not-closed` | 待った時間を書きます。結果はそろっています。 |
-| `connect-failed`、`connect-lost` | ネットワーク、先、ブリッジがどう終わったかと、その最後の行を書きます。ブリッジについては、`start`、`ended-before-start`、`not-joined`、`participant-failed`、`exit-code` の代わりに出ます。`connect-failed` は、ブリッジが開けるものの一覧を出すコマンド（`vehicle_sil_ethernet_bridge --list-interfaces`、`vehicle_sil_vector_xl_bridge --list-channels`）を挙げます。 |
+| `connect-failed`、`connect-lost` | ネットワーク、先、ブリッジがどう終わったかと、ブリッジが理由を書いた行を書きます（[バスを外につなぐ](#バスを外につなぐ--connect)）。ブリッジについては、`start`、`ended-before-start`、`not-joined`、`participant-failed`、`exit-code` の代わりに出ます。`connect-failed` は、ブリッジが開けるものの一覧を出すコマンド（`vehicle_sil_ethernet_bridge --list-interfaces`、`vehicle_sil_vector_xl_bridge --list-channels`）を挙げます。 |
 | `timeout` | manual の必須の participant がいる実行では、始まらなかったときにも出ます（待っていたものを書きます）。 |
 | `control-link-no-hello` | hello が来なかったのか、返事が来なかったのかは、メッセージに書きます（[接続の状態](#接続の状態state)）。 |
 | `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |
