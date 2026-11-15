@@ -1,5 +1,7 @@
 # 自分の画面のテンプレート（gui_starter）
 
+[English](README.md)
+
 GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面の、最小の形です。クライアントのライブラリ（[gui/client](../../gui/client/README.ja.md)）だけを使い、ビルドなしの素の HTML と ES モジュールで書いてあります。これをコピーして、自分の画面に書き換えます。変数を 1 つ表示する画面にするまでの手順は、ガイド [ブラウザの GUI に自分の画面を作る](../../docs/ja/howto/gui-screen.md) にあります。
 
 | ファイル | 内容 |

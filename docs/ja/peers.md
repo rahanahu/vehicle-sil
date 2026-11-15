@@ -1,5 +1,7 @@
 # ピアを別々のプロセスで動かす（`Peer`、`vehicle_sil_sim_controller`）
 
+[English](../peers.md)
+
 `Simulation` や `ecu_main` を使わずに、`Peer` や SIL Kit の participant を自分で組み立て、別々のプロセスで動かす方法です。例の実行ファイルを起動するコマンドと、自分のピアを書くときの `PeerOptions` の設定を示します。
 
 | したいこと | 使うもの | 節 |

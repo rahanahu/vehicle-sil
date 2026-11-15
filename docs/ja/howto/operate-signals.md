@@ -1,5 +1,7 @@
 # 信号を外から操作する
 
+[English](../../howto/operate-signals.md)
+
 動いているシミュレーションの ECU の変数を、Python やコマンドから読み書きし、仮想時間を一時停止して少しずつ進める手順です。`vehicle_sil_launch run` に `--control` を付けると起動する Control Server に、gRPC で接続します。
 
 ## 方法を選ぶ

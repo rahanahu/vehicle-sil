@@ -1,5 +1,7 @@
 # 実行とテストの基盤
 
+[English](../../internals/execution.md)
+
 ECU のアプリケーションを組み立てる `Ecu`、J1939 と LIN のノードを動かす participant の `Peer`、プロセス内の仮想バスで実行する `LocalBench` とテストのツール、それらを選んで動かす `Simulation` について、仕様と、実装が守る保証を書きます。
 
 | 節 | 書いてあること |

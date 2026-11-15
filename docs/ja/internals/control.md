@@ -1,5 +1,7 @@
 # 外部操作（Control API）
 
+[English](../../internals/control.md)
+
 Control API の Control Agent、Hub、SIL Kit の上のトランスポート、Control Server、ランチャーの Control Server、シナリオについて、反映の時刻、順序、上限、スレッドの保証と制限を書きます。使い方は [control-api.md](../control-api.md) にあります。
 
 | 節 | 書いてあること |

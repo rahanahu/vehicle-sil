@@ -1,5 +1,7 @@
 # 照合と指摘（`vehicle_sil_launch check`）
 
+[English](../simulation-check.md)
+
 `vehicle_sil_launch check <file>` が、設定ファイルと ECU の実行ファイルを照合する順序、指摘のコードの一覧、出力の形式（人が読む表と JSON）のリファレンスです。`vehicle_sil_launch run` も、最初に同じ照合をします。
 
 | 調べること | 節 |

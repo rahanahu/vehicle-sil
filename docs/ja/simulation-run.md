@@ -1,5 +1,7 @@
 # シミュレーションの実行（`vehicle_sil_launch run`）
 
+[English](../simulation-run.md)
+
 `vehicle_sil_launch run <file>` が何をどの順にするか、いつ中断するか、何を出力するかのリファレンスです。複数のシナリオをまとめて実行する `vehicle_sil_launch test` も、このドキュメントにあります。引数の一覧は [simulation-config.md](simulation-config.md) の「引数と終了コード」にあります。
 
 | 調べること | 節 |

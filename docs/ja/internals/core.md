@@ -1,5 +1,7 @@
 # participant の基盤（`vehicle_sil::core`）
 
+[English](../../internals/core.md)
+
 SIL Kit の participant と lifecycle を持つ `ParticipantRuntime` について、公開 API が保証すること、所有と終了の順序、スレッドとキュー、実時間モードの時刻、SIL Kit の設定の既定を書きます。仮想時間の進み方と時間ゲートは [virtual-time.md](virtual-time.md) にあります。
 
 | 節 | 書いてあること |

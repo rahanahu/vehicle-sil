@@ -1,5 +1,7 @@
 # CAN の共通基盤
 
+[English](../../internals/can.md)
+
 CAN のポート、ホスト、ドライバー、仮想バス、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator について、仕様と、実装が守る保証と制限を書きます。CAN の上に自分のプロトコルを作るときに守るインターフェース（`Port`、`Steppable`）の仕様も、ここにあります。
 
 | 節 | 書いてあること |

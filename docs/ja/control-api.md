@@ -1,5 +1,7 @@
 # Control API の使い方
 
+[English](../control-api.md)
+
 Control API は、実行中のシミュレーションを外から操作・監視する gRPC の API です（`proto/vehicle_sil/control/v1/control.proto`）。このドキュメントは、起動のしかた、認証、ECU の変数の宣言、呼び出しの一覧、Python のクライアントと CLI、時間の操作のルールのリファレンスです。手順を追って試すときは、ガイド「[信号を外から操作する](howto/operate-signals.md)」から始めます。
 
 | 調べたいこと | 節 |

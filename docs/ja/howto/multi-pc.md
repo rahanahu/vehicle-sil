@@ -1,5 +1,7 @@
 # 複数の PC で動かす
 
+[English](../../howto/multi-pc.md)
+
 1 つのシミュレーションを 2 台の PC に分けて動かす手順です。1 台で `vehicle_sil_launch`（以下、ランチャー）を動かし、もう 1 台で起動した ECU をそのシミュレーションに参加させます。後半で、ほかの PC から Control API と GUI を使う方法も説明します。
 
 > [!WARNING]

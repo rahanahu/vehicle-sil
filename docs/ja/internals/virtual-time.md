@@ -1,5 +1,7 @@
 # 共通仮想時間
 
+[English](../../internals/virtual-time.md)
+
 仮想時間の進み方、時間ゲート（一時停止、ステップ実行、速度）、受信の順序について、実装が守る保証と制限を書きます。
 
 SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間を共有します。ピアごとにステップ幅を決められます（例: 物理モデル 1 ms、LIN Slave 2 ms、LIN Master 5 ms、J1939 ECU 10 ms）。ピアはそれぞれ独立したプロセスで、同じ PC でも別の PC でも動きます。

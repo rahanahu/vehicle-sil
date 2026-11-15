@@ -1,5 +1,7 @@
 # ビルドと取り込み
 
+[English](../build.md)
+
 vehicle-sil 自体のビルド方法と、自分の CMake プロジェクトに vehicle-sil を取り込む方法をまとめたドキュメントです。
 
 | したいこと | 読む節 |

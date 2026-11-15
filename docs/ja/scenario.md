@@ -1,5 +1,7 @@
 # シナリオ（`vehicle_sil_launch run --scenario`）
 
+[English](../scenario.md)
+
 シナリオのファイルの形式と、実行したときのルール（時刻、条件が見る値、結果、指摘のコード、出力）のリファレンスです。手順を追って試すときは、ガイド「[シナリオでテストを書く](howto/scenario-tests.md)」から始めます。
 
 | 調べたいこと | 節 |

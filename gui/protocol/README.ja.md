@@ -1,5 +1,7 @@
 # gui/protocol
 
+[English](README.md)
+
 GUI サーバー（`gui/server`）の HTTP と WebSocket の API の、公開する仕様です。リクエストとレスポンスの形、WebSocket のメッセージ、エラーの `code`、上限を載せています。サンプルの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この API だけを使います。自分の画面やツールも、このドキュメントと例に従えば同じことができます。
 
 | 知りたいこと | 節 |

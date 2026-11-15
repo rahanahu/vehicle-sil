@@ -1,5 +1,7 @@
 # gui/client
 
+[English](README.md)
+
 GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ（TypeScript、`@vehicle-sil/gui-client`）のリファレンスです。入手とインポートの方法、公開 API の一覧、使い方、ECU の変数の読み書き、ライフサイクルが書いてあります。
 
 ライブラリが持つのは、接続（トークン、再接続）、セッションのコピー（サーバーの要約とイベントから組み立てた、実行の状態のコピー）、実行と時間の操作、ECU の変数（一覧、値の watch、書き込みと結果）、サーバーの API の型と読み取りです。Angular にも RxJS にも、ほかのパッケージにも依存しません。サンプルの画面（`gui/web`）も、Angular の薄いラッパー（`gui/web/src/app/core/session/`）を通して、これだけを使います。

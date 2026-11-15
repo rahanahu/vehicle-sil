@@ -1,5 +1,7 @@
 # プログラムから使う（`--events`、`--stdin-commands`、`version`）
 
+[English](../simulation-events.md)
+
 GUI やスクリプトなどのプログラムから `vehicle_sil_launch` を起動して、経過と結果を読み、止めるためのリファレンスです。実行の流れ、止め方、結果は [simulation-run.md](simulation-run.md) にあります。
 
 | 使うもの | できること | 節 |

@@ -1,5 +1,7 @@
 # vehicle-sil
 
+[English](README.md)
+
 vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェアでシミュレートし、複数の ECU をつないで PC 上で動かしてテストするためのツール一式です。ECU は C++20 で書きます。ECU の間の通信と時刻の同期には [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) を使います。すべての ECU は、実際の時計ではなく、共通のシミュレーションの時刻（仮想時間）で動くので、何度実行しても同じ結果になります。Linux と Windows（MinGW）で動きます。
 
 > [!NOTE]

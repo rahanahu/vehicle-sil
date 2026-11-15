@@ -1,5 +1,7 @@
 # Vector XL CAN Bridge
 
+[English](../bridges.md)
+
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。このドキュメントには、接続の手順、引数、終了コード、統計、転送の仕様、ビルド、検証の範囲が書いてあります。
 
 | 接続するもの | `--xl-target` | 必要なもの | 確認済み | 未確認 |

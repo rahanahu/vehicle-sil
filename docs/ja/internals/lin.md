@@ -1,5 +1,7 @@
 # LIN を仮想時間で動かす（`vehicle_sil::lin`）
 
+[English](../../internals/lin.md)
+
 LIN の Master と Slave（`LinMaster`、`LinSlave`）、ポート（`LinPort`）、仮想 LIN バス（`VirtualLinBus`）が守るルールと制約を書きます。使い方の例は [lin-guide.md](../lin-guide.md) にあります。
 
 | 節 | 書いてあること |

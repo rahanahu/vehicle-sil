@@ -1,5 +1,7 @@
 # ECU のプロジェクト（vehicle-sil のテンプレート）
 
+[English](README.md)
+
 [vehicle-sil](https://github.com/rahanahu/vehicle-sil) で ECU を作るプロジェクトのテンプレートです。2 つの ECU をビルドし、1 つのシミュレーションとして実行し、ブラウザの GUI で値を操作するところまでを、この README の手順で進めます。その後、ECU を自分のものに書き換えます。
 
 ## 前提

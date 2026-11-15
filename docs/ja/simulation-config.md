@@ -1,5 +1,7 @@
 # シミュレーションの設定ファイル（`vehicle_sil_launch`）
 
+[English](../simulation-config.md)
+
 `vehicle_sil_launch` に渡す設定ファイルのリファレンスです。設定ファイルのキーと書き方のルール、`check`、`run`、`test`、`version` の引数と終了コードを載せています。形式とルールはまだ変わることがあります。
 
 設定ファイルには、participant にする実行ファイル、それらが接続するネットワーク、止める時刻を書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。

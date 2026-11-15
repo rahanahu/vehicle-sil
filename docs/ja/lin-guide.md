@@ -1,5 +1,7 @@
 # LIN のノードの作り方
 
+[English](../lin-guide.md)
+
 ECU に LIN の Master か Slave を持たせる方法と、LIN の例を別々のプロセスで動かす方法です。スケジュール、フレームの送受信、診断フレーム（0x3C、0x3D）、Sleep/Wakeup のルールと制約は、[internals/lin.md](internals/lin.md) にあります。
 
 `vehicle_sil::lin` は、仮想時間で動く LIN の Master と Slave です（SIL Kit にも J1939 にも依存しません）。

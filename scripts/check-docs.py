@@ -220,7 +220,11 @@ def check(files: list[Path], require_english: bool = False) -> tuple[list[str], 
                 d = rel(dest)
                 if d is not None:
                     found.setdefault(english_of(d) or d, lineno)
-                    if dest.suffix == ".md" and japanese_page and japanese_of(d):
+                    # The one link across the editions: a page's language switch, to its own other edition.
+                    switch = rel(f) in (english_of(d), japanese_of(d))
+                    if switch:
+                        pass
+                    elif dest.suffix == ".md" and japanese_page and japanese_of(d):
                         problems.append(f"{where}: links the English page {d}: link its Japanese page {japanese_of(d)}")
                     elif dest.suffix == ".md" and not japanese_page and english_of(d):
                         problems.append(f"{where}: links the Japanese page {d}: link its English page {english_of(d)}")
