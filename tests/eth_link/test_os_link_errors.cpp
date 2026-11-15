@@ -189,7 +189,7 @@ TEST_CASE(os_links_exist_on_linux_only)
     CHECK(list_interfaces().empty());
     try
     {
-        (void)make_packet_link({"eth0", false});
+        (void)make_packet_link({"eth0", Promiscuous::Off});
         CHECK(false);
     }
     catch (const LinkError& e)
