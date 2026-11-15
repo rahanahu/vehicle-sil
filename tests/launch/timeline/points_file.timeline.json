@@ -40,7 +40,7 @@
       "end_ms": 50,
       "code": null,
       "message": null,
-      "writes": [0],
+      "lines": [0],
       "watch": null,
       "failed": null
     },
@@ -55,7 +55,7 @@
       "end_ms": 80,
       "code": null,
       "message": null,
-      "writes": [1],
+      "lines": [1],
       "watch": null,
       "failed": null
     }

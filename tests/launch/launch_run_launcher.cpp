@@ -3989,7 +3989,7 @@ void timeline(const Options& o)
                            "      \"from_ms\": 100,\n      \"to_ms\": 200,\n      \"base\": null,\n      \"base_source\": null,\n"
                            "      \"shape\": {\n        \"type\": \"square\",\n        \"low\": 20,\n        \"high\": 30,\n"
                            "        \"period_ms\": 40,\n        \"for_ms\": 100\n      },\n") &&
-                contains(file, "      \"writes\": [0, 1],\n") && contains(file, "      \"writes\": [2],\n"),
+                contains(file, "      \"lines\": [0, 1],\n") && contains(file, "      \"lines\": [2],\n"),
             "the lines of the inputs:\n" + file);
     // The run's own output is the one without --timeline.
     const Captured without = launch(o, plain, dir);

@@ -66,7 +66,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
-      "writes": [0],
+      "lines": [0],
       "watch": null,
       "failed": null
     },
@@ -81,7 +81,7 @@
       "end_ms": 40,
       "code": "scenario-write",
       "message": "the write for 40 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write before it in that command (Body.mode = auto (2)), and it stays applied",
-      "writes": [1, 2],
+      "lines": [1, 2],
       "watch": null,
       "failed": {
         "at_ms": 40,
@@ -117,7 +117,7 @@
       "end_ms": null,
       "code": null,
       "message": null,
-      "writes": [],
+      "lines": [],
       "watch": {
         "mode": "once",
         "from_ms": null,
