@@ -1,7 +1,9 @@
 // Unit tests of the parts of viewer.js that need no DOM: reading a file, the model, and the layout
 // (time to position, the rows of the steps, held segments, thinning out). They read the timeline references
-// that the launcher's tests compare (tests/launch/timeline), so the page is tried on what the launcher writes.
-// Run with `npm run test:timeline` in gui/web (scripts/verify-web.py runs it).
+// that the launcher's tests compare (tests/launch/timeline), so the page is tried on what the launcher writes,
+// and the fixtures beside them (fixtures/) for what those do not have: a bool or an enum write that was not
+// applied, a write whose result is not known, points dropped at the limits. tests/schema/test_schemas.py holds
+// the fixtures to the schema of the file. Run with `npm run test:timeline` in gui/web (scripts/verify-web.py runs it).
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,9 +12,14 @@ const path = require('node:path');
 const T = require('../viewer.js');
 
 const REFERENCES = path.join(__dirname, '..', '..', '..', 'tests', 'launch', 'timeline');
+const FIXTURES = path.join(__dirname, 'fixtures');
 
 function reference(name) {
   return JSON.parse(fs.readFileSync(path.join(REFERENCES, `${name}.timeline.json`), 'utf8'));
+}
+
+function fixture(name) {
+  return JSON.parse(fs.readFileSync(path.join(FIXTURES, `${name}.timeline.json`), 'utf8'));
 }
 
 function model(data) {
@@ -30,11 +37,17 @@ const series = (t, v, extra) => ({
   ...extra,
 });
 
-test('every reference file is read, with a lane for each variable and nothing it cannot draw', () => {
-  const names = fs.readdirSync(REFERENCES).filter((f) => f.endsWith('.timeline.json'));
-  assert.ok(names.length >= 5, 'the references are there');
-  for (const name of names) {
-    const text = fs.readFileSync(path.join(REFERENCES, name), 'utf8');
+test('every reference file and fixture is read, with a lane for each variable and nothing it cannot draw', () => {
+  const files = [REFERENCES, FIXTURES].flatMap((dir) =>
+    fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.timeline.json'))
+      .map((f) => path.join(dir, f)),
+  );
+  assert.ok(files.length >= 8, 'the references and the fixtures are there');
+  for (const file of files) {
+    const name = path.basename(file);
+    const text = fs.readFileSync(file, 'utf8');
     const read = T.readTimeline(text, name);
     assert.equal(read.error, undefined, `${name}: ${read.error}`);
     const m = T.buildModel(read.timeline);
@@ -112,6 +125,31 @@ test('values the page does not know are named, not drawn wrongly', () => {
   data.steps[0].kind = 'freeze';
   data.steps[0].status = 'paused';
   data.lines[0].kind = 'freeze';
+  // Values that are not of their variable's type (a hand-edited or broken file): named, and not drawn.
+  const bools = reference('motions');
+  const lamp = bools.series.find((s) => s.variable === 'Door.lamp' && s.source === 'written');
+  lamp.points = [
+    [0, 'false'],
+    [10, 1],
+    [20, true],
+  ];
+  const ratio = bools.series.find((s) => s.variable === 'Door.ratio');
+  ratio.points[1][1] = true;
+  const typed = model(bools);
+  assert.deepEqual(typed.byName.get('Door.lamp').notes, [
+    'Note: 2 values of the written series are not true or false, as its type bool says, so they are not drawn (the first: "false" at 0 ms).'.slice(
+      'Note: '.length,
+    ),
+  ]);
+  assert.deepEqual(typed.byName.get('Door.lamp').written.v, [undefined, undefined, true]);
+  assert.match(
+    typed.byName.get('Door.ratio').notes.join(),
+    /1 value of the written series is not a number/,
+  );
+  assert.equal(
+    T.readoutText('sent', T.valueAt(typed.byName.get('Door.lamp').written, 5, 100)),
+    'sent: a value that is not of the type (see the note)',
+  );
   const m = model(data);
   const level = m.byName.get('Body.level');
   const speed = m.byName.get('Body.body.speed');
@@ -154,8 +192,9 @@ test('a refused write: which writes are in the ECU, which are not, and which one
     ],
   );
   assert.deepEqual(T.valueAt(m.byName.get('Body.level').written, 40, 40), {
-    value: 7,
-    notApplied: 13,
+    value: 13,
+    state: 'not-applied',
+    kept: { value: 7 },
   });
 });
 
@@ -174,8 +213,8 @@ test('a condition that failed: its lane, its value and its band; the other condi
   const speed = m.byName.get('Body.body.speed');
   assert.equal(speed.failing, true);
   assert.deepEqual(
-    speed.bands.map((b) => [b.step, b.mode, b.from, b.to, b.failed]),
-    [[2, 'during', 50, 250, true]],
+    speed.bands.map((b) => [b.step, b.mode, b.from, b.to, b.until, b.failed]),
+    [[2, 'during', 50, 140, 250, true]],
   );
   const level = m.byName.get('Body.level');
   assert.equal(level.failing, false);
@@ -229,26 +268,149 @@ test('steps that overlap go on separate rows, others share one', () => {
   assert.equal(count, 2);
 });
 
-test('points from not_applied_from on are not applied, and the ECU keeps the value before them', () => {
-  const segs = T.holdSegments(
-    series([0, 10, 20, 30], [1, 2, 3, 4], { notAppliedFrom: 2 }),
-    50,
-    null,
-  );
+test('points from not_applied_from on: not applied where the writes say so, else not known', () => {
+  // The failed step's write of point 2 was not applied; point 3 was sent after it: not known.
+  const s = series([0, 10, 20, 30], [1, 2, 3, 4], {
+    notAppliedFrom: 2,
+    applied: new Map([[2, false]]),
+  });
   assert.deepEqual(
-    segs.map((x) => [x.from, x.to, x.v, x.state]),
+    T.holdSegments(s, 50, null).map((x) => [x.from, x.to, x.v, x.state]),
     [
       [0, 10, 1, 'sent'],
       [10, 20, 2, 'sent'],
       [20, 30, 3, 'not-applied'],
-      [30, 50, 4, 'not-applied'],
-      [20, 50, 2, 'held'],
+      [30, 50, 4, 'not-known'],
+      // The ECU keeps 2 only as long as that is known: up to the point whose result is not known.
+      [20, 30, 2, 'held'],
     ],
   );
-  const s = series([0, 10, 20, 30], [1, 2, 3, 4], { notAppliedFrom: 2 });
-  assert.deepEqual(T.valueAt(s, 25, 50), { value: 2, notApplied: 3 });
+  assert.deepEqual(T.valueAt(s, 25, 50), { value: 3, state: 'not-applied', kept: { value: 2 } });
+  assert.deepEqual(T.valueAt(s, 35, 50), { value: 4, state: 'not-known' });
   assert.deepEqual(T.valueAt(s, 15, 50), { value: 2 });
   assert.equal(T.valueAt(s, -1, 50), null);
+  // Every point not applied: the ECU keeps the value before them to the end.
+  const all = series([0, 10, 20], [1, 2, 3], {
+    notAppliedFrom: 1,
+    applied: new Map([
+      [1, false],
+      [2, false],
+    ]),
+  });
+  assert.deepEqual(
+    T.holdSegments(all, 50, null)
+      .filter((x) => x.state === 'held')
+      .map((x) => [x.from, x.to, x.v]),
+    [[10, 50, 1]],
+  );
+  assert.deepEqual(T.valueAt(all, 30, 50).kept, { value: 1 });
+});
+
+test('a write whose result is not known is never drawn or worded as not applied', () => {
+  const m = model(fixture('applied_unknown'));
+  assert.deepEqual(
+    m.failure.writes.map((w) => [w.variable, w.applied, w.cause]),
+    [
+      ['Body.mode', null, false],
+      ['Body.level', null, false],
+    ],
+  );
+  for (const name of ['Body.level', 'Body.mode']) {
+    const written = m.byName.get(name).written;
+    const segs = T.holdSegments(written, m.recordedTo, null);
+    assert.ok(
+      segs.every((x) => x.state !== 'not-applied' && x.state !== 'held'),
+      `${name}: ${JSON.stringify(segs)}`,
+    );
+    assert.ok(segs.some((x) => x.state === 'not-known'));
+  }
+  const level = m.byName.get('Body.level');
+  const at50 = T.valueAt(level.written, 50, m.recordedTo, null);
+  assert.deepEqual(at50, { value: 13, state: 'not-known' });
+  const text = T.readoutText('sent', at50, level.info);
+  assert.equal(text, 'sent 13 (not known whether the ECU applied it)');
+  assert.doesNotMatch(text, /not applied|the ECU has/);
+});
+
+test('a bool and an enum write that was not applied stay visible above the value the ECU kept', () => {
+  const m = model(fixture('state_not_applied'));
+  for (const [name, sentValue, keptValue] of [
+    ['Body.mode', 2, 0],
+    ['Body.lamp', true, false],
+  ]) {
+    const segs = T.mergeEqual(T.holdSegments(m.byName.get(name).written, m.recordedTo, null));
+    assert.deepEqual(
+      segs.map((x) => [x.from, x.to, x.state]),
+      [
+        [0, 40, 'sent'],
+        [40, 60, 'not-applied'],
+        [60, 60, 'not-known'],
+        [40, 60, 'held'],
+      ],
+      name,
+    );
+    assert.equal(segs[1].v, sentValue);
+    assert.equal(segs[3].v, keptValue);
+    const layout = T.stateBandLayout(segs, 10, 20);
+    const held = layout.findIndex((x) => x.seg.state === 'held');
+    const shown = layout.filter(
+      (x) => x.seg.state === 'not-applied' || x.seg.state === 'not-known',
+    );
+    assert.equal(held, 0, 'the kept value is drawn first');
+    assert.equal(shown.length, 2);
+    // Nothing that is drawn later covers them, and the kept value's strip is under them, not on them.
+    for (const x of shown) {
+      assert.ok(layout.indexOf(x) > held);
+      assert.ok(x.y + x.height <= layout[held].y, `${name}: ${JSON.stringify(layout)}`);
+    }
+  }
+  const mode = m.byName.get('Body.mode');
+  assert.equal(
+    T.readoutText('sent', T.valueAt(mode.written, 50, m.recordedTo, null), mode.info),
+    'sent auto (2) (not applied; the ECU has off (0))',
+  );
+  assert.equal(
+    T.readoutText('sent', T.valueAt(mode.written, 60, m.recordedTo, null), mode.info),
+    'sent on (1) (not known whether the ECU applied it)',
+  );
+});
+
+test('inside the interval whose points were dropped, the read-out says so instead of an older value', () => {
+  const m = model(fixture('dropped_ramp'));
+  const level = m.byName.get('Body.level');
+  const gap = level.gaps.written;
+  assert.deepEqual(gap, { from: 10, before: 8000, dropped: 799 });
+  const inside = T.valueAt(level.written, 5000, m.recordedTo, gap);
+  assert.deepEqual(inside, { missing: true });
+  assert.equal(
+    T.readoutText('sent', inside, level.info),
+    "sent: values dropped at the file's limits",
+  );
+  assert.deepEqual(T.valueAt(level.written, 5, m.recordedTo, gap), { value: 5 });
+  assert.deepEqual(T.valueAt(level.written, 8005, m.recordedTo, gap), {
+    value: level.written.v[1],
+  });
+});
+
+test('the words of a failed write follow the file: refused, not known, not sent', () => {
+  const refused = model(reference('write_refused')).failure;
+  const words = T.writeWords(refused);
+  assert.equal(words.heading, 'Writes for 40 ms');
+  assert.match(words.explain, /^Applied: .* Not applied: the ECU refused it/);
+  assert.doesNotMatch(words.explain, /never reached|Not known/);
+  assert.deepEqual(refused.writes.map(words.cause), ['', 'the cause of the failure']);
+  const unknown = T.writeWords(model(fixture('applied_unknown')).failure);
+  assert.equal(unknown.explain, 'Not known: no result says whether the ECU applied it.');
+  // A step that failed before it sent anything: one write with point null.
+  const data = reference('write_refused');
+  data.steps[1].failed.writes = [
+    { variable: 'Body.level', at_ms: 40, value: 13, point: null, applied: false },
+  ];
+  data.steps[1].failed.write = 0;
+  const notSent = model(data).failure;
+  const said = T.writeWords(notSent);
+  assert.deepEqual(notSent.writes.map(said.cause), ['not sent: the cause of the failure']);
+  assert.doesNotMatch(said.heading + said.explain, /sent together|refused:/);
 });
 
 test('points are not joined across the interval whose points were dropped at the limits', () => {

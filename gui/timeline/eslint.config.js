@@ -20,16 +20,38 @@ const NODE = ['module', 'require', '__dirname'];
 const SHARED = ['globalThis', 'console'];
 const globals = (names) => Object.fromEntries(names.map((name) => [name, 'readonly']));
 
-/** Text from the file (names, units, messages) must never be parsed as HTML. */
+const TEXT_ONLY =
+  'The page puts text in with textContent only: names and messages come from the file.';
+
+/** Text from the file (names, units, messages) must never be parsed as HTML or become a handler. */
 const NO_HTML = {
   'no-restricted-properties': [
     'error',
-    ...['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'write', 'writeln'].map((property) => ({
+    ...[
+      'innerHTML',
+      'outerHTML',
+      'insertAdjacentHTML',
+      'createContextualFragment',
+      'setHTMLUnsafe',
+      'parseHTMLUnsafe',
+      'srcdoc',
+      'write',
+      'writeln',
+    ].map((property) => ({
       ...(property.startsWith('write') ? { object: 'document' } : {}),
       property,
-      message:
-        'The page puts text in with textContent only: names and messages come from the file.',
+      message: TEXT_ONLY,
     })),
+  ],
+  'no-restricted-syntax': [
+    'error',
+    { selector: "NewExpression[callee.name='DOMParser']", message: TEXT_ONLY },
+    {
+      // h() turns on... keys into listeners; setAttribute must not make a handler or a document of text.
+      selector:
+        "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on|srcdoc$)/i]",
+      message: TEXT_ONLY,
+    },
   ],
 };
 

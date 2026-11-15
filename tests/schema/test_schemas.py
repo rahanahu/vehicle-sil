@@ -14,7 +14,9 @@ Without the launcher (the files only):
   - the copies in template/schema/ are the files they are copies of, and the first line of each YAML file of examples/
     and template/ names the schema of its kind (# yaml-language-server: $schema=<relative path>);
   - the timeline files of tests/launch/timeline/ (what the scenario's engine writes for `run --timeline`) are valid
-    for schema/timeline.schema.json, every key of that schema is described, and files with a mistake are not valid.
+    for schema/timeline.schema.json, every key of that schema is described, and files with a mistake are not valid;
+  - the timeline files that the tests of the timeline page use (gui/timeline/tests/fixtures/) are valid too, so that
+    the page is not tested on a shape the launcher cannot write.
 
 With the built examples (VEHICLE_SIL_EXAMPLE_DIR):
   - the first line of each copy of an example's YAML file in the build directory leads to a copy of its schema.
@@ -52,6 +54,7 @@ SIMULATION = json.loads((SCHEMA_DIR / "simulation.schema.json").read_text(encodi
 SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="utf-8"))
 TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
 TIMELINE_REFERENCES = ROOT / "tests" / "launch" / "timeline"
+TIMELINE_PAGE_FIXTURES = ROOT / "gui" / "timeline" / "tests" / "fixtures"
 MODELINE = re.compile(r"^# yaml-language-server: \$schema=(\S+)$")
 LAUNCH = os.environ.get("VEHICLE_SIL_LAUNCH_EXE", "")
 EXAMPLE_DIR = os.environ.get("VEHICLE_SIL_EXAMPLE_DIR", "")
@@ -867,6 +870,14 @@ class TimelineSchema(unittest.TestCase):
             self.assertEqual(problems(TIMELINE, json.loads(path.read_text(encoding="utf-8"))), [],
                              f"{path.relative_to(ROOT)} is not valid for schema/timeline.schema.json: the launcher "
                              "wrote it, so correct the schema (and docs/simulation-run.md)")
+
+    def test_the_fixtures_of_the_timeline_page_are_valid(self):
+        files = sorted(TIMELINE_PAGE_FIXTURES.glob("*.timeline.json"))
+        self.assertGreater(len(files), 0, f"{TIMELINE_PAGE_FIXTURES} has no timeline files any more")
+        for path in files:
+            self.assertEqual(problems(TIMELINE, json.loads(path.read_text(encoding="utf-8"))), [],
+                             f"{path.relative_to(ROOT)} is not valid for schema/timeline.schema.json: correct the "
+                             "fixture, so that the page is tested on what the launcher can write")
 
     def test_a_file_with_a_mistake_is_not_valid(self):
         good = json.loads((TIMELINE_REFERENCES / "fails_beside.timeline.json").read_text(encoding="utf-8"))

@@ -1003,13 +1003,13 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 ### Viewing a timeline file
 
-The page `gui/timeline/timeline.html` in the vehicle-sil repository draws a timeline file as a chart. Open it in a browser (as a local file is fine; it needs `viewer.js` beside it) and drop the timeline file on it, or choose the file with **Open a file**. The page reads the file in the browser and sends nothing anywhere.
+The page `gui/timeline/timeline.html` in the vehicle-sil repository draws a timeline file as a chart. Open it in a browser (as a local file is fine; it needs `viewer.js` beside it) and drop the timeline file on it, or choose the file with **Open a file** (a button, so the keyboard works too). The page reads the file in the browser and sends nothing anywhere.
 
-- If the scenario failed, the page opens on the failure: the step that failed and when, the launcher's message, each condition that did not hold with the value it saw, and, for a failed write, which writes for that time the ECU applied and which it did not.
-- The chart has a lane for the steps and one for each variable: the inputs (the values sent, and the values seen when a condition reads them), then the other variables. The bands show the values that each condition allows (green: it held; red: it did not). Drag across the chart to zoom in; double-click shows the whole run.
+- If the scenario failed, the page opens on the failure: the step that failed and when, the launcher's message, each condition that did not hold with the value it saw, and, for a failed write, which writes for that time the ECU applied, which it did not, and for which no result says (not known).
+- The chart has a lane for the steps and one for each variable: the inputs (the values sent, and the values seen when a condition reads them), then the other variables. The bands show the values that each condition allows (green: it held; red: it did not; grey: the step was not decided by it). A value sent that the ECU did not apply is red and dashed, one for which that is not known is orange and dotted; neither is drawn as a value the variable took. Drag across the chart to zoom in; double-click shows the whole run.
 - Below the chart, tables hold the same steps, input lines and findings.
 - Served by a web server, the page also takes the file's address in `?src=`, on the same server only (`timeline.html?src=runs/throttle_step.timeline.json`).
-- The page reads format 1 with `stage` `"run"`. For another format or stage, it says that it cannot show the file instead of drawing it. It ignores keys it does not know, and names the values it does not know instead of drawing them.
+- The page reads format 1 with `stage` `"run"`. For another format or stage, it says that it cannot show the file instead of drawing it. It ignores keys it does not know, and names the values it does not know, and values that are not of their variable's type, under their lane instead of drawing them. A file it cannot show leaves the page empty, so that nothing of the file before is taken for it; the name of the file shown is in the header.
 
 ### File format
 

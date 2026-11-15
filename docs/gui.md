@@ -1162,6 +1162,7 @@ Directories and tests for developing the GUI itself.
 | Library tests | The `client` stage of `verify-web.py` |
 | Bundling the library into one file | The `bundle` stage of `verify-web.py` |
 | Package | The `package` stage of `verify-web.py` |
+| Unit tests of the timeline page `gui/timeline` | The `timeline` stage of `verify-web.py` (its browser tests: `--e2e-grep 'timeline page'`) |
 | Serving the screen template `examples/gui_starter` with `--web` and running it in a browser | The end-to-end test `starter.spec.ts` |
 
 The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map.md](code-map.md#timeouts-and-the-scale-factor)).

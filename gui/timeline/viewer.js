@@ -142,8 +142,27 @@
   // ---------------------------------------------------------------------------------------------------------------
   // The model: what the page draws, worked out once per file
 
-  /** Reads one series into columns. Returns { series } or { note } when the page cannot draw it. */
-  function readSeries(s) {
+  /** What a value of each type is, for the note on values that are not of their variable's type. */
+  const TYPE_WORDS = {
+    real: 'a number',
+    integer: 'an integer',
+    bool: 'true or false',
+    enum: 'the value of an item (an integer)',
+  };
+
+  /** Whether a value fits its variable's type. null fits all (a real that is no number); a type not known takes all. */
+  function fitsType(value, type) {
+    if (value === null || !Object.prototype.hasOwnProperty.call(TYPE_WORDS, type)) return true;
+    if (type === 'bool') return typeof value === 'boolean';
+    if (type === 'real') return isNum(value);
+    return Number.isInteger(value);
+  }
+
+  /**
+   * Reads one series of a variable of type `type` into columns. Returns { series, notes } or { note } when the
+   * page cannot draw it. A value that is not of the type becomes undefined (not drawn) and is named in the notes.
+   */
+  function readSeries(s, type) {
     const what = `the ${s.source} series`;
     if (!Object.prototype.hasOwnProperty.call(KNOWN.encoding, s.source)) {
       return { note: `${what} is not drawn: this page does not know the source "${s.source}".` };
@@ -169,20 +188,47 @@
     const t = [];
     const v = [];
     const base = bi >= 0 ? [] : null;
+    const wrong = [];
+    let rounded = 0;
     for (const p of s.points) {
       if (!Array.isArray(p) || !isNum(p[ti])) {
         return { note: `${what} is not drawn: a point is not [time, value].` };
       }
       t.push(p[ti]);
-      v.push(p[vi] === undefined ? null : p[vi]);
+      const value = p[vi] === undefined ? null : p[vi];
+      if (!fitsType(value, type)) {
+        wrong.push([p[ti], value]);
+        v.push(undefined);
+      } else {
+        if (type === 'integer' && value !== null && !Number.isSafeInteger(value)) rounded++;
+        v.push(value);
+      }
       if (base) base.push(p[bi] === undefined ? null : p[bi]);
     }
+    const notes = [];
+    if (wrong.length) {
+      const [at, value] = wrong[0];
+      notes.push(
+        `${wrong.length} value${wrong.length === 1 ? '' : 's'} of ${what} ${wrong.length === 1 ? 'is' : 'are'} not ` +
+          `${TYPE_WORDS[type]}, as its type ${type} says, so ${wrong.length === 1 ? 'it is' : 'they are'} not drawn ` +
+          `(the first: ${JSON.stringify(value)} at ${fmtMs(at)}).`,
+      );
+    }
+    if (rounded) {
+      notes.push(
+        `${rounded} value${rounded === 1 ? '' : 's'} of ${what} ${rounded === 1 ? 'is' : 'are'} beyond ` +
+          `±${Number.MAX_SAFE_INTEGER}, which this page cannot hold exactly: shown rounded.`,
+      );
+    }
     return {
+      notes,
       series: {
         source: s.source,
         t,
         v,
         base,
+        /** For points of the failed step's writes: point index -> applied (true, false, or null: not known). */
+        applied: null,
         notAppliedFrom: Number.isInteger(s.not_applied_from) ? s.not_applied_from : null,
         firstMs: isNum(s.first_ms) ? s.first_ms : null,
         lastMs: isNum(s.last_ms) ? s.last_ms : null,
@@ -208,10 +254,11 @@
 
   /**
    * The bands that conditions put on a variable's lane. A band covers the samples the condition looks at:
-   * at: the instant from_ms; always and during: from_ms to until_ms; once: from_ms to the time it held (passed)
-   * or to the limit, with a thin line on to the limit.
+   * at: the instant from_ms; always and during: from_ms to until_ms, but not past the failure of the step or the
+   * end of the record (`recordedTo`), since no sample was looked at after them; once: from_ms to the time it held
+   * (passed) or to the limit, with a thin line on to the limit. `until` is the end the scenario gave.
    */
-  function watchBands(step, variable) {
+  function watchBands(step, variable, recordedTo) {
     const w = step.watch;
     if (!isObject(w) || !Array.isArray(w.conditions) || !isNum(w.from_ms))
       return { bands: [], notes: [] };
@@ -240,11 +287,16 @@
       const from = w.from_ms;
       let to = isNum(w.until_ms) ? w.until_ms : from;
       let limit = null;
+      const until = to;
       if (w.mode === 'once') {
         limit = isNum(w.until_ms) ? w.until_ms : null;
         if (step.status === 'passed' && isNum(step.at_ms)) to = step.at_ms;
         else if (step.status === 'failed' && isObject(step.failed) && isNum(step.failed.at_ms))
           to = step.failed.at_ms;
+      } else if (w.mode === 'during' || w.mode === 'always') {
+        if (step.status === 'failed' && isObject(step.failed) && isNum(step.failed.at_ms))
+          to = Math.min(to, step.failed.at_ms);
+        if (isNum(recordedTo)) to = Math.min(to, recordedTo);
       }
       bands.push({
         step: step.index,
@@ -252,6 +304,7 @@
         mode: w.mode,
         from,
         to: Math.max(to, from),
+        until: Math.max(until, from),
         limit,
         compare,
         status: knows(KNOWN.stepStatus, step.status) ? step.status : 'unknown',
@@ -287,7 +340,8 @@
           mode: isObject(step.watch) ? step.watch.mode : null,
         };
       });
-    const writes = (f && Array.isArray(f.writes) ? f.writes : []).filter(isObject).map((w, i) => {
+    const writes = (f && Array.isArray(f.writes) ? f.writes : []).map((w, i) => {
+      if (!isObject(w)) return null;
       const info = byName.get(w.variable);
       return {
         variable: w.variable,
@@ -302,6 +356,7 @@
         cause: f.write === i,
       };
     });
+    const known = writes.filter(Boolean);
     const at = f && isNum(f.at_ms) ? f.at_ms : isNum(step.at_ms) ? step.at_ms : null;
     return {
       step,
@@ -309,7 +364,7 @@
       code: (f && f.code) || step.code || null,
       message: typeof step.message === 'string' ? step.message : null,
       conditions,
-      writes,
+      writes: known,
     };
   }
 
@@ -346,13 +401,15 @@
     for (const s of tl.series) {
       if (typeof s.variable !== 'string') continue;
       const v = varOf(s.variable);
-      const read = readSeries(s);
+      const read = readSeries(s, v.info.type);
       if (read.note) {
         v.notes.push(read.note);
         continue;
       }
       if (read.series.source === 'written' && !v.written) v.written = read.series;
       else if (read.series.source === 'sampled' && !v.sampled) v.sampled = read.series;
+      else continue;
+      v.notes.push(...read.notes);
       const gap = gapOf(tl.limits, s.variable, s.source);
       if (gap) v.gaps[s.source] = gap;
     }
@@ -383,7 +440,7 @@
       for (const name of names) {
         if (typeof name !== 'string') continue;
         const v = varOf(name);
-        const { bands, notes } = watchBands(step, name);
+        const { bands, notes } = watchBands(step, name, recordedTo);
         v.bands.push(...bands);
         v.notes.push(...notes);
       }
@@ -406,11 +463,16 @@
         if (typeof w.variable !== 'string') continue;
         const v = varOf(w.variable);
         if (w.cause || w.applied !== true) v.failing = true;
+        if (v.written && w.point !== null) {
+          if (!v.written.applied) v.written.applied = new Map();
+          v.written.applied.set(w.point, w.applied);
+        }
         v.marks.push({
           kind: 'write',
           at: w.at ?? failure.at,
           value: w.value,
           applied: w.applied,
+          sent: w.point !== null,
           cause: w.cause,
         });
       }
@@ -513,25 +575,60 @@
     return { rows, count: Math.max(1, ends.length) };
   }
 
+  /** Whether a state is of a point that was sent and is not known to be in the ECU. */
+  const unapplied = (state) => state === 'not-applied' || state === 'not-known';
+
+  /**
+   * What is known of point i of a series. sampled: 'seen'. written: 'sent' before not_applied_from; from it on
+   * 'not-applied' where the failed step's writes say the ECU did not apply it (applied false), and 'not-known'
+   * otherwise (applied null, or a point sent after them: the schema says these are not known to have been applied).
+   */
+  function pointState(series, i) {
+    if (series.source === 'sampled') return 'seen';
+    const naf = series.notAppliedFrom;
+    if (naf === null || i < naf) return 'sent';
+    const applied = series.applied ? series.applied.get(i) : undefined;
+    return applied === false ? 'not-applied' : applied === true ? 'sent' : 'not-known';
+  }
+
+  /**
+   * The value the ECU kept from the first point of not_applied_from on, while it is known: up to the first point
+   * that is not 'not-applied'. Returns { from, to, v } or null (no such point, or not known from the start).
+   */
+  function keptValue(series, end) {
+    const naf = series.notAppliedFrom;
+    const n = series.t.length;
+    if (naf === null || naf < 1 || naf >= n || pointState(series, naf) !== 'not-applied')
+      return null;
+    let to = Math.max(end ?? series.t[n - 1], series.t[n - 1]);
+    for (let i = naf + 1; i < n; i++) {
+      if (pointState(series, i) !== 'not-applied') {
+        to = series.t[i];
+        break;
+      }
+    }
+    return { from: series.t[naf], to, v: series.v[naf - 1] };
+  }
+
   /**
    * The segments of a series held from each point to the next: { from, to, v, base, state }.
-   * state: 'sent' (or 'seen'), 'held' (the applied value that stayed in the ECU after a write was not applied),
-   * 'not-applied' (points from not_applied_from on), 'alone' (a point inside an interval whose points were dropped:
-   * not held). `end` is where the last point stops (the end of the record, or last_ms of a sampled series).
+   * state: 'sent' (or 'seen'); 'not-applied' and 'not-known' (from not_applied_from on, see pointState); 'held'
+   * (the value that stayed in the ECU after a write it did not apply, while that is known); 'alone' (a point
+   * inside an interval whose points were dropped: not held). `end` is where the last point stops (the end of the
+   * record, or last_ms of a sampled series). v is undefined for a value that is not of the variable's type.
    */
   function holdSegments(series, end, gap) {
     const segs = [];
     const n = series.t.length;
     const naf = series.notAppliedFrom;
-    const normal = series.source === 'sampled' ? 'seen' : 'sent';
     for (let i = 0; i < n; i++) {
       const from = series.t[i];
       let to = i + 1 < n ? series.t[i + 1] : Math.max(end ?? from, from);
-      let state = naf !== null && i >= naf ? 'not-applied' : normal;
+      let state = pointState(series, i);
       if (gap) {
         if (from >= gap.from && from < gap.before) {
           to = from;
-          if (state !== 'not-applied') state = 'alone';
+          if (!unapplied(state)) state = 'alone';
         } else if (from < gap.from && to > gap.from) {
           to = gap.from;
         }
@@ -545,17 +642,26 @@
         state,
       });
     }
-    if (naf !== null && naf > 0 && naf < n) {
-      const last = Math.max(end ?? series.t[n - 1], series.t[n - 1]);
-      segs.push({
-        from: series.t[naf],
-        to: last,
-        v: series.v[naf - 1],
-        base: undefined,
-        state: 'held',
-      });
-    }
+    const kept = series.source === 'sampled' ? null : keptValue(series, end);
+    if (kept) segs.push({ ...kept, base: undefined, state: 'held' });
     return segs;
+  }
+
+  /**
+   * Where each segment of a bool or enum band goes, in the order drawn: { seg, y, height }. The value kept in the
+   * ECU ('held') is a strip under the row, drawn first, so that it never covers a write that was not applied or
+   * whose result is not known (the row above it is shorter by the strip).
+   */
+  function stateBandLayout(segs, y0, height) {
+    const strip = 5;
+    const held = segs.filter((seg) => seg.state === 'held');
+    const rowHeight = held.length ? height - strip - 1 : height;
+    return [
+      ...held.map((seg) => ({ seg, y: y0 + height - strip, height: strip })),
+      ...segs
+        .filter((seg) => seg.state !== 'held')
+        .map((seg) => ({ seg, y: y0, height: rowHeight })),
+    ];
   }
 
   /**
@@ -589,8 +695,15 @@
     return out;
   }
 
-  /** The value of a series at time t: { value, notApplied } or null where it has none. */
-  function valueAt(series, t, end) {
+  /**
+   * The value of a series at time t, or null where it has none:
+   *   { value }                                a value sent or seen (undefined: not of the variable's type);
+   *   { missing: true }                        inside the interval `gap` whose points were dropped at the limits;
+   *   { value, state: 'not-applied', kept }    sent, and the ECU did not apply it. kept: { value } that the ECU
+   *                                            has (value undefined: from before the record), or null: not known;
+   *   { value, state: 'not-known' }            sent, and whether the ECU applied it is not known.
+   */
+  function valueAt(series, t, end, gap) {
     if (!series || !series.t.length || t < series.t[0]) return null;
     let lo = 0;
     let hi = series.t.length - 1;
@@ -599,13 +712,65 @@
       if (series.t[mid] <= t) lo = mid;
       else hi = mid - 1;
     }
-    const limit = series.source === 'sampled' ? (series.lastMs ?? end) : end;
+    // Where the drawing stops: a sampled value at last_ms; a sent one at the end, or at its last point after it.
+    const last = series.t[series.t.length - 1];
+    const limit =
+      series.source === 'sampled' ? (series.lastMs ?? end) : isNum(end) ? Math.max(end, last) : end;
     if (isNum(limit) && t > limit) return null;
-    const naf = series.notAppliedFrom;
-    if (naf !== null && lo >= naf) {
-      return { value: naf > 0 ? series.v[naf - 1] : undefined, notApplied: series.v[lo] };
+    if (gap && t >= gap.from && t < gap.before && series.t[lo] !== t) return { missing: true };
+    const state = pointState(series, lo);
+    if (state === 'not-known') return { value: series.v[lo], state };
+    if (state === 'not-applied') {
+      // The ECU has the value before not_applied_from only while every point since was not applied.
+      const naf = series.notAppliedFrom;
+      let known = true;
+      for (let i = naf; i <= lo && known; i++) known = pointState(series, i) === 'not-applied';
+      return {
+        value: series.v[lo],
+        state,
+        kept: !known ? null : { value: naf > 0 ? series.v[naf - 1] : undefined },
+      };
     }
     return { value: series.v[lo] };
+  }
+
+  /** The words of the cursor's read-out for one series ("sent" or "seen") at a time: see valueAt(). */
+  function readoutText(word, at, info) {
+    if (at.missing) return `${word}: values dropped at the file's limits`;
+    if (at.value === undefined) return `${word}: a value that is not of the type (see the note)`;
+    const value = `${word} ${fmtValue(at.value, info)}`;
+    if (at.state === 'not-known') return `${value} (not known whether the ECU applied it)`;
+    if (at.state !== 'not-applied') return value;
+    const has =
+      at.kept === null
+        ? 'a value that is not known'
+        : at.kept.value === undefined
+          ? 'its earlier value'
+          : fmtValue(at.kept.value, info);
+    return `${value} (not applied; the ECU has ${has})`;
+  }
+
+  /**
+   * The words of the table of a failed step's writes, from what the file says of each write: applied, point (null:
+   * not sent) and whether it is the cause. Returns { heading, explain, cause(write) }.
+   */
+  function writeWords(f) {
+    const at = f.writes.length && f.writes[0].at !== null ? f.writes[0].at : f.at;
+    const has = (applied) => f.writes.some((w) => w.applied === applied);
+    const explain = [
+      has(true) ? 'Applied: in the ECU, although the step failed.' : null,
+      has(false)
+        ? 'Not applied: the ECU refused it, or it came after the refused write in the same command, or it was not sent.'
+        : null,
+      has(null) ? 'Not known: no result says whether the ECU applied it.' : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const cause = (w) => {
+      if (w.point === null) return w.cause ? 'not sent: the cause of the failure' : 'not sent';
+      return w.cause ? 'the cause of the failure' : '';
+    };
+    return { heading: `Writes for ${fmtMs(at)}`, explain, cause };
   }
 
   /** The value range of a numeric lane: the declared min and max, or (fit) the values with some room. */
@@ -692,9 +857,13 @@
     initialView,
     niceTicks,
     packRows,
+    pointState,
     holdSegments,
+    stateBandLayout,
     decimate,
     valueAt,
+    readoutText,
+    writeWords,
     laneRange,
     defaultFit,
     mergeEqual,
@@ -762,14 +931,25 @@
     cursor: null,
     lanes: [],
     width: 0,
+    /** The name of the file shown (null for data embedded in the page or none). */
+    file: null,
   };
 
   const $ = (id) => document.getElementById(id);
 
+  /** Says why a file cannot be shown. The page then shows no file, so that nothing on it is taken for this one. */
   function showError(message) {
     const box = $('error');
     box.replaceChildren(h('strong', { text: 'This file cannot be shown. ' }), message);
     box.hidden = false;
+    state.model = null;
+    state.file = null;
+    state.lanes = [];
+    $('view').hidden = true;
+    $('load').hidden = false;
+    $('title').textContent = 'Scenario timeline';
+    $('facts').replaceChildren();
+    document.title = 'Scenario timeline';
   }
 
   function clearError() {
@@ -789,6 +969,7 @@
     state.fit.clear();
     state.hidden.clear();
     state.cursor = null;
+    state.file = name || null;
     document.title = `${model.name ?? 'Scenario'} - timeline`;
     $('load').hidden = true;
     $('view').hidden = false;
@@ -805,6 +986,7 @@
       text: String(m.status),
     });
     const facts = [
+      ['timeline file', state.file],
       ['scenario', tl.scenario.file],
       ['configuration', tl.file],
       ['variant', tl.variant],
@@ -892,7 +1074,7 @@
           'div',
           { class: 'banner warn small' },
           h('strong', { text: 'Points are missing. ' }),
-          'The launcher dropped older points at the limits of the file, so these values are missing (shown hatched): ',
+          'The launcher dropped older points at the limits of the file, so these values are missing (shown as a shaded box with a dashed border): ',
           m.dropped
             .map(
               (d) =>
@@ -938,18 +1120,14 @@
   }
 
   function renderWrites(f) {
-    const at = f.writes[0].at;
+    const words = writeWords(f);
     const label = (w) =>
       w.applied === true ? 'applied' : w.applied === false ? 'not applied' : 'not known';
     return h(
       'div',
       {},
-      h('h3', { text: `Writes sent together for ${fmtMs(at)}` }),
-      h(
-        'p',
-        { class: 'muted small' },
-        'Applied writes are in the ECU although the step failed. Not applied writes never reached it.',
-      ),
+      h('h3', { text: words.heading }),
+      h('p', { class: 'muted small', 'data-testid': 'failed-writes-explained' }, words.explain),
       h(
         'table',
         { class: 'writes', 'data-testid': 'failed-writes' },
@@ -979,7 +1157,7 @@
                 appliedIcon(w.applied),
                 ` ${label(w)}`,
               ),
-              h('td', { text: w.cause ? 'refused: the cause of the failure' : '' }),
+              h('td', { text: words.cause(w) }),
             ),
           ),
         ),
@@ -1238,7 +1416,12 @@
   function axisLane(scale) {
     const height = 22;
     const { lane, svg, cursor } = laneShell(
-      h('span', { class: 'muted small', id: 'cursor-time', text: 'Virtual time' }),
+      h('span', {
+        class: 'muted small',
+        id: 'cursor-time',
+        'aria-live': 'polite',
+        text: 'Virtual time',
+      }),
       height,
       scale,
       'axis',
@@ -1376,6 +1559,16 @@
       .join(' · ');
     const fit = defaultFit(v) !== state.fit.has(v.name);
     const readout = h('div', { class: 'readout small' });
+    const writtenEnd =
+      m.recordedTo ??
+      (v.written && v.written.t.length ? v.written.t[v.written.t.length - 1] : null);
+    // The legend names the states of the sent values that the lane has.
+    const writtenStates = new Set();
+    if (v.written && v.written.notAppliedFrom !== null) {
+      for (let i = v.written.notAppliedFrom; i < v.written.t.length; i++)
+        writtenStates.add(pointState(v.written, i));
+      if (keptValue(v.written, writtenEnd)) writtenStates.add('held');
+    }
     const head = h(
       'div',
       {},
@@ -1390,6 +1583,11 @@
         v.sampled
           ? h('span', { class: 'key seen' }, both && kind !== 'number' ? 'seen (lower)' : 'seen')
           : null,
+        writtenStates.has('not-applied')
+          ? h('span', { class: 'key not-applied' }, 'not applied')
+          : null,
+        writtenStates.has('not-known') ? h('span', { class: 'key not-known' }, 'not known') : null,
+        writtenStates.has('held') ? h('span', { class: 'key held' }, 'kept in the ECU') : null,
         v.written && v.written.base ? h('span', { class: 'key base' }, 'base') : null,
         kind === 'number' && isNum(info.min) && isNum(info.max)
           ? h('button', {
@@ -1434,9 +1632,6 @@
         `${gap.dropped} points of the ${source} series were dropped at the file's limits: values are missing from ${fmtMs(gap.from)} to ${fmtMs(gap.before)}`,
       );
     }
-    const writtenEnd =
-      m.recordedTo ??
-      (v.written && v.written.t.length ? v.written.t[v.written.t.length - 1] : null);
     const sampledEnd = v.sampled ? (v.sampled.lastMs ?? m.recordedTo) : null;
     if (kind === 'number') {
       const [lo, hi] = laneRange(v, fit);
@@ -1468,6 +1663,8 @@
       const bands = [];
       if (v.written) bands.push(['sent', v.written, writtenEnd, v.gaps.written]);
       if (v.sampled) bands.push(['seen', v.sampled, sampledEnd, v.gaps.sampled]);
+      // A write of the failed step has its mark with its words; its band does not say them again.
+      const marked = new Set(v.marks.filter((mk) => mk.kind === 'write').map((mk) => mk.at));
       bands.forEach(([cls, series, end, gap], i) => {
         const y0 = area.y0 + i * BAND_HEIGHT;
         drawStateBand(
@@ -1479,6 +1676,7 @@
           cls,
           kind,
           info,
+          cls === 'sent' ? marked : new Set(),
         );
       });
       drawBandsState(svg, v, scale, area, info);
@@ -1529,12 +1727,19 @@
     }
   }
 
+  /** The title of a segment of a series, by its state (the same words as the read-out and the writes table). */
+  const STATE_TITLES = {
+    'not-applied': 'Sent, and the ECU did not apply it',
+    'not-known': 'Sent; not known whether the ECU applied it',
+    held: 'The value that stayed in the ECU: the writes after it were not applied',
+  };
+
   function drawNumberSeries(svg, segs, scale, y, cls) {
     const shown = decimate(segs, scale);
-    const groups = { main: [], ghost: [], held: [] };
+    const groups = { main: [], 'not-applied': [], 'not-known': [], held: [] };
     let prev = null;
     for (const seg of shown) {
-      const key = seg.state === 'not-applied' ? 'ghost' : seg.state === 'held' ? 'held' : 'main';
+      const key = Object.prototype.hasOwnProperty.call(groups, seg.state) ? seg.state : 'main';
       if (!isNum(seg.v)) {
         prev = null;
         continue;
@@ -1548,18 +1753,23 @@
       d += `M${x0} ${y(seg.v)}L${Math.max(x1, x0 + 0.5)} ${y(seg.v)}`;
       groups[key].push(d);
       prev = seg.state === 'alone' ? null : { key, x: x1, y: y(seg.v) };
-      if (seg.state === 'alone' || seg.state === 'not-applied') {
-        s('circle', { class: `pt ${cls} ${seg.state}`, cx: x0, cy: y(seg.v), r: 2.5 }, svg);
+      if (seg.state === 'alone' || unapplied(seg.state)) {
+        const pt = s(
+          'circle',
+          { class: `pt ${cls} ${seg.state}`, cx: x0, cy: y(seg.v), r: 2.5 },
+          svg,
+        );
+        if (unapplied(seg.state))
+          tooltip(pt, `${STATE_TITLES[seg.state]}: ${fmtValue(seg.v)} at ${fmtMs(seg.from)}`);
       }
     }
     if (groups.main.length) s('path', { class: `series ${cls}`, d: groups.main.join('') }, svg);
-    if (groups.held.length)
-      s('path', { class: `series ${cls} held`, d: groups.held.join('') }, svg);
-    if (groups.ghost.length) {
-      tooltip(
-        s('path', { class: `series ${cls} not-applied`, d: groups.ghost.join('') }, svg),
-        'Sent, but not applied by the ECU (from not_applied_from on)',
-      );
+    for (const key of ['held', 'not-applied', 'not-known']) {
+      if (groups[key].length)
+        tooltip(
+          s('path', { class: `series ${cls} ${key}`, d: groups[key].join('') }, svg),
+          STATE_TITLES[key],
+        );
     }
   }
 
@@ -1574,39 +1784,48 @@
     if (d) s('path', { class: 'series base', d }, svg);
   }
 
-  function drawStateBand(svg, segs, scale, y0, height, cls, kind, info) {
-    const shown = decimate(segs, scale);
-    for (const seg of shown) {
+  function drawStateBand(svg, segs, scale, y0, height, cls, kind, info, marked) {
+    for (const { seg, y, height: rh } of stateBandLayout(decimate(segs, scale), y0, height)) {
+      // A value that is not of the variable's type is not drawn (the lane's note names it).
+      if (seg.v === undefined) continue;
       const x0 = Math.max(-1, scale.x(seg.from));
       const x1 = Math.min(scale.width + 1, scale.x(seg.to));
       // A point at the end of the record (or alone in a gap) still gets a visible width.
-      const w = Math.max(seg.to === seg.from || seg.state === 'not-applied' ? 3 : 0.5, x1 - x0);
+      const w = Math.max(seg.to === seg.from || unapplied(seg.state) ? 3 : 0.5, x1 - x0);
       let fill;
-      if (seg.v === null || seg.v === undefined) fill = 'null';
+      if (seg.v === null) fill = 'null';
       else if (seg.min !== seg.max) fill = 'mixed';
       else if (kind === 'bool') fill = seg.v ? 'true' : 'false';
       else fill = `e${Math.abs(Number(seg.v)) % 3}`;
       const r = s(
         'rect',
-        { class: `state ${cls} ${seg.state} v-${fill}`, x: x0, y: y0, width: w, height },
+        { class: `state ${cls} ${seg.state} v-${fill}`, x: x0, y, width: w, height: rh },
         svg,
       );
+      const value = fmtValue(seg.v, info);
       tooltip(
         r,
-        `${fmtValue(seg.v, info)} from ${fmtMs(seg.from)}${seg.state === 'not-applied' ? ' (sent, not applied)' : ''}`,
+        seg.state === 'held'
+          ? `${STATE_TITLES.held}: ${value} from ${fmtMs(seg.from)} to ${fmtMs(seg.to)}`
+          : unapplied(seg.state)
+            ? `${STATE_TITLES[seg.state]}: ${value} at ${fmtMs(seg.from)}`
+            : `${value} from ${fmtMs(seg.from)}`,
       );
-      const text = fill === 'mixed' ? '…' : fmtValue(seg.v, info);
-      const label =
+      if (seg.state === 'held' || (unapplied(seg.state) && marked.has(seg.from))) continue;
+      const text = fill === 'mixed' ? '…' : value;
+      const name =
         kind === 'enum' && info && Array.isArray(info.items)
           ? ((info.items.find((i) => i && i.value === seg.v) || {}).name ?? text)
           : text;
+      const said = { 'not-applied': ' (not applied)', 'not-known': ' (not known)' }[seg.state];
+      const label = said && w > (name + said).length * 6.5 + 6 ? name + said : name;
       if (w > label.length * 6.5 + 6) {
         s(
           'text',
           {
             class: `state-label ${seg.state}`,
             x: Math.max(x0, 0) + 3,
-            y: y0 + height - 6,
+            y: y + rh - 6,
             text: label,
           },
           svg,
@@ -1621,7 +1840,7 @@
   }
 
   function bandTitle(b, info) {
-    const range = b.mode === 'at' ? `at ${fmtMs(b.from)}` : `${fmtMs(b.from)} to ${fmtMs(b.to)}`;
+    const range = b.mode === 'at' ? `at ${fmtMs(b.from)}` : `${fmtMs(b.from)} to ${fmtMs(b.until)}`;
     const limit = b.limit !== null && b.limit !== b.to ? `, limit ${fmtMs(b.limit)}` : '';
     const result = b.failed ? 'did not hold' : b.status === 'passed' ? 'held' : `step ${b.status}`;
     return `Step ${b.step} (${b.mode}): ${compareText(b.compare, info)}, ${range}${limit}: ${result}`;
@@ -1715,7 +1934,13 @@
       } else {
         const cls = mk.applied === true ? 'ok' : mk.applied === false ? 'bad' : 'warn';
         const word =
-          mk.applied === true ? 'applied' : mk.applied === false ? 'not applied' : 'not known';
+          mk.applied === true
+            ? 'applied'
+            : mk.applied === false
+              ? mk.sent === false
+                ? 'not sent'
+                : 'not applied'
+              : 'not known whether applied';
         const g = tooltip(
           s('g', { class: `mark write ${cls}${mk.cause ? ' cause' : ''}` }, svg),
           `Write of ${fmtValue(mk.value, v.info, true)} for ${fmtMs(mk.at)}: ${word}${mk.cause ? ' (the cause of the failure)' : ''}`,
@@ -1732,7 +1957,7 @@
           },
           g,
         );
-        const label = `${fmtValue(mk.value, v.info)} ${word}`;
+        const label = `${fmtValue(mk.value, v.info)} ${mk.applied === null ? 'not known' : word}`;
         const left = x + label.length * 6.5 + 10 > scale.width;
         s(
           'text',
@@ -1807,16 +2032,10 @@
       const v = lane.readout.v;
       const parts = [];
       const end = m.recordedTo;
-      const w = valueAt(v.written, t, end);
-      const sv = valueAt(v.sampled, t, end);
-      if (w) {
-        parts.push(
-          w.notApplied !== undefined
-            ? `sent ${fmtValue(w.notApplied, v.info)} (not applied; the ECU has ${w.value === undefined ? 'its earlier value' : fmtValue(w.value, v.info)})`
-            : `sent ${fmtValue(w.value, v.info)}`,
-        );
-      }
-      if (sv) parts.push(`seen ${fmtValue(sv.value, v.info)}`);
+      const w = valueAt(v.written, t, end, v.gaps.written);
+      const sv = valueAt(v.sampled, t, end, v.gaps.sampled);
+      if (w) parts.push(readoutText('sent', w, v.info));
+      if (sv) parts.push(readoutText('seen', sv, v.info));
       // The time is in the head of the axis lane; each lane says only its values (all of them on hover).
       lane.readout.el.textContent = parts.join(' · ');
       lane.readout.el.title = lane.readout.el.textContent;
@@ -1863,7 +2082,8 @@
       );
       return;
     }
-    fetch(url, { credentials: 'same-origin' })
+    // A redirect could lead to another origin: the file must come from this address itself.
+    fetch(url, { credentials: 'same-origin', redirect: 'error' })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
@@ -1878,6 +2098,7 @@
   }
 
   function start() {
+    $('open').addEventListener('click', () => $('file').click());
     $('file').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
       if (file) readFile(file);
@@ -1905,7 +2126,17 @@
     });
     const chart = $('chart');
     chart.addEventListener('keydown', (e) => {
-      if (!state.model || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      if (!state.model) return;
+      if (e.key === '+' || e.key === '=' || e.key === '-') {
+        // Zoom in or out around the cursor (or the middle of the view).
+        e.preventDefault();
+        const [t0, t1] = state.view;
+        const c = state.cursor ?? (t0 + t1) / 2;
+        const k = e.key === '-' ? 2 : 0.5;
+        setView([c - (c - t0) * k, c + (t1 - c) * k]);
+        return;
+      }
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       const stepT =
         (state.model.tick ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);

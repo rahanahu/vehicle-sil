@@ -1027,7 +1027,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - テンプレートのコピーが同じである
 - 例とテンプレートの YAML の 1 行目がスキーマを指す
 - ビルドのディレクトリにコピーされた例の 1 行目の先に、スキーマのコピーがある
-- 時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）と例の実行の出力がスキーマに通り、エラーのある形が落ちる
+- 時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）、時間の軸のページの試験用のファイル（`gui/timeline/tests/fixtures/`）、例の実行の出力がスキーマに通り、エラーのある形が落ちる
 
 このテストには、PyYAML と jsonschema のある Python が必要です（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`）。なければ、configure のときに理由を表示して登録しません。CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確認します。
 
@@ -1770,6 +1770,7 @@ flowchart TD
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
 | ファイルを描くページ | `gui/timeline/viewer.js`（ページは `timeline.html`。「The page」より上は DOM なしで動き、単体テストが呼ぶ部分） |
+| 新しい種類の段、送った値の新しい状態 | `laneKind()` と `variableLane()` の分岐、状態は `pointState()` と `holdSegments()`、`timeline.html` の CSS のクラス。名前を出す代わりに描かせる値は `KNOWN` |
 
 合わせて直すもの:
 
@@ -1792,7 +1793,7 @@ flowchart TD
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`
-- 基準のファイルでページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`）。
+- 基準のファイルと、ページの試験用のファイル `gui/timeline/tests/fixtures/`（基準のファイルにない形。`tests/schema/test_schemas.py` がスキーマに通ることを確かめる）でページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`）。
 
 ### シナリオをまとめて実行する
 

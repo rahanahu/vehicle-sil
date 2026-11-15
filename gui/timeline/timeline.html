@@ -134,8 +134,7 @@
       .fact {
         overflow-wrap: anywhere;
       }
-      button,
-      .button {
+      button {
         font: inherit;
         color: var(--fg);
         background: var(--panel);
@@ -144,12 +143,10 @@
         padding: 4px 10px;
         cursor: pointer;
       }
-      button:hover,
-      .button:hover {
+      button:hover {
         border-color: var(--muted);
       }
       button:focus-visible,
-      .button:focus-within,
       #chart:focus-visible {
         outline: 2px solid var(--sent);
         outline-offset: 2px;
@@ -363,6 +360,15 @@
       .key.base::before {
         border-top: 1.5px dashed var(--base);
       }
+      .key.not-applied::before {
+        border-top: 2px dashed var(--bad);
+      }
+      .key.not-known::before {
+        border-top: 2px dotted var(--warn);
+      }
+      .key.held::before {
+        border-top: 4px solid var(--neutral);
+      }
       .readout {
         color: var(--fg);
         font-variant-numeric: tabular-nums;
@@ -500,13 +506,20 @@
         stroke-width: 1.25;
       }
       .series.held {
-        stroke-dasharray: 1 0;
+        stroke: var(--neutral);
+        stroke-width: 4;
+        opacity: 0.6;
       }
       .series.not-applied {
         stroke: var(--bad);
         stroke-dasharray: 4 3;
         stroke-width: 1.5;
-        opacity: 0.8;
+      }
+      .series.not-known {
+        stroke: var(--warn);
+        stroke-dasharray: 1 3;
+        stroke-linecap: round;
+        stroke-width: 2;
       }
       .series.base {
         stroke: var(--base);
@@ -522,6 +535,11 @@
       .pt.not-applied {
         fill: var(--panel);
         stroke: var(--bad);
+        stroke-width: 1.5;
+      }
+      .pt.not-known {
+        fill: var(--panel);
+        stroke: var(--warn);
         stroke-width: 1.5;
       }
       .state {
@@ -549,10 +567,21 @@
         fill: var(--e2);
       }
       .state.not-applied {
-        fill: none;
+        fill: var(--bad-fill);
         stroke: var(--bad);
         stroke-width: 1.5;
         stroke-dasharray: 4 3;
+      }
+      .state.not-known {
+        fill: var(--warn-fill);
+        stroke: var(--warn);
+        stroke-width: 1.5;
+        stroke-dasharray: 1.5 2.5;
+      }
+      .state.held {
+        fill: var(--neutral);
+        opacity: 0.6;
+        stroke: none;
       }
       .state-label {
         pointer-events: none;
@@ -602,6 +631,7 @@
       }
       .mark text {
         font-weight: 700;
+        pointer-events: none;
       }
       .mark.bad text {
         fill: var(--bad);
@@ -665,9 +695,8 @@
           <h1 id="title">Scenario timeline</h1>
           <div id="facts" class="small"></div>
         </div>
-        <label class="button"
-          >Open a file<input id="file" type="file" accept=".json,application/json" hidden
-        /></label>
+        <button id="open" type="button">Open a file</button>
+        <input id="file" type="file" accept=".json,application/json" hidden />
       </header>
       <div id="error" role="alert" hidden></div>
       <section id="load">
@@ -695,8 +724,10 @@
           Steps: a bar from start to end, a tick where the result was decided, a thin line on to a
           wait's limit. Shaded: the values a condition allows (green: it held; red: it did not;
           grey: not decided by it). Red dashed line: the failure. Grey on the right: after the end
-          of the record. Drag across the chart to zoom in, double-click for the whole run; hover (or
-          focus the chart and use the arrow keys) for the values at a time.
+          of the record. Sent values: red dashed where the ECU did not apply them, orange dotted
+          where that is not known, and a thick grey line for the value the ECU kept. Drag across the
+          chart to zoom in, double-click for the whole run; hover (or focus the chart and use the
+          arrow keys, + and - to zoom) for the values at a time.
         </p>
         <div
           id="chart"

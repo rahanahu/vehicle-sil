@@ -56,7 +56,7 @@ Run these in `gui/web/`. Each reports success or failure through its exit code.
 - `npm start` forwards `/api/` and `/ws` to the GUI server (127.0.0.1:8765) (`proxy.conf.mjs`; the port comes from the environment variable `GUI_PORT`).
 - `npm run build:client` writes `../../build/gui-client/vehicle-sil-gui-client.mjs`. It uses the esbuild that comes with the Angular build tools.
 - `npm run pack:client` writes `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz`, then installs it to check it (`../client/pack.mjs`).
-- `npm run lint` also lints `../client`, with that directory's `eslint.config.js`.
+- `npm run lint` also lints `../client` and `../timeline`, each with its own `eslint.config.js` (plain ESLint, not angular-eslint).
 - `npm run e2e` and `npm run e2e:real` need `npm run build` first.
 - `npm run e2e:real` takes the launcher from the environment variable `VEHICLE_SIL_GUI_LAUNCHER`.
 - `scripts/verify-web.py` compares and updates the translation files ("Internationalization" below).

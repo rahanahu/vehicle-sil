@@ -56,7 +56,7 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 - `npm start` は、`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送します（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）。
 - `npm run build:client` の出力は `../../build/gui-client/vehicle-sil-gui-client.mjs` です。esbuild は、Angular のビルドのツールが持っているものを使います。
 - `npm run pack:client` の出力は `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz` です。作った後に、インストールして確認します（`../client/pack.mjs`）。
-- `npm run lint` は、`../client` も、その `eslint.config.js` で検査します。
+- `npm run lint` は、`../client` と `../timeline` も、それぞれの `eslint.config.js` で検査します（angular-eslint ではなく素の ESLint）。
 - `npm run e2e` と `npm run e2e:real` の前に、`npm run build` が必要です。
 - `npm run e2e:real` は、ランチャーを環境変数 `VEHICLE_SIL_GUI_LAUNCHER` で受け取ります。
 - 翻訳ファイルとの比較と更新は、`scripts/verify-web.py` で行います（下の「国際化」）。

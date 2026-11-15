@@ -1027,7 +1027,7 @@ What `test_schemas.py` checks:
 - The template's copies are identical
 - Line 1 of the example and template YAML files points to a schema
 - A schema copy exists where line 1 of an example copied to the build directory points
-- The reference timeline files (`tests/launch/timeline/`) and the timeline file of an example run pass the timeline schema, and malformed files fail it
+- The reference timeline files (`tests/launch/timeline/`), the fixtures of the timeline page (`gui/timeline/tests/fixtures/`) and the timeline file of an example run pass the timeline schema, and malformed files fail it
 
 This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `mingw-w64-ucrt-x86_64-python-jsonschema` of MSYS2). Without them, configure prints the reason and does not register the test. CI confirms that `schema.files_and_launcher` is registered in `linux-gcc-debug`.
 
@@ -1770,6 +1770,7 @@ Where to change:
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
 | The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
+| A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.html`, and `KNOWN` for a value the page should draw instead of naming |
 
 What to update together:
 
@@ -1792,7 +1793,7 @@ Tests:
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`
-- The page, on the reference files: `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
+- The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
 
 ### Running several scenarios
 
