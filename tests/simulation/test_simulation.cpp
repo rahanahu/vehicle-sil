@@ -1031,3 +1031,161 @@ TEST_CASE(simulation_place_can_be_chosen_at_run_time)
     Simulation none(std::nullopt);
     CHECK(none.is_local());
 }
+
+// --- SilKitOptions::j1939_nodes
+
+namespace {
+
+vehicle_sil::ecu_executable::J1939NodeOverride node_entry(std::string network, std::optional<j1939::Address> from,
+                                                          std::optional<j1939::Address> address,
+                                                          std::optional<std::uint32_t> identity_number = std::nullopt)
+{
+    vehicle_sil::ecu_executable::J1939NodeOverride out;
+    out.network = std::move(network);
+    out.node.from = from;
+    out.node.address = address;
+    out.node.identity_number = identity_number;
+    return out;
+}
+
+/// what() of the std::invalid_argument that `f` throws; "(nothing thrown)" without one.
+template <typename F>
+std::string refusal(F&& f)
+{
+    try
+    {
+        f();
+    }
+    catch (const std::invalid_argument& e)
+    {
+        return e.what();
+    }
+    return "(nothing thrown)";
+}
+
+void same_text(const std::string& actual, const std::string& expected)
+{
+    if (actual != expected)
+    {
+        throw vehicle_sil::unit::Failure("texts differ\n  actual:   " + actual + "\n  expected: " + expected);
+    }
+}
+
+/// The node that the same engine code adds, whichever ECU runs it.
+j1939::Node& add_engine(Ecu& ecu)
+{
+    const j1939::Name name = j1939::Name{}.set_identity_number(0x1234).set_manufacturer_code(0x7F0).set_function(0x82);
+    return ecu.j1939("VehicleCAN").add_node({0x00, name});
+}
+
+} // namespace
+
+TEST_CASE(simulation_gives_j1939_nodes_to_the_ecu_they_name_only)
+{
+    // The same engine code twice on one network. As it is, both claim 0x00 with one NAME ...
+    {
+        Simulation sim(SilKitOptions{});
+        j1939::Node& first = add_engine(sim.add_ecu("Engine1", 10ms));
+        j1939::Node& second = add_engine(sim.add_ecu("Engine2", 10ms));
+        sim.run_for(500ms);
+        CHECK(first.address_state() == j1939::AddressState::CannotClaim);
+        CHECK(second.address_state() == j1939::AddressState::CannotClaim);
+    }
+    // ... and with other values for the second one, each holds its address.
+    {
+        SilKitOptions options;
+        // Written as docs/j1939-guide.md shows it.
+        options.j1939_nodes["Engine2"] = {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}};
+        Simulation sim(options);
+        j1939::Node& first = add_engine(sim.add_ecu("Engine1", 10ms));
+        j1939::Node& second = add_engine(sim.add_ecu("Engine2", 10ms));
+        CHECK_EQ(first.address(), 0x00);
+        CHECK_EQ(first.name()->identity_number(), 0x1234u);
+        CHECK_EQ(second.address(), 0x01);
+        CHECK_EQ(second.coded_address(), 0x00);
+        CHECK_EQ(second.name()->identity_number(), 2u);
+        sim.run_for(500ms);
+        CHECK(first.address_state() == j1939::AddressState::Claimed);
+        CHECK(second.address_state() == j1939::AddressState::Claimed);
+        CHECK_EQ(first.address(), 0x00);
+        CHECK_EQ(second.address(), 0x01);
+    }
+}
+
+TEST_CASE(simulation_refuses_j1939_nodes_for_no_ecu_and_for_no_node_before_it_starts)
+{
+    {
+        SilKitOptions options;
+        options.j1939_nodes = {{"Engine3", {node_entry("VehicleCAN", 0x00, 0x01)}}};
+        Simulation sim(options);
+        add_engine(sim.add_ecu("Engine1", 10ms));
+        add_engine(sim.add_ecu("Engine2", 10ms));
+        const std::string expected = "vehicle_sil::Simulation: SilKitOptions::j1939_nodes has entries for 'Engine3', which is "
+                                     "not an ECU of this simulation (its ECUs: 'Engine1', 'Engine2')";
+        same_text(refusal([&] { sim.run_for(100ms); }), expected);
+        same_text(refusal([&] { sim.run(); }), expected);
+        // Nothing was started: the ECU can still be added, and then the simulation runs.
+        j1939::Node& third = add_engine(sim.add_ecu("Engine3", 10ms));
+        CHECK_EQ(third.address(), 0x01);
+        sim.run_for(100ms);
+    }
+    {
+        SilKitOptions options;
+        options.j1939_nodes = {{"Engine2", {node_entry("VehicleCAN", 0x10, 0x01)}}};
+        Simulation sim(options);
+        add_engine(sim.add_ecu("Engine1", 10ms));
+        add_engine(sim.add_ecu("Engine2", 10ms));
+        same_text(refusal([&] { sim.run_for(100ms); }),
+                  "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+                  "(VehicleCAN=from:0x10,address:0x01: no node at 0x10 in the code there; its nodes there: 0x00): correct "
+                  "or remove them; nodes added after start() keep the values in their code");
+    }
+    // An entry that no node took is refused before anything is started as well: the same
+    // refusal again, and once a node takes the entry, the simulation runs.
+    {
+        SilKitOptions options;
+        options.j1939_nodes = {{"Engine2", {node_entry("VehicleCAN", 0x10, 0x11)}}};
+        Simulation sim(options);
+        add_engine(sim.add_ecu("Engine1", 10ms));
+        Ecu& engine2 = sim.add_ecu("Engine2", 10ms);
+        const j1939::Name name = j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0).set_function(0x82);
+        auto& channel = engine2.j1939("VehicleCAN");
+        channel.add_node({0x20, j1939::Name{name}.set_identity_number(0x2346)});
+        const std::string expected = "PeerOptions::j1939_nodes has entries that no node took";
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run_for(100ms); }, expected));
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run_for(100ms); }, expected));
+        CHECK(throws_with<std::invalid_argument>([&] { sim.run(); }, expected));
+        j1939::Node& taken = channel.add_node({0x10, name});
+        CHECK_EQ(taken.address(), 0x11);
+        sim.run_for(100ms);
+    }
+    // What the entries of one ECU cannot be is refused when the ECU is added.
+    {
+        SilKitOptions options;
+        options.j1939_nodes = {{"Engine2", {node_entry("", 0x00, 0x01)}}};
+        Simulation sim(options);
+        sim.add_ecu("Engine1", 10ms);
+        CHECK(throws_with<std::invalid_argument>([&] { sim.add_ecu("Engine2", 10ms); }, "j1939_nodes has an entry with an empty network name"));
+    }
+}
+
+TEST_CASE(ecu_networks_refuse_node_overrides_of_the_code_on_the_local_buses_too)
+{
+    j1939::NetworkOptions own;
+    own.node_overrides.push_back(node_entry("", 0x00, 0x02).node);
+    const std::string refused =
+        " was given NetworkOptions::node_overrides, which is for a j1939::Network that a program makes itself: an ECU "
+        "sets the values of its nodes in add_node(), and a simulation changes them with j1939_nodes "
+        "(PeerOptions::j1939_nodes, --j1939-node)";
+    Simulation sim;
+    Ecu& ecu = sim.add_ecu("Engine", 10ms);
+    same_text(refusal([&] { ecu.j1939("CAN", own); }), "vehicle_sil::Ecu: j1939(\"CAN\")" + refused);
+    same_text(refusal([&] { sim.local().add_j1939("Tool", 10ms, own); }),
+              "vehicle_sil::Ecu: LocalBench::add_j1939(\"Tool\")" + refused);
+    // Nothing was made: the names are free.
+    CHECK_EQ(ecu.j1939("CAN").add_node({0x00}).address(), 0x00);
+    CHECK_EQ(sim.local().add_j1939("Tool", 10ms).add_node({0x01}).address(), 0x01);
+    // On SIL Kit as well.
+    Simulation silkit(SilKitOptions{});
+    same_text(refusal([&] { silkit.add_ecu("Engine", 10ms).j1939("CAN", own); }), "vehicle_sil::Ecu: j1939(\"CAN\")" + refused);
+}

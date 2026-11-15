@@ -140,6 +140,8 @@ For how received messages are handled, the determinism of J1939 and LIN, and the
 
 When a network has another name in the simulation than in the code, set `options.network_names = {{"VehicleCAN", "J1939_CAN1"}};` (simulation name to code name) to match them without changing the code. Only the name of the SIL Kit network and the names of the monitoring output change. For the rules, see "Renaming networks" in [ecu-executable.md](ecu-executable.md#renaming-networks---map-network) (an ECU executable takes `--map-network`).
 
+You can also change a J1939 node's address and part of its NAME (identity number, function instance, ECU instance) without changing the code. Use it to put 2 copies of the same ECU code on one network. `options.j1939_nodes = {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}};` makes the node that the code adds at 0x00 on `VehicleCAN` (the simulation's name) use 0x01 and identity number 2. The lines apply only to nodes added before `start()`, and if a line applies to no node, `start()` throws `std::invalid_argument`. For the rules, see "Run in a simulation" in [j1939-guide.md](j1939-guide.md#run-in-a-simulation).
+
 ## Simulate CAN bus arbitration and transmission time
 
 SIL Kit's standard CAN delivers each frame to every participant with the time at which it was sent. To reproduce arbitration and transmission time in virtual time, add the simple CAN Network Simulator as a participant. The peers' code stays the same.

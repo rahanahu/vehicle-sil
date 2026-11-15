@@ -284,6 +284,7 @@ What they check in the engine:
 - `j1939.seat_*`: the listener seat, an internal interface of the engine (what it hears, its order against the `Observer`, handlers and timers, that it is read-only, that having it or not changes no trace)
 - `j1939.sniffer_*`: `TransferSniffer`, with the rules on hand-written frames and agreement with the receiving node of an engine that got the same frames (transfers between engines, fault injection with a fixed seed); `j1939.sniffer_boundary` checks that it does not depend on `Network`
 - `j1939.listener_*`: `Listener`: what it overhears from exchanges between engines matches the receiver, transmissions of nodes of the same `Network` are not passed, how node addresses are handled, the order of handlers, that it is read-only, construction and destruction; `j1939.sniffer_boundary` also checks that `listener.cpp` uses no engine internals other than the seat
+- Overrides of a node's address and NAME (`NetworkOptions::node_overrides`): the functions that apply them and the round trip of the text form, claiming with the changed values, what is refused and its message, nodes added after the start closed it keeping the values of the code, 2 copies of the same node code on one bus, and the changed values after a lost claim, a Request and a Commanded Address (`j1939.*override*`)
 
 Virtual bus and SIL Kit give the same result:
 
@@ -330,6 +331,7 @@ Typed messages (`j1939_codec.*`):
 What each one checks:
 
 - `peer.*`: 3 participants with J1939 and LIN, the same result as the virtual bus, real time and external ports, setup errors, failure reporting
+- `peer.*j1939_nodes*`: `PeerOptions::j1939_nodes` applies to a renamed network and to a network on an external port, not to nodes added after `start()`; the reason for a line that applied to no node and the message of `start()` (also for a node added after the first step run through `host()`); `start_together` refuses with the same message and starts no `Peer`; `node_overrides` passed by the code is refused
 - `testkit.*`: loss of an address, a missing Address Claimed, a missing TP packet, disconnection, injection of raw frames, results that do not depend on the receiver's step size or on whether recording is on
 - `ecu_api.*`: `examples/j1939/ecu_pair`, a custom protocol built with the toolbox and `Requester`, tests that check communication with `Monitor`, `Observer` and a tap
 - `param_service.*`: the normal flow, session expiry, a second tool, an ECU that does not respond, address change and loss, rejection, destruction of a running protocol part
@@ -345,6 +347,7 @@ Unit tests of the JSON of an ECU's `--describe` output (`to_json(EcuDescription)
 - The full text when empty and when every field is set, the key order, numbers, 64-bit enumeration values, the NAME string, string escaping, the version
 - `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`: `libs/ecu` and `libs/simulation/include` include no SIL Kit header, directly or indirectly
 - `ecu.boundary_check_*`: tests of that check itself
+- `ecu.j1939_node_argument*`: the round trip of the functions that write and read the value of the argument `--j1939-node`, the message for each wrong value, the checks between the lines of one ECU
 
 ### `simulation` / `examples`
 
@@ -365,6 +368,7 @@ What `simulation.*` checks:
 - A gateway with 2 networks, raw CAN, LIN master and slave, and an Ethernet channel give the same result on both
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
+- `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -637,6 +641,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | `Network`, `Node` | `j1939/network.hpp` |
 | `Pgn`, `Identifier` | `j1939/types.hpp` |
 | `Name` | `j1939/name.hpp` |
+| Overrides of a node's address and NAME: `NodeOverride`, `apply_node_overrides()`, the conversion to and from text (used by `Network` and by tools that check beforehand) | `j1939/node_override.hpp` |
 | `Subscription`, `Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
 | `TransferSniffer` (follows the transfers between other ECUs from the frames; does not depend on `Network`) | `j1939/transfer_sniffer.hpp` |
@@ -684,6 +689,7 @@ Main classes and functions:
 | `EcuDescription`, `to_json()` | `ecu/describe.hpp` |
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
+| The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
 | `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)

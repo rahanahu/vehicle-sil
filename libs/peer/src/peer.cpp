@@ -74,6 +74,8 @@ struct Peer::Channel
     std::unique_ptr<detail::GatedCanPort> gate;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
+    /// For each entry of the network's node_overrides: its index in PeerOptions::j1939_nodes.
+    std::vector<std::size_t> j1939_node_entries;
 };
 
 struct Peer::RawCan
@@ -155,6 +157,25 @@ Peer::Peer(PeerOptions options) :
                                         "Remove Network from the controllers of the configuration, or leave "
                                         "network_names out and name the networks there");
         }
+    }
+    for (const auto& entry : options_.j1939_nodes)
+    {
+        if (entry.network.empty())
+        {
+            const std::string settings = j1939::format_node_override(entry.node);
+            throw std::invalid_argument(who + "j1939_nodes has an entry with an empty network name (" +
+                                        (settings.empty() ? std::string("no settings") : settings) +
+                                        "): it needs the simulation's name of a J1939 network of this ECU");
+        }
+        if (const std::string problem = j1939::node_override_range_problem(entry.node); !problem.empty())
+        {
+            throw std::invalid_argument(who + "j1939_nodes has an entry for the network \"" + entry.network +
+                                        "\" with " + problem);
+        }
+    }
+    if (const std::string problem = ecu_executable::j1939_node_arguments_error(options_.j1939_nodes); !problem.empty())
+    {
+        throw std::invalid_argument(who + "j1939_nodes, written as arguments of an ECU executable: " + problem);
     }
     ParticipantRuntimeOptions runtimeOptions;
     runtimeOptions.participant_name = options_.participant;
@@ -424,9 +445,86 @@ void Peer::require_unmonitored(const std::string& network) const
     }
 }
 
+std::vector<std::size_t> Peer::give_j1939_nodes(const std::string& network, j1939::NetworkOptions& options) const
+{
+    std::vector<std::size_t> entries;
+    const std::string& simulation = simulation_name(network);
+    for (std::size_t i = 0; i < options_.j1939_nodes.size(); ++i)
+    {
+        if (options_.j1939_nodes[i].network == simulation)
+        {
+            options.node_overrides.push_back(options_.j1939_nodes[i].node);
+            entries.push_back(i);
+        }
+    }
+    return entries;
+}
+
+std::vector<UnusedJ1939Node> Peer::unused_j1939_nodes() const
+{
+    std::vector<UnusedJ1939Node> out;
+    for (std::size_t i = 0; i < options_.j1939_nodes.size(); ++i)
+    {
+        const auto& entry = options_.j1939_nodes[i];
+        if (!entry.node.changes())
+        {
+            continue;
+        }
+        UnusedJ1939Node unused{entry, UnusedJ1939Node::Reason::NoNetwork, {}, {}};
+        bool used = false;
+        for (const auto& c : channels_)
+        {
+            const auto mine = std::find(c->j1939_node_entries.begin(), c->j1939_node_entries.end(), i);
+            if (mine == c->j1939_node_entries.end())
+            {
+                continue;
+            }
+            const auto row = static_cast<std::size_t>(mine - c->j1939_node_entries.begin());
+            const auto open = c->network->unused_node_overrides();
+            if (std::find(open.begin(), open.end(), row) == open.end())
+            {
+                used = true;
+                break;
+            }
+            for (std::size_t n = 0; n < c->network->node_count(); ++n)
+            {
+                unused.coded_addresses.push_back(c->network->node(n).coded_address());
+            }
+            // Before the entries close, add_node() gives an entry to its node or throws: a node that
+            // the entry is for, but that did not take it, came after they closed.
+            const auto& coded = unused.coded_addresses;
+            const auto from = entry.node.from;
+            if (coded.empty())
+            {
+                unused.reason = UnusedJ1939Node::Reason::NoNodes;
+            }
+            else if (!from || std::find(coded.begin(), coded.end(), *from) != coded.end())
+            {
+                unused.reason = UnusedJ1939Node::Reason::AddedAfterFirstStep;
+            }
+            else
+            {
+                unused.reason = UnusedJ1939Node::Reason::NoNodeAtFrom;
+            }
+            break;
+        }
+        if (used)
+        {
+            continue;
+        }
+        for (const auto& c : channels_)
+        {
+            unused.networks.push_back({simulation_name(c->name), c->name});
+        }
+        out.push_back(std::move(unused));
+    }
+    return out;
+}
+
 j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions options)
 {
     require_not_started("j1939()");
+    detail::refuse_node_overrides("j1939(\"" + network_name + "\")", options.network);
     require_unmonitored(network_name);
     require_can_name(network_name, "j1939");
     std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
@@ -456,7 +554,9 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
         c.controller = std::move(controller);
         c.gate = std::make_unique<detail::GatedCanPort>(*c.silkit_port, agent_.connection());
         c.tap = std::make_unique<can::TapPort>(*c.gate);
+        std::vector<std::size_t> entries = give_j1939_nodes(network_name, options.network);
         c.network = std::make_unique<j1939::Network>(std::move(options.network));
+        c.j1939_node_entries = std::move(entries);
         host_.add(*c.network, *c.tap);
     }
     catch (...)
@@ -474,6 +574,7 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
 j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j1939::NetworkOptions options)
 {
     require_not_started("j1939()");
+    detail::refuse_node_overrides("j1939(\"" + name + "\")", options);
     require_unmonitored(name);
     if (!port)
     {
@@ -493,6 +594,7 @@ j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j
     Channel& c = add_channel(std::move(name));
     try
     {
+        c.j1939_node_entries = give_j1939_nodes(c.name, options);
         c.external_port = std::move(port);
         c.gate = std::make_unique<detail::GatedCanPort>(*c.external_port, agent_.connection());
         c.tap = std::make_unique<can::TapPort>(*c.gate);
@@ -602,6 +704,15 @@ void Peer::set_end(SimTime end)
 namespace detail {
 
 void set_virtual_time_end(Peer& peer, SimTime end) { peer.set_end(end); }
+
+void require_j1939_nodes_taken(const Peer& peer)
+{
+    // A started peer: its start() says so, and its nodes belong to its step thread now.
+    if (!peer.started_)
+    {
+        peer.require_j1939_nodes_taken();
+    }
+}
 
 void set_network_check(Peer& peer,
                        std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check)
@@ -976,9 +1087,83 @@ can::RawChannel& Peer::raw_channel(std::string_view name) const
     throw std::out_of_range(message);
 }
 
+void Peer::require_j1939_nodes_taken() const
+{
+    if (const auto unused = unused_j1939_nodes(); !unused.empty())
+    {
+        std::string list;
+        for (const auto& u : unused)
+        {
+            list += list.empty() ? "" : "; ";
+            list += ecu_executable::format_j1939_node_argument(u.entry) + ": ";
+            switch (u.reason)
+            {
+            case UnusedJ1939Node::Reason::NoNetwork:
+            {
+                std::string names;
+                for (const auto& n : u.networks)
+                {
+                    names += (names.empty() ? "" : ", ") + n.simulation +
+                             (n.code == n.simulation ? "" : " (" + n.code + " in the code)");
+                }
+                list += "no J1939 network of that name; its J1939 networks: " + (names.empty() ? "none" : names);
+                break;
+            }
+            case UnusedJ1939Node::Reason::NoNodes:
+                list += "no node on that network";
+                break;
+            case UnusedJ1939Node::Reason::NoNodeAtFrom:
+            {
+                std::string nodes;
+                for (const j1939::Address a : u.coded_addresses)
+                {
+                    nodes += (nodes.empty() ? "" : ", ") + j1939::coded_address_text(a);
+                }
+                list += "no node at " + j1939::coded_address_text(u.entry.node.from.value_or(j1939::kNullAddress)) +
+                        " in the code there; its nodes there: " + nodes;
+                break;
+            }
+            case UnusedJ1939Node::Reason::AddedAfterFirstStep:
+            {
+                const auto many = u.coded_addresses.size() > 1;
+                if (u.entry.node.from)
+                {
+                    list += "the node at " + j1939::coded_address_text(*u.entry.node.from) + " in the code there";
+                }
+                else
+                {
+                    std::string nodes;
+                    for (const j1939::Address a : u.coded_addresses)
+                    {
+                        nodes += (nodes.empty() ? "" : ", ") + j1939::coded_address_text(a);
+                    }
+                    list += (many ? "the nodes there (" : "the node there (") + nodes + " in the code)";
+                }
+                list += many && !u.entry.node.from
+                            ? " were added after the network's first step, so they keep the values in their code (add "
+                              "them before that step)"
+                            : " was added after the network's first step, so it keeps the values in its code (add it "
+                              "before that step)";
+                break;
+            }
+            }
+        }
+        throw std::invalid_argument("vehicle_sil::Peer \"" + options_.participant +
+                                    "\": PeerOptions::j1939_nodes has entries that no node took (" + list +
+                                    "): correct or remove them; nodes added after start() keep the values in their code");
+    }
+}
+
 void Peer::start(std::chrono::milliseconds timeout)
 {
     require_not_started("start()");
+    // The entries of j1939_nodes that no node took are mistakes: nothing is started for them. After
+    // this, a node that is added keeps the values in its code.
+    require_j1939_nodes_taken();
+    for (const auto& c : channels_)
+    {
+        static_cast<void>(c->network->close_node_overrides());
+    }
     // Every ECU has an agent at the start: its input ecu.connected.
     agent_.get().complete_schema(); // the monitoring outputs; the peer stays unstarted if it throws
     started_ = true;
@@ -1106,6 +1291,12 @@ namespace {
 /// joins every thread, then rethrows the controller's exception, else the first of a peer.
 void start_peers(SimulationController* controller, const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
 {
+    // Before anything starts: a peer whose start() refuses its j1939_nodes would leave the others
+    // and the controller waiting until their timeout, whose error would hide the refusal.
+    for (const Peer* peer : peers)
+    {
+        detail::require_j1939_nodes_taken(*peer);
+    }
     std::vector<std::exception_ptr> errors(peers.size());
     std::vector<std::thread> starters;
     struct Joiner

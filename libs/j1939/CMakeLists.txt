@@ -4,6 +4,7 @@ add_library(vehicle_sil_j1939 STATIC
   src/listener.cpp
   src/network.cpp
   src/node.cpp
+  src/node_override.cpp
   src/timer_set.cpp
   src/toolbox.cpp
   src/transfer_sniffer.cpp

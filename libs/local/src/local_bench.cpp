@@ -877,6 +877,7 @@ j1939::Network& LocalBench::add_j1939(std::string name, SimDuration step, j1939:
         throw std::logic_error(std::string(kWho) + "add_j1939() after the first run");
     }
     static_cast<void>(only_bus_if_any("add_j1939()"));
+    detail::refuse_node_overrides("LocalBench::add_j1939(\"" + name + "\")", options);
     add_ecu(std::move(name), step);
     try
     {

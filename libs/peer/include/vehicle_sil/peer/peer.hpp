@@ -12,6 +12,7 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/ecu/ecu.hpp"
+#include "vehicle_sil/ecu/j1939_node_argument.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 
 #include <atomic>
@@ -54,6 +55,11 @@ void set_virtual_time_end(Peer& peer, SimTime end);
 void set_network_check(Peer& peer,
                        std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
 
+/// What start() of `peer` would throw for the entries of PeerOptions::j1939_nodes that no node took
+/// (std::invalid_argument); nothing for a started peer. start_together() calls it for every peer
+/// before it starts any.
+void require_j1939_nodes_taken(const Peer& peer);
+
 /// The kind of the network that the code of `peer` names `network`, if it has one.
 [[nodiscard]] std::optional<NetworkKind> network_kind(const Peer& peer, std::string_view network);
 
@@ -66,6 +72,38 @@ void set_network_check(Peer& peer,
 [[nodiscard]] const std::string& simulation_network_name(const Peer& peer, const std::string& network);
 
 } // namespace detail
+
+/// An entry of PeerOptions::j1939_nodes that no node took, with what is needed to say why and what
+/// to write instead.
+struct UnusedJ1939Node
+{
+    enum class Reason : std::uint8_t
+    {
+        NoNetwork,    ///< the ECU has no J1939 network with that name in the simulation
+        NoNodes,      ///< that network of the ECU has no node
+        NoNodeAtFrom, ///< no node of the ECU on that network has the address `from` in its code
+        /// The node that the entry is for (the one at `from` in the code; without `from`, the
+        /// network's node) was added after the network's first step (j1939::Network::
+        /// close_node_overrides()), so it keeps the values in its code. Only a caller that steps
+        /// the peer itself before start() (host()) gets there.
+        AddedAfterFirstStep,
+    };
+    /// A J1939 network of the ECU: its name in the simulation and the name its code gives it (the
+    /// same without an entry of PeerOptions::network_names).
+    struct Network
+    {
+        std::string simulation;
+        std::string code;
+    };
+
+    ecu_executable::J1939NodeOverride entry;
+    Reason reason = Reason::NoNetwork;
+    /// The addresses that the code gives the ECU's nodes on that network (j1939::Node::
+    /// coded_address()), in the order they were added; empty for NoNetwork and NoNodes.
+    std::vector<j1939::Address> coded_addresses{};
+    /// The J1939 networks of the ECU, in the order they were added.
+    std::vector<Network> networks{};
+};
 
 struct PeerOptions
 {
@@ -106,6 +144,24 @@ struct PeerOptions
     /// from the call that makes a network if two networks of the ECU would be one in the
     /// simulation, and from j1939(name, port) for a name with an entry (nothing to rename).
     std::map<std::string, std::string> network_names{};
+    /// Other values for J1939 nodes of this ECU than its code gives (the address, and the
+    /// identity number, function instance and ECU instance of the NAME), for the same ECU code
+    /// run more than once on one network. An entry names the network as the simulation does
+    /// (`network`: the name after network_names, not the code's name where the two differ) and
+    /// the node by the address its code gives it (`node.from`; without it, the only node of the
+    /// ECU on that network). The node is added with the new values, as if its code had given
+    /// them (j1939::NetworkOptions::node_overrides, also for a network on a port of the caller's);
+    /// describe() and the monitoring outputs then say the new values. Other ECUs that have this
+    /// node's address or whole NAME in their code are not changed by it. An ECU executable takes
+    /// these as --j1939-node (ecu_main()).
+    /// Only the nodes added before start() take an entry: a node added later keeps the values in
+    /// its code. An entry that changes nothing is not looked at.
+    /// std::invalid_argument from the constructor for an empty network name, a value out of its
+    /// range, two entries for one network with the same `from`, and an entry without `from`
+    /// beside another one for its network; from add_node() as j1939::NetworkOptions::node_overrides
+    /// says (an entry that cannot be applied to its node, a second node an entry would be for);
+    /// from start() for entries that no node took (unused_j1939_nodes()).
+    std::vector<ecu_executable::J1939NodeOverride> j1939_nodes{};
     /// With a control agent (Ecu::input(), output(), agent()): it also gets the peer's monitoring
     /// outputs, after the ECU's variables, when its schema is completed (control::Agent::
     /// complete_schema(): by a transport such as control_silkit::AgentTransport, the first submit()
@@ -245,6 +301,10 @@ public:
     [[nodiscard]] j1939::Network& network(std::string_view name) const;
     /// The names of the J1939 networks, in the order they were added.
     [[nodiscard]] std::vector<std::string> network_names() const;
+    /// The entries of PeerOptions::j1939_nodes that change something and that no node took so far
+    /// (after start(): none, since start() refuses them), in their order. For whoever set the ECU
+    /// up and wants to say what is wrong before start() throws (ecu_main()).
+    [[nodiscard]] std::vector<UnusedJ1939Node> unused_j1939_nodes() const;
     [[nodiscard]] can::TapPort& tap(std::string_view name) const;
     /// The SIL Kit port of a network made by j1939(network_name); nullptr for an external port.
     [[nodiscard]] can::SilKitCanPort* silkit_port(std::string_view name) const;
@@ -272,7 +332,9 @@ public:
     /// completes its schema (with the monitoring outputs: std::invalid_argument for a clash, and
     /// the peer stays unstarted), starts the lifecycle and waits until the participant runs
     /// (ParticipantRuntime::start()), then, in real time, starts the driver. Once only
-    /// (std::logic_error).
+    /// (std::logic_error). First of all, std::invalid_argument for entries of
+    /// PeerOptions::j1939_nodes that no node took (the peer stays unstarted); from then on a node
+    /// that is added keeps the values in its code (j1939::Network::close_node_overrides()).
     void start(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// Waits until the lifecycle ends (ParticipantRuntime::wait_until_finished()). Real time:
     /// then stops the driver.
@@ -300,6 +362,7 @@ private:
     friend void detail::set_virtual_time_end(Peer& peer, SimTime end);
     friend void detail::set_network_check(
         Peer& peer, std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
+    friend void detail::require_j1939_nodes_taken(const Peer& peer);
     friend std::optional<NetworkKind> detail::network_kind(const Peer& peer, std::string_view network);
     friend std::optional<NetworkKind> detail::simulation_network_kind(const Peer& peer, std::string_view network);
     friend const std::string& detail::simulation_network_name(const Peer& peer, const std::string& network);
@@ -369,7 +432,13 @@ private:
     /// their kinds and whichever was made first, the two would be one bus (and one name of the
     /// monitoring outputs).
     void require_own_simulation_name(const std::string& network, const std::string& call) const;
+    /// std::invalid_argument for the entries of PeerOptions::j1939_nodes that no node took.
+    void require_j1939_nodes_taken() const;
     Channel& add_channel(std::string name);
+    /// For both j1939(): the entries of PeerOptions::j1939_nodes for the network that the code
+    /// names `network` (their `network` is its name in the simulation) as `options.node_overrides`,
+    /// and their indices in PeerOptions::j1939_nodes in the same order.
+    [[nodiscard]] std::vector<std::size_t> give_j1939_nodes(const std::string& network, j1939::NetworkOptions& options) const;
     [[nodiscard]] Channel& channel(std::string_view name) const;
     void run_application(SimTime now);
 

@@ -33,6 +33,26 @@ namespace detail {
 class EcuAgent;
 } // namespace detail
 
+namespace detail {
+
+/// For every call that makes an ECU's J1939 network from the caller's NetworkOptions (`call`, e.g.
+/// `j1939("J1939_CAN")`): std::invalid_argument if they have node_overrides. Were they allowed, an
+/// ECU would describe itself with the values after its own entries, and the entries of the
+/// simulation, which pick a node by the address in its code, would miss it.
+inline void refuse_node_overrides(const std::string& call, const j1939::NetworkOptions& options)
+{
+    if (!options.node_overrides.empty())
+    {
+        throw std::invalid_argument(
+            "vehicle_sil::Ecu: " + call +
+            " was given NetworkOptions::node_overrides, which is for a j1939::Network that a program makes itself: an "
+            "ECU sets the values of its nodes in add_node(), and a simulation changes them with j1939_nodes "
+            "(PeerOptions::j1939_nodes, --j1939-node)");
+    }
+}
+
+} // namespace detail
+
 /// Where one ECU's application is assembled: the J1939 networks it is on (and, for other
 /// protocols, raw CAN channels), its LIN master and slaves, its channels of raw Ethernet frames,
 /// the variables it shows for control
@@ -105,10 +125,14 @@ public:
     /// A J1939 network of this ECU on the CAN network `network` (ECUs that name the same
     /// network share its bus). std::invalid_argument for an empty name, for a name this ECU
     /// used before for a J1939 network and for a LIN network's name; std::logic_error once the
-    /// run has started.
+    /// run has started. std::invalid_argument for NetworkOptions::node_overrides as well: they are
+    /// for a j1939::Network that a program makes itself. An ECU gives its nodes their values in
+    /// add_node(), and whoever puts the ECU into a simulation changes them from outside
+    /// (PeerOptions::j1939_nodes; --j1939-node of an ECU executable).
     j1939::Network& j1939(const std::string& network, j1939::NetworkOptions options = {})
     {
         require_network_name(network);
+        detail::refuse_node_overrides("j1939(\"" + network + "\")", options);
         return add_j1939(network, std::move(options));
     }
     /// A raw CAN channel of this ECU on the CAN network `network`, for a protocol that is not

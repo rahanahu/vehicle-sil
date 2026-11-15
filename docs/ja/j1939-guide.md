@@ -117,6 +117,8 @@ inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 | 開始後の `j1939()`、`on_step()`、`every()`、`at()`、`emplace()` | `std::logic_error` です。 |
 | ノードの追加 | `Network::add_node()` のルールで、ステップの中からもできます。 |
 
+`j1939::Network` を自分で作るプログラム（`Ecu` を使わないもの）は、`NetworkOptions::node_overrides` で、ノードのコードを変えずにアドレスと NAME の一部（identity number、function instance、ECU instance）を替えられます。同じノードのコードを 1 本のバスに 2 つ載せるための口です。行は、コードのアドレス（`from`。省くと、そのネットワークのただ 1 つのノード）でノードを指します。`add_node()` は、指されたノードを替えた後の値で作ります（`Node::address()`、`requested_address()`、`name()` は替えた後の値、`Node::coded_address()` だけがコードのアドレス）。行が当たるのは、最初の `begin()` より前に追加したノードだけです（`Network::close_node_overrides()` でも閉じられます。使われなかった行の番号を返します）。その後に追加したノードは、コードの値のままです。当てられない行（NAME のないノードに NAME の欄、など）と、1 つの行が 2 つ目のノードに当たる場合は、`add_node()` が `std::invalid_argument` を投げます。`Ecu::j1939()` で作るネットワークは `node_overrides` を受け付けません（`std::invalid_argument`）。ECU のノードの値は、ECU を動かす側が外から替えます（下の「シミュレーションで実行する」の `SilKitOptions::j1939_nodes`、`PeerOptions::j1939_nodes`）。
+
 ### 複数のネットワークを持つ ECU
 
 ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送信すると、同じステップで送信されます。
@@ -749,6 +751,25 @@ SIL Kit で 1 回しか動かせないのは、止まった時刻のステップ
 | `controller` | このプロセスが simulation を始めて終えるか（既定 `true`）。`false` なら外の controller（`vehicle_sil_sim_controller`、Control Server）が決め、`run()` で終わりまで待つ |
 | `other_participants` | 始める前にそろっていなければならない、ほかのプロセスの Coordinated な participant（`controller` が `true` のときだけ） |
 | `start_timeout` | 始まるまでに許す時間（既定 30 秒） |
+| `network_names` | ネットワークの名前の対応（シミュレーションの名前 → ECU のコードの名前）。このプロセスの全部の ECU に効く |
+| `j1939_nodes` | J1939 のノードのアドレスと NAME の一部を、ECU のコードを変えずに替える（ECU の名前 → 行の並び）。下の説明を参照 |
+
+`j1939_nodes` は、同じ ECU のコードを 2 つ追加するためのものです。そのままでは、2 つの ECU が同じアドレスを同じ NAME で要求し、どちらもアドレスを持てません。
+
+```cpp
+vehicle_sil::SilKitOptions options;
+options.j1939_nodes["Engine2"] = {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}};
+vehicle_sil::Simulation sim(options);
+install_engine(sim.add_ecu("Engine1", 10ms), ...);   // コードのとおり 0x00
+install_engine(sim.add_ecu("Engine2", 10ms), ...);   // 0x01、identity number 2
+```
+
+- 行は、ネットワーク（シミュレーションでの名前。`network_names` で替えたネットワークは、替えた後の名前）と、ノードのコードのアドレス（`from`。省くと、その ECU のそのネットワークのただ 1 つのノード）で、ノードを指します。替えられるのは `address`（254 は、任意アドレス対応の NAME のノードだけ）、`identity_number`、`function_instance`、`ecu_instance` です。
+- `network_names` と違って ECU ごとに書きます。全部の ECU に同じ行を当てると、同じネットワークの 2 つの ECU がまた同じアドレスになるためです。
+- 当たるのは、開始までに追加したノードだけです。開始の後に追加したノードは、コードの値のままです。
+- 替わるのは、そのノード自身だけです。このノードのアドレスや NAME の全体をコードに持っているほかの ECU は、変わりません。
+- `std::invalid_argument` になるもの: 空のネットワーク名、範囲の外の値、同じネットワークと `from` の行が 2 つ、`from` のない行と同じネットワークの別の行（`add_ecu()`）。当てられない行（NAME のないノードに NAME の欄、任意アドレスに対応しない NAME に 254）、1 つの行が 2 つ目のノードに当たる場合（`add_node()`）。この simulation にない ECU の名前、どのノードにも当たらなかった行（`run()`、`run_for()`。何も始めずに投げます）。
+- プロセス内の仮想バス（`Simulation()`）には、この口はありません。
 
 `run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。失敗にするものは、`controller` で変わります。
 
@@ -766,7 +787,7 @@ SIL Kit で 1 回しか動かせないのは、止まった時刻のステップ
 - 別のプロセスで 1 つの participant として動かすとき
 - Control Agent を組み込むとき
 
-`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
+`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。`Peer` では、同じ行を `PeerOptions::j1939_nodes`（その ECU の行の並び）に書きます。どのノードにも当たらなかった行があると、`Peer::start()` が何も始めずに `std::invalid_argument` を投げます（先に `Peer::unused_j1939_nodes()` で、行ごとの理由を得られます）。`start_together` では、どれかの `Peer` にそういう行があると、どれも始めずに、その `Peer` の `start()` と同じメッセージで投げます。`start()` の前に `host()` から自分でステップを回すプログラムでは、行が当たるのは最初のステップまでに追加したノードだけです。
 
 ## ECU をテストする
 

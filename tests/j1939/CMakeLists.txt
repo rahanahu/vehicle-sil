@@ -8,6 +8,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
     test_j1939_address_management.cpp
     test_j1939_bus_timing.cpp
     test_j1939_network.cpp
+    test_j1939_node_override.cpp
     test_j1939_observer.cpp
     test_j1939_outage.cpp
     test_j1939_real_time.cpp

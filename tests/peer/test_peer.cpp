@@ -24,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1159,4 +1160,259 @@ TEST_CASE(peer_names_both_names_of_a_renamed_network_when_its_controller_fails)
         throw vehicle_sil::unit::Failure("the reason of the Error does not name both names: " + reason);
     }
     body.stop("test done");
+}
+
+// --- PeerOptions::j1939_nodes
+
+namespace {
+
+vehicle_sil::ecu_executable::J1939NodeOverride node_entry(std::string network, std::optional<j1939::Address> from,
+                                                          std::optional<j1939::Address> address,
+                                                          std::optional<std::uint32_t> identity_number = std::nullopt)
+{
+    vehicle_sil::ecu_executable::J1939NodeOverride out;
+    out.network = std::move(network);
+    out.node.from = from;
+    out.node.address = address;
+    out.node.identity_number = identity_number;
+    return out;
+}
+
+/// A NAME that is not arbitrary address capable, with manufacturer code 0x7F0.
+j1939::Name engine_name() { return j1939::Name{}.set_identity_number(0x1234).set_manufacturer_code(0x7F0).set_function(0x82); }
+
+/// what() of the std::invalid_argument that `f` throws; "(nothing thrown)" without one.
+template <typename F>
+std::string refusal(F&& f)
+{
+    try
+    {
+        f();
+    }
+    catch (const std::invalid_argument& e)
+    {
+        return e.what();
+    }
+    return "(nothing thrown)";
+}
+
+void same_text(const std::string& actual, const std::string& expected)
+{
+    if (actual != expected)
+    {
+        throw vehicle_sil::unit::Failure("texts differ\n  actual:   " + actual + "\n  expected: " + expected);
+    }
+}
+
+} // namespace
+
+TEST_CASE(peer_gives_its_j1939_nodes_the_values_of_its_options_until_the_start)
+{
+    InProcessRegistry registry;
+    can::ManualRealTimeClock clock;
+    PeerOptions o;
+    o.participant = "Engine2";
+    o.registry_uri = registry.uri;
+    o.virtual_time = std::nullopt;
+    o.real_time_clock = &clock;
+    o.max_idle = 5ms;
+    // The code says J1939_CAN; an entry names the network as the simulation does.
+    o.network_names = {{"VehicleCAN", "J1939_CAN"}};
+    o.j1939_nodes = {node_entry("VehicleCAN", 0x00, 0x01, 2), node_entry("XL1", std::nullopt, 0x31),
+                     // changes nothing: not looked at, whatever it names
+                     node_entry("Nowhere", 0x55, std::nullopt)};
+    Peer peer(o);
+    j1939::Network& vehicle = peer.j1939("J1939_CAN");
+    j1939::Node& engine = vehicle.add_node({0x00, engine_name()});
+    j1939::Node& other = vehicle.add_node({0x05});
+    CHECK_EQ(engine.address(), 0x01);
+    CHECK_EQ(engine.coded_address(), 0x00);
+    CHECK(engine.name() == std::optional<j1939::Name>(engine_name().set_identity_number(2)));
+    CHECK_EQ(other.address(), 0x05);
+    // A network on a port of the caller's takes them as well.
+    j1939::Node& tool = peer.j1939("XL1", std::make_unique<FakeRealTimePort>()).add_node({0x30});
+    CHECK_EQ(tool.address(), 0x31);
+    CHECK(peer.unused_j1939_nodes().empty());
+    // What the ECU says about itself now: the values it runs with.
+    const auto description = peer.describe();
+    CHECK_EQ(description.networks.at(0).nodes.at(0).address, 0x01);
+    CHECK(description.networks.at(0).nodes.at(0).name == engine.name());
+    CHECK_EQ(description.networks.at(1).nodes.at(0).address, 0x31);
+
+    // The caller's own node_overrides are refused, by each way to a network.
+    j1939::NetworkOptions own;
+    own.node_overrides.push_back(node_entry("", 0x00, 0x02).node);
+    const std::string refused =
+        " was given NetworkOptions::node_overrides, which is for a j1939::Network that a program makes itself: an ECU "
+        "sets the values of its nodes in add_node(), and a simulation changes them with j1939_nodes "
+        "(PeerOptions::j1939_nodes, --j1939-node)";
+    same_text(refusal([&] { static_cast<vehicle_sil::Ecu&>(peer).j1939("Body", own); }), "vehicle_sil::Ecu: j1939(\"Body\")" + refused);
+    vehicle_sil::J1939ChannelOptions channel;
+    channel.network = own;
+    same_text(refusal([&] { peer.j1939("Body", channel); }), "vehicle_sil::Ecu: j1939(\"Body\")" + refused);
+    same_text(refusal([&] { peer.j1939("XL2", std::make_unique<FakeRealTimePort>(), own); }),
+              "vehicle_sil::Ecu: j1939(\"XL2\")" + refused);
+    CHECK((peer.network_names() == std::vector<std::string>{"J1939_CAN", "XL1"}));
+
+    // From the start on, a node that is added keeps the values in its code: the entry for 0x00 is
+    // not applied again, and it does not refuse a second node at 0x00 either.
+    std::atomic<int> lateAddress{-1};
+    std::atomic<int> lateCoded{-1};
+    peer.on_step([&](SimTime) {
+        if (lateAddress.load() < 0)
+        {
+            j1939::Node& late = vehicle.add_node({0x00, engine_name().set_identity_number(9)});
+            lateCoded = late.coded_address();
+            lateAddress = late.address();
+        }
+    });
+    peer.start();
+    CHECK(vehicle_sil::unit::eventually([&] { return lateAddress.load() >= 0; }, 20s));
+    peer.stop();
+    CHECK(!peer.failed());
+    CHECK_EQ(lateAddress.load(), 0x00);
+    CHECK_EQ(lateCoded.load(), 0x00);
+    CHECK_EQ(engine.address(), 0x01);
+}
+
+TEST_CASE(peer_refuses_to_start_with_j1939_nodes_that_no_node_took)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Engine2";
+    o.registry_uri = registry.uri;
+    o.network_names = {{"VehicleCAN", "J1939_CAN"}};
+    o.j1939_nodes = {node_entry("J1939_CAN", 0x00, 0x01), // the code's name: no network of the simulation
+                     node_entry("VehicleCAN", 0x10, 0x11),
+                     node_entry("VehicleCAN", 0x00, std::nullopt, 2),
+                     node_entry("BodyCAN", std::nullopt, 0x05)};
+    Peer peer(o);
+    j1939::Network& vehicle = peer.j1939("J1939_CAN");
+    vehicle.add_node({0x00, engine_name()});
+    vehicle.add_node({0x21});
+    peer.j1939("BodyCAN"); // no node
+    const auto unused = peer.unused_j1939_nodes();
+    using Reason = vehicle_sil::UnusedJ1939Node::Reason;
+    CHECK_EQ(unused.size(), 3u);
+    CHECK(unused.at(0).entry == o.j1939_nodes[0]);
+    CHECK(unused.at(0).reason == Reason::NoNetwork);
+    CHECK(unused.at(0).coded_addresses.empty());
+    CHECK_EQ(unused.at(0).networks.size(), 2u);
+    CHECK(unused.at(0).networks.at(0).simulation == "VehicleCAN");
+    CHECK(unused.at(0).networks.at(0).code == "J1939_CAN");
+    CHECK(unused.at(0).networks.at(1).simulation == "BodyCAN");
+    CHECK(unused.at(0).networks.at(1).code == "BodyCAN");
+    CHECK(unused.at(1).entry == o.j1939_nodes[1]);
+    CHECK(unused.at(1).reason == Reason::NoNodeAtFrom);
+    CHECK((unused.at(1).coded_addresses == std::vector<j1939::Address>{0x00, 0x21}));
+    CHECK(unused.at(2).entry == o.j1939_nodes[3]);
+    CHECK(unused.at(2).reason == Reason::NoNodes);
+    CHECK(unused.at(2).coded_addresses.empty());
+    same_text(refusal([&] { peer.start(); }),
+              "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+              "(J1939_CAN=from:0x00,address:0x01: no J1939 network of that name; its J1939 networks: VehicleCAN (J1939_CAN "
+              "in the code), BodyCAN; VehicleCAN=from:0x10,address:0x11: no node at 0x10 in the code there; its nodes "
+              "there: 0x00, 0x21; BodyCAN=address:0x05: no node on that network): correct or remove them; nodes added "
+              "after start() keep the values in their code");
+    // Nothing was started: the ECU can still be set up, and a node can still take its entry.
+    CHECK_EQ(peer.j1939("BodyCAN2").add_node({0x10}).address(), 0x10);
+    CHECK_EQ(peer.network("BodyCAN").add_node({0x07}).address(), 0x05);
+    CHECK_EQ(peer.unused_j1939_nodes().size(), 2u);
+}
+
+TEST_CASE(peer_says_that_the_node_of_a_j1939_nodes_entry_came_after_the_first_step)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Engine2";
+    o.registry_uri = registry.uri;
+    can::ManualRealTimeClock clock;
+    o.virtual_time = std::nullopt;
+    o.real_time_clock = &clock;
+    o.j1939_nodes = {node_entry("VehicleCAN", 0x00, 0x01), node_entry("BodyCAN", std::nullopt, 0x05),
+                     node_entry("VehicleCAN", 0x10, 0x11)};
+    Peer peer(o);
+    // On ports of the caller's, which a step before start() may use (SIL Kit ports refuse it).
+    j1939::Network& vehicle = peer.j1939("VehicleCAN", std::make_unique<FakeRealTimePort>());
+    j1939::Network& body = peer.j1939("BodyCAN", std::make_unique<FakeRealTimePort>());
+    // The caller steps the peer itself before start(): the first step ends the time of the
+    // entries, and the nodes added after it keep the values in their code.
+    peer.host().step(SimTime{});
+    CHECK_EQ(vehicle.add_node({0x00, engine_name()}).address(), 0x00);
+    CHECK_EQ(body.add_node({0x20, engine_name()}).address(), 0x20);
+    const auto unused = peer.unused_j1939_nodes();
+    using Reason = vehicle_sil::UnusedJ1939Node::Reason;
+    CHECK_EQ(unused.size(), 3u);
+    CHECK(unused.at(0).reason == Reason::AddedAfterFirstStep);
+    CHECK((unused.at(0).coded_addresses == std::vector<j1939::Address>{0x00}));
+    CHECK(unused.at(1).reason == Reason::AddedAfterFirstStep);
+    CHECK((unused.at(1).coded_addresses == std::vector<j1939::Address>{0x20}));
+    CHECK(unused.at(2).reason == Reason::NoNodeAtFrom);
+    CHECK((unused.at(2).coded_addresses == std::vector<j1939::Address>{0x00}));
+    same_text(refusal([&] { peer.start(); }),
+              "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+              "(VehicleCAN=from:0x00,address:0x01: the node at 0x00 in the code there was added after the network's "
+              "first step, so it keeps the values in its code (add it before that step); BodyCAN=address:0x05: the "
+              "node there (0x20 in the code) was added after the network's first step, so it keeps the values in its "
+              "code (add it before that step); VehicleCAN=from:0x10,address:0x11: no node at 0x10 in the code there; "
+              "its nodes there: 0x00): correct or remove them; nodes added after start() keep the values in their code");
+}
+
+TEST_CASE(peer_start_together_refuses_j1939_nodes_that_no_node_took_before_it_starts_a_peer)
+{
+    // Started first, Engine1 and the controller would wait for Engine2 until their timeout, and the
+    // controller's timeout would hide why Engine2 did not start.
+    InProcessRegistry registry;
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Engine1", "Engine2"};
+    control.stop_at = 1s;
+    SimulationController controller(control);
+    Peer engine1(coordinated("Engine1", registry.uri, 10ms));
+    PeerOptions o = coordinated("Engine2", registry.uri, 10ms);
+    o.j1939_nodes = {node_entry("VehicleCAN", 0x10, 0x01)};
+    Peer engine2(o);
+    engine1.j1939("VehicleCAN").add_node({0x00, engine_name()});
+    engine2.j1939("VehicleCAN").add_node({0x00, engine_name()});
+    same_text(refusal([&] { start_together(controller, {&engine1, &engine2}, 5s); }),
+              "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+              "(VehicleCAN=from:0x10,address:0x01: no node at 0x10 in the code there; its nodes there: 0x00): correct "
+              "or remove them; nodes added after start() keep the values in their code");
+    // Nothing was started: both can still be set up.
+    CHECK_EQ(engine1.j1939("BodyCAN").node_count(), 0u);
+    CHECK_EQ(engine2.j1939("BodyCAN").node_count(), 0u);
+}
+
+TEST_CASE(peer_refuses_j1939_nodes_that_cannot_stand_and_what_add_node_refuses)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Engine2";
+    o.registry_uri = registry.uri;
+    const auto with = [&](std::vector<vehicle_sil::ecu_executable::J1939NodeOverride> entries) {
+        PeerOptions made = o;
+        made.j1939_nodes = std::move(entries);
+        return made;
+    };
+    const std::string who = "vehicle_sil::Peer \"Engine2\": ";
+    same_text(refusal([&] { Peer peer(with({node_entry("", std::nullopt, 0x01)})); }),
+              who + "j1939_nodes has an entry with an empty network name (address:0x01): it needs the simulation's name of "
+                    "a J1939 network of this ECU");
+    same_text(refusal([&] { Peer peer(with({node_entry("VehicleCAN", 0x00, std::nullopt, 2097152)})); }),
+              who + "j1939_nodes has an entry for the network \"VehicleCAN\" with identity_number 2097152, which is out of "
+                    "its range 0..2097151");
+    same_text(refusal([&] { Peer peer(with({node_entry("VehicleCAN", 0x00, 0x01), node_entry("VehicleCAN", 0x00, std::nullopt, 2)})); }),
+              who + "j1939_nodes, written as arguments of an ECU executable: --j1939-node VehicleCAN=from:0x00,address:0x01 "
+                    "and --j1939-node VehicleCAN=from:0x00,identity_number:2 change the same node (at 0x00 in the ECU's "
+                    "code): give its settings in one --j1939-node");
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { Peer peer(with({node_entry("VehicleCAN", std::nullopt, 0x01), node_entry("VehicleCAN", 0x21, 0x22)})); },
+        "give every --j1939-node of a network a from"));
+    // The same from on two networks is fine; what the network refuses comes from add_node().
+    Peer peer(with({node_entry("VehicleCAN", 0x00, std::nullopt, 2), node_entry("BodyCAN", 0x00, 254)}));
+    CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("VehicleCAN").add_node({0x00}); },
+                                             "the node override from:0x00,identity_number:2 sets a NAME field, but the node "
+                                             "at 0x00 in the code has no NAME"));
+    CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("BodyCAN").add_node({0x00, engine_name()}); },
+                                             "is not arbitrary address capable: give an address of 0..253"));
 }

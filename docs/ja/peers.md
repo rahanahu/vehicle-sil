@@ -140,6 +140,8 @@ coordinated の participant と一緒に動かすピアは、次のどちらか�
 
 シミュレーションでのネットワークの名前がコードの名前と違うときは、`options.network_names = {{"VehicleCAN", "J1939_CAN1"}};`（シミュレーションの名前 → コードの名前）で、コードを変えずに合わせられます。替わるのは SIL Kit のネットワークの名前と監視の出力の名前だけです。ルールは [ecu-executable.md](ecu-executable.md) の「ネットワークの名前を替える」にあります（ECU の実行ファイルでは `--map-network`）。
 
+J1939 のノードのアドレスと NAME の一部（identity number、function instance、ECU instance）も、コードを変えずに替えられます。同じ ECU のコードを 1 つのネットワークに 2 つ載せるときに使います。`options.j1939_nodes = {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}};` は、コードが `VehicleCAN`（シミュレーションでの名前）に 0x00 で追加するノードを、0x01、identity number 2 にします。当たるのは `start()` までに追加したノードだけで、どのノードにも当たらなかった行があると `start()` が `std::invalid_argument` を投げます。ルールは [j1939-guide.md](j1939-guide.md) の「シミュレーションで実行する」にあります。
+
 ## CAN バスの調停と送信時間を模擬する
 
 SIL Kit の標準の CAN は、送信したフレームを送信した時刻のまま全員に届けます。調停と送信時間を仮想時間で再現するには、簡易 CAN Network Simulator を participant として加えます。各ピアのコードは変わりません。

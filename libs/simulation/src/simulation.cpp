@@ -166,6 +166,9 @@ struct Simulation::SilKitRun
         }
     }
 
+    /// Before a run, while nothing is started: std::invalid_argument for a name of
+    /// SilKitOptions::j1939_nodes that is not an ECU here, and for entries that no node took.
+    void require_j1939_nodes() const;
     void run(std::optional<SimDuration> stop_at);
 
 private:
@@ -179,6 +182,31 @@ private:
     /// does. Nobody is stopped meanwhile.
     void wait_for_the_abort();
 };
+
+void Simulation::SilKitRun::require_j1939_nodes() const
+{
+    for (const auto& [ecu, entries] : options.j1939_nodes)
+    {
+        if (std::find(names.begin(), names.end(), ecu) == names.end())
+        {
+            std::string ecus;
+            for (const auto& name : names)
+            {
+                ecus += (ecus.empty() ? "'" : ", '") + name + "'";
+            }
+            throw std::invalid_argument(std::string(kWho) + "SilKitOptions::j1939_nodes has entries for '" + ecu +
+                                        "', which is not an ECU of this simulation (its ECUs: " +
+                                        (ecus.empty() ? "none" : ecus) + ")");
+        }
+    }
+    // start_together() refuses the entries that no node took as well, before it starts a peer.
+    // By then the run has its controller and counts as run: here nothing is started yet, and
+    // the caller can add the node and run.
+    for (const auto& peer : peers)
+    {
+        detail::require_j1939_nodes_taken(*peer);
+    }
+}
 
 void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
 {
@@ -479,6 +507,10 @@ Ecu& Simulation::add_ecu(std::string name, SimDuration step)
     o.registry_uri = s.uri;
     o.participant_configuration = s.options.participant_configuration;
     o.network_names = s.options.network_names;
+    if (const auto nodes = s.options.j1939_nodes.find(name); nodes != s.options.j1939_nodes.end())
+    {
+        o.j1939_nodes = nodes->second; // this ECU's only: see SilKitOptions::j1939_nodes
+    }
     o.lifecycle = LifecycleMode::Coordinated;
     o.virtual_time = VirtualTimeOptions{step, std::nullopt, std::nullopt};
     // Within the start timeout: a name still held by an earlier process is waited for no longer.
@@ -539,6 +571,7 @@ void Simulation::run_for(SimDuration duration)
     {
         throw std::logic_error(std::string(kWho) + "a SIL Kit simulation runs once");
     }
+    s.require_j1939_nodes();
     s.ran = true;
     s.run(duration);
     s.now = SimTime{} + duration;
@@ -557,6 +590,7 @@ void Simulation::run()
         throw std::logic_error(std::string(kWho) + "a SIL Kit simulation runs once");
     }
     require_ecus("run()");
+    s.require_j1939_nodes();
     s.ran = true;
     s.run(std::nullopt);
 }

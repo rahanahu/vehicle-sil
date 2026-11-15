@@ -154,6 +154,34 @@ Network::Network(NetworkOptions options)
     {
         throw std::invalid_argument("vehicle_sil::j1939::Network: bam_packet_interval must be 10 .. 200 ms");
     }
+    for (const NodeOverride& entry : options_.node_overrides)
+    {
+        if (const std::string problem = node_override_range_problem(entry); !problem.empty())
+        {
+            throw std::invalid_argument("vehicle_sil::j1939::Network: the node override sets " + problem);
+        }
+    }
+    if (const auto clash = find_node_override_clash(options_.node_overrides))
+    {
+        const std::string first = format_node_override(options_.node_overrides[clash->first]);
+        const std::string second = format_node_override(options_.node_overrides[clash->second]);
+        if (!clash->without_from)
+        {
+            throw std::invalid_argument("vehicle_sil::j1939::Network: node_overrides has two entries for the node at " +
+                                        coded_address_text(*options_.node_overrides[clash->first].from) +
+                                        " in the code (" + first + " and " + second +
+                                        "): write its settings in one entry");
+        }
+        // The one without from is named first, whichever comes first in the list.
+        const bool firstHasNone = !options_.node_overrides[clash->first].from;
+        const std::string& none = firstHasNone ? first : second;
+        const std::string& other = firstHasNone ? second : first;
+        throw std::invalid_argument("vehicle_sil::j1939::Network: node_overrides has an entry without from (" +
+                                    (none.empty() ? std::string("no settings") : none) +
+                                    "), which stands for the only node, and another entry (" +
+                                    (other.empty() ? std::string("no settings") : other) + "): give every entry a from");
+    }
+    node_override_users_.resize(options_.node_overrides.size());
     transport_ = std::make_unique<Transport>(*this, options_);
     nodes_.reserve(options_.max_nodes);
     // Data frames and transport data packets share max_frames_per_step.
@@ -476,7 +504,103 @@ void Network::warn(std::string_view text) const
     }
 }
 
-Node& Network::add_node(const NodeOptions& options)
+std::vector<std::size_t> Network::unused_node_overrides() const
+{
+    std::vector<std::size_t> out;
+    for (std::size_t i = 0; i < options_.node_overrides.size(); ++i)
+    {
+        if (options_.node_overrides[i].changes() && !node_override_users_[i])
+        {
+            out.push_back(i);
+        }
+    }
+    return out;
+}
+
+std::vector<std::size_t> Network::close_node_overrides()
+{
+    if (node_overrides_closed_)
+    {
+        return {};
+    }
+    node_overrides_closed_ = true;
+    return unused_node_overrides();
+}
+
+std::optional<std::size_t> Network::take_node_override(NodeOptions& options) const
+{
+    const Address coded = options.address;
+    for (std::size_t i = 0; i < options_.node_overrides.size(); ++i)
+    {
+        const NodeOverride& entry = options_.node_overrides[i];
+        if (!entry.changes() || !node_override_matches(entry, coded))
+        {
+            continue;
+        }
+        const std::string who = "vehicle_sil::j1939::Network: the node override " + format_node_override(entry);
+        const std::string at = coded_address_text(coded);
+        if (const auto& user = node_override_users_[i])
+        {
+            // One entry is for one node. With the same address in the code, no from can tell the
+            // two apart; with another one (an entry without from), a from can.
+            const Address first = nodes_[*user]->coded_address();
+            if (first == coded)
+            {
+                throw std::invalid_argument(who + " cannot pick a node: the code adds two nodes at " + at +
+                                            ", and from tells nodes apart by that address; remove the override, and "
+                                            "give the nodes addresses of their own in the code");
+            }
+            throw std::invalid_argument(who + " has no from, so it is for the only node, and a second node was added "
+                                        "(at " + at + " in the code; the first is at " + coded_address_text(first) +
+                                        "): give it a from (with ecu_main: --j1939-node <network>=from:<address in the "
+                                        "code>,...)");
+        }
+        const NodeOverrideOutcome outcome = apply_node_override({options.address, options.name}, entry);
+        if (outcome.error)
+        {
+            switch (*outcome.error)
+            {
+            case NodeOverrideError::NameFieldWithoutName:
+            {
+                std::string fields;
+                for (const auto& [name, given] :
+                     {std::pair<const char*, bool>{"identity_number", entry.identity_number.has_value()},
+                      {"function_instance", entry.function_instance.has_value()},
+                      {"ecu_instance", entry.ecu_instance.has_value()}})
+                {
+                    if (given)
+                    {
+                        fields += fields.empty() ? "" : ", ";
+                        fields += name;
+                    }
+                }
+                throw std::invalid_argument(who + " sets a NAME field, but the node at " + at +
+                                            " in the code has no NAME (it does not claim its address): remove " + fields +
+                                            "; for this node only address can be changed");
+            }
+            case NodeOverrideError::AnyAddressNotCapable:
+                throw std::invalid_argument(who + " asks for any free address (254), but the NAME of the node at " + at +
+                                            " in the code is not arbitrary address capable: give an address of 0..253");
+            case NodeOverrideError::AnyAddressWithoutName:
+                throw std::invalid_argument(who + " asks for any free address (254), but the node at " + at +
+                                            " in the code has no NAME, so it cannot claim a free address: give an "
+                                            "address of 0..253");
+            case NodeOverrideError::FieldOutOfRange:
+            case NodeOverrideError::AddressOutOfRange:
+                break;
+            }
+            // The constructor refused these already.
+            throw std::invalid_argument("vehicle_sil::j1939::Network: the node override sets " +
+                                        node_override_range_problem(entry));
+        }
+        options.address = outcome.values.address;
+        options.name = outcome.values.name;
+        return i;
+    }
+    return std::nullopt;
+}
+
+Node& Network::add_node(const NodeOptions& coded)
 {
     require_not_reentrant("add_node()");
     require_not_failed();
@@ -489,6 +613,10 @@ Node& Network::add_node(const NodeOptions& options)
     {
         throw std::length_error("vehicle_sil::j1939::Network: too many nodes (max_nodes)");
     }
+    // An override first: everything below sees its values as if the code had given them. Once the
+    // entries are closed (the start), a node keeps the values in its code and no entry is looked at.
+    NodeOptions options = coded;
+    const std::optional<std::size_t> taken = node_overrides_closed_ ? std::nullopt : take_node_override(options);
     const bool anyAddress = options.address == kNullAddress && options.name && options.name->arbitrary_address_capable();
     if (!is_unicast(options.address) && !anyAddress)
     {
@@ -504,7 +632,7 @@ Node& Network::add_node(const NodeOptions& options)
     }
     try
     {
-        nodes_.push_back(std::unique_ptr<Node>(new Node(*this, nodes_.size(), options)));
+        nodes_.push_back(std::unique_ptr<Node>(new Node(*this, nodes_.size(), options, coded.address)));
     }
     catch (...)
     {
@@ -514,6 +642,10 @@ Node& Network::add_node(const NodeOptions& options)
     // Added during a step (the application stage, or a handler of another network of the host):
     // the node takes part from the next begin(), whatever stage this network is in.
     nodes_.back()->active_ = phase_ == Phase::Idle;
+    if (taken)
+    {
+        node_override_users_[*taken] = nodes_.size() - 1;
+    }
     return *nodes_.back();
 }
 
@@ -556,6 +688,8 @@ void Network::begin(SimTime now)
                                    std::to_string(to_ns(now)) + " ns after t=" + std::to_string(to_ns(*now_)) + " ns)");
         }
         now_ = now;
+        // The start: nodes added from now on keep the values in their code.
+        node_overrides_closed_ = true;
         for (auto& node : nodes_)
         {
             node->active_ = true;

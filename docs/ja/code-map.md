@@ -284,6 +284,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - `j1939.seat_*`: エンジンの内部の口である聞き役の席（聞こえるもの、`Observer`、ハンドラー、タイマーとの順、読み取り専用であること、席の有無で記録が変わらないこと）
 - `j1939.sniffer_*`: `TransferSniffer` の、手で書いたフレームでの決まりと、同じフレームを受けたエンジンの受信側のノードとの一致（エンジンどうしの転送、種を固定した故障注入）。`j1939.sniffer_boundary` は `Network` に依らないことを検査する
 - `j1939.listener_*`: `Listener` の、エンジンどうしのやり取りを横から聞いた結果が受け手と一致すること、同じ `Network` のノードの送信が渡らないこと、ノードのアドレスの扱い、ハンドラーの順、読み取り専用であること、生成と破棄。`j1939.sniffer_boundary` は `listener.cpp` がエンジンの内部を席のほかに使わないことも検査する
+- ノードのアドレスと NAME の上書き（`NetworkOptions::node_overrides`。当てる関数と文字列の往復、上書きの後の値で claim すること、拒否するものとそのメッセージ、開始で閉じた後のノードがコードの値のままであること、同じノードのコードを 1 本のバスに 2 つ載せる場面、負けた後・Request・Commanded Address でも上書きの後の値が使われること）（`j1939.*override*`）
 
 仮想バスと SIL Kit の一致:
 
@@ -330,6 +331,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 それぞれが確認すること:
 
 - `peer.*`: J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立てのエラー、失敗の報告
+- `peer.*j1939_nodes*`: `PeerOptions::j1939_nodes` が、名前を替えたネットワークと外から渡したポートのネットワークに当たること、`start()` の後に追加したノードに当たらないこと、どのノードにも当たらなかった行の理由と `start()` のメッセージ（`host()` で回した最初のステップの後に追加したノードの場合も）、`start_together` がどの `Peer` も始めずに同じメッセージで拒否すること、コードが渡した `node_overrides` を拒否すること
 - `testkit.*`: アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果
 - `ecu_api.*`: `examples/j1939/ecu_pair`、ツールキットと `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確認するテスト
 - `param_service.*`: 正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中のコンポーネントの破棄
@@ -345,6 +347,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - 空と全部入りの全文、キーの順、数値、64 ビットの列挙の値、NAME の文字列、文字列のエスケープ、バージョン
 - `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`: `libs/ecu` と `libs/simulation/include` が、SIL Kit のヘッダーを直接にも間接にも含まないこと
 - `ecu.boundary_check_*`: その検査自体のテスト
+- `ecu.j1939_node_argument*`: 引数 `--j1939-node` の値を書く関数と読む関数の往復、誤った値ごとのメッセージ、1 つの ECU の行どうしの検査
 
 ### `simulation` / `examples`
 
@@ -365,6 +368,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - 2 つのネットワークを持つゲートウェイ、生の CAN、LIN の Master と Slave、イーサネットのチャネルが、両方で同じ結果になること
 - `Ecu::describe()`
 - 関数として呼んだ `ecu_main()` の引数と終了コード
+- `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ追加する場面）、ない ECU の名前や当たらなかった行を始める前に拒否すること
 
 イーサネットのチャネル（`test_ethernet.cpp`）では、次のステップで受信すること、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、拒否するときの文言、`LocalBench` の参照を確認します。
 
@@ -637,6 +641,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Network`、`Node` | `j1939/network.hpp` |
 | `Pgn`、`Identifier` | `j1939/types.hpp` |
 | `Name` | `j1939/name.hpp` |
+| ノードのアドレスと NAME の上書き `NodeOverride`、`apply_node_overrides()`、文字列との往復（`Network` と、前もって照合するツールの両方が使う） | `j1939/node_override.hpp` |
 | `Subscription`、`Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
 | `TransferSniffer`（ほかの ECU どうしの転送をフレームから追う。`Network` に依らない） | `j1939/transfer_sniffer.hpp` |
@@ -684,6 +689,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `EcuDescription`、`to_json()` | `ecu/describe.hpp` |
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
 | ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
+| 引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
 | バスからの切断（`ecu.connected`）の `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort` | `ecu/detail/bus_connection.hpp` |
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）

@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/ecu.hpp"
+#include "vehicle_sil/ecu/j1939_node_argument.hpp"
 
 #include <chrono>
 #include <map>
@@ -53,6 +54,18 @@ struct SilKitOptions
     /// virtual buses (no SilKitOptions) there is nothing to rename. std::invalid_argument from
     /// add_ecu() or from the call that makes a network, as PeerOptions::network_names says.
     std::map<std::string, std::string> network_names{};
+    /// Other values for J1939 nodes than the ECUs' code gives, for the same ECU code added more
+    /// than once: the name of an ECU of this process -> its entries (as PeerOptions::j1939_nodes:
+    /// the network by its name in the simulation, the node by the address in the code).
+    /// {{"Engine2", {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}}}}: the
+    /// node that the code of "Engine2" adds at 0x00 on "VehicleCAN" is at 0x01, with identity
+    /// number 2. Unlike network_names, they are kept for each ECU: the same entry for every ECU
+    /// would put two ECUs of one network at the same address again. On the local virtual buses
+    /// (no SilKitOptions) there is none: there the test owns the code.
+    /// std::invalid_argument from add_ecu() and from a node's add_node() as
+    /// PeerOptions::j1939_nodes says; from run() and run_for(), before anything is started, for
+    /// a name that is not an ECU of this simulation and for entries that no node took.
+    std::map<std::string, std::vector<ecu_executable::J1939NodeOverride>> j1939_nodes{};
 };
 
 /// A run failed. what(): "<ecu>: <why>" of each ECU (or other participant) that failed,
