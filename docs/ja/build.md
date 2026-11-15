@@ -66,7 +66,7 @@ cmake --build --preset linux-gcc-debug
 ctest --preset linux-gcc-debug
 ```
 
-3 つのコマンドの `linux-gcc-debug` は、次のプリセットに替えられます。README の「[リポジトリからビルドする](../README.md#リポジトリからビルドする)」は `linux-gcc-control` を使っています。
+3 つのコマンドの `linux-gcc-debug` は、次のプリセットに替えられます。README の「[リポジトリからビルドする](../../README.ja.md#リポジトリからビルドする)」は `linux-gcc-control` を使っています。
 
 | プリセット | 内容 | 追加で必要なもの |
 |---|---|---|
@@ -85,7 +85,7 @@ ThreadSanitizer のプリセットのテストは、誤検出とわかってい�
 
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
 
-コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](../AGENTS.md) の「検証とスクリプト」）。
+コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](../../AGENTS.md) の「検証とスクリプト」）。
 
 ### Windows（MSYS2 UCRT64）
 
@@ -135,7 +135,7 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 | `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz` | Ubuntu 22.04（x86_64） | glibc 2.35 以上（Ubuntu 22.04 と同じか新しい glibc）だけで、ほかの共有ライブラリは不要です。 |
 | `vehicle-sil-tools-<バージョン>-windows-x86_64.zip` | MSYS2 UCRT64 の MinGW | DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ のランタイムを静的にリンク）。 |
 
-アーカイブには次のものが入っています。詳しい内容はアーカイブの `README.md` に、同梱しているものとそのライセンスは [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) にあります。
+アーカイブには次のものが入っています。詳しい内容はアーカイブの `README.md` に、同梱しているものとそのライセンスは [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) にあります。
 
 | 入っているもの | 補足 |
 |---|---|
@@ -181,7 +181,7 @@ target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939
 vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
 ```
 
-新しく始めるときは、これを書いてあるテンプレート [template/](../template) をコピーするのが早道です（README の「[クイックスタート](../README.md#クイックスタート)」）。完全な例は [examples/fetchcontent_consumer](../examples/fetchcontent_consumer) にあります。
+新しく始めるときは、これを書いてあるテンプレート [template/](../../template) をコピーするのが早道です（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）。完全な例は [examples/fetchcontent_consumer](../../examples/fetchcontent_consumer) にあります。
 
 | 項目 | 取り込んだときの動作 |
 |---|---|
@@ -275,8 +275,8 @@ Windows では、コピーする DLL がなくなるので、`vehicle_sil_copy_r
 
 ## 関連するドキュメント
 
-- 最初に試すコマンド → README の「[クイックスタート](../README.md#クイックスタート)」
-- 検証のスクリプト → [AGENTS.md](../AGENTS.md)
+- 最初に試すコマンド → README の「[クイックスタート](../../README.ja.md#クイックスタート)」
+- 検証のスクリプト → [AGENTS.md](../../AGENTS.md)
 - テストのラベルと実行方法 → [code-map.md](code-map.md)
 - ECU の書き方 → [j1939-guide.md](j1939-guide.md)
 - SIL Kit の固定、パッチ、gRPC、Python の探し方 → [dependencies.md](dependencies.md)

@@ -10,8 +10,8 @@ ECU の変数に値を設定し、結果を確認するテストを、YAML の�
 
 | 必要なもの | 条件 |
 |---|---|
-| ビルド | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」のとおりに、`linux-gcc-control` でビルドしてあること。 |
-| 例の ECU | [examples/ecu_main](../../examples/ecu_main) の Engine と Dashboard を使います。ビルドすると、設定ファイルと一緒に `build/linux-gcc-control/examples/ecu_main/` に置かれます。 |
+| ビルド | README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」のとおりに、`linux-gcc-control` でビルドしてあること。 |
+| 例の ECU | [examples/ecu_main](../../../examples/ecu_main) の Engine と Dashboard を使います。ビルドすると、設定ファイルと一緒に `build/linux-gcc-control/examples/ecu_main/` に置かれます。 |
 
 リポジトリのルートで次の 2 行を実行します。これ以降のコマンドは、すべてこのディレクトリ（`simulation.yaml` のある所）で実行します。
 
@@ -41,7 +41,7 @@ cd build/linux-gcc-control/examples/ecu_main
 | 7 | ディレクトリのシナリオをまとめて実行する | 機種とシナリオの組ごとの結果の表 |
 | 8 | CI で実行する | 終了コードと JSON |
 
-手順 1〜8 は順に進めます。手順 3〜6 で作るファイルの完成形は、[examples/scenario_tests](../../examples/scenario_tests) にあります。その後の「ECU をバスから切断する」と「注意点」は、必要になったときに読みます。
+手順 1〜8 は順に進めます。手順 3〜6 で作るファイルの完成形は、[examples/scenario_tests](../../../examples/scenario_tests) にあります。その後の「ECU をバスから切断する」と「注意点」は、必要になったときに読みます。
 
 ## 手順 1: 付属のシナリオを実行する
 

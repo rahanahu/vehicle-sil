@@ -1043,20 +1043,21 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 ### `scripts/`
 
-開発と CI のスクリプトです。一覧は [AGENTS.md](../AGENTS.md) の「検証とスクリプト」にあります。
+開発と CI のスクリプトです。一覧は [AGENTS.md](../../AGENTS.md) の「検証とスクリプト」にあります。
 
 | テスト | 対象 |
 |---|---|
 | `scripts/verify-python.py` | 各スクリプトの `--help` |
 | `tests/scripts/test_run_gui.py` | `scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言 |
 | `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: GitHub Actions の job の Summary に書く中身、書かないとき |
+| `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: 英語のページと日本語のページの対（見出し、コードブロック、リンク）、英語版がまだないページ |
 | `tests/template/test_get_tools.py` | `package.py template`、`version` |
 
 - `ctest -R`: `^template\.get_tools`、`^scripts\.`
 
 ### `patches/sil-kit`
 
-SIL Kit に当てるパッチです。configure のときに、ビルドのディレクトリのコピーに当てます（`cmake/VehicleSilDependencies.cmake`）。書き方は [patches/README.md](../patches/README.md) にあります。
+SIL Kit に当てるパッチです。configure のときに、ビルドのディレクトリのコピーに当てます（`cmake/VehicleSilDependencies.cmake`）。書き方は [patches/README.md](../../patches/README.md) にあります。
 
 - テスト: configure が通ること
 
@@ -1071,6 +1072,9 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 ## ドキュメントの例とテスト
 
 ドキュメントの中の例（設定ファイル、コード、コマンドの出力）のうち、`<!-- ... -->` の印の行の直後にあるコードブロックは、テストが実物と照合します。印とブロックを変えたときに失敗するテストは、次のとおりです。
+
+- テストが照合するのは、`tests/CMakeLists.txt` の `VEHICLE_SIL_TESTED_DOCS` のディレクトリのページです（英語のページ `docs/` がそろうまでは、日本語のページ `docs/ja/`）。もう一方の言語のページは、`scripts/check-docs.py` がコードブロックを照合して守ります（英語と日本語でブロックの数、順、言語のタグが同じ。日本語を含まないブロックはバイト単位で同じ）。
+- ページそのものを見るテスト（`tests/schema/test_schemas.py`、GUI サーバーのテスト、`gui/client/pack.mjs`、`scripts/package.py version`）は、両方の言語のページを読みます。
 
 ### リファレンスの例
 
@@ -2129,7 +2133,7 @@ simulation-run.md に書いてあるランチャーの出力:
 
 - ルートの `CMakeLists.txt` の `project(... VERSION)`
 
-合わせて直す所は、[CHANGELOG.md](../CHANGELOG.md) に書いてあります。
+合わせて直す所は、[CHANGELOG.md](../../CHANGELOG.md) に書いてあります。
 
 - `pyproject.toml`、`gui/server/pyproject.toml`
 - `template/get_tools.py`
@@ -2171,7 +2175,7 @@ simulation-run.md に書いてあるランチャーの出力:
 
 合わせて直すドキュメントとファイル:
 
-- [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): 同じ中身を書いた所（同梱する物と、ライセンスの文の場所）
+- [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md): 同じ中身を書いた所（同梱する物と、ライセンスの文の場所）
 - [build.md](build.md) の「ビルド済みのツール」
 - `.github/workflows/release.yml`
 
@@ -2215,6 +2219,6 @@ gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、
 
 | ドキュメント | 内容 |
 |---|---|
-| [AGENTS.md](../AGENTS.md) | ドキュメントの管理、コミット、検証のスクリプト（先に読みます） |
+| [AGENTS.md](../../AGENTS.md) | ドキュメントの管理、コミット、検証のスクリプト（先に読みます） |
 | [architecture.md](architecture.md) | 全体の構成と、各ディレクトリと各ターゲットの内容 |
 | [internals/](architecture.md#内部の仕組み) のドキュメント | 変える場所の内部の仕組み |

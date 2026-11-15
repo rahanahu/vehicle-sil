@@ -9,15 +9,15 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 
 | やりたいこと | 使うもの | ドキュメント |
 |---|---|---|
-| 自分の ECU を作る | C++ のクラス 1 つと `ecu_main()` の 1 行で、ECU が実行ファイルになります。 | [最初の ECU を作る](docs/howto/first-ecu.md) |
-| ECU に通信させる | J1939（CAN）、LIN、生のイーサネットのフレームを送受信できます。 | [j1939-guide.md](docs/j1939-guide.md)、[lin-guide.md](docs/lin-guide.md)、[examples/ethernet](examples/ethernet) |
-| 作り始める前に、ECU の分け方や名前を決める | 何をバスに送り何を変数にするか、ネットワークの名前、アドレスなどの選び方をまとめてあります。 | [作り始める前に決めること](docs/howto/design-choices.md) |
-| 複数の ECU をつないで 1 つのシミュレーションとして動かす | `vehicle_sil_launch` が、YAML の設定ファイルと各 ECU の不整合を検出し（`check`）、すべてを起動して実行します（`run`）。 | [複数の ECU をつないで動かす](docs/howto/integrate-ecus.md) |
-| テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオでテストを書く](docs/howto/scenario-tests.md) |
-| 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/howto/operate-signals.md) |
-| ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/gui.md) |
-| 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用とイーサネット用にあります。 | [bridges.md](docs/bridges.md)、[ethernet-bridge.md](docs/ethernet-bridge.md) |
-| ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/howto/multi-pc.md) |
+| 自分の ECU を作る | C++ のクラス 1 つと `ecu_main()` の 1 行で、ECU が実行ファイルになります。 | [最初の ECU を作る](docs/ja/howto/first-ecu.md) |
+| ECU に通信させる | J1939（CAN）、LIN、生のイーサネットのフレームを送受信できます。 | [j1939-guide.md](docs/ja/j1939-guide.md)、[lin-guide.md](docs/ja/lin-guide.md)、[examples/ethernet](examples/ethernet) |
+| 作り始める前に、ECU の分け方や名前を決める | 何をバスに送り何を変数にするか、ネットワークの名前、アドレスなどの選び方をまとめてあります。 | [作り始める前に決めること](docs/ja/howto/design-choices.md) |
+| 複数の ECU をつないで 1 つのシミュレーションとして動かす | `vehicle_sil_launch` が、YAML の設定ファイルと各 ECU の不整合を検出し（`check`）、すべてを起動して実行します（`run`）。 | [複数の ECU をつないで動かす](docs/ja/howto/integrate-ecus.md) |
+| テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオでテストを書く](docs/ja/howto/scenario-tests.md) |
+| 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/ja/howto/operate-signals.md) |
+| ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/ja/gui.md) |
+| 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用とイーサネット用にあります。 | [bridges.md](docs/ja/bridges.md)、[ethernet-bridge.md](docs/ja/ethernet-bridge.md) |
+| ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/ja/howto/multi-pc.md) |
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,7 @@ flowchart LR
 
 図の線は、接続を表します。ECU、`vehicle_sil_launch`、ブリッジは SIL Kit でつながり、Python とブラウザは `vehicle_sil_launch` につないで値を読み書きします。
 
-ECU は 1 つずつ別の実行ファイルです。何人かが別々に作った ECU を、内部を知らない人が設定ファイルに並べて動かせます。全体の構成は [docs/architecture.md](docs/architecture.md) に、やりたいこと別のサンプルは [examples/README.md](examples/README.md) にあります。
+ECU は 1 つずつ別の実行ファイルです。何人かが別々に作った ECU を、内部を知らない人が設定ファイルに並べて動かせます。全体の構成は [docs/architecture.md](docs/ja/architecture.md) に、やりたいこと別のサンプルは [examples/README.md](examples/README.ja.md) にあります。
 
 ## 実行例
 
@@ -112,7 +112,7 @@ failed: 2 errors, 1 warning, 0 notes
 
 ブラウザの GUI でスロットルのスライダーを動かすと、回転数が変わります。
 
-![ブラウザの GUI の「変数」の画面。スロットルを 20 % から 60 % に動かした後で、回転数のグラフが 1200 rpm から 2000 rpm に上がっている](docs/images/gui-variables.png)
+![ブラウザの GUI の「変数」の画面。スロットルを 20 % から 60 % に動かした後で、回転数のグラフが 1200 rpm から 2000 rpm に上がっている](docs/ja/images/gui-variables.png)
 
 ## クイックスタート
 
@@ -131,7 +131,7 @@ failed: 2 errors, 1 warning, 0 notes
 | [uv](https://docs.astral.sh/uv/) | 指定なし | ビルドと GUI が使う Python（3.11 以上）とパッケージをインストールします。 |
 | Node.js、npm | 24.15 以上、11.12 以上 | GUI の画面のビルドに使います。 |
 
-リポジトリをビルドして、上の例を実行し、GUI を起動します。最初の構成とビルドは、SIL Kit と（PC になければ）gRPC をダウンロードしてコンパイルするので、ネットワークへの接続と、数分から十数分の時間が必要です。コマンドは Linux のものです。Windows の手順、ほかのプリセット、テストの実行方法は [docs/build.md](docs/build.md) にあります。
+リポジトリをビルドして、上の例を実行し、GUI を起動します。最初の構成とビルドは、SIL Kit と（PC になければ）gRPC をダウンロードしてコンパイルするので、ネットワークへの接続と、数分から十数分の時間が必要です。コマンドは Linux のものです。Windows の手順、ほかのプリセット、テストの実行方法は [docs/build.md](docs/ja/build.md) にあります。
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
@@ -176,7 +176,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 vehicle-sil-gui simulation.live.yaml
 ```
 
-必要なもののバージョンと各ステップの説明は、テンプレートの [README](template/README.md) にあります。バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) にあります。
+必要なもののバージョンと各ステップの説明は、テンプレートの [README](template/README.ja.md) にあります。バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) にあります。
 
 ## ECU の書き方
 
@@ -219,11 +219,11 @@ int main(int argc, char** argv)
 
 | コード | 意味 | 詳細 |
 |---|---|---|
-| `ecu.j1939("J1939_CAN")` | 設定ファイルの `networks` と同じ名前のネットワークに接続し、名前が一致しなければ上の `check` のエラーになります。 | [j1939-guide.md](docs/j1939-guide.md) |
-| `ecu.input()`、`ecu.output()` | シナリオ、Python、GUI から読み書きする変数を宣言します。 | [control-api.md](docs/control-api.md) の「ECU の変数」 |
-| `ecu.every()` | 仮想時間の周期ごとに、モデルを更新し、メッセージを送信します。 | [最初の ECU を作る](docs/howto/first-ecu.md) |
-| `node_.send()` | 隣の [engine_speed.hpp](examples/ecu_main/engine_speed.hpp) で定義したメッセージを送信します。 | [j1939-codec.md](docs/j1939-codec.md)（信号の定義を YAML に書いて型を生成する） |
-| `ecu_main<Engine>()` | どの ECU も同じ引数（`--describe`、`--local --run-for-ms 1000` など）を持つ実行ファイルにします。 | [ecu-executable.md](docs/ecu-executable.md) |
+| `ecu.j1939("J1939_CAN")` | 設定ファイルの `networks` と同じ名前のネットワークに接続し、名前が一致しなければ上の `check` のエラーになります。 | [j1939-guide.md](docs/ja/j1939-guide.md) |
+| `ecu.input()`、`ecu.output()` | シナリオ、Python、GUI から読み書きする変数を宣言します。 | [control-api.md](docs/ja/control-api.md) の「ECU の変数」 |
+| `ecu.every()` | 仮想時間の周期ごとに、モデルを更新し、メッセージを送信します。 | [最初の ECU を作る](docs/ja/howto/first-ecu.md) |
+| `node_.send()` | 隣の [engine_speed.hpp](examples/ecu_main/engine_speed.hpp) で定義したメッセージを送信します。 | [j1939-codec.md](docs/ja/j1939-codec.md)（信号の定義を YAML に書いて型を生成する） |
+| `ecu_main<Engine>()` | どの ECU も同じ引数（`--describe`、`--local --run-for-ms 1000` など）を持つ実行ファイルにします。 | [ecu-executable.md](docs/ja/ecu-executable.md) |
 
 複数の ECU を 1 つのプロセスで動かす書き方もあります。SIL Kit なしで動くので、ECU のロジックを 1 人で試すのに向いています（[examples/getting_started](examples/getting_started)）。
 
@@ -232,26 +232,26 @@ int main(int argc, char** argv)
 | 分野 | 制限 | 補足、代わりの方法 |
 |---|---|---|
 | CAN | クラシック CAN（8 バイト以下）だけです。 | RTR、CAN FD、CAN XL のフレームは、受信時に破棄して件数を数えます。 |
-| J1939 | ETP（1785 バイトを超えるメッセージ）はありません。 | ほかの制限と、規格との一致を確認していない点は [docs/internals/j1939.md](docs/internals/j1939.md) の「J1939 の既知の制限」と各節にあります。 |
+| J1939 | ETP（1785 バイトを超えるメッセージ）はありません。 | ほかの制限と、規格との一致を確認していない点は [docs/internals/j1939.md](docs/ja/internals/j1939.md) の「J1939 の既知の制限」と各節にあります。 |
 | LIN | 仮想時間だけで動きます。 | 実時間の `Peer` では `std::logic_error` になります。 |
 | LIN | LIN の dynamic response など、SIL Kit の experimental API を使っています。 | — |
 | LIN | SIL Kit で動かす Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。 | ステップ幅は、設定ファイルの `step_ms` で指定します。 |
 | LIN | Slave が受信できるのは、Master が送るフレームだけです。 | ほかの Slave の応答は、仮想 LIN バスでは受信できず、SIL Kit では購読した ID なら受信できますが、受信するステップと時刻は決定論的ではありません。 |
-| イーサネット | 生のフレームだけで、TCP/IP のスタックはありません。 | 外部のネットワークとは [ethernet-bridge.md](docs/ethernet-bridge.md) のブリッジで接続します。 |
+| イーサネット | 生のフレームだけで、TCP/IP のスタックはありません。 | 外部のネットワークとは [ethernet-bridge.md](docs/ja/ethernet-bridge.md) のブリッジで接続します。 |
 | 時間と操作 | シミュレーションを最初からやり直す操作（リセット）はありません。 | 停止してから `run` を実行し直します。 |
 | 時間と操作 | `vehicle_sil_sim_controller` からは、仮想時間の一時停止とステップ実行ができません。 | C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力のコマンド、Control API（`--control`）からできます。 |
 | 時間と操作 | CAN と LIN のチャネルやデバイスは、Control API、設定ファイル、GUI からは選択できません。 | Vector XL CAN Bridge のチャネルは、起動時の引数で指定します。 |
 | 時間と操作 | 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。 | — |
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |
 | ツールとビルド | `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は安定していません。 | — |
-| ツールとビルド | `install()` とパッケージ化（`find_package`）には未対応です。 | FetchContent か `add_subdirectory` で組み込みます（[docs/build.md](docs/build.md) の「外部プロジェクトから使う（FetchContent）」）。 |
+| ツールとビルド | `install()` とパッケージ化（`find_package`）には未対応です。 | FetchContent か `add_subdirectory` で組み込みます（[docs/build.md](docs/ja/build.md) の「外部プロジェクトから使う（FetchContent）」）。 |
 | OS と機器 | Windows 10 は未確認です。 | Windows 11 の MSYS2 UCRT64 で確認しています。 |
-| OS と機器 | Vector XL CAN Bridge が扱うのは、クラシック CAN だけです。 | 使い方と仕様は [bridges.md](docs/bridges.md) にあります。 |
+| OS と機器 | Vector XL CAN Bridge が扱うのは、クラシック CAN だけです。 | 使い方と仕様は [bridges.md](docs/ja/bridges.md) にあります。 |
 | OS と機器 | Vector XL CAN Bridge は、ほかの物理 CAN の構成や機器では未確認です。 | Vector Virtual CAN と VN5620 の物理ループバックで確認しています。 |
 
 ## 開発に参加する
 
-vehicle-sil 自体を開発するときは、先に [AGENTS.md](AGENTS.md) を読みます。ドキュメントの管理、コミットメッセージ、検証用スクリプトのルールがあります。ソースコードの構成は [docs/code-map.md](docs/code-map.md) にあります。
+vehicle-sil 自体を開発するときは、先に [AGENTS.md](AGENTS.md) を読みます。ドキュメントの管理、コミットメッセージ、検証用スクリプトのルールがあります。ソースコードの構成は [docs/code-map.md](docs/ja/code-map.md) にあります。
 
 ## ライセンス
 

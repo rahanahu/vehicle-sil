@@ -51,7 +51,7 @@ vehicle_sil_launch run simulation.yaml
 | 大きさ | 16 MiB を超えるファイルは読みません。 |
 | ファイルの種類 | 通常のファイルでないもの（デバイスやパイプ）は読みません。 |
 
-例: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml)（CMake が実行ファイルの横、`build/<preset>/examples/ecu_main/` にコピーします）。
+例: [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml)（CMake が実行ファイルの横、`build/<preset>/examples/ecu_main/` にコピーします）。
 
 <!-- examples/ecu_main/simulation.yaml -->
 ```yaml
@@ -171,7 +171,7 @@ participants:
 
 ### エディターの補完
 
-JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が使えます。上の例の 1 行目がこれです。パスは、書いているファイルのディレクトリを基準にします。
+JSON Schema は [schema/simulation.schema.json](../../schema/simulation.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が使えます。上の例の 1 行目がこれです。パスは、書いているファイルのディレクトリを基準にします。
 
 | 項目 | 内容 |
 |---|---|
@@ -434,7 +434,7 @@ manual の必須の participant がいる実行では、開始の時間の上限
 
 #### 例
 
-[examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml) の Engine を自分で起動します。`run` は、標準エラーに次の 2 行を書きます（`<dir>` は例のディレクトリです。Windows では、パスが `\` で区切られ、実行ファイルの名前に `.exe` が付きます）。2 行目の `[vehicle_sil_launch]` の後が、実行するコマンドです。
+[examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml) の Engine を自分で起動します。`run` は、標準エラーに次の 2 行を書きます（`<dir>` は例のディレクトリです。Windows では、パスが `\` で区切られ、実行ファイルの名前に `.exe` が付きます）。2 行目の `[vehicle_sil_launch]` の後が、実行するコマンドです。
 
 <!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->
 ```text

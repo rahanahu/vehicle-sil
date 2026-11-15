@@ -21,7 +21,7 @@
 
 | 必要なもの | 条件 |
 |---|---|
-| vehicle-sil のビルド | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」のとおりに、プリセット `linux-gcc-control` でビルドしてあること。 |
+| vehicle-sil のビルド | README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」のとおりに、プリセット `linux-gcc-control` でビルドしてあること。 |
 | [uv](https://docs.astral.sh/uv/) | Python のクライアントと CLI の実行に使います。 |
 
 コマンドは、すべてリポジトリのルート（`README.md` のある所）で実行します。このガイドに出てくるパスは、次の 3 つです。
@@ -95,7 +95,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep co
 
 ## 最初のスクリプトを実行する
 
-シミュレーションを時刻 0 で一時停止した状態で起動し、スロットルに 50 % を書き込み、500 ms 進めてから、回転数を読みます。次が [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py) の全文です（1 行目の `# SPDX-License-Identifier: MIT` だけ省いています）。
+シミュレーションを時刻 0 で一時停止した状態で起動し、スロットルに 50 % を書き込み、500 ms 進めてから、回転数を読みます。次が [examples/launch_control/write_and_read.py](../../../examples/launch_control/write_and_read.py) の全文です（1 行目の `# SPDX-License-Identifier: MIT` だけ省いています）。
 
 <!-- examples/launch_control/write_and_read.py -->
 ```python
@@ -268,12 +268,12 @@ CLI のほかのコマンドは、次のとおりです。
 
 ## Python の例を実行する
 
-ここから後の節は、Python のクライアントの呼び出しを、することごとに説明します。コードは、[examples/launch_control](../../examples/launch_control) の 2 つの例から抜き出したものです。どちらの例も、結果を自分で確認し、期待どおりなら終了コード 0、違えば 1 で終わります。
+ここから後の節は、Python のクライアントの呼び出しを、することごとに説明します。コードは、[examples/launch_control](../../../examples/launch_control) の 2 つの例から抜き出したものです。どちらの例も、結果を自分で確認し、期待どおりなら終了コード 0、違えば 1 で終わります。
 
 | 例 | すること |
 |---|---|
-| [write_before_start.py](../../examples/launch_control/write_before_start.py) | 最初のステップの前に書き込み、500 ms 進めて、書き込みの結果と値を確認し、最後まで実行します。 |
-| [pause_and_step.py](../../examples/launch_control/pause_and_step.py) | 実時間の 4 分の 1 の速度で動かし、回転数が 1000 rpm に達したら一時停止し、時刻を指定して書き込み、100 ms 進めて確認します。 |
+| [write_before_start.py](../../../examples/launch_control/write_before_start.py) | 最初のステップの前に書き込み、500 ms 進めて、書き込みの結果と値を確認し、最後まで実行します。 |
+| [pause_and_step.py](../../../examples/launch_control/pause_and_step.py) | 実時間の 4 分の 1 の速度で動かし、回転数が 1000 rpm に達したら一時停止し、時刻を指定して書き込み、100 ms 進めて確認します。 |
 
 ```sh
 uv run python examples/launch_control/write_before_start.py \
@@ -556,7 +556,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --std
 
 Control API が扱うのは、ECU が宣言した変数と時間だけで、J1939 のフレームは扱いません。受信した信号を外から読むには、ECU が、受信した値を出力の変数にします。外から決める値は、入力の変数にして、ECU が送信する値に使います。
 
-例では、表示の ECU が、受信した回転数を出力の変数 `dashboard.engine_speed` にしています。次は、[examples/ecu_main/dashboard/main.cpp](../../examples/ecu_main/dashboard/main.cpp) の `Dashboard` のコンストラクターの一部です。
+例では、表示の ECU が、受信した回転数を出力の変数 `dashboard.engine_speed` にしています。次は、[examples/ecu_main/dashboard/main.cpp](../../../examples/ecu_main/dashboard/main.cpp) の `Dashboard` のコンストラクターの一部です。
 
 <!-- examples/ecu_main/dashboard/main.cpp: an excerpt -->
 ```cpp

@@ -84,7 +84,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ。足りないものには入れ方を出す） |
 | `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する（落ちたテストと出力の先頭、ログの場所） |
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイルを確かめる |
-| `scripts/check-docs.py` | 追跡している Markdown の相対リンクと、リンクの後に「…」で挙げた節の名前を確かめる |
+| `scripts/check-docs.py` | 追跡している Markdown の相対リンクと、リンクの後に「…」で挙げた節の名前を確かめる。英語のページ（`docs/`、`README.md`）と日本語のページ（`docs/ja/`、`README.ja.md`）の対が、見出しの深さの並び、コードブロック、リンクの先でそろっているかも確かめる（英語版がまだないページは数えるだけ。`--require-english` で誤り） |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる |
 | `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の書式、lint、単体試験、ビルド、e2e |
 | `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験、クライアントの例、その後に `verify-web.py`（`--skip-web` でサーバーだけ、`--launcher` で本物のランチャーでも） |

@@ -535,4 +535,4 @@ SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積�
 - 全体像とターゲットの一覧 → [architecture.md](architecture.md)
 - 変更する場所の内部の仕組み → [architecture.md](architecture.md#内部の仕組み) の「内部の仕組み」
 - ビルドの手順と必要なもの → [build.md](build.md)
-- パッチの作り方 → [patches/README.md](../patches/README.md)
+- パッチの作り方 → [patches/README.md](../../patches/README.md)

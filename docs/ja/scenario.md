@@ -28,7 +28,7 @@
 
 ## 例
 
-[examples/ecu_main/scenarios/throttle_step.yaml](../examples/ecu_main/scenarios/throttle_step.yaml) は、[examples/ecu_main](../examples/ecu_main) の Engine と Dashboard のシナリオです。
+[examples/ecu_main/scenarios/throttle_step.yaml](../../examples/ecu_main/scenarios/throttle_step.yaml) は、[examples/ecu_main](../../examples/ecu_main) の Engine と Dashboard のシナリオです。
 
 ```yaml
 vehicle_sil_scenario: 1
@@ -93,7 +93,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 `<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから切断されます。送信したフレームはバスに出ず、バスのフレームも受信しません。`true` を書くと戻ります（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。通信の相手がいなくなったことを、ほかの ECU が正しく検出するかをテストできます。
 
-[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を切断し、Dashboard が回転数の途絶を検出することを確認します（`dashboard.engine_lost`。回転数を 300 ms 受信しなければ true）。続けて Engine を戻し、回復することを確認します。
+[examples/ecu_main/scenarios/engine_disconnect.yaml](../../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を切断し、Dashboard が回転数の途絶を検出することを確認します（`dashboard.engine_lost`。回転数を 300 ms 受信しなければ true）。続けて Engine を戻し、回復することを確認します。
 
 ```yaml
 steps:
@@ -197,7 +197,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 
 ### スキーマ
 
-JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が使えます。[例のファイル](../examples/ecu_main/scenarios/throttle_step.yaml)の 1 行目がその例で、パスは、書いているファイルのディレクトリからの相対パスです。
+JSON Schema は [schema/scenario.schema.json](../../schema/scenario.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が使えます。[例のファイル](../../examples/ecu_main/scenarios/throttle_step.yaml)の 1 行目がその例で、パスは、書いているファイルのディレクトリからの相対パスです。
 
 | 項目 | 内容 |
 |---|---|
@@ -279,7 +279,7 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 
 ## 波形で動かす（`wave`）
 
-`wave` は、変数を決まった波形で動かします。次の例は、スロットルを、いまの値を中心に ±5 %、1 秒に 10 回の正弦波で 200 ms 動かします（[examples/ecu_main/scenarios/throttle_wave.yaml](../examples/ecu_main/scenarios/throttle_wave.yaml) にある手順です）。
+`wave` は、変数を決まった波形で動かします。次の例は、スロットルを、いまの値を中心に ±5 %、1 秒に 10 回の正弦波で 200 ms 動かします（[examples/ecu_main/scenarios/throttle_wave.yaml](../../examples/ecu_main/scenarios/throttle_wave.yaml) にある手順です）。
 
 ```yaml
   - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }
@@ -401,7 +401,7 @@ integer は四捨五入します（ちょうど .5 は 0 から遠い側。計�
 
 `square` は、値そのものを高い側と低い側に切り替えます（ECU がピンのエッジを見る入力）。ECU がデューティーや周波数を数の変数として受ける PWM の入力には、その変数に `set` や `ramp`、`sine` を使います。
 
-`vehicle_sil::signal`（[`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
+`vehicle_sil::signal`（[`signal/waveform.hpp`](../../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
 
 ### ECU のステップより細かい波形
 

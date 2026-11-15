@@ -13,7 +13,7 @@ int main(int argc, char** argv)
 }
 ```
 
-完全な例は [examples/ecu_main](../examples/ecu_main)（`vehicle_sil_engine_ecu` と `vehicle_sil_dashboard_ecu`）です。
+完全な例は [examples/ecu_main](../../examples/ecu_main)（`vehicle_sil_engine_ecu` と `vehicle_sil_dashboard_ecu`）です。
 
 | 調べること | 節 |
 |---|---|

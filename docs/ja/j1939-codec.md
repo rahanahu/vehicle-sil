@@ -16,7 +16,7 @@ YAML で定義すると、ビルドのときに C++ の型ができます。ア�
 | 境界値と特別な値をテストする | `set_raw()`、`for_each_signal` | [テストで使う](#テストで使う) |
 | 生成器を使わずに型を書く | `codec::MessageType` | [手で書く型](#手で書く型) |
 
-[examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_engine()` の一部です（`node` はノード、`engine` はモデル）。メッセージの定義は、同じディレクトリの `ecu_pair_messages.yaml` です。
+[examples/j1939/ecu_pair/ecu_pair.hpp](../../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_engine()` の一部です（`node` はノード、`engine` はモデル）。メッセージの定義は、同じディレクトリの `ecu_pair_messages.yaml` です。
 
 ```cpp
     codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) {
@@ -31,11 +31,11 @@ YAML で定義すると、ビルドのときに C++ の型ができます。ア�
     });
 ```
 
-YAML で定義して使う、単独で動く例は [examples/typed_messages](../examples/typed_messages) です。
+YAML で定義して使う、単独で動く例は [examples/typed_messages](../../examples/typed_messages) です。
 
 ## CMake に組み込む
 
-`engine_messages` と `my_ecu` は、自分のターゲットの名前に置き換えます。リポジトリでの使い方は [examples/typed_messages/CMakeLists.txt](../examples/typed_messages/CMakeLists.txt) にあります。
+`engine_messages` と `my_ecu` は、自分のターゲットの名前に置き換えます。リポジトリでの使い方は [examples/typed_messages/CMakeLists.txt](../../examples/typed_messages/CMakeLists.txt) にあります。
 
 ```cmake
 vehicle_sil_add_j1939_codec(engine_messages engine_messages.yaml)   # engine_messages.hpp ができる
@@ -415,7 +415,7 @@ struct EngineStatus
 
 受信した値は、状態で分けて読みます。特別な値でも範囲外でも、`raw()` は受信した値をそのまま返します（範囲で定義した特別な値なら、範囲の中のどの値だったかまでわかります）。
 
-断片です（`m` は受信した型付きメッセージ、`use`、`log`、`detail` は利用者のもの）。特別な値の名前を読む動く例は [examples/typed_messages/main.cpp](../examples/typed_messages/main.cpp) にあります。
+断片です（`m` は受信した型付きメッセージ、`use`、`log`、`detail` は利用者のもの）。特別な値の名前を読む動く例は [examples/typed_messages/main.cpp](../../examples/typed_messages/main.cpp) にあります。
 
 ```cpp
 if (const auto v = m.speed.value()) {

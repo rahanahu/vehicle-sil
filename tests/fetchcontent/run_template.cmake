@@ -1,9 +1,10 @@
 # Copies template/ of SOURCE_DIR (the vehicle-sil working tree) to BINARY_DIR/project, configures and
 # builds it with its own preset (linux or windows) and vehicle-sil from SOURCE_DIR instead of the
 # network (FETCHCONTENT_SOURCE_DIR_VEHICLE_SIL), then checks and runs its simulation with LAUNCH
-# (tests/template/check_and_run.cmake). Invoked by CTest with cmake -P.
+# (tests/template/check_and_run.cmake), whose outputs must be those of the pages in DOCS (the manual the tests
+# read, VEHICLE_SIL_TESTED_DOCS of tests/CMakeLists.txt). Invoked by CTest with cmake -P.
 cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
-foreach(var SOURCE_DIR BINARY_DIR LAUNCH)
+foreach(var SOURCE_DIR BINARY_DIR LAUNCH DOCS)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "run_template.cmake: ${var} is required")
   endif()
@@ -37,6 +38,6 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build --preset ${preset} WORKING_DI
                 COMMAND_ERROR_IS_FATAL ANY)
 
 set(DIR "${project}")
-set(DOC "${SOURCE_DIR}/docs/howto/first-ecu.md")
-set(SCENARIO_DOC "${SOURCE_DIR}/docs/scenario.md")
+set(DOC "${DOCS}/howto/first-ecu.md")
+set(SCENARIO_DOC "${DOCS}/scenario.md")
 include("${SOURCE_DIR}/tests/template/check_and_run.cmake")

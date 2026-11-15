@@ -24,13 +24,13 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、メッセー�
 | ECU の値を外部から読み書きする | `Ecu::input`、`Ecu::output` | [外部から信号を読み書きする（UI、テスト）](#外部から信号を読み書きするuiテスト) |
 | 信号をビット位置を書かずに扱う | 型付きメッセージ | [データの形（Codec）](#データの形codec) |
 
-最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU をコンポーネントだけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードをテストでも使っています。
+最初に動かすなら [examples/getting_started](../../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU をコンポーネントだけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードをテストでも使っています。
 
 ## コード例の読み方
 
 この文書のコードは抜粋で、そのままではコンパイルできません。`#include`、`using`、変数の宣言を省いています。コンパイルできる全体がどのファイルのどの関数にあるかを、抜粋ごとに示します。リポジトリのファイルを短くしたものには「短くしたもの」と書きます。
 
-抜粋は、[examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) と同じ別名を使います。
+抜粋は、[examples/j1939/ecu_pair/ecu_pair.hpp](../../examples/j1939/ecu_pair/ecu_pair.hpp) と同じ別名を使います。
 
 ```cpp
 using namespace std::chrono_literals;
@@ -55,7 +55,7 @@ namespace codec = vehicle_sil::j1939::codec;
 
 `vehicle_sil::Ecu` は ECU のアプリケーションを組み立てるためのインターフェースです。SIL Kit の participant（`Peer`）と、プロセス内の仮想バスの ECU（`LocalBench::add_ecu()`）が実装します。そのため、`Ecu&` を受け取る関数かクラスに ECU を書くと、同じコードがどちらの上でも動きます。
 
-[examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_engine()` です。
+[examples/j1939/ecu_pair/ecu_pair.hpp](../../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_engine()` です。
 
 ```cpp
 inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
@@ -119,7 +119,7 @@ inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 
 ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送信すると、同じステップで送信されます。
 
-[examples/vehicle/main.cpp](../examples/vehicle/main.cpp)（2 つの CAN と 1 つの LIN）の `Gateway` です。
+[examples/vehicle/main.cpp](../../examples/vehicle/main.cpp)（2 つの CAN と 1 つの LIN）の `Gateway` です。
 
 ```cpp
 class Gateway // one ECU on two networks: what it receives on one it sends on the other
@@ -196,7 +196,7 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // �
 | 実行が `time` に達しないとき | 呼ばれません。 |
 | 登録できる時点 | 最初の実行の前だけです。 |
 
-[examples/pid_stream/main.cpp](../examples/pid_stream/main.cpp) の `Tool` のコンストラクターです。
+[examples/pid_stream/main.cpp](../../examples/pid_stream/main.cpp) の `Tool` のコンストラクターです。
 
 ```cpp
         auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x80});
@@ -247,7 +247,7 @@ status.set_period(50ms);                                                        
 | span を取る関数 | 長さを返す `Encoder` として扱います。 |
 | `max_length` を超えたとき | span の形と同じく、`Network` が失敗します。 |
 
-断片です（`ids`、`value_of`、`client` は利用者のもの）。同じ形のコードは、[examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp) の `PidStreamer` にあります。
+断片です（`ids`、`value_of`、`client` は利用者のもの）。同じ形のコードは、[examples/pid_stream/pid_stream.hpp](../../examples/pid_stream/pid_stream.hpp) の `PidStreamer` にあります。
 
 ```cpp
 auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vector<std::uint8_t>& out) {
@@ -296,7 +296,7 @@ node.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(
 
 ## Request を送信して応答を受信する
 
-[examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_cab()` の一部です（`cab` はノード、`dash` は表示のモデル）。
+[examples/j1939/ecu_pair/ecu_pair.hpp](../../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_cab()` の一部です（`cab` はノード、`dash` は表示のモデル）。
 
 ```cpp
     j1939::Requester::of(cab).request(kPgnSoftwareId, kEngineAddress, [&dash](const j1939::RequestResult& r) {
@@ -325,7 +325,7 @@ node.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(
 
 ## 受信を監視する
 
-断片です（`cab` はノード、`dash` は表示のモデル）。`Monitor` を付ける全体は [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_cab()` にあります。`Monitor::data()` を型で読む形は `tests/j1939/test_j1939_codec_node.cpp` がテストしています。
+断片です（`cab` はノード、`dash` は表示のモデル）。`Monitor` を付ける全体は [examples/j1939/ecu_pair/ecu_pair.hpp](../../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_cab()` にあります。`Monitor::data()` を型で読む形は `tests/j1939/test_j1939_codec_node.cpp` がテストしています。
 
 ```cpp
 auto& eec = cab.attach<j1939::Monitor>(kPgnEngineStatus,
@@ -454,7 +454,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 
 受信した要求ごとにコンポーネント（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に残りの枠を確認します。`node.network().timers_free()`（残りの枠の数）を、作るコンポーネントの `kTimers`（`PeriodicSender::kTimers` など）と比べ、足りなければ要求を拒否します。
 
-ハンドラの中の `std::length_error` は `Network` を失敗させます。そのため、確認しないと、多数のアドレスから要求を送信するだけでその ECU の通信を止められます。確認するコードは、[examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp) の `PidStreamer` にあります。
+ハンドラの中の `std::length_error` は `Network` を失敗させます。そのため、確認しないと、多数のアドレスから要求を送信するだけでその ECU の通信を止められます。確認するコードは、[examples/pid_stream/pid_stream.hpp](../../examples/pid_stream/pid_stream.hpp) の `PidStreamer` にあります。
 
 ## 独自のプロトコルを作る
 
@@ -462,8 +462,8 @@ Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更�
 
 | 例 | 内容 |
 |---|---|
-| [examples/pid_stream](../examples/pid_stream) | 最初の手本です（要求を受信して周期的に返すコンポーネント）。 |
-| [examples/j1939/param_service](../examples/j1939/param_service) | 完全な例です（サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします）。 |
+| [examples/pid_stream](../../examples/pid_stream) | 最初の手本です（要求を受信して周期的に返すコンポーネント）。 |
+| [examples/j1939/param_service](../../examples/j1939/param_service) | 完全な例です（サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします）。 |
 
 `param_service` が扱うのは、セッションの開始と終了、書き込み中の途中の応答、トランスポートプロトコルで送信するブロック、エラー応答、無通信でのセッションの終了、相手の消失です。テストは `tests/testkit/test_param_service.cpp` です。
 
@@ -471,7 +471,7 @@ Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更�
 
 固定長のメッセージは YAML で定義します（[j1939-codec.md](j1939-codec.md)）。1 つの PGN に複数のメッセージを載せるときは、操作のバイトを `selector` にします。
 
-[examples/j1939/param_service/param_service_messages.yaml](../examples/j1939/param_service/param_service_messages.yaml) の `messages` の 1 つです。
+[examples/j1939/param_service/param_service_messages.yaml](../../examples/j1939/param_service/param_service_messages.yaml) の `messages` の 1 つです。
 
 ```yaml
   - name: Read
@@ -488,7 +488,7 @@ Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更�
 
 コマンドを 1 つの相手へ送信し、応答を待つのは `j1939::Exchange` です（ターゲット `vehicle_sil::j1939_exchange`）。
 
-[examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp) の `ParamClient::run()` と `answer_to()` を、読み出しだけに短くしたものです。この形のままのコードは、リポジトリにはありません。
+[examples/j1939/param_service/param_service.cpp](../../examples/j1939/param_service/param_service.cpp) の `ParamClient::run()` と `answer_to()` を、読み出しだけに短くしたものです。この形のままのコードは、リポジトリにはありません。
 
 ```cpp
 j1939::Exchange exchange(node, {.timeout = 200ms, .retries = 1});
@@ -616,7 +616,7 @@ exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（ア
 
 手順は、前の応答のコールバックで次のコマンドを `start()` してつなぎます。セッションのように前の応答で次のコマンドが決まる手順や、操作を順に 1 つずつ行う手順は、利用者のコンポーネントが操作の待ち行列を持ちます。
 
-例の `ParamClient`（[examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp)）は、次のようにしています。
+例の `ParamClient`（[examples/j1939/param_service/param_service.cpp](../../examples/j1939/param_service/param_service.cpp)）は、次のようにしています。
 
 | 場面 | `ParamClient` の動作 |
 |---|---|
@@ -637,7 +637,7 @@ exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（ア
 
 応答側は `on_message` とノードの `send()` で書きます（専用のコンポーネントはありません）。
 
-[examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp) の `ParamServer` のコンストラクターと `ParamServer::on_command()` を短くしたものです。この形のままのコードは、リポジトリにはありません。
+[examples/j1939/param_service/param_service.cpp](../../examples/j1939/param_service/param_service.cpp) の `ParamServer` のコンストラクターと `ParamServer::on_command()` を短くしたものです。この形のままのコードは、リポジトリにはありません。
 
 ```cpp
 ParamServer(j1939::Node& node, ParameterTable& table)
@@ -702,7 +702,7 @@ void on_command(const j1939::Message& m) {
 
 `vehicle_sil::Simulation`（ターゲット `vehicle_sil::simulation`）が ECU を動かします。動かす場所はコンストラクターで選び、ECU のコードは変わりません。実行時に選ぶときは、`std::optional<SilKitOptions>` を渡します（空ならプロセス内の仮想バス）。
 
-[examples/j1939/ecu_pair/main.cpp](../examples/j1939/ecu_pair/main.cpp) の `main()` を、引数の処理と表示を除いて短くしたものです。層を自分で組み立てる例は [examples/low_level](../examples/low_level) です。
+[examples/j1939/ecu_pair/main.cpp](../../examples/j1939/ecu_pair/main.cpp) の `main()` を、引数の処理と表示を除いて短くしたものです。層を自分で組み立てる例は [examples/low_level](../../examples/low_level) です。
 
 ```cpp
 vehicle_sil::Simulation sim;                                   // プロセス内の仮想バス
@@ -770,7 +770,7 @@ SIL Kit で 1 回しか動かせないのは、止まった時刻のステップ
 
 自分の ECU は、`Simulation` の仮想バスでテストします。時刻は仮想時間で、`sleep` は不要です。同じ入力からは同じ結果になります。
 
-断片です（`CHECK` はテストのマクロ）。同じ 2 つの ECU を同じツールでテストするコードは `tests/testkit/test_ecu_personas.cpp` に、故障の注入と観測の例は [examples/fault_injection](../examples/fault_injection) にあります。
+断片です（`CHECK` はテストのマクロ）。同じ 2 つの ECU を同じツールでテストするコードは `tests/testkit/test_ecu_personas.cpp` に、故障の注入と観測の例は [examples/fault_injection](../../examples/fault_injection) にあります。
 
 ```cpp
 vehicle_sil::Simulation sim;                               // 仮想バス
@@ -873,7 +873,7 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ほかの ECU が受信するもの、送信するもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator でテストしています）。
 
-この形のままのコードは、リポジトリにはありません。`Observer` で受信を数える部分は [examples/low_level/main.cpp](../examples/low_level/main.cpp) に、`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+この形のままのコードは、リポジトリにはありません。`Observer` で受信を数える部分は [examples/low_level/main.cpp](../../examples/low_level/main.cpp) に、`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
 
 ```cpp
 class BusWatch final : public j1939::Observer {
@@ -914,7 +914,7 @@ UI やテストから ECU の値を読み書きするときは、ECU に変数�
 | 受信した信号など、外部に見せる値 | `output` |
 | 外部から決める値 | `input` |
 
-[examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp) の `Engine` のコンストラクターの一部です。
+[examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) の `Engine` のコンストラクターの一部です。
 
 ```cpp
 ecu.input("engine.throttle", &throttle_,
@@ -928,13 +928,13 @@ ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // 送信する PG の元�
 
 コンポーネントとエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。
 
-独自プロトコルのコンポーネントも、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。YAML で定義して使う例は [examples/typed_messages](../examples/typed_messages) です。
+独自プロトコルのコンポーネントも、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。YAML で定義して使う例は [examples/typed_messages](../../examples/typed_messages) です。
 
 ## 関連するドキュメント
 
 | 読むもの | 内容 |
 |---|---|
-| README の「[ECU の書き方](../README.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
+| README の「[ECU の書き方](../../README.ja.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
 | [j1939-codec.md](j1939-codec.md) | 信号を値として読み書きする型付きメッセージ |
 | [ecu-executable.md](ecu-executable.md) | ECU を実行ファイルにする方法 |
 | [internals/j1939.md](internals/j1939.md) | API の保証とルールの詳細 |

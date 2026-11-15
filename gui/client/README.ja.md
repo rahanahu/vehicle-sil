@@ -230,7 +230,7 @@ await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, star
 - ブラウザと Web Worker では、ブラウザが付けるので `origin` を渡しません（Worker の WebSocket はハンドシェイクのヘッダーを付けられません）。
 - HTTP の実装を変えるときは `http`（`HttpTransport`）を、WebSocket を変えるときは `socket`（`SocketFactory`）を渡します。
 
-ライブラリが肩代わりしないルール（ランチャーの `features` に合わせたリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/gui.md) の「画面を作るときのルール」にあります。
+ライブラリが肩代わりしないルール（ランチャーの `features` に合わせたリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」にあります。
 
 ## ECU の変数
 
@@ -511,7 +511,7 @@ throttle.close();
 - 自分のファイルのほかは import しない（`eslint.config.js` が止める。動的な `import()` も、テスト用のヘルパーのほかでは止める。`tsconfig.json` の `rootDir` で、`src/` の外も止まる）。
 - ブラウザにしかないもの（`window`、`document`、`localStorage` など）を使わない。必要なものは設定（`ClientOptions`）で受け取る。
 - 人に見せる文（`TimeFailure.message` など）は英語。画面の言葉にするのはラッパーの役目（`kind` などの機械が読むフィールドから作る）。
-- 公開 API を追加したら、`src/index.ts` と上の「公開 API」の表に追加し、[自分の画面を作る](../../docs/howto/gui-screen.md) を合わせる。
+- 公開 API を追加したら、`src/index.ts` と上の「公開 API」の表に追加し、[自分の画面を作る](../../docs/ja/howto/gui-screen.md) を合わせる。
 
 ## テスト
 
@@ -530,9 +530,9 @@ throttle.close();
 
 | 知りたいこと                                                             | ドキュメント                                                           |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| 自分の画面を作り、GUI サーバーに配信させる手順                           | [自分の画面を作る](../../docs/howto/gui-screen.md)                     |
-| サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証） | [gui/protocol](../protocol/README.md)                                  |
-| ライブラリが肩代わりしないルール                                         | [docs/gui.md](../../docs/gui.md) の「画面を作るときのルール」          |
+| 自分の画面を作り、GUI サーバーに配信させる手順                           | [自分の画面を作る](../../docs/ja/howto/gui-screen.md)                  |
+| サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証） | [gui/protocol](../protocol/README.ja.md)                               |
+| ライブラリが肩代わりしないルール                                         | [docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」       |
 | 自分の画面の出発点にするファイル                                         | 画面のテンプレート [examples/gui_starter](../../examples/gui_starter/) |
 | 画面を使わずに Node から使う例                                           | [examples/gui_client](../../examples/gui_client/)                      |
 

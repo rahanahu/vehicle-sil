@@ -13,7 +13,7 @@ ECU に LIN の Master か Slave を持たせる方法と、LIN の例を別々�
 
 ECU のクラスの中で `Ecu::lin_master()` と `Ecu::lin_slave()` から使うと、`Simulation()`（プロセス内の仮想 LIN バス）でも `Simulation(SilKitOptions{})`（SIL Kit）でも同じ結果になります。
 
-[examples/vehicle/main.cpp](../examples/vehicle/main.cpp) の `BodyController`（Master）と `DoorModule`（Slave。別の ECU）です。`#include`、定数、`main()` は、このファイルにあります。`lin` は `vehicle_sil::lin` の別名です。
+[examples/vehicle/main.cpp](../../examples/vehicle/main.cpp) の `BodyController`（Master）と `DoorModule`（Slave。別の ECU）です。`#include`、定数、`main()` は、このファイルにあります。`lin` は `vehicle_sil::lin` の別名です。
 
 ```cpp
 class BodyController // a J1939 node on "Body" and the LIN master of "Door"
@@ -67,7 +67,7 @@ public:
 
 `Peer` を使わずに組み立てるときは、SIL Kit の LIN コントローラの上に `vehicle_sil::lin::SilKitLinPort`（`vehicle_sil::lin_silkit`）を作り、`LinMaster(port, schedule, step)` と `LinSlave(port, options)` を自分のステップハンドラで動かします。
 
-例は [examples/lin](../examples/lin) です（`master/main.cpp` と `slave/main.cpp`）。3 つのピアが、SIL Kit の上で 1 つのクラスタを作ります。
+例は [examples/lin](../../examples/lin) です（`master/main.cpp` と `slave/main.cpp`）。3 つのピアが、SIL Kit の上で 1 つのクラスタを作ります。
 
 | ピア | participant 名 | ステップ幅 |
 |---|---|---|
@@ -104,6 +104,6 @@ $E/vehicle_sil_lin_slave --role status --registry-uri $URI --end-ms 1000 --step-
 
 | 読むもの | 内容 |
 |---|---|
-| README の「[ECU の書き方](../README.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
+| README の「[ECU の書き方](../../README.ja.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
 | [internals/lin.md](internals/lin.md) | スケジュール、送受信、診断フレーム、Sleep/Wakeup のルールと制約 |
 | [peers.md](peers.md) | ピアを別々のプロセスで動かす方法 |

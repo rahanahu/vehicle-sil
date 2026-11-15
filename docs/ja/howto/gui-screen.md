@@ -302,6 +302,6 @@ rm token.header
 
 ## 次に読むもの
 
-- 値を書き込むスライダーやスイッチを作る → テンプレートの `main.js` の「Slider and lamp」と、[gui/client/README.md](../../gui/client/README.md) の「コンポーネントを作る（`bind`）」
-- TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../examples/gui_starter/README.md) の「TypeScript とフレームワークで作る」
+- 値を書き込むスライダーやスイッチを作る → テンプレートの `main.js` の「Slider and lamp」と、[gui/client/README.md](../../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」
+- TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」

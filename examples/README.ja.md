@@ -67,19 +67,19 @@ getting_started、typed_messages、pid_stream、fault_injection、vehicle、ethe
 
 ### ecu_main
 
-ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシミュレーションで動かすときに読みます。`main()` は `ecu_main()` の 1 行で、どの ECU も同じ引数（`--describe`、`--registry-uri`、`--local --run-for-ms`）を持ちます。動かし方と `--describe` の JSON は [docs/ecu-executable.md](../docs/ecu-executable.md) にあります。CTest の `ecu_main.*` が、2 つを別々のプロセスで動かして確認します。
+ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシミュレーションで動かすときに読みます。`main()` は `ecu_main()` の 1 行で、どの ECU も同じ引数（`--describe`、`--registry-uri`、`--local --run-for-ms`）を持ちます。動かし方と `--describe` の JSON は [docs/ecu-executable.md](../docs/ja/ecu-executable.md) にあります。CTest の `ecu_main.*` が、2 つを別々のプロセスで動かして確認します。
 
 | ファイル | 内容 |
 |---|---|
-| `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする設定ファイルで、`vehicle_sil_launch check` で照合し、`vehicle_sil_launch run` で動かせます（[docs/simulation-config.md](../docs/simulation-config.md)）。 |
+| `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする設定ファイルで、`vehicle_sil_launch check` で照合し、`vehicle_sil_launch run` で動かせます（[docs/simulation-config.md](../docs/ja/simulation-config.md)）。 |
 | `simulation.live.yaml` | 同じ 2 つを等速で、止めるまで動かす設定ファイルで、GUI で値を見ながら操作するときに使います（リポジトリからは `scripts/run-gui.py` がこれで GUI を起動します）。 |
-| `simulation.two-pcs.yaml` | 同じ 2 つを 2 台の PC に分けて動かす設定ファイルです（[docs/howto/multi-pc.md](../docs/howto/multi-pc.md)）。 |
-| `simulation.dashboard.yaml` | ブラウザの GUI で変数をどう並べるかです（[docs/gui.md](../docs/gui.md) の「ダッシュボードのファイル」）。 |
-| `panels/rpm-bar.js` | ダッシュボードに置く自作のパネル（素の JavaScript）です（[docs/gui.md](../docs/gui.md) の「カスタムパネル」）。 |
+| `simulation.two-pcs.yaml` | 同じ 2 つを 2 台の PC に分けて動かす設定ファイルです（[docs/howto/multi-pc.md](../docs/ja/howto/multi-pc.md)）。 |
+| `simulation.dashboard.yaml` | ブラウザの GUI で変数をどう並べるかです（[docs/gui.md](../docs/ja/gui.md) の「ダッシュボードのファイル」）。 |
+| `panels/rpm-bar.js` | ダッシュボードに置く自作のパネル（素の JavaScript）です（[docs/gui.md](../docs/ja/gui.md) の「カスタムパネル」）。 |
 
 ### integrate_ecus
 
-ガイド [複数の ECU をつないで動かす](../docs/howto/integrate-ecus.md) の例を動かすときに読みます。ビルドツリーの `examples/integrate_ecus/` で実行します。
+ガイド [複数の ECU をつないで動かす](../docs/ja/howto/integrate-ecus.md) の例を動かすときに読みます。ビルドツリーの `examples/integrate_ecus/` で実行します。
 
 | ファイル | 内容 |
 |---|---|
@@ -90,13 +90,13 @@ ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシ�
 
 ### first_ecu
 
-ガイド [最初の ECU を作る](../docs/howto/first-ecu.md) の完成形を見るときに読みます。[template/](../template) の 2 つの ECU に、変数だけの ECU（`Cooler`）、CMake に追加する 4 行、3 つの ECU の `simulation.yaml`、Python から変数を読み書きするスクリプトを追加したものです。
+ガイド [最初の ECU を作る](../docs/ja/howto/first-ecu.md) の完成形を見るときに読みます。[template/](../template) の 2 つの ECU に、変数だけの ECU（`Cooler`）、CMake に追加する 4 行、3 つの ECU の `simulation.yaml`、Python から変数を読み書きするスクリプトを追加したものです。
 
 単独ではビルドしません。テストのビルドが、テンプレートの 2 つの ECU の隣（`build/<preset>/tests/template/project/bin/`）に `cooler_ecu` を作ります。CTest の `template.first_ecu` が、ファイルと出力をガイドと照合します（Python のスクリプトは `control_server.example_first_ecu`）。
 
 ### scenario_tests
 
-ガイド [シナリオでテストを書く](../docs/howto/scenario-tests.md) で書くファイルの完成形を見るときに読みます。[ecu_main](ecu_main) の 2 つの ECU に対する 4 つのシナリオ（値の設定と確認、応答の時間、`ramp` と `wave` の間の確認、パラメーターと `only`）と、機種を 2 つ追加した設定ファイルです。
+ガイド [シナリオでテストを書く](../docs/ja/howto/scenario-tests.md) で書くファイルの完成形を見るときに読みます。[ecu_main](ecu_main) の 2 つの ECU に対する 4 つのシナリオ（値の設定と確認、応答の時間、`ramp` と `wave` の間の確認、パラメーターと `only`）と、機種を 2 つ追加した設定ファイルです。
 
 ビルドするものはありません。`build/<preset>/examples/ecu_main/` にコピーして、`vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/` で実行できます（シナリオの先頭のコメントの分、出力の行番号はガイドとずれます）。CTest の `launch_run.scenario_guide` が、ファイル、出力、終了コードをガイドと照合します。
 
@@ -118,30 +118,30 @@ EtherType の既定（0x88B5）と MAC アドレス（ローカル管理のア�
 | スクリプト | 内容 | CTest |
 |---|---|---|
 | `write_before_start.py` | `ecu_main` の 2 つの ECU を `--start-paused` で起動し、最初のステップの前にエンジンのスロットルを書き込み、500 ms 進めて回転数を読み返して確認します（違えば 1 で終了）。 | `control_server.example_write_before_start` |
-| `write_and_read.py` | ガイド [信号を外から操作する](../docs/howto/operate-signals.md) の最初のスクリプトで、`ecu_main` の 2 つの ECU を `--start-paused` で起動し、スロットルに 50 % を書き込み、500 ms 進めて、回転数を表示します（引数は `vehicle_sil_launch` のパスと `simulation.yaml`）。 | `control_server.guide_operate_signals`（ガイドに載せた全文と出力を照合） |
+| `write_and_read.py` | ガイド [信号を外から操作する](../docs/ja/howto/operate-signals.md) の最初のスクリプトで、`ecu_main` の 2 つの ECU を `--start-paused` で起動し、スロットルに 50 % を書き込み、500 ms 進めて、回転数を表示します（引数は `vehicle_sil_launch` のパスと `simulation.yaml`）。 | `control_server.guide_operate_signals`（ガイドに載せた全文と出力を照合） |
 | `pause_and_step.py` | `ecu_main` の 2 つの ECU を実時間の 4 分の 1 の速度で動かし、`watch()` で回転数を見て 1000 rpm を超えたら一時停止し、止まっている時刻の 1 ms 後を `at` にしてスロットルを書き込み、100 ms 進め、書き込みが反映されたステップと、`snapshot()` で読んだ時刻と値を確認し、最速に変えて最後まで動かします（違えば 1 で終了）。 | `control_server.example_pause_and_step` |
 
-どれも、`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドと、gRPC のある Python が必要です（[docs/control-api.md](../docs/control-api.md) の「Python」）。
+どれも、`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドと、gRPC のある Python が必要です（[docs/control-api.md](../docs/ja/control-api.md) の「Python」）。
 
-ECU を自分で起動する（デバッガーから動かすなど）ときも、その participant を `manual` にして同じランチャーに接続します（[docs/simulation-config.md](../docs/simulation-config.md) の「participant を自分で起動する」）。
+ECU を自分で起動する（デバッガーから動かすなど）ときも、その participant を `manual` にして同じランチャーに接続します（[docs/simulation-config.md](../docs/ja/simulation-config.md) の「participant を自分で起動する」）。
 
 ### gui_client
 
-GUI と同じ API（[gui/protocol](../gui/protocol/README.md)）で、自分のツールを作るときに読みます。照合して実行を始め、イベントを読み、終わりを待ちます。実行は `VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <設定ファイル>` です。
+GUI と同じ API（[gui/protocol](../gui/protocol/README.ja.md)）で、自分のツールを作るときに読みます。照合して実行を始め、イベントを読み、終わりを待ちます。実行は `VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <設定ファイル>` です。
 
 | ファイル | 内容 |
 |---|---|
 | `run.mjs` | Node 22 以上の標準の `fetch` と `WebSocket` だけを使います。 |
-| `run-with-library.mjs` | クライアントのライブラリ（[gui/client](../gui/client/README.md)）を 1 つにまとめたファイルを使います。 |
+| `run-with-library.mjs` | クライアントのライブラリ（[gui/client](../gui/client/README.ja.md)）を 1 つにまとめたファイルを使います。 |
 | `variables.mjs` | 同じライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き込み、進めて止めて、値を確認する。Control Server を持つランチャーが必要です）。 |
 
-CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確認します）。使い方は [docs/gui.md](../docs/gui.md) の「画面のないツールから使う」にあります。
+CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確認します）。使い方は [docs/gui.md](../docs/ja/gui.md) の「画面のないツールから使う」にあります。
 
 ### gui_starter
 
-GUI サーバーに配信させる自分の画面（`vehicle-sil-gui --web <dir>`）を、好きなフレームワークで一から作るときに読みます。クライアントのライブラリだけで、接続、照合、開始と停止、変数を 1 つ見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までの最小の形です。TypeScript と好きなフレームワークで作るときの、ライブラリのパッケージ（`.tgz`）の使い方も [README](gui_starter/README.md) にあります。
+GUI サーバーに配信させる自分の画面（`vehicle-sil-gui --web <dir>`）を、好きなフレームワークで一から作るときに読みます。クライアントのライブラリだけで、接続、照合、開始と停止、変数を 1 つ見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までの最小の形です。TypeScript と好きなフレームワークで作るときの、ライブラリのパッケージ（`.tgz`）の使い方も [README](gui_starter/README.ja.md) にあります。
 
-CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に `--web` で配信してブラウザで確認します）。使い方は [docs/gui.md](../docs/gui.md) の「自分の画面を作る」にあります。
+CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に `--web` で配信してブラウザで確認します）。使い方は [docs/gui.md](../docs/ja/gui.md) の「自分の画面を作る」にあります。
 
 ### low_level
 
@@ -159,4 +159,4 @@ CMake には入っていません（`scripts/verify-gui.py` が、流し直す�
 
 ## 外部の CMake プロジェクトから使う
 
-[fetchcontent_consumer](fetchcontent_consumer) は、FetchContent で取り込む外部プロジェクトの例で、別のビルドとして configure してテストします（ラベル `fetchcontent`）。手順は [docs/build.md](../docs/build.md) の「外部プロジェクトから使う（FetchContent）」にあります。
+[fetchcontent_consumer](fetchcontent_consumer) は、FetchContent で取り込む外部プロジェクトの例で、別のビルドとして configure してテストします（ラベル `fetchcontent`）。手順は [docs/build.md](../docs/ja/build.md) の「外部プロジェクトから使う（FetchContent）」にあります。

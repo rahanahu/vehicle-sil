@@ -18,8 +18,8 @@ after a line "<!-- ... -->" there:
                                                        dashboard then writes
 
 Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main in the build tree),
-VEHICLE_SIL_REPOSITORY (the source tree), PYTHONPATH with the repository's python/ directory,
-VEHICLE_SIL_CONTROL_STUBS.
+VEHICLE_SIL_REPOSITORY (the source tree), VEHICLE_SIL_TESTED_DOCS (the directory of the pages the tests read),
+PYTHONPATH with the repository's python/ directory, VEHICLE_SIL_CONTROL_STUBS.
 """
 import json
 import os
@@ -41,7 +41,8 @@ def setUpModule():
     LAUNCH = os.environ["VEHICLE_SIL_LAUNCH_EXE"]
     CONFIG = str(pathlib.Path(os.environ["VEHICLE_SIL_EXAMPLE_DIR"]) / "simulation.yaml")
     REPOSITORY = pathlib.Path(os.environ["VEHICLE_SIL_REPOSITORY"])
-    GUIDE = REPOSITORY / "docs" / "howto" / "operate-signals.md"
+    # The manual the tests read (VEHICLE_SIL_TESTED_DOCS of tests/CMakeLists.txt).
+    GUIDE = pathlib.Path(os.environ["VEHICLE_SIL_TESTED_DOCS"]) / "howto" / "operate-signals.md"
 
 
 def blocks():

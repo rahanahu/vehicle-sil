@@ -74,7 +74,7 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 | 扱うもの（仮想時間） | 一時停止、再開、ステップ実行、指定時刻まで、速度、停止です。 |
 | Peer の一覧 | 設定ファイルの必須の participant は、Agent がなくても一覧にあります。 |
 
-例は [examples/launch_control](../examples/launch_control) にあります。
+例は [examples/launch_control](../../examples/launch_control) にあります。
 
 | 例 | 内容 |
 |---|---|

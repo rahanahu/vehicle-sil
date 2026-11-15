@@ -2,14 +2,14 @@
 
 テンプレートのプロジェクトに自分の ECU を 1 つ追加し、ほかの ECU と一緒にシミュレーションで実行する手順です。最後に、その ECU の変数を Python から読み書きします。追加するのは、水温が目標の温度に近づいていくだけの小さな ECU（`Cooler`）です。CAN での通信は、手順の後の「J1939 で通信させる」で追加します。
 
-手順のとおりに書いたファイルの完成形は、[examples/first_ecu](../../examples/first_ecu) にあります。
+手順のとおりに書いたファイルの完成形は、[examples/first_ecu](../../../examples/first_ecu) にあります。
 
 ## 前提
 
 | 必要なもの | 条件 |
 |---|---|
 | OS | Linux か、Windows の MSYS2 UCRT64 シェルで作業します。 |
-| コンパイラ、CMake、Ninja、Git | バージョンは、テンプレートの [README](../../template/README.md) の「前提」の表にあります。 |
+| コンパイラ、CMake、Ninja、Git | バージョンは、テンプレートの [README](../../../template/README.ja.md) の「前提」の表にあります。 |
 | Python | `get_tools.py` の実行に、3.9 以上を使います。 |
 | [uv](https://docs.astral.sh/uv/) | 手順 7 で、Python のクライアントを実行するのに使います。 |
 
@@ -131,12 +131,12 @@ participants:
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
+| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
 | ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された `export` の行を実行します。 |
 | `check` が、末尾に `[executable]` の付いたエラーを表示する | ECU の実行ファイルが `bin/` にありません。 | `cmake --build --preset linux` を実行します。 |
 
-`get_tools.py` のほかの使い方は、テンプレートの [README](../../template/README.md) にあります。
+`get_tools.py` のほかの使い方は、テンプレートの [README](../../../template/README.ja.md) にあります。
 
 ## 手順 2: ECU のクラスと `main()` を書く
 
@@ -203,7 +203,7 @@ ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。コン�
 
 ## 手順 3: CMake に追加してビルドする
 
-`CMakeLists.txt` の末尾に、次の 4 行を追加します。エンジンの ECU の 4 行（[template/CMakeLists.txt](../../template/CMakeLists.txt) の 32〜36 行からコメントを除いたもの）の、名前とソースファイルを変えたものです。
+`CMakeLists.txt` の末尾に、次の 4 行を追加します。エンジンの ECU の 4 行（[template/CMakeLists.txt](../../../template/CMakeLists.txt) の 32〜36 行からコメントを除いたもの）の、名前とソースファイルを変えたものです。
 
 <!-- examples/first_ecu/CMakeLists.txt -->
 ```cmake
@@ -470,11 +470,11 @@ at 500 ms: cooler.target = 22.0, cooler.temperature = 22.0
 
 | 追加するもの | 例のある場所 |
 |---|---|
-| メッセージの定義（PGN とデータの形式）を、送信側と受信側で共有するヘッダー | [template/engine_speed.hpp](../../template/engine_speed.hpp) |
-| ヘッダーの `#include` と、名前空間の別名 `j1939` | [template/engine/main.cpp](../../template/engine/main.cpp) の 11 行と 18 行 |
+| メッセージの定義（PGN とデータの形式）を、送信側と受信側で共有するヘッダー | [template/engine_speed.hpp](../../../template/engine_speed.hpp) |
+| ヘッダーの `#include` と、名前空間の別名 `j1939` | [template/engine/main.cpp](../../../template/engine/main.cpp) の 11 行と 18 行 |
 | ネットワークへの接続と、J1939 のノード | 同じファイルの 27〜28 行 |
 | 周期的な送信（`node_.send()`） | 同じファイルの 38〜40 行 |
-| 受信（`node.on_message()`） | [template/dashboard/main.cpp](../../template/dashboard/main.cpp) の 22〜27 行 |
+| 受信（`node.on_message()`） | [template/dashboard/main.cpp](../../../template/dashboard/main.cpp) の 22〜27 行 |
 | 設定ファイルの `networks` の項目 | 手順 1 の `simulation.yaml` の `J1939_CAN` |
 
 エンジンの ECU のクラスは、次のとおりです（`template/engine/main.cpp` の 22〜47 行）。

@@ -26,7 +26,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - バージョンが違うときは、待っても直らないので再接続しません。ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まります。
 - **受信し直すもの**: WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の中心のフィールド（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、再接続して `hello` から受信し直します。要約を正とします。続けて起きるたびに、再接続するまでの間隔を延ばします。
 - **頼んだときだけ変わる形**: 前の形のままでは重いものは、クライアントが認証のメッセージで頼んだときだけ形を変えます（`session_without_check`）。頼まないクライアントには、いままでの形で送ります。
-- ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/simulation-events.md) の「プログラムから使う」）。
+- ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「プログラムから使う」）。
 - エラーの `code` の名前は変えません（追加することはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。プログラムは `code` で分けます。
 
 ## 認証と Origin
@@ -105,7 +105,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - `-` で始まる名前は、ランチャーが引数の値として受け取れません（ランチャーの照合もそのような名前を拒否します）。設定ファイルで名前を変えます。
 - 同じ名前を両方に書いたリクエストは、ランチャーも拒否します。
 
-`manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/simulation-config.md) の「participant を自分で起動する」）。
+`manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/ja/simulation-config.md) の「participant を自分で起動する」）。
 
 - 設定ファイルの `manual: true` は、照合の結果の `participants[].manual` に出ます。
 - `manual` は、`api/app` の `launcher.version.features` に `manual-participants` があるときだけ送ります。ないときはフィールドを省きます。
@@ -155,7 +155,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running` です。
 - その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
-- コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/simulation-events.md) の「標準入力のコマンド」）。
+- コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
 
 ## エラーの `code`
 
@@ -460,7 +460,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 **`paused` と `sim_ms`**
 
-`paused` と `sim_ms` と値は、**1 回の読み取りのもの**です。サーバーは、watch している participant の値と仮想時間を、Control Server の 1 回の呼び出し（`GetSnapshot`。[docs/control-api.md](../../docs/control-api.md) の「時刻と値をまとめて読む」）で読み、`paused` はそのレスポンスのフラグ（`consistent`）から決めます。
+`paused` と `sim_ms` と値は、**1 回の読み取りのもの**です。サーバーは、watch している participant の値と仮想時間を、Control Server の 1 回の呼び出し（`GetSnapshot`。[docs/control-api.md](../../docs/ja/control-api.md) の「時刻と値をまとめて読む」）で読み、`paused` はそのレスポンスのフラグ（`consistent`）から決めます。
 
 | `paused` | シミュレーション | 値 | `sim_ms` |
 |---|---|---|---|
@@ -511,7 +511,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 止まっている間の書き込みは、次のようになります。
 
 - 最初のステップの前で止まっている間（`start_paused`）に書いたものは、時刻 0 のステップで反映されます（`parameter` も書けます）。
-- 一時停止してから書くときは、`at_ms` を止まっている時刻より後にします。その時刻のステップは、もう実行した ECU があるためです（ランチャーのルール: [docs/control-api.md](../../docs/control-api.md)）。
+- 一時停止してから書くときは、`at_ms` を止まっている時刻より後にします。その時刻のステップは、もう実行した ECU があるためです（ランチャーのルール: [docs/control-api.md](../../docs/ja/control-api.md)）。
 - 止まっている時刻そのもの（か、それより前）を指定した書き込みは、いったん `queued` になり、ECU の次のステップで `late` に確定します（`late: "apply"` なら、そのステップで反映されます）。
 
 `{"type": "operation", "session", "seq", "state", "done", "peers": {"<peer>": {"state", "applied_at_ms", "late", "reason"}}}`
@@ -541,7 +541,7 @@ participant ごとの `state` は次のとおりです。
 
 ## シナリオ
 
-ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/scenario.md)）を、画面から使う API です。ランチャーの `features` に `scenario` があるときだけ使えます。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
+ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/ja/scenario.md)）を、画面から使う API です。ランチャーの `features` に `scenario` があるときだけ使えます。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
 
 ### シナリオの一覧（`api/scenarios`）
 
@@ -631,7 +631,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 ## ダッシュボードのファイル
 
-`GET api/dashboard?file=<設定ファイル>` は、設定ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確認して JSON で返します（書き方は [docs/gui.md](../../docs/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
+`GET api/dashboard?file=<設定ファイル>` は、設定ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確認して JSON で返します（書き方は [docs/gui.md](../../docs/ja/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
 
 | フィールド | 内容 |
 |---|---|
@@ -758,8 +758,8 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 
 | したいこと | 読むもの |
 |---|---|
-| 自分の画面を作る | [自分の画面を作る](../../docs/howto/gui-screen.md) |
-| TypeScript から使う（接続、再接続、要約へのイベントの反映、時間のコマンド、ECU の変数の watch、書き込みと結果） | クライアントのライブラリ [gui/client](../client/README.md) |
+| 自分の画面を作る | [自分の画面を作る](../../docs/ja/howto/gui-screen.md) |
+| TypeScript から使う（接続、再接続、要約へのイベントの反映、時間のコマンド、ECU の変数の watch、書き込みと結果） | クライアントのライブラリ [gui/client](../client/README.ja.md) |
 | 画面を使わない最小のクライアントを見る | リポジトリの [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上） |
 | ECU の変数を読み書きする例を見る | リポジトリの [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs)（ライブラリを使う） |
 

@@ -1,6 +1,6 @@
 # 自分の画面のテンプレート（gui_starter）
 
-GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面の、最小の形です。クライアントのライブラリ（[gui/client](../../gui/client/README.md)）だけを使い、ビルドなしの素の HTML と ES モジュールで書いてあります。これをコピーして、自分の画面に書き換えます。変数を 1 つ表示する画面にするまでの手順は、ガイド [ブラウザの GUI に自分の画面を作る](../../docs/howto/gui-screen.md) にあります。
+GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面の、最小の形です。クライアントのライブラリ（[gui/client](../../gui/client/README.ja.md)）だけを使い、ビルドなしの素の HTML と ES モジュールで書いてあります。これをコピーして、自分の画面に書き換えます。変数を 1 つ表示する画面にするまでの手順は、ガイド [ブラウザの GUI に自分の画面を作る](../../docs/ja/howto/gui-screen.md) にあります。
 
 | ファイル | 内容 |
 |---|---|
@@ -59,7 +59,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | 書き込めない理由 | 実行がない、ECU が切断されている |
 | 書き込みの状態 | 送った、受け付けた、反映した、失敗した理由 |
 
-スライダーを続けて動かしても、サーバーが前の書き込みを受け取るまでは、最後の値だけを覚えて送ります。自分のコンポーネント（スイッチ、数値の入力、選択肢）も同じ形で作れます（[gui/client/README.md](../../gui/client/README.md) の「コンポーネントを作る（`bind`）」）。
+スライダーを続けて動かしても、サーバーが前の書き込みを受け取るまでは、最後の値だけを覚えて送ります。自分のコンポーネント（スイッチ、数値の入力、選択肢）も同じ形で作れます（[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」）。
 
 ## 自分の画面にする
 
@@ -70,7 +70,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | ビルド済みのツール | `cp -r <ツール>/gui_starter my-screen` | `--web my-screen` |
 | リポジトリ | `cp -r examples/gui_starter my-screen` | `--web my-screen` |
 
-`--web` に渡すのは、ビルドした画面の置き場所（`index.html` のあるディレクトリ）です。配信のルール（配信するファイル、CSP、トークン）は [docs/gui.md](../../docs/gui.md) の「自分の画面のリファレンス」にあります。
+`--web` に渡すのは、ビルドした画面の置き場所（`index.html` のあるディレクトリ）です。配信のルール（配信するファイル、CSP、トークン）は [docs/gui.md](../../docs/ja/gui.md) の「自分の画面のリファレンス」にあります。
 
 ## TypeScript とフレームワークで作る
 
@@ -112,4 +112,4 @@ throttle.write(60);
 
 - この例は、`npm run pack:client` が、作ったパッケージの型で検査します（型の解決 `nodenext` と `bundler` の両方）。
 - 状態はどれも `Readable`（`get()` と `subscribe(fn)` を持つ、読み取り専用の値）です。フレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte の store、Angular の signal など）へは、`subscribe` で変換します。
-- 開発サーバー（Vite など）で作りながら接続する手順は、[docs/gui.md](../../docs/gui.md) の「開発サーバーを使う」です。
+- 開発サーバー（Vite など）で作りながら接続する手順は、[docs/gui.md](../../docs/ja/gui.md) の「開発サーバーを使う」です。

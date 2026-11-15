@@ -105,7 +105,7 @@ $E/vehicle_sil_vt_body_controller --registry-uri $URI --end-ms 5000 --trace body
 
 ### 自分のピアを書く
 
-[examples/virtual_time/common/vt_peer.hpp](../examples/virtual_time/common/vt_peer.hpp) の `peer_options()`、`run_until_finished()` と、[examples/virtual_time/ecu/main.cpp](../examples/virtual_time/ecu/main.cpp) を短くしたものです。この形のままのコードは、リポジトリにはありません（`name`、`pgn`、`ecu_tick()`、`ecu_output()` は利用者のもの）。
+[examples/virtual_time/common/vt_peer.hpp](../../examples/virtual_time/common/vt_peer.hpp) の `peer_options()`、`run_until_finished()` と、[examples/virtual_time/ecu/main.cpp](../../examples/virtual_time/ecu/main.cpp) を短くしたものです。この形のままのコードは、リポジトリにはありません（`name`、`pgn`、`ecu_tick()`、`ecu_output()` は利用者のもの）。
 
 ```cpp
 vehicle_sil::PeerOptions options;
@@ -172,6 +172,6 @@ $B/tools/sim_controller/vehicle_sil_sim_controller --registry-uri $URI --require
 
 | 読むもの | 内容 |
 |---|---|
-| README の「[ECU の書き方](../README.md#ecu-の書き方)」、[j1939-guide.md](j1939-guide.md) | この文書の前に読む、ECU とノードの書き方 |
+| README の「[ECU の書き方](../../README.ja.md#ecu-の書き方)」、[j1939-guide.md](j1939-guide.md) | この文書の前に読む、ECU とノードの書き方 |
 | [internals/virtual-time.md](internals/virtual-time.md) | 仮想時間のルール |
 | [internals/can.md](internals/can.md) | CAN の基盤 |

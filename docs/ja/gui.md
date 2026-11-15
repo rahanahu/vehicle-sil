@@ -31,11 +31,11 @@ flowchart LR
 | 部分 | 場所 | 役目 |
 |---|---|---|
 | GUI サーバー | `gui/server`（コマンドは `vehicle-sil-gui`） | ランチャーを起動し、API を提供し、画面の静的なファイルを配信します。 |
-| サーバーの API | [gui/protocol](../gui/protocol/README.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めていて、どの言語からでも使えます。 |
-| クライアントのライブラリ | [gui/client](../gui/client/README.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。 |
+| サーバーの API | [gui/protocol](../../gui/protocol/README.ja.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めていて、どの言語からでも使えます。 |
+| クライアントのライブラリ | [gui/client](../../gui/client/README.ja.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。 |
 | サンプルの画面 | `gui/web`（Angular） | 上の 3 つだけで作ったリファレンス実装で、`--web` を指定しなければ GUI サーバーはこれを配信します。 |
 
-ライブラリと GUI サーバーの間は HTTP と WebSocket（[gui/protocol](../gui/protocol/README.md) が仕様）、GUI サーバーとランチャーの間は、ランチャーの標準入出力と Control Server（gRPC）です。
+ライブラリと GUI サーバーの間は HTTP と WebSocket（[gui/protocol](../../gui/protocol/README.ja.md) が仕様）、GUI サーバーとランチャーの間は、ランチャーの標準入出力と Control Server（gRPC）です。
 
 ## GUI を使う
 
@@ -51,7 +51,7 @@ flowchart LR
 
 コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。リポジトリをビルドして使う場合は、次のように読み替えます。
 
-| | テンプレートのプロジェクト | リポジトリ（README の「[クイックスタート](../README.md#クイックスタート)」の後） |
+| | テンプレートのプロジェクト | リポジトリ（README の「[クイックスタート](../../README.ja.md#クイックスタート)」の後） |
 |---|---|---|
 | 実行するディレクトリ | `simulation.yaml` のある所 | リポジトリのルート |
 | 起動するコマンド | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
@@ -201,7 +201,7 @@ vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 | 作り方 | 使うもの | 出発点 |
 |---|---|---|
 | ビルドなしの素の JavaScript | ライブラリを 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | 画面のテンプレート（`gui_starter`）をコピーします（上のガイド）。 |
-| TypeScript と好きなフレームワーク（React、Vue、Svelte など） | ライブラリのパッケージ（`.tgz`） | [examples/gui_starter/README.md](../examples/gui_starter/README.md) の「TypeScript とフレームワークで作る」 |
+| TypeScript と好きなフレームワーク（React、Vue、Svelte など） | ライブラリのパッケージ（`.tgz`） | [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」 |
 | Angular | 上のパッケージと、サンプルの画面のコンポーネントとラッパー | 「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」 |
 | 画面のないツール（テストの駆動、記録） | ライブラリか、サーバーの API | 「[画面のないツールから使う](#画面のないツールから使う)」 |
 
@@ -218,9 +218,9 @@ vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 | 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
 | 画面 | サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`） |
 
-- ビルド済みのツール（README の「[クイックスタート](../README.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。
+- ビルド済みのツール（README の「[クイックスタート](../../README.ja.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。
 - 変数の読み書きに必要なもののどちらかがなくても、ほかの機能はそのまま使えます。変数だけが「使えない」になり、理由を表示します。
-- 画面を使うだけなら Node.js は不要です。画面のビルドには必要です（[gui/web/README.md](../gui/web/README.md)）。
+- 画面を使うだけなら Node.js は不要です。画面のビルドには必要です（[gui/web/README.md](../../gui/web/README.ja.md)）。
 
 ## 起動の引数と終了コード
 
@@ -403,7 +403,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 | `POST api/time` `{"command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げる） |
 | `POST api/time` `{"command": "speed", "value": <数か "max">}` | 速度の変更（一時停止はそのまま） |
 
-`api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。形とエラーの `code` は [gui/protocol/README.md](../gui/protocol/README.md) にあります。
+`api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。形とエラーの `code` は [gui/protocol/README.md](../../gui/protocol/README.ja.md) にあります。
 
 ## シナリオ
 
@@ -422,7 +422,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 - シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
 - 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送るので、Control Server がシナリオの実行中に拒否する時間の呼び出しとは別です。
 - ランチャーの `features` に `scenario-control` があれば、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。ないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
-- サーバーの API は `GET api/scenarios?file=<設定ファイル>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../gui/protocol/README.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
+- サーバーの API は `GET api/scenarios?file=<設定ファイル>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
 
 ### 操作をシナリオとして保存する
 
@@ -461,7 +461,7 @@ steps:
 - 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で実行できます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
 - 確認する手順は、エディターで追加します。
 - 名前に `.` がある participant の変数は、シナリオで指定できない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに表示されます。
-- サーバーの API は `GET api/recording`（[gui/protocol/README.md](../gui/protocol/README.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
+- サーバーの API は `GET api/recording`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
 
 ## ECU の変数
 
@@ -481,15 +481,15 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 - **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。`sim_ms` より後のステップの値は入っていません。
   - GUI サーバーは、時刻と値をランチャーの Control Server から 1 回の呼び出し（`GetSnapshot`。[control-api.md](control-api.md) の「時刻と値をまとめて読む」）で読み、そのレスポンスの印（`consistent`）が真のときだけ、真にします（止まったという通知だけでは真にしません）。
   - ちょうど `sim_ms` に始まるステップの値は、止まっている間に後から届くことがあり、そのときは同じ時刻の通知がもう 1 回届きます。
-  - 動いている間は偽です。前提と制限は、[gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」に書いてあります。
+  - 動いている間は偽です。前提と制限は、[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ECU の変数」に書いてあります。
   - `GetSnapshot` を持たない古いランチャーでは、変数の機能は `failed`（理由つき）になります。
 - **書き込みの検査**: サーバーは、`session` が実行中の実行のものでなければ拒否します（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書き込まないため）。シナリオを実行している実行にも書き込めません（`scenario-running`）。サーバーが、変数の一覧と照合して型と範囲を確認してから、ランチャーに渡します。
 - **書き込みの結果**: 結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が拒否した（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
 
 | 調べたいこと | 読む所 |
 |---|---|
-| 通知とリクエストの形、上限 | [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」 |
-| ライブラリの API（コンポーネントを作る `bind` も） | [gui/client/README.md](../gui/client/README.md) の「ECU の変数」 |
+| 通知とリクエストの形、上限 | [gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ECU の変数」 |
+| ライブラリの API（コンポーネントを作る `bind` も） | [gui/client/README.md](../../gui/client/README.ja.md) の「ECU の変数」 |
 | 動く例 | リポジトリの `examples/gui_client/variables.mjs` |
 | Angular のラッパー | `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`） |
 
@@ -497,7 +497,7 @@ ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数
 
 ## サンプルの画面
 
-`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使うことも、コンポーネントをコピーして自分の Angular の画面で使うこともできます（「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」）。画面の開発のルールは [gui/web/README.md](../gui/web/README.md) にあります。
+`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使うことも、コンポーネントをコピーして自分の Angular の画面で使うこともできます（「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」）。画面の開発のルールは [gui/web/README.md](../../gui/web/README.ja.md) にあります。
 
 「変数の画面とコンポーネント」「ダッシュボードのファイル」「カスタムパネル」は、サンプルの画面の機能です。自分の画面には自動では付きません。
 
@@ -804,7 +804,7 @@ Angular で自分の画面を作るときは、サンプルのコンポーネン
 
 サンプルの画面の機能です（自分の画面には自動では付きません。ファイルの中身は `client.dashboard(file)` で読めるので、自分の画面で使うこともできます）。
 
-設定ファイルの隣に `<設定ファイルの名前（拡張子なし）>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../examples/ecu_main/simulation.dashboard.yaml) です。
+設定ファイルの隣に `<設定ファイルの名前（拡張子なし）>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../../examples/ecu_main/simulation.dashboard.yaml) です。
 
 ```yaml
 vehicle_sil_dashboard: 1
@@ -850,22 +850,22 @@ sections:
 - **エラー**: GUI サーバーが読むときに、YAML のエラーと形のエラーを、ファイルの行と桁、データの中の場所、直し方とともに返します。画面はエラーの一覧を表示して、変数を自動で並べます。
 - **変数との照合**: 変数があるか、コンポーネントが変数に合うかは、画面がいまの変数の一覧で確認し、合わないコンポーネントの場所に理由を表示します（ほかは描きます）。いまの実行にない変数は「この実行にない変数です」と表示します。実行を開始する前でも、ファイルのとおりに並んだコンポーネントを見られます。
 - **読み直す**: 画面は、実行が替わるたびにファイルを読み直します。直した後すぐに見るには、画面の「読み直す」を押します。パネルのモジュールを直したときは、ページを読み込み直します（ブラウザは一度定義した custom element を差し替えられないため）。
-- **エディターの補完**: JSON Schema は [gui/protocol/dashboard.schema.json](../gui/protocol/dashboard.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと補完と検査が効きます。
+- **エディターの補完**: JSON Schema は [gui/protocol/dashboard.schema.json](../../gui/protocol/dashboard.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと補完と検査が効きます。
 - **上限**: 256 KiB、入れ子 16 段、値 50000 個、セクション 200 個、項目は全部で 2000 個（多いときは `auto` を使います）、1 つの値は 1024 文字。YAML の別名（`&name` と `*name`）とタグ（`!!python/...` など）、2 つ目の文書（`---`）は使えません。
 - **保存**: 画面で並べ替えて保存することはできません（ファイルを書き換えます）。
-- サーバーの API は `GET api/dashboard?file=<設定ファイル>`（[gui/protocol/README.md](../gui/protocol/README.md) の「ダッシュボードのファイル」）、ライブラリでは `client.dashboard(file)` です。
+- サーバーの API は `GET api/dashboard?file=<設定ファイル>`（[gui/protocol/README.md](../../gui/protocol/README.ja.md) の「ダッシュボードのファイル」）、ライブラリでは `client.dashboard(file)` です。
 
 ### カスタムパネル
 
 サンプルの画面の機能です（ダッシュボードのファイルから使います）。
 
-自分で書いた画面のコンポーネントを、ダッシュボードに置けます。パネルは custom element を定義する ES モジュールで、設定ファイルの隣の `panels/` に置き、ダッシュボードのファイルの `panels:` に書きます（書いたものだけを読み込みます）。例は [examples/ecu_main/panels/rpm-bar.js](../examples/ecu_main/panels/rpm-bar.js)（素の JavaScript。回転数を棒で表示する）です。
+自分で書いた画面のコンポーネントを、ダッシュボードに置けます。パネルは custom element を定義する ES モジュールで、設定ファイルの隣の `panels/` に置き、ダッシュボードのファイルの `panels:` に書きます（書いたものだけを読み込みます）。例は [examples/ecu_main/panels/rpm-bar.js](../../examples/ecu_main/panels/rpm-bar.js)（素の JavaScript。回転数を棒で表示する）です。
 
 画面は、`panels:` のモジュールを全部読み込み終えてから、`panel:` の名前の要素を作り、次のプロパティを渡してから、ページに挿入します（`connectedCallback` で使えます）。
 
 | プロパティ | 内容 |
 |---|---|
-| `client` | クライアントのライブラリの `GuiClient`（[gui/client/README.md](../gui/client/README.md)） |
+| `client` | クライアントのライブラリの `GuiClient`（[gui/client/README.md](../../gui/client/README.ja.md)） |
 | `options` | 項目の `options`（プレーンなオブジェクト） |
 | `variables` | 項目の `variables`（`[{peer, name}]`） |
 
@@ -915,7 +915,7 @@ sections:
   - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
   - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、画面のテンプレートの README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。
   - `--out <dir>` で置き場所を、`--version <バージョン>` でバージョンを変えられます（`node gui/client/pack.mjs --help`）。
-- 公開している API は [gui/client/README.md](../gui/client/README.md) の「公開 API」の一覧です。
+- 公開している API は [gui/client/README.md](../../gui/client/README.ja.md) の「公開 API」の一覧です。
 
 ### `--web` で配信するファイル
 
@@ -1038,7 +1038,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 | `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`scenario`、`no-range`、`no-value` |
 | `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
 
-`condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../gui/client/README.md) の「コンポーネントを作る（`bind`）」にあります。
+`condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」にあります。
 
 | `condition.kind` | 意味 |
 |---|---|
@@ -1058,7 +1058,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 
 ### 画面のテンプレート（`gui_starter`）
 
-[examples/gui_starter](../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。ビルド済みのツールでは、`gui_starter/` にあります。
+[examples/gui_starter](../../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。ビルド済みのツールでは、`gui_starter/` にあります。
 
 - 接続する、設定ファイルを照合する、実行を開始して止める、変数を 1 つ選んで見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までがあります。
 - 使い方は、その README にあります。
@@ -1066,7 +1066,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 
 ### 画面のないツールから使う
 
-リポジトリの [examples/gui_client](../examples/gui_client/) に、画面を使わずに API を呼ぶ、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。ビルド済みのツールのアーカイブには入っていません。
+リポジトリの [examples/gui_client](../../examples/gui_client/) に、画面を使わずに API を呼ぶ、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。ビルド済みのツールのアーカイブには入っていません。
 
 | ファイル | 内容 |
 |---|---|
@@ -1251,10 +1251,10 @@ python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <場
 | ドキュメント | 内容 |
 |---|---|
 | [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) | 画面のテンプレートから、変数を 1 つ表示する画面を作る手順 |
-| [gui/client/README.md](../gui/client/README.md) | クライアントのライブラリの API |
-| [gui/protocol/README.md](../gui/protocol/README.md) | サーバーの HTTP と WebSocket の API |
-| [gui/web/README.md](../gui/web/README.md) | サンプルの画面の開発 |
-| [examples/gui_starter/README.md](../examples/gui_starter/README.md) | 画面のテンプレートの使い方 |
+| [gui/client/README.md](../../gui/client/README.ja.md) | クライアントのライブラリの API |
+| [gui/protocol/README.md](../../gui/protocol/README.ja.md) | サーバーの HTTP と WebSocket の API |
+| [gui/web/README.md](../../gui/web/README.ja.md) | サンプルの画面の開発 |
+| [examples/gui_starter/README.md](../../examples/gui_starter/README.ja.md) | 画面のテンプレートの使い方 |
 | [simulation-run.md](simulation-run.md) | ランチャーの `run` と用語 |
 | [control-api.md](control-api.md) | ECU の変数と Control API |
 | [scenario.md](scenario.md) | シナリオのファイルの書き方 |
