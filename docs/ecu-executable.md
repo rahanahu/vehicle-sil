@@ -301,7 +301,7 @@ Cases that give exit code 3, each reported in one line before the simulation sta
 | The ECU has no network with the executable name | The message lists the ECU's networks. |
 | After renaming, 2 networks of the ECU have the same name | For example `--map-network B=A` when the code has both `A` and `B`. A swap (`--map-network B=A --map-network A=B`) is allowed. |
 | The configuration of `--silkit-config` sets `Network` for a controller (`CanControllers`, `LinControllers`, `EthernetControllers`, `FlexrayControllers`) | SIL Kit prefers the `Network` of the configuration, so it would be unclear which name applies. This holds also for a controller that has nothing to do with the renamed networks. A `--map-network` that renames nothing is not refused. A vehicle-sil build that uses a SIL Kit not built from source cannot read the configuration, so it refuses a renaming `--map-network` together with `--silkit-config`, whatever the configuration contains (the same holds for `PeerOptions::network_names` with a participant configuration). |
-| The ECU declares a variable with the name of a renamed monitoring output | For example `j1939.VehicleCAN.bus_state`. |
+| The ECU registers a variable directly on `agent()` with the name of a renamed monitoring output | For example `j1939.VehicleCAN.bus_state`. `input()`, `output()` and the like already refuse a name that starts with `j1939.` (see [Reserved variable name prefixes](#reserved-variable-name-prefixes)). |
 
 On Windows (MinGW), give the networks you rename ASCII names; a `--map-network` with a non-ASCII character gives exit code 4. Windows converts arguments to the code page and replaces the characters that the code page lacks with `?` or a similar character, so the converted value would put the ECU on a network of another name without an error. `ecu_main` checks this argument alone against the command line before the conversion (when `main()` passes its `argc` and `argv` unchanged). On Linux, names can be ASCII or UTF-8 (other byte sequences give exit code 4).
 
@@ -324,13 +324,18 @@ When you run several ECUs with `vehicle_sil_launch`, each ECU executable must me
 
 ### Reserved variable name prefixes
 
-Names that start with these prefixes are for the variables that vehicle-sil adds.
+Names that start with these prefixes are for the variables that vehicle-sil adds. An ECU cannot declare them, whether it runs on SIL Kit or on the local buses and whether monitoring is on or off.
 
 | Prefix | Used for | Example |
 |---|---|---|
 | `ecu.` | Variables that every ECU has | `ecu.connected` |
 | `peer.` | Monitoring variables that `Peer` adds | `peer.steps` |
-| `j1939.<network name>.` | Monitoring variables that `Peer` adds for each J1939 network | `j1939.J1939_CAN.frames_sent` |
+| `j1939.` | Monitoring variables that `Peer` adds for each J1939 network (`j1939.<network name>.`) | `j1939.J1939_CAN.frames_sent` |
+| `can.`, `lin.`, `eth.` | Kept for the monitoring variables of raw CAN channels, LIN nodes and Ethernet channels (none yet) | |
+
+Only the start of the name counts: `engine.j1939.speed` is an ordinary name. `spy.` is not reserved: `vehicle_sil::spy::Spy` declares its variables like an application does, under `spy.` by default (`SpyOptions::statistics_as`), so do not use names under it for your own variables in an ECU with a `Spy`.
+
+To fix an ECU that uses one of these prefixes, rename the variable, and the scenarios, `variables` entries and GUI settings that use the old name.
 
 An ECU that joins a SIL Kit simulation (`Peer`) adds the monitoring variables after the variables that the ECU declared (`PeerOptions::monitor`, enabled by default). They are not in `variables` of `--describe`, but during a run they appear next to the ECU's variables. For the list of variables, see "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring).
 
@@ -338,9 +343,8 @@ When a colliding name causes an error depends on how it is declared and on the p
 
 | Declaration | When it fails |
 |---|---|
-| Declaring a name that starts with `ecu.` or `peer.` with `input()`, `output()` and the like of `Ecu` | At the declaration, with `std::invalid_argument`, so `--describe` and `--local` find it too. |
+| Declaring a name that starts with one of the prefixes above with `input()`, `output()` and the like of `Ecu` | At the declaration, with `std::invalid_argument`, so `--describe` and `--local` find it too. |
 | A name registered directly with `agent()` collides with a monitoring variable of `Peer` | Not checked at registration; found when the ECU starts on SIL Kit (exit code 3 with `ecu_main`). |
-| Declaring a name that collides with a monitoring variable that starts with `j1939.<network name>.` | Found only when the ECU starts on SIL Kit. |
 
 The `std::invalid_argument` of `input()` and the like is the same for `Peer` and `LocalBench`, and its message gives the variable name and the rule. Variable names belong to each ECU, so they need not be aligned between ECUs.
 

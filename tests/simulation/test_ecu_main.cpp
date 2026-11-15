@@ -929,12 +929,12 @@ TEST_CASE(ecu_main_start_timeout_and_start_failure)
     require(contains(timeout.err, "within 300 ms"), "the timeout given", timeout);
     require(contains(timeout.err, "To wait longer: --start-timeout-ms)\n"), "the hint", timeout);
 
-    // A start that fails for another reason (a variable that clashes with a network's
-    // monitoring output on SIL Kit): no hint about a controller.
+    // A start that fails for another reason (a variable registered on the agent that clashes
+    // with a network's monitoring output on SIL Kit): no hint about a controller.
     const Result clash = call_with({"--registry-uri", uri, "--name", "Clash"}, [](Ecu& ecu) {
         static double x = 0;
         static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
-        ecu.input("j1939.CAN.bus_state", &x);
+        ecu.agent().input("j1939.CAN.bus_state", &x);
     });
     require(clash.code == 3, "exit 3", clash);
     require(clash.err.rfind("error: Clash: could not start: ", 0) == 0, "could not start", clash);
@@ -1067,12 +1067,13 @@ TEST_CASE(ecu_main_map_network_renames_the_networks_of_the_run)
     const Result none = call_with({"--registry-uri", uri, "--map-network", "VehicleCAN=CAN"}, [](Ecu&) {});
     require(none.code == 3 && contains(none.err, "the ECU has no network 'CAN' (its networks: none): "), "an ECU without networks", none);
     // The other name reaches the ECU's participant: its monitoring outputs are named with it, so
-    // a variable of the ECU with that name clashes (and with the code's name it does not).
+    // a variable registered on the agent with that name clashes (and with the code's name it
+    // does not; input() and the like refuse any name under "j1939.").
     static double x = 0.0;
     const auto with_variable = [](const char* name) {
         return [name](Ecu& ecu) {
             static_cast<void>(ecu.j1939("CAN").add_node({.address = 0x10}));
-            ecu.input(name, &x);
+            ecu.agent().input(name, &x);
         };
     };
     const Result clash = call_with({"--registry-uri", uri, "--start-timeout-ms", "300", "--map-network", "VehicleCAN=CAN"},

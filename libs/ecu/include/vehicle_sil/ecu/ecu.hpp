@@ -205,13 +205,11 @@ public:
     /// every write), step, description, parameter (writable before the first step only).
     /// `value` must stay valid as long as the ECU (a member of an emplace()d object, or of the
     /// application class that Simulation::add() makes). std::invalid_argument for an empty
-    /// name, a name this ECU declared before, a name that starts with "peer." (reserved for a
-    /// Peer's monitoring outputs, on every implementation alike) or "ecu." (reserved for the
-    /// variables every ECU has, such as "ecu.connected") and bad options;
-    /// std::logic_error once the run has started or the schema is complete. A clash with the
-    /// other monitoring outputs of a Peer ("j1939.<network>. ...") shows when the schema is
-    /// completed (control::Agent::complete_schema(): Peer::start(), a transport's constructor
-    /// (control_silkit::AgentTransport) or the first submit()), as std::invalid_argument there.
+    /// name, a name this ECU declared before, a name that starts with a prefix kept for
+    /// monitoring outputs ("peer.", "j1939.", "can.", "lin.", "eth.":
+    /// monitor_names::kReservedPrefixes; on every implementation alike, also with monitoring
+    /// off) or "ecu." (reserved for the variables every ECU has, such as "ecu.connected") and
+    /// bad options; std::logic_error once the run has started or the schema is complete.
     template <typename T>
     void input(std::string name, T* value, control::VariableOptions options = {})
     {
@@ -444,22 +442,20 @@ public:
         }
         return *agent_;
     }
-    /// The prefix of the names a Peer gives its own monitoring outputs (PeerOptions::monitor).
-    static constexpr std::string_view kReservedPrefix = monitor_names::kPeerPrefix;
     /// The prefix of the variables every ECU has (kConnectedVariable).
     static constexpr std::string_view kBuiltinPrefix = "ecu.";
 
     /// Runs `add` (the registration of the variable `name`) on get(); std::invalid_argument and
     /// std::logic_error come back of the same type with `who` in front. A name that starts with
-    /// kReservedPrefix or kBuiltinPrefix is std::invalid_argument before anything is made.
+    /// one of monitor_names::kReservedPrefixes or kBuiltinPrefix is std::invalid_argument before
+    /// anything is made, whatever the implementation and whether monitoring is on.
     void declare(const std::string& name, const std::function<void(control::Agent&)>& add)
     {
-        if (name.compare(0, kReservedPrefix.size(), kReservedPrefix) == 0)
+        if (const auto* reserved = monitor_names::reserved_prefix(name))
         {
             throw std::invalid_argument(who_ + "the variable name \"" + name + "\" starts with \"" +
-                                        std::string(kReservedPrefix) +
-                                        "\", which is reserved for the monitoring outputs of a Peer (PeerOptions::monitor): "
-                                        "choose a name that does not start with it");
+                                        std::string(reserved->prefix) + "\", which is reserved for the monitoring outputs of " +
+                                        std::string(reserved->outputs) + ": choose a name that does not start with it");
         }
         if (name.compare(0, kBuiltinPrefix.size(), kBuiltinPrefix) == 0)
         {

@@ -301,7 +301,7 @@ engine_ecu --registry-uri silkit://localhost:8500 --map-network VehicleCAN=J1939
 | 実行ファイルの名前のネットワークを、ECU が持たない | メッセージに、ECU のネットワークを並べます。 |
 | 替えた後で、ECU の 2 つのネットワークが同じ名前になる | たとえば、コードが `A` と `B` の両方を持つときの `--map-network B=A` です。入れ替え（`--map-network B=A --map-network A=B`）は書けます。 |
 | `--silkit-config` の設定が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`、`FlexrayControllers`）に `Network` を書いている | SIL Kit は設定の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えるネットワークと関係のないコントローラーでも拒否します。名前を替えない `--map-network` だけなら拒否しません。ソースからビルドしていない SIL Kit を使う vehicle-sil のビルドは、設定を読めないので、名前を替える `--map-network` と `--silkit-config` の併用を、設定の内容によらず拒否します（`PeerOptions::network_names` と participant の設定も同じです）。 |
-| ECU が、替えた後の監視の出力と同じ名前の変数を宣言している | たとえば `j1939.VehicleCAN.bus_state` です。 |
+| ECU が、替えた後の監視の出力と同じ名前の変数を `agent()` に直接登録している | たとえば `j1939.VehicleCAN.bus_state` です。`input()`、`output()` などは、`j1939.` で始まる名前をその場で拒否します（[使えない変数名の接頭辞](#使えない変数名の接頭辞)）。 |
 
 Windows（MinGW）では、名前を替えるネットワークに ASCII の名前を使います。ASCII でない文字のある `--map-network` は終了コード 4 です。Windows の引数はコードページに変換されて届き、コードページにない文字は `?` や似た文字に置き換わるので、そのまま読むと、エラーなしに別の名前のネットワークに載ってしまいます。`ecu_main` は、この引数だけを変換前のコマンドラインで確認します（`main()` の `argc` と `argv` をそのまま渡したとき）。Linux では、ASCII か UTF-8 の名前を書けます（どちらでもないバイト列は終了コード 4）。
 
@@ -324,13 +324,18 @@ Windows（MinGW）では、名前を替えるネットワークに ASCII の名�
 
 ### 使えない変数名の接頭辞
 
-次の接頭辞で始まる名前は、vehicle-sil が追加する変数に使います。
+次の接頭辞で始まる名前は、vehicle-sil が追加する変数に使います。ECU は、SIL Kit で動くときもローカルのバスで動くときも、監視の有無にかかわらず、この名前を宣言できません。
 
 | 接頭辞 | 使う変数 | 例 |
 |---|---|---|
 | `ecu.` | どの ECU にもある変数 | `ecu.connected` |
 | `peer.` | `Peer` が追加する監視用の変数 | `peer.steps` |
-| `j1939.<ネットワーク名>.` | `Peer` が J1939 のネットワークごとに追加する監視用の変数 | `j1939.J1939_CAN.frames_sent` |
+| `j1939.` | `Peer` が J1939 のネットワークごとに追加する監視用の変数（`j1939.<ネットワーク名>.`） | `j1939.J1939_CAN.frames_sent` |
+| `can.`、`lin.`、`eth.` | raw CAN のチャネル、LIN のノード、Ethernet のチャネルの監視用の変数のために空けてある（まだない） | |
+
+見るのは名前の先頭だけです。`engine.j1939.speed` はふつうの名前です。`spy.` は予約していません。`vehicle_sil::spy::Spy` は、アプリケーションと同じ方法で、既定では `spy.` の下に変数を宣言します（`SpyOptions::statistics_as`）。`Spy` を持つ ECU では、自分の変数に `spy.` の下の名前を使わないでください。
+
+この接頭辞を使っている ECU は、変数の名前を替え、古い名前を使っているシナリオ、`variables` の項目、GUI の設定も合わせて直します。
 
 監視用の変数は、SIL Kit のシミュレーションに参加する ECU（`Peer`）が、ECU の宣言した変数の後に追加します（`PeerOptions::monitor`、既定で有効）。`--describe` の `variables` には含まれませんが、実行中は ECU の変数と並んで見えます。変数の一覧は [internals/control.md](internals/control.md) の「Peer の監視」にあります。
 
@@ -338,9 +343,8 @@ Windows（MinGW）では、名前を替えるネットワークに ASCII の名�
 
 | 宣言 | エラーになる時点 |
 |---|---|
-| `Ecu` の `input()`、`output()` などで、`ecu.` か `peer.` で始まる名前を宣言する | 宣言のときに `std::invalid_argument` になるので、`--describe` と `--local` でも見つかります。 |
+| `Ecu` の `input()`、`output()` などで、上の接頭辞で始まる名前を宣言する | 宣言のときに `std::invalid_argument` になるので、`--describe` と `--local` でも見つかります。 |
 | `agent()` に直接登録した名前が、`Peer` の監視用の変数と重なる | 登録のときは検査せず、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。 |
-| `j1939.<ネットワーク名>.` で始まる監視用の変数と重なる名前を宣言する | SIL Kit で始めるときにだけ見つかります。 |
 
 `input()` などの `std::invalid_argument` は、`Peer` でも `LocalBench` でも同じで、メッセージに変数の名前とルールが入ります。変数名は ECU ごとに独立なので、ECU の間でそろえる必要はありません。
 
