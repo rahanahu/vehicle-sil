@@ -1769,12 +1769,14 @@ Where to change:
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
+| The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
 
 What to update together:
 
 - `schema/timeline.schema.json`
 - "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)
 - The reference files `tests/launch/timeline/*.timeline.json`. Do not edit them by hand; the `README.md` in that directory says how to write them again and which keys are not compared.
+- `gui/timeline/viewer.js`, when the page should draw a new key or value. Until then it ignores the key, or names the value without drawing it; a new format version or `stage` makes it refuse the file.
 
 Rules:
 
@@ -1790,6 +1792,7 @@ Tests:
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`
+- The page, on the reference files: `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
 
 ### Running several scenarios
 

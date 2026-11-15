@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
-Steps, in order: npm ci, npm run format:check, npm run lint (gui/web and gui/client), npm test, npm run
+Steps, in order: npm ci, npm run format:check, npm run lint (gui/web, gui/client and gui/timeline), npm test, npm run
 test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
-DOM), i18n (npm run i18n:extract, then the
+DOM), npm run test:timeline (the timeline page gui/timeline: the unit tests of viewer.js on Node, no DOM),
+i18n (npm run i18n:extract, then the
 extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
 message, a message not translated yet ("target": null), a changed source and a broken target fail; obsolete
 entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
@@ -85,6 +86,7 @@ SUMMARY_LINES = {
     "lint": re.compile(r"All files pass linting"),
     "test": re.compile(r"^\s+Tests\s+\d+"),
     "client": re.compile(r"^\s+Tests\s+\d+"),
+    "timeline": re.compile(r"^\S+ pass \d+\s*$"),  # node --test: "ℹ pass 17" (or "# pass 17" as TAP)
     "i18n": re.compile(r"Extraction Complete"),
     "build": re.compile(r"Initial total"),
     "bundle": re.compile(r"vehicle-sil-gui-client\.mjs\s+\S+"),
@@ -219,7 +221,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
     found = [ln.strip() for ln in lines if SUMMARY_LINES[step.name].search(ln)]
     step.summary = re.sub(r"\s*\|\s*|\s{2,}", " ", found[-1]).strip() if found else ""
     if step.name == "lint" and not step.ok:
-        step.summary = ""  # "All files pass linting" is ng lint's; the lint of gui/client may still have failed
+        # "All files pass linting" is ng lint's; the lint of gui/client or gui/timeline may still have failed
+        step.summary = ""
     if step.name in NOTE_LINES:
         step.notes = [ln.strip() for ln in lines if NOTE_LINES[step.name].search(ln)][:3]
     if not step.ok:
@@ -318,8 +321,8 @@ def main() -> int:
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     parser.add_argument("--skip-checks", action="store_true",
-                        help="do not run the format check, lint, unit tests (gui/web and gui/client) and the i18n "
-                        "step (the build and e2e still run)")
+                        help="do not run the format check, lint, unit tests (gui/web, gui/client and gui/timeline) and "
+                        "the i18n step (the build and e2e still run)")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     parser.add_argument("--i18n-only", action="store_true",
@@ -361,7 +364,7 @@ def main() -> int:
     if not i18n_alone and not args.skip_checks:
         steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
                   Step("test", [npm, "test"]), Step("client", [npm, "run", "test:client"]),
-                  Step("i18n", [npm, "run", "i18n:extract"])]
+                  Step("timeline", [npm, "run", "test:timeline"]), Step("i18n", [npm, "run", "i18n:extract"])]
     if not i18n_alone:
         steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"]),
                   Step("package", [npm, "run", "pack:client"])]

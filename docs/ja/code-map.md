@@ -1769,12 +1769,14 @@ flowchart TD
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
+| ファイルを描くページ | `gui/timeline/viewer.js`（ページは `timeline.html`。「The page」より上は DOM なしで動き、単体テストが呼ぶ部分） |
 
 合わせて直すもの:
 
 - `schema/timeline.schema.json`
 - [simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」
 - 基準のファイル `tests/launch/timeline/*.timeline.json`。手で直しません。作り直し方と比べないキーは、そのディレクトリの `README.md` にあります。
+- ページに新しいキーや値を描かせるときは `gui/timeline/viewer.js`。それまでは、知らないキーは無視し、知らない値は描かずに名前を出します。形の版や `stage` が新しいファイルは、表示できないと言います。
 
 守ること:
 
@@ -1790,6 +1792,7 @@ flowchart TD
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`
+- 基準のファイルでページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`）。
 
 ### シナリオをまとめて実行する
 
