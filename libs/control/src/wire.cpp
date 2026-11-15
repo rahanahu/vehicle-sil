@@ -11,10 +11,55 @@ namespace {
 
 // Every number is little endian, written byte by byte (no struct is copied).
 //
-// A message: 'V' 'S' 'C' 'W', version u16, kind u8, 0 u8, then the content of its kind. A text is
-// its length u32 and its bytes. The beginning of a hello, up to its participant, never changes.
+// A message: 'V' 'S' 'C' 'W', version u16, kind u8, revision u8 (0 in version 1, where it is not
+// read), then the content of its kind. A text is its length u32 and its bytes. The beginning of a
+// hello, up to its participant, never changes.
+//
+// From version 2 on, a variable, a write, a result and an event are elements: a size u32 and
+// that many bytes (Writer::begin_element(), Reader::begin_element()). An enum item and a value
+// are not.
 constexpr std::uint8_t kMagic[4] = {'V', 'S', 'C', 'W'};
 constexpr std::size_t kHeaderBytes = 8;
+constexpr std::size_t kRevisionAt = 7;
+/// "No number" in an optional u32 (CommandResult::applied_writes, SubmitResult::failed_write).
+constexpr std::uint32_t kNone = 0xFFFF'FFFF;
+
+/// The fewest bytes of one variable, write, result and event: a count that the rest of the
+/// message cannot hold is refused with them before anything is read or kept for it. Too large a
+/// number here refuses a correct message, too small a one lets a count through that is not there.
+struct Least
+{
+    std::size_t variable;
+    std::size_t write;
+    std::size_t result;
+    std::size_t event;
+};
+// Version 1. A variable: name (4 + 1), type, causality, unit (4), flags, description (4), items (4).
+// A write: name (4), a bool (2). A result: seq (8), status, flags, reason (4). An event: time
+// (8), level, text (4).
+constexpr Least kLeastV1{4 + 1 + 1 + 1 + 4 + 1 + 4 + 4, 4 + 2, 8 + 1 + 1 + 4, 8 + 1 + 4};
+// Version 2: each with its size (4), and a result with applied_writes (4).
+constexpr Least kLeastV2{4 + kLeastV1.variable, 4 + kLeastV1.write, 4 + kLeastV1.result + 4, 4 + kLeastV1.event};
+
+constexpr const Least& least(std::uint16_t version) noexcept
+{
+    return version >= 2 ? kLeastV2 : kLeastV1;
+}
+
+std::uint8_t revision_of(std::uint16_t version, std::span<const std::uint8_t> bytes) noexcept
+{
+    return version >= 2 ? bytes[kRevisionAt] : std::uint8_t{0};
+}
+
+void require_version(std::uint16_t version, const char* function)
+{
+    if (!speaks(version))
+    {
+        throw std::invalid_argument(std::string("vehicle_sil::control::wire::") + function + "(): version " + std::to_string(version) +
+                                    " cannot be written; the versions are " + std::to_string(kOldestVersion) + " to " +
+                                    std::to_string(kNewestVersion));
+    }
+}
 
 constexpr std::uint8_t kStepFinal = 1;
 constexpr std::uint8_t kStepValues = 2;
@@ -22,7 +67,8 @@ constexpr std::uint8_t kStepValues = 2;
 class Writer
 {
 public:
-    explicit Writer(Bytes& out) : out_(out) {}
+    Writer(Bytes& out, std::uint16_t version) : out_(out), version_(version) {}
+    [[nodiscard]] std::uint16_t version() const noexcept { return version_; }
     void u8(std::uint8_t v) { out_.push_back(v); }
     void u16(std::uint16_t v)
     {
@@ -58,9 +104,27 @@ public:
     void header(Kind kind)
     {
         out_.insert(out_.end(), std::begin(kMagic), std::end(kMagic));
-        u16(kVersion);
+        u16(version_);
         u8(static_cast<std::uint8_t>(kind));
-        u8(0);
+        u8(version_ >= 2 ? kRevision : std::uint8_t{0});
+    }
+    /// The beginning of an element; what it returns goes to end_element() behind its content.
+    /// Version 1 has no elements: nothing is written.
+    [[nodiscard]] std::size_t begin_element()
+    {
+        const std::size_t at = out_.size();
+        if (version_ >= 2)
+        {
+            u32(0);
+        }
+        return at;
+    }
+    void end_element(std::size_t at)
+    {
+        if (version_ >= 2)
+        {
+            patch_u32(at, static_cast<std::uint32_t>(out_.size() - at - 4));
+        }
     }
     void value(const Value& v)
     {
@@ -94,16 +158,20 @@ public:
 
 private:
     Bytes& out_;
+    std::uint16_t version_;
 };
 
-/// Reads within the span; the first read beyond it (or the first fail()) sticks.
+/// Reads within the span; the first read beyond it (or the first fail()) sticks. Inside an
+/// element (begin_element()..end_element()) it reads within the element.
 class Reader
 {
 public:
-    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
+    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes), end_(bytes.size()) {}
 
     [[nodiscard]] bool ok() const noexcept { return error_.code == ErrorCode::Ok; }
-    [[nodiscard]] std::size_t left() const noexcept { return bytes_.size() - at_; }
+    /// The bytes left of the element, or of the message outside one.
+    [[nodiscard]] std::size_t left() const noexcept { return end_ - at_; }
+    [[nodiscard]] std::uint16_t version() const noexcept { return version_; }
     [[nodiscard]] Error take_error() { return std::move(error_); }
     void set_version(std::uint16_t version) noexcept { error_.version = version; }
 
@@ -171,7 +239,7 @@ public:
         }
         if (size > left())
         {
-            fail(ErrorCode::Truncated, "a text of " + std::to_string(size) + " bytes with " + std::to_string(left()) + " left");
+            beyond("a text of " + std::to_string(size) + " bytes with " + std::to_string(left()) + " left");
             return;
         }
         out.assign(reinterpret_cast<const char*>(bytes_.data() + at_), size);
@@ -194,10 +262,64 @@ public:
         const std::uint32_t n = u32();
         if (ok() && n > left() / least)
         {
-            fail(ErrorCode::Truncated, std::to_string(n) + " " + what + " announced with " + std::to_string(left()) + " bytes left");
+            beyond(std::to_string(n) + " " + what + " announced with " + std::to_string(left()) + " bytes left");
             return 0;
         }
         return ok() ? n : 0;
+    }
+    /// Flags of which this revision knows `known`. Other bits: skipped from a newer writer, else
+    /// refused.
+    std::uint8_t flags(std::uint8_t known, const char* what)
+    {
+        const std::uint8_t v = u8();
+        if (ok() && (v & ~known) != 0 && !newer_)
+        {
+            fail(ErrorCode::Malformed, std::string("unknown flags of ") + what);
+        }
+        return static_cast<std::uint8_t>(v & known);
+    }
+    /// The size of an element (version 2 on; nothing in version 1): the reads up to
+    /// end_element() stay within it. One that reaches beyond the message is Truncated.
+    void begin_element(const char* what)
+    {
+        if (version_ < 2)
+        {
+            return;
+        }
+        const std::uint32_t size = u32();
+        if (!ok())
+        {
+            return;
+        }
+        if (size > left())
+        {
+            fail(ErrorCode::Truncated,
+                 std::string(what) + " of " + std::to_string(size) + " bytes with " + std::to_string(left()) + " left");
+            return;
+        }
+        end_ = at_ + size;
+        in_element_ = true;
+    }
+    /// The end of the element: what is left of it is skipped from a newer writer, else refused.
+    void end_element(const char* what)
+    {
+        if (!in_element_)
+        {
+            return;
+        }
+        if (ok() && at_ != end_)
+        {
+            if (newer_)
+            {
+                at_ = end_;
+            }
+            else
+            {
+                fail(ErrorCode::Malformed, std::to_string(left()) + " bytes after the end of " + what);
+            }
+        }
+        end_ = bytes_.size();
+        in_element_ = false;
     }
     /// An enumerator below `end`.
     std::uint8_t enumerator(std::uint8_t end, const char* what)
@@ -242,6 +364,7 @@ public:
         const std::uint8_t found = u8();
         static_cast<void>(u8());
         error_.version = version;
+        error_.revision = revision_of(version, bytes_);
         if (found != static_cast<std::uint8_t>(kind))
         {
             fail(ErrorCode::WrongKind, "a message of kind " + std::to_string(found) + ", not " +
@@ -254,17 +377,20 @@ public:
             fail(ErrorCode::TooLarge, std::to_string(bytes_.size()) + " bytes; the limit is " + std::to_string(limit));
             return false;
         }
-        if (version != kVersion)
+        if (!speaks(version))
         {
-            fail(ErrorCode::VersionMismatch, "written in version " + std::to_string(version) + " of the format; this side speaks version " +
-                                                 std::to_string(kVersion));
+            fail(ErrorCode::VersionMismatch, "written in version " + std::to_string(version) + " of the format; this side reads versions " +
+                                                 std::to_string(kOldestVersion) + " to " + std::to_string(kNewestVersion));
             return false;
         }
+        version_ = version;
+        newer_ = error_.revision > kRevision;
         return true;
     }
+    /// The end of the message: what is left is skipped from a newer writer, else refused.
     void end()
     {
-        if (ok() && left() != 0)
+        if (ok() && left() != 0 && !newer_)
         {
             fail(ErrorCode::Malformed, std::to_string(left()) + " bytes after the end of the message");
         }
@@ -279,14 +405,31 @@ private:
         }
         if (left() < n)
         {
-            fail(ErrorCode::Truncated, "the message ends after " + std::to_string(bytes_.size()) + " bytes");
+            beyond("the message ends after " + std::to_string(bytes_.size()) + " bytes");
             return false;
         }
         return true;
     }
+    /// What is to be read is not there: the message is cut short, or, inside an element, the
+    /// element is smaller than what it has to hold.
+    void beyond(std::string truncated)
+    {
+        if (in_element_)
+        {
+            fail(ErrorCode::Malformed, "an element ends before its content does");
+        }
+        else
+        {
+            fail(ErrorCode::Truncated, std::move(truncated));
+        }
+    }
 
     std::span<const std::uint8_t> bytes_;
     std::size_t at_ = 0;
+    std::size_t end_;              ///< of the element being read, else of the message
+    bool in_element_ = false;      ///< one level: an element holds no elements
+    std::uint16_t version_ = 0;    ///< of the message, once header() accepted it
+    bool newer_ = false;           ///< written by a revision after kRevision: what is unknown is skipped
     Error error_;
 };
 
@@ -311,6 +454,7 @@ constexpr std::uint8_t kHasStep = 4;
 
 void write_variable(Writer& w, const VariableInfo& v)
 {
+    const std::size_t element = w.begin_element();
     w.text(v.name);
     w.u8(static_cast<std::uint8_t>(v.type));
     w.u8(static_cast<std::uint8_t>(v.causality));
@@ -335,20 +479,18 @@ void write_variable(Writer& w, const VariableInfo& v)
         w.text(item.name);
         w.i64(item.value);
     }
+    w.end_element(element);
 }
 
 VariableInfo read_variable(Reader& r)
 {
     VariableInfo v;
+    r.begin_element("a variable");
     r.name(v.name, "a variable name");
     v.type = static_cast<ValueType>(r.enumerator(4, "variable type"));
     v.causality = static_cast<Causality>(r.enumerator(3, "causality"));
     v.unit = r.text();
-    const std::uint8_t has = r.u8();
-    if (r.ok() && (has & ~(kHasMin | kHasMax | kHasStep)) != 0)
-    {
-        r.fail(ErrorCode::Malformed, "unknown flags of a variable");
-    }
+    const std::uint8_t has = r.flags(kHasMin | kHasMax | kHasStep, "a variable");
     if (has & kHasMin)
     {
         v.min = r.f64();
@@ -371,20 +513,26 @@ VariableInfo read_variable(Reader& r)
         item.value = r.i64();
         v.items.push_back(std::move(item));
     }
+    r.end_element("a variable");
     return v;
 }
 
-// A result: seq u64, status u8, flags u8 (1 late, 2 applied_at), applied_at i64 if flagged, reason.
+// A result: seq u64, status u8, flags u8 (1 late, 2 applied_at), applied_at i64 if flagged,
+// from version 2 on applied_writes u32 (kNone: not said), reason.
 constexpr std::uint8_t kResultLate = 1;
 constexpr std::uint8_t kResultAppliedAt = 2;
 
-std::size_t result_bytes(const CommandResult& result)
+// result_bytes() and event_bytes() are what write_result() and write_event() write, to the byte:
+// encode_step() decides with them whether one more fits, and a number that is too small makes a
+// message larger than its limit.
+std::size_t result_bytes(const CommandResult& result, std::uint16_t version)
 {
-    return 8 + 1 + 1 + (result.applied_at ? 8 : 0) + 4 + cut(result.reason).size();
+    return least(version).result + (result.applied_at ? 8 : 0) + cut(result.reason).size();
 }
 
 void write_result(Writer& w, const CommandResult& result)
 {
+    const std::size_t element = w.begin_element();
     w.u64(result.seq);
     w.u8(static_cast<std::uint8_t>(result.status));
     w.u8(static_cast<std::uint8_t>((result.late ? kResultLate : 0) | (result.applied_at ? kResultAppliedAt : 0)));
@@ -392,20 +540,33 @@ void write_result(Writer& w, const CommandResult& result)
     {
         w.i64(to_ns(*result.applied_at));
     }
+    if (w.version() >= 2)
+    {
+        w.u32(result.applied_writes.value_or(kNone));
+    }
     w.text(cut(result.reason));
+    w.end_element(element);
 }
 
-std::size_t event_bytes(const Event& event)
+std::size_t event_bytes(const Event& event, std::uint16_t version)
 {
-    return 8 + 1 + 4 + cut(event.text).size();
+    return least(version).event + cut(event.text).size();
 }
 
 void write_event(Writer& w, const Event& event)
 {
+    const std::size_t element = w.begin_element();
     w.i64(to_ns(event.time));
     w.u8(static_cast<std::uint8_t>(event.level));
     w.text(cut(event.text));
+    w.end_element(element);
 }
+
+// Every single result and event fits the smallest step message: session, time, flags and the two
+// counts are in front of it.
+constexpr std::size_t kStepHeadBytes = kHeaderBytes + 8 + 8 + 1 + 2 + 2;
+static_assert(kStepHeadBytes + kLeastV2.result + 8 + kMaxTextBytes <= kMinMessageBytes);
+static_assert(kStepHeadBytes + kLeastV2.event + kMaxTextBytes <= kMinMessageBytes);
 
 std::size_t value_bytes(const Value& value)
 {
@@ -436,11 +597,13 @@ std::optional<Header> peek(std::span<const std::uint8_t> bytes, Error& error)
     }
     Header header;
     header.version = static_cast<std::uint16_t>(bytes[4] | (bytes[5] << 8));
+    header.revision = revision_of(header.version, bytes);
     error.version = header.version;
+    error.revision = header.revision;
     if (bytes[6] < static_cast<std::uint8_t>(Kind::Hello) || bytes[6] > static_cast<std::uint8_t>(Kind::LastWordReceived))
     {
-        // Another version may have kinds this one does not know.
-        if (header.version == kVersion)
+        // A version that is not read may have kinds this build does not know.
+        if (speaks(header.version))
         {
             error.code = ErrorCode::WrongKind;
             error.text = "unknown kind " + std::to_string(bytes[6]);
@@ -451,8 +614,9 @@ std::optional<Header> peek(std::span<const std::uint8_t> bytes, Error& error)
     return header;
 }
 
-bool encode_hello(const Hello& hello, Bytes& out, std::string& why)
+bool encode_hello(const Hello& hello, Bytes& out, std::string& why, std::uint16_t version)
 {
+    require_version(version, "encode_hello");
     out.clear();
     why.clear();
     if (hello.participant.empty() || hello.participant.size() > kMaxNameBytes)
@@ -481,7 +645,7 @@ bool encode_hello(const Hello& hello, Bytes& out, std::string& why)
         why = "max_pending is " + std::to_string(hello.max_pending) + "; it must be within 1.." + std::to_string(kMaxPending);
         return false;
     }
-    Writer w(out);
+    Writer w(out, version);
     w.header(Kind::Hello);
     w.text(hello.participant); // up to here, the same in every version
     w.u64(hello.session);
@@ -534,8 +698,7 @@ Error decode_hello(std::span<const std::uint8_t> bytes, Hello& out)
     out.step = SimDuration{r.i64()};
     out.sample_period = SimDuration{r.i64()};
     out.max_pending = r.u32();
-    // A variable has at least a name of one byte.
-    const std::uint32_t variables = r.count(4 + 1 + 1 + 1 + 4 + 1 + 4 + 4, "variables");
+    const std::uint32_t variables = r.count(least(r.version()).variable, "variables");
     if (r.ok() && variables > kMaxVariables)
     {
         r.fail(ErrorCode::TooLarge, std::to_string(variables) + " variables; the limit is " + std::to_string(kMaxVariables));
@@ -557,10 +720,11 @@ Error decode_hello(std::span<const std::uint8_t> bytes, Hello& out)
     return r.take_error();
 }
 
-bool encode_command(const CommandMessage& message, Bytes& out)
+bool encode_command(const CommandMessage& message, Bytes& out, std::uint16_t version)
 {
+    require_version(version, "encode_command");
     out.clear();
-    Writer w(out);
+    Writer w(out, version);
     w.header(Kind::Command);
     w.u64(message.session);
     w.u64(message.command.seq);
@@ -570,8 +734,10 @@ bool encode_command(const CommandMessage& message, Bytes& out)
     w.u32(static_cast<std::uint32_t>(message.command.writes.size()));
     for (const auto& write : message.command.writes)
     {
+        const std::size_t element = w.begin_element();
         w.text(write.name);
         w.value(write.value);
+        w.end_element(element);
         if (out.size() > kMaxMessageBytes)
         {
             out.clear();
@@ -599,26 +765,35 @@ Error decode_command(std::span<const std::uint8_t> bytes, CommandMessage& out)
         out.command.at = time_of(at);
     }
     out.command.late = static_cast<LatePolicy>(r.enumerator(2, "late policy"));
-    const std::uint32_t writes = r.count(4 + 2, "writes");
+    const std::uint32_t writes = r.count(least(r.version()).write, "writes");
     for (std::uint32_t i = 0; i < writes && r.ok(); ++i)
     {
         Write& write = out.command.writes.emplace_back();
+        r.begin_element("a write");
         r.text(write.name);
         write.value = r.value();
+        r.end_element("a write");
     }
     r.end();
     return r.take_error();
 }
 
-void encode_submitted(const SubmittedMessage& message, Bytes& out)
+// A submitted message: session u64, seq u64, status u8, reason, and from version 2 on
+// failed_write u32 (kNone: none).
+void encode_submitted(const SubmittedMessage& message, Bytes& out, std::uint16_t version)
 {
+    require_version(version, "encode_submitted");
     out.clear();
-    Writer w(out);
+    Writer w(out, version);
     w.header(Kind::Submitted);
     w.u64(message.session);
     w.u64(message.seq);
     w.u8(static_cast<std::uint8_t>(message.result.status));
     w.text(cut(message.result.reason));
+    if (version >= 2)
+    {
+        w.u32(message.result.failed_write.value_or(kNone));
+    }
 }
 
 Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& out)
@@ -632,31 +807,45 @@ Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& ou
     out.seq = r.u64();
     out.result.status = static_cast<SubmitStatus>(r.enumerator(3, "submit status"));
     r.text(out.result.reason);
+    out.result.failed_write.reset();
+    if (r.version() >= 2)
+    {
+        if (const std::uint32_t failed = r.u32(); failed != kNone)
+        {
+            out.result.failed_write = failed;
+        }
+    }
     r.end();
     return r.take_error();
 }
 
-void encode_session(Kind kind, std::uint64_t session, Bytes& out)
+void encode_session(Kind kind, std::uint64_t session, Bytes& out, std::uint16_t version)
 {
+    require_version(version, "encode_session");
     if (kind != Kind::Probe && kind != Kind::Ready && kind != Kind::LastWordReceived)
     {
         throw std::invalid_argument(
             "vehicle_sil::control::wire::encode_session(): the kind must be Probe, Ready or LastWordReceived");
     }
     out.clear();
-    Writer w(out);
+    Writer w(out, version);
     w.header(kind);
     w.u64(session);
 }
 
 std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes)
 {
-    if (bytes.size() < kHeaderBytes + 8 || bytes.size() > kMaxMessageBytes || std::memcmp(bytes.data(), kMagic, 4) != 0 ||
-        static_cast<std::uint16_t>(bytes[4] | (bytes[5] << 8)) != kVersion)
+    if (bytes.size() < kHeaderBytes + 8 || bytes.size() > kMaxMessageBytes || std::memcmp(bytes.data(), kMagic, 4) != 0)
     {
         return std::nullopt;
     }
     Addressed out;
+    out.version = static_cast<std::uint16_t>(bytes[4] | (bytes[5] << 8));
+    if (!speaks(out.version))
+    {
+        return std::nullopt;
+    }
+    out.revision = revision_of(out.version, bytes);
     switch (bytes[6])
     {
     case static_cast<std::uint8_t>(Kind::Command):
@@ -674,9 +863,11 @@ std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes)
     default:
         return std::nullopt;
     }
-    if (out.kind != Kind::Command && bytes.size() != kHeaderBytes + 8)
+    // A probe, a ready and a last-word-received message are their session and nothing else; a
+    // newer revision may have added to them.
+    if (out.kind != Kind::Command && bytes.size() != kHeaderBytes + 8 && out.revision <= kRevision)
     {
-        return std::nullopt; // a probe, a ready and a last-word-received message are their session and nothing else
+        return std::nullopt;
     }
     for (int i = 0; i < 8; ++i)
     {
@@ -689,8 +880,9 @@ std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes)
 // events, and with kStepValues: time i64, sequence u64, total u32, first u32, count u32, values.
 void encode_step(std::uint64_t session, SimTime time, bool final, std::span<const CommandResult> results,
                  std::span<const Event> events, const Snapshot* sample, std::size_t max_bytes, Bytes& scratch,
-                 const std::function<void(const Bytes& message)>& emit)
+                 const std::function<void(const Bytes& message)>& emit, std::uint16_t version)
 {
+    require_version(version, "encode_step");
     if (max_bytes < kMinMessageBytes || max_bytes > kMaxMessageBytes)
     {
         throw std::invalid_argument("vehicle_sil::control::wire::encode_step(): max_bytes must be within " +
@@ -698,7 +890,7 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
     }
     constexpr std::size_t kFlagsAt = kHeaderBytes + 16;
     constexpr std::size_t kValuesHead = 8 + 8 + 4 + 4 + 4;
-    Writer w(scratch);
+    Writer w(scratch, version);
     std::size_t next_result = 0;
     std::size_t next_event = 0;
     std::size_t next_value = 0;
@@ -715,7 +907,7 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
         w.u16(0);
         std::uint16_t n_results = 0;
         while (next_result < results.size() && n_results < std::numeric_limits<std::uint16_t>::max()
-               && scratch.size() + result_bytes(results[next_result]) <= max_bytes)
+               && scratch.size() + result_bytes(results[next_result], version) <= max_bytes)
         {
             write_result(w, results[next_result++]);
             ++n_results;
@@ -724,7 +916,7 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
         if (next_result == results.size())
         {
             while (next_event < events.size() && n_events < std::numeric_limits<std::uint16_t>::max()
-                   && scratch.size() + event_bytes(events[next_event]) <= max_bytes)
+                   && scratch.size() + event_bytes(events[next_event], version) <= max_bytes)
             {
                 write_event(w, events[next_event++]);
                 ++n_events;
@@ -784,15 +976,11 @@ Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out)
     }
     out.session = r.u64();
     out.time = time_of(r.i64());
-    const std::uint8_t flags = r.u8();
-    if (r.ok() && (flags & ~(kStepFinal | kStepValues)) != 0)
-    {
-        r.fail(ErrorCode::Malformed, "unknown flags of a step message");
-    }
+    const std::uint8_t flags = r.flags(kStepFinal | kStepValues, "a step message");
     out.final = (flags & kStepFinal) != 0;
     const std::uint16_t results = r.u16();
     const std::uint16_t events = r.u16();
-    if (r.ok() && (results > r.left() / 14 || events > r.left() / 13))
+    if (r.ok() && (results > r.left() / least(r.version()).result || events > r.left() / least(r.version()).event))
     {
         r.fail(ErrorCode::Truncated, "more results or events announced than the message can hold");
     }
@@ -803,26 +991,33 @@ Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out)
     for (std::uint16_t i = 0; i < results && r.ok(); ++i)
     {
         CommandResult& result = out.results.emplace_back();
+        r.begin_element("a result");
         result.seq = r.u64();
         result.status = static_cast<CommandStatus>(r.enumerator(4, "command status"));
-        const std::uint8_t has = r.u8();
-        if (r.ok() && (has & ~(kResultLate | kResultAppliedAt)) != 0)
-        {
-            r.fail(ErrorCode::Malformed, "unknown flags of a result");
-        }
+        const std::uint8_t has = r.flags(kResultLate | kResultAppliedAt, "a result");
         result.late = (has & kResultLate) != 0;
         if (has & kResultAppliedAt)
         {
             result.applied_at = time_of(r.i64());
         }
+        if (r.version() >= 2)
+        {
+            if (const std::uint32_t applied = r.u32(); applied != kNone)
+            {
+                result.applied_writes = applied;
+            }
+        }
         r.text(result.reason);
+        r.end_element("a result");
     }
     for (std::uint16_t i = 0; i < events && r.ok(); ++i)
     {
         Event& event = out.events.emplace_back();
+        r.begin_element("an event");
         event.time = time_of(r.i64());
         event.level = static_cast<EventLevel>(r.enumerator(3, "event level"));
         r.text(event.text);
+        r.end_element("an event");
     }
     if (r.ok() && (flags & kStepValues) != 0)
     {
