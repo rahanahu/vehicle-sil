@@ -1129,7 +1129,9 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "check": 1,
     "run": 1,
     "events": 1,
-    "describe": 1
+    "describe": 1,
+    "test": 1,
+    "timeline": 1
   },
   "features": [
     "events",

@@ -56,4 +56,5 @@ def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path
                        capture_output=True, timeout=RUN_TIMEOUT_S)
     check = json.loads(p.stdout)
     assert check["result"] == "passed", check["findings"]
-    assert check["scenario"] == {"file": "rec.yaml", "name": "recorded from s\u00edm.yaml (run 1)", "steps": 2}
+    assert check["scenario"] == {"file": "rec.yaml", "name": "recorded from s\u00edm.yaml (run 1)", "steps": 2,
+                                 "inputs": [], "lines": []}

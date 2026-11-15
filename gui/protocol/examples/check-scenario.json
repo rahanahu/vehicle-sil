@@ -122,6 +122,8 @@
               "builtin": false
             }
           ],
+          "network_map": null,
+          "j1939_nodes": null,
           "control": {
             "transport": "silkit",
             "wire_version": 2
@@ -219,6 +221,8 @@
               "builtin": false
             }
           ],
+          "network_map": null,
+          "j1939_nodes": null,
           "control": {
             "transport": "silkit",
             "wire_version": 2
@@ -240,6 +244,8 @@
           "status": "not_checked",
           "reported": null,
           "variables": null,
+          "network_map": null,
+          "j1939_nodes": null,
           "control": null
         }
       ],
@@ -269,7 +275,9 @@
       "scenario": {
         "file": "scenarios/throttle.yaml",
         "name": "throttle up",
-        "steps": 3
+        "steps": 3,
+        "inputs": [],
+        "lines": []
       }
     }
   }

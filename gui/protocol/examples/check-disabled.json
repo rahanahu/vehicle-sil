@@ -125,6 +125,8 @@
               "builtin": false
             }
           ],
+          "network_map": null,
+          "j1939_nodes": null,
           "control": {
             "transport": "silkit",
             "wire_version": 2
@@ -145,6 +147,8 @@
           "status": "disabled",
           "reported": null,
           "variables": null,
+          "network_map": null,
+          "j1939_nodes": null,
           "control": null
         },
         {
@@ -163,6 +167,8 @@
           "status": "not_checked",
           "reported": null,
           "variables": null,
+          "network_map": null,
+          "j1939_nodes": null,
           "control": null
         }
       ],

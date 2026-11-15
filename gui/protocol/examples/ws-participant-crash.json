@@ -215,6 +215,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -312,6 +314,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -333,6 +337,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -1171,7 +1177,7 @@
         "event": "time",
         "seq": 73,
         "t_ms": 730,
-        "sim_ms": 25530,
+        "sim_ms": 25760,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -1596,7 +1602,7 @@
         "seq": 111,
         "t_ms": 1110,
         "source": "Dashboard",
-        "line": "t=44500 ms engine speed 1200 rpm (445 messages)"
+        "line": "error: something went wrong, exiting with code 3"
       }
     },
     {
@@ -1607,7 +1613,7 @@
         "seq": 112,
         "t_ms": 1120,
         "source": "Dashboard",
-        "line": "t=45000 ms engine speed 1200 rpm (450 messages)"
+        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 162049 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
       }
     },
     {
@@ -1617,72 +1623,6 @@
         "event": "log",
         "seq": 113,
         "t_ms": 1130,
-        "source": "Dashboard",
-        "line": "t=45500 ms engine speed 1200 rpm (455 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 114,
-        "t_ms": 1140,
-        "source": "Dashboard",
-        "line": "t=46000 ms engine speed 1200 rpm (460 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 115,
-        "t_ms": 1150,
-        "source": "Dashboard",
-        "line": "t=46500 ms engine speed 1200 rpm (465 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 116,
-        "t_ms": 1160,
-        "source": "Dashboard",
-        "line": "t=47000 ms engine speed 1200 rpm (470 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 117,
-        "t_ms": 1170,
-        "source": "Dashboard",
-        "line": "error: something went wrong, exiting with code 3"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 118,
-        "t_ms": 1180,
-        "source": "Dashboard",
-        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 2137439 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 119,
-        "t_ms": 1190,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 3"
       }
@@ -1692,8 +1632,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 120,
-        "t_ms": 1200,
+        "seq": 114,
+        "t_ms": 1140,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 3,
@@ -1705,8 +1645,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 121,
-        "t_ms": 1210,
+        "seq": 115,
+        "t_ms": 1150,
         "name": "Dashboard",
         "state": "failed",
         "reason": "process_ended",
@@ -1718,8 +1658,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 122,
-        "t_ms": 1220,
+        "seq": 116,
+        "t_ms": 1160,
         "source": "vehicle_sil_launch",
         "line": "participant 'Dashboard' failed; aborting the simulation"
       }
@@ -1729,9 +1669,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 123,
-        "t_ms": 1230,
-        "sim_ms": 47440,
+        "seq": 117,
+        "t_ms": 1170,
+        "sim_ms": 44460,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -1746,8 +1686,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 124,
-        "t_ms": 1240,
+        "seq": 118,
+        "t_ms": 1180,
         "source": "vehicle_sil_launch",
         "line": "the simulation was aborted: participant 'Dashboard' failed"
       }
@@ -1757,8 +1697,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 125,
-        "t_ms": 1250,
+        "seq": 119,
+        "t_ms": 1190,
         "severity": "error",
         "code": "participant-failed",
         "file": "participant-crash.yaml",
@@ -1774,8 +1714,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 126,
-        "t_ms": 1260,
+        "seq": 120,
+        "t_ms": 1200,
         "phase": "stopping"
       }
     },
@@ -1784,8 +1724,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 127,
-        "t_ms": 1270,
+        "seq": 121,
+        "t_ms": 1210,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1795,8 +1735,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 128,
-        "t_ms": 1280,
+        "seq": 122,
+        "t_ms": 1220,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1808,8 +1748,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 129,
-        "t_ms": 1290,
+        "seq": 123,
+        "t_ms": 1230,
         "source": "vehicle_sil_launch",
         "line": "asking Logger to stop (SIGTERM)"
       }
@@ -1819,8 +1759,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 130,
-        "t_ms": 1300,
+        "seq": 124,
+        "t_ms": 1240,
         "name": "Logger",
         "state": "stop_requested"
       }
@@ -1830,8 +1770,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 131,
-        "t_ms": 1310,
+        "seq": 125,
+        "t_ms": 1250,
         "name": "Logger",
         "state": "ended",
         "exit_code": null,
@@ -1843,8 +1783,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 132,
-        "t_ms": 1320,
+        "seq": 126,
+        "t_ms": 1260,
         "phase": "ended"
       }
     },
@@ -1853,8 +1793,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 133,
-        "t_ms": 1330,
+        "seq": 127,
+        "t_ms": 1270,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1866,13 +1806,14 @@
           "notes": 1,
           "simulation": "aborted",
           "interrupted_by": null,
+          "registry_uri": "silkit://127.0.0.1:8510",
           "timing": {
             "speed": "max",
             "time_step_ms": 10,
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 47440,
+            "sim_ms": 44460,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -1936,11 +1877,11 @@
             }
           ],
           "traffic": {
-            "before_ms": 47440,
+            "before_ms": 44460,
             "unplaced": [
               {
                 "participant": "Logger",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               }
             ],
             "networks": [
@@ -1954,7 +1895,7 @@
                 "unplaced": [
                   {
                     "participant": "Logger",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   }
                 ],
                 "participants": [
@@ -1963,8 +1904,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 47430,
-                    "frames_sent": 476,
+                    "at_ms": 44450,
+                    "frames_sent": 446,
                     "frames_received": 0
                   },
                   {
@@ -1972,9 +1913,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 47430,
+                    "at_ms": 44450,
                     "frames_sent": 0,
-                    "frames_received": 476
+                    "frames_received": 446
                   }
                 ]
               }
@@ -2098,6 +2039,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2195,6 +2138,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2216,6 +2161,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],
@@ -2267,13 +2214,13 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 133,
-        "last_t_ms": 1330,
+        "last_seq": 127,
+        "last_t_ms": 1270,
         "time": {
           "event": "time",
-          "seq": 123,
-          "t_ms": 1230,
-          "sim_ms": 47440,
+          "seq": 117,
+          "t_ms": 1170,
+          "sim_ms": 44460,
           "speed": "max",
           "paused": false,
           "actual_speed": 1.5,
@@ -2388,6 +2335,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -2485,6 +2434,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -2506,6 +2457,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -2624,13 +2577,14 @@
           "notes": 1,
           "simulation": "aborted",
           "interrupted_by": null,
+          "registry_uri": "silkit://127.0.0.1:8510",
           "timing": {
             "speed": "max",
             "time_step_ms": 10,
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 47440,
+            "sim_ms": 44460,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -2694,11 +2648,11 @@
             }
           ],
           "traffic": {
-            "before_ms": 47440,
+            "before_ms": 44460,
             "unplaced": [
               {
                 "participant": "Logger",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               }
             ],
             "networks": [
@@ -2712,7 +2666,7 @@
                 "unplaced": [
                   {
                     "participant": "Logger",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   }
                 ],
                 "participants": [
@@ -2721,8 +2675,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 47430,
-                    "frames_sent": 476,
+                    "at_ms": 44450,
+                    "frames_sent": 446,
                     "frames_received": 0
                   },
                   {
@@ -2730,9 +2684,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 47430,
+                    "at_ms": 44450,
                     "frames_sent": 0,
-                    "frames_received": 476
+                    "frames_received": 446
                   }
                 ]
               }
@@ -2856,6 +2810,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2953,6 +2909,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2974,6 +2932,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],
@@ -3008,7 +2968,7 @@
             "dropped": 0
           },
           "Dashboard": {
-            "kept": 97,
+            "kept": 91,
             "dropped": 0
           }
         },

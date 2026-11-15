@@ -190,6 +190,9 @@ struct RunOutcome
 {
     /// The registry or the controller could not be set up (nothing was started): why.
     std::string setup_error{};
+    /// Where the registry of the run listens, as its participants get it (with the port it took
+    /// for port 0), or "" if none was started.
+    std::string registry_uri{};
     SimulationEnd simulation = SimulationEnd::NotStarted;
     /// The required participants did not all join within start_timeout_ms.
     bool start_timed_out = false;
@@ -594,9 +597,19 @@ struct HostAddress
 /// ("silkit://0.0.0.0:<port>", "silkit://[::]:<port>") is reached at one of `addresses`
 /// (host_addresses()), or, without any, at an address of this computer the line tells how to
 /// find; any other URI as it is. `ipv6_only`: a registry on [::] takes no IPv4 (the line says
-/// how to take it).
+/// how to take it, with the port the file has: `written_port`, or the port of `uri` if empty).
 [[nodiscard]] std::string other_computers_line(const std::string& uri, const std::vector<HostAddress>& addresses,
-                                               bool ipv6_only = false);
+                                               bool ipv6_only = false, const std::string& written_port = {});
+/// What run adds, in parentheses, to "the registry cannot listen at <listen>: <SIL Kit's message>":
+/// the likely cause and what to write instead. SIL Kit's message names no cause when the system
+/// refuses the address or the port (SIL Kit v5.0.8 only logs it), so the cause is found from
+/// `listen`: an IPv4 address that is none of `addresses` (host_addresses()), 0.0.0.0 or loopback
+/// is not this computer's; with port 0 no other program can have the port, so only the host can be
+/// wrong; with a fixed port of this computer, another registry may have it. `written`: `listen` is
+/// the file's registry_uri; `fixed`: it is the port of a run with a participant started by hand.
+/// "" when there is nothing to add.
+[[nodiscard]] std::string registry_listen_hint(const std::string& listen, bool written, bool fixed,
+                                               const std::vector<HostAddress>& addresses);
 /// One line of a participant's output as the launcher shows it: control characters (C0 but tabs,
 /// DEL, C1) and bytes that are not UTF-8 as '?'.
 [[nodiscard]] std::string printable(std::string_view line);

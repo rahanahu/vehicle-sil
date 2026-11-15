@@ -199,7 +199,7 @@ void traffic(const Options& o)
                 "        \"delivered\": true,\n"
                 "        \"unplaced\": [],\n"
                 "        \"participants\": [\n" +
-                    member("A", "", counted) + ",\n" + member("B", "", counted) + ",\n" + member("Raw", "no-counters", not_counted) +
+                    member("A", "", counted) + ",\n" + member("B", "", counted) + ",\n" + member("Raw", "no_counters", not_counted) +
                     ",\n" + member("Door", "mapped", not_counted) + ",\n" + member("Tool", "", counted) +
                     "\n"
                     "        ]\n"
@@ -212,8 +212,8 @@ void traffic(const Options& o)
                     "        \"receivers\": 0,\n"
                     "        \"delivered\": null,\n"
                     "        \"unplaced\": [\n"
-                    "          {\n            \"participant\": \"Door\",\n            \"reason\": \"no-counters\"\n          },\n"
-                    "          {\n            \"participant\": \"Tool\",\n            \"reason\": \"no-counters\"\n          }\n"
+                    "          {\n            \"participant\": \"Door\",\n            \"reason\": \"no_counters\"\n          },\n"
+                    "          {\n            \"participant\": \"Tool\",\n            \"reason\": \"no_counters\"\n          }\n"
                     "        ],\n"
                     "        \"participants\": []\n"
                     "      }\n"
@@ -261,10 +261,10 @@ void traffic(const Options& o)
     expect_code(bridged_json, 0, "run with a bridge --json");
     require(contains(bridged_json.standard_output,
                      "    \"unplaced\": [\n      {\n        \"participant\": \"Bridge\",\n"
-                     "        \"reason\": \"no-control-link\"\n      }\n    ],\n") &&
+                     "        \"reason\": \"no_control_link\"\n      }\n    ],\n") &&
                 contains(bridged_json.standard_output,
                          "        \"delivered\": null,\n        \"unplaced\": [\n          {\n"
-                         "            \"participant\": \"Bridge\",\n            \"reason\": \"no-control-link\"\n          }\n"
+                         "            \"participant\": \"Bridge\",\n            \"reason\": \"no_control_link\"\n          }\n"
                          "        ],\n"),
             "the JSON's traffic with a bridge:\n" + bridged_json.standard_output);
     const Captured alone_json = launch(o, {"run", "bridged.yaml", "--json", "--disable", "Bridge"}, mixed);
@@ -300,7 +300,7 @@ void traffic(const Options& o)
                 contains(gateway_json.standard_output, "        \"delivered\": false,\n        \"unplaced\": [],\n") &&
                 contains(gateway_json.standard_output,
                          "        \"delivered\": null,\n        \"unplaced\": [\n          {\n"
-                         "            \"participant\": \"Gateway\",\n            \"reason\": \"no-counters\"\n          }\n"
+                         "            \"participant\": \"Gateway\",\n            \"reason\": \"no_counters\"\n          }\n"
                          "        ],\n"),
             "the JSON's traffic with a gateway:\n" + gateway_json.standard_output);
 

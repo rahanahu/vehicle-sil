@@ -634,9 +634,13 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
                 w.end_array();
             }
-            // Only for an entry with "network_names": the lines as written (also one that renames
-            // nothing), the simulation's name and the executable's.
-            if (!p.network_names.empty())
+            // For an entry with "network_names": the lines as written (also one that renames
+            // nothing), the simulation's name and the executable's; null without.
+            if (p.network_names.empty())
+            {
+                w.null("network_map");
+            }
+            else
             {
                 w.begin_array("network_map");
                 for (const NetworkName& entry : p.network_names)
@@ -649,9 +653,14 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
                 w.end_array();
             }
-            // Only for an entry with "j1939_nodes": the entries as written (also one that changes
-            // nothing), and the node each takes with its values in the code and after the entry.
-            if (!p.j1939_nodes.empty())
+            // For an entry with "j1939_nodes": the entries as written (also one that changes
+            // nothing), and the node each takes with its values in the code and after the entry;
+            // null without.
+            if (p.j1939_nodes.empty())
+            {
+                w.null("j1939_nodes");
+            }
+            else
             {
                 const std::vector<SeenNetwork> seen = p.enabled && result.status == ParticipantStatus::Described && result.ecu
                                                           ? seen_networks(p, *result.ecu)
@@ -783,9 +792,16 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         {
             w.integer("unchecked_expects", static_cast<std::int64_t>(report.scenario->unchecked_expects));
         }
-        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        if (report.scenario->scenario)
         {
+            // Empty for a scenario without a dither (Scenario::has_dither).
             detail::write_scenario_lines_json(w, scenario_inputs_text(*report.scenario->scenario), report.scenario->scenario->lines);
+        }
+        else
+        {
+            // The scenario could not be read.
+            w.null("inputs");
+            w.null("lines");
         }
         w.end_object();
     }

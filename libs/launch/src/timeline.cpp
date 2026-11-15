@@ -186,7 +186,7 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
     // The times of a step that has its time; a step the scenario did not get to has none.
     const bool timed = watch && run.start;
     write_ms(w, "from_ms", timed ? std::optional<SimTime>(watch->from) : std::nullopt);
-    write_ms(w, "until_ms", timed ? watch->until : std::nullopt);
+    write_ms(w, "to_ms", timed ? watch->until : std::nullopt);
     w.begin_array("conditions");
     for (const ScenarioCondition& condition : step.conditions)
     {
@@ -201,6 +201,10 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
             if (c.op == Compare::Near)
             {
                 w.real("tolerance", c.tolerance);
+            }
+            else
+            {
+                w.null("tolerance");
             }
             w.end_object();
         }
@@ -291,23 +295,28 @@ void write_series(JsonWriter& w, const TimelineInput& input)
             w.string("variable", input.scenario->variables[series.variable].text);
             w.string("source", series.sampled ? "sampled" : "written");
             w.string("encoding", series.sampled ? "changes" : "all");
+            // Every key in every series: what does not apply to this one is null.
+            w.begin_array_on_one_line("columns");
+            w.string({}, "at_ms");
+            w.string({}, "value");
             if (series.dithered)
             {
                 // A dither was on the input: every point with what it was made of.
-                w.begin_array_on_one_line("columns");
-                w.string({}, "t_ms");
-                w.string({}, "value");
                 w.string({}, "base");
-                w.end_array();
             }
+            w.end_array();
             if (series.sampled)
             {
                 w.integer("samples", static_cast<std::int64_t>(series.sample_count));
                 write_ms(w, "first_ms", series.first_sample);
                 write_ms(w, "last_ms", series.last_sample);
+                w.null("not_applied_from");
             }
             else
             {
+                w.null("samples");
+                w.null("first_ms");
+                w.null("last_ms");
                 // Sent and not known to be applied: the first write of the failed request that
                 // was not applied (or has no result) and what was sent after it, and what was
                 // written for a time after the step at which the scenario was over (no ECU got
@@ -318,6 +327,10 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 if (it != series.written.end())
                 {
                     w.integer("not_applied_from", it - series.written.begin());
+                }
+                else
+                {
+                    w.null("not_applied_from");
                 }
             }
             w.begin_array("points");
@@ -888,7 +901,7 @@ std::string format_timeline_json(const TimelineInput& input)
     w.string("file", input.file);
     write_text_or_null(w, "variant", input.variant);
     detail::write_params_json(w, "params", input.params);
-    w.integer("tick_ms", input.tick_ms);
+    w.integer("time_step_ms", input.time_step_ms);
     w.begin_object("scenario");
     w.string("file", run.file);
     write_text_or_null(w, "name", run.name);
@@ -922,7 +935,13 @@ std::string format_timeline_json(const TimelineInput& input)
         w.begin_object();
         if (codeOnly)
         {
+            // Its code and severity; the rest may differ from run to run, so it is null.
+            w.string("severity", detail::severity_text(finding.severity));
             w.string("code", finding.code);
+            for (const char* key : {"file", "line", "participant", "network", "message", "detail"})
+            {
+                w.null(key);
+            }
         }
         else
         {

@@ -267,7 +267,7 @@ TEST_CASE(a_participant_far_ahead_of_the_controller_is_not_on_the_runs_time)
     fed.put(0, std::move(more), 100ms);
     CHECK(kept.expired());
     check_text(said(fed.finish(100)), "before 100\nBUS (can) counted 1 senders 1 receivers 1 delivered ?\n"
-                                      "  A real-time at - sent - received -\n  B counted at 90 sent 1 received 1\n");
+                                      "  A real_time at - sent - received -\n  B counted at 90 sent 1 received 1\n");
     // One that runs in virtual time is a step or two ahead, never that far.
     Fed synced(pair_plan());
     synced.hello(0, counters("BUS"));
@@ -315,13 +315,13 @@ TEST_CASE(a_participant_that_is_not_counted_says_why)
     fed.put(7, sample(90ms, 4, 5), 90ms);
     const RunTraffic traffic = fed.finish(100);
     check_text(said(traffic), "before 100\nBUS (can) counted 1 senders 1 receivers 1 delivered ?\n"
-                              "  Silent no-control-link at - sent - received -\n"
+                              "  Silent no_control_link at - sent - received -\n"
                               "  Restarted restarted at - sent - received -\n"
-                              "  RealTime real-time at - sent - received -\n"
-                              "  Raw no-counters at - sent - received -\n"
+                              "  RealTime real_time at - sent - received -\n"
+                              "  Raw no_counters at - sent - received -\n"
                               "  Mapped mapped at - sent - received -\n"
-                              "  Early no-sample at - sent - received -\n"
-                              "  Odd no-sample at - sent - received -\n"
+                              "  Early no_sample at - sent - received -\n"
+                              "  Odd no_sample at - sent - received -\n"
                               "  Ok counted at 90 sent 5 received 4\n");
     const auto& rows = traffic.per_network.at(0).participants;
     CHECK(!rows.at(0).virtual_time.has_value());
@@ -383,24 +383,24 @@ TEST_CASE(every_network_of_the_file_is_there_with_who_is_known_to_be_on_it)
     fed.put(1, sample(0ms, 3, 4), 0ms);
     // Quiet (without --describe and without a control agent) may be on any of them, and Tool on
     // those its agent has no counters for.
-    check_text(said(fed.finish(10)), "before 10\nunplaced Quiet no-control-link\n"
+    check_text(said(fed.finish(10)), "before 10\nunplaced Quiet no_control_link\n"
                                      "FIRST (can) unplaced 2 counted 1 senders 1 receivers 1 delivered ?\n"
                                      "  Described counted at 0 sent 2 received 1\n"
-                                     "  Tool unplaced no-counters\n"
-                                     "  Quiet unplaced no-control-link\n"
+                                     "  Tool unplaced no_counters\n"
+                                     "  Quiet unplaced no_control_link\n"
                                      "UNUSED (lin) unplaced 2 counted 0 senders 0 receivers 0 delivered ?\n"
-                                     "  Tool unplaced no-counters\n"
-                                     "  Quiet unplaced no-control-link\n"
+                                     "  Tool unplaced no_counters\n"
+                                     "  Quiet unplaced no_control_link\n"
                                      "SECOND (can) unplaced 1 counted 1 senders 1 receivers 1 delivered ?\n"
-                                     "  Described no-counters at - sent - received -\n"
+                                     "  Described no_counters at - sent - received -\n"
                                      "  Tool counted at 0 sent 4 received 3\n"
-                                     "  Quiet unplaced no-control-link\n");
+                                     "  Quiet unplaced no_control_link\n");
     // Nobody is known to be on a network of the file (participants without --describe and
     // without a control agent): it is there all the same. No network in the file: none.
     Fed unknown(TrafficPlan{{{"BUS", "can"}}, {{"Tool", true, false, {}}}});
-    check_text(said(unknown.finish(10)), "before 10\nunplaced Tool no-control-link\n"
+    check_text(said(unknown.finish(10)), "before 10\nunplaced Tool no_control_link\n"
                                          "BUS (can) unplaced 1 counted 0 senders 0 receivers 0 delivered ?\n"
-                                         "  Tool unplaced no-control-link\n");
+                                         "  Tool unplaced no_control_link\n");
     Fed none(TrafficPlan{{}, {{"Tool", true, false, {}}}});
     CHECK(none.finish(10).per_network.empty());
 }
@@ -415,10 +415,10 @@ TEST_CASE(a_participant_known_on_no_network_keeps_a_network_from_saying_nothing_
     Fed bridged(plan);
     bridged.hello(0, counters("BUS"));
     bridged.put(0, sample(0ms, 0, 11), 0ms);
-    check_text(said(bridged.finish(10)), "before 10\nunplaced Bridge no-control-link\n"
+    check_text(said(bridged.finish(10)), "before 10\nunplaced Bridge no_control_link\n"
                                          "BUS (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
                                          "  Engine counted at 0 sent 11 received 0\n"
-                                         "  Bridge unplaced no-control-link\n");
+                                         "  Bridge unplaced no_control_link\n");
     // Without the bridge in the run (disabled), nothing arrived.
     plan.participants.at(1).in_run = false;
     Fed alone(plan);
@@ -434,10 +434,10 @@ TEST_CASE(a_participant_known_on_no_network_keeps_a_network_from_saying_nothing_
     elsewhere.hello(0, counters("BUS"));
     elsewhere.put(0, sample(0ms, 0, 11), 0ms);
     elsewhere.hello(1, counters("ELSEWHERE"));
-    check_text(said(elsewhere.finish(10)), "before 10\nunplaced Bridge no-counters\n"
+    check_text(said(elsewhere.finish(10)), "before 10\nunplaced Bridge no_counters\n"
                                            "BUS (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
                                            "  Engine counted at 0 sent 11 received 0\n"
-                                           "  Bridge unplaced no-counters\n");
+                                           "  Bridge unplaced no_counters\n");
     Fed placed(plan);
     placed.hello(0, counters("BUS"));
     placed.put(0, sample(0ms, 0, 11), 0ms);
@@ -465,7 +465,7 @@ TEST_CASE(a_participant_placed_on_one_network_by_its_counters_may_be_on_another_
                                      "  Gateway counted at 0 sent 0 received 0\n"
                                      "CAN_B (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
                                      "  Engine counted at 0 sent 11 received 0\n"
-                                     "  Gateway unplaced no-counters\n");
+                                     "  Gateway unplaced no_counters\n");
     // A described participant is where --describe says, and nowhere else: with the gateway
     // described (on CAN_A only), nothing arrived on CAN_B.
     plan.participants.at(0) = {"Gateway", true, true, {"CAN_A"}};
@@ -484,12 +484,12 @@ TEST_CASE(a_participant_placed_on_one_network_by_its_counters_may_be_on_another_
     Fed late(plan);
     late.hello(1, counters("CAN_B"));
     late.put(1, sample(0ms, 0, 11), 0ms);
-    check_text(said(late.finish(10)), "before 10\nunplaced Gateway no-control-link\n"
+    check_text(said(late.finish(10)), "before 10\nunplaced Gateway no_control_link\n"
                                       "CAN_A (can) unplaced 1 counted 0 senders 0 receivers 0 delivered ?\n"
-                                      "  Gateway unplaced no-control-link\n"
+                                      "  Gateway unplaced no_control_link\n"
                                       "CAN_B (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
                                       "  Engine counted at 0 sent 11 received 0\n"
-                                      "  Gateway unplaced no-control-link\n");
+                                      "  Gateway unplaced no_control_link\n");
 }
 
 TEST_CASE(the_counters_of_a_hello_are_found_by_the_names_the_agent_announced)
@@ -787,7 +787,7 @@ TEST_CASE(a_flood_while_nobody_looks_loses_nothing_of_the_scenario_and_of_the_co
     a.step(110ms, 0, 12);
     CHECK(t.taken() == (std::vector<std::string>{"0@90", "0@100", "0@105", "0@110"}));
     check_text(said(t.samples.finish(110)), "before 110\nBUS (can) counted 1 senders 1 receivers 0 delivered ?\n"
-                                            "  A counted at 105 sent 11 received 0\n  B real-time at - sent - received -\n");
+                                            "  A counted at 105 sent 11 received 0\n  B real_time at - sent - received -\n");
 }
 
 TEST_CASE(a_participant_whose_samples_did_not_come_is_told_from_one_without_an_agent)
@@ -795,7 +795,7 @@ TEST_CASE(a_participant_whose_samples_did_not_come_is_told_from_one_without_an_a
     Tapped t;
     FakeAgent a(t.hub, "A", "a1");
     check_text(said(t.samples.finish(100)), "before 100\nBUS (can) counted 0 senders 0 receivers 0 delivered ?\n"
-                                            "  A no-sample at - sent - received -\n  B no-control-link at - sent - received -\n");
+                                            "  A no_sample at - sent - received -\n  B no_control_link at - sent - received -\n");
 }
 
 TEST_CASE(a_participant_that_was_started_again_is_not_counted)

@@ -6,6 +6,8 @@
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
+#include "vehicle_sil/launch/test.hpp"
+#include "vehicle_sil/launch/timeline.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -62,6 +64,8 @@ std::string format_version_json(const std::vector<std::string_view>& more)
     w.integer("run", kRunFormat);
     w.integer("events", kEventsFormat);
     w.integer("describe", kEcuDescriptionFormat);
+    w.integer("test", kTestFormat);
+    w.integer("timeline", kTimelineFormat);
     w.end_object();
     w.begin_array("features");
     for (const auto feature : kFeatures)

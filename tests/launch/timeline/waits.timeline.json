@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "steps that wait, passing",
@@ -85,14 +85,15 @@
       "watch": {
         "mode": "once",
         "from_ms": 0,
-        "until_ms": 200,
+        "to_ms": 200,
         "conditions": [
           {
             "variable": "Body.body.speed",
             "compare": [
               {
                 "op": "ge",
-                "value": 100
+                "value": 100,
+                "tolerance": null
               }
             ]
           }
@@ -130,7 +131,7 @@
       "watch": {
         "mode": "once",
         "from_ms": 80,
-        "until_ms": 580,
+        "to_ms": 580,
         "conditions": [
           {
             "variable": "Body.body.speed",
@@ -147,7 +148,8 @@
             "compare": [
               {
                 "op": "eq",
-                "value": false
+                "value": false,
+                "tolerance": null
               }
             ]
           }
@@ -170,14 +172,15 @@
       "watch": {
         "mode": "always",
         "from_ms": 110,
-        "until_ms": 140,
+        "to_ms": 140,
         "conditions": [
           {
             "variable": "Body.body.speed",
             "compare": [
               {
                 "op": "eq",
-                "value": 200
+                "value": 200,
+                "tolerance": null
               }
             ]
           }
@@ -191,6 +194,11 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 10],
         [30, 10],
@@ -205,9 +213,11 @@
       "variable": "Body.body.speed",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 15,
       "first_ms": 0,
       "last_ms": 140,
+      "not_applied_from": null,
       "points": [
         [0, 50],
         [10, 100],
@@ -222,9 +232,11 @@
       "variable": "Body.pulse",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 15,
       "first_ms": 0,
       "last_ms": 140,
+      "not_applied_from": null,
       "points": [
         [0, false]
       ]

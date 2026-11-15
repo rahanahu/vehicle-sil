@@ -71,6 +71,23 @@ std::string without_timing(std::string text)
             text.replace(from, to - from, "<" + key + ">");
         }
     }
+    // The port of the run's registry (registry_uri of the result): a free one, different in every run.
+    const std::string registry = "\"registry_uri\":";
+    for (auto at = text.find(registry); at != std::string::npos; at = text.find(registry, at + 1))
+    {
+        const std::string uri = "\"silkit://127.0.0.1:";
+        auto from = at + registry.size();
+        if (from < text.size() && text[from] == ' ')
+        {
+            ++from;
+        }
+        if (text.compare(from, uri.size(), uri) == 0)
+        {
+            from += uri.size();
+            const auto to = text.find('"', from);
+            text.replace(from, to - from, "<port>");
+        }
+    }
     return text;
 }
 

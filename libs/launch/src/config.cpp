@@ -510,25 +510,28 @@ private:
         return std::nullopt;
     }
 
-    /// "silkit://<host>:<port>", or empty (and an error).
+    /// "silkit://<host>:<port>" (port 0: the registry takes a free port), or empty (and an error).
     std::optional<std::string> registry_uri(ryml::id_type node)
     {
         const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
         const std::string scheme = "silkit://";
         const auto colon = text.rfind(':');
         std::int64_t port = -1;
-        const bool hasPort = colon != std::string::npos && colon > scheme.size() &&
+        // Digits only, as the schema says: from_chars would take "-0" for 0.
+        const bool hasPort = colon != std::string::npos && colon > scheme.size() && colon + 1 < text.size() &&
+                             std::all_of(text.begin() + static_cast<std::ptrdiff_t>(colon) + 1, text.end(),
+                                         [](char c) { return c >= '0' && c <= '9'; }) &&
                              std::from_chars(text.data() + colon + 1, text.data() + text.size(), port).ptr ==
-                                 text.data() + text.size() &&
-                             colon + 1 < text.size();
+                                 text.data() + text.size();
         const bool plain = std::none_of(text.begin(), text.end(), [](char c) {
             return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
         });
-        if (text.rfind(scheme, 0) != 0 || !hasPort || port < 1 || port > 65535 || !plain)
+        if (text.rfind(scheme, 0) != 0 || !hasPort || port < 0 || port > 65535 || !plain)
         {
             error("value", doc_.line(node),
                   "registry_uri must be where the registry of the simulation listens, silkit://<host>:<port> with a port "
-                  "from 1 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for other computers too), not " +
+                  "from 0 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for other computers too; port "
+                  "0: a free port, chosen when the run starts), not " +
                       shown_value(node) + "; leave registry_uri out for a free port on 127.0.0.1");
             return std::nullopt;
         }

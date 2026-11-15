@@ -533,7 +533,7 @@ const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming 
 /** A participant of the run that the launcher does not know to be on a network (or on any network). */
 export interface TrafficUnplaced extends FromLauncher {
   participant: string;
-  /** Why (for example no-control-link, no-counters). */
+  /** Why (for example no_control_link, no_counters). */
   reason: string;
 }
 
@@ -549,7 +549,7 @@ const readTrafficUnplaced = (value: unknown, path: string, u?: Unreadable): Traf
 export interface TrafficParticipant extends FromLauncher {
   name: string;
   counted: boolean;
-  /** Why it was not counted (for example no-control-link, restarted, real-time); null when counted. */
+  /** Why it was not counted (for example no_control_link, restarted, real_time); null when counted. */
   not_counted: string | null;
   /** Whether it runs in virtual time; null if its connection to the ECU variables did not connect. */
   virtual_time: boolean | null;

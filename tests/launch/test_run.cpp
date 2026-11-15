@@ -802,6 +802,7 @@ TEST_CASE(the_json_report)
     RunOutcome o = passed_run();
     o.simulation = SimulationEnd::Interrupted;
     o.interrupted_by = "SIGINT";
+    o.registry_uri = "silkit://127.0.0.1:41234";
     ParticipantRun killed = participant("Brake", 7);
     killed.ending = Ending::Killed;
     killed.left_processes = true;
@@ -827,6 +828,7 @@ TEST_CASE(the_json_report)
                "  \"notes\": 1,\n"
                "  \"simulation\": \"interrupted\",\n"
                "  \"interrupted_by\": \"SIGINT\",\n"
+               "  \"registry_uri\": \"silkit://127.0.0.1:41234\",\n"
                "  \"timing\": {\n"
                "    \"speed\": \"max\",\n"
                "    \"time_step_ms\": 10,\n"
@@ -902,7 +904,7 @@ TEST_CASE(the_json_report)
                "          {\n"
                "            \"name\": \"Brake\",\n"
                "            \"counted\": false,\n"
-               "            \"not_counted\": \"no-control-link\",\n"
+               "            \"not_counted\": \"no_control_link\",\n"
                "            \"virtual_time\": null,\n"
                "            \"at_ms\": null,\n"
                "            \"frames_sent\": null,\n"
@@ -952,7 +954,7 @@ TEST_CASE(the_json_report)
     none.check.findings.push_back(Finding{Severity::Error, "unknown-key", "x", 3, "", ""});
     const std::string empty = format_run_json(none);
     CHECK(empty.find("  \"result\": \"check_failed\",\n") != std::string::npos);
-    CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"timing\": null,\n  \"participants\": [],\n"
+    CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"registry_uri\": null,\n  \"timing\": null,\n  \"participants\": [],\n"
                      "  \"traffic\": null,\n  \"findings\": [],\n") != std::string::npos);
     // A run that did not get to its simulation, and one with nobody on a network; every name of "not_counted".
     CHECK(format_run_json(report_of(passed_run())).find("  ],\n  \"traffic\": null,\n  \"findings\": [") != std::string::npos);
@@ -967,7 +969,7 @@ TEST_CASE(the_json_report)
                    traffic_not_counted_name(TrafficNotCounted::NoCounters) + "," +
                    traffic_not_counted_name(TrafficNotCounted::Mapped) + "," +
                    traffic_not_counted_name(TrafficNotCounted::NoSample),
-               ",no-control-link,restarted,real-time,no-counters,mapped,no-sample");
+               ",no_control_link,restarted,real_time,no_counters,mapped,no_sample");
     // What a machine reads of a network: true, false, and "cannot be said".
     RunOutcome heard = passed_run();
     const auto counted = [](const char* name, std::int64_t sent, std::int64_t received) {
@@ -995,11 +997,11 @@ TEST_CASE(the_json_report)
         return indent + "{\n" + indent + "  \"participant\": \"" + name + "\",\n" + indent + "  \"reason\": \"" + reason +
                "\"\n" + indent + "}";
     };
-    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no-control-link") + ",\n" +
-                        entry("      ", "Tool", "no-counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
+    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no_control_link") + ",\n" +
+                        entry("      ", "Tool", "no_counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
     CHECK(unplaced.find("        \"delivered\": null,\n        \"unplaced\": [\n" +
-                        entry("          ", "Bridge", "no-control-link") + ",\n" + entry("          ", "Tool", "no-counters") +
-                        ",\n" + entry("          ", "Gateway", "no-counters") + "\n        ],\n        \"participants\": []\n") !=
+                        entry("          ", "Bridge", "no_control_link") + ",\n" + entry("          ", "Tool", "no_counters") +
+                        ",\n" + entry("          ", "Gateway", "no_counters") + "\n        ],\n        \"participants\": []\n") !=
           std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));
@@ -1423,6 +1425,46 @@ TEST_CASE(a_participant_outside_the_file_is_named_when_it_waits_for_the_start)
     CHECK(!w.look("Other", State::Other, t0));
 }
 
+TEST_CASE(a_registry_that_cannot_listen_is_told_the_likely_cause)
+{
+    using launch::detail::HostAddress;
+    using launch::detail::registry_listen_hint;
+    const std::vector<HostAddress> here = {{"198.51.100.5", true}, {"[2001:db8::10]", false}};
+    // An IPv4 address that is not this computer's, with port 0 or not, written or not.
+    const std::string elsewhere = " (192.0.2.1 is not an address of this computer, and the registry listens on this computer: "
+                                  "write in registry_uri one of this computer's addresses (198.51.100.5, [2001:db8::10]), "
+                                  "0.0.0.0 for all of them, or 127.0.0.1 for this computer only)";
+    CHECK(registry_listen_hint("silkit://192.0.2.1:0", true, false, here) == elsewhere);
+    CHECK(registry_listen_hint("silkit://192.0.2.1:8500", true, false, here) == elsewhere);
+    CHECK(registry_listen_hint("silkit://192.0.2.1:0", true, false, {}) ==
+          " (192.0.2.1 is not an address of this computer, and the registry listens on this computer: write in registry_uri "
+          "0.0.0.0 for all of this computer's addresses, or 127.0.0.1 for this computer only)");
+    // This computer's, with a fixed port: another registry may have it.
+    const std::string busy = " (does another registry run there? choose another port in registry_uri, or port 0 for a free one)";
+    for (const std::string uri : {"silkit://127.0.0.1:8500", "silkit://0.0.0.0:8500", "silkit://198.51.100.5:8500",
+                                  "silkit://[::]:8500", "silkit://localhost:8500", "silkit://[::1]:8500"})
+    {
+        CHECK(registry_listen_hint(uri, true, false, here) == busy);
+    }
+    // ... and with port 0 nothing has the port: SIL Kit's message is all there is.
+    CHECK(registry_listen_hint("silkit://0.0.0.0:0", true, false, here).empty());
+    CHECK(registry_listen_hint("silkit://127.0.0.1:0", true, false, here).empty());
+    // A name (or an IPv6 address, which may be written in more than one way): it may be another computer's.
+    CHECK(registry_listen_hint("silkit://other-pc:0", true, false, here) ==
+          " (is other-pc an address of this computer, where the registry listens? If not, write in registry_uri one of this "
+          "computer's addresses (198.51.100.5, [2001:db8::10]), 0.0.0.0 for all of them, or 127.0.0.1 for this computer only)");
+    CHECK(registry_listen_hint("silkit://[2001:db8::99]:8500", true, false, here) ==
+          " (does another registry run there, or is [2001:db8::99] not an address of this computer? Choose another port in "
+          "registry_uri (port 0 for a free one), or write there one of this computer's addresses (198.51.100.5, "
+          "[2001:db8::10]), 0.0.0.0 for all of them, or 127.0.0.1 for this computer only)");
+    // Not written: the port of a run with a participant started by hand, or a free one (nothing to add).
+    CHECK(registry_listen_hint("silkit://127.0.0.1:8500", false, true, here) ==
+          " (a run with a participant you start yourself (manual) listens there if the file has no registry_uri, so that its "
+          "command stays the same; does another registry run there? write another port in registry_uri, or port 0 for a free "
+          "one: the command then changes from run to run)");
+    CHECK(registry_listen_hint("silkit://127.0.0.1:0", false, false, here).empty());
+}
+
 TEST_CASE(other_computers_are_told_where_to_join)
 {
     using launch::detail::HostAddress;
@@ -1457,6 +1499,10 @@ TEST_CASE(other_computers_are_told_where_to_join)
           "from other computers, join at silkit://<an address of this computer>:8500 (none found here: ipconfig on "
           "Windows, ip addr elsewhere, shows them; it listens on IPv6 only here: for IPv4, write registry_uri: "
           "silkit://0.0.0.0:8500)" + tail);
+    // The file has port 0: the way to IPv4 keeps port 0, not the port this run took.
+    CHECK(other_computers_line("silkit://[::]:41234", {{"[2001:db8::10]", true}}, true, "0") ==
+          "from other computers, join at silkit://[2001:db8::10]:41234 (this computer's address; it listens on IPv6 only "
+          "here: for IPv4, write registry_uri: silkit://0.0.0.0:0)" + tail);
     // A registry on one address: that one, whatever this computer has.
     CHECK(other_computers_line("silkit://192.0.2.10:8500", {{"198.51.100.5", true}}) ==
           "from other computers, join at silkit://192.0.2.10:8500" + tail);

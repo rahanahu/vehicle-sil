@@ -251,7 +251,7 @@ struct TimelineInput
     std::string variant{}; ///< the chosen variant, or ""
     /// The scenario's parameters with the values in effect (ScenarioRead::params).
     std::vector<ParamValue> params{};
-    std::int64_t tick_ms = 0; ///< the step of the launcher's controller
+    std::int64_t time_step_ms = 0; ///< the time step of the launcher's controller
     const Scenario* scenario = nullptr;
     const ScenarioRun* run = nullptr;
     /// What the scenario's participants describe: the unit, the range and the causality of the

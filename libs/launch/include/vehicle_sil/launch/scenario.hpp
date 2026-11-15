@@ -255,7 +255,8 @@ struct Scenario
     /// (a note of the check says so).
     std::vector<ScenarioOverlay> inputs{};
     std::vector<ScenarioStep> steps{};
-    /// The file has "inputs" or a dither step that runs: its outputs then list `inputs` and `lines`.
+    /// The file has "inputs" or a dither step that runs: its outputs for people then list `inputs`
+    /// and `lines` (the JSON always has them: empty without).
     bool has_dither = false;
     /// With has_dither: what "inputs" declares and what each step that runs puts on an input
     /// that has a dither at some time (a declared one, or a dither step's, also none), in the

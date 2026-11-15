@@ -45,7 +45,7 @@
       `${what} is not drawn: this page does not know the encoding "${encoding}".`,
     'series.noPoints': ({ what }) => `${what} is not drawn: it has no "points" array.`,
     'series.noColumns': ({ what }) =>
-      `${what} is not drawn: its "columns" have no "t_ms" or "value".`,
+      `${what} is not drawn: its "columns" have no "at_ms" or "value".`,
     'series.badPoint': ({ what }) => `${what} is not drawn: a point is not [time, value].`,
     'series.wrongType': ({ count, what, words, type, value, at }) =>
       `${count} value${count === 1 ? '' : 's'} of ${what} ${count === 1 ? 'is' : 'are'} not ${words}, ` +
@@ -128,7 +128,7 @@
     'fact.scenario': 'scenario',
     'fact.configuration': 'configuration',
     'fact.variant': 'variant',
-    'fact.tick': 'controller time step',
+    'fact.timeStep': 'controller time step',
     'fact.recordedTo': 'recorded to',
     'fact.nothingRecorded': 'nothing recorded',
     'fact.version': 'vehicle-sil',
@@ -350,7 +350,7 @@
       `${what}は描きません。このページは encoding "${encoding}" を知りません。`,
     'series.noPoints': ({ what }) => `${what}は描きません。配列 "points" がありません。`,
     'series.noColumns': ({ what }) =>
-      `${what}は描きません。"columns" に "t_ms" か "value" がありません。`,
+      `${what}は描きません。"columns" に "at_ms" か "value" がありません。`,
     'series.badPoint': ({ what }) => `${what}は描きません。[時刻, 値] でない点があります。`,
     'series.wrongType': ({ count, what, words, type, value, at }) =>
       `${what}の値のうち ${count} 個は、型 ${type} が言う${words}ではないので、描きません（最初のもの: ${at} の ${value}）。`,
@@ -430,7 +430,7 @@
     'fact.scenario': 'シナリオ',
     'fact.configuration': '構成ファイル',
     'fact.variant': 'variant',
-    'fact.tick': 'コントローラーの時間の刻み',
+    'fact.timeStep': 'コントローラーの時間の刻み',
     'fact.recordedTo': '記録の終わり',
     'fact.nothingRecorded': '記録なし',
     'fact.version': 'vehicle-sil',

@@ -215,6 +215,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -312,6 +314,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -333,6 +337,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             },
             {
@@ -351,6 +357,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -599,11 +607,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 18,
         "t_ms": 180,
-        "name": "Engine",
-        "state": "no_hello"
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -613,6 +621,17 @@
         "event": "control_link",
         "seq": 19,
         "t_ms": 190,
+        "name": "Engine",
+        "state": "no_hello"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 20,
+        "t_ms": 200,
         "name": "Dashboard",
         "state": "version_mismatch",
         "version": 1
@@ -623,8 +642,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "name": "Gauge",
         "state": "not_offered"
       }
@@ -634,8 +653,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "name": "Logger",
         "state": "none"
       }
@@ -645,8 +664,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 23,
+        "t_ms": 230,
         "phase": "running"
       }
     },
@@ -655,8 +674,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 24,
+        "t_ms": 240,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -666,8 +685,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 25,
+        "t_ms": 250,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -676,17 +695,6 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -916,6 +924,7 @@
           "notes": 2,
           "simulation": "reached_stop_at",
           "interrupted_by": null,
+          "registry_uri": "silkit://127.0.0.1:8510",
           "timing": {
             "speed": "max",
             "time_step_ms": 10,
@@ -1007,11 +1016,11 @@
             "unplaced": [
               {
                 "participant": "Gauge",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               },
               {
                 "participant": "Logger",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               }
             ],
             "networks": [
@@ -1025,11 +1034,11 @@
                 "unplaced": [
                   {
                     "participant": "Gauge",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   },
                   {
                     "participant": "Logger",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   }
                 ],
                 "participants": [
@@ -1181,6 +1190,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -1278,6 +1289,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -1299,6 +1312,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               },
               {
@@ -1317,6 +1332,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],
@@ -1508,6 +1525,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -1605,6 +1624,8 @@
                   "builtin": false
                 }
               ],
+              "network_map": null,
+              "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
                 "wire_version": 2
@@ -1626,6 +1647,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             },
             {
@@ -1644,6 +1667,8 @@
               "status": "not_checked",
               "reported": null,
               "variables": null,
+              "network_map": null,
+              "j1939_nodes": null,
               "control": null
             }
           ],
@@ -1802,6 +1827,7 @@
           "notes": 2,
           "simulation": "reached_stop_at",
           "interrupted_by": null,
+          "registry_uri": "silkit://127.0.0.1:8510",
           "timing": {
             "speed": "max",
             "time_step_ms": 10,
@@ -1893,11 +1919,11 @@
             "unplaced": [
               {
                 "participant": "Gauge",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               },
               {
                 "participant": "Logger",
-                "reason": "no-control-link"
+                "reason": "no_control_link"
               }
             ],
             "networks": [
@@ -1911,11 +1937,11 @@
                 "unplaced": [
                   {
                     "participant": "Gauge",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   },
                   {
                     "participant": "Logger",
-                    "reason": "no-control-link"
+                    "reason": "no_control_link"
                   }
                 ],
                 "participants": [
@@ -2067,6 +2093,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2164,6 +2192,8 @@
                     "builtin": false
                   }
                 ],
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
                   "wire_version": 2
@@ -2185,6 +2215,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               },
               {
@@ -2203,6 +2235,8 @@
                 "status": "not_checked",
                 "reported": null,
                 "variables": null,
+                "network_map": null,
+                "j1939_nodes": null,
                 "control": null
               }
             ],

@@ -358,7 +358,7 @@ When participants listen on loopback only, TCP uses `127.0.0.1` (`::1` if the UR
 
 With a non-loopback address, anyone who can connect to this computer can join the simulation, because SIL Kit has no authentication (note `registry-on-network`).
 
-The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`).
+The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, or the host of `registry_uri` is not an address of this computer, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`). In parentheses, the error says which of these is likely and what to write in `registry_uri` instead.
 
 ### What counts as a loopback address
 
@@ -477,7 +477,7 @@ The network traffic counts (the `traffic:` line and table of the human-readable 
 - A run that ended by a stop request, `--timeout-ms`, a participant's failure or a participant that stopped the simulation (the virtual time at which it ended, `sim_ms`, differs, and so do the counts).
 - A network on which a participant that does not run in virtual time (a real-time `Peer`, a bridge) sends frames (the receivers' counts differ).
 - A participant that joined later (`manual`, `required: false`), or one that was started again (whether it is counted, and why not, differ).
-- A short run with a `describe: false` participant (`run` does not wait for the connection to that participant's variables, so if it connects late, the participant is `no-sample` or `no-control-link`).
+- A short run with a `describe: false` participant (`run` does not wait for the connection to that participant's variables, so if it connects late, the participant is `no_sample` or `no_control_link`).
 
 Line endings are LF on every OS. When writing to the Windows console, both `check` and `run` show the text as UTF-8 characters, whatever the console code page.
 
@@ -588,19 +588,19 @@ When the simulation started, the result shows after the participant table whethe
 
 | Shown at the right | `not_counted` in the JSON | Meaning |
 |---|---|---|
-| `not counted: no control link` | `"no-control-link"` | Its connection to ECU variables did not connect (`--no-control`, or an executable without one) |
+| `not counted: no control link` | `"no_control_link"` | Its connection to ECU variables did not connect (`--no-control`, or an executable without one) |
 | `not counted: restarted` | `"restarted"` | A process with the same name was started again (its counts start again from 0) |
-| `not counted: real time` | `"real-time"` | It does not run in virtual time (the times of its values are not the simulation's). This includes a participant that reports virtual time but whose values ran more than 64 controller time steps ahead |
-| `not counted: no J1939 counters` | `"no-counters"` | It has no counters for that network (it uses the network as raw CAN, LIN or Ethernet) |
+| `not counted: real time` | `"real_time"` | It does not run in virtual time (the times of its values are not the simulation's). This includes a participant that reports virtual time but whose values ran more than 64 controller time steps ahead |
+| `not counted: no J1939 counters` | `"no_counters"` | It has no counters for that network (it uses the network as raw CAN, LIN or Ethernet) |
 | `not counted: counters mapped by variables` | `"mapped"` | The configuration's `variables` maps one of its counters (its values differ from the executable's) |
-| `not counted: no sample before the end` | `"no-sample"` | No value of a step before the end arrived |
+| `not counted: no sample before the end` | `"no_sample"` | No value of a step before the end arrived |
 
 - An unplaced participant has `-` as its counts and one of two reasons at the right of its row:
 
 | Shown at the right | `reason` in the JSON | Meaning |
 |---|---|---|
-| `unplaced: no control link` | `"no-control-link"` | No connection to its ECU variables had connected when the run ended. Either it has none (a logger, a bridge, another tool, `--no-control`), which is the same in every run, or its connection came too late in this run (`run` does not wait for the connection of a `describe: false` participant). The launcher cannot tell these apart. If the participant has a connection, a longer run places it |
-| `unplaced: no J1939 counters` | `"no-counters"` | Its connection to ECU variables has no counters for the network (in the row with `-` as the network: for any network of the configuration file). This is the same in every run of the configuration |
+| `unplaced: no control link` | `"no_control_link"` | No connection to its ECU variables had connected when the run ended. Either it has none (a logger, a bridge, another tool, `--no-control`), which is the same in every run, or its connection came too late in this run (`run` does not wait for the connection of a `describe: false` participant). The launcher cannot tell these apart. If the participant has a connection, a longer run places it |
+| `unplaced: no J1939 counters` | `"no_counters"` | Its connection to ECU variables has no counters for the network (in the row with `-` as the network: for any network of the configuration file). This is the same in every run of the configuration |
 
 ### Run findings (`code`)
 
@@ -702,6 +702,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `errors`, `warnings`, `notes` | Counts for the check and the run together |
 | `simulation` | How the simulation ended (see the table below). `null` if nothing was started |
 | `interrupted_by` | The signal or key that interrupted the run (`"SIGINT"`, `"Ctrl+C"` and so on). `null` if the run was not interrupted |
+| `registry_uri` | Where the run's registry listened, as the participants got it: with port 0 in the file, the port it took (`registry_uri` of `check` is as written). `null` if no registry was started |
 | `timing` | How time progressed (see the table below). `null` if nothing was started |
 | `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants |
 | `traffic` | The traffic on each network (see [Network traffic](#network-traffic-traffic) and the table below). `null` if the simulation did not start |
@@ -709,7 +710,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `check` | The check result (the same object as `check --json`) |
 | `scenario` | Only with `--scenario`: the scenario result (see "Output" in [scenario.md](scenario.md#output)) |
 
-The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`). In a scenario with a `dither`, both `scenario` objects also have `inputs[]` (the dithers declared in `inputs`) and `lines[]` (the list of what the text places on the inputs).
+The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`). Both `scenario` objects also have `inputs[]` (the dithers declared in `inputs`) and `lines[]` (the list of what the text places on the inputs): empty in a scenario without a `dither`, `null` if the scenario could not be read.
 
 Values of `simulation`:
 
@@ -721,7 +722,7 @@ Values of `simulation`:
 | `"interrupted"` | Stopped by a stop request (Ctrl+C and similar) |
 | `"not_started"` | Did not start |
 
-In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
+In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null. In a run with `--timeline`, `scenario.timeline` holds the name of the timeline file, as given in the arguments, and `null` without it (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)).
 
 Keys of `participants[]`:
 
@@ -791,7 +792,7 @@ Keys of `traffic`:
 | Key | Value |
 |---|---|
 | `before_ms` | The virtual time at which the run ended (`timing.sim_ms`). The counts are from steps that started before it |
-| `unplaced[]` | The participants of the run that the launcher knows on no network (see "[Network traffic](#network-traffic-traffic)"), in configuration file order: `participant` (its name), `reason` (`"no-control-link"` or `"no-counters"`; the table of reasons is in the same section). `[]` if there are none. Each of them is also in `unplaced` of every network |
+| `unplaced[]` | The participants of the run that the launcher knows on no network (see "[Network traffic](#network-traffic-traffic)"), in configuration file order: `participant` (its name), `reason` (`"no_control_link"` or `"no_counters"`; the table of reasons is in the same section). `[]` if there are none. Each of them is also in `unplaced` of every network |
 | `networks[]` | Every network of the configuration file, in its order: `name` (the simulation's name), `kind`, `counted` (the number of counted participants), `senders` (how many of them sent one frame or more), `receivers` (how many of them received one or more), `delivered` and `unplaced` (see below) |
 | `networks[].delivered` | Whether sent frames arrived. `true`: a counted participant sent, and another counted participant received. `false`: a counted participant sent, no counted participant received, every participant known to be on the network was counted, and the network's `unplaced` is empty. `null`: unknown (no counted participant, nobody sent, the only sender is the only receiver (it received the frames of a participant that the launcher does not count), or no counted participant received while a participant that was not counted is on the network or the network's `unplaced` is not empty) |
 | `networks[].unplaced[]` | The participants of the run that may be on this network without the launcher knowing (`describe: false`, and no counters for this network), in configuration file order: `participant`, `reason` (as in `unplaced` above). `[]` if there are none. A participant that its counters place on another network is listed here and not in the `unplaced` of `traffic` |
@@ -812,6 +813,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
   "notes": 0,
   "simulation": "reached_stop_at",
   "interrupted_by": null,
+  "registry_uri": "silkit://127.0.0.1:<port>",
   "timing": {
     "speed": "max",
     "time_step_ms": 10,
@@ -985,6 +987,8 @@ For a program that decides whether frames arrived, read `delivered` of each netw
             "builtin": false
           }
         ],
+        "network_map": null,
+        "j1939_nodes": null,
         "control": {
           "transport": "silkit",
           "wire_version": 2
@@ -1061,6 +1065,8 @@ For a program that decides whether frames arrived, read `delivered` of each netw
             "builtin": false
           }
         ],
+        "network_map": null,
+        "j1939_nodes": null,
         "control": {
           "transport": "silkit",
           "wire_version": 2
@@ -1083,7 +1089,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
 }
 ```
 
-The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>` and `<actual_speed>`).
+The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>`, `<actual_speed>` and `<port>`).
 
 ## Recording a scenario run on a timeline (`--timeline`)
 
@@ -1093,7 +1099,7 @@ With `--timeline <file>`, `run --scenario` writes the values that the scenario w
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event with `--events`). In the result of `run --json` and `--events`, `scenario.timeline` holds the file name (as given in the arguments). **Without `--timeline`, nothing in the output of a run changes.**
+- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event with `--events`). In the result of `run --json` and `--events`, `scenario.timeline` holds the file name (as given in the arguments), and `null` without `--timeline`. **Without `--timeline`, nothing else in the output of a run changes.**
 - The file is opened before anything is started (missing directories are created). If it cannot be opened, the run ends with the error `setup` (exit code 3) and starts nothing. If the file cannot be written after the run (a full disk, for example), the error is `timeline-write`. The scenario result (`scenario.status`) does not change, but the finding is an error, so the run fails even when the scenario passed (exit code 1).
 - If points were dropped at the limits, the `timeline:` line adds the number of dropped points, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
 - The file is written whether the scenario passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
@@ -1122,30 +1128,32 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `vehicle_sil_timeline` | Version of this format (currently 1) |
 | `vehicle_sil`, `stage` | The vehicle-sil version; `"run"` (the record of an actual run) |
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
-| `tick_ms` | The controller's time step |
+| `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
 | `scenario` | `file`, `name`, `status` and `over_at_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
 | `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
-| `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `code` only (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
+| `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `severity` and `code` only, the other keys `null` (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
 | `limits` | The limits on the number of points, and the dropped points (see "Limits" below) |
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` and `status` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version.
 
-The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write. Launchers with `timeline-lines` in `features` of `vehicle_sil_launch version --json` write the top-level `lines[]` and the `lines` of each step.
+Every key in this section is in every file. A key that does not apply has the value `null`. The one exception is `expect_skipped` of a step, which, as in `run --json`, is there only when the step has it.
+
+The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
 The `watch` of a step is the condition that the step checks (`null` for a step without a condition).
 
-| `mode` | Step | What it looks at | `until_ms` |
+| `mode` | Step | What it looks at | `to_ms` |
 |---|---|---|---|
 | `at` | `expect` at one point in time | The value at `from_ms` | `null` |
-| `always` | `expect` with `hold_for_ms` | The value at `from_ms` and every sample up to `until_ms` | The step's time + `hold_for_ms` |
+| `always` | `expect` with `hold_for_ms` | The value at `from_ms` and every sample up to `to_ms` | The step's time + `hold_for_ms` |
 | `once` | `expect` with `within_ms`, `wait_until` | The value at `from_ms` and the samples after it. The time at which the condition held is the step's `at_ms` | The wait limit |
-| `during` | `expect` beside `ramp` and `wave` | Only the samples with times from `from_ms` to `until_ms` | The ECU step in which the final value enters the ECU (it can be after the step's `end_ms`; see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
+| `during` | `expect` beside `ramp` and `wave` | Only the samples with times from `from_ms` to `to_ms` | The ECU step in which the final value enters the ECU (it can be after the step's `end_ms`; see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
 
-- `watch.conditions[]` has one entry per variable: `variable` and `compare[]` (`op` is `eq`, `ne`, `ge`, `le`, `gt`, `lt` or `near`; `value`; `tolerance` for `near`).
-- For a step that the scenario never reached (`not_run`), `from_ms` and `until_ms` are `null`.
+- `watch.conditions[]` has one entry per variable: `variable` and `compare[]` (`op` is `eq`, `ne`, `ge`, `le`, `gt`, `lt` or `near`; `value`; `tolerance` for `near`, `null` for the other ops).
+- For a step that the scenario never reached (`not_run`), `from_ms` and `to_ms` are `null`.
 
 The `failed` of a failed step holds what failed, as numbers (`null` for other steps; the text for people is in `message`).
 
@@ -1217,6 +1225,11 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
   "variable": "Engine.engine.throttle",
   "source": "written",
   "encoding": "all",
+  "columns": ["at_ms", "value"],
+  "samples": null,
+  "first_ms": null,
+  "last_ms": null,
+  "not_applied_from": null,
   "points": [
     [0, 50],
     [500, 50],
@@ -1228,16 +1241,20 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 | `source` | Contents | `encoding` |
 |---|---|---|
 | `written` | Every write that the scenario sent. A point is `[time, value]`, where the time is when the write takes effect. **These are the values sent; they did not necessarily reach the ECU** (see `not_applied_from` below) | `all` |
-| `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points |
+| `sampled` | The sample values that the scenario saw, only for the variables that conditions read | `changes`: only samples whose value changed become points. `samples` (the number of samples seen), `first_ms` and `last_ms` (the times of the first and the last sample) are kept beside the points. They are `null` in a `written` series |
 
-- **The `written` series of an input on which the scenario places a `dither` has 3 columns**, and the series has `"columns": ["t_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). The points of a series without `columns` are `[time, value]`. A reader takes the columns by the names in `columns`.
+- `columns` names the columns of a point: `["at_ms", "value"]`. **The `written` series of an input on which the scenario places a `dither` has 3 columns**: `["at_ms", "value", "base"]`. The third column, `base`, is the value before the dither is added and the type rounding is applied: the value of a `set`, or the value of a `ramp` or `wave` at that time (see "Overlaying a dither" in [scenario.md](scenario.md#overlaying-a-dither-dither)). A series has 3 columns when the text of the scenario places a dither on that input (a declaration in `inputs`, or a `dither` step with a waveform that runs in the variant). Then every point has 3 columns, also before the dither is placed and after it is removed, whether or not the run reached that step (the number of columns does not change with the controller's time step). A reader takes the columns by the names in `columns`.
 
   ```json
   {
     "variable": "Engine.engine.throttle",
     "source": "written",
     "encoding": "all",
-    "columns": ["t_ms", "value", "base"],
+    "columns": ["at_ms", "value", "base"],
+    "samples": null,
+    "first_ms": null,
+    "last_ms": null,
+    "not_applied_from": null,
     "points": [
       [0, 50, 50],
       [10, 52, 50],
@@ -1251,7 +1268,7 @@ For a step that failed on a write, `writes[]` holds every write that the scenari
 - Values: a bool is `true` or `false`, an enum is the item's value (the names are in `variables[].items`), and a real that is not a number is `null`.
 - A sample is the value at the end of an ECU step, with the time of the start of that step (see "Values that conditions see" in [scenario.md](scenario.md#values-that-conditions-see)). Read a `sampled` value as lasting from its point to the next point (the last point lasts until `last_ms`).
 - "Changed" in `changes` means that the written text differs (`0` and `-0` differ; consecutive `null`s are the same).
-- If a `written` series has `not_applied_from`, the points from that index (from 0) on were sent but are not known to have reached the ECU. Do not draw them as if the value changed. These are:
+- If `not_applied_from` of a `written` series is not `null`, the points from that index (from 0) on were sent but are not known to have reached the ECU. Do not draw them as if the value changed. These are:
   - The point of a write of the failed step whose `applied` is `false` or `null` (the `point` of that entry in `failed.writes[]`) and the points after it, whether the ECU's Agent refused the write at once or the ECU refused it in its step. A write of the same `set` (or of the same time's `dither` writes) that the ECU did apply (`applied: true`) is not marked.
   - Points whose time is after `scenario.over_at_ms` (no ECU advanced to that time).
 - In a failed run and in a run that ended partway, some points before `not_applied_from` can also be writes that the scenario had not confirmed when the run ended (it had not yet seen their results; for a point at exactly `over_at_ms`, whether the ECU ran the step at that time differs from run to run). In a run that passed, every point was applied, with one exception: a `dither` write for the time of the last step may not have its result yet, because the scenario is over as soon as its last step passes.
@@ -1320,12 +1337,12 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 |---|---|
 | Failed (`failed`) | The `at_ms` of the failed step (in a run that ended at `stop_at_ms`, the time it stopped) |
 | Passed (`passed`) | The latest `at_ms` of the steps |
-| Ended partway (`incomplete`) | The time of the last sample seen (0 if none was seen). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is set) |
+| Ended partway (`incomplete`) | The time of the last sample seen (0 if none was seen). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
 
 - The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Only in a run that failed on a write that the ECU's Agent refused at once is `over_at_ms` (the time step of the refusal) at or before `recorded_to_ms` (the time of that write).
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.
-- For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `tick_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
+- For runs that passed and runs that failed on a sample or a wait, a different controller time step (`time_step_ms`) gives the same file, except `over_at_ms` and `time_step_ms`. The following do depend on the time step, in the same places as the scenario result does (see "Timing" in [scenario.md](scenario.md#timing) and "Results" in [scenario.md](scenario.md#results)):
   - The `end_ms` of a wait step that succeeded (`wait_until`, `expect` with `within_ms`), and the times of the steps after it.
   - In a run where a step failed, the `status` of the other steps (the steps after the failed one and the steps in progress), which can be `passed`, `unfinished` or `not_run`, and their `start_ms`, `at_ms` and `end_ms`. The time step decides how far ahead the controller had sent and how many results it had seen before the failure was known. **So a `passed` step can have an `at_ms` after `recorded_to_ms`, and the points of that step's writes are not in the series** (the series and `recorded_to_ms` do not depend on the time step).
   - Everything in a run that ended with a write not applied. When a write that a `dither` makes while no motion runs (a write that belongs to no step) is refused, the step that fails (the first step not yet decided at that moment) also depends on the time step. If that write would be sent after the time step that decides the last step, with some time steps the scenario passes without sending it (see "When a step fails" in [scenario.md](scenario.md#when-a-step-fails)).
@@ -1536,7 +1553,7 @@ Keys of `runs[]`:
 | `reason` | The right column of the table (`null` if empty) |
 | `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
 
-`formats` and `features` of `version --json` have no entries for `test`.
+`formats` of `version --json` has the version of this JSON as `test`; `features` has no entry for `test`.
 
 ## See also
 

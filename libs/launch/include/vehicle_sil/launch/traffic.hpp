@@ -26,7 +26,7 @@ enum class TrafficNotCounted
     Mapped,        ///< the entry's `variables` map the counters: their values are not the executable's
     NoSample,      ///< no sample of a step before the end came
 };
-/// "no-control-link", "restarted", "real-time", "no-counters", "mapped", "no-sample" (the
+/// "no_control_link", "restarted", "real_time", "no_counters", "mapped", "no_sample" (the
 /// result's "not_counted"); None: "".
 [[nodiscard]] const char* traffic_not_counted_name(TrafficNotCounted why);
 
@@ -57,7 +57,7 @@ enum class TrafficUnplacedReason
     /// configuration, in RunTraffic::unplaced). The same in every run of the configuration.
     NoCounters,
 };
-/// "no-control-link", "no-counters" (the result's "reason").
+/// "no_control_link", "no_counters" (the result's "reason").
 [[nodiscard]] const char* traffic_unplaced_reason_name(TrafficUnplacedReason why);
 
 /// A participant of the run without --describe that may be on a network without the launcher

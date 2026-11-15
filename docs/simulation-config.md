@@ -87,7 +87,7 @@ Top-level keys:
 | `stop_at_ms` | | Virtual time at which the simulation stops (ms, an integer from 1 to 10^12) | The simulation runs until a participant stops it or you stop `run` with Ctrl+C |
 | `start_timeout_ms` | | How long to wait for the required participants to join (ms, an integer from 1 to 10^12) | 30000 |
 | `stop_timeout_ms` | | How long `run` waits for participants to end (ms, an integer from 1 to 10^12) | 10000 |
-| `registry_uri` | | Where `run` starts the registry (`silkit://<host>:<port>`, port from 1 to 65535) | A free port on 127.0.0.1 |
+| `registry_uri` | | Where `run` starts the registry (`silkit://<host>:<port>`, port from 0 to 65535; 0: a free port) | A free port on 127.0.0.1 |
 | `speed` | | Speed at which virtual time advances (a number from 0.000001 to 1000000, or `max`) | As fast as possible (same as `max`) |
 | `time_step_ms` | | The controller's time step (ms of virtual time, an integer from 1 to 10^12) | 10 when running as fast as possible |
 | `late_tolerance_ms` | | Tolerance for lateness (ms of real time, an integer from 1 to 10^12) | 10 (independent of the time step and the speed) |
@@ -131,6 +131,7 @@ Notes on individual keys:
 |---|---|
 | Omitted | A free port on 127.0.0.1. |
 | Omitted, and a required participant is one that you start yourself | `silkit://127.0.0.1:8500` (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)). |
+| Port 0 (`silkit://127.0.0.1:0`, `silkit://0.0.0.0:0`) | A free port, chosen when the run starts. The `registry at` and `join at` lines, the commands of the participants (also the one printed for a participant that you start yourself) and the `registry` event of `--events` have that port, and so has `registry_uri` of the `run --json` result; `registry_uri` in the JSON of the check is as written. The port changes from run to run, and so does the command for a participant that you start yourself (manual) or that runs on another computer: for a debugger configuration you reuse, or for another computer, write a fixed port. |
 | Participants on other computers join too | Write an address such as `silkit://0.0.0.0:8500`. Participants on this computer get a URI with `127.0.0.1`. |
 | Not a loopback address (`127.x.x.x`, `[::1]`, `localhost`) | The check reports the note `registry-on-network`, and `run` passes the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` to the participants it starts (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
 
@@ -364,7 +365,7 @@ The arguments are quoted for the shell you paste them into:
 - cmd.exe expands `%...%` even inside `"`, so edit arguments that contain `%` before you paste them.
 - To paste into PowerShell, add `&` before the quoted executable, and edit arguments that contain `$` or `` ` ``.
 
-If `registry_uri` is not written, a run with a required manual participant starts the registry at `silkit://127.0.0.1:8500`. The command is the same in every run, so you can set up the debugger configuration once and reuse it. If another program uses that port, `run` fails with a `setup` error; write another port in `registry_uri`.
+If `registry_uri` is not written, a run with a required manual participant starts the registry at `silkit://127.0.0.1:8500`. The command is the same in every run, so you can set up the debugger configuration once and reuse it. If another program uses that port, `run` fails with a `setup` error; write another port in `registry_uri`, or port 0 for a free one (the command then changes from run to run).
 
 #### With a non-loopback `registry_uri`
 

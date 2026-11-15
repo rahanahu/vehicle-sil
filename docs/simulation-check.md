@@ -371,8 +371,8 @@ Keys of each element of `participants[]`:
 | `reported` | The `--describe` output (only when `status` is `described`; `null` otherwise) |
 | `variables` | Array of the ECU's variables as the simulation sees them (`ecu.connected`, then in declaration order) |
 | `variable_map` | Array of the mappings written in `variables` of the configuration file (in the order written). Present only for participants that have `variables` |
-| `network_map` | Array of the lines written in `network_names` of the configuration file (in the order written, after the lines of the variant are merged). Present only for participants that have `network_names` |
-| `j1939_nodes` | Array of the entries written in `j1939_nodes` of the configuration file, with the node each one takes (in the order written, after the entries of the variant are merged). Present only for participants that have `j1939_nodes` |
+| `network_map` | Array of the lines written in `network_names` of the configuration file (in the order written, after the lines of the variant are merged). `null` for participants without `network_names` |
+| `j1939_nodes` | Array of the entries written in `j1939_nodes` of the configuration file, with the node each one takes (in the order written, after the entries of the variant are merged). `null` for participants without `j1939_nodes` |
 | `control` | How the ECU exposes its variables, as reported in its `--describe` output |
 
 | `status` | Meaning |
@@ -536,6 +536,8 @@ participants:
           "builtin": false
         }
       ],
+      "network_map": null,
+      "j1939_nodes": null,
       "control": {
         "transport": "silkit",
         "wire_version": 2

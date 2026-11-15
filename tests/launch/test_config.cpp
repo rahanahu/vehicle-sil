@@ -686,13 +686,14 @@ TEST_CASE(run_decides_the_listen_variable_of_its_participants_and_notes_one_it_i
 TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
 {
     const std::string expected = "registry_uri must be where the registry of the simulation listens, silkit://<host>:<port> "
-                                 "with a port from 1 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for "
-                                 "other computers too), not ";
+                                 "with a port from 0 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for "
+                                 "other computers too; port 0: a free port, chosen when the run starts), not ";
     const std::string tail = "; leave registry_uri out for a free port on 127.0.0.1\n";
     for (const auto& [value, shown] : std::vector<std::pair<std::string, std::string>>{
              {"http://localhost:8500", "the text \"http://localhost:8500\""},
              {"silkit://localhost", "the text \"silkit://localhost\""},
-             {"silkit://localhost:0", "the text \"silkit://localhost:0\""},
+             {"silkit://localhost:-1", "the text \"silkit://localhost:-1\""},
+             {"silkit://localhost:-0", "the text \"silkit://localhost:-0\""},
              {"silkit://localhost:65536", "the text \"silkit://localhost:65536\""},
              {"silkit://localhost:85x0", "the text \"silkit://localhost:85x0\""},
              {"'silkit://local host:8500'", "the text \"silkit://local host:8500\""},
@@ -703,6 +704,12 @@ TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
         check_text(got.substr(0, std::min(got.size(), std::string("E 2 value: ").size())), "E 2 value: ", value.c_str());
         CHECK(got.find(expected) != std::string::npos);
         CHECK(got.ends_with(tail));
+    }
+    // Port 0: the registry takes a free port when the run starts.
+    for (const std::string uri : {"silkit://127.0.0.1:0", "silkit://localhost:65535"})
+    {
+        check_text(read("vehicle_sil_simulation: 1\nregistry_uri: " + uri + "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
+                   "", uri.c_str());
     }
     check_text(read("vehicle_sil_simulation: 1\nstop_timeout_ms: 0\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
                "E 2 value: stop_timeout_ms is 0, but it must be from 1 to 1000000000000 (milliseconds to wait for each "

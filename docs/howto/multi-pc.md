@@ -183,7 +183,8 @@ When `registry_uri` is `0.0.0.0`, the launcher lists the IPv4 addresses of this 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `the registry cannot listen at silkit://...: ...`, and the exit code is 3 | Another program or another `run` uses that port. | Change the port in `registry_uri`, or end the other `run`. |
+| `the registry cannot listen at silkit://...: ... (does another registry run there? ...)`, and the exit code is 3 | Another program or another `run` uses that port. | Change the port in `registry_uri`, or end the other `run`. Keep a fixed port: the other computers join at it. |
+| `the registry cannot listen at silkit://...: ... (<address> is not an address of this computer ...)`, and the exit code is 3 | `registry_uri` has the address of another computer. The registry listens on the computer that runs `run`. | Write one of the addresses that the message lists, or `0.0.0.0`. |
 
 ## Step 3: Join from the other computer
 

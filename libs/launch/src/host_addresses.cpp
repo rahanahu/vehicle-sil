@@ -4,6 +4,8 @@
 // (run.hpp, detail::host_addresses() and detail::other_computers_line()).
 #include "vehicle_sil/launch/run.hpp"
 
+#include "vehicle_sil/core/participant_configuration.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -237,7 +239,8 @@ bool detail::ipv6_any_takes_ipv4()
 #endif
 }
 
-std::string detail::other_computers_line(const std::string& uri, const std::vector<HostAddress>& addresses, bool ipv6_only)
+std::string detail::other_computers_line(const std::string& uri, const std::vector<HostAddress>& addresses, bool ipv6_only,
+                                         const std::string& written_port)
 {
     const auto colon = uri.rfind(':');
     const std::string port = colon == std::string::npos ? std::string{} : uri.substr(colon + 1);
@@ -249,7 +252,9 @@ std::string detail::other_computers_line(const std::string& uri, const std::vect
     {
         return "from other computers, join at " + uri + tail;
     }
-    const std::string only6 = ipv6_only ? "; it listens on IPv6 only here: for IPv4, write registry_uri: silkit://0.0.0.0:" + port
+    // What the file has: port 0 stays 0 (a free port in every run), not the one this run took.
+    const std::string only6 = ipv6_only ? "; it listens on IPv6 only here: for IPv4, write registry_uri: silkit://0.0.0.0:" +
+                                              (written_port.empty() ? port : written_port)
                                         : std::string{};
     if (addresses.empty())
     {
@@ -268,6 +273,58 @@ std::string detail::other_computers_line(const std::string& uri, const std::vect
         which += "; the first is on the network of its default route, usually the one the others reach";
     }
     return "from other computers, join at " + list + " (" + which + only6 + ")" + tail;
+}
+
+std::string detail::registry_listen_hint(const std::string& listen, bool written, bool fixed,
+                                         const std::vector<HostAddress>& addresses)
+{
+    const std::string scheme = "silkit://";
+    const auto colon = listen.rfind(':');
+    if (listen.rfind(scheme, 0) != 0 || colon == std::string::npos || colon < scheme.size())
+    {
+        return {};
+    }
+    const std::string host = listen.substr(scheme.size(), colon - scheme.size());
+    const bool freePort = listen.substr(colon + 1) == "0";
+    // An IPv4 address as text (an IPv6 one may be written in more than one way: it counts as a name).
+    const bool ipv4 = !host.empty() && std::count(host.begin(), host.end(), '.') == 3 &&
+                      std::all_of(host.begin(), host.end(), [](char c) { return c == '.' || (c >= '0' && c <= '9'); });
+    const bool mine = host == "0.0.0.0" || host == "[::]" || is_loopback_registry_uri(listen) ||
+                      std::any_of(addresses.begin(), addresses.end(), [&host](const HostAddress& a) { return a.host == host; });
+    std::string list;
+    for (std::size_t i = 0; i < addresses.size(); ++i)
+    {
+        list += (i == 0 ? "" : ", ") + addresses[i].host;
+    }
+    const std::string instead = list.empty() ? "0.0.0.0 for all of this computer's addresses, or 127.0.0.1 for this computer only"
+                                             : "one of this computer's addresses (" + list +
+                                                   "), 0.0.0.0 for all of them, or 127.0.0.1 for this computer only";
+    if (ipv4 && !mine)
+    {
+        return " (" + host + " is not an address of this computer, and the registry listens on this computer: write in "
+                             "registry_uri " +
+               instead + ")";
+    }
+    if (!written)
+    {
+        return fixed ? " (a run with a participant you start yourself (manual) listens there if the file has no registry_uri, "
+                       "so that its command stays the same; does another registry run there? write another port in "
+                       "registry_uri, or port 0 for a free one: the command then changes from run to run)"
+                     : std::string{};
+    }
+    if (mine)
+    {
+        // Port 0 is never taken by another program: SIL Kit's message is all there is to say.
+        return freePort ? std::string{}
+                        : " (does another registry run there? choose another port in registry_uri, or port 0 for a free one)";
+    }
+    return freePort ? " (is " + host + " an address of this computer, where the registry listens? If not, write in "
+                                       "registry_uri " +
+                          instead + ")"
+                    : " (does another registry run there, or is " + host +
+                          " not an address of this computer? Choose another port in registry_uri (port 0 for a free one), or "
+                          "write there " +
+                          instead + ")";
 }
 
 } // namespace vehicle_sil::launch

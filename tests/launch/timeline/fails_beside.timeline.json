@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "the expect beside a ramp fails at a sample",
@@ -72,14 +72,15 @@
       "watch": {
         "mode": "during",
         "from_ms": 50,
-        "until_ms": 250,
+        "to_ms": 250,
         "conditions": [
           {
             "variable": "Body.body.speed",
             "compare": [
               {
                 "op": "le",
-                "value": 200
+                "value": 200,
+                "tolerance": null
               }
             ]
           },
@@ -88,7 +89,8 @@
             "compare": [
               {
                 "op": "ge",
-                "value": 14
+                "value": 14,
+                "tolerance": null
               }
             ]
           }
@@ -123,14 +125,15 @@
       "watch": {
         "mode": "at",
         "from_ms": null,
-        "until_ms": null,
+        "to_ms": null,
         "conditions": [
           {
             "variable": "Body.level",
             "compare": [
               {
                 "op": "eq",
-                "value": 30
+                "value": 30,
+                "tolerance": null
               }
             ]
           }
@@ -144,6 +147,11 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 14],
         [50, 14],
@@ -162,9 +170,11 @@
       "variable": "Body.level",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 15,
       "first_ms": 0,
       "last_ms": 140,
+      "not_applied_from": null,
       "points": [
         [0, 14],
         [60, 15],
@@ -180,9 +190,11 @@
       "variable": "Body.body.speed",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 15,
       "first_ms": 0,
       "last_ms": 140,
+      "not_applied_from": null,
       "points": [
         [0, 50],
         [10, 100],

@@ -209,7 +209,7 @@
     let vi = 1;
     let bi = -1;
     if (Array.isArray(s.columns)) {
-      ti = s.columns.indexOf('t_ms');
+      ti = s.columns.indexOf('at_ms');
       vi = s.columns.indexOf('value');
       bi = s.columns.indexOf('base');
       if (ti < 0 || vi < 0) {
@@ -263,8 +263,8 @@
         /** For points of the failed step's writes: point index -> applied (true, false, or null: not known). */
         applied: null,
         notAppliedFrom: Number.isInteger(s.not_applied_from) ? s.not_applied_from : null,
-        /** written: a dither writes it too (the series has columns). */
-        dithered: Array.isArray(s.columns),
+        /** written: a dither writes it too (its points have the column base). */
+        dithered: bi >= 0,
         /** written: whether the file says the point before not_applied_from is in the ECU (see appliedBefore). */
         beforeApplied: false,
         firstMs: isNum(s.first_ms) ? s.first_ms : null,
@@ -291,7 +291,7 @@
 
   /**
    * The bands that conditions put on a variable's lane. A band covers the samples the condition looks at:
-   * at: the instant from_ms; always and during: from_ms to until_ms, but not past the failure of the step or the
+   * at: the instant from_ms; always and during: from_ms to to_ms, but not past the failure of the step or the
    * end of the record (`recordedTo`), since no sample was looked at after them; once: from_ms to the time it held
    * (passed) or to the limit, with a thin line on to the limit. `until` is the end the scenario gave.
    */
@@ -318,11 +318,11 @@
         return;
       }
       const from = w.from_ms;
-      let to = isNum(w.until_ms) ? w.until_ms : from;
+      let to = isNum(w.to_ms) ? w.to_ms : from;
       let limit = null;
       const until = to;
       if (w.mode === 'once') {
-        limit = isNum(w.until_ms) ? w.until_ms : null;
+        limit = isNum(w.to_ms) ? w.to_ms : null;
         if (step.status === 'passed' && isNum(step.at_ms)) to = step.at_ms;
         else if (step.status === 'failed' && isObject(step.failed) && isNum(step.failed.at_ms))
           to = step.failed.at_ms;
@@ -447,7 +447,7 @@
   function buildModel(tl) {
     const sc = tl.scenario;
     const recordedTo = isNum(sc.recorded_to_ms) ? sc.recorded_to_ms : null;
-    const tick = isNum(tl.tick_ms) && tl.tick_ms > 0 ? tl.tick_ms : null;
+    const timeStep = isNum(tl.time_step_ms) && tl.time_step_ms > 0 ? tl.time_step_ms : null;
     const vars = [];
     const byName = new Map();
     const addVar = (info) => {
@@ -566,7 +566,7 @@
       for (const s of [v.written, v.sampled])
         if (s && s.t.length) end = Math.max(end, s.t[s.t.length - 1]);
     }
-    const margin = Math.max(tick ?? 0, end * 0.04, end > 0 ? 0 : 10);
+    const margin = Math.max(timeStep ?? 0, end * 0.04, end > 0 ? 0 : 10);
     const domain = [0, end + margin];
 
     const inputs = vars.filter((v) => v.info.written === true || (v.written && !v.info.watched));
@@ -582,7 +582,7 @@
       status: sc.status,
       recordedTo,
       overAt: isNum(sc.over_at_ms) ? sc.over_at_ms : null,
-      tick,
+      timeStep,
       steps: tl.steps,
       lines,
       vars,
@@ -613,7 +613,7 @@
     if (!f || !isNum(f.at)) return [d0, d1];
     const start = isNum(f.step.start_ms) ? Math.min(f.step.start_ms, f.at) : f.at;
     const right = Math.max(f.at, model.recordedTo ?? f.at);
-    const span = Math.max(right - start, (d1 - d0) * 0.2, (model.tick ?? 1) * 4);
+    const span = Math.max(right - start, (d1 - d0) * 0.2, (model.timeStep ?? 1) * 4);
     const t0 = Math.max(d0, start - span * 0.3);
     const t1 = Math.min(d1, right + span * 0.15);
     return [t0, Math.max(t1, t0 + 1e-9)];
@@ -1166,7 +1166,7 @@
       ['fact.scenario', tl.scenario.file],
       ['fact.configuration', tl.file],
       ['fact.variant', tl.variant],
-      ['fact.tick', m.tick !== null ? fmtMs(m.tick) : null],
+      ['fact.timeStep', m.timeStep !== null ? fmtMs(m.timeStep) : null],
       ['fact.recordedTo', m.recordedTo !== null ? fmtMs(m.recordedTo) : t('fact.nothingRecorded')],
       ['fact.version', tl.vehicle_sil],
     ].filter(([, v]) => v !== null && v !== undefined);
@@ -1525,9 +1525,9 @@
   /** The view around a step (from its start to its end and the end of what it watches). */
   function stepView(st) {
     const from = st.start_ms;
-    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.until_ms : null].filter(isNum);
+    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.to_ms : null].filter(isNum);
     const to = Math.max(from, ...ends);
-    const pad = Math.max((to - from) * 0.25, (state.model.tick ?? 1) * 3);
+    const pad = Math.max((to - from) * 0.25, (state.model.timeStep ?? 1) * 3);
     return [Math.max(state.model.domain[0], from - pad), Math.min(state.model.domain[1], to + pad)];
   }
 
@@ -1726,9 +1726,9 @@
       const limit =
         isObject(st.watch) &&
         st.watch.mode === 'once' &&
-        isNum(st.watch.until_ms) &&
-        st.watch.until_ms > end
-          ? st.watch.until_ms
+        isNum(st.watch.to_ms) &&
+        st.watch.to_ms > end
+          ? st.watch.to_ms
           : null;
       if ((limit ?? end) < scale.t0 || start > scale.t1) continue;
       const label = `#${st.index} ${st.kind}`;
@@ -2658,7 +2658,7 @@
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       const stepT =
-        (state.model.tick ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);
+        (state.model.timeStep ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);
       const t = state.cursor ?? state.view[0];
       moveCursor(
         Math.min(

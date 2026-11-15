@@ -94,7 +94,8 @@ std::string yaml_quote(const std::string& text);
 std::string without_versions(std::string text);
 
 /// `text` with the values that depend on how fast the machine is as the docs show them: every
-/// "wall_ms" and "actual_speed" (in the JSON and in the events) as <wall_ms> and <actual_speed>.
+/// "wall_ms" and "actual_speed" (in the JSON and in the events) as <wall_ms> and <actual_speed>,
+/// and the port of a "registry_uri" at 127.0.0.1 as <port>.
 std::string without_timing(std::string text);
 
 /// The Markdown file directly in the directory `docs` that has the line `marker` (exactly one has it).

@@ -371,8 +371,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `reported` | `--describe` の出力（`status` が `described` のときだけ。ほかは `null`） |
 | `variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順） |
 | `variable_map` | 設定ファイルの `variables` に書いた対応の配列（書いた順）。`variables` を書いた participant だけにあります |
-| `network_map` | 設定ファイルの `network_names` に書いた行の配列（書いた順。機種の行を重ねた後）。`network_names` を書いた participant だけにあります |
-| `j1939_nodes` | 設定ファイルの `j1939_nodes` に書いた行と、各行が当たったノードの配列（書いた順。機種の行を重ねた後）。`j1939_nodes` を書いた participant だけにあります |
+| `network_map` | 設定ファイルの `network_names` に書いた行の配列（書いた順。機種の行を重ねた後）。`network_names` のない participant では `null` です |
+| `j1939_nodes` | 設定ファイルの `j1939_nodes` に書いた行と、各行が当たったノードの配列（書いた順。機種の行を重ねた後）。`j1939_nodes` のない participant では `null` です |
 | `control` | ECU が `--describe` に出力した、変数の公開の方法 |
 
 | `status` | 意味 |
@@ -536,6 +536,8 @@ participants:
           "builtin": false
         }
       ],
+      "network_map": null,
+      "j1939_nodes": null,
       "control": {
         "transport": "silkit",
         "wire_version": 2

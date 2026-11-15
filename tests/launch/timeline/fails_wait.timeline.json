@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "a wait runs out",
@@ -85,14 +85,15 @@
       "watch": {
         "mode": "once",
         "from_ms": 0,
-        "until_ms": 100,
+        "to_ms": 100,
         "conditions": [
           {
             "variable": "Body.body.speed",
             "compare": [
               {
                 "op": "ge",
-                "value": 1000
+                "value": 1000,
+                "tolerance": null
               }
             ]
           },
@@ -101,7 +102,8 @@
             "compare": [
               {
                 "op": "eq",
-                "value": 1
+                "value": 1,
+                "tolerance": null
               }
             ]
           }
@@ -142,6 +144,11 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 5]
       ]
@@ -150,6 +157,11 @@
       "variable": "Door.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [0, 1]
       ]
@@ -158,9 +170,11 @@
       "variable": "Door.level",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 11,
       "first_ms": 0,
       "last_ms": 100,
+      "not_applied_from": null,
       "points": [
         [0, 1]
       ]
@@ -169,9 +183,11 @@
       "variable": "Body.body.speed",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 11,
       "first_ms": 0,
       "last_ms": 100,
+      "not_applied_from": null,
       "points": [
         [0, 50]
       ]

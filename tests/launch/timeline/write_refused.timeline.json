@@ -5,7 +5,7 @@
   "file": "simulation.yaml",
   "variant": null,
   "params": [],
-  "tick_ms": 10,
+  "time_step_ms": 10,
   "scenario": {
     "file": "scenario.yaml",
     "name": "an ECU refuses a write",
@@ -121,14 +121,15 @@
       "watch": {
         "mode": "once",
         "from_ms": null,
-        "until_ms": null,
+        "to_ms": null,
         "conditions": [
           {
             "variable": "Body.level",
             "compare": [
               {
                 "op": "eq",
-                "value": 13
+                "value": 13,
+                "tolerance": null
               }
             ]
           },
@@ -137,7 +138,8 @@
             "compare": [
               {
                 "op": "eq",
-                "value": 2
+                "value": 2,
+                "tolerance": null
               }
             ]
           }
@@ -151,6 +153,10 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
       "not_applied_from": 1,
       "points": [
         [0, 7],
@@ -161,9 +167,11 @@
       "variable": "Body.level",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 5,
       "first_ms": 0,
       "last_ms": 40,
+      "not_applied_from": null,
       "points": [
         [0, 7]
       ]
@@ -172,6 +180,11 @@
       "variable": "Body.mode",
       "source": "written",
       "encoding": "all",
+      "columns": ["at_ms", "value"],
+      "samples": null,
+      "first_ms": null,
+      "last_ms": null,
+      "not_applied_from": null,
       "points": [
         [40, 2]
       ]
@@ -180,9 +193,11 @@
       "variable": "Body.mode",
       "source": "sampled",
       "encoding": "changes",
+      "columns": ["at_ms", "value"],
       "samples": 5,
       "first_ms": 0,
       "last_ms": 40,
+      "not_applied_from": null,
       "points": [
         [0, 0],
         [40, 2]

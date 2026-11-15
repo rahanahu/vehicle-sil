@@ -888,7 +888,7 @@ With `--timeline <file>`, `run --scenario` also writes the values that the scena
 - If `expect`s beside steps are not checked, the result line ends with `, <n> expect not checked`.
 - A skipped step has `-` as its time in the table, and its line during the run has no ` at <time> ms`.
 
-In a scenario with a `dither` (it has `inputs`, or a `dither` step that runs), the check part is followed by a list of what is placed on the inputs. The output of other scenarios does not change, and the list also appears in the check part at the start of `run`. The list has only the inputs on which a `dither` is placed or removed: it is there to show what comes under each dither, so the writes of other inputs are left out. It has one row per item, in the order of the `inputs` declarations and then the steps. `from` and `to` are the times of the text: `?` after a wait step, and `-` as the `to` of a `dither` without an end. The `from` of a declared dither is `first write`: it is applied from the first write to that input, so the text does not give its time. This is the list for [examples/ecu_main/scenarios/throttle_dither.yaml](../examples/ecu_main/scenarios/throttle_dither.yaml):
+In a scenario with a `dither` (it has `inputs`, or a `dither` step that runs), the check part is followed by a list of what is placed on the inputs. The output for people of other scenarios does not change, and the list also appears in the check part at the start of `run`. The list has only the inputs on which a `dither` is placed or removed: it is there to show what comes under each dither, so the writes of other inputs are left out. It has one row per item, in the order of the `inputs` declarations and then the steps. `from` and `to` are the times of the text: `?` after a wait step, and `-` as the `to` of a `dither` without an end. The `from` of a declared dither is `first write`: it is applied from the first write to that input, so the text does not give its time. This is the list for [examples/ecu_main/scenarios/throttle_dither.yaml](../examples/ecu_main/scenarios/throttle_dither.yaml):
 
 <!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->
 ```text
@@ -911,11 +911,11 @@ Engine.engine.throttle  ?            -     dither none (after the wait of line 1
 | `params` | Only if any | For each parameter that the scenario declares or uses: `name`, `value`, `from` |
 | `skipped_steps` | Only if any | The number of steps to be skipped |
 | `unchecked_expects` | Only if any | The number of `expect`s beside steps that will not be checked |
-| `inputs`, `lines` | Only in a scenario with a `dither` | See the next table. The `scenario` of `run --json` has the same keys |
+| `inputs`, `lines` | Always (empty arrays in a scenario without a `dither`; `null` if the scenario could not be read) | See the next table. The `scenario` of `run --json` has the same keys |
 
 `value` in `params` is the effective value (`true` or `false`, a number or a string). `from` is one of `scenario`, `configuration`, `variant` and `command_line`.
 
-Keys of a scenario with a `dither`:
+Keys about the `dither`s:
 
 | Key | Meaning |
 |---|---|
@@ -934,7 +934,8 @@ Keys of a scenario with a `dither`:
 | `over_at_ms` | The controller step at which the scenario ended (for `passed` and `failed`; null otherwise). |
 | `skipped_steps` | The number of skipped steps. The key is present only if there is at least 1. |
 | `unchecked_expects` | The number of `expect`s beside `ramp` and `wave` that were not checked. The key is present only if there is at least 1. |
-| `inputs[]`, `lines[]` | Only in a scenario with a `dither`: the dithers declared in `inputs` and the list of what the text places on the inputs (the same as in `check --json` above; known before the run). |
+| `inputs[]`, `lines[]` | The dithers declared in `inputs` and the list of what the text places on the inputs (the same as in `check --json` above; known before the run). Empty in a scenario without a `dither`. |
+| `timeline` | The name of the `--timeline` file, as given in the arguments; `null` without `--timeline`. |
 | `steps[]` | The result of each step (next table). |
 
 A step counted in `unchecked_expects` did run, so it is not counted in `skipped_steps`.
@@ -1020,7 +1021,10 @@ Here is the `scenario` that `run --json` gives for the failing example of [Resul
         "code": null,
         "message": null
       }
-    ]
+    ],
+    "inputs": [],
+    "lines": [],
+    "timeline": null
   }
 ```
 
