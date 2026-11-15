@@ -187,6 +187,11 @@ export interface ScenarioView {
   status: ScenarioStatus | null;
   /** Virtual time at which the scenario ended. */
   overAtMs: number | null;
+  /**
+   * Where the server serves the run's timeline file (`api/timeline/<session id>`), once the run has ended with one;
+   * else null. The page `timeline/` of the server draws it (see "Timeline of a scenario run" in docs/gui.md).
+   */
+  timelineUrl: string | null;
 }
 
 function scenarioView(summary: SummaryScenario): ScenarioView {
@@ -198,6 +203,7 @@ function scenarioView(summary: SummaryScenario): ScenarioView {
     stepsOmitted: summary.steps_omitted,
     status: summary.status,
     overAtMs: summary.over_at_ms,
+    timelineUrl: summary.timeline_url,
   };
 }
 

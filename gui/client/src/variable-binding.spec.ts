@@ -296,6 +296,7 @@ describe('client.variables.bind', () => {
       steps_omitted: 0,
       status: null,
       over_at_ms: null,
+      timeline_url: null,
     };
     await deliver(hello('ready', 1, { scenario }));
     expect(client.session.session.get()?.scenario).not.toBeNull();
