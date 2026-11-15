@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 #include "pcap_link.hpp"
 
+#include "../text_width.hpp"
+
 #include <algorithm>
 #include <atomic>
-#include <cctype>
 #include <cerrno>
 #include <climits>
 #include <cstring>
@@ -46,11 +47,11 @@ std::string trimmed(std::string text)
     return text;
 }
 
+/// Whether `a` and `b` are the same but for the case of ASCII letters (other letters must be the same).
 bool same_ignoring_case(std::string_view a, std::string_view b) noexcept
 {
-    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
-        return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
-    });
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [&](char x, char y) { return lower(x) == lower(y); });
 }
 
 std::string_view without_braces(std::string_view text) noexcept
@@ -377,8 +378,13 @@ TransmitResult PcapLink::transmit(std::span<const std::uint8_t> frame)
             {
                 return TransmitResult::QueueFull;
             }
+            // Npcap's text says itself that the send failed ("send error: PacketSendPacket failed: ..."),
+            // libpcap's on Linux does not ("send: Network is down").
             const std::string why = trimmed(pcap_text(api_.geterr(handle_)));
-            error = "sending on '" + options_.name + "' failed: " + (why.empty() ? "result " + std::to_string(result) : why);
+            const std::string where = "sending on '" + options_.name + "'";
+            error = why.empty()                                ? where + " failed: result " + std::to_string(result)
+                    : why.find("failed") != std::string::npos ? where + ": " + why
+                                                               : where + " failed: " + why;
         }
     }
     set_last_error(std::move(error));
@@ -712,6 +718,28 @@ std::size_t choose_pcap_device(std::span<const PcapDevice> devices, std::string_
     std::vector<std::string> names;
     if (found.empty())
     {
+        // Windows takes a connection name whatever the case of its ASCII letters ("ethernet 2" for
+        // "Ethernet 2"), so the bridge does too where that names one connection. Names that differ
+        // only in case are refused with those names: each of them, exactly, still chooses its own.
+        for (std::size_t i = 0; i < devices.size(); ++i)
+        {
+            if (!devices[i].connection.empty() && same_ignoring_case(devices[i].connection, wanted))
+            {
+                found.push_back(i);
+            }
+        }
+        if (found.size() == 1)
+        {
+            return found.front();
+        }
+        for (const auto index : found)
+        {
+            names.push_back(as_typed(devices[index].connection));
+        }
+        if (!names.empty())
+        {
+            throw pcap_ambiguous_interface(flavor, wanted, names);
+        }
         for (const auto& device : devices)
         {
             names.push_back(as_typed(display_name(device)));
@@ -736,12 +764,12 @@ std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor 
     std::size_t width = 0;
     for (const auto& device : devices)
     {
-        width = std::max(width, as_typed(display_name(device)).size());
+        width = std::max(width, display_width(as_typed(display_name(device))));
     }
     for (const auto& device : devices)
     {
         const std::string name = as_typed(display_name(device));
-        text += "  --interface " + name + std::string(width - name.size() + 2, ' ') + state_text(device.flags);
+        text += "  --interface " + name + std::string(width - display_width(name) + 2, ' ') + state_text(device.flags);
         std::string more = device.description;
         if (device.name != display_name(device))
         {
