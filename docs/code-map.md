@@ -369,6 +369,7 @@ What `simulation.*` checks:
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
+- `simulation.ecu_main_j1939_node*`: `--j1939-node` of `ecu_main()` gives the node the values of the line (also on a renamed network), the message for a line that applies to no node (exit code 3), a node added in a step keeps the values of the code; the usage errors of its value are in `simulation.ecu_main_refuses_bad_command_lines`
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -384,6 +385,7 @@ What `ecu_main.*` checks:
 - The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
 - `--local`
 - 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- 2 copies of the engine, the second with `--j1939-node` (`ecu_main.j1939_node`: the addresses in the monitoring output)
 - Usage, stop requests
 
 ### `core` / `lin`
