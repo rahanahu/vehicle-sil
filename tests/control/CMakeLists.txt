@@ -10,6 +10,14 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_tests
     test_peer_agent.cpp
     test_variable_map.cpp
     test_wire.cpp
+    test_wire_v1_golden.cpp
+    test_wire_v2.cpp
+  LINK vehicle_sil::simulation)
+
+# Replaces the global operator new to count the allocations of encode_step(): its own binary.
+vehicle_sil_add_harness_tests(vehicle_sil_control_wire_allocation_tests
+  PREFIX control LABELS unit control TIMEOUT 60
+  SOURCES test_wire_allocation.cpp
   LINK vehicle_sil::simulation)
 
 # A transport that outlives its ECU ends the process with a message (not a use after free).
