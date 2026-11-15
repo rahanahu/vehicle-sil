@@ -13,8 +13,8 @@ needs no C++ build:
   schema   tests/schema/test_schemas.py: the JSON Schemas of schema/ against the examples and the documents (the
            part that needs no launcher; CTest runs all of it, as schema.files_and_launcher)
   scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py),
-           tests/scripts/test_job_summary.py (scripts/job_summary.py) and tests/scripts/test_check_docs.py
-           (scripts/check-docs.py)
+           tests/scripts/test_job_summary.py (scripts/job_summary.py), tests/scripts/test_check_docs.py
+           (scripts/check-docs.py) and tests/scripts/test_verify.py (scripts/verify.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
@@ -212,7 +212,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
         return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")] +
                    [s.run([python, "tests/scripts/test_run_gui.py"]),
                     s.run([python, "tests/scripts/test_job_summary.py"]),
-                    s.run([python, "tests/scripts/test_check_docs.py"])])
+                    s.run([python, "tests/scripts/test_check_docs.py"]),
+                    s.run([python, "tests/scripts/test_verify.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):

@@ -82,7 +82,7 @@ Do not rewrite existing commit history. Ignore settings alone do not untrack a t
 | Script | What it does |
 |---|---|
 | `scripts/doctor.py` | Checks whether this computer has what the build and the tests need, and prints one line per requirement (read-only; for anything missing, prints how to install it) |
-| `scripts/verify.py` | Configures, builds and tests each preset, and summarizes the result (failed tests with the start of their output, and the log locations) |
+| `scripts/verify.py` | Configures, builds and tests each preset, and summarizes the result (failed tests with the start of their output and the lines further down that say FAIL or Error, and the log locations) |
 | `scripts/check-commits.py` | Checks the format of commit messages, and that no file that must not be committed is included |
 | `scripts/check-docs.py` | Checks the relative links in the tracked Markdown files, and the section names quoted after a link in the form `の「…」`. Also checks that each English page (`docs/`, `README.md`) and its Japanese page (`docs/ja/`, `README.ja.md`) agree in the sequence of heading levels, the code blocks and the link targets (a page without its English edition is only counted; with `--require-english` it is an error) |
 | `scripts/mutate.py` | Applies the mutations written in a TOML file one at a time and checks that the tests fail |

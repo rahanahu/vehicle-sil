@@ -3,7 +3,8 @@
 
 The full output of every step goes to build/logs/<tag>-<preset>-{configure,build,test}.log and the
 test results to build/logs/<tag>-<preset>.junit.xml. The summary names the failed stage, the failed
-tests with the first lines of their output, the first compiler errors and the log files.
+tests with the first lines of their output and the lines further down that say FAIL or Error, the
+first compiler errors and the log files.
 
 Exit codes: 0 every preset passed, 1 a preset failed, 2 usage error.
 Requires Python 3.11+ (standard library only); runs on Linux and in MSYS2 on Windows.
@@ -32,6 +33,10 @@ LINUX_PRESETS = ["linux-gcc-debug", "linux-gcc-release", "linux-clang-debug", "l
 MAX_FAILED_NAMES = 20
 MAX_FAILED_OUTPUTS = 3
 OUTPUT_LINES = 15
+# Lines further down a failing test's output that say what failed: shown after its first lines, so that a long
+# output does not hide them (a test's "FAIL: ...", GoogleTest's "[  FAILED  ]", an "Error").
+FAIL_MARK = re.compile(r"FAIL|Error")
+MAX_FAIL_LINES = 5
 # The longest line shown (longer ones are cut): a test's message whole, as far as it is sensible.
 LINE_CHARS = 400
 MAX_ERRORS = 3
@@ -133,6 +138,17 @@ def parse_ctest(text: str, result: Result) -> bool:
     return True
 
 
+def shown_output(lines: list[str]) -> list[str]:
+    """What the summary shows of a failing test's output: its first lines, then the lines further down that say what
+    failed (after a line "...")."""
+    lines = _trim(list(lines))
+    marked = [ln for ln in lines[OUTPUT_LINES:] if FAIL_MARK.search(ln)][:MAX_FAIL_LINES]
+    shown = _trim(lines[:OUTPUT_LINES])
+    if marked:
+        shown += ["..."] + [ln[:LINE_CHARS] for ln in marked]
+    return shown
+
+
 def outputs_from_log(text: str, names: list[str]) -> dict[str, list[str]]:
     """The output ctest printed after the first failing status line of each named test."""
     wanted, found = set(names), {}
@@ -145,9 +161,9 @@ def outputs_from_log(text: str, names: list[str]) -> dict[str, list[str]]:
                 current = m.group(1)
                 found[current] = []
             continue
-        if current is not None and len(found[current]) < OUTPUT_LINES:
+        if current is not None:
             found[current].append(line)
-    return {n: _trim(v) for n, v in found.items()}
+    return {n: shown_output(v) for n, v in found.items()}
 
 
 def outputs_from_junit(path: Path, names: list[str]) -> dict[str, list[str]]:
@@ -160,7 +176,7 @@ def outputs_from_junit(path: Path, names: list[str]) -> dict[str, list[str]]:
         name = case.get("name", "")
         if name in wanted:
             out = case.findtext("system-out") or ""
-            found[name] = _trim(out.replace("\r", "").splitlines()[:OUTPUT_LINES])
+            found[name] = shown_output(out.replace("\r", "").splitlines())
     return found
 
 
