@@ -967,17 +967,20 @@ def verify_command(args: argparse.Namespace) -> int:
             s.run([launch] + command, cwd=project, timeout=300)
 
     def connect(s: Step) -> None:
-        # check --connect on the template with an Ethernet network added: the launcher, with a PATH of the system's
-        # directories only, finds the bridge next to it in bin/ and runs its --describe with the arguments of the
-        # network. No adapter is opened (the target is a name the bridge is not asked to open).
+        # check --connect on the template with an Ethernet network added: the launcher finds the bridge next to it
+        # in bin/ and runs its --describe with the arguments of the network. No adapter is opened (the target is a
+        # name the bridge is not asked to open). The environment is that of the step simulate, where the check also
+        # starts the template's ECUs (MinGW: their runtime DLLs are on that PATH), less every PATH directory that
+        # holds a bridge (a build tree's): the bridge found can then only be the one next to the launcher.
         text = (project / "simulation.yaml").read_text(encoding="utf-8")
         added, n = re.subn(r"(?m)^networks:\n", "networks:\n  - name: ETH\n    kind: ethernet\n"
                            "    external: { all_frames: true }\n", text, count=1)
         if n != 1:
             raise StepFailed("the template's simulation.yaml has no line `networks:` to add the network ETH under")
         (project / "connect.yaml").write_text(added, encoding="utf-8")
+        path = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and not (Path(d) / ETHERNET_BRIDGE).is_file()]
         p = s.run([launch, "check", "--json", "--connect", "ETH=vsil-verify0", "connect.yaml"], cwd=project,
-                  env=dict(os.environ, PATH=minimal_path()), check=False, capture=True, timeout=300)
+                  env=dict(os.environ, PATH=os.pathsep.join(path)), check=False, capture=True, timeout=300)
         try:
             result = json.loads(p.stdout)
         except json.JSONDecodeError:
