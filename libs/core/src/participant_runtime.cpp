@@ -1440,7 +1440,8 @@ void ParticipantRuntime::deliver_stop(bool now, std::chrono::steady_clock::time_
             stop_delivered_.store(true, std::memory_order_release); // it ends anyway
         }
         // Before Running, SIL Kit ignores Stop() (with a warning): the request is kept and
-        // delivered by start() once Running is reached or, with virtual time, by the first step.
+        // delivered once Running is reached (by start(), or by on_status() when start() does not
+        // wait any more) or, with virtual time, by the first step.
     }
     catch (const std::exception&)
     {
@@ -1822,14 +1823,17 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         }
     }
     // This participant's own status comes here too: a stop requested after a step failure
-    // waited for the Error (deliver_stop()).
+    // waited for the Error (deliver_stop()), and one requested before Running waits for Running.
+    // start() passes that one on while it waits, and the first step does with virtual time; when
+    // start() has given up (a timeout) and there are no steps, this is the only place left.
+    // deliver_stop() keeps a request for the first step where it has to, and passes it on once.
     if (status.participantName == options_.participant_name)
     {
         if (has_finished(PeerStatus{status.state}))
         {
             notify_stop_observer(); // also a stop that another participant asked for
         }
-        if (status.state == orch::ParticipantState::Error)
+        if (status.state == orch::ParticipantState::Error || status.state == orch::ParticipantState::Running)
         {
             deliver_stop(false);
         }

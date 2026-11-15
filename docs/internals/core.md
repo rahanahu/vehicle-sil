@@ -90,7 +90,7 @@ CommunicationReady handlers need this guarantee when the start fails before Runn
 
 | When CommunicationReady arrives | Handlers |
 |---|---|
-| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). In virtual time, the stop that `stop()` kept is passed at the first step, and the lifecycle stops there |
+| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). The stop that `stop()` kept is passed where the lifecycle can take it, and the lifecycle stops there: in virtual time at the first step, otherwise when the participant gets to Running |
 | While `stop()` waits for the shutdown | Called as usual |
 
 The tests are `core.communication_ready_after_stop_*` and `core.communication_ready_handler_that_runs_is_waited_for_by_stop`.

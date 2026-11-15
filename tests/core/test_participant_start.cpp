@@ -356,6 +356,40 @@ TEST_CASE(participant_start_goes_on_waiting_when_it_is_told_to_give_up_while_the
     CHECK(state == std::optional(orch::ParticipantState::Running));
 }
 
+TEST_CASE(participant_without_virtual_time_passes_on_a_stop_when_it_runs_after_start_ran_out_of_time)
+{
+    // start() runs out of time before Running, and the caller asks for a stop, which SIL Kit
+    // does not take before Running. Without virtual time there is no first step that could pass
+    // the request on later, and start() is not looking any more: the runtime passes it on when it
+    // sees its own Running.
+    InProcessRegistry registry;
+    Meeting meeting;
+    ParticipantRuntime runtime(ParticipantRuntimeOptions{"Starter", registry.uri});
+    hold_the_lifecycle_until_the_flags_are_read(runtime, meeting); // here: until the test lets go
+
+    bool ranOut = false;
+    try
+    {
+        runtime.start(50ms);
+    }
+    catch (const StartTimeoutError&)
+    {
+        ranOut = true;
+    }
+    runtime.request_stop("test: stop after start() ran out of time");
+    {
+        const std::lock_guard lock(meeting.mutex);
+        meeting.flagsRead = true;
+    }
+    meeting.changed.notify_all();
+    const auto state = runtime.wait_until_finished(unit::scaled_timeout(10s));
+    runtime.stop("test");
+
+    CHECK(ranOut);
+    CHECK(!meeting.waitRanOut);
+    CHECK(state == std::optional(orch::ParticipantState::Shutdown));
+}
+
 TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_start_was_back_from_the_lifecycle)
 {
     // An autonomous participant's CommunicationReady handlers run on the SIL Kit thread as soon as
