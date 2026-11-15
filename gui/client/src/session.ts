@@ -18,61 +18,83 @@ import {
 } from './session-state';
 import { ErrorSink, Readable, Writable, callEach, derived, rethrowLater } from './values';
 
-/** 残す、セッションにつながらない知らせの種類の数。 */
+/** How many kinds of notices not tied to a session are kept. */
 export const MAX_NOTICES = 20;
 
-/** seq が前の事象より後でない事象を当てなかったときの知らせ（英語。ほかの知らせと同じく、そのまま出す）。 */
+/**
+ * Notice for an event not applied because its seq was not after the previous event's (English, shown as is like the
+ * other notices).
+ */
 export const STALE_EVENTS_NOTICE =
   'events came with a seq that is not after the last one, and were not shown ' +
   '(the launcher wrote them out of order, or the server sent them again)';
 
-/** セッションにつながらない知らせ（読めない通知など。英語の文はそのまま出す）。同じ文は数をまとめる。 */
+/**
+ * Notice not tied to a session (an unreadable notification and so on; the English text is shown as is). Identical texts
+ * are counted together.
+ */
 export interface Notice {
   id: number;
   message: string;
-  /** 同じ文が届いた回数。 */
+  /** How many times the same text arrived. */
   count: number;
 }
 
-/** セッションの写しの、読むための口（GuiClient.session）。 */
+/** Read side of the session copy (GuiClient.session). */
 export interface ClientSession {
-  /** いまの（または最後の）セッション。サーバーにまだ何もなければ null。 */
+  /** The current (or last) session. null while the server has none yet. */
   readonly session: Readable<SessionView | null>;
   /**
-   * セッションの写しがサーバーと揃っている: つながっていて、hello と再送を受け終えた。揃っていない間は、古い表示を
-   * 見て操作しないよう、開始と停止を押せなくする。ほかの機能（値など）は、それぞれの ready を持つ。
+   * The session copy matches the server: connected, and hello and the resent events have all arrived. Until then,
+   * Start and Stop are disabled so that nobody acts on a stale display. Other features (values and so on) have their
+   * own ready.
    */
   readonly ready: Readable<boolean>;
-  /** 最後に事象を当てた時刻（Date.now()）。経過時間を時計で進める起点。 */
+  /** When an event was last applied (Date.now()). The starting point for advancing elapsed time with the clock. */
   readonly lastEventAt: Readable<number>;
-  /** セッションにつながらない知らせ。セッションの知らせ（seq の抜けなど）は session の problems。 */
+  /**
+   * Notices not tied to a session. Notices about the session (a gap in seq and so on) are in the problems of session.
+   */
   readonly notices: Readable<readonly Notice[]>;
   /**
-   * サーバーがトークンを断った（WebSocket の unauthorized）。接続はもうつなぎ直さない。一度立つと戻らない（別の
-   * トークンで使うときは、クライアントを作り直す）。
+   * The server refused the token (WebSocket unauthorized). The connection no longer reconnects. Once set, it stays
+   * set (to use another token, create a new client).
    */
   readonly rejected: Readable<boolean>;
   /**
-   * サーバーの口の版が、このライブラリの読む版（PROTOCOL_VERSION）と違う。そのわけの文（英語）。接続はもう
-   * つなぎ直さない（待っても直らない）。一度立つと戻らない。違わなければ null。
+   * The text (English) saying why the server API's version differs from the version this library reads
+   * (PROTOCOL_VERSION). The connection no longer reconnects (waiting will not fix it). Once set, it stays set. null if
+   * the versions match.
    */
   readonly incompatible: Readable<string | null>;
-  /** 読めた通知を、状態に当てた後にまとまりごとに受ける。返す関数で購読をやめる。 */
+  /**
+   * Receives the readable notifications, one batch at a time, after they are applied to the state. Call the returned
+   * function to unsubscribe.
+   */
   onMessages(listener: (batch: readonly ServerMessage[]) => void): () => void;
-  /** 利用者が気づいたこと（読めない応答など）を、知らせに出す。同じ文は数をまとめる。 */
+  /**
+   * Adds something the user noticed (an unreadable answer and so on) to the notices. Identical texts are counted
+   * together.
+   */
   report(message: string, count?: number): void;
-  /** 知らせを消す。 */
+  /** Removes a notice. */
   dismissNotice(id: number): void;
 }
 
 /**
- * セッション（ランチャーの 1 回の run）の写し。接続（Connection）の通知を読み、サーバーの要約と事象から状態を作る。
+ * Copy of a session (one run of the launcher). Reads the notifications of the connection (Connection) and builds the
+ * state from the server's summary and events.
  *
- * - hello の要約で状態を作り直し（要約が正）、続く事象（再送のログと、新しい事象）を当てる。
- * - つなぐたびに、持っているセッションのどこから再送してほしいかを、認証のメッセージに入れる（resumeFields）。
- * - 要約の芯が読めない hello か session を受けたら、揃っていないことにして、接続に作り直しを頼む（hello から受け直す）。
- * - 知らない通知と知らない事象は、状態に当てずに通す（onMessages には読めたものだけ、接続の onBatch にはすべて）。
- * - 接続への頼みごと（断られたら切る、作り直す）は、購読者へ知らせる前に済ませる（購読者が投げても進む）。
+ * - Rebuilds the state from the summary in hello (the summary is authoritative), then applies the events that follow
+ *   (the resent log and new events).
+ * - On every connect, puts into the authentication message where in the session it holds the server should resend
+ *   from (resumeFields).
+ * - On a hello or session whose summary core is unreadable, marks itself not in sync and asks the connection to
+ *   restart (receive again from hello).
+ * - Passes unknown notifications and unknown events through without applying them (onMessages gets only the readable
+ *   ones, the connection's onBatch gets all of them).
+ * - Requests to the connection (disconnect after a refusal, restart) are made before subscribers are notified (so
+ *   they happen even if a subscriber throws).
  */
 export class SessionFeed implements ClientSession {
   private readonly current: Writable<SessionView | null>;
@@ -119,14 +141,15 @@ export class SessionFeed implements ClientSession {
     );
   }
 
-  /** 断られたか、版が違って、もうつながない（読める値を立てる前、接続を切る前に立つ）。 */
+  /** Refused, or the versions differ: never connect again (set before the readable values and before disconnecting). */
   get stopped(): boolean {
     return this.stoppedFlag;
   }
 
   /**
-   * 認証のメッセージに足す欄: 持っているセッションのどこから再送してほしいか。接続がつなぐたびに呼ぶ（呼ぶと、
-   * hello と再送を受け終えるまで「揃っていない」になる）。ライブラリの中だけで使う。
+   * Fields to add to the authentication message: where in the session it holds the server should resend from. Called
+   * on every connect (after the call, the copy is not in sync until hello and the resent events have arrived). Used
+   * only inside the library.
    */
   resumeFields(): Pick<AuthMessage, 'session' | 'from_seq'> {
     this.synced.set(false);
@@ -142,14 +165,16 @@ export class SessionFeed implements ClientSession {
   }
 
   /**
-   * HTTP の応答の要約を、通知を待たずに当てる（開始、停止、fetchSession() の応答。ライブラリの中で使う）。
-   * WebSocket がつながっていれば、同じ実行では、ランチャーと停止の依頼だけを取る（ほかは通知で届く）。前の実行の
-   * 要約では、新しい実行を戻さない。
+   * Applies the summary in an HTTP answer without waiting for the notification (the answers to start, stop and
+   * fetchSession(); used inside the library). While the WebSocket is connected, takes only the launcher and the stop
+   * request for the same run (the rest arrives in notifications). A summary of an earlier run never brings back an old
+   * run over a new one.
    */
   adopt(summary: SessionSummary | null): void {
     if (!summary) return;
     const session = this.current.get();
-    // 前の実行の要約（始まりかけの実行への停止の応答など）で、新しい実行を戻さない
+    // A summary of an earlier run (such as the answer to a stop of a run that was just starting) never replaces a newer
+    // run
     if (session && summary.id < session.id) return;
     const live = this.connection.state.get() === 'open';
     this.current.set(
@@ -167,7 +192,7 @@ export class SessionFeed implements ClientSession {
     this.noticeList.update((list) => list.filter((notice) => notice.id !== id));
   }
 
-  /** 接続から届いたまとまりを読んで当てる。 */
+  /** Reads and applies a batch from the connection. */
   private receive(raw: readonly unknown[]): void {
     const batch: ServerMessage[] = [];
     let stop: 'unauthorized' | 'incompatible' | 'lost' | null = null;
@@ -186,7 +211,7 @@ export class SessionFeed implements ClientSession {
           error instanceof ProtocolError &&
           error.path === 'message.vehicle_sil_gui'
         ) {
-          // 版が違う: 待っても直らないので、つなぎ直さない
+          // Version mismatch: waiting will not fix it, so do not reconnect
           const version = JSON.stringify((value as { vehicle_sil_gui?: unknown }).vehicle_sil_gui);
           incompatible =
             `the server speaks version ${version} of the GUI protocol (vehicle_sil_gui) and this client ` +
@@ -195,7 +220,7 @@ export class SessionFeed implements ClientSession {
           break;
         }
         if (type === 'hello' || type === 'session') {
-          // 状態を作り直せないので、揃っていないことにして、hello から受け直す（残りは捨てる）
+          // The state cannot be rebuilt: mark not in sync and receive again from hello (drop the rest)
           stop = 'lost';
           break;
         }
@@ -204,13 +229,13 @@ export class SessionFeed implements ClientSession {
       if (message === null) continue;
       batch.push(message);
       if (message.type === 'error' && message.code === 'unauthorized') {
-        // 断られた: 続きは受けず、つなぎ直さない（画面が開き直しを促す）
+        // Refused: take nothing more and do not reconnect (the screen tells the user to open it again)
         stop = 'unauthorized';
         break;
       }
     }
-    // 接続への頼みごとを、購読者へ知らせる前に済ませる。止める印は切る前に立てる（切った知らせの中で connect() を
-    // 呼ばれても、つながない）
+    // Make the requests to the connection before notifying subscribers. Set the stop flag before disconnecting (so a
+    // connect() called from within the disconnect notification does not connect)
     if (stop === 'unauthorized' || stop === 'incompatible') {
       this.stoppedFlag = true;
       this.connection.close();
@@ -229,7 +254,7 @@ export class SessionFeed implements ClientSession {
     let events: LauncherEvent[] = [];
     let applied = false;
     let synced = this.synced.get();
-    // hello から synced までの再送は、つなぎ直す前に受けていた分と重なることがある（数えない）
+    // The resent events between hello and synced may overlap what arrived before the reconnect (not counted)
     let replaying = !synced;
     const flush = () => {
       if (session && events.length > 0) {
@@ -242,7 +267,8 @@ export class SessionFeed implements ClientSession {
       if (message.type !== 'event') flush();
       switch (message.type) {
         case 'hello': {
-          // 要約で作り直す。持っている分の続きを頼んだ再接続（from_seq つき）だけは、手元のログを残す
+          // Rebuild from the summary. Only a reconnect that asked to continue from what it holds (with from_seq) keeps
+          // the local log
           synced = false;
           replaying = true;
           const { session: summary, replay } = message;
@@ -263,7 +289,8 @@ export class SessionFeed implements ClientSession {
           replaying = false;
           break;
         case 'session':
-          // 要約が正: 事象と同じ順で届くので、届いた時点のサーバーの状態として置き換える（ログは残す）
+          // The summary is authoritative: it arrives in the same order as events, so replace the state with the
+          // server's state at that point (keep the log)
           session =
             session?.id === message.session.id
               ? applySummary(session, message.session, true)
@@ -274,7 +301,7 @@ export class SessionFeed implements ClientSession {
           break;
         case 'error':
           if (message.code === 'unauthorized') {
-            // rejected で知らせる（receive が接続を切る）
+            // Reported through rejected (receive disconnects)
           } else if (session && message.session === session.id) {
             const { code, message: text, skipped } = message;
             session = addProblem(
@@ -286,7 +313,7 @@ export class SessionFeed implements ClientSession {
           }
           break;
         case 'resync':
-          // すぐ後に hello から送り直される。それまでは揃っていない
+          // Sent again shortly, starting with hello. Not in sync until then
           synced = false;
           replaying = true;
           break;

@@ -1,34 +1,164 @@
-# サンプル
+# Examples
 
-やりたいこと別のサンプルです。上から順に読むと、使う層が少しずつ下がります。getting_started、typed_messages、pid_stream、fault_injection、vehicle、ethernet（`vehicle_sil_ethernet_example`）、low_level は、引数なしで動きます。結果を数行で表示し、期待どおりなら 0、違えば 1 で終了します。CTest にも入っています（ラベル `examples`）。ecu_pair は結果を検査しません。
+[日本語](README.ja.md)
 
-実行ファイルはビルドツリーの `examples/` 以下にあります（例: `build/linux-gcc-release/examples/getting_started/vehicle_sil_getting_started`）。
+This page lists the examples by task, and describes what each one contains and how to run it.
 
-| やりたいこと | 場所と実行ファイル | 読むとき |
+## List of examples
+
+The further down the list, the lower the layer an example uses.
+
+| Goal | Example | Executables and files |
 |---|---|---|
-| 最初の ECU を動かす（送る、受ける） | [getting_started](getting_started) `vehicle_sil_getting_started` | 最初に読みます。`Ecu&` を受け取るクラスで ECU を書き、`Simulation` で仮想バスか SIL Kit に載せます（`--silkit`）。 |
-| ECU アプリの部品を使う（Request、監視、識別情報） | [j1939/ecu_pair](j1939/ecu_pair) `vehicle_sil_j1939_ecu_pair` | 部品（`PeriodicSender`、`Requester`、`Monitor` など）で ECU の振る舞いを組み立てるときに読みます。既定は SIL Kit で、`--local` を付けると仮想バスで動きます。 |
-| メッセージを YAML で定義して使う | [typed_messages](typed_messages) `vehicle_sil_typed_messages` | ビット位置を書かずに信号を扱いたいとき。スケール、符号、列挙、特別な値、9 バイト以上のメッセージを使います。 |
-| 独自のプロトコルを作る（問い合わせを受けて値を定期的に返す） | [pid_stream](pid_stream) `vehicle_sil_pid_stream` | 部品を自分で書く最初の手本です。要求を受けて要求元へ周期的に返す部品と、その使い方を示します。バイト列の形式は差し替えられます。同じ相手の新しい要求には送信部品を作り直さずに周期を変え（`set_period()`）、長さの変わる返信は vector に追記して作ります。新しい相手の部品は、上限（`max_streams`）とタイマーの残り（`timers_free()`）を確かめてからハンドラの中で作り、Stop や期限切れではハンドラやタイマーの中で破棄します。ツールの操作は `Ecu::at()` で時刻に書きます。 |
-| 独自のプロトコルを作る（セッション、書き込み、長いデータ） | [j1939/param_service](j1939/param_service) `vehicle_sil_j1939_param_service` | 上の例より大きいプロトコル（セッション、再試行、ブロックの転送）を作るとき。 |
-| 故障を入れて、通信を観測して試験する | [fault_injection](fault_injection) `vehicle_sil_fault_injection` | 通信断、アドレスの競合、転送の途中の欠落、生フレームの注入を、仮想バスで再現して確かめるとき。 |
-| 複数の ECU、複数のネットワーク、LIN を 1 つのシミュレーションにする | [vehicle](vehicle) `vehicle_sil_vehicle` | 2 つの CAN と 1 つの LIN にまたがる構成を作るとき。LIN の Master と Slave も `Ecu&` のクラスの中にあります。エンジンの ECU は外から読み書きする変数を宣言し、`main()` が時刻を指定して書き込みます。既定は SIL Kit で、`--local` を付けると仮想バス（CAN と LIN）で同じ結果になります。 |
-| ECU ごとに実行ファイルを作り、別の人がまとめる | [ecu_main](ecu_main) `vehicle_sil_engine_ecu`、`vehicle_sil_dashboard_ecu` | 各自が ECU を実行ファイルにし、まとめる人が SIL Kit の 1 つのシミュレーションで動かすとき。`main()` は `ecu_main()` の 1 行で、どの ECU も同じ引数（`--describe`、`--registry-uri`、`--local --run-for-ms`）を持ちます。動かし方と `--describe` の JSON は [docs/ecu-executable.md](../docs/ecu-executable.md) にあります。2 つをまとめる構成ファイル `simulation.yaml` は、`vehicle_sil_launch check` で照合し、`vehicle_sil_launch run` で動かせます（[docs/simulation-config.md](../docs/simulation-config.md)）。CTest の `ecu_main.*` が、2 つを別々のプロセスで動かして確かめます。`simulation.live.yaml` は、同じ 2 つを等速で、止めるまで動かす構成です（GUI で値を見ながら触るとき。リポジトリからは `scripts/run-gui.py` がこれで GUI を起動します）。ブラウザの GUI で変数をどう並べるかは `simulation.dashboard.yaml` に、そこに置く自作の部品（素の JavaScript）は `panels/rpm-bar.js` にあります（[docs/gui.md](../docs/gui.md) の「ダッシュボードのファイル」「持ち込みのパネル」）。 |
-| 生のイーサネットのフレームを送受信する | [ethernet](ethernet) `vehicle_sil_ethernet_example`、`vehicle_sil_eth_sensor_ecu`、`vehicle_sil_eth_display_ecu` | ECU が自分でイーサネットのフレームを組み立てて送受信するとき（`Ecu::ethernet()`。vehicle-sil は TCP/IP のスタックを持ちません）。センサーが 100 ms ごとに値を送り、表示器が受けて確認を返します。`vehicle_sil_ethernet_example` は 2 つの ECU を 1 つのプロセスで動かし（引数なしは仮想ネットワーク、`--silkit` は SIL Kit。結果は同じで、自分で検査します）、`--ethertype <数>` でフレームの EtherType を変えられます。残りの 2 つは同じ ECU を `ecu_main()` で実行ファイルにしたもので、`vehicle_sil_launch run simulation.yaml --scenario scenarios/exchange.yaml` で動かします（ネットワークの `kind: ethernet`、`ecu.connected` でネットワークから外す）。EtherType の既定（0x88B5）と MAC アドレス（ローカル管理のアドレス）はこの例が決めた値で、規格では確かめていません。 |
-| ランチャーの Control Server に Python からつなぐ | [launch_control](launch_control) `write_before_start.py` | `vehicle_sil_launch run --control` で動かすシミュレーションを、Python から操作するとき。`ecu_main` の 2 つの ECU を `--start-paused` で起動し、最初のステップの前にエンジンのスロットルを書き、500 ms 進めて回転数を読み返して確かめます（違えば 1 で終了）。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドと、gRPC のある Python が要ります（[docs/control-api.md](../docs/control-api.md) の「Python」）。CTest の `control_server.example_write_before_start` です。ECU を自分で起動する（デバッガーから動かすなど）ときも、その participant を `manual` にして同じランチャーにつなぎます（[docs/simulation-config.md](../docs/simulation-config.md) の「participant を自分で起動する」）。 |
-| 動いているシミュレーションを止めて、時刻を指定して書く | [launch_control](launch_control) `pause_and_step.py` | 動いている途中で止めて書き、少し進めて確かめるとき。`ecu_main` の 2 つの ECU を実時間の 4 分の 1 の速さで動かし、`watch()` で回転数を見て 1000 rpm を超えたら一時停止し、止まっている時刻の 1 ms 後を `at` にしてスロットルを書き、100 ms 進め、書き込みが入ったステップと、`snapshot()` で読んだ時刻と値を確かめ、最速に変えて最後まで動かします（違えば 1 で終了）。要るものは `write_before_start.py` と同じです。CTest の `control_server.example_pause_and_step` です。 |
-| ブラウザの GUI のサーバーを、画面を使わずに叩く | [gui_client](gui_client)（素の JavaScript。`VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <構成ファイル>`） | GUI と同じ口（[gui/protocol](../gui/protocol/README.md)）で、自分の道具を作るとき。照合して実行を始め、事象を読み、終わりを待ちます。`run.mjs` は Node 22 以上の標準の `fetch` と `WebSocket` だけを使い、`run-with-library.mjs` はクライアントのライブラリ（[gui/client](../gui/client/README.md)）を 1 つにまとめたファイルを使います。`variables.mjs` は、同じライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き、進めて止めて、値を確かめる。Control Server を持つランチャーが要ります）。CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確かめます）。使い方は [docs/gui.md](../docs/gui.md) の「画面のない道具」。 |
-| ブラウザの GUI に、自分の画面を作る | [gui_starter](gui_starter)（素の HTML と JavaScript。ビルドなし） | GUI サーバーに配らせる自分の画面（`vehicle-sil-gui --web <dir>`）を、好きな枠組みで一から作るとき。クライアントのライブラリだけで、つなぐ、照合、開始と停止、変数を 1 つ見て書く、`client.variables.bind` で作ったスライダーとランプ、までの最小の形です。TypeScript と好きな枠組みで作るときの、ライブラリのパッケージ（`.tgz`）の使い方も README にあります。CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に `--web` で配ってブラウザで確かめます）。使い方は [docs/gui.md](../docs/gui.md) の「自分の画面を作る」。 |
-| 層を自分で組み立てる（バス、ホスト、ドライバー、ネットワーク） | [low_level](low_level) `vehicle_sil_low_level` | 新しいバックエンドや試験の土台を作るとき。通常は `Simulation` を使います。 |
+| Run your first ECUs (one sends, one receives) | [getting_started](getting_started) | `vehicle_sil_getting_started` |
+| Use the protocol parts for ECU applications (Request, monitoring, identification) | [j1939/ecu_pair](j1939/ecu_pair) | `vehicle_sil_j1939_ecu_pair` |
+| Define messages in YAML and use them | [typed_messages](typed_messages) | `vehicle_sil_typed_messages` |
+| Build a custom protocol (answer a query by returning values periodically) | [pid_stream](pid_stream) | `vehicle_sil_pid_stream` |
+| Build a custom protocol (sessions, writes, long data) | [j1939/param_service](j1939/param_service) | `vehicle_sil_j1939_param_service` |
+| Inject faults, observe the communication and test it | [fault_injection](fault_injection) | `vehicle_sil_fault_injection` |
+| Combine several ECUs, several networks and LIN into one simulation | [vehicle](vehicle) | `vehicle_sil_vehicle` |
+| Build one executable per ECU and combine them into one simulation with a configuration file | [ecu_main](ecu_main) | `vehicle_sil_engine_ecu`, `vehicle_sil_dashboard_ecu` |
+| Find and fix mismatches between ECUs built separately | [integrate_ecus](integrate_ecus) | `vehicle_sil_dashboard_v1_ecu` |
+| Add an ECU to the ECU project template | [first_ecu](first_ecu) | `cooler_ecu`, `read_cooler.py` |
+| Write scenario tests | [scenario_tests](scenario_tests) | `my_tests/*.yaml`, `simulation.variants.yaml` |
+| Send and receive raw Ethernet frames | [ethernet](ethernet) | `vehicle_sil_ethernet_example`, `vehicle_sil_eth_sensor_ecu`, `vehicle_sil_eth_display_ecu` |
+| Connect to the launcher's Control Server from Python | [launch_control](launch_control) | `write_before_start.py` |
+| Write a value from Python, advance time and read a value (the shortest example) | [launch_control](launch_control) | `write_and_read.py` |
+| Pause a running simulation and write at a specified time | [launch_control](launch_control) | `pause_and_step.py` |
+| Call the browser GUI server without the screens | [gui_client](gui_client) | `run.mjs`, `run-with-library.mjs`, `variables.mjs` (plain JavaScript) |
+| Build your own screen for the browser GUI | [gui_starter](gui_starter) | Plain HTML and JavaScript (no build) |
+| Assemble the layers yourself (bus, host, driver, network) | [low_level](low_level) | `vehicle_sil_low_level` |
 
-## 結合試験の駆動役
+## How to run the examples
 
-次の実行ファイルは、結合試験が別プロセスとして起動する相手です。入門用ではありません。
+The executables are under `examples/` in the build tree (for example, `build/linux-gcc-release/examples/getting_started/vehicle_sil_getting_started`).
 
-- [j1939/sender](j1939/sender)、[j1939/receiver](j1939/receiver): J1939 スタックを実時間の `Peer` で動かす送信側と、SIL Kit の CAN で直接受けて照合する受信側。
-- [lin](lin): LIN の Master と Slave のピア（`Peer` を使わず、`ParticipantRuntime` と `SilKitLinPort` で組み立てる）。
-- [virtual_time](virtual_time): 仮想時間のピア（物理モデル、J1939 ECU、LIN センサー、ボディコントローラー）。
+getting_started, typed_messages, pid_stream, fault_injection, vehicle, ethernet (`vehicle_sil_ethernet_example`) and low_level run without arguments. They print the result in a few lines and exit with 0 if it is as expected, or 1 if not. CTest runs them too (label `examples`). ecu_pair does not check its result.
 
-## 外部の CMake プロジェクトから使う
+## About each example
 
-- [fetchcontent_consumer](fetchcontent_consumer): FetchContent で取り込む外部プロジェクトの例。別のビルドとして構成して試験します（ラベル `fetchcontent`）。
+### getting_started
+
+Read this first. It writes ECUs as classes that take `Ecu&` and runs them with `Simulation` on a virtual bus or on SIL Kit (`--silkit`).
+
+### j1939/ecu_pair
+
+Read this to build ECU behavior from protocol parts (`PeriodicSender`, `Requester`, `Monitor` and others). It runs on SIL Kit by default, and on a virtual bus with `--local`.
+
+### typed_messages
+
+Read this to handle signals without writing bit positions. It uses scaling, sign, enumerations, special values and messages of 9 bytes or more.
+
+### pid_stream
+
+The first example to follow when you write a protocol part yourself. It shows a protocol part that receives requests and replies periodically to the requester, and how to use it. You can replace the byte format.
+
+For a new request from the same requester, it changes the period (`set_period()`) instead of recreating the sending protocol part. It builds replies of varying length by appending to a vector. It creates the protocol part for a new requester inside the handler, after it checks the limit (`max_streams`) and the free timer slots (`timers_free()`), and destroys it inside the handler or the timer on Stop or expiry. The tool's operations are scheduled at given times with `Ecu::at()`.
+
+### j1939/param_service
+
+Read this to build a protocol larger than pid_stream above (sessions, retries, block transfers).
+
+### fault_injection
+
+Read this to reproduce and check disconnection, address conflicts, frames lost in the middle of a transfer and injected raw frames on a virtual bus.
+
+### vehicle
+
+Read this to build a setup that spans 2 CAN networks and 1 LIN network. The LIN master and slave are also inside `Ecu&` classes. The engine ECU declares variables that are read and written from outside the simulation, and `main()` writes them at specified times. It runs on SIL Kit by default; with `--local` it runs on virtual buses (CAN and LIN) with the same result.
+
+### ecu_main
+
+Read this to build one executable per ECU and run them in one SIL Kit simulation. `main()` is the single line `ecu_main()`, and every ECU takes the same arguments (`--describe`, `--registry-uri`, `--local --run-for-ms`). [docs/ecu-executable.md](../docs/ecu-executable.md) explains how to run them and the `--describe` JSON. The CTest tests `ecu_main.*` run the 2 ECUs in separate processes and check them.
+
+| File | Contents |
+|---|---|
+| `simulation.yaml` | The configuration file that combines the 2 ECUs into one simulation. Check it with `vehicle_sil_launch check` and run it with `vehicle_sil_launch run` ([docs/simulation-config.md](../docs/simulation-config.md)). |
+| `simulation.live.yaml` | A configuration file that runs the same 2 ECUs at real-time speed until you stop them. Use it to watch and change values in the GUI (from the repository, `scripts/run-gui.py` starts the GUI with it). |
+| `simulation.two-pcs.yaml` | A configuration file that runs the same 2 ECUs split across 2 computers ([docs/howto/multi-pc.md](../docs/howto/multi-pc.md)). |
+| `simulation.dashboard.yaml` | How the browser GUI lays out the variables (see "Dashboard files" in [docs/gui.md](../docs/gui.md#dashboard-files)). |
+| `panels/rpm-bar.js` | A custom panel (plain JavaScript) placed on the dashboard (see "Custom panels" in [docs/gui.md](../docs/gui.md#custom-panels)). |
+
+### integrate_ecus
+
+Read this to run the example of the guide [Integrate and run several ECUs](../docs/howto/integrate-ecus.md). Run it in `examples/integrate_ecus/` of the build tree.
+
+| File | Contents |
+|---|---|
+| `simulation.yaml` | A configuration file that lists the engine ECU of ecu_main and a dashboard ECU (`vehicle_sil_dashboard_v1_ecu`) that calls the same bus by another network name (`VehicleCAN`). `check` reports the mismatch. |
+| `simulation.two-buses.yaml` | A configuration file that only adds the name to `networks`. `check` and `run` both pass, but the dashboard ECU does not receive the engine speed. |
+| `simulation.fixed.yaml` | A configuration file with the dashboard ECU replaced by the rebuilt one. |
+| `scenarios/engine_speed.yaml` | A scenario that checks the reception. |
+
+### first_ecu
+
+Read this to see the finished files of the guide [Create your first ECU](../docs/howto/first-ecu.md). It contains an ECU with variables only (`Cooler`) added to the 2 ECUs of [template/](../template), the 4 lines added to CMake, a `simulation.yaml` with 3 ECUs and a script that reads and writes variables from Python.
+
+It is not built on its own. The test build creates `cooler_ecu` next to the 2 ECUs of the template (`build/<preset>/tests/template/project/bin/`). The CTest test `template.first_ecu` compares the files and the output with the guide (`control_server.example_first_ecu` does this for the Python script).
+
+### scenario_tests
+
+Read this to see the finished files that you write in the guide [Write tests with scenarios](../docs/howto/scenario-tests.md). It contains 4 scenarios for the 2 ECUs of [ecu_main](ecu_main) (setting and checking values, response time, checks during `ramp` and `wave`, parameters and `only`) and a configuration file with 2 variants added.
+
+There is nothing to build. Copy the files to `build/<preset>/examples/ecu_main/` and run them with `vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/`. The line numbers in the output differ from the guide by the comment lines at the start of each scenario. The CTest test `launch_run.scenario_guide` compares the files, the output and the exit codes with the guide.
+
+### ethernet
+
+Read this to have an ECU build Ethernet frames itself and send and receive them (`Ecu::ethernet()`; vehicle-sil has no TCP/IP stack). The sensor sends a value every 100 ms, and the display receives it and replies with an acknowledgement.
+
+| Executable | Contents |
+|---|---|
+| `vehicle_sil_ethernet_example` | Runs the 2 ECUs in one process (on a virtual network without arguments, on SIL Kit with `--silkit`; the result is the same, and the example checks it itself). `--ethertype <number>` changes the EtherType of the frames. |
+| `vehicle_sil_eth_sensor_ecu`, `vehicle_sil_eth_display_ecu` | The same ECUs turned into executables with `ecu_main()`. Run them with `vehicle_sil_launch run simulation.yaml --scenario scenarios/exchange.yaml` (the network has `kind: ethernet`; `ecu.connected` disconnects an ECU from the bus). |
+
+The default EtherType (0x88B5) and the MAC addresses (locally administered addresses) are values that this example chose. They are not verified against the standard.
+
+### launch_control
+
+Python scripts that control a simulation run with `vehicle_sil_launch run --control`.
+
+| Script | Contents | CTest |
+|---|---|---|
+| `write_before_start.py` | Starts the 2 ECUs of `ecu_main` with `--start-paused`, writes the engine throttle before the first step, advances 500 ms, and reads back and checks the engine speed (exits with 1 if it differs). | `control_server.example_write_before_start` |
+| `write_and_read.py` | The first script of the guide [Read and write signals from outside](../docs/howto/operate-signals.md). Starts the 2 ECUs of `ecu_main` with `--start-paused`, writes 50 % to the throttle, advances 500 ms and prints the engine speed (the arguments are the path of `vehicle_sil_launch` and `simulation.yaml`). | `control_server.guide_operate_signals` (compares the full script and output shown in the guide) |
+| `pause_and_step.py` | Runs the 2 ECUs of `ecu_main` at a quarter of real-time speed, watches the engine speed with `watch()` and pauses when it exceeds 1000 rpm. Then it writes the throttle with `at` set to 1 ms after the paused time, advances 100 ms, checks the step in which the write was applied and the time and values read with `snapshot()`, and switches to as fast as possible to run to the end (exits with 1 if anything differs). | `control_server.example_pause_and_step` |
+
+All of them need a build with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` and a Python with gRPC (see "Python" in [docs/control-api.md](../docs/control-api.md#python)).
+
+To start an ECU yourself (to run it from a debugger, for example), make that participant `manual` and connect it to the same launcher (see "Starting a participant yourself (`manual`, `--manual`)" in [docs/simulation-config.md](../docs/simulation-config.md#starting-a-participant-yourself-manual---manual)).
+
+### gui_client
+
+Read this to build your own tool on the same API as the GUI ([gui/protocol](../gui/protocol/README.md)). It runs the check, starts a run, reads events and waits for the end. Run it with `VEHICLE_SIL_GUI_URL='<URL>' node run.mjs <configuration file>`.
+
+| File | Contents |
+|---|---|
+| `run.mjs` | Uses only the standard `fetch` and `WebSocket` of Node 22 or later. |
+| `run-with-library.mjs` | Uses the client library ([gui/client](../gui/client/README.md)) bundled into one file. |
+| `variables.mjs` | Reads and writes ECU variables with the same library: starts paused, writes one variable before the first step, advances, pauses and checks the value. Needs a launcher with a Control Server. |
+
+It is not part of the CMake build (`scripts/verify-gui.py` runs it against a stand-in launcher that replays the output of the real one, and checks it). For how to use it, see "Use from tools without a screen" in [docs/gui.md](../docs/gui.md#use-from-tools-without-a-screen).
+
+### gui_starter
+
+Read this to build your own screen, served by the GUI server (`vehicle-sil-gui --web <dir>`), from scratch in the framework of your choice. It is a minimal screen built only on the client library: connect, check, start and stop, watch and write one variable, and a slider and a lamp made with `client.variables.bind`. Its [README](gui_starter/README.md) also explains how to use the library package (`.tgz`) with TypeScript and the framework of your choice.
+
+It is not part of the CMake build (`scripts/verify-gui.py` serves it with `--web` against a stand-in launcher that replays the output of the real one, and checks it in a browser). For how to use it, see "Build your own screen" in [docs/gui.md](../docs/gui.md#build-your-own-screen).
+
+### low_level
+
+Read this to build a new backend or a test harness. Normally, use `Simulation`.
+
+## Executables started by integration tests
+
+The integration tests start the executables below as separate processes. They are not meant as introductions.
+
+| Example | Contents |
+|---|---|
+| [j1939/sender](j1939/sender), [j1939/receiver](j1939/receiver) | A sender that runs the J1939 stack on a real-time `Peer`, and a receiver that receives directly with SIL Kit CAN and checks the frames. |
+| [lin](lin) | LIN master and slave peers (assembled from `ParticipantRuntime` and `SilKitLinPort`, without `Peer`). |
+| [virtual_time](virtual_time) | Virtual-time peers (physical model, J1939 ECU, LIN sensor, body controller). |
+
+## Use from an external CMake project
+
+[fetchcontent_consumer](fetchcontent_consumer) is an example of an external project that includes vehicle-sil with FetchContent. It is configured and tested as a separate build (label `fetchcontent`). For the steps, see "Use from another project (FetchContent)" in [docs/build.md](../docs/build.md#use-from-another-project-fetchcontent).

@@ -47,7 +47,7 @@ describe('the condition of a value and whether it can be written', () => {
       kind: 'stale',
       why: 'peer',
     });
-    // 値の読み取りが失敗し続けている（ready のまま理由がある）: 最後に読めた値は古い
+    // Reading values keeps failing (a reason while still ready): the last value read is stale
     expect(valueCondition({ ...base, reading, readFailing: true })).toMatchObject({
       kind: 'stale',
       why: 'reading',
