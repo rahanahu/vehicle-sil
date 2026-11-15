@@ -53,6 +53,14 @@ void check_text(const std::string& actual, const std::string& expected, const ch
 
 } // namespace
 
+TEST_CASE(current_executable_is_this_test_program)
+{
+    const fs::path self = vehicle_sil::process::current_executable();
+    CHECK(self.is_absolute());
+    CHECK(fs::is_regular_file(self));
+    check_text(vehicle_sil::process::utf8_from_path(self.stem()), "vehicle_sil_process_tests", "the executable's name");
+}
+
 TEST_CASE(captures_stdout_and_stderr_apart_and_the_exit_code)
 {
     const Captured run = run_captured(kHelper, {"--out", "to stdout\n", "--err", "to stderr\n", "--exit", "3"});

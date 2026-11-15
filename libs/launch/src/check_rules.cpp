@@ -319,6 +319,9 @@ struct Rules
     std::set<std::pair<std::size_t, std::string>> j1939_held{};
     /// The version of vehicle_sil_launch, for the messages that say which version to build with.
     std::string launcher_version{};
+    /// The networks that --connect connects to a real bus: their bridge (bridge_participant()) is
+    /// on them, though it is not a participant of the file.
+    std::set<std::string> outside{};
 
     void add(Severity severity, const char* code, std::size_t line, std::string message, const std::string& participant,
              const std::string& network) const
@@ -1447,6 +1450,29 @@ void check_ethernet_network(const Rules& rules, const NetworkConfig& network, co
 void check_test_on_bridged_network(const Rules& rules, const NetworkConfig& network, std::size_t talker,
                                    const std::vector<std::string>& users)
 {
+    const auto talked_on = [&] {
+        for (const SeenNetwork& seen : rules.seen[talker])
+        {
+            if (seen.network.name == network.name && seen.network.kind() == network.kind && !seen.network.nodes.empty())
+            {
+                return both_names(seen);
+            }
+        }
+        return "'" + network.name + "'";
+    };
+    const std::string consequence =
+        ": what it sends there goes out on the real bus too, its address claims among it, and a real ECU with the same "
+        "address fights it for the address: let it only listen there (no J1939 nodes), or ";
+    if (rules.outside.contains(network.name))
+    {
+        const ParticipantConfig& p = rules.config.participants[talker];
+        rules.add(Severity::Warning, "test-participant-talks-on-bridged-network", p.line,
+                  participant_prefix(p.name) + "it has role: test and J1939 nodes on network " + talked_on() +
+                      ", and --connect connects that network to a real bus" + consequence +
+                      "do not connect the network in runs with it (leave --connect " + network.name + " out)",
+                  p.name, network.name);
+        return;
+    }
     std::vector<std::string> on;    // bridges that described themselves on the network
     std::vector<std::string> maybe; // bridges with describe: false (their networks are not known)
     for (const std::size_t b : rules.bridges)
@@ -1488,20 +1514,9 @@ void check_test_on_bridged_network(const Rules& rules, const NetworkConfig& netw
                 " this network to a real bus";
     }
     const std::string fix = "--disable " + (on.empty() ? maybe : on).front();
-    std::string talked = "'" + network.name + "'";
-    for (const SeenNetwork& seen : rules.seen[talker])
-    {
-        if (seen.network.name == network.name && seen.network.kind() == network.kind && !seen.network.nodes.empty())
-        {
-            talked = both_names(seen);
-            break;
-        }
-    }
     rules.add(Severity::Warning, "test-participant-talks-on-bridged-network", p.line,
-        participant_prefix(p.name) + "it has role: test and J1939 nodes on network " + talked + ", and " +
-            where + ": what it sends there goes out on the real bus too, its address claims among it, and a real "
-            "ECU with the same address fights it for the address: let it only listen there (no J1939 nodes), or "
-            "leave the bridge out of runs with it (" + fix + ", or enabled: false in a variant)" +
+        participant_prefix(p.name) + "it has role: test and J1939 nodes on network " + talked_on() + ", and " +
+            where + consequence + "leave the bridge out of runs with it (" + fix + ", or enabled: false in a variant)" +
             (rules.bridges_marked
                  ? std::string{}
                  : "; if " + and_list(maybe) +
@@ -1541,6 +1556,38 @@ std::string same_bus_lines(const Rules& rules, const NetworkConfig& network, con
     }
     return "add network_names: { " + detail::join(lines) + " } to the participant '" + ecu + "'" +
            (replaced.empty() ? std::string{} : " (in place of " + detail::join(replaced) + ")");
+}
+
+/// A network that --connect connects to a real bus (Rules::outside), and an enabled role: bridge
+/// participant that carries it (`users`: who described itself on it), or may (describe: false).
+void check_connect_loops(const Rules& rules, const NetworkConfig& network, const std::vector<std::string>& users)
+{
+    const std::string fix = ": leave one of the two bridges out (--disable ";
+    for (std::size_t i = 0; i < rules.config.participants.size() && i < rules.results.size(); ++i)
+    {
+        const ParticipantConfig& p = rules.config.participants[i];
+        if (!p.enabled || p.role != ParticipantRole::Bridge)
+        {
+            continue;
+        }
+        const std::string leave = fix + p.name + ", or leave --connect " + network.name + " out)";
+        if (rules.results[i].status == ParticipantStatus::NotChecked)
+        {
+            rules.add(Severity::Warning, "connect-maybe-loop", p.line,
+                      participant_prefix(p.name) + "it has role: bridge and describe: false, so the check cannot see "
+                      "whether it carries network '" + network.name + "', which --connect connects to a real bus: if it "
+                      "does, frames go round between the two bridges" + leave,
+                      p.name, network.name);
+        }
+        else if (std::find(users.begin(), users.end(), p.name) != users.end())
+        {
+            rules.add(Severity::Error, "connect-loop", p.line,
+                      participant_prefix(p.name) + "it has role: bridge and carries network '" + network.name +
+                          "' to a real bus, and --connect connects the network too: frames would go round between the "
+                          "two bridges" + leave,
+                      p.name, network.name);
+        }
+    }
 }
 
 /// The network `network` (of a valid kind): who is on it, then the rules of its kind.
@@ -1623,6 +1670,11 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             talkingTests.push_back(i);
         }
     }
+    const bool connected = rules.outside.contains(network.name);
+    if (connected)
+    {
+        check_connect_loops(rules, network, users);
+    }
     // Not while a line of network_names with a wrong value keeps a participant from it.
     const bool sayAll = !rules.incomplete && !rules.held.contains(network.name);
     const Severity weight = rules.unchecked ? Severity::Note : Severity::Warning;
@@ -1639,8 +1691,9 @@ void check_network(const Rules& rules, const NetworkConfig& network)
     }
     // Participants for testing (role: test) are not counted: a spy on the network of one ECU
     // does not make that network right.
+    // The bridge of --connect is on a connected network too: what is sent there reaches the real bus.
     const std::size_t ecus = users.size() - tests.size();
-    if (ecus <= 1 && sayAll)
+    if (ecus <= 1 && sayAll && !connected)
     {
         std::string ecu;
         for (const auto& who : users)
@@ -1658,7 +1711,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         {
             for (const auto& other : rules.config.networks)
             {
-                if (&other == &network || !other.valid || other.kind != network.kind)
+                if (&other == &network || !other.valid || other.kind != network.kind || rules.outside.contains(other.name))
                 {
                     continue;
                 }
@@ -1757,7 +1810,7 @@ std::optional<Finding> j1939_nodes_unsupported(const ParticipantConfig& particip
 }
 
 std::vector<Finding> check_participants(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
-                                        std::string_view launcher_version)
+                                        std::string_view launcher_version, std::span<const std::string> outside)
 {
     std::vector<Finding> out;
     std::map<std::string, const NetworkConfig*> networks;
@@ -1779,6 +1832,7 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
     };
     Rules rules{config, results, out};
     rules.launcher_version = std::string(launcher_version);
+    rules.outside.insert(outside.begin(), outside.end());
     rules.seen.resize(config.participants.size());
     for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
     {

@@ -32,6 +32,8 @@ This is the reference for `vehicle_sil_launch check <file>`: the order in which 
 | 3 | The `--describe` output | Starts each `describe: true` executable with `--describe --name <participant name>` and reads the JSON on its stdout. |
 | 4 | The configuration file against the `--describe` output | Checks the two against each other. |
 
+With `--connect`, after stage 3 the check also looks for the bridge of each connected network and runs its `--describe` with the arguments that the launcher gives it (see "Connecting a network outside (`external`, `--connect`)" in [simulation-config.md](simulation-config.md#connecting-a-network-outside-external---connect)).
+
 **Notes on stage 1**
 
 - The form of every variant (`variants`) is checked, including the variants that are not selected.
@@ -107,6 +109,16 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `unused-network` | Warning (a note when there is a `describe: false` participant) | No participant uses the network. | Delete the network, or check the network names on the ECU side. |
 | `single-participant` | Warning (a note when there is a `describe: false` participant) | The network has only one participant (nobody receives what it sends). | Add the other participants of the network, or delete the network. |
 | `test-participant-talks-on-bridged-network` | Warning | A `role: test` participant with a J1939 node may be on the same network as a bridge. | Make the participant only receive on that network (create no J1939 node), or disable the bridge for that run. |
+| `connect-network` | Error | `--connect` names a network that is not in `networks`. | Correct the name (the finding message gives a close one). A network whose name has `=` cannot be connected: rename it. |
+| `connect-kind` | Error | `--connect` names a LIN network (there is no bridge for LIN). | Leave that `--connect` out. |
+| `connect-target` | Error | The target of `--connect` is empty, longer than 256 bytes, not UTF-8, has a control character or starts with `-`, or, for a CAN network, is not `virtual:<n>` or `physical:<n>` (`<n>` from 1). | Give a target that the bridge lists (`--list-interfaces`, `--list-channels`), or `none`. |
+| `connect-name-taken` | Error | A participant of the file has the name of the bridge of a connected network (`bridge.<network>`). | Rename the participant. |
+| `connect-filter` | Error | A connected Ethernet network has neither `external.ethertypes` nor `external.all_frames`, and the launcher cannot list the MAC addresses of the participants on it: one reports none, one has `describe: false`, or none reports one. | Write `external.ethertypes` or `external.all_frames: true` for the network, or give each participant on it its MAC address. |
+| `connect-tool-missing` | Error | The bridge of a connected network is neither next to `vehicle_sil_launch` nor in an absolute directory of `PATH`. | Build the bridge, and put it next to `vehicle_sil_launch` or its directory on `PATH`. |
+| `connect-tool-failed` | Error | The bridge's `--describe` with the arguments of `--connect` failed (an exit code, the time limit, output that is not a description), or the bridge described another name or network. | Correct what the bridge's line in the finding message says (the target, `external`), or use the bridge of the vehicle-sil of `vehicle_sil_launch`. |
+| `connect-loop` | Error | An enabled `role: bridge` participant reports a connected network in its `--describe` output: frames would go round between the two bridges. | Leave one of them out (`--disable <name>`, or leave the `--connect` out). |
+| `connect-maybe-loop` | Warning | An enabled `role: bridge` participant has `describe: false`, and a network is connected (it may carry that network). | If it carries the network, leave one of the two bridges out. |
+| `connect-not-real-time` | Warning | A network is connected, and the file's `speed` is not 1 (also when it has no `speed`: as fast as possible). | Write `speed: 1` in the file. |
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
 | `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
@@ -157,6 +169,11 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `test-participant-talks-on-bridged-network` | The `role: bridge` participants are treated as bridges. If there is none, the `describe: false` participants without `role` are. |
 | `test-participant-talks-on-bridged-network` | The participant's transmissions and its address claim (Address Claimed) go out on the real bus. |
 | `test-participant-talks-on-bridged-network` | The finding message says whether a bridge is definitely or only possibly on the network, and how to fix it (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)). |
+| `test-participant-talks-on-bridged-network` | A network that `--connect` connects has a bridge too. The finding message then says to leave the `--connect` out in runs with the participant. |
+| `single-participant` | Not reported for a network that `--connect` connects: its bridge counts as a participant. A connected network without participants is still `unused-network`. |
+| `connect-*` | Only with `--connect` (see "Connecting a network outside (`external`, `--connect`)" in [simulation-config.md](simulation-config.md#connecting-a-network-outside-external---connect)). They are errors and warnings of the check only: the check does not open an adapter or a channel. |
+| `connect-filter` | Not reported while a participant has no description (`failed`, `skipped`): fix its error first. A `role: bridge` participant and a disabled one do not count. |
+| `connect-tool-failed` | The finding message gives the command and the bridge's line (its last line that starts with `error:`, or else its last line). The check runs the bridge only when nothing else is wrong with the network's `--connect`. |
 | `coarse-time-step` | The same message as the run finding (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
 | `control-link-not-offered`, `control-link-version` | `run` cannot read or write the variables of that ECU (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). |
 | `variable-map-*` | For how to write a mapping, see "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables). |
@@ -232,7 +249,7 @@ The output has these 4 parts, from top to bottom:
 | Part | Content |
 |---|---|
 | Participant table | The step size and networks reported by `--describe`. |
-| Network table | The participants that use each network. |
+| Network table | The participants that use each network. With `--connect`, a 4th column `outside`: the target of each connected network, `-` for the others. |
 | Findings | One per line: errors, then warnings, then notes, each group in line order. |
 | Result line | The numbers of errors, warnings and notes. |
 
@@ -429,6 +446,12 @@ Keys of each element of `networks[]` and `findings[]`:
 | `networks[].kind` | Kind (`null` if it could not be read) |
 | `networks[].line` | Line in the configuration file |
 | `networks[].participants` | Names of the participants that use the network (in the order of the configuration file; counted under the names after `network_names` is applied) |
+| `networks[].outside` | Only on a network that `--connect` connects (other networks do not have the key): its bridge, below |
+| `networks[].outside.tool` | The bridge's executable (`vehicle_sil_ethernet_bridge`, `vehicle_sil_vector_xl_bridge`) |
+| `networks[].outside.tool_path` | Where it was found (`null` if it was not) |
+| `networks[].outside.target` | The target as given to `--connect` |
+| `networks[].outside.participant` | The bridge's participant name (`bridge.<network>`) |
+| `networks[].outside.command` | The bridge and the arguments that the launcher gives it (without `--describe` and `--name`) |
 | `findings[].severity` | `"error"`, `"warning"`, `"note"` |
 | `findings[].code` | Finding code |
 | `findings[].file` | The configuration file (for a finding about the scenario of `--scenario`, the scenario file) |

@@ -9,6 +9,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_batch.cpp
     test_check.cpp
     test_config.cpp
+    test_connect.cpp
     test_events.cpp
     test_j1939_nodes_match.cpp
     test_run.cpp
@@ -55,10 +56,38 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_target_defaults(vehicle_sil_launch_cli_launcher)
   add_dependencies(vehicle_sil_launch_cli_launcher vehicle_sil_launch vehicle_sil_process_helper vehicle_sil_engine_ecu
                    vehicle_sil_dashboard_ecu)
+  # For the scenario connect: vehicle_sil_launch and the two bridges under the names the launcher
+  # looks for, in one directory (the bridges are the production main() on the fake pcap library
+  # and on the fake XL driver: their --describe and their command line are the real ones). On
+  # Windows the DLLs they need go there too.
+  set(_connect_tools ${CMAKE_CURRENT_BINARY_DIR}/connect_tools)
+  set(_connect_copies vehicle_sil_launch vehicle_sil_ethernet_bridge_on_fake_pcap vehicle_sil_vector_xl_bridge_on_fake)
+  set(_connect_dlls)
+  if(WIN32)
+    foreach(_copy IN LISTS _connect_copies)
+      list(APPEND _connect_dlls
+           COMMAND ${CMAKE_COMMAND} -E $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${_copy}>>,copy_if_different,true>
+                   $<TARGET_RUNTIME_DLLS:${_copy}> ${_connect_tools})
+    endforeach()
+  endif()
+  add_custom_target(vehicle_sil_launch_connect_tools
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${_connect_tools}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vehicle_sil_launch>
+            ${_connect_tools}/vehicle_sil_launch$<TARGET_FILE_SUFFIX:vehicle_sil_launch>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vehicle_sil_ethernet_bridge_on_fake_pcap>
+            ${_connect_tools}/vehicle_sil_ethernet_bridge$<TARGET_FILE_SUFFIX:vehicle_sil_ethernet_bridge_on_fake_pcap>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vehicle_sil_vector_xl_bridge_on_fake>
+            ${_connect_tools}/vehicle_sil_vector_xl_bridge$<TARGET_FILE_SUFFIX:vehicle_sil_vector_xl_bridge_on_fake>
+    ${_connect_dlls}
+    COMMAND_EXPAND_LISTS
+    VERBATIM)
+  add_dependencies(vehicle_sil_launch_connect_tools ${_connect_copies})
+  add_dependencies(vehicle_sil_launch_cli_launcher vehicle_sil_launch_connect_tools)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_cli_launcher
     PREFIX launch_cli LABELS integration launch TIMEOUT 120
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/cli
     SCENARIOS
+      connect
       describe
       docs
       enabled
@@ -66,6 +95,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       unreadable
       usage
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
+         --connect-tools ${_connect_tools}
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..

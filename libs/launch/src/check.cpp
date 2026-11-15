@@ -63,6 +63,63 @@ std::string command_text(const std::vector<std::string>& words)
     return out;
 }
 
+/// One run of `executable` with `arguments` (--describe and --name among them) in `directory`,
+/// shown in messages as `shown` with the arguments.
+DescribeRun run_describe(const std::filesystem::path& executable, const std::string& shown,
+                         const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
+                         const std::filesystem::path& directory)
+{
+    std::vector<std::string> words{shown};
+    words.insert(words.end(), arguments.begin(), arguments.end());
+    DescribeRun run;
+    run.command_text = command_text(words);
+    run.timeout = timeout;
+    try
+    {
+        process::Captured captured = process::run_captured(std::filesystem::absolute(executable), arguments,
+                                                           process::CaptureOptions{timeout, 1u << 20, directory});
+        run.exit_code = captured.exit_code;
+        run.signal = captured.signal;
+        run.output_truncated = captured.output_truncated;
+        run.error_truncated = captured.error_truncated;
+        run.standard_output = std::move(captured.standard_output);
+        run.standard_error = std::move(captured.standard_error);
+    }
+    catch (const process::StartError& e)
+    {
+        run.start_error = e.what();
+        run.start_refused_by_system = e.cause() == process::StartError::Cause::System;
+    }
+    catch (const std::exception& e)
+    {
+        run.start_error = e.what();
+        run.start_refused_by_system = true;
+    }
+    return run;
+}
+
+/// The names of the networks in `outside`.
+std::vector<std::string> outside_names(const std::vector<NetworkOutside>& outside)
+{
+    std::vector<std::string> names;
+    for (const NetworkOutside& network : outside)
+    {
+        names.push_back(network.network);
+    }
+    return names;
+}
+
+/// Sets NetworkOutside::usable: no error is about connecting its network.
+void mark_usable(CheckReport& report)
+{
+    for (NetworkOutside& outside : report.outside)
+    {
+        outside.usable = std::none_of(report.findings.begin(), report.findings.end(), [&](const Finding& f) {
+            return f.severity == Severity::Error && f.network == outside.network && f.code.rfind("connect-", 0) == 0;
+        });
+    }
+}
+
 } // namespace
 
 std::size_t CheckReport::errors() const
@@ -239,6 +296,14 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     report.findings = std::move(read.findings);
     report.config = std::move(read.config);
+    if (report.config && options.file_only && !options.connect.empty())
+    {
+        // Only the form and the names: no tool is looked for.
+        ConnectCheck connect = check_connections(*report.config, {}, options.connect, nullptr);
+        report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
+        report.outside = std::move(connect.outside);
+        mark_usable(report);
+    }
     if (!report.config || options.file_only)
     {
         return report;
@@ -294,34 +359,9 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         std::vector<std::string> arguments =
             expand_placeholders(std::vector<std::string>(p.command.begin() + 1, p.command.end()), "", "");
         arguments.insert(arguments.end(), {"--describe", "--name", p.name});
-        std::vector<std::string> shown{p.command.front()};
-        shown.insert(shown.end(), arguments.begin(), arguments.end());
-        DescribeRun run;
-        run.command_text = command_text(shown);
-        run.timeout = options.describe_timeout;
-        try
-        {
-            // As vehicle_sil_launch run starts it: in the directory of the configuration file.
-            process::Captured captured = process::run_captured(
-                std::filesystem::absolute(executable), arguments,
-                process::CaptureOptions{options.describe_timeout, 1u << 20, std::filesystem::absolute(base)});
-            run.exit_code = captured.exit_code;
-            run.signal = captured.signal;
-            run.output_truncated = captured.output_truncated;
-            run.error_truncated = captured.error_truncated;
-            run.standard_output = std::move(captured.standard_output);
-            run.standard_error = std::move(captured.standard_error);
-        }
-        catch (const process::StartError& e)
-        {
-            run.start_error = e.what();
-            run.start_refused_by_system = e.cause() == process::StartError::Cause::System;
-        }
-        catch (const std::exception& e)
-        {
-            run.start_error = e.what();
-            run.start_refused_by_system = true;
-        }
+        // As vehicle_sil_launch run starts it: in the directory of the configuration file.
+        const DescribeRun run =
+            run_describe(executable, p.command.front(), arguments, options.describe_timeout, std::filesystem::absolute(base));
         DescribeOutcome outcome = interpret_describe(p, run);
         if (outcome.error)
         {
@@ -335,8 +375,23 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         }
         report.participants.push_back(std::move(result));
     }
-    auto compared = check_participants(*report.config, report.participants, version());
+    if (!options.connect.empty())
+    {
+        ConnectTools tools;
+        tools.launcher_dir = options.tool_directory;
+        tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
+        tools.describe = [&](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
+            return run_describe(tool, process::utf8_from_path(tool.stem()), arguments, options.describe_timeout,
+                                std::filesystem::absolute(base));
+        };
+        ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
+        report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
+        report.outside = std::move(connect.outside);
+    }
+    const std::vector<std::string> outside = outside_names(report.outside);
+    auto compared = check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
+    mark_usable(report);
     // A run at the file's speed with the file's time_step_ms: known before it runs.
     if (report.config->speed && report.config->time_step_ms)
     {

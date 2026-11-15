@@ -438,6 +438,7 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 
 - [docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合
 - `--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数のエラー
+- `launch_cli.connect`: 2 つのブリッジ（`main()` を偽の pcap ライブラリと偽の XL ドライバーで作ったもの）を、本当の名前でビルドディレクトリの `connect_tools/` に写して `check --connect`。`PATH` と、写した `vehicle_sil_launch` の隣で見つかり、作業ディレクトリでは見つからないこと、`networks[].outside`、引数を受けないブリッジ、`run --connect` と `test --connect` を断ること
 
 `launch_run.*` が確認すること:
 
@@ -818,7 +819,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 | 名前 | 場所 |
 |---|---|
-| `ChildProcess`、`run_captured()` | `process/child_process.hpp` |
+| `ChildProcess`、`run_captured()`、`current_executable()`（このプロセスの実行ファイルのパス） | `process/child_process.hpp` |
 | `Process` | `process/process.hpp` |
 
 - テスト: `tests/process`
@@ -832,6 +833,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
+| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()` と、ランチャーがブリッジを探す `find_tool()` | `launch/connect.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
@@ -849,6 +851,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `src/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
+| `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
+| `--connect` の形、ブリッジの引数、`find_tool()`（ランチャーの隣、次に `PATH`）。`find_tool()` と `find_executable()` が共有する `PATH` の探索は `src/config.cpp` の `detail::find_on_path()` | `src/connect.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |

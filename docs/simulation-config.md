@@ -102,7 +102,7 @@ Keys of each element of `networks` (list every network that the ECUs use):
 |---|---|---|
 | `networks[].name` | Yes | Name of the network (the name passed to the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`; if an executable calls it by another name, write that in the participant's `network_names`) |
 | `networks[].kind` | Yes | One of `can`, `lin` and `ethernet` |
-| `networks[].external` | | How the network behaves when it is connected outside to a real bus (`can`: `bitrate`; `ethernet`: `ethertypes`, `all_frames`). See [Connecting a network outside](#connecting-a-network-outside-external) |
+| `networks[].external` | | How the network behaves when it is connected outside to a real bus (`can`: `bitrate`; `ethernet`: `ethertypes`, `all_frames`). See [Connecting a network outside](#connecting-a-network-outside-external---connect) |
 
 Keys of each element of `participants`:
 
@@ -526,9 +526,9 @@ Other rules:
 - `check --json` writes the role to `participants[].role`.
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
 
-### Connecting a network outside (`external`)
+### Connecting a network outside (`external`, `--connect`)
 
-A network can be connected outside, to a real bus. `external` says how the network behaves when it is connected, and is used only then: a run that does not connect the network ignores it. It holds what is the same on every PC that runs the simulation. Where the network is connected (an adapter, a channel) differs from PC to PC, so it is not written in the file: `external.connect` is an error.
+A network can be connected outside, to a real bus. `external` says how the network behaves when it is connected, and is used only then: a run that does not connect the network ignores it. It holds what is the same on every PC that runs the simulation. Where the network is connected (an adapter, a channel) differs from PC to PC, so it is not written in the file: you give it when you start, with `--connect <network>=<target>` (below), and `external.connect` is an error.
 
 ```yaml
 networks:
@@ -553,6 +553,37 @@ Other rules:
 - A `lin` network cannot have `external`: there is no bridge for LIN, so it runs on SIL Kit only.
 - A key of the other kind (`ethertypes` on a `can` network, `bitrate` on an `ethernet` network) is an `unknown-key` error.
 - A variant (`variants`) cannot change it, as with every key of `networks`.
+
+#### `--connect`
+
+`check --connect <network>=<target>` checks the file as it runs with the network connected to a real bus through a bridge of this repository. `run` does not connect a bus yet: it ends with a usage error (exit code 4) for `--connect`, and so does `test`.
+
+```sh
+vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+```
+
+| Kind | Bridge | `<target>` |
+|---|---|---|
+| `ethernet` | `vehicle_sil_ethernet_bridge` ([ethernet-bridge.md](ethernet-bridge.md)) | The adapter as the bridge's `--interface` takes it: on Windows the connection name (`vEthernet (A)`), the pcap name (`\Device\NPF_{...}`) or `{GUID}`; on Linux the interface name (`enp3s0`). `vehicle_sil_ethernet_bridge --list-interfaces` lists them. |
+| `can` | `vehicle_sil_vector_xl_bridge` ([bridges.md](bridges.md)) | `virtual:<n>` or `physical:<n>`: the channel number from 1 that `vehicle_sil_vector_xl_bridge --list-channels` shows. |
+| `lin` | None | Cannot be connected (`connect-kind`). |
+
+- `none` as the target: SIL Kit only, the same as no `--connect` for that network (for a script that says so outright). Give an adapter named `none` by its pcap name.
+- Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
+- Quote the whole argument when the target has spaces: `--connect "ETH_EXT=vEthernet (A)"`.
+- The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer.
+- The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
+- On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
+- A real bus does not wait for the virtual time: with `--connect`, a file without `speed: 1` gets the warning `connect-not-real-time`.
+
+The arguments that the launcher gives the bridge:
+
+| Kind | Arguments |
+|---|---|
+| `ethernet` | `--network <network> --interface <target>`, and the frames that pass: `--all-frames` (`all_frames: true`), `--ethertype` (`ethertypes`), or else `--src-mac` with the MAC addresses that the participants on the network report in their `--describe` output (if one reports none, or has `describe: false`, the error is `connect-filter`) |
+| `can` | `--network <network> --xl-target <virtual or physical> --xl-channel <n>`, and `--bitrate <bitrate>` with `bitrate` |
+
+The findings are the `connect-*` codes in [simulation-check.md](simulation-check.md#finding-codes). `check --json` writes the bridge, where it was found and its command line to `networks[].outside`, and the human-readable output adds the column `outside` to the network table.
 
 ### Matching variable names and values (`variables`)
 
@@ -852,7 +883,7 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
-                         [--describe-timeout-ms <ms>] [--disable <name>]...
+                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -895,6 +926,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--log-dir <dir>` | `run` only | Directory for the output files, one per participant. |
 | `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
+| `--connect <network>=<target>` | `check` only | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
 | `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
@@ -928,6 +960,7 @@ Notes on individual options:
 | `--timeout-ms` | In a run with a required manual participant, counts from the moment `run` starts to wait for the participants. |
 | `--timeout-ms` | When it runs out, the run is aborted with an error. |
 | `--manual` | `run` does not start the participant; it prints the command and waits. |
+| `--connect` | `run` and `test` end with a usage error for it: `run` does not connect a bus yet, and `test` runs each scenario as fast as possible. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 

@@ -32,6 +32,8 @@
 | 3 | `--describe` の出力 | `describe: true` の各実行ファイルを `--describe --name <participant 名>` で起動し、標準出力の JSON を読みます。 |
 | 4 | 設定ファイルと `--describe` の出力 | 2 つを照合します。 |
 
+`--connect` があると、順 3 の後に、つなぐネットワークごとにブリッジを探し、ランチャーが渡す引数でその `--describe` を走らせます（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。
+
 **順 1 の補足**
 
 - 機種（`variants`）は、選んでいないものも含めて全部の形を確認します。
@@ -107,6 +109,16 @@
 | `unused-network` | 警告（`describe: false` の participant がいるときは注記） | どの participant も使わないネットワークです。 | ネットワークを削除するか、ECU の側のネットワーク名を確認します。 |
 | `single-participant` | 警告（`describe: false` の participant がいるときは注記） | participant が 1 つだけのネットワークです（送信したものを誰も受信しない）。 | そのネットワークのほかの participant を追加するか、ネットワークを削除します。 |
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを持つ participant と、ブリッジが、同じネットワークにいるかもしれません。 | その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その実行ではブリッジを無効にします。 |
+| `connect-network` | 誤り | `--connect` が、`networks` にないネットワークを指しています。 | 名前を直します（指摘の文が近い名前を出します）。名前に `=` を含むネットワークはつなげないので、名前を変えます。 |
+| `connect-kind` | 誤り | `--connect` が LIN のネットワークを指しています（LIN をつなぐブリッジはありません）。 | その `--connect` を外します。 |
+| `connect-target` | 誤り | `--connect` の先が、空、256 バイトより長い、UTF-8 でない、制御文字を含む、`-` で始まる、のどれかです。CAN のネットワークでは、`virtual:<n>` か `physical:<n>`（`<n>` は 1 から）でもありません。 | ブリッジの一覧（`--list-interfaces`、`--list-channels`）にある先か、`none` を書きます。 |
+| `connect-name-taken` | 誤り | ファイルの participant が、つなぐネットワークのブリッジの名前（`bridge.<network>`）を持っています。 | その participant の名前を変えます。 |
+| `connect-filter` | 誤り | つなぐイーサネットのネットワークに `external.ethertypes` も `external.all_frames` もなく、そこにいる participant の MAC アドレスをランチャーが並べられません（出力しない participant がいる、`describe: false` の participant がいる、1 つも出力されていない）。 | そのネットワークに `external.ethertypes` か `external.all_frames: true` を書くか、そこにいる各 participant に MAC アドレスを持たせます。 |
+| `connect-tool-missing` | 誤り | つなぐネットワークのブリッジが、`vehicle_sil_launch` の隣にも、`PATH` の絶対パスのディレクトリにもありません。 | ブリッジをビルドし、`vehicle_sil_launch` の隣に置くか、そのディレクトリを `PATH` に入れます。 |
+| `connect-tool-failed` | 誤り | `--connect` の引数でのブリッジの `--describe` が失敗した（終了コード、時間切れ、説明でない出力）か、ブリッジが別の名前やネットワークを出力しました。 | 指摘の文にあるブリッジの行のとおりに直す（先、`external`）か、`vehicle_sil_launch` と同じ vehicle-sil のブリッジを使います。 |
+| `connect-loop` | 誤り | 有効な `role: bridge` の participant が、つなぐネットワークを `--describe` に出力しています（2 つのブリッジの間でフレームが回ります）。 | どちらかを外します（`--disable <name>` か、その `--connect` を外す）。 |
+| `connect-maybe-loop` | 警告 | 有効な `role: bridge` の participant が `describe: false` で、つなぐネットワークがあります（そのネットワークを中継するかもしれません）。 | そのネットワークを中継するなら、2 つのブリッジのどちらかを外します。 |
+| `connect-not-real-time` | 警告 | つなぐネットワークがあり、ファイルの `speed` が 1 ではありません（`speed` がない、つまり最速のときも）。 | ファイルに `speed: 1` を書きます。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
@@ -157,6 +169,11 @@
 | `test-participant-talks-on-bridged-network` | ブリッジとして扱うのは `role: bridge` の participant で、1 つもなければ、`role` を書いていない `describe: false` の participant です。 |
 | `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの要求（Address Claimed）が、実機のバスに出ます。 |
 | `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
+| `test-participant-talks-on-bridged-network` | `--connect` でつなぐネットワークにも、ブリッジがいます。そのときの指摘の文は、その participant を使う実行では `--connect` を外すように言います。 |
+| `single-participant` | `--connect` でつなぐネットワークでは出ません。ブリッジを participant として数えます。participant のいないつなぐネットワークは、今までどおり `unused-network` です。 |
+| `connect-*` | `--connect` のときだけです（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。照合だけの誤りと警告で、照合はアダプターもチャンネルも開きません。 |
+| `connect-filter` | 説明を読めない participant（`failed`、`skipped`）がいる間は出しません。先にその誤りを直します。`role: bridge` の participant と、無効の participant は数えません。 |
+| `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`error:` で始まる最後の行、なければ最後の行）を出します。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがないときだけです。 |
 | `coarse-time-step` | `run` の指摘と同じ文です（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
 | `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
 | `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |
@@ -232,7 +249,7 @@
 | 部分 | 内容 |
 |---|---|
 | participant の表 | `--describe` に出力されたステップ幅とネットワークです。 |
-| ネットワークの表 | ネットワークを使う participant です。 |
+| ネットワークの表 | ネットワークを使う participant です。`--connect` があると、4 列目 `outside` に、つなぐネットワークの先を出します（ほかは `-`）。 |
 | 指摘 | 1 つが 1 行で、エラー、警告、注記の順に、それぞれ行の順に並びます。 |
 | 結果の 1 行 | エラー、警告、注記の数です。 |
 
@@ -429,6 +446,12 @@ failed: 3 errors, 1 warning, 0 notes
 | `networks[].kind` | 種類（読めなかったときは `null`） |
 | `networks[].line` | 設定ファイルの行 |
 | `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順。`network_names` を当てた後の名前で数える） |
+| `networks[].outside` | `--connect` でつなぐネットワークだけにあります（ほかのネットワークにはこのキーがありません）。そのブリッジです（下のキー） |
+| `networks[].outside.tool` | ブリッジの実行ファイル（`vehicle_sil_ethernet_bridge`、`vehicle_sil_vector_xl_bridge`） |
+| `networks[].outside.tool_path` | 見つけた場所（見つからなければ `null`） |
+| `networks[].outside.target` | `--connect` に渡した先 |
+| `networks[].outside.participant` | ブリッジの participant 名（`bridge.<network>`） |
+| `networks[].outside.command` | ブリッジと、ランチャーが渡す引数（`--describe` と `--name` は除く） |
 | `findings[].severity` | `"error"`、`"warning"`、`"note"` |
 | `findings[].code` | 指摘のコード |
 | `findings[].file` | 設定ファイル（`--scenario` のシナリオについての指摘では、シナリオのファイル） |

@@ -102,7 +102,7 @@ participants:
 |---|---|---|
 | `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前。実行ファイルが別の名前で呼んでいるときは、その participant の `network_names` に書きます） |
 | `networks[].kind` | はい | `can`、`lin`、`ethernet` のどれか |
-| `networks[].external` | | ネットワークを外の実機のバスにつないだときのふるまい（`can` は `bitrate`、`ethernet` は `ethertypes`、`all_frames`）。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal) |
+| `networks[].external` | | ネットワークを外の実機のバスにつないだときのふるまい（`can` は `bitrate`、`ethernet` は `ethertypes`、`all_frames`）。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect) |
 
 `participants` の要素のキーは次のとおりです。
 
@@ -524,9 +524,9 @@ passed: 0 errors, 0 warnings, 1 note
 - `check --json` では、`participants[].role` に出力されます。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
 
-### ネットワークを外につなぐ（`external`）
+### ネットワークを外につなぐ（`external`、`--connect`）
 
-ネットワークは、外の実機のバスにつなげます。`external` には、つないだときのネットワークのふるまいを書きます。使うのはつないだときだけで、つながない実行では読み飛ばします。書くのは、シミュレーションを走らせるどの PC でも同じことです。つなぐ先（アダプター、チャンネル）は PC ごとに違うので、ファイルには書きません。`external.connect` は誤りです。
+ネットワークは、外の実機のバスにつなげます。`external` には、つないだときのネットワークのふるまいを書きます。使うのはつないだときだけで、つながない実行では読み飛ばします。書くのは、シミュレーションを走らせるどの PC でも同じことです。つなぐ先（アダプター、チャンネル）は PC ごとに違うので、ファイルには書かず、始めるときに `--connect <network>=<target>`（下）で渡します。`external.connect` は誤りです。
 
 ```yaml
 networks:
@@ -551,6 +551,37 @@ networks:
 - `lin` のネットワークには `external` を書けません。LIN をつなぐブリッジがないので、SIL Kit の中だけで動きます。
 - ほかの種類のキー（`can` のネットワークの `ethertypes`、`ethernet` のネットワークの `bitrate`）は `unknown-key` の誤りです。
 - 機種（`variants`）では変えられません（`networks` のほかのキーと同じです）。
+
+#### `--connect`
+
+`check --connect <network>=<target>` は、このリポジトリのブリッジでネットワークを実機のバスにつないで走らせるときの形で、ファイルを照合します。`run` はまだバスをつなげません。`--connect` を渡すと使い方の誤り（終了コード 4）で終わります。`test` も同じです。
+
+```sh
+vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+```
+
+| 種類 | ブリッジ | `<target>` |
+|---|---|---|
+| `ethernet` | `vehicle_sil_ethernet_bridge`（[ethernet-bridge.md](ethernet-bridge.md)） | ブリッジの `--interface` が受けるアダプターの名前です。Windows は接続名（`vEthernet (A)`）、pcap の名前（`\Device\NPF_{...}`）、`{GUID}`、Linux はインターフェース名（`enp3s0`）。`vehicle_sil_ethernet_bridge --list-interfaces` が一覧を出します。 |
+| `can` | `vehicle_sil_vector_xl_bridge`（[bridges.md](bridges.md)） | `virtual:<n>` か `physical:<n>`。`vehicle_sil_vector_xl_bridge --list-channels` が出す、1 から始まるチャンネル番号です。 |
+| `lin` | なし | つなげません（`connect-kind`）。 |
+
+- 先を `none` にすると SIL Kit の中だけで、そのネットワークに `--connect` を書かないのと同じです（スクリプトで「つながない」と書くため）。`none` という名前のアダプターは、pcap の名前で書きます。
+- 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
+- 先に空白があるときは、引数全体を引用符で囲みます（`--connect "ETH_EXT=vEthernet (A)"`）。
+- ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。
+- 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
+- つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
+- 実機のバスは仮想時間を待ちません。`--connect` があるのに、ファイルに `speed: 1` がなければ、警告 `connect-not-real-time` です。
+
+ランチャーがブリッジに渡す引数は、次のとおりです。
+
+| 種類 | 引数 |
+|---|---|
+| `ethernet` | `--network <network> --interface <target>` と、通すフレーム。`--all-frames`（`all_frames: true`）、`--ethertype`（`ethertypes`）、どちらもなければ `--src-mac` で、そのネットワークの participant が `--describe` に出力した MAC アドレス（出力しない participant や `describe: false` の participant がいると、誤り `connect-filter`） |
+| `can` | `--network <network> --xl-target <virtual か physical> --xl-channel <n>` と、`bitrate` があれば `--bitrate <bitrate>` |
+
+指摘は [simulation-check.md](simulation-check.md#指摘のコード) の `connect-*` です。`check --json` は、ブリッジ、見つけた場所、コマンドラインを `networks[].outside` に書き、人向けの出力はネットワークの表に列 `outside` を足します。
 
 ### 変数の名前と値を合わせる（`variables`）
 
@@ -850,7 +881,7 @@ variants:
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
-                         [--describe-timeout-ms <ms>] [--disable <name>]...
+                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
@@ -893,6 +924,7 @@ vehicle_sil_launch version [--json]
 | `--log-dir <dir>` | `run` だけ | participant ごとの出力のファイルを置くディレクトリです。 |
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
+| `--connect <network>=<target>` | `check` だけ | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -926,6 +958,7 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms` | manual の必須の participant がいる実行では、participant を待ち始めた時点から数えます。 |
 | `--timeout-ms` | 超えたら、中断してエラーにします。 |
 | `--manual` | `run` は起動せず、コマンドを表示して待ちます。 |
+| `--connect` | `run` と `test` では使い方の誤りです。`run` はまだバスをつなげず、`test` は各シナリオをできるだけ速く走らせます。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 
