@@ -37,10 +37,32 @@
       },
       "examples": [{ "idle_rpm": 800, "settle_ms": 500 }]
     },
+    "inputs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/variable_name" },
+      "description": "What is on top of inputs from the start of the scenario: each input (<participant>.<variable>, an integer or a real) with its dither. The value written is what the steps put on the input (set, ramp, wave) plus the dither, as the variable's type has it. A dither step changes it or takes it off.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dither"],
+        "description": "What is on top of one input.",
+        "properties": {
+          "dither": {
+            "$ref": "#/definitions/overlay",
+            "description": "The dither of the input, from the first value a step puts on it."
+          },
+          "undersampled": {
+            "const": "ok",
+            "description": "Run this input's dither as it is, also where it changes faster than its ECU steps: check then says nothing about that."
+          }
+        }
+      },
+      "examples": [{ "Engine.engine.throttle": { "dither": { "triangle": { "amplitude": 2, "period_ms": 40 } } } }]
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
-      "description": "What to do, in order. A step does one thing (set, ramp, wave, wait_until or expect) at its time: at_ms, or after_ms from the end of the step before it (without either: after_ms: 0). A ramp or a wave may have an expect beside it, which must be true all through it.",
+      "description": "What to do, in order. A step does one thing (set, ramp, wave, dither, wait_until or expect) at its time: at_ms, or after_ms from the end of the step before it (without either: after_ms: 0). A ramp or a wave may have an expect beside it, which must be true all through it.",
       "items": { "$ref": "#/definitions/step" }
     }
   },
@@ -55,6 +77,7 @@
         { "$ref": "#/definitions/step_set" },
         { "$ref": "#/definitions/step_ramp" },
         { "$ref": "#/definitions/step_wave" },
+        { "$ref": "#/definitions/step_dither" },
         { "$ref": "#/definitions/step_wait_until" },
         { "$ref": "#/definitions/step_expect" }
       ]
@@ -280,22 +303,27 @@
           }
         },
         "points": {
-          "type": "array",
-          "minItems": 1,
-          "description": "A table: [milliseconds since the step began, value] in the order of the times. The wave ends at the last point, and the variable keeps its value. For any type; a bool and an enum keep each value until the next point.",
-          "items": {
-            "type": "array",
-            "minItems": 2,
-            "additionalItems": false,
-            "items": [
-              {
-                "description": "Milliseconds of virtual time since the step began.",
-                "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 1000000000000 }, { "$ref": "#/definitions/parameter" }]
-              },
-              { "$ref": "#/definitions/value" }
-            ]
-          },
-          "examples": [[[0, 0], [100, 50], [400, 20]]]
+          "description": "A table: [milliseconds since the step began, value] in the order of the times, or a CSV file and its column ({ file, value }). The wave ends at the last point, and the variable keeps its value. For any type; a bool and an enum keep each value until the next point.",
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "additionalItems": false,
+                "items": [
+                  {
+                    "description": "Milliseconds of virtual time since the step began.",
+                    "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 1000000000000 }, { "$ref": "#/definitions/parameter" }]
+                  },
+                  { "$ref": "#/definitions/value" }
+                ]
+              }
+            },
+            { "$ref": "#/definitions/points_file" }
+          ],
+          "examples": [[[0, 0], [100, 50], [400, 20]], { "file": "traces/drive.csv", "value": "throttle" }]
         },
         "around": {
           "$ref": "#/definitions/number",
@@ -356,6 +384,96 @@
         },
         { "if": { "required": ["interpolate"] }, "then": { "required": ["points"] } }
       ]
+    },
+    "step_dither": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dither"],
+      "properties": {
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "dither": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/definitions/variable_name" },
+          "description": "Changes what is on top of inputs from the step's time on: each input (<participant>.<variable>, an integer or a real) with a dither, or none to take its dither off. An input that a step has put a value on is written once at the step's time. The step takes no time.",
+          "additionalProperties": {
+            "anyOf": [
+              { "const": "none", "description": "Takes the input's dither off: its value alone is written once." },
+              { "$ref": "#/definitions/overlay" }
+            ]
+          },
+          "examples": [
+            { "Engine.engine.throttle": "none" },
+            { "Engine.engine.throttle": { "noise": { "amplitude": 1, "hold_ms": 10, "seed": 7 } } }
+          ]
+        },
+        "undersampled": {
+          "const": "ok",
+          "description": "Run this step's dithers as they are, also where they change faster than their ECU steps: check then says nothing about that."
+        }
+      }
+    },
+    "overlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "description": "A dither: one shape around 0 that has no end (no for_ms) and no middle of its own (no around). Its value at a virtual time is added to the value of the input at that time. The keys of each shape are those of the same shape of a wave.",
+      "properties": {
+        "sine": {
+          "$ref": "#/definitions/wave/properties/sine",
+          "description": "A sine: 0 at the start of each period, counted from the virtual time 0."
+        },
+        "triangle": {
+          "$ref": "#/definitions/wave/properties/triangle",
+          "description": "A triangle with its corners where a sine has its highest and lowest values."
+        },
+        "sawtooth": {
+          "$ref": "#/definitions/wave/properties/sawtooth",
+          "description": "A sawtooth: each period rises in a straight line from -amplitude to amplitude and jumps back (falling: true: the other way)."
+        },
+        "square": {
+          "description": "A square with amplitude: so far above for duty percent of each period, then so far below. Not with low and high: a dither has no values of its own.",
+          "allOf": [
+            { "$ref": "#/definitions/wave/properties/square" },
+            { "required": ["amplitude"], "not": { "anyOf": [{ "required": ["low"] }, { "required": ["high"] }] } }
+          ]
+        },
+        "noise": {
+          "$ref": "#/definitions/wave/properties/noise",
+          "description": "Random values, each kept for hold_ms. They depend on the seed, the input's name and the virtual time alone: every run gives the same ones."
+        }
+      }
+    },
+    "points_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "value"],
+      "description": "Points from a CSV file: its first line names the columns, and each line below it is a point (a time and the values). Read with the same rules as points written in the scenario.",
+      "properties": {
+        "file": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*\\\\)(?!(.*/)?\\.\\.(/|$))",
+          "description": "The CSV file, from the directory of the scenario file, with / between directories: not an absolute path, and without .. (a scenario reads only files in its own directory and below it)."
+        },
+        "value": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "description": "The name of the column of the values, as the file's first line names it."
+        },
+        "time": {
+          "type": ["string", "number"],
+          "minLength": 1,
+          "description": "The name of the column of the times. Without it, the first column."
+        },
+        "time_unit": {
+          "anyOf": [{ "enum": ["ms", "s"] }, { "$ref": "#/definitions/parameter" }],
+          "description": "The unit of the times: ms (the default) or s. Each time must come to a whole number of milliseconds since the step began."
+        }
+      },
+      "examples": [{ "file": "traces/drive.csv", "value": "throttle" }, { "file": "drive.csv", "value": "throttle", "time": "t", "time_unit": "s" }]
     },
     "amplitude": {
       "description": "How far the value goes above and below the middle: 0 or more.",

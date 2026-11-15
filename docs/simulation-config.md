@@ -746,7 +746,7 @@ vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <fil
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+                       [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
                        [--] <file>
@@ -776,6 +776,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--scenario <file>` | | The scenario file ([scenario.md](scenario.md)). |
 | `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
 | `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
+| `--timeline <file>` | `run` only, and only with `--scenario` | Writes the values that the scenario wrote and saw to a JSON file, in virtual-time order (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `--scenarios <dir or files>` | `test` only | The scenarios to run. |
 | `--fail-fast` | `test` only | Runs nothing after the first run that fails. |
 | `--speed <speed>` | `run` only | Overrides `speed` in the configuration file (a number or `max`; see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)). |
@@ -807,6 +808,7 @@ Notes on individual options:
 | `--variant` | In `test`, limits the variants to run (can be repeated; without it, all variants run). |
 | `--param` | Can be repeated (each name once). |
 | `--param` | In `test`, applies only to the scenarios that have a parameter of that name (if no scenario has it, a usage error). |
+| `--timeline` | If the file cannot be opened, nothing is started and the exit code is 3. |
 | `--scenarios` | A directory (the `.yaml`, `.yml` and `.json` files directly in it, in name order) or files (in the order written). |
 | `--scenarios` | Takes any number of paths after it, and can be repeated. |
 | `--scenarios` | Write the configuration file before `--scenarios` or after `--`. |

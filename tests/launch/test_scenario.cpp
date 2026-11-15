@@ -3,21 +3,29 @@
 // The scenario file (scenario.hpp: reading and checking, the wording of its errors) and the
 // engine that runs a scenario (scenario_run.hpp) against a model of ECUs that steps in virtual
 // time: when the writes take effect, that no sample is skipped, the wording of the failures, and
-// that the result is the same whenever the samples and results of a step arrive.
+// that the result is the same whenever the samples and results of a step arrive. At the end: the
+// timeline of a run (timeline.hpp) that the engine notes against the same model, compared with
+// the files of tests/launch/timeline.
 #include "launch_test_util.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -132,10 +140,19 @@ public:
     Policy policy = [](std::size_t, SimTime) { return 0; };
     bool reverse = false; ///< the ECUs step in the reverse order
     std::optional<SimTime> stop_at;
+    /// A participant failed and ended the run: the engine is told so when the run is over.
+    bool superseded = false;
+    /// timeline_of(): the simulation ends here for another reason (none: after 5 s).
+    std::optional<SimDuration> ends_after;
     /// "Body.level=5 for 130 applied at 130", in the order applied.
     std::vector<std::string> log;
     ScenarioEngine* engine = nullptr;
     const Scenario* scenario = nullptr;
+    /// What the engine notes for a timeline, if set (run()).
+    TimelineRecord* record = nullptr;
+    /// If set: what `peer` answers at once to a command for the time `at` instead of taking it
+    /// (its status and reason; empty: it takes the command as ever).
+    std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
 
     World()
     {
@@ -162,6 +179,12 @@ public:
             {
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "unknown peer";
+                continue;
+            }
+            if (const auto refused = refuse ? refuse(w.peer, time) : std::nullopt)
+            {
+                target->status = refused->status;
+                target->reason = refused->reason;
                 continue;
             }
             if (w.name == "level" && (std::get<std::int64_t>(w.value) < 0 || std::get<std::int64_t>(w.value) > 100))
@@ -192,7 +215,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this);
+        ScenarioEngine e(s, tick, *this, {}, record);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)
@@ -235,6 +258,10 @@ public:
         if (!e.over())
         {
             e.cut_short();
+        }
+        if (superseded)
+        {
+            e.superseded();
         }
         engine = nullptr;
         return e.run();
@@ -299,7 +326,7 @@ private:
                     if (name == "level" && std::get<std::int64_t>(value) == 13)
                     {
                         r = control::TargetResult{m.name, control::TargetStatus::Rejected, std::nullopt, false,
-                                                  "a setter threw: 13 is not a level"};
+                                                  "level: a setter threw: 13 is not a level"};
                         break;
                     }
                     if (name == "level")
@@ -497,12 +524,12 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 1 format-version: vehicle_sil_scenario is 2, but this vehicle_sil_launch reads format 1 only: use the "
                "vehicle-sil that the file was written for\n");
     check_text(errors("steps:\n  - set: { Body.level: 1 }\nstep: 1\n"),
-               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, only, params, steps)\n"
+               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, only, params, inputs, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
-               "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wave, wait_until, "
+               "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wave, dither, wait_until, "
                "timeout_ms, expect, within_ms, hold_for_ms, undersampled)\n"
-               "E 3 value: the step does nothing: give it one of set, ramp, wave, wait_until, expect\n");
+               "E 3 value: the step does nothing: give it one of set, ramp, wave, dither, wait_until, expect\n");
     check_text(errors(kHead + "  - set: { Body.level: 1 }\n    expect: { Body.level: 1 }\n"),
                "E 3 value: the step has set, expect: a step does one thing; make a step of each\n");
     // The variables.
@@ -785,7 +812,7 @@ TEST_CASE(scenario_failures_say_the_time_and_the_values)
     check_text(run("  - at_ms: 50\n    set: { Body.level: 13 }\n  - expect: { Body.level: 13 }\n"),
                "failed over=60\n"
                "3 failed start=50 at=50 end=50 scenario-write: the write for 50 ms was not applied by participant 'Body': the ECU "
-               "rejected it (a setter threw: 13 is not a level)\n"
+               "rejected it (level: a setter threw: 13 is not a level)\n"
                "5 not_run start=- at=- end=-\n");
     // A participant without a link: the first step that uses it says so, before anything runs.
     check_text(run("  - at_ms: 50\n    set: { Body.level: 1 }\n  - expect: { Door.lamp: false }\n",
@@ -1017,7 +1044,7 @@ TEST_CASE(scenario_parameter_errors_say_what_to_write)
     check_text(lines(near.usage_errors),
                "E 0 usage: --param leve=1: the scenario has no parameter leve (did you mean level?): its parameters "
                "are level; remove the option or correct the name\n");
-    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.level: 1 }\n", catalog(), context);
+    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.level: 2 }\n", catalog(), context);
     check_text(lines(none.findings), "");
     check_text(lines(none.usage_errors),
                "E 0 usage: --param leve=1: the scenario has no parameter leve: it uses none (a step uses one as "
@@ -1859,7 +1886,7 @@ TEST_CASE(scenario_wave_errors_say_what_is_wrong_and_what_to_write)
                "how long it bounces)\n"
                "E 9 missing-key: the chatter of Body.level needs bounces (how often it falls back before it rests) or for_ms (how long it "
                "bounces)\n"
-               "E 11 value: undersampled goes with wave, not with set: remove it\n"
+               "E 11 value: undersampled goes with wave and dither, not with set: remove it\n"
                "E 13 value: undersampled must be ok (run the step's waves as they are, also where they change faster than their ECU "
                "steps), not 'yes': write undersampled: ok, or remove it\n"
                "E 14 value: around does not go with the pulse of Body.level: a pulse returns to the value the variable has when the "
@@ -2022,6 +2049,241 @@ TEST_CASE(scenario_times_are_the_same_whether_a_wave_is_skipped_or_not)
     check_text(applied(a, "Body.ratio"), "");
 }
 
+// --- points from a CSV file ---
+
+namespace {
+
+/// A ScenarioContext whose files are `files` (by the path the scenario writes); `reads` counts the
+/// reads of each.
+ScenarioContext with_files(std::map<std::string, std::string> files, std::shared_ptr<std::map<std::string, int>> reads = {})
+{
+    ScenarioContext context;
+    context.read_file = [files = std::move(files), reads](const std::string& path, std::string& problem) -> std::optional<std::string> {
+        if (reads)
+        {
+            ++(*reads)[path];
+        }
+        const auto it = files.find(path);
+        if (it == files.end())
+        {
+            problem = "does not exist";
+            return std::nullopt;
+        }
+        return it->second;
+    };
+    return context;
+}
+
+} // namespace
+
+TEST_CASE(scenario_points_from_a_file_write_what_the_same_points_in_the_text_write)
+{
+    // The same points in the text and in two files: a byte order mark, CRLF, a blank line, a name
+    // in quotes, spaces around a cell, hexadecimal, an enum by name and by value, a bool as 0, the
+    // times in seconds in a column that is not the first, one file for two variables.
+    const std::string first = "  - set: { Body.ratio: 0, Door.lamp: false }\n";
+    const std::string text =
+        kHead + first +
+        "  - wave: { Body.level: { points: [[0, 0], [50, 25.5], [80, 0x3C], [400, 20]] }, Door.mode: { points: [[0, auto], [50, off], [80, 1], [400, on]] },\n"
+        "            Door.lamp: { points: [[10, true], [30, false]] },\n"
+        "            Body.ratio: { points: [[10, 0.25], [30, 1]] } }\n"
+        "  - expect: { Body.level: 20, Door.mode: on, Door.lamp: false, Body.ratio: 1 }\n";
+    const std::string fromFiles =
+        kHead + first +
+        "  - wave: { Body.level: { points: { file: traces/drive.csv, value: level } }, Door.mode: { points: { file: traces/drive.csv, value: mode, time: time_ms } },\n"
+        "            Door.lamp: { points: { file: lamp.csv, value: lamp, time: t, time_unit: s } },\n"
+        "            Body.ratio: { points: { file: lamp.csv, value: ratio, time: t, time_unit: s } } }\n"
+        "  - expect: { Body.level: 20, Door.mode: on, Door.lamp: false, Body.ratio: 1 }\n";
+    const auto reads = std::make_shared<std::map<std::string, int>>();
+    const ScenarioContext context = with_files({{"traces/drive.csv", "\xEF\xBB\xBF\"time_ms\", level ,mode\r\n0,0,auto\r\n\r\n50,25.5,off\r\n"
+                                                                     "80,0x3C,1\r\n400,20,\"on\"\r\n"},
+                                                {"lamp.csv", "lamp,t,ratio\ntrue,0.01,0.25\n0,0.03,1\n"}},
+                                               reads);
+    const ScenarioRead read = read_scenario(fromFiles, catalog(), context);
+    check_text(lines(read.findings), "");
+    CHECK(read.scenario.has_value());
+    check_text(read.scenario->steps[1].text + "\n",
+               "wave Body.level points from traces/drive.csv column level (4, linear) over 400 ms; Door.mode points from "
+               "traces/drive.csv column mode (4, hold) over 400 ms; Door.lamp points from lamp.csv column lamp (2, hold) over 30 ms; "
+               "Body.ratio points from lamp.csv column ratio (2, linear) over 30 ms\n");
+    // Each file is read once.
+    CHECK(*reads == (std::map<std::string, int>{{"lamp.csv", 1}, {"traces/drive.csv", 1}}));
+    World inText;
+    World inFiles;
+    const ScenarioRun a = inText.run(read_scenario(text, catalog()).scenario.value());
+    const ScenarioRun b = inFiles.run(*read.scenario);
+    CHECK(a.status == ScenarioStatus::Passed && b.status == ScenarioStatus::Passed);
+    check_text(text_of(b), text_of(a));
+    for (const char* variable : {"Body.level", "Door.mode", "Door.lamp", "Body.ratio"})
+    {
+        check_text(applied(inFiles, variable), applied(inText, variable));
+    }
+    // 25.5 at 50 ms, 60 at 80 ms, then 1.25 less every 10 ms to 20 at 400 ms (rounded for the integer).
+    check_text(applied(inFiles, "Body.level"), "0@0 5@10 10@20 15@30 20@40 26@50 37@60 49@70 60@80 59@90 58@100 56@110 55@120 "
+                                               "54@130 53@140 51@150 50@160 49@170 48@180 46@190 45@200 44@210 43@220 41@230 40@240 "
+                                               "39@250 38@260 36@270 35@280 34@290 33@300 31@310 30@320 29@330 28@340 26@350 25@360 "
+                                               "24@370 23@380 21@390 20@400 ");
+}
+
+TEST_CASE(scenario_points_file_errors_say_the_file_the_line_and_the_column)
+{
+    std::string big = "time,level\n";
+    for (int i = 0; i <= 100'000; ++i)
+    {
+        big += std::to_string(i) + ",1\n";
+    }
+    const ScenarioContext context =
+        with_files({{"ok.csv", "time,level\n0,1\n50,2\n"},
+                    {"twice.csv", "time,level,level\n0,1,2\n10,1,2\n"},
+                    {"cells.csv", "time,level\n0,1\n10,this-is-not-a-number-at-all\n"},
+                    {"times.csv", "time,level\n0,1\n12.5,2\n"},
+                    {"seconds.csv", "time,level\n0,1\nsoon,2\n"},
+                    {"negative.csv", "time,level\n-5,1\n10,2\n"},
+                    {"order.csv", "time,level\n0,1\n50,2\n50,3\n"},
+                    {"range.csv", "time,level\n0,1\n10,500\n"},
+                    {"empty.csv", "\xEF\xBB\xBF\r\n  \r\n"},
+                    {"header.csv", "time,level\r\n"},
+                    {"ragged.csv", "time,level\n0,1\n10\n"},
+                    {"quote.csv", "time,level\n0,\"1\n"},
+                    {"utf16.csv", std::string("\xFF\xFEt\0", 4)},
+                    {"door.csv", "time,lamp,mode\n0,yes,open\n10,1,1\n"},
+                    {"big.csv", big}});
+    const auto findings = [&](const std::string& steps, const ScenarioContext& c) { return lines(read_scenario(kHead + steps, catalog(), c).findings); };
+    // The path: from the scenario's directory, below it, with '/'.
+    check_text(findings("  - wave: { Body.level: { points: { file: /data/ok.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: 'C:/data/ok.csv', value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: traces/../../ok.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: 'traces\\ok.csv', value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: none.csv, value: level } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: the file '/data/ok.csv' is an absolute path: give the path from the "
+               "scenario file's directory (traces/drive.csv); a scenario reads only files in its own directory and below it\n"
+               "E 4 scenario-points-file: the points of Body.level: the file 'C:/data/ok.csv' is an absolute path: give the path from the "
+               "scenario file's directory (traces/drive.csv); a scenario reads only files in its own directory and below it\n"
+               "E 5 scenario-points-file: the points of Body.level: the file 'traces/../../ok.csv' goes up a directory (..): a scenario "
+               "reads only files in its own directory and below it; put the file there\n"
+               "E 6 scenario-points-file: the points of Body.level: the file 'traces\\ok.csv' has '\\': write '/' between directories "
+               "(traces/drive.csv), which every OS reads\n"
+               "E 7 scenario-points-file: the points of Body.level: none.csv does not exist\n");
+    // The keys.
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, unit: s } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, time_unit: min } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: [level] } } }\n"
+                        "  - wave: { Body.level: { points: 5 } }\n",
+                        context),
+               "E 3 missing-key: the points of Body.level from a file need value: the name of the column of the values (points: { file: "
+               "traces/drive.csv, value: throttle })\n"
+               "E 4 unknown-key: the points of Body.level: unknown key 'unit': remove it, or use one of the keys here (file, value, time, "
+               "time_unit)\n"
+               "E 5 value: time_unit of the points of Body.level must be ms or s, not 'min'\n"
+               "E 6 value: value of the points of Body.level must be the name of the column of the values, not a list\n"
+               "E 7 value: points of Body.level must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), "
+               "or a CSV file and its column (points: { file: traces/drive.csv, value: throttle }), not '5'\n");
+    // The columns.
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv, value: levl } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: level, time: when } } }\n"
+                        "  - wave: { Body.level: { points: { file: twice.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: ok.csv, value: time } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: ok.csv has no column 'levl' on its first line (line 1): did you mean "
+               "'level'?; its columns are 'time', 'level'\n"
+               "E 4 scenario-points-file: the points of Body.level: ok.csv has no column 'when' on its first line (line 1); its columns "
+               "are 'time', 'level'\n"
+               "E 5 scenario-points-file: the points of Body.level: twice.csv has 2 columns named 'level' (columns 2 and 3): give its "
+               "columns different names on its first line\n"
+               "E 6 scenario-points-file: the points of Body.level: value names the column of the times ('time', the first column): name "
+               "the column of the values, or the column of the times with time\n");
+    // The cells: the first wrong one, cut short.
+    check_text(findings("  - wave: { Body.level: { points: { file: cells.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: times.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: seconds.csv, value: level, time_unit: s } } }\n"
+                        "  - wave: { Body.level: { points: { file: negative.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: order.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: range.csv, value: level } } }\n"
+                        "  - wave: { Door.lamp: { points: { file: door.csv, value: lamp } } }\n"
+                        "  - wave: { Door.mode: { points: { file: door.csv, value: mode } } }\n",
+                        context),
+               "E 3 scenario-value: the value on line 3 of cells.csv (column 'level') for Body.level (integer) must be a number, not "
+               "'this-is-not-a-number...'\n"
+               "E 4 value: the time on line 3 of times.csv (column 'time') is 12.5 ms: the times of points are whole milliseconds; round "
+               "them in the file\n"
+               "E 5 value: the time on line 3 of seconds.csv (column 'time') must be a number of seconds since the step began, not 'soon'\n"
+               "E 6 value: the time on line 2 of negative.csv (column 'time') is -5 ms, but it must be from 0 to 1000000000000 "
+               "(milliseconds of virtual time since the step began)\n"
+               "E 7 value: the times of the points of Body.level must go up: line 4 of order.csv is at 50 ms, not after line 3 (50 ms); "
+               "for a value that jumps, write interpolate: hold beside the points (each value is then kept until the next point)\n"
+               "E 8 scenario-value: the value on line 3 of range.csv (column 'level') for Body.level (integer) is 500, outside its range "
+               "(from 0 to 100)\n"
+               "E 9 scenario-value: the value on line 2 of door.csv (column 'lamp') for Door.lamp (bool) must be true, false, 1 or 0, "
+               "not 'yes'\n"
+               "E 10 scenario-value: the value on line 2 of door.csv (column 'mode') for Door.mode (enum) must be one of its items, by "
+               "name or by value, not 'open': the items are off (0), on (1), auto (2)\n");
+    // The file as a whole.
+    check_text(findings("  - wave: { Body.level: { points: { file: empty.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: header.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: ragged.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: quote.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: utf16.csv, value: level } } }\n"
+                        "  - wave: { Body.level: { points: { file: big.csv, value: level } } }\n",
+                        context),
+               "E 3 scenario-points-file: the points of Body.level: empty.csv is empty: its first line names the columns (time,throttle), "
+               "and each line below it gives a time and the values\n"
+               "E 4 scenario-points-file: the points of Body.level: header.csv has no lines of values below the names of its columns "
+               "(line 1): give one line for each point (0,50)\n"
+               "E 5 scenario-points-file: the points of Body.level: ragged.csv has 1 cell on line 3, and its first line names 2 columns: "
+               "give every line one cell for each column\n"
+               "E 6 scenario-points-file: the points of Body.level: quote.csv has a cell in quotes on line 2 whose closing quote is not on "
+               "the line: end a cell in quotes with a quote before the next ',' (write \"\" for a quote in it)\n"
+               "E 7 scenario-points-file: the points of Body.level: utf16.csv is not UTF-8 text (it looks like UTF-16, or has bytes that "
+               "are not UTF-8): save it as CSV in UTF-8\n"
+               "E 8 scenario-points-file: the points of Body.level: big.csv has more than 100000 lines of values (one point each): keep "
+               "fewer points, or split it into steps of their own\n");
+    // Without a way to read files (read_scenario() without ScenarioContext::read_file).
+    check_text(findings("  - wave: { Body.level: { points: { file: ok.csv, value: level } } }\n", ScenarioContext{}),
+               "E 3 scenario-points-file: the points of Body.level: ok.csv is not read here: points from a file are read with the "
+               "scenario file (check --scenario, run --scenario)\n");
+    // A parameter may name the file and the column.
+    check_text(findings("  - wave: { Body.level: { points: { file: \"${trace}\", value: \"${column}\" } } }\n"
+                        "params: { trace: ok.csv, column: level }\n",
+                        context),
+               "");
+}
+
+TEST_CASE(scenario_points_file_of_a_skipped_wave_gives_its_length)
+{
+    // A skipped step lasts until the time on the last line of its file, as it would if it ran.
+    const std::string text = kHead + "  - wave: { Body.boost: { points: { file: boost.csv, value: b, time: t } } }\n"
+                                     "  - wave: { Body.boost: { points: { file: boost.csv, value: b, time: s, time_unit: s } } }\n"
+                                     "  - wave: { Body.boost: { points: { file: none.csv, value: b } } }\n";
+    const ScenarioRead absent =
+        read_scenario(text, catalog_without_boost(), with_files({{"boost.csv", "b,t,s\n1,0,0\n2,70,0.25\n"}}));
+    CHECK(absent.scenario.has_value());
+    CHECK_EQ(absent.skipped, std::size_t{3});
+    CHECK_EQ(absent.scenario->steps[0].skipped_ms, std::int64_t{70});
+    CHECK_EQ(absent.scenario->steps[1].skipped_ms, std::int64_t{250});
+    CHECK_EQ(absent.scenario->steps[2].skipped_ms, std::int64_t{0});
+}
+
+TEST_CASE(scenario_files_are_read_beside_the_scenario_file)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "points-files";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "traces");
+    // A name that is not ASCII: the path is UTF-8 on every OS.
+    const std::string name = "traces/\xE8\xB5\xB0\xE8\xA1\x8C.csv";
+    std::ofstream(dir / process::path_from_utf8(name), std::ios::binary) << "time,level\n0,1\n";
+    const auto read = files_beside(dir / "s.yaml");
+    std::string problem;
+    CHECK(read(name, problem) == std::optional<std::string>{"time,level\n0,1\n"});
+    CHECK(!read("traces", problem).has_value());
+    check_text(problem, "is not a regular file: name the CSV file");
+    CHECK(!read("none.csv", problem).has_value());
+    CHECK(problem.rfind("does not exist (looked for ", 0) == 0);
+    CHECK(problem.find("): the path is from the scenario file's directory; check it") != std::string::npos);
+}
+
 // --- an expect beside a ramp or a wave ---
 
 TEST_CASE(scenario_expect_beside_a_ramp_is_read_with_the_ramp)
@@ -2032,7 +2294,7 @@ TEST_CASE(scenario_expect_beside_a_ramp_is_read_with_the_ramp)
                                     "  - wave: { Door.ratio: { sine: { amplitude: 0.1, period_ms: 100 }, around: 0.5, for_ms: 200 } }\n"
                                     "    expect: { Door.ratio: { ge: 0.3 } }\n");
     CHECK_EQ(s.steps.size(), std::size_t{3});
-    CHECK(s.steps[1].kind == StepKind::Ramp && s.steps[1].conditions.size() == 2 && s.steps[1].signals.size() == 1);
+    CHECK(s.steps[1].kind == StepKind::Ramp && s.steps[1].conditions.size() == 2 && s.steps[1].motions.size() == 1);
     CHECK(s.steps[2].kind == StepKind::Wave && s.steps[2].conditions.size() == 1);
     check_text(s.steps[1].text + "\n" + s.steps[2].text + "\n",
                "ramp Body.level to 10 over 100 ms, expecting Body.level le 10; Body.lamp eq false\n"
@@ -2189,7 +2451,7 @@ TEST_CASE(scenario_expect_beside_a_motion_decides_the_step_with_its_writes)
                           [](World& w) { w.ecus[1].step = 30ms; }),
                "failed over=130\n"
                "3 failed start=0 at=100 end=100 scenario-write: the write for 100 ms was not applied by participant 'Door': "
-               "the ECU rejected it (a setter threw: 13 is not a level)\n");
+               "the ECU rejected it (level: a setter threw: 13 is not a level)\n");
 }
 
 TEST_CASE(scenario_expect_beside_a_wave_fails_with_what_the_launcher_learns_first)
@@ -2279,4 +2541,2076 @@ TEST_CASE(scenario_expect_beside_a_ramp_that_uses_an_absent_variable_is_skipped_
                                                        "  - expect: { Body.level: 2 }\n",
                                                catalog_without_boost(), context);
     CHECK(std::none_of(checked.findings.begin(), checked.findings.end(), [](const Finding& f) { return f.severity != Severity::Note; }));
+}
+
+// --- the timeline of a run (timeline.hpp) ---
+
+TEST_CASE(scenario_motion_starts_from_where_the_one_before_it_left_the_variable)
+{
+    // An integer. The lag ends at 77.7, which the ECU gets as 78; the ramp after it starts from
+    // that 78, not from 77.7: halfway to 77 it writes 77.5, which is 78 (from 77.7 it would be 77).
+    const Scenario rounded = read(kHead + "  - wave: { Body.level: { lag: { from: 0, to: 100, tau_ms: 20 }, for_ms: 30 } }\n"
+                                          "  - ramp: { Body.level: { to: 77, over_ms: 20 } }\n");
+    World world;
+    CHECK(world.run(rounded).status == ScenarioStatus::Passed);
+    check_text(applied(world, "Body.level"), "0@0 39@10 63@20 78@30 78@30 78@40 77@50 ");
+    // A ramp that ends between two steps of its ECU (25 ms, steps of 10 ms): the one after it
+    // starts from its end value (80), not from the last value on a step (68).
+    const Scenario between = read(kHead + "  - set: { Body.level: 20 }\n"
+                                          "  - ramp: { Body.level: { to: 80, over_ms: 25 } }\n"
+                                          "  - ramp: { Body.level: { to: 0, over_ms: 20 } }\n");
+    World off;
+    CHECK(off.run(between).status == ScenarioStatus::Passed);
+    check_text(applied(off, "Body.level"), "20@0 20@0 44@10 68@20 80@30 80@30 40@40 0@50 ");
+}
+
+TEST_CASE(scenario_first_motion_without_a_base_takes_the_sample_the_controllers_step_has_let_it_see)
+{
+    // A ramp at 25 ms that does not say where it starts, of a variable the scenario has not
+    // written: its base is a sample. With a controller that steps every 10 or 20 ms the samples
+    // of 0 and 10 ms were looked at before the writes for 25 ms went out. With one that steps
+    // every 30 ms those writes go out at 0 ms, before any sample: the same scenario fails. (The
+    // message says the way out: give it from.)
+    const Scenario s = read(kHead + "  - at_ms: 25\n"
+                                    "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n");
+    for (const SimDuration tick : {SimDuration{10ms}, SimDuration{20ms}})
+    {
+        World world;
+        world.tick = tick;
+        CHECK(world.run(s).status == ScenarioStatus::Passed);
+        check_text(applied(world, "Body.level"), "0@30 40@40 80@50 ");
+    }
+    World coarse;
+    coarse.tick = 30ms;
+    check_text(text_of(coarse.run(s)),
+               "failed over=0\n"
+               "3 failed start=25 at=25 end=45 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
+               "ECU has arrived before 25 ms and the scenario has not written it; give the ramp from: <value>\n");
+    // Where it turns: the writes for the times up to the controller's first step (30 ms, that
+    // time too) go out at 0 ms. A ramp at 30 ms fails as well; one at 40 ms goes out at 30 ms, with
+    // the samples of 0 to 20 ms looked at.
+    World edge;
+    edge.tick = 30ms;
+    check_text(text_of(edge.run(read(kHead + "  - at_ms: 30\n"
+                                             "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"))),
+               "failed over=0\n"
+               "3 failed start=30 at=30 end=50 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
+               "ECU has arrived before 30 ms and the scenario has not written it; give the ramp from: <value>\n");
+    World after;
+    after.tick = 30ms;
+    CHECK(after.run(read(kHead + "  - at_ms: 40\n"
+                                 "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"))
+              .status == ScenarioStatus::Passed);
+    check_text(applied(after, "Body.level"), "0@40 40@50 80@60 ");
+}
+
+/// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
+/// makes it (the findings: those of the failed steps, as the run's).
+std::string timeline_of(const std::string& text, SimDuration tick, const std::function<void(World&)>& setup = {},
+                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {}, const ScenarioContext& context = {})
+{
+    ScenarioRead r = read_scenario(text, described, context);
+    if (!r.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+    }
+    const Scenario s = *r.scenario;
+    World world;
+    world.tick = tick;
+    if (setup)
+    {
+        setup(world);
+    }
+    TimelineRecord record(s, limits);
+    world.record = &record;
+    ScenarioRun run = world.run(s, world.ends_after.value_or(5s));
+    run.file = "scenario.yaml";
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.tick_ms = ms_of(at(tick));
+    input.scenario = &s;
+    input.run = &run;
+    input.catalog = &described;
+    input.record = &record;
+    for (const ScenarioStepRun& step : run.steps)
+    {
+        if (step.status == StepStatus::Failed)
+        {
+            input.findings.push_back(Finding{Severity::Error, step.code, step.text + ": " + step.message, step.line, "", "", "", run.file});
+        }
+    }
+    return format_timeline_json(input);
+}
+
+/// A timeline file without what is not compared between runs with different steps of the
+/// controller and between builds: the version, the files' names, when the controller saw the
+/// scenario over, its step.
+std::string compared(const std::string& timeline)
+{
+    std::istringstream in(timeline);
+    std::string out;
+    for (std::string line; std::getline(in, line);)
+    {
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.pop_back();
+        }
+        const bool left_out = std::ranges::any_of(
+            std::vector<std::string>{"  \"vehicle_sil\": ", "  \"file\": ", "  \"tick_ms\": ", "    \"file\": ", "    \"over_at_ms\": "},
+            [&line](const std::string& start) { return line.rfind(start, 0) == 0; });
+        if (!left_out)
+        {
+            out += line + "\n";
+        }
+    }
+    return out;
+}
+
+/// The part of a timeline file from `from` up to (not with) `to`.
+std::string part(const std::string& timeline, const std::string& from, const std::string& to)
+{
+    const auto begin = timeline.find(from);
+    const auto end = begin == std::string::npos ? begin : timeline.find(to, begin);
+    if (end == std::string::npos)
+    {
+        throw unit::Failure("the timeline has no '" + from + "' ... '" + to + "':\n" + timeline);
+    }
+    return timeline.substr(begin, end - begin);
+}
+
+TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
+{
+    // A scenario that passes, one that fails at a sample and one whose wait runs out: the file is
+    // the same whether the controller steps every 10, 20, 30 or 4 ms, though the engine then looks
+    // at the samples and learns the results at other times. Door steps every 4 ms (it samples
+    // every 20 ms then). None has a step that waits and becomes true: such a step ends one step
+    // of the controller after the engine knows (ScenarioEngine), so it and the steps after it
+    // have other times with another step.
+    const std::string passes = kHead + "  - set: { Body.level: 10, Door.level: 3 }\n"
+                                       "  - at_ms: 20\n"
+                                       "    expect: { Body.body.speed: { ge: 100 } }\n"
+                                       "  - after_ms: 15\n"
+                                       "    ramp: { Door.level: { to: 9, over_ms: 50 }, Body.level: { to: 12, over_ms: 35 } }\n"
+                                       "    expect: { Door.level: { ge: 3 }, Body.body.speed: { le: 120 } }\n"
+                                       "  - set: { Door.lamp: true }\n"
+                                       "  - after_ms: 20\n"
+                                       "    expect: { Door.level: 9 }\n"
+                                       "    hold_for_ms: 45\n"
+                                       "  - set: { Body.level: 0 }\n";
+    const std::string fails = kHead + "  - set: { Body.level: 10 }\n"
+                                      "  - at_ms: 15\n"
+                                      "    expect: { Body.body.speed: { le: 60 }, Door.level: 0 }\n"
+                                      "    hold_for_ms: 100\n"
+                                      "  - set: { Body.level: 0 }\n";
+    const std::string times_out = kHead + "  - wave: { Door.level: { square: { low: 1, high: 2, period_ms: 16 }, for_ms: 64 } }\n"
+                                          "    expect: { Door.level: { ge: 0 } }\n"
+                                          "  - wait_until: { Body.body.speed: { gt: 0 }, Door.level: 2 }\n"
+                                          "    timeout_ms: 75\n";
+    const auto door4 = [](World& w) { w.ecus[1].step = 4ms; };
+    for (const std::string& text : {passes, fails, times_out})
+    {
+        const std::string first = compared(timeline_of(text, 10ms, door4, catalog(10ms, 4ms)));
+        CHECK(first.find("\"recorded_to_ms\": null") == std::string::npos);
+        for (const SimDuration tick : {SimDuration{20ms}, SimDuration{30ms}, SimDuration{4ms}, SimDuration{5ms}})
+        {
+            check_text(compared(timeline_of(text, tick, door4, catalog(10ms, 4ms))), first, "the timeline with another step");
+        }
+        // Nor on when what a step makes arrives.
+        for (const auto& [name, policy] : policies())
+        {
+            check_text(compared(timeline_of(text, 10ms, [&](World& w) { door4(w); w.policy = policy; }, catalog(10ms, 4ms))), first,
+                       name.c_str());
+        }
+    }
+    // The lines of the inputs are the same too (they are in the files compared above). Here the
+    // expect fails at 15 ms. The ramp at 25 ms is put on its line by a controller that steps
+    // every 30 ms (it sends the writes up to 30 ms at 0 ms), and not by one that steps every 5 or
+    // 10 ms (it knows of the failure at 20 ms, before the writes for 25 ms). The file has the
+    // lines put up to "recorded to" (15 ms): the set, and with no step the ramp.
+    const std::string ahead = kHead + "  - set: { Body.level: 10 }\n"
+                                      "  - at_ms: 15\n"
+                                      "    expect: { Body.body.speed: { le: 60 } }\n"
+                                      "  - at_ms: 25\n"
+                                      "    ramp: { Door.level: { from: 1, to: 9, over_ms: 30 } }\n";
+    const auto lines_of = [](const std::string& timeline) { return part(timeline, "  \"lines\": [\n", "  \"findings\""); };
+    for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
+    {
+        const std::string made = timeline_of(ahead, tick);
+        CHECK(made.find("    \"recorded_to_ms\": 15\n") != std::string::npos);
+        check_text(lines_of(made),
+                   "  \"lines\": [\n    {\n      \"variable\": \"Body.level\",\n      \"kind\": \"set\",\n      \"line\": 3,\n"
+                   "      \"step\": 1,\n      \"from_ms\": 0,\n      \"to_ms\": 0,\n      \"base\": 10,\n"
+                   "      \"base_source\": \"written\",\n      \"shape\": null,\n      \"text\": \"Body.level = 10\"\n    }\n  ],\n",
+                   "the lines with another step");
+        // (The step's own list follows the lines of the file.)
+        CHECK(made.find("      \"lines\": [0],\n") != std::string::npos && made.find("      \"lines\": [1],\n") == std::string::npos);
+    }
+    // The watch beside the ramp goes to the step of Door that applies the end value (88 ms), past
+    // the step's end (85 ms); the last step passed at 150 ms, and that is where the file ends.
+    const std::string passed = timeline_of(passes, 20ms, door4, catalog(10ms, 4ms));
+    check_text(part(passed, "        \"mode\": \"during\",", "        \"conditions\""),
+               "        \"mode\": \"during\",\n        \"from_ms\": 35,\n        \"until_ms\": 88,\n");
+    CHECK(passed.find("      \"start_ms\": 35,\n      \"at_ms\": 85,\n      \"end_ms\": 85,\n") != std::string::npos);
+    check_text(part(passed, "  \"scenario\": {", "  \"variables\""),
+               "  \"scenario\": {\n    \"file\": \"scenario.yaml\",\n    \"name\": null,\n    \"status\": \"passed\",\n"
+               "    \"over_at_ms\": 160,\n    \"recorded_to_ms\": 150\n  },\n");
+    // What is in it: the hold from 15 ms fails at once with the sample of 10 ms, so the file has
+    // what was written and sampled up to 15 ms and nothing after it, though the controller (every
+    // 30 ms) saw the scenario over at 30 ms, with the samples of 20 ms there.
+    const std::string failed = timeline_of(fails, 30ms, door4, catalog(10ms, 4ms));
+    CHECK(failed.find("    \"over_at_ms\": 30,\n    \"recorded_to_ms\": 15\n") != std::string::npos);
+    CHECK(failed.find("      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+                      "      \"points\": [\n        [0, 10]\n      ]") != std::string::npos);
+    CHECK(failed.find("      \"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"
+                      "      \"samples\": 2,\n      \"first_ms\": 0,\n      \"last_ms\": 10,\n      \"points\": [\n"
+                      "        [0, 50],\n        [10, 100]\n      ]") != std::string::npos);
+    CHECK(failed.find("      \"failed\": {\n        \"at_ms\": 15,\n        \"code\": \"scenario-failed\",\n        \"conditions\": [\n"
+                      "          {\n            \"condition\": 0,\n            \"value\": 100,\n            \"sample_ms\": 10\n          }\n"
+                      "        ],\n        \"writes\": [],\n        \"write\": null\n      }") != std::string::npos);
+}
+
+std::string file_text(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+    {
+        throw unit::Failure("cannot read " + path.string());
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    std::string out = text.str();
+    std::erase(out, '\r');
+    return out;
+}
+
+TEST_CASE(timeline_files_are_the_references)
+{
+    // tests/launch/timeline: each scenario with the timeline file the engine writes for it against
+    // the model (README.md there: what is not compared, and how to write the references again).
+    // The second list: the other steps of the controller that give the same file (none for a
+    // scenario with a step that waits and becomes true, or with a write that an ECU refuses: what
+    // the engine learns first then depends on the step).
+    const std::filesystem::path directory = std::filesystem::path(VEHICLE_SIL_SOURCE_DIR) / "tests" / "launch" / "timeline";
+    const char* update = std::getenv("VEHICLE_SIL_UPDATE_TIMELINE_REFERENCES");
+    const bool writing = update != nullptr && std::string(update) == "1";
+    const std::vector<std::pair<std::string, std::vector<SimDuration>>> references = {
+        {"motions", {20ms, 30ms}},
+        {"fails_beside", {20ms, 30ms}},
+        {"fails_wait", {20ms, 30ms}},
+        {"waits", {}},
+        {"write_refused", {}},
+        {"points_file", {20ms, 30ms}},
+        {"dither", {5ms, 20ms, 30ms}},
+    };
+    for (const auto& [name, steps] : references)
+    {
+        const std::string scenario = file_text(directory / (name + ".yaml"));
+        const std::filesystem::path reference = directory / (name + ".timeline.json");
+        // The points of a wave may be in a CSV file beside the scenario: <name>.csv.
+        ScenarioContext context;
+        if (std::filesystem::exists(directory / (name + ".csv")))
+        {
+            context = with_files({{name + ".csv", file_text(directory / (name + ".csv"))}});
+        }
+        const auto timeline = [&](SimDuration step) { return timeline_of(scenario, step, {}, catalog(), {}, context); };
+        const std::string made = timeline(10ms);
+        if (writing)
+        {
+            std::ofstream out(reference, std::ios::binary | std::ios::trunc);
+            out << made;
+            if (!out.flush())
+            {
+                throw unit::Failure("cannot write " + reference.string());
+            }
+        }
+        check_text(compared(made), compared(file_text(reference)),
+                   (name + ".timeline.json (if the change is meant: tests/launch/timeline/README.md says how to write it again)").c_str());
+        for (const SimDuration step : steps)
+        {
+            check_text(compared(timeline(step)), compared(made), (name + " with another step of the controller").c_str());
+        }
+    }
+}
+
+TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
+{
+    // A ramp of 300 ms (a write every 10 ms) between two sets, and its speed in every sample: with
+    // 8 points a series, the 8 newest of the ramp stay, and both sets; of the samples the 8 newest.
+    const std::string text = kHead + "  - set: { Body.level: 2 }\n"
+                                     "  - ramp: { Body.level: { to: 92, over_ms: 300 } }\n"
+                                     "    expect: { Body.body.speed: { ge: 0 } }\n"
+                                     "  - set: { Body.level: 0 }\n"
+                                     "  - after_ms: 20\n"
+                                     "    expect: { Body.body.speed: { ge: 0 } }\n";
+    const std::string limited = timeline_of(text, 10ms, {}, catalog(), TimelineLimits{8, 1000});
+    check_text(part(limited, "  \"series\": [", "  \"lines\""),
+               "  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [0, 2],\n"
+               "        [230, 71],\n"
+               "        [240, 74],\n"
+               "        [250, 77],\n"
+               "        [260, 80],\n"
+               "        [270, 83],\n"
+               "        [280, 86],\n"
+               "        [290, 89],\n"
+               "        [300, 92],\n"
+               "        [300, 0]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.body.speed\",\n"
+               "      \"source\": \"sampled\",\n"
+               "      \"encoding\": \"changes\",\n"
+               "      \"samples\": 33,\n"
+               "      \"first_ms\": 0,\n"
+               "      \"last_ms\": 320,\n"
+               "      \"points\": [\n"
+               "        [250, 770],\n"
+               "        [260, 800],\n"
+               "        [270, 830],\n"
+               "        [280, 860],\n"
+               "        [290, 890],\n"
+               "        [300, 840],\n"
+               "        [310, 790],\n"
+               "        [320, 740]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+    check_text(part(limited, "  \"limits\": {", "\n}\n"),
+               "  \"limits\": {\n"
+               "    \"points_per_series\": 8,\n"
+               "    \"points_total\": 1000,\n"
+               "    \"dropped\": [\n"
+               "      {\n"
+               "        \"variable\": \"Body.level\",\n"
+               "        \"source\": \"written\",\n"
+               "        \"dropped\": 23,\n"
+               "        \"dropped_from_ms\": 0,\n"
+               "        \"dropped_before_ms\": 230\n"
+               "      },\n"
+               "      {\n"
+               "        \"variable\": \"Body.body.speed\",\n"
+               "        \"source\": \"sampled\",\n"
+               "        \"dropped\": 25,\n"
+               "        \"dropped_from_ms\": 0,\n"
+               "        \"dropped_before_ms\": 250\n"
+               "      }\n"
+               "    ]\n"
+               "  }");
+    // The same with another step of the controller, which has looked further ahead when the
+    // scenario is over.
+    check_text(compared(timeline_of(text, 30ms, {}, catalog(), TimelineLimits{8, 1000})), compared(limited), "limited, another step");
+    // All series together: the ones with the most points give first, down to the same number.
+    const std::string total = timeline_of(text, 10ms, {}, catalog(), TimelineLimits{1000, 10});
+    check_text(part(total, "  \"limits\": {", "\n}\n"),
+               "  \"limits\": {\n"
+               "    \"points_per_series\": 1000,\n"
+               "    \"points_total\": 10,\n"
+               "    \"dropped\": [\n"
+               "      {\n"
+               "        \"variable\": \"Body.level\",\n"
+               "        \"source\": \"written\",\n"
+               "        \"dropped\": 26,\n"
+               "        \"dropped_from_ms\": 0,\n"
+               "        \"dropped_before_ms\": 260\n"
+               "      },\n"
+               "      {\n"
+               "        \"variable\": \"Body.body.speed\",\n"
+               "        \"source\": \"sampled\",\n"
+               "        \"dropped\": 28,\n"
+               "        \"dropped_from_ms\": 0,\n"
+               "        \"dropped_before_ms\": 280\n"
+               "      }\n"
+               "    ]\n"
+               "  }");
+    check_text(compared(timeline_of(text, 30ms, {}, catalog(), TimelineLimits{1000, 10})), compared(total), "total, another step");
+}
+
+TEST_CASE(timeline_counts_the_samples_up_to_the_time_it_is_closed_at)
+{
+    // Samples of one value are kept as one point with their number; closed at a time between
+    // them, the record has the samples up to that time, also where they do not come evenly.
+    const Scenario s = read(kHead + "  - expect: { Body.level: 0, Body.body.speed: 0 }\n");
+    const auto closed_at = [&s](SimDuration to) {
+        TimelineRecord record(s);
+        for (const std::int64_t t : {0, 10, 20, 25, 35, 45, 55})
+        {
+            record.sampled(0, at(std::chrono::milliseconds(t)), control::Value{std::int64_t{7}});
+            record.sampled(1, at(std::chrono::milliseconds(t)), t < 35 ? control::Value{0.0} : control::Value{-0.0});
+        }
+        record.close(at(to));
+        std::string out;
+        for (const auto& series : record.series())
+        {
+            out += std::to_string(series.sample_count) + " samples, last " + time_text(series.last_sample) + ":";
+            for (const auto& point : series.samples)
+            {
+                out += point.repeats ? "" : " " + std::to_string(ms_of(point.first)) + "=" + value_text(point.value);
+            }
+            out += "\n";
+        }
+        return out;
+    };
+    // 0 and -0 are written differently: a point each.
+    check_text(closed_at(100ms), "7 samples, last 55: 0=7\n7 samples, last 55: 0=0 35=-0\n");
+    check_text(closed_at(54ms), "6 samples, last 45: 0=7\n6 samples, last 45: 0=0 35=-0\n");
+    check_text(closed_at(35ms), "5 samples, last 35: 0=7\n5 samples, last 35: 0=0 35=-0\n");
+    check_text(closed_at(34ms), "4 samples, last 25: 0=7\n4 samples, last 25: 0=0\n");
+    check_text(closed_at(19ms), "2 samples, last 10: 0=7\n2 samples, last 10: 0=0\n");
+    check_text(closed_at(0ms), "1 samples, last 0: 0=7\n1 samples, last 0: 0=0\n");
+    // Of the findings the file has those of the scenario, and that an ECU's values came late (its
+    // code alone); nothing of the pace in real time, which differs from run to run.
+    bool code_only = true;
+    CHECK(timeline_takes_finding("scenario-failed", code_only) && !code_only);
+    CHECK(timeline_takes_finding("control-link-late-values", code_only) && code_only);
+    CHECK(!timeline_takes_finding("behind-real-time", code_only));
+    CHECK(!timeline_takes_finding("timeline-write", code_only));
+    CHECK(!timeline_takes_finding("exit-code", code_only));
+    // Nothing is noted once it is closed.
+    TimelineRecord record(s);
+    record.close(at(10ms));
+    record.sampled(0, at(0ms), control::Value{std::int64_t{1}});
+    CHECK(record.series()[0].samples.empty());
+}
+
+TEST_CASE(timeline_marks_the_write_that_was_refused)
+{
+    // A written point is what was sent. The write a step failed of is a point too, and the series
+    // says from where on its points were not applied; the failure names the point.
+    // (A description without the range of level: the check lets the value through, as with an
+    // ECU that says less than its agent checks.)
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const auto refused = [&loose](const std::string& text, SimDuration tick) {
+        const std::string timeline = timeline_of(text, tick, {}, loose);
+        return part(timeline, "  \"scenario\": {", "  \"variables\"") + part(timeline, "        \"writes\": [", "\n      }\n") +
+               part(timeline, "  \"series\": [", "  \"lines\"");
+    };
+    // Refused at once by the agent (out of range), between two steps of the controller: over at
+    // 30 ms, the write is for 40 ms.
+    check_text(refused(kHead + "  - set: { Body.level: 7 }\n"
+                               "  - set: { Body.level: 95 }\n"
+                               "  - at_ms: 30\n"
+                               "    wave: { Body.level: { triangle: { amplitude: 10, period_ms: 40 }, for_ms: 40 } }\n",
+                       10ms),
+               "  \"scenario\": {\n"
+               "    \"file\": \"scenario.yaml\",\n"
+               "    \"name\": null,\n"
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 30,\n"
+               "    \"recorded_to_ms\": 40\n"
+               "  },\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 40,\n"
+               "            \"value\": 105,\n"
+               "            \"point\": 3,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0"
+               "  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 3,\n"
+               "      \"points\": [\n"
+               "        [0, 7],\n"
+               "        [0, 95],\n"
+               "        [30, 95],\n"
+               "        [40, 105]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+    // The same at a step of the controller: the write for 0 ms is refused at 0 ms, where the
+    // scenario is over.
+    check_text(refused(kHead + "  - set: { Body.level: 102 }\n", 10ms),
+               "  \"scenario\": {\n"
+               "    \"file\": \"scenario.yaml\",\n"
+               "    \"name\": null,\n"
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 0,\n"
+               "    \"recorded_to_ms\": 0\n"
+               "  },\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 0,\n"
+               "            \"value\": 102,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0"
+               "  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [0, 102]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+}
+
+TEST_CASE(timeline_says_which_writes_of_a_failed_set_were_applied)
+{
+    // An ECU applies the writes of one command one after the other and stops at the one whose
+    // setter throws: the writes before it are applied. The file says so per write, marks only the
+    // points that were not applied, and names the write that is the reason.
+    const auto failed = [](const std::string& text, const ScenarioCatalog& described = catalog()) {
+        const std::string timeline = timeline_of(text, 10ms, {}, described);
+        return part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n") +
+               part(timeline, "  \"series\": [", "  \"lines\"");
+    };
+    // The setter of the second of three writes throws (level 13); a write of another
+    // participant in the same set is applied. The sample of 20 ms has the mode that was applied.
+    check_text(failed(kHead + "  - set: { Body.level: 5, Body.lamp: false }\n"
+                              "  - at_ms: 20\n"
+                              "    set: { Body.mode: 2, Body.level: 13, Body.lamp: true, Door.level: 4 }\n"
+                              "  - at_ms: 60\n"
+                              "    expect: { Body.mode: auto }\n"),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); the ECU had already applied the write before it in that command (Body.mode = auto (2)), and it stays applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": true\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.lamp\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": true,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Door.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 4,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": true\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, 5],\n"
+               "        [20, 13]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.lamp\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, false],\n"
+               "        [20, true]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"sampled\",\n"
+               "      \"encoding\": \"changes\",\n"
+               "      \"samples\": 3,\n"
+               "      \"first_ms\": 0,\n"
+               "      \"last_ms\": 20,\n"
+               "      \"points\": [\n"
+               "        [0, 0],\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Door.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [20, 4]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // The first write of the command: nothing of it was applied.
+    check_text(failed(kHead + "  - at_ms: 20\n"
+                              "    set: { Body.level: 13, Body.mode: 2 }\n"),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (level: a setter threw: 13 is not a level); none of the 2 writes of that command was applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 13]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // A result that does not name a write (here: a parameter after the first step): which of
+    // the writes were applied is not known, and no write is named as the reason.
+    // (Described as an input, so that the check lets it through: as with an ECU that says less
+    // than its agent checks.)
+    ScenarioCatalog unnamed = catalog();
+    unnamed[0].variables[1].causality = control::Causality::Input;
+    check_text(failed(kHead + "  - set: { Body.level: 5 }\n"
+                              "  - at_ms: 20\n"
+                              "    set: { Body.mode: 2, Body.gain: 3 }\n",
+                      unnamed),
+               "      \"message\": \"the write for 20 ms was not applied by participant 'Body': the ECU rejected it (a parameter is writable only before the first step); which of the 2 writes of that command the ECU applied is not known\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.gain\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 3,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": null\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": null  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [0, 5]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.mode\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 2]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.gain\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [20, 3]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+    // Refused by the agent's check when it got the command: none of its writes was applied, and
+    // the reason names the write.
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const std::string timeline = timeline_of(kHead + "  - at_ms: 20\n"
+                                                     "    set: { Body.mode: 2, Body.level: 102 }\n",
+                                             10ms, {}, loose);
+    check_text(part(timeline, "      \"message\": \"the write", "\n") + "\n" + part(timeline, "        \"writes\": [", "\n      }\n"),
+               "      \"message\": \"the write for 20 ms was not taken by participant 'Body': the ECU's agent refused it (level: out of range); none of the 2 writes of that command was applied\",\n"
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.mode\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 2,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 102,\n"
+               "            \"point\": 0,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1");
+}
+
+TEST_CASE(timeline_marks_the_point_of_the_failed_write_among_points_of_one_time)
+{
+    // Two steps write the same variable for the same time, as two commands. The first is the
+    // one the ECU rejects: its point is marked, not the last point of that time.
+    const std::string timeline = timeline_of(kHead + "  - set: { Body.level: 5 }\n"
+                                                     "  - at_ms: 20\n"
+                                                     "    set: { Body.level: 13 }\n"
+                                                     "  - at_ms: 20\n"
+                                                     "    set: { Body.level: 8 }\n",
+                                             10ms);
+    check_text(part(timeline, "        \"writes\": [", "\n      }\n") + part(timeline, "  \"series\": [", "  \"lines\""),
+               "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 1,\n"
+               "            \"applied\": false\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 0  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 1,\n"
+               "      \"points\": [\n"
+               "        [0, 5],\n"
+               "        [20, 13],\n"
+               "        [20, 8]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n"
+               "");
+}
+
+TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_them)
+{
+    // An expect that the sample of 10 ms fails, and a set for 20 ms after it. What becomes of the
+    // set depends on the controller's step: with 5 ms the failure is seen before the set is sent;
+    // with 10 ms the set is sent and not judged yet; with 30 ms it was sent at 0 ms and is seen
+    // applied at 30 ms, before the sample is looked at.
+    const std::string text = kHead + "  - set: { Body.level: 5 }\n"
+                                     "  - at_ms: 10\n"
+                                     "    expect: { Body.body.speed: 0 }\n"
+                                     "  - at_ms: 20\n"
+                                     "    set: { Body.level: 6 }\n";
+    const auto steps = [&text](SimDuration tick) {
+        const std::string timeline = timeline_of(text, tick);
+        std::string out = part(timeline, "    \"recorded_to_ms\"", "  },");
+        std::istringstream in(part(timeline, "  \"steps\": [", "  \"series\""));
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const char* key : {"\"index\"", "\"status\"", "\"start_ms\"", "\"at_ms\"", "\"end_ms\""})
+            {
+                if (line.rfind(std::string("      ") + key, 0) == 0)
+                {
+                    out += line.substr(6) + (std::string(key) == "\"end_ms\"" ? "\n" : " ");
+                }
+            }
+        }
+        return out + part(timeline, "  \"series\": [", "  \"lines\"");
+    };
+    // The series and where they end are the same: they go to the failure, and the set for 20 ms
+    // is no point of them, also where its step passed.
+    const std::string same =
+        "    \"recorded_to_ms\": 10\n"
+        "\"index\": 1, \"status\": \"passed\", \"start_ms\": 0, \"at_ms\": 0, \"end_ms\": 0,\n"
+        "\"index\": 2, \"status\": \"failed\", \"start_ms\": 10, \"at_ms\": 10, \"end_ms\": 10,\n";
+    const std::string series =
+        "  \"series\": [\n"
+        "    {\n"
+        "      \"variable\": \"Body.level\",\n"
+        "      \"source\": \"written\",\n"
+        "      \"encoding\": \"all\",\n"
+        "      \"points\": [\n"
+        "        [0, 5]\n"
+        "      ]\n"
+        "    },\n"
+        "    {\n"
+        "      \"variable\": \"Body.body.speed\",\n"
+        "      \"source\": \"sampled\",\n"
+        "      \"encoding\": \"changes\",\n"
+        "      \"samples\": 2,\n"
+        "      \"first_ms\": 0,\n"
+        "      \"last_ms\": 10,\n"
+        "      \"points\": [\n"
+        "        [0, 50]\n"
+        "      ]\n"
+        "    }\n"
+        "  ],\n";
+    check_text(steps(5ms),
+               same + "\"index\": 3, \"status\": \"not_run\", \"start_ms\": null, \"at_ms\": null, \"end_ms\": null,\n" + series);
+    check_text(steps(10ms),
+               same + "\"index\": 3, \"status\": \"unfinished\", \"start_ms\": 20, \"at_ms\": null, \"end_ms\": null,\n" + series);
+    check_text(steps(30ms),
+               same + "\"index\": 3, \"status\": \"passed\", \"start_ms\": 20, \"at_ms\": 20, \"end_ms\": 20,\n" + series);
+}
+
+TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recorded)
+{
+    const auto head = [](const std::string& text, const std::function<void(World&)>& setup) {
+        const std::string timeline = timeline_of(text, 10ms, setup);
+        std::string out = part(timeline, "    \"status\"", "  },");
+        std::istringstream in(part(timeline, "  \"series\": [", "  \"lines\""));
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"not_applied_from\"", 0) == 0 || line.rfind("      \"last_ms\"", 0) == 0)
+            {
+                out += line.substr(6) + "\n";
+            }
+        }
+        std::istringstream steps(part(timeline, "  \"steps\": [", "  \"series\""));
+        for (std::string line; std::getline(steps, line);)
+        {
+            if (line.rfind("      \"failed\"", 0) == 0)
+            {
+                out += line.substr(6) + "\n";
+            }
+        }
+        return out;
+    };
+    const std::string refused = kHead + "  - set: { Body.level: 7 }\n"
+                                        "  - at_ms: 40\n"
+                                        "    set: { Body.level: 13 }\n"
+                                        "  - expect: { Body.level: 13 }\n"
+                                        "    within_ms: 100\n";
+    // stop_at_ms before the scenario's end: failed at that time, and recorded to it.
+    check_text(head(refused, [](World& w) { w.stop_at = at(30ms); }),
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 30,\n"
+               "    \"recorded_to_ms\": 30\n"
+               "\"last_ms\": 20,\n"
+               "\"failed\": null\n"
+               "\"failed\": {\n"
+               "\"failed\": null\n");
+    // A participant failed after a write to it had failed: the scenario is incomplete and no step
+    // has failed, but the record ends where it was closed, at the write, and its point is marked.
+    check_text(head(refused, [](World& w) { w.superseded = true; }),
+               "    \"status\": \"incomplete\",\n"
+               "    \"over_at_ms\": null,\n"
+               "    \"recorded_to_ms\": 40\n"
+               "\"not_applied_from\": 1,\n"
+               "\"last_ms\": 40,\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n");
+    // The simulation ended for another reason: recorded to the last sample that was looked at.
+    check_text(head(kHead + "  - set: { Body.level: 7 }\n"
+                            "  - wait_until: { Body.level: 8 }\n"
+                            "    timeout_ms: 9000\n",
+                    [](World& w) { w.ends_after = 300ms; }),
+               "    \"status\": \"incomplete\",\n"
+               "    \"over_at_ms\": null,\n"
+               "    \"recorded_to_ms\": 290\n"
+               "\"last_ms\": 290,\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n");
+}
+
+TEST_CASE(timeline_keeps_the_writes_of_the_times_before_a_motion_that_finds_no_base)
+{
+    // The controller steps every 30 ms, so the writes for 10 and for 25 ms go out together at
+    // 0 ms, before any sample. The ramp at 25 ms finds no value to start from; the set of the
+    // other variable at 10 ms was sent before that is said, and is in its series.
+    const std::string text = kHead + "  - at_ms: 10\n"
+                                     "    set: { Door.level: 3 }\n"
+                                     "  - at_ms: 25\n"
+                                     "    ramp: { Body.level: { to: 5, over_ms: 20 } }\n";
+    const std::string made = timeline_of(text, 30ms);
+    check_text(part(made, "    \"status\": ", "  },\n  \"variables\""),
+               "    \"status\": \"failed\",\n    \"over_at_ms\": 0,\n    \"recorded_to_ms\": 25\n");
+    // (Sent, not applied: the simulation ended at 0 ms.) The ramp wrote nothing.
+    check_text(part(made, "  \"series\": [", "  \"lines\""),
+               "  \"series\": [\n"
+               "    {\n      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n      \"points\": [\n        [10, 3]\n      ]\n    },\n"
+               "    {\n      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"points\": []\n    }\n  ],\n");
+    CHECK(made.find("      \"status\": \"unfinished\",\n      \"start_ms\": 10,") != std::string::npos);
+}
+
+TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
+{
+    // What each step put on the line of a variable, with the base of a motion and where it is
+    // from: the step ("written"), the line, or a sample.
+    const auto lines_of = [](const std::string& timeline) {
+        // "<kind> <variable> <from>-<to> base=<base> <source>" per line of the file's lines.
+        std::istringstream in(part(timeline, "  \"lines\": [\n", "  \"findings\""));
+        std::string out;
+        const auto value = [](const std::string& line) {
+            std::string text = line.substr(line.find(": ") + 2);
+            std::erase(text, '"');
+            std::erase(text, ',');
+            return text;
+        };
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const auto& [key, after] : std::vector<std::pair<std::string, std::string>>{
+                     {"kind", " "}, {"variable", " "}, {"from_ms", "-"}, {"to_ms", " base="}, {"base", " "}, {"base_source", "\n"}})
+            {
+                if (line.rfind("      \"" + key + "\": ", 0) == 0)
+                {
+                    out += value(line) + after;
+                }
+            }
+        }
+        return out;
+    };
+    // Door.level is 0 in the model, and the scenario has not written it: the first ramp starts
+    // from the sample. The ramp of Body.level starts from the set, the wave after it swings around
+    // where the ramp ends, the lag names its start, and the square has its own values.
+    const std::string made =
+        timeline_of(kHead + "  - set: { Body.level: 20 }\n"
+                            "  - at_ms: 30\n"
+                            "    ramp: { Body.level: { to: 80, over_ms: 25 }, Door.level: { to: 4, over_ms: 20 } }\n"
+                            "  - wave: { Body.level: { triangle: { amplitude: 5, period_ms: 40 }, for_ms: 40 },\n"
+                            "            Door.ratio: { lag: { from: 0.25, to: 1, tau_ms: 20 }, for_ms: 40 },\n"
+                            "            Door.lamp: { square: { period_ms: 20 }, for_ms: 40 } }\n",
+                    10ms);
+    // (The variable comes before the kind in the file.)
+    check_text(lines_of(made), "Body.level set 0-0 base=20 written\n"
+                               "Body.level ramp 30-55 base=20 line\n"
+                               "Door.level ramp 30-50 base=0 sample\n"
+                               "Body.level wave 55-95 base=80 line\n"
+                               "Door.ratio wave 55-95 base=0.25 written\n"
+                               "Door.lamp wave 55-95 base=null null\n");
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"lag\",\n        \"to\": 1,\n        \"tau_ms\": 20,\n"
+                    "        \"for_ms\": 40\n      },\n"
+                    "      \"text\": \"Door.ratio lag from 0.25 to 1 tau 20 ms for 40 ms\"") != std::string::npos);
+    CHECK(made.find("      \"lines\": [1, 2],\n") != std::string::npos && made.find("      \"lines\": [3, 4, 5],\n") != std::string::npos);
+
+    // The file has what happened: a line of which no write was sent is not in it, and not in the
+    // writes of its step. A set that its agent refuses at once (sent: its point is in the series,
+    // marked), and at the same time a ramp, of which nothing went out: the set's line alone, and
+    // the ramp's step (not run) has no writes.
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const std::string refused = timeline_of(kHead + "  - at_ms: 40\n"
+                                                    "    set: { Body.level: 105 }\n"
+                                                    "  - ramp: { Body.level: { to: 50, over_ms: 20 } }\n",
+                                            10ms, {}, loose);
+    CHECK(refused.find("    \"status\": \"failed\",") != std::string::npos);
+    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n");
+    const auto step_lines_of = [](const std::string& timeline) {
+        std::istringstream in(timeline);
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"lines\": ", 0) == 0)
+            {
+                out += line.substr(15) + " ";
+            }
+        }
+        return out;
+    };
+    check_text(step_lines_of(refused), "[0], [], ");
+    // One step moves three variables. The second finds no base (the scenario has not written it
+    // and no sample is there at 0 ms): the first was sent and is a line, the second and the third
+    // (which names its base) were not and are not. Whatever the controller's step.
+    for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
+    {
+        const std::string part_sent = timeline_of(kHead + "  - set: { Door.lamp: true }\n"
+                                                          "  - ramp: { Door.ratio: { from: 0, to: 1, over_ms: 20 }, Body.level: { to: 5, over_ms: 20 },\n"
+                                                          "            Door.level: { from: 0, to: 9, over_ms: 20 } }\n"
+                                                          "  - set: { Body.level: 1 }\n",
+                                                tick);
+        check_text(lines_of(part_sent), "Door.lamp set 0-0 base=true written\n"
+                                        "Door.ratio ramp 0-20 base=0 written\n",
+                   "the lines of a step that sent a part of its writes");
+        check_text(step_lines_of(part_sent), "[0], [1], [], ");
+        CHECK(part_sent.find("      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+                             "      \"points\": []\n") != std::string::npos);
+    }
+    // A run that never began has no lines, and says so with an empty list.
+    const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n");
+    ScenarioRun run = scenario_not_run(s);
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.scenario = &s;
+    input.run = &run;
+    const std::string none = format_timeline_json(input);
+    CHECK(none.find("\n  \"lines\": [],\n") != std::string::npos && none.find("      \"lines\": [],\n") != std::string::npos);
+}
+
+TEST_CASE(timeline_line_after_a_motion_that_returns_to_a_sample_starts_from_that_sample_too)
+{
+    // Door's input is 20, and Door writes 60 to it in its step at 30 ms. The wave at 45 ms names no middle and
+    // the scenario has not written the variable: it swings around a sample, and returns to it.
+    // The ramp after it starts from the line, which is that sample still. A controller that steps
+    // every 10 ms sends the writes for 45 ms at 40 ms and has looked at the sample of 30 ms (60);
+    // one that steps every 30 ms sends them at 30 ms and has looked at the one of 20 ms (20).
+    const std::string text = kHead + "  - at_ms: 45\n"
+                                     "    wave: { Door.level: { square: { amplitude: 5, period_ms: 20 }, for_ms: 20 } }\n"
+                                     "  - ramp: { Door.level: { to: 10, over_ms: 20 } }\n";
+    const auto bases = [&text](SimDuration tick) {
+        const std::string made = timeline_of(text, tick, [](World& w) {
+            w.ecus[1].level = 20;
+            w.ecus[1].last_level = 20;
+            w.ecus[1].own_level = std::pair{at(30ms), std::int64_t{60}};
+        });
+        std::istringstream in(part(made, "  \"lines\": [\n", "  \"findings\""));
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"base", 0) == 0)
+            {
+                out += line.substr(6) + " ";
+            }
+        }
+        return out;
+    };
+    check_text(bases(10ms), "\"base\": 60, \"base_source\": \"sample\", \"base\": 60, \"base_source\": \"line\", ");
+    check_text(bases(30ms), "\"base\": 20, \"base_source\": \"sample\", \"base\": 20, \"base_source\": \"line\", ");
+}
+
+// --- dither: a shape on top of an input ---
+
+namespace {
+
+const std::string kDitherHead = "vehicle_sil_scenario: 1\n";
+
+/// The writes that were applied to one variable, "value@time of the write>step that applied it"
+/// each, up to the writes for `until`.
+std::string written_to(const World& world, const std::string& variable, SimDuration until)
+{
+    std::string out;
+    const std::string head = variable + "=";
+    for (const std::string& entry : world.log)
+    {
+        const std::size_t forAt = entry.find(" for ");
+        if (entry.rfind(head, 0) != 0 || forAt == std::string::npos)
+        {
+            continue;
+        }
+        const std::size_t applied = entry.find(" applied at ");
+        const std::string time = entry.substr(forAt + 5, applied - forAt - 5);
+        if (std::stoll(time) <= ms_of(at(until)))
+        {
+            out += entry.substr(head.size(), forAt - head.size()) + "@" + time + ">" + entry.substr(applied + 12) + " ";
+        }
+    }
+    return out;
+}
+
+/// How many writes of one variable each step of its ECU applied, "<step>:<count>" for the steps
+/// up to `until` that did not apply exactly one.
+std::string steps_without_one_write(const World& world, const std::string& variable, SimDuration from, SimDuration until, SimDuration step)
+{
+    std::map<std::int64_t, int> count;
+    const std::string head = variable + "=";
+    for (const std::string& entry : world.log)
+    {
+        if (entry.rfind(head, 0) == 0)
+        {
+            ++count[std::stoll(entry.substr(entry.rfind(' ') + 1))];
+        }
+    }
+    std::string out;
+    for (SimDuration t = from; t <= until; t += step)
+    {
+        const int n = count[ms_of(at(t))];
+        if (n != 1)
+        {
+            out += std::to_string(ms_of(at(t))) + ":" + std::to_string(n) + " ";
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(scenario_dither_is_read_from_the_inputs_and_from_its_step)
+{
+    const ScenarioRead r = read_scenario(kDitherHead + "inputs:\n"
+                                                       "  Body.ratio: { dither: { noise: { amplitude: 0.05, hold_ms: 10, seed: 7 } } }\n"
+                                                       "  Door.level:\n"
+                                                       "    dither: { triangle: { amplitude: 2, period_ms: 80 } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.ratio: 0.5, Door.level: 5 }\n"
+                                                       "  - after_ms: 100\n"
+                                                       "    dither: { Body.ratio: none, Door.level: { square: { amplitude: 1, frequency_hz: 25, duty: 25 } } }\n",
+                                         catalog());
+    check_text(lines(r.findings), "");
+    if (!r.scenario)
+    {
+        throw unit::Failure("no scenario");
+    }
+    const Scenario& s = *r.scenario;
+    // The inputs come first among the variables, wherever a step uses them.
+    CHECK(s.inputs.size() == 2 && s.variables.size() == 2);
+    if (s.inputs.size() != 2 || s.steps.size() != 2 || s.steps[1].overlays.size() != 2)
+    {
+        throw unit::Failure("the scenario was not read as written");
+    }
+    CHECK(s.variables[0].text == "Body.ratio" && s.variables[1].text == "Door.level");
+    CHECK(s.inputs[0].variable == 0 && s.inputs[0].line == 3 && s.inputs[0].shape != nullptr);
+    CHECK(s.inputs[0].text == "Body.ratio noise amplitude 0.05 hold 10 ms seed 7");
+    CHECK(s.inputs[1].variable == 1 && s.inputs[1].line == 4); // (the entry's line, not the line of its dither)
+    CHECK(s.inputs[1].text == "Door.level triangle amplitude 2 period 80 ms");
+    CHECK(s.inputs[1].described.type == "triangle" && s.inputs[1].described.values.size() == 2);
+    CHECK(s.steps[1].kind == StepKind::Dither && std::string(step_kind_name(s.steps[1].kind)) == "dither");
+    check_text(s.steps[1].text, "dither Body.ratio none; Door.level square amplitude 1 frequency 25 Hz duty 25 %");
+    CHECK(s.steps[1].overlays[0].shape == nullptr && s.steps[1].overlays[0].described.type.empty());
+    CHECK(s.steps[1].overlays[1].shape != nullptr && s.steps[1].overlays[1].described.type == "square");
+    // A dither step takes no time: the next step counts from its time.
+    const Scenario timed = read(kHead + "  - at_ms: 50\n    dither: { Body.level: none }\n  - after_ms: 10\n    set: { Body.level: 1 }\n");
+    World world;
+    check_text(text_of(world.run(timed)), "passed over=70\n"
+                                          "3 passed start=50 at=50 end=50\n"
+                                          "5 passed start=60 at=60 end=60\n");
+    // A number of the shape may be a parameter, as in a wave.
+    const Scenario withParam = read(kDitherHead + "params: { swing: 3 }\ninputs:\n  Body.level: { dither: { triangle: { amplitude: \"${swing}\", period_ms: 40 } } }\n"
+                                                  "steps:\n  - set: { Body.level: 50 }\n");
+    CHECK(withParam.inputs.size() == 1 && withParam.inputs[0].text == "Body.level triangle amplitude 3 period 40 ms");
+}
+
+TEST_CASE(scenario_dither_adds_to_whatever_the_scenario_puts_on_the_input)
+{
+    // A triangle of 2 every 40 ms on Body.level: 0, +2, 0, -2 at the steps of Body. It is on the
+    // value of the set, on the ramp (which starts from the 50 the set left, not from a dithered
+    // value) and on the ramp's end value; none takes it off with one write of the value alone;
+    // a dither put later is at the place of its period that the time says (250 ms: the top).
+    const Scenario s = read(kDitherHead + "inputs:\n"
+                                          "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+                                          "steps:\n"
+                                          "  - set: { Body.level: 50 }\n"
+                                          "  - at_ms: 100\n"
+                                          "    ramp: { Body.level: { to: 80, over_ms: 60 } }\n"
+                                          "  - at_ms: 200\n"
+                                          "    dither: { Body.level: none }\n"
+                                          "  - at_ms: 250\n"
+                                          "    dither: { Body.level: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+                                          "  - at_ms: 280\n"
+                                          "    expect: { Body.level: 80 }\n");
+    for (const auto& [name, policy] : policies())
+    {
+        for (const SimDuration tick : {5ms, 10ms, 30ms})
+        {
+            World world;
+            world.tick = tick;
+            world.policy = policy;
+            const ScenarioRun run = world.run(s);
+            const std::string where = name + ", tick " + std::to_string(tick.count());
+            check_text(written_to(world, "Body.level", 280ms),
+                       "50@0>0 52@10>10 50@20>20 48@30>30 50@40>40 52@50>50 50@60>60 48@70>70 50@80>80 52@90>90 "
+                       "50@100>100 53@110>110 60@120>120 67@130>130 70@140>140 73@150>150 80@160>160 "
+                       "82@170>170 80@180>180 78@190>190 80@200>200 "
+                       "82@250>250 80@260>260 78@270>270 80@280>280 ",
+                       where.c_str());
+            check_text(text_of(run).substr(text_of(run).find('\n') + 1), "5 passed start=0 at=0 end=0\n"
+                                                                          "6 passed start=100 at=160 end=160\n"
+                                                                          "8 passed start=200 at=200 end=200\n"
+                                                                          "10 passed start=250 at=250 end=250\n"
+                                                                          "12 passed start=280 at=280 end=280\n",
+                       where.c_str());
+        }
+    }
+}
+
+TEST_CASE(scenario_dither_writes_once_per_step_of_its_ecu_where_no_step_writes_and_no_motion_runs)
+{
+    // The values and the times of the writes do not depend on the controller's step or on when
+    // the samples arrive, also in a stretch after a step that waits: the dither is a function
+    // of the virtual time. Body.level: a ramp that begins and ends between two steps of Body
+    // (107 ms to 193 ms). Body.ratio: set once, with a noise. Door.level has no dither.
+    const std::string steps = "steps:\n"
+                              "  - set: { Body.level: 20, Body.ratio: 0.5, Door.level: 7 }\n"
+                              "  - at_ms: 107\n"
+                              "    ramp: { Body.level: { to: 60, over_ms: 86 }, Door.level: { to: 9, over_ms: 86 } }\n"
+                              "  - wait_until: { Body.body.speed: { ge: 615 } }\n"
+                              "    timeout_ms: 2000\n"
+                              "  - expect: { Body.level: { ge: 50 } }\n"
+                              "    hold_for_ms: 100\n";
+    const Scenario s = read(kDitherHead + "inputs:\n"
+                                          "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+                                          "  Body.ratio: { dither: { noise: { amplitude: 0.05, hold_ms: 10, seed: 7 } } }\n" +
+                            steps);
+    const Scenario plain = read(kDitherHead + steps);
+    std::string first;
+    std::string firstRatio;
+    std::string door;
+    for (const auto& [name, policy] : policies())
+    {
+        for (const SimDuration tick : {5ms, 10ms, 30ms})
+        {
+            const std::string where = name + ", tick " + std::to_string(tick.count());
+            World world;
+            world.tick = tick;
+            world.policy = policy;
+            const ScenarioRun run = world.run(s);
+            check_text(scenario_status_name(run.status), "passed", where.c_str());
+            // The wait became true at a sample, whose time is the same in every run; the stretch
+            // after it is 100 ms of the dither alone.
+            const SimDuration waited = *run.steps[2].at - SimTime{};
+            check_text(std::to_string(waited.count() / 1000000), "210", where.c_str()); // (the speed follows the level: 620 with the 62 of 210 ms)
+            const std::string level = written_to(world, "Body.level", waited + 100ms);
+            const std::string ratio = written_to(world, "Body.ratio", waited + 100ms);
+            if (first.empty())
+            {
+                first = level;
+                firstRatio = ratio;
+            }
+            check_text(level, first, where.c_str());
+            check_text(ratio, firstRatio, where.c_str());
+            // One write per step of the ECU, at the step's own time, but for: the ramp's writes,
+            // which keep their own times (107, 117, ...: each is applied by the next step), and
+            // its end value at 193 ms, which the step at 200 ms applies before the dither's write
+            // of 200 ms.
+            check_text(steps_without_one_write(world, "Body.level", 0ms, waited + 100ms, 10ms), "200:2 ", where.c_str());
+            check_text(steps_without_one_write(world, "Body.ratio", 0ms, waited + 100ms, 10ms), "", where.c_str());
+            // An input without a dither is written as in a scenario without any: the same writes.
+            World other;
+            other.tick = tick;
+            other.policy = policy;
+            other.run(plain); // (its wait runs out: without the dither the speed stays below 615)
+            check_text(written_to(world, "Door.level", 5s), written_to(other, "Door.level", 5s), where.c_str());
+            if (door.empty())
+            {
+                door = written_to(world, "Door.level", 5s);
+            }
+            check_text(written_to(world, "Door.level", 5s), door, where.c_str());
+            // The ramp writes at the same times with and without the dither.
+            const auto times = [](const std::string& writes) {
+                std::string out;
+                for (std::size_t at = writes.find('@'); at != std::string::npos; at = writes.find('@', at + 1))
+                {
+                    out += writes.substr(at, writes.find(' ', at) - at) + " ";
+                }
+                return out;
+            };
+            const std::string ramp = times(written_to(other, "Body.level", 193ms));
+            check_text(ramp, "@0>0 @107>110 @117>120 @127>130 @137>140 @147>150 @157>160 @167>170 @177>180 @187>190 @193>200 ", where.c_str());
+            CHECK(times(level).find(" @100>100 " + ramp.substr(ramp.find("@107")) + "@200>200 ") != std::string::npos);
+        }
+    }
+    check_text(first.substr(0, first.find("@200>200")),
+               "20@0>0 22@10>10 20@20>20 18@30>30 20@40>40 22@50>50 20@60>60 18@70>70 20@80>80 22@90>90 20@100>100 "
+               "19@107>110 24@117>120 31@127>130 35@137>140 37@147>150 43@157>160 49@167>170 53@177>180 56@187>190 59@193>200 60");
+    check_text(door, "7@0>0 7@107>110 7@117>120 7@127>130 8@137>140 8@147>150 8@157>160 8@167>170 9@177>180 9@187>190 9@193>200 ");
+}
+
+TEST_CASE(scenario_dither_is_added_before_an_integer_is_rounded)
+{
+    // Body.level goes from 10 to 11 in 100 ms. At 40 ms the ramp is at 10.4, which is written as
+    // 10; the triangle of 0.2 is at its top there (a quarter of 160 ms), and 10.6 is written as
+    // 11. Added to the rounded 10 it would stay 10.
+    const std::string ramp = "steps:\n  - ramp: { Body.level: { from: 10, to: 11, over_ms: 100 } }\n";
+    World plain;
+    plain.run(read(kDitherHead + ramp));
+    check_text(written_to(plain, "Body.level", 100ms), "10@0>0 10@10>10 10@20>20 10@30>30 10@40>40 11@50>50 11@60>60 11@70>70 11@80>80 11@90>90 11@100>100 ");
+    World world;
+    world.run(read(kDitherHead + "inputs:\n  Body.level: { dither: { triangle: { amplitude: 0.2, period_ms: 160 } } }\n" + ramp));
+    check_text(written_to(world, "Body.level", 100ms), "10@0>0 10@10>10 10@20>20 10@30>30 11@40>40 11@50>50 11@60>60 11@70>70 11@80>80 11@90>90 11@100>100 ");
+    // A real input gets the sum as it is: the same bits as a wave around the same value from 0.
+    World real;
+    real.run(read(kDitherHead + "inputs:\n  Body.ratio: { dither: { triangle: { amplitude: 0.07, period_ms: 40, phase_deg: 30 } } }\n"
+                                "steps:\n  - set: { Body.ratio: 0.3 }\n  - at_ms: 100\n    expect: { Body.ratio: { ge: 0 } }\n"));
+    World wave;
+    wave.run(read(kDitherHead + "steps:\n  - wave: { Body.ratio: { triangle: { amplitude: 0.07, period_ms: 40, phase_deg: 30 }, around: 0.3, for_ms: 200 } }\n"));
+    check_text(written_to(real, "Body.ratio", 100ms), written_to(wave, "Body.ratio", 100ms));
+    CHECK(written_to(real, "Body.ratio", 100ms).find("@100>100") != std::string::npos);
+}
+
+TEST_CASE(scenario_dither_waits_for_the_first_value_and_a_dither_step_writes_once)
+{
+    // A declared dither rides from the first thing the scenario puts on the input: nothing is
+    // written before the set at 30 ms.
+    {
+        World world;
+        const ScenarioRun run = world.run(read(kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }\n"
+                                                             "steps:\n  - at_ms: 30\n    set: { Body.level: 50 }\n"
+                                                             "  - at_ms: 60\n    expect: { Body.level: 51 }\n"));
+        check_text(written_to(world, "Body.level", 60ms), "49@30>30 51@40>40 49@50>50 51@60>60 ");
+        check_text(scenario_status_name(run.status), "passed");
+    }
+    // A dither step on an input without a value writes nothing and passes at its time, whatever
+    // the controller's step is; the dither is there when the set comes. A set and a dither step
+    // at one time: both write, each the set's value with the dither that is put at that time
+    // (the square is low at 50 ms). none writes the value alone, once.
+    const Scenario s = read(kHead + "  - at_ms: 20\n"
+                                    "    dither: { Body.level: { square: { amplitude: 1, period_ms: 20 } }, Door.level: none }\n"
+                                    "  - at_ms: 30\n"
+                                    "    set: { Body.level: 50 }\n"
+                                    "  - at_ms: 50\n"
+                                    "    set: { Body.level: 70 }\n"
+                                    "  - at_ms: 50\n"
+                                    "    dither: { Body.level: { square: { amplitude: 5, period_ms: 20 } } }\n"
+                                    "  - at_ms: 80\n"
+                                    "    dither: { Body.level: none }\n"
+                                    "  - at_ms: 120\n"
+                                    "    expect: { Body.level: 70 }\n");
+    for (const SimDuration tick : {5ms, 10ms, 30ms})
+    {
+        World world;
+        world.tick = tick;
+        const ScenarioRun run = world.run(s);
+        const std::string where = "tick " + std::to_string(tick.count());
+        check_text(text_of(run).substr(text_of(run).find('\n') + 1), "3 passed start=20 at=20 end=20\n"
+                                                                      "5 passed start=30 at=30 end=30\n"
+                                                                      "7 passed start=50 at=50 end=50\n"
+                                                                      "9 passed start=50 at=50 end=50\n"
+                                                                      "11 passed start=80 at=80 end=80\n"
+                                                                      "13 passed start=120 at=120 end=120\n",
+                   where.c_str());
+        check_text(written_to(world, "Body.level", 120ms), "49@30>30 51@40>40 65@50>50 65@50>50 75@60>60 65@70>70 70@80>80 ", where.c_str());
+        check_text(written_to(world, "Door.level", 120ms), "", where.c_str());
+    }
+}
+
+TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not_decided)
+{
+    // 99 with a square of 2 that is low for 50 ms and then high: the write of 50 ms is 101, which
+    // Body refuses when it gets it. It is no step's write. The set passed long before; the step
+    // that fails is the first that is not decided when the launcher sends the write, which
+    // depends on the controller's step: every 10 ms the expect of 30 ms has passed, every 30 ms
+    // it has not (the write of 50 ms goes out at 30 ms, with those up to 60 ms).
+    const std::string head = kDitherHead + "inputs:\n"
+                                           "  Body.level: { dither: { square: { amplitude: 2, period_ms: 100, phase_deg: 180 } } }\n"
+                                           "steps:\n"
+                                           "  - set: { Body.level: 99 }\n"
+                                           "  - at_ms: 30\n"
+                                           "    expect: { Body.level: 97 }\n";
+    const Scenario two = read(head + "  - at_ms: 60\n    expect: { Body.level: 97 }\n");
+    const std::string message = "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100 (level: "
+                                "out of range): lower its amplitude, or keep the value further from the end of the range\n";
+    {
+        World world;
+        world.tick = 10ms;
+        check_text(text_of(world.run(two)), "failed over=40\n"
+                                            "5 passed start=0 at=0 end=0\n"
+                                            "6 passed start=30 at=30 end=30\n"
+                                            "8 failed start=60 at=50 end=60 " + message);
+    }
+    {
+        World world;
+        world.tick = 30ms;
+        check_text(text_of(world.run(two)), "failed over=30\n"
+                                            "5 passed start=0 at=0 end=0\n"
+                                            "6 failed start=30 at=50 end=30 " + message +
+                                            "8 not_run start=- at=- end=-\n");
+    }
+    // The same in the last step of the controller before the scenario is over: with a step of
+    // 10 ms the scenario has passed before the write of 50 ms is sent, with 30 ms it fails.
+    const Scenario one = read(head);
+    {
+        World world;
+        world.tick = 10ms;
+        check_text(text_of(world.run(one)), "passed over=40\n"
+                                            "5 passed start=0 at=0 end=0\n"
+                                            "6 passed start=30 at=30 end=30\n");
+    }
+    {
+        World world;
+        world.tick = 30ms;
+        check_text(text_of(world.run(one)), "failed over=30\n"
+                                            "5 passed start=0 at=0 end=0\n"
+                                            "6 failed start=30 at=50 end=30 " + message);
+    }
+    // Rejected by the ECU in its step (the setter of Body.level throws at 13): known when the
+    // result is judged. The dithers of one time for one participant are one command, which the
+    // ECU applies one write after the other until a setter throws: the message is about the
+    // input the reason names, and says that the input before it in the command was written.
+    const Scenario rejected = read(kDitherHead + "inputs:\n"
+                                                 "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
+                                                 "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
+                                                 "  Door.level: { dither: { square: { amplitude: 1, period_ms: 40 } } }\n"
+                                                 "steps:\n"
+                                                 "  - set: { Body.level: 12, Body.ratio: 0.5, Door.level: 5 }\n"
+                                                 "  - at_ms: 100\n"
+                                                 "    expect: { Body.level: 11 }\n");
+    World world;
+    check_text(text_of(world.run(rejected)), "failed over=30\n"
+                                             "7 passed start=0 at=0 end=0\n"
+                                             "8 failed start=100 at=20 end=100 scenario-write: the dither of Body.level (line 4) wrote 13 at 20 ms, "
+                                             "and participant 'Body' did not apply the write: the ECU rejected it (level: a setter threw: 13 is not "
+                                             "a level); the dither of 1 other input of that participant was in the same command; the ECU had "
+                                             "already applied the write before it in that command (Body.ratio = 0.6), and it stays applied\n");
+    // The model ECU has the ratio of that command (as a real one has: Agent::apply()), and not the level.
+    check_text(written_to(world, "Body.ratio", 20ms), "0.6@0>0 0.4@10>10 0.6@20>20 ");
+    check_text(written_to(world, "Body.level", 20ms), "11@0>0 11@10>10 ");
+    check_text(written_to(world, "Door.level", 20ms), "6@0>0 6@10>10 4@20>20 ");
+    // The timeline says the same: of the command's writes the one before the rejected one was
+    // applied and has no mark; the rejected one is the reason and is marked. The write of the
+    // other participant, sent for the same time, was applied.
+    const std::string file = timeline_of(kDitherHead + "inputs:\n"
+                                                       "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
+                                                       "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
+                                                       "  Door.level: { dither: { square: { amplitude: 1, period_ms: 40 } } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.level: 12, Body.ratio: 0.5, Door.level: 5 }\n"
+                                                       "  - at_ms: 100\n"
+                                                       "    expect: { Body.level: 11 }\n",
+                                         10ms);
+    check_text(part(file, "        \"writes\": [", "\n      }\n"), "        \"writes\": [\n"
+               "          {\n"
+               "            \"variable\": \"Body.ratio\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 0.6,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": true\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Body.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 13,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": false\n"
+               "          },\n"
+               "          {\n"
+               "            \"variable\": \"Door.level\",\n"
+               "            \"at_ms\": 20,\n"
+               "            \"value\": 4,\n"
+               "            \"point\": 2,\n"
+               "            \"applied\": true\n"
+               "          }\n"
+               "        ],\n"
+               "        \"write\": 1");
+    const auto series = [&file](const std::string& variable) {
+        return part(file, "      \"variable\": \"" + variable + "\",\n      \"source\": \"written\",\n", "      \"points\"");
+    };
+    CHECK(series("Body.ratio").find("not_applied_from") == std::string::npos);
+    CHECK(series("Door.level").find("not_applied_from") == std::string::npos);
+    CHECK(series("Body.level").find("      \"not_applied_from\": 2,\n") != std::string::npos);
+}
+
+TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_known_and_its_range_only_if_that_is_the_reason)
+{
+    const std::string head = kDitherHead + "inputs:\n"
+                                           "  Body.level: { dither: { square: { amplitude: 2, period_ms: 100, phase_deg: 180 } } }\n";
+    const std::string steps = "steps:\n"
+                              "  - set: { Body.level: 99, Body.ratio: 0.5 }\n"
+                              "  - at_ms: 100\n"
+                              "    expect: { Body.level: 97 }\n";
+    const auto failure = [](const ScenarioRun& run) {
+        // (Of the step that failed, whichever it is: the first that was not decided.)
+        for (const ScenarioStepRun& step : run.steps)
+        {
+            if (step.status == StepStatus::Failed)
+            {
+                return step.code + ": " + step.message + "\n";
+            }
+        }
+        return std::string("no step failed\n");
+    };
+    // The write of 50 ms is 101, beyond the range, but the agent has no room for the command:
+    // that is what the message says, not the range (lowering the amplitude would not help).
+    {
+        World world;
+        world.refuse = [](const std::string& peer, SimTime at) -> std::optional<control::TargetResult> {
+            if (peer == "Body" && at == SimTime{} + 50ms)
+            {
+                return control::TargetResult{peer, control::TargetStatus::Busy, std::nullopt, false, "the peer has too many commands in flight"};
+            }
+            return std::nullopt;
+        };
+        check_text(failure(world.run(read(head + steps))),
+                   "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, and participant 'Body' did not take the write: "
+                   "the ECU's agent had too many commands waiting (the peer has too many commands in flight)\n");
+    }
+    // A value within the range that the agent refuses for a reason of its own: status and reason.
+    {
+        World world;
+        world.refuse = [](const std::string& peer, SimTime at) -> std::optional<control::TargetResult> {
+            if (peer == "Body" && at == SimTime{} + 10ms)
+            {
+                return control::TargetResult{peer, control::TargetStatus::Invalid, std::nullopt, false, "level: the simulation has ended"};
+            }
+            return std::nullopt;
+        };
+        check_text(failure(world.run(read(head + steps))),
+                   "scenario-write: the dither of Body.level (line 3) wrote 97 at 10 ms, and participant 'Body' did not take the write: "
+                   "the ECU's agent refused it (level: the simulation has ended)\n");
+    }
+    // Two dithered inputs of Body in one command, and the agent says which one it refuses (its
+    // reason begins with the variable's name): that input and its range, though it is the
+    // second of the command.
+    {
+        World world;
+        const ScenarioRun run = world.run(read(head + "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n" + steps));
+        check_text(failure(run), "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100 (level: out of "
+                                 "range): lower its amplitude, or keep the value further from the end of the range; the dither of 1 other "
+                                 "input of that participant was in the same command; none of the 2 writes of that command was applied\n");
+    }
+}
+
+TEST_CASE(scenario_dither_errors_say_what_is_wrong_and_what_to_write)
+{
+    const auto errors = [](const std::string& text) { return lines(read_scenario(kDitherHead + text, catalog()).findings); };
+    const std::string steps = "steps:\n  - set: { Body.level: 1 }\n";
+    // What a wave has and a dither cannot have.
+    check_text(errors("inputs:\n"
+                      "  Body.level: { dither: { triangle: { amplitude: 1, period_ms: 100 }, for_ms: 500 } }\n"
+                      "  Body.ratio: { dither: { sine: { amplitude: 0.1, period_ms: 100 }, around: 0.5 } }\n"
+                      "  Door.level: { dither: { pulse: { value: 1, width_ms: 50 } } }\n"
+                      "  Door.ratio: { dither: { square: { low: 0, high: 1, period_ms: 100 } } }\n" +
+                      steps),
+               "E 3 value: the dither of Body.level has for_ms: a dither has no end, it stays until a dither step changes it; remove "
+               "for_ms (dither: { Body.level: none } takes it off)\n"
+               "E 4 value: the dither of Body.ratio has around: a dither swings around the value the scenario puts on the input (set, "
+               "ramp, wave); remove around\n"
+               "E 5 value: pulse cannot be a dither (it has a length): use sine, triangle, sawtooth, square with amplitude or noise, or "
+               "write it as a wave step\n"
+               "E 6 value: the dither of Door.ratio is a square with low: a dither swings around the value of the input, it has no "
+               "values of its own; give the square amplitude instead (square: { amplitude: 1, period_ms: 100 })\n");
+    // The variable: a number, an input, one the configuration has.
+    check_text(errors("inputs:\n"
+                      "  Body.lamp: { dither: { square: { period_ms: 100 } } }\n"
+                      "  Body.mode: { dither: { triangle: { amplitude: 1, period_ms: 100 } } }\n"
+                      "  Body.gain: { dither: { triangle: { amplitude: 1, period_ms: 100 } } }\n"
+                      "  Body.pulse: { dither: { triangle: { amplitude: 1, period_ms: 100 } } }\n"
+                      "  Body.levle: { dither: { triangle: { amplitude: 1, period_ms: 100 } } }\n" +
+                      steps),
+               "E 3 scenario-value: Body.lamp is a bool: a dither needs a number (an integer or a real input); remove it\n"
+               "E 4 scenario-value: Body.mode is an enum: a dither needs a number (an integer or a real input); remove it\n"
+               "E 5 scenario-not-writable: Body.gain is a parameter: it can be written only before the first step, that is with set in "
+               "a step at 0 (at_ms: 0, or the first steps without a time), not with a dither\n"
+               "E 6 scenario-not-writable: Body.pulse is an output of its ECU: it can be read (expect, wait_until), not written; write "
+               "one of the ECU's inputs instead\n"
+               "E 7 scenario-variable: 'Body.levle': participant 'Body' has no variable 'levle': did you mean 'Body.level'? "
+               "(vehicle_sil_launch check --json lists the variables)\n");
+    // The form of inputs, and of an entry (which has a dither; any other key is unknown).
+    check_text(errors("inputs: [Body.level]\n" + steps),
+               "E 2 value: inputs must be a mapping of inputs to what is on top of them ({ Body.level: { dither: { triangle: { "
+               "amplitude: 1, period_ms: 100 } } } }), not a list\n");
+    check_text(errors("inputs:\n"
+                      "  Body.level: { dither: { triangle: { amplitude: 1, period_ms: 100 } }, clip: true }\n"
+                      "  Body.ratio: { undersampled: ok }\n"
+                      "  Door.level: { dither: none }\n"
+                      "  Door.ratio: { dither: { triangle: { amplitude: 0.1, period_ms: 100 } }, undersampled: yes }\n"
+                      "  Door.level: { dither: { noise: { amplitude: 1, hold_ms: 10, seed: 1 } } }\n" +
+                      steps),
+               "E 3 unknown-key: inputs: Body.level: unknown key 'clip': remove it, or use one of the keys here (dither, undersampled)\n"
+               "E 4 missing-key: inputs: Body.ratio has no dither: say what is on top of the input (dither: { triangle: { amplitude: "
+               "1, period_ms: 100 } }), or remove the entry\n"
+               "E 5 value: the dither of Door.level in inputs is none: an input without a dither needs no entry; remove it\n"
+               "E 6 value: undersampled must be ok (run the input's dither as it is, also where it changes faster than its ECU steps), "
+               "not 'yes': write undersampled: ok, or remove it\n"
+               // (Door.ratio's dither is read, and nothing puts a value on Door.ratio.)
+               "W 6 scenario-dither-unused: the dither of Door.ratio is never written: no step that runs puts a value on Door.ratio "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Door.ratio, or remove the entry\n"
+               "E 7 duplicate-key: inputs: 'Door.level' appears twice (first at line 5); keep one of them\n");
+    // The step: none or a shape, one shape, the shape's own keys.
+    check_text(errors("steps:\n"
+                      "  - dither: { Body.level: off }\n"
+                      "  - dither: { Body.level: false, Body.ratio: \"none\" }\n" // (none in quotes is none: JSON has no other way)
+                      "  - dither: Body.level\n"
+                      "  - dither: { Body.level: { } }\n"
+                      "  - dither: { Body.level: { sine: { amplitude: 1, period_ms: 100 }, noise: { amplitude: 1, hold_ms: 10, seed: 1 } } }\n"
+                      "  - dither: { Body.level: { triangle: { amplitude: 1 } } }\n"
+                      "  - dither: { Body.level: { triangle: { amplitude: 1, period_ms: 100, duty: 10 } } }\n"
+                      "  - dither: { Body.level: { wobble: { amplitude: 1 } } }\n"
+                      "  - dither: { Body.level: none }\n"
+                      "    hold_for_ms: 10\n"),
+               "E 3 value: the dither of Body.level must be none (which takes the dither off) or a shape ({ triangle: { amplitude: 1, "
+               "period_ms: 100 } }), not 'off': write none, or a shape\n"
+               "E 4 value: the dither of Body.level must be none (which takes the dither off) or a shape ({ triangle: { amplitude: 1, "
+               "period_ms: 100 } }), not 'false': write none, or a shape\n"
+               "E 5 value: dither must be a mapping of inputs to a shape or none ({ Body.level: { triangle: { amplitude: 1, period_ms: "
+               "100 } } }, or { Body.level: none } to take a dither off), not 'Body.level'\n"
+               "E 6 value: the dither of Body.level names no shape: give it one of sine, triangle, sawtooth, square, noise\n"
+               "E 7 value: the dither of Body.level has sine, noise: an input has one dither; keep one of them\n"
+               "E 8 missing-key: the triangle dither of Body.level needs period_ms or frequency_hz: how long one period is, or how many "
+               "there are in a second\n"
+               "E 9 unknown-key: the triangle dither of Body.level: unknown key 'duty': remove it, or use one of the keys here "
+               "(amplitude, period_ms, frequency_hz, phase_deg)\n"
+               "E 10 unknown-key: dither of Body.level: unknown key 'wobble': remove it, or use one of the keys here (sine, triangle, "
+               "sawtooth, square, noise)\n"
+               "E 12 value: hold_for_ms goes with expect, not with dither: remove it\n");
+    // A parameter cannot stand for none or for the shape.
+    check_text(errors("params: { what: none }\nsteps:\n  - dither: { Body.level: \"${what}\" }\n"),
+               "E 4 value: the dither of Body.level is the parameter what: a parameter cannot stand for none or for a shape; write none "
+               "or the shape here (its numbers can be parameters)\n");
+}
+
+TEST_CASE(scenario_dither_of_a_variable_the_configuration_does_not_have_is_skipped)
+{
+    // A dither step that uses an absent variable is skipped whole, as a set is; a declared
+    // dither of one is left out, and a note says so. The other inputs keep theirs.
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kDitherHead + "inputs:\n"
+                                                       "  Body.boost: { dither: { triangle: { amplitude: 1, period_ms: 40 } } }\n"
+                                                       "  Body.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.level: 5 }\n"
+                                                       "  - at_ms: 20\n"
+                                                       "    dither: { Body.boost: none, Body.level: none }\n"
+                                                       "  - at_ms: 40\n"
+                                                       "    expect: { Body.level: 6 }\n",
+                                         catalog_without_boost(), context);
+    check_text(lines(r.findings),
+               "N 3 scenario-input-skipped: the dither of Body.boost is not used: Body.boost is absent: participant 'Body' does not "
+               "have it in the variant small (absent: true in its variables); the steps that write Body.boost are skipped too\n"
+               "N 7 scenario-step-skipped: the step is skipped (dither Body.boost; Body.level none): Body.boost is absent: participant "
+               "'Body' does not have it in the variant small (absent: true in its variables); the other steps run, also those that "
+               "would need what this one does\n");
+    if (!r.scenario)
+    {
+        throw unit::Failure("no scenario");
+    }
+    CHECK(r.scenario->inputs.size() == 1 && r.skipped == 1);
+    World world;
+    const ScenarioRun run = world.run(*r.scenario);
+    check_text(text_of(run), "passed over=50\n"
+                             "6 passed start=0 at=0 end=0\n"
+                             "7 skipped start=20 at=- end=20 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
+                             "the variant small (absent: true in its variables)\n"
+                             "9 passed start=40 at=40 end=40\n");
+    // The skipped step took nothing off: the dither goes on.
+    check_text(written_to(world, "Body.level", 40ms), "6@0>0 4@10>10 6@20>20 4@30>30 6@40>40 ");
+}
+
+TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_were_on)
+{
+    const auto lines_of = [](const std::string& timeline) {
+        // "<variable> <kind> line <line> step <step> <from>-<to> <text>" per line of the file's lines.
+        std::istringstream in(part(timeline, "  \"lines\": [\n", "  \"findings\""));
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const auto& [key, after] : std::vector<std::pair<std::string, std::string>>{
+                     {"variable", " "}, {"kind", " line "}, {"line", " step "}, {"step", " "}, {"from_ms", "-"}, {"to_ms", " "}, {"text", "\n"}})
+            {
+                if (line.rfind("      \"" + key + "\": ", 0) == 0)
+                {
+                    std::string text = line.substr(line.find(": ") + 2);
+                    std::erase(text, '"');
+                    std::erase(text, ',');
+                    out += text + after;
+                }
+            }
+        }
+        return out;
+    };
+    const auto step_lines_of = [](const std::string& timeline) {
+        std::istringstream in(timeline);
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"lines\": ", 0) == 0)
+            {
+                out += line.substr(15) + " ";
+            }
+        }
+        return out;
+    };
+    // The declared dither of Body.level is a line from the first write that carries it (the set
+    // at 30 ms), without a step and without an end. The dither step at 20 ms puts one on
+    // Body.ratio, which has no value: its line begins with the set at 60 ms, and is of that step.
+    // none at 90 ms is a line too (no shape): where the dither before it ends. The dither of
+    // Door.level never carried anything, and the one that the step at 20 ms put on Door.ratio is
+    // replaced at 60 ms before a write: neither is a line.
+    const std::string text = kDitherHead + "inputs:\n"
+                                           "  Body.level: { dither: { triangle: { amplitude: 2, frequency_hz: 25 } } }\n"
+                                           "  Door.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+                                           "params: { swing: 0.05, pick: 12345678901234567 }\n"
+                                           "steps:\n"
+                                           "  - at_ms: 20\n"
+                                           "    dither: { Body.ratio: { noise: { amplitude: \"${swing}\", hold_ms: 10, seed: \"${pick}\" } },\n"
+                                           "              Door.ratio: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
+                                           "  - at_ms: 30\n"
+                                           "    set: { Body.level: 50 }\n"
+                                           "  - at_ms: 60\n"
+                                           "    dither: { Door.ratio: { sawtooth: { amplitude: 0.1, period_ms: 20, falling: true } } }\n"
+                                           "  - at_ms: 60\n"
+                                           "    set: { Body.ratio: 0.5, Door.ratio: 0.5 }\n"
+                                           "  - at_ms: 90\n"
+                                           "    dither: { Body.level: none }\n"
+                                           "  - at_ms: 110\n"
+                                           "    expect: { Body.level: 50 }\n";
+    const std::string made = timeline_of(text, 10ms);
+    CHECK(made.find("    \"status\": \"passed\",") != std::string::npos);
+    // (After the lines that the steps put at a time come the dithers that begin at it, in the
+    // order of their first writes: the step at 60 ms that puts Door.ratio's is before the set.)
+    check_text(lines_of(made), "Body.level set line 10 step 2 30-30 Body.level = 50\n"
+                               "Body.level dither line 3 step null 30-null Body.level triangle amplitude 2 frequency 25 Hz\n"
+                               "Body.ratio set line 14 step 4 60-60 Body.ratio = 0.5\n"
+                               "Door.ratio set line 14 step 4 60-60 Door.ratio = 0.5\n"
+                               "Door.ratio dither line 12 step 3 60-null Door.ratio sawtooth amplitude 0.1 period 20 ms falling\n"
+                               "Body.ratio dither line 7 step 1 60-null Body.ratio noise amplitude 0.05 hold 10 ms seed 12345678901234567\n"
+                               "Body.level dither line 16 step 5 90-null Body.level none\n");
+    // The steps' writes are the places of their lines; a dither step's are its dithers' lines.
+    check_text(step_lines_of(made), "[5], [0], [4], [2, 3], [6], [], ");
+    // A dither line has no base; its shape is what the text has, with the parameters put in (a
+    // seed keeps every digit); none has no shape.
+    CHECK(made.find("      \"kind\": \"dither\",\n      \"line\": 7,\n      \"step\": 1,\n      \"from_ms\": 60,\n      \"to_ms\": null,\n"
+                    "      \"base\": null,\n      \"base_source\": null,\n      \"shape\": {\n        \"type\": \"noise\",\n"
+                    "        \"amplitude\": 0.05,\n        \"hold_ms\": 10,\n        \"seed\": 12345678901234567\n      },\n") != std::string::npos);
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"triangle\",\n        \"amplitude\": 2,\n        \"frequency_hz\": 25\n      },\n") !=
+          std::string::npos);
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"sawtooth\",\n        \"amplitude\": 0.1,\n        \"period_ms\": 20,\n"
+                    "        \"falling\": true\n      },\n") != std::string::npos);
+    CHECK(made.find("      \"to_ms\": null,\n      \"base\": null,\n      \"base_source\": null,\n      \"shape\": null,\n"
+                    "      \"text\": \"Body.level none\"\n") != std::string::npos);
+    // The series of an input that a dither was on has a third column: what each value was made
+    // of, before the dither and the rounding. Also for the points after the dither was taken off.
+    check_text(part(made, "      \"variable\": \"Body.level\",\n      \"source\": \"written\"", "    },\n"),
+               "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"t_ms\", \"value\", \"base\"],\n"
+               "      \"points\": [\n"
+               "        [30, 48, 50],\n        [40, 50, 50],\n        [50, 52, 50],\n        [60, 50, 50],\n        [70, 48, 50],\n"
+               "        [80, 50, 50],\n        [90, 50, 50]\n      ]\n");
+    // A file without a dither is as it was: two columns and no "columns".
+    const std::string plain = timeline_of(kHead + "  - set: { Body.level: 50 }\n", 10ms);
+    CHECK(plain.find("\"columns\"") == std::string::npos && plain.find("        [0, 50]\n") != std::string::npos);
+    // A dither whose first write is refused was sent: it is a line, and the point is marked.
+    const std::string refused = timeline_of(kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
+                                                          "steps:\n  - at_ms: 20\n    set: { Body.level: 99 }\n"
+                                                          "  - at_ms: 60\n    expect: { Body.level: 99 }\n",
+                                            10ms);
+    check_text(lines_of(refused), "Body.level set line 5 step 1 20-20 Body.level = 99\n"
+                                  "Body.level dither line 3 step null 20-null Body.level square amplitude 2 period 40 ms\n");
+    CHECK(refused.find("      \"not_applied_from\": 2,\n") != std::string::npos);
+    check_text(part(refused, "      \"points\": [\n", "      ]\n"), "      \"points\": [\n        [20, 97, 99],\n        [30, 97, 99],\n        [40, 101, 99]\n");
+    // The step that failed is the first that was not decided, with the dither's write as what failed.
+    CHECK(refused.find("        \"writes\": [\n          {\n            \"variable\": \"Body.level\",\n            \"at_ms\": 40,\n"
+                       "            \"value\": 101,\n            \"point\": 2,\n            \"applied\": false\n          }\n        ],\n"
+                       "        \"write\": 0\n") != std::string::npos);
+}
+
+TEST_CASE(timeline_line_has_the_base_as_the_step_names_it_and_the_shape_with_the_parameters_put_in)
+{
+    // The base a step names is written as it is: 10.5 for an integer (the line and the sample
+    // give what the variable's type has), and a bool as a bool. The shape has the values of the
+    // text with the parameters put in: a number as a number, a seed with every digit, a word.
+    const std::string made =
+        timeline_of(kDitherHead + "params: { hz: 12.5, pick: 9007199254740993, bell: gaussian, hold: 20 }\n"
+                                  "steps:\n"
+                                  "  - ramp: { Body.level: { from: 10.5, to: 20, over_ms: 20 } }\n"
+                                  "  - wave: { Body.lamp: { chatter: { to: true, interval_ms: 10, bounces: 1 } },\n"
+                                  "            Body.ratio: { sine: { amplitude: 0.1, frequency_hz: \"${hz}\" }, around: 0.5, for_ms: 20 },\n"
+                                  "            Body.level: { noise: { amplitude: 1, hold_ms: \"${hold}\", seed: \"${pick}\", distribution: \"${bell}\" }, for_ms: 20 } }\n",
+                    10ms);
+    CHECK(made.find("    \"status\": \"passed\",") != std::string::npos);
+    CHECK(made.find("      \"kind\": \"ramp\",\n      \"line\": 4,\n      \"step\": 1,\n      \"from_ms\": 0,\n      \"to_ms\": 20,\n"
+                    "      \"base\": 10.5,\n      \"base_source\": \"written\",\n") != std::string::npos);
+    CHECK(made.find("      \"base\": false,\n      \"base_source\": \"written\",\n      \"shape\": {\n        \"type\": \"chatter\",\n") !=
+          std::string::npos);
+    CHECK(made.find("      \"base\": 20,\n      \"base_source\": \"line\",\n      \"shape\": {\n        \"type\": \"noise\",\n"
+                    "        \"amplitude\": 1,\n        \"hold_ms\": 20,\n        \"seed\": 9007199254740993,\n"
+                    "        \"distribution\": \"gaussian\",\n        \"for_ms\": 20\n      },\n") != std::string::npos);
+    CHECK(made.find("        \"type\": \"sine\",\n        \"amplitude\": 0.1,\n        \"frequency_hz\": 12.5,\n        \"for_ms\": 20\n") !=
+          std::string::npos);
+}
+
+TEST_CASE(scenario_dither_that_can_leave_the_range_or_is_never_written_gets_a_warning)
+{
+    const auto findings = [](const std::string& text, const ScenarioCatalog& c = catalog()) {
+        return lines(read_scenario(kDitherHead + text, c).findings);
+    };
+    const auto estimate = [](const std::string& variable) {
+        return ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is right, the run "
+               "fails at the write that is outside. Lower the amplitude, keep the values of " + variable +
+               " further from the ends of its range, or take the dither off before them (dither: { " + variable + ": none })\n";
+    };
+    // The values the text puts on the input while the dither is on it, with the dither's
+    // amplitude on both sides: a set's value, the ends of a ramp, where a wave around a value
+    // goes. One finding per dither. A value that is only known in the run is not looked at.
+    check_text(findings("inputs:\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                        "  Body.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: 1, distribution: gaussian } } }\n"
+                        "  Door.level: { dither: { square: { amplitude: 3, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 50, Body.ratio: 0.8, Door.level: 50 }\n"
+                        "  - ramp: { Body.level: { to: 99, over_ms: 100 } }\n"
+                        "  - wave: { Door.level: { sine: { amplitude: 5, period_ms: 80 }, around: 7, for_ms: 80 } }\n"
+                        "  - dither: { Door.level: { triangle: { amplitude: 1, period_ms: 80 } } }\n"),
+               "W 3 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 99 of line 8, "
+               "the values written go from 97 to 101" + estimate("Body.level") +
+               "W 4 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.8 of line 7, "
+               "the values written go about from 0.5 to 1.1 (three times the amplitude of a gaussian noise, which is its standard "
+               "deviation)" + estimate("Body.ratio") +
+               "W 5 scenario-dither-range: the dither of Door.level may take it out of its range (from 0 to 100): on the 2 of line 9, "
+               "the values written go from -1 to 5" + estimate("Door.level"));
+    // Which dither is on which value, by the order of the steps: a dither that was taken off is
+    // not on the value that comes after, and one that a step puts is on the value the input was
+    // left at, not on those before. Nothing here leaves the range, and nothing is said.
+    check_text(findings("inputs:\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 5, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 50 }\n"
+                        "  - at_ms: 200\n"
+                        "    dither: { Body.level: none }\n"
+                        "  - at_ms: 300\n"
+                        "    set: { Body.level: 100 }\n"
+                        "  - at_ms: 400\n"
+                        "    set: { Body.level: 60 }\n"
+                        "  - at_ms: 400\n"
+                        "    dither: { Body.level: { triangle: { amplitude: 3, period_ms: 80 } } }\n"),
+               "");
+    // A dither that a step puts while the input stands near an end; and every value a dither may
+    // leave the range on is in its one finding (the first with its numbers, the others counted).
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { triangle: { amplitude: 0.1, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 98, Body.ratio: 0.95 }\n"
+                        "  - dither: { Body.level: { triangle: { amplitude: 5, period_ms: 80 } } }\n"
+                        "  - ramp: { Body.ratio: { from: 0.05, to: 0.5, over_ms: 100 } }\n"
+                        "  - set: { Body.ratio: 1 }\n"),
+               "W 3 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.95 of line 5, "
+               "the values written go from 0.85 to 1.05; so on 2 other values (lines 7, 8)" + estimate("Body.ratio") +
+               "W 6 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 98 of line 5, "
+               "the values written go from 93 to 103" + estimate("Body.level"));
+    // An integer is rounded as the run rounds it. 100 with a dither of 0.4 is written as 100:
+    // nothing about the range, and the finding about the amplitude does not say "0.5 or more",
+    // which would leave the range there. With 0.5 it is written as 101, and that is said.
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 0.4, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 100 }\n"),
+               "W 3 scenario-wave-undersampled: the triangle dither of Body.level has an amplitude of 0.4, but Body.level is an integer: "
+               "on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only where a ramp or a wave "
+               "is between two whole values). An amplitude of 0.5 or more would show, but on the 100 of line 5 it would leave the range "
+               "(from 0 to 100): keep that value further from the end of the range first, or remove the dither; to run it as it is "
+               "without this message, add undersampled: ok to the input's entry in inputs\n");
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 0.5, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 100 }\n"),
+               "W 3 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 100 of line 5, "
+               "the values written go from 100 to 101" + estimate("Body.level"));
+    // What stays a false alarm (and fails check --strict): the estimate puts the ends of the
+    // dither on the ends of a wave under it, whenever they are. Here the triangle is at its
+    // bottom when the sine is at its top: no write is above 0.98, and the run passes.
+    const std::string opposite = "inputs:\n  Body.ratio: { dither: { triangle: { amplitude: 0.02, period_ms: 80, phase_deg: 180 } } }\n"
+                                 "steps:\n  - wave: { Body.ratio: { sine: { amplitude: 0.03, period_ms: 80 }, around: 0.96, for_ms: 80 } }\n"
+                                 "  - expect: { Body.ratio: { ge: 0.9 } }\n";
+    check_text(findings(opposite),
+               "W 3 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.99 of line 5, "
+               "the values written go from 0.97 to 1.01" + estimate("Body.ratio"));
+    World passes;
+    check_text(scenario_status_name(passes.run(read(kDitherHead + opposite)).status), "passed");
+    // Within the range: nothing. The run refuses what is outside all the same (another test).
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 98 }\n  - ramp: { Body.level: { to: 2, over_ms: 100 } }\n"),
+               "");
+    // A declared dither of an input that no step puts a value on is never written. A dither step
+    // is no value, and a step that this configuration skips does not count.
+    ScenarioContext context;
+    context.variant = "small";
+    check_text(lines(read_scenario(kDitherHead + "inputs:\n"
+                                                 "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                 "  Door.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                 "steps:\n"
+                                                 "  - set: { Body.boost: 1, Door.level: 5 }\n"
+                                                 "  - dither: { Body.level: none }\n"
+                                                 "  - expect: { Body.level: 0 }\n",
+                                   catalog_without_boost(), context)
+                         .findings),
+               "W 3 scenario-dither-unused: the dither of Body.level is never written: no step that runs puts a value on Body.level "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Body.level, or remove the entry\n"
+               "W 4 scenario-dither-unused: the dither of Door.level is never written: no step that runs puts a value on Door.level "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Door.level, or remove the entry\n"
+               "N 6 scenario-step-skipped: the step is skipped (set Body.boost; Door.level = 5): Body.boost is absent: participant "
+               "'Body' does not have it in the variant small (absent: true in its variables); the other steps run, also those that "
+               "would need what this one does\n");
+    // What the ECU's step makes of a dither is said as for a wave, and how to run it as it is
+    // says where to write that: the input's entry, or the step. An integer rounds a dither of
+    // less than a half away on a whole value.
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { sine: { amplitude: 0.1, period_ms: 15 } } }\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 0.2, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.ratio: 0.5, Body.level: 50 }\n"
+                        "  - dither: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 5, seed: 1 } } }\n"),
+               "W 3 scenario-wave-undersampled: the sine dither of Body.ratio has a period of 15 ms, but participant 'Body' takes its "
+               "inputs once per step of 10 ms: with fewer than two values per period the ECU sees a slower shape or a constant, not this "
+               "one. Make the period 80 ms or more (8 values per period); to run it as it is without this message, add undersampled: ok "
+               "to the input's entry in inputs\n"
+               "W 4 scenario-wave-undersampled: the triangle dither of Body.level has an amplitude of 0.2, but Body.level is an integer: "
+               "on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only where a ramp or a wave "
+               "is between two whole values). Make the amplitude 0.5 or more; to run it as it is without this message, add "
+               "undersampled: ok to the input's entry in inputs\n"
+               "W 7 scenario-wave-undersampled: the noise dither of Body.ratio changes every 5 ms, faster than the step of participant "
+               "'Body' (10 ms): the ECU gets only the value at the time of each of its steps; the values between are never applied. Make "
+               "hold_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n");
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { sine: { amplitude: 0.1, period_ms: 15 } }, undersampled: ok }\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 0.2, period_ms: 80 } }, undersampled: ok }\n"
+                        "steps:\n"
+                        "  - set: { Body.ratio: 0.5, Body.level: 50 }\n"
+                        "  - dither: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 5, seed: 1 } } }\n"
+                        "    undersampled: ok\n"),
+               "");
+}
+
+TEST_CASE(scenario_with_a_dither_lists_what_its_text_puts_on_the_inputs)
+{
+    const auto listed = [](const Scenario& s) {
+        std::string out;
+        for (const ScenarioLineText& line : s.lines)
+        {
+            out += line.variable + " " + line.kind + " step " + (line.step ? std::to_string(*line.step) : "-") + " " +
+                   (line.from_ms ? std::to_string(*line.from_ms) : "?") + "-" + (line.to_ms ? std::to_string(*line.to_ms) : "?") + " " +
+                   line_time_source_name(line.time_source) + " line " + std::to_string(line.line) +
+                   (line.after_wait > 0 ? " after " + std::to_string(line.after_wait) : "") + (line.shape ? " [" + line.shape->type + "]" : "") +
+                   ": " + line.text + "\n";
+        }
+        return out;
+    };
+    // The declared dithers first (no step; they begin with the first write of their input, which
+    // the text does not say), then what each step that runs puts on an input that has a dither
+    // at some time, in the order of the file. A time after a step that waits is not known before
+    // the run. Door.lamp has no dither: its set is not in the list.
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kDitherHead + "inputs:\n"
+                                                       "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                       "  Body.boost: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.level: 50, Door.lamp: true }\n"
+                                                       "  - at_ms: 100\n"
+                                                       "    ramp: { Body.level: { to: 80, over_ms: 60 } }\n"
+                                                       "  - set: { Body.boost: 1 }\n"
+                                                       "  - wait_until: { Body.level: { ge: 0 } }\n"
+                                                       "    timeout_ms: 100\n"
+                                                       "  - dither: { Body.level: none }\n"
+                                                       "  - after_ms: 10\n"
+                                                       "    wave: { Body.level: { pulse: { value: 10, width_ms: 20 } } }\n",
+                                         catalog_without_boost(), context);
+    if (!r.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+    }
+    CHECK(r.scenario->has_dither);
+    // (The texts are those of a timeline file's lines: with the variable.)
+    check_text(listed(*r.scenario), "Body.level dither step - ?-? first_write line 3 [triangle]: Body.level triangle amplitude 2 period 80 ms\n"
+                                    "Body.level set step 1 0-0 text line 6: Body.level = 50\n"
+                                    "Body.level ramp step 2 100-160 text line 7 [ramp]: Body.level to 80 over 60 ms\n"
+                                    "Body.level dither step 5 ?-? after_wait line 12 after 10: Body.level none\n"
+                                    "Body.level wave step 6 ?-? after_wait line 13 after 10 [pulse]: Body.level pulse 10 width 20 ms\n");
+    // The run's result has the same, and what "inputs" declares (of the variables there are).
+    const ScenarioRun before = scenario_not_run(*r.scenario);
+    CHECK(before.has_dither && before.lines.size() == 5 && before.inputs.size() == 1);
+    CHECK(before.inputs[0].variable == "Body.level" && before.inputs[0].line == 3 &&
+          before.inputs[0].text == "Body.level triangle amplitude 2 period 80 ms" && before.inputs[0].shape.has_value());
+    // A scenario without a dither has no list: its outputs are as they were. A dither step alone is one.
+    const Scenario plain = read(kHead + "  - set: { Body.level: 50 }\n");
+    CHECK(!plain.has_dither && plain.lines.empty() && !scenario_not_run(plain).has_dither);
+    const Scenario stepOnly = read(kHead + "  - dither: { Body.level: none }\n");
+    CHECK(stepOnly.has_dither && stepOnly.lines.size() == 1 && stepOnly.inputs.empty());
+}
+
+TEST_CASE(scenario_dither_noise_is_the_same_in_every_run_and_differs_by_seed_and_by_variable)
+{
+    const auto text = [](const std::string& seedBody, const std::string& seedDoor) {
+        return kDitherHead + "inputs:\n"
+                             "  Body.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: " + seedBody + " } } }\n"
+                             "  Door.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: " + seedDoor + " } } }\n"
+                             "steps:\n"
+                             "  - set: { Body.ratio: 0.5, Door.ratio: 0.5 }\n"
+                             "  - at_ms: 200\n"
+                             "    expect: { Body.ratio: { ge: 0.4, le: 0.6 }, Door.ratio: { ge: 0.4, le: 0.6 } }\n";
+    };
+    const auto values = [](const World& world, const std::string& variable) {
+        // The values alone: "0.53 0.47 ...".
+        std::string out;
+        const std::string writes = written_to(world, variable, 200ms);
+        for (std::size_t from = 0; from < writes.size(); from = writes.find(' ', from) + 1)
+        {
+            out += writes.substr(from, writes.find('@', from) - from) + " ";
+        }
+        return out;
+    };
+    // Two runs of one scenario write the same file, whatever the controller's step is.
+    const std::string first = timeline_of(text("7", "7"), 10ms);
+    CHECK(first.find("    \"status\": \"passed\",") != std::string::npos);
+    check_text(timeline_of(text("7", "7"), 10ms), first, "the same scenario again");
+    check_text(compared(timeline_of(text("7", "7"), 30ms)), compared(first), "with another step of the controller");
+    // The name of the variable is part of the seed: one seed for two inputs is two sequences.
+    World same;
+    same.run(read(text("7", "7")));
+    const std::string body = values(same, "Body.ratio");
+    CHECK(std::count(body.begin(), body.end(), ' ') == 21 && body != values(same, "Door.ratio"));
+    // Another seed is another sequence, and the input with the seed it had keeps its own.
+    World other;
+    other.run(read(text("8", "7")));
+    CHECK(values(other, "Body.ratio") != body && values(other, "Door.ratio") == values(same, "Door.ratio"));
+}
+
+TEST_CASE(scenario_dither_writes_of_no_step_do_not_decide_a_step)
+{
+    // One step moves two inputs: Body.level for 20 ms, Door.level for 200 ms. From 30 ms the
+    // dither alone writes Body.level, while the step is still under way: those writes are no
+    // step's, and the step passes when its own last write is applied, at 200 ms.
+    const Scenario s = read(kDitherHead + "inputs:\n"
+                                          "  Body.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }\n"
+                                          "steps:\n"
+                                          "  - ramp: { Body.level: { from: 10, to: 50, over_ms: 20 }, Door.level: { from: 20, to: 40, over_ms: 200 } }\n");
+    for (const SimDuration tick : {10ms, 30ms})
+    {
+        World world;
+        world.tick = tick;
+        const ScenarioRun run = world.run(s);
+        check_text(text_of(run), "passed over=210\n5 passed start=0 at=200 end=200\n", ("tick " + std::to_string(tick.count())).c_str());
+        check_text(written_to(world, "Body.level", 60ms), "11@0>0 29@10>10 51@20>20 49@30>30 51@40>40 49@50>50 51@60>60 ");
+    }
+}
+
+TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_got)
+{
+    // A scenario that fails at a sample (the expect of 30 ms) before the dither step of 50 ms.
+    // With a controller step of 30 ms the write of 50 ms went out before the failure was seen,
+    // with 10 ms it did not; the file is the same. The series has its base column because the
+    // scenario puts a dither on the input at all, not because a write carried one. (Compared:
+    // the series and the lines. The status of the steps after the one that failed depends on the
+    // controller's step, as in every run that fails.)
+    const auto recorded = [](const std::string& timeline) { return part(timeline, "  \"series\": [", "  \"findings\""); };
+    const std::string failing = kHead + "  - set: { Body.level: 50 }\n"
+                                        "  - at_ms: 30\n"
+                                        "    expect: { Body.level: 51 }\n"
+                                        "  - at_ms: 50\n"
+                                        "    dither: { Body.level: { square: { amplitude: 2, period_ms: 40 } } }\n";
+    const std::string fine = timeline_of(failing, 10ms);
+    CHECK(fine.find("    \"status\": \"failed\",") != std::string::npos);
+    check_text(recorded(timeline_of(failing, 30ms)), recorded(fine), "with a controller step of 30 ms");
+    CHECK(fine.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50]\n      ]\n") != std::string::npos);
+    // The same for a declared dither whose input gets its first value after the failure.
+    const std::string declared = kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
+                                               "steps:\n  - at_ms: 30\n    expect: { Body.level: 51 }\n"
+                                               "  - at_ms: 50\n    set: { Body.level: 50 }\n";
+    check_text(recorded(timeline_of(declared, 30ms)), recorded(timeline_of(declared, 10ms)), "a declared dither");
+    // And where the run decides whether the dither step is reached: after a step that waits.
+    const std::string waiting = kHead + "  - set: { Body.level: 50 }\n"
+                                        "  - wait_until: { Body.level: 51 }\n"
+                                        "    timeout_ms: 40\n"
+                                        "  - dither: { Body.level: { square: { amplitude: 2, period_ms: 40 } } }\n";
+    const std::string timedOut = timeline_of(waiting, 10ms);
+    check_text(recorded(timeline_of(waiting, 30ms)), recorded(timedOut), "a dither step after a wait that runs out");
+    CHECK(timedOut.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n") != std::string::npos);
 }

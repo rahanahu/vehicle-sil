@@ -1,0 +1,423 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "dither",
+    "status": "passed",
+    "over_at_ms": 210,
+    "recorded_to_ms": 200
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Body.ratio",
+      "participant": "Body",
+      "type": "real",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 1,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Door.level",
+      "participant": "Door",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": false
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 14,
+      "kind": "set",
+      "text": "set Body.level = 50",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "lines": [0],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 15,
+      "kind": "set",
+      "text": "set Body.ratio = 0.5",
+      "status": "passed",
+      "start_ms": 30,
+      "at_ms": 30,
+      "end_ms": 30,
+      "code": null,
+      "message": null,
+      "lines": [2],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 3,
+      "line": 17,
+      "kind": "ramp",
+      "text": "ramp Body.level to 60 over 36 ms",
+      "status": "passed",
+      "start_ms": 47,
+      "at_ms": 83,
+      "end_ms": 83,
+      "code": null,
+      "message": null,
+      "lines": [4],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 4,
+      "line": 19,
+      "kind": "dither",
+      "text": "dither Body.level none; Door.level none",
+      "status": "passed",
+      "start_ms": 120,
+      "at_ms": 120,
+      "end_ms": 120,
+      "code": null,
+      "message": null,
+      "lines": [5],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 5,
+      "line": 21,
+      "kind": "dither",
+      "text": "dither Body.level square amplitude 3 period 40 ms duty 25 %",
+      "status": "passed",
+      "start_ms": 150,
+      "at_ms": 150,
+      "end_ms": 150,
+      "code": null,
+      "message": null,
+      "lines": [7],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 6,
+      "line": 23,
+      "kind": "set",
+      "text": "set Body.level = 70",
+      "status": "passed",
+      "start_ms": 150,
+      "at_ms": 150,
+      "end_ms": 150,
+      "code": null,
+      "message": null,
+      "lines": [6],
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 7,
+      "line": 25,
+      "kind": "expect",
+      "text": "expect Body.level ge 67, le 73; Body.ratio ge 0.45, le 0.55",
+      "status": "passed",
+      "start_ms": 200,
+      "at_ms": 200,
+      "end_ms": 200,
+      "code": null,
+      "message": null,
+      "lines": [],
+      "watch": {
+        "mode": "at",
+        "from_ms": 200,
+        "until_ms": null,
+        "conditions": [
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 67
+              },
+              {
+                "op": "le",
+                "value": 73
+              }
+            ]
+          },
+          {
+            "variable": "Body.ratio",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 0.45
+              },
+              {
+                "op": "le",
+                "value": 0.55
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "columns": ["t_ms", "value", "base"],
+      "points": [
+        [0, 50, 50],
+        [10, 52, 50],
+        [20, 50, 50],
+        [30, 48, 50],
+        [40, 50, 50],
+        [47, 51, 50],
+        [57, 53, 52.77777777777778],
+        [67, 54, 55.55555555555556],
+        [77, 58, 58.333333333333336],
+        [83, 61, 60],
+        [90, 62, 60],
+        [100, 60, 60],
+        [110, 58, 60],
+        [120, 60, 60],
+        [150, 67, 70],
+        [150, 67, 70],
+        [160, 73, 70],
+        [170, 67, 70],
+        [180, 67, 70],
+        [190, 67, 70],
+        [200, 73, 70]
+      ]
+    },
+    {
+      "variable": "Body.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 21,
+      "first_ms": 0,
+      "last_ms": 200,
+      "points": [
+        [0, 50],
+        [10, 52],
+        [20, 50],
+        [30, 48],
+        [40, 50],
+        [50, 51],
+        [60, 53],
+        [70, 54],
+        [80, 58],
+        [90, 62],
+        [100, 60],
+        [110, 58],
+        [120, 60],
+        [150, 67],
+        [160, 73],
+        [170, 67],
+        [200, 73]
+      ]
+    },
+    {
+      "variable": "Body.ratio",
+      "source": "written",
+      "encoding": "all",
+      "columns": ["t_ms", "value", "base"],
+      "points": [
+        [30, 0.5348311458534407, 0.5],
+        [40, 0.4504525469722368, 0.5],
+        [50, 0.4504525469722368, 0.5],
+        [60, 0.5441439491533636, 0.5],
+        [70, 0.5441439491533636, 0.5],
+        [80, 0.512022879861516, 0.5],
+        [90, 0.512022879861516, 0.5],
+        [100, 0.5363185191681494, 0.5],
+        [110, 0.5363185191681494, 0.5],
+        [120, 0.5262350384544587, 0.5],
+        [130, 0.5262350384544587, 0.5],
+        [140, 0.4859321285765268, 0.5],
+        [150, 0.4859321285765268, 0.5],
+        [160, 0.46335905017403983, 0.5],
+        [170, 0.46335905017403983, 0.5],
+        [180, 0.5456015287308512, 0.5],
+        [190, 0.5456015287308512, 0.5],
+        [200, 0.5182402673622672, 0.5]
+      ]
+    },
+    {
+      "variable": "Body.ratio",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 21,
+      "first_ms": 0,
+      "last_ms": 200,
+      "points": [
+        [0, 0],
+        [30, 0.5348311458534407],
+        [40, 0.4504525469722368],
+        [60, 0.5441439491533636],
+        [80, 0.512022879861516],
+        [100, 0.5363185191681494],
+        [120, 0.5262350384544587],
+        [140, 0.4859321285765268],
+        [160, 0.46335905017403983],
+        [180, 0.5456015287308512],
+        [200, 0.5182402673622672]
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 14,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 50,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 50"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "dither",
+      "line": 10,
+      "step": null,
+      "from_ms": 0,
+      "to_ms": null,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "triangle",
+        "amplitude": 2,
+        "period_ms": 40
+      },
+      "text": "Body.level triangle amplitude 2 period 40 ms"
+    },
+    {
+      "variable": "Body.ratio",
+      "kind": "set",
+      "line": 15,
+      "step": 2,
+      "from_ms": 30,
+      "to_ms": 30,
+      "base": 0.5,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.ratio = 0.5"
+    },
+    {
+      "variable": "Body.ratio",
+      "kind": "dither",
+      "line": 11,
+      "step": null,
+      "from_ms": 30,
+      "to_ms": null,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "noise",
+        "amplitude": 0.05,
+        "hold_ms": 20,
+        "seed": 7
+      },
+      "text": "Body.ratio noise amplitude 0.05 hold 20 ms seed 7"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "ramp",
+      "line": 17,
+      "step": 3,
+      "from_ms": 47,
+      "to_ms": 83,
+      "base": 50,
+      "base_source": "line",
+      "shape": {
+        "type": "ramp",
+        "to": 60,
+        "over_ms": 36
+      },
+      "text": "Body.level to 60 over 36 ms"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "dither",
+      "line": 19,
+      "step": 4,
+      "from_ms": 120,
+      "to_ms": null,
+      "base": null,
+      "base_source": null,
+      "shape": null,
+      "text": "Body.level none"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 23,
+      "step": 6,
+      "from_ms": 150,
+      "to_ms": 150,
+      "base": 70,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 70"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "dither",
+      "line": 21,
+      "step": 5,
+      "from_ms": 150,
+      "to_ms": null,
+      "base": null,
+      "base_source": null,
+      "shape": {
+        "type": "square",
+        "amplitude": 3,
+        "period_ms": 40,
+        "duty": 25
+      },
+      "text": "Body.level square amplitude 3 period 40 ms duty 25 %"
+    }
+  ],
+  "findings": [],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

@@ -24,6 +24,8 @@ namespace vehicle_sil::detail {
 /// An empty key starts an element of an array; any other key a member of an object. Strings:
 /// valid UTF-8 as it is, '"', '\\' and the control characters escaped, a byte that starts no
 /// valid UTF-8 sequence as U+FFFD. Compact: the same without any line end or space (one line).
+/// An array begun with begin_array_on_one_line() is written on one line with all that is in it,
+/// its elements ", " apart ("[10, 50.3]").
 class JsonWriter
 {
 public:
@@ -35,6 +37,15 @@ public:
     void begin_object(std::string_view key = {}) { open(key, '{'); }
     void end_object() { close('}'); }
     void begin_array(std::string_view key) { open(key, '['); }
+    /// The array and everything in it on one line (a point of a long list: one line per point).
+    void begin_array_on_one_line(std::string_view key)
+    {
+        open(key, '[');
+        if (one_line_ == 0)
+        {
+            one_line_ = 1; // (inside another such array, open() has counted it already)
+        }
+    }
     void end_array() { close(']'); }
 
     void string(std::string_view key, std::string_view value)
@@ -82,12 +93,19 @@ private:
         {
             out_ += ',';
         }
-        first_ = false;
-        if (depth_ > 0 && !compact_)
+        if (one_line_ > 0)
+        {
+            if (!first_ && !compact_)
+            {
+                out_ += ' ';
+            }
+        }
+        else if (depth_ > 0 && !compact_)
         {
             out_ += '\n';
             out_.append(static_cast<std::size_t>(depth_) * 2, ' ');
         }
+        first_ = false;
         if (!key.empty())
         {
             quoted(key);
@@ -100,11 +118,19 @@ private:
         out_ += bracket;
         ++depth_;
         first_ = true;
+        if (one_line_ > 0)
+        {
+            ++one_line_; // how deep in the array on one line (1: in the array itself)
+        }
     }
     void close(char bracket)
     {
         --depth_;
-        if (!first_ && !compact_) // not empty: the bracket on a line of its own
+        if (one_line_ > 0)
+        {
+            --one_line_;
+        }
+        else if (!first_ && !compact_) // not empty: the bracket on a line of its own
         {
             out_ += '\n';
             out_.append(static_cast<std::size_t>(depth_) * 2, ' ');
@@ -178,6 +204,7 @@ private:
     int depth_ = 0;
     bool first_ = true;
     bool compact_ = false;
+    int one_line_ = 0; ///< > 0: in an array on one line, this deep
 };
 
 /// The names to_json() uses: "bool", "integer", "real", "enum"; "input", "output", "parameter".

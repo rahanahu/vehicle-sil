@@ -120,6 +120,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `name` | いいえ | シナリオの名前です（出力に表示されます）。 |
 | `only` | いいえ | このシナリオを実行する機種の名前の並びです（`only: [small, medium]`。書かなければ、どの機種でも実行します。[機種を限定する](#機種を限定するonly)）。 |
 | `params` | いいえ | パラメーターの既定の値（名前 → 値）です（手順の値の位置に `${name}` と書いて使います。[パラメーター](#パラメーターparamsname)）。 |
+| `inputs` | いいえ | 入力ごとの宣言（変数 → `{ dither: <波形> }`）です。シナリオの始めから、その入力に細かい揺れを重ねます（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
 | `steps` | はい | 手順の並び（1 つ以上）で、上から順に進みます。 |
 
 ### 手順のキー
@@ -131,6 +132,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `set` | `set: { <変数>: <値>, ... }` | 値を設定します。 |
 | `ramp` | `ramp: { <変数>: { to: <値>, over_ms: <ms>, from: <値> }, ... }` | `over_ms` の間、値を直線で動かします（`from` は省けます）。 |
 | `wave` | `wave: { <変数>: { <波形>: { ... }, around: <値>, for_ms: <ms> }, ... }` | 決まった波形（`sine`、`square` など）で値を動かします（[波形で動かす](#波形で動かすwave)）。 |
+| `dither` | `dither: { <変数>: { <波形>: { ... } }, ... }`、`dither: { <変数>: none }` | その時刻から、入力に重ねる揺れを替えます。`none` は外します（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。 |
 | `wait_until` | `wait_until: { <変数>: <条件>, ... }` | 条件が成り立つまで待ちます。 |
 | `expect` | `expect: { <変数>: <条件>, ... }` | 手順の時刻に、条件が成り立つことを確認します。 |
 
@@ -142,7 +144,7 @@ YAML です（`{` で始まれば JSON）。設定ファイルとは別のファ
 | `within_ms: <ms>` | `expect` | この間に 1 度でも成り立てば成功で、成り立った時点で次の手順へ進みます。 |
 | `hold_for_ms: <ms>` | `expect` | この間ずっと成り立つことを確認します。 |
 | `expect: { <変数>: <条件>, ... }` | `ramp`、`wave` | 動かしている間ずっと（手順の時刻から終わりまで）、条件が成り立つことを確認します。 |
-| `undersampled: ok` | `wave` | その手順の波形が ECU のステップより細かくても、照合で指摘しません。 |
+| `undersampled: ok` | `wave`、`dither` | その手順の波形が ECU のステップより細かくても、照合で指摘しません。 |
 
 `at_ms` も `after_ms` もない手順は、`after_ms: 0` と同じです。
 
@@ -215,7 +217,7 @@ JSON Schema は [schema/scenario.schema.json](../../schema/scenario.schema.json)
 
 | 手順 | 終わる時刻 | 実行の前にわかるか |
 |---|---|---|
-| `set`、`expect`（その時点） | T | わかります。 |
+| `set`、`dither`、`expect`（その時点） | T | わかります。 |
 | `ramp` | T + 最も長い `over_ms` | わかります。 |
 | `wave` | T + 最も長い波形の長さ | わかります。 |
 | `expect` と `hold_for_ms` | T + `hold_for_ms` | わかります。 |
@@ -271,13 +273,17 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 | 1 つの `set` に、同じ participant の変数が複数ある | 同じステップでまとめて反映されます。 |
 | `ramp` が書く時刻 | 変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）に、`from` から `to` への直線の上の値を書き、T + `over_ms` に `to` を書きます。 |
 | `ramp` の始まりの値（`from` を省いたとき） | シナリオがその変数に最後に書いた値です。 |
-| シナリオがまだ書いていない変数の始まりの値 | 最新のサンプルの値です。 |
+| シナリオがまだ書いていない変数の始まりの値 | 最新のサンプルの値です。どのサンプルになるか（1 つもないか）は、controller のタイムステップによります（時刻 T の書き込みは、T より前のタイムステップで送るため。[simulation-run.md](simulation-run.md) の「記録の終わり（`recorded_to_ms`）」）。タイムステップによらない結果にするには、`from` を書きます。 |
 | 書いた値もサンプルもない | 失敗です（`from` を書きます）。 |
 | シナリオが書いた後に、ほかの書き手（ECU 自身など）が値を変えた | 始まりの値は変わりません。 |
 | 書き込みの結果を確認する時点 | 反映する ECU のステップの、次の controller のステップです。 |
 | 反映されなかった書き込み（ECU の setter が拒否した、相手が接続していない、など） | その手順の失敗です。 |
+| いくつもの変数を書く 1 つの `set` で、ECU の setter がそのうちの 1 つを拒否した | その手順の失敗です。**その `set` の中で、拒否された変数より前の変数は、もう書き込まれていて、そのまま残ります。** 拒否された変数とその後ろは書き込まれていません。メッセージがその変数を挙げ、時間の軸のファイルは書き込みごとに印を付けます（[simulation-run.md](simulation-run.md#ファイルの形) の「ファイルの形」）。 |
+| 動きのない間の `dither` の書き込み | 手順のものでない書き込みが、ECU のステップごとに 1 回出ます（[細かい揺れを重ねる](#細かい揺れを重ねるdither)）。同じ時刻・同じ participant の分は、1 つの書き込みにまとめます。断られると、その時点でまだ決まっていない最初の手順の失敗（`scenario-write`）です。1 つの `set` と同じで、その participant の入力のうち、断られたものより前の入力は、もう書き込まれています。 |
 
 書き込みが、書いた時刻のステップに間に合わないことはありません。ランチャーは、時間ゲートで controller の各ステップを止め、次のタイムステップまでの書き込みを ECU に渡し終えてから進めます。時刻 0 の分は、全員が最初のステップの前で待っている間に渡します。
+
+手順のものでない `dither` の書き込みが断られたときの文は、どの入力の揺れが、いつ、どの値を書いたかを言います。範囲の外だと言うのは、エージェントがそう言って断ったときだけで、ほかの拒否（つながっていない、コマンドが多すぎる、setter の例外など）は、状態と理由を言います。まとめた書き込みの入力の 1 つを ECU の setter が断ったときは、その入力を名指しし、それより前の入力（ECU がもう書き込んだもの）を並べます。まとめた書き込みのどの入力のせいかがわからないとき（コマンドが多すぎる、理由に変数の名前を言わない ECU など）は、participant を主語にして、その書き込みの入力と値を全部並べます。
 
 ## 波形で動かす（`wave`）
 
@@ -335,7 +341,7 @@ ECU は、Agent の `sample_period`（既定は仮想時間の 10 ms）ごとに
 | | `bounces` | 横の `for_ms` とどちらか | 元の値に戻る回数です。 |
 | | `seed` | いいえ | 書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれます。 |
 | | `from` | いいえ | 元の値です（bool には書きません。`to` の反対です）。 |
-| `points` | `[[<ms>, <値>], ...]` | はい | 時刻（手順の始めからの ms、昇順）と値の表です。 |
+| `points` | `[[<ms>, <値>], ...]` か CSV ファイル（`{ file: <パス>, value: <列> }`。[点を CSV ファイルから読む](#点を-csv-ファイルから読む)） | はい | 時刻（手順の始めからの ms、昇順）と値の表です。 |
 
 bool の `square` には、`low`・`high` も `amplitude` も書きません（`false` と `true` です）。
 
@@ -405,6 +411,28 @@ integer は四捨五入します（ちょうど .5 は 0 から遠い側。計�
 
 `vehicle_sil::signal`（[`signal/waveform.hpp`](../../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
 
+### 点を CSV ファイルから読む
+
+`points` には、点の表の代わりに CSV ファイルとその列を書けます。記録した値の列を、そのまま入力に流すときに使います。
+次の例は、[examples/ecu_main/scenarios/throttle_trace.yaml](../../examples/ecu_main/scenarios/throttle_trace.yaml) の 15 行で、同じディレクトリの `throttle_trace.csv` の列 `throttle` を、最初の列の時刻（ms）で流します。
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+| キー | 必須 | 意味 |
+|---|---|---|
+| `file` | はい | CSV ファイルです。シナリオのファイルがあるディレクトリからのパスで、ディレクトリの区切りは `/` です。絶対パス、`..` を含むパス、`\` を含むパスはエラーです（シナリオは、自分のディレクトリとその下のファイルだけを読みます）。 |
+| `value` | はい | 値の列の名前です。 |
+| `time` | いいえ | 時刻の列の名前です。省くと最初の列です。 |
+| `time_unit` | いいえ | 時刻の単位で、`ms`（既定）か `s` です。どちらも手順の始めからの時刻で、整数の ms になる値を書きます（`s` の `0.25` は 250 ms）。 |
+
+- CSV の 1 行目は列の名前で、その下の 1 行が 1 点です。区切りは `,` で、セルを `"` で囲めます（中の `"` は `""`）。UTF-8 で、先頭の BOM、CRLF の改行、空行はかまいません。どの行も、1 行目と同じ数のセルを持ちます。
+- 読んだ点は、`[[<ms>, <値>], ...]` に書いたときと同じ決まりで照合し、同じ値を書きます（時刻は昇順、値は型と範囲、`interpolate` は横に書く、ECU のステップより細かい点の警告）。値のセルは数です。bool は `true`、`false`、`1`、`0`、enum は項目の名前か値です。integer の値には 16 進（`0x3C`）も書けます。
+- 1 つのファイルの別の列を、別の変数に使えます。ファイルは照合のときに 1 回だけ読みます。値の行は 100000 行まで、ファイルは 16 MiB までです。
+- `file`、`value`、`time`、`time_unit` には `${名前}` を書けます（同じシナリオに、別の記録を流す）。
+- ファイル、パス、列のエラーは `scenario-points-file` です。セルのエラーは、`[[<ms>, <値>], ...]` と同じ `value`（時刻）と `scenario-value`（値）です。指摘の行はシナリオの `file` の行で、メッセージが CSV の何行目のどの列かを言います（セルは 20 文字で切ります）。セルのエラーは、1 つの `points` につき最初の 1 つだけを言います。
+
 ### ECU のステップより細かい波形
 
 ECU は、ステップごとに 1 回だけ入力を受け取ります。それより細かい波形は、書いたとおりには ECU に見えません。照合（`check --scenario`、`run --scenario` の最初）は、相手の ECU のステップ幅と比べて、ECU に実際に見える形を警告で示します。警告なので、実行はできます。`--strict` では照合で失敗します。
@@ -451,6 +479,46 @@ ECU に見える値の並びは、手順がいつ始まるかによりません�
 - 最後の点の直前の点の書き込みが、終わりの書き込みと同じステップで反映される（短い `pulse` と同じルールです）。
 
 動かしようのないものは、警告ではなくエラーです。周期や幅が 0 以下、`noise` に `seed` がない、`points` の時刻が昇順でない、型に合わない波形（bool に `sine` など）、範囲の外が、これに当たります。
+
+## 細かい揺れを重ねる（`dither`）
+
+`dither` は、入力に、中心が 0 で終わりのない波形を重ねます。
+ECU に書く値は、**手順が入力に置いた値（基準）に、その時刻の揺れを足して、変数の型に丸めたもの**です。
+基準は、`set` の値か、`ramp` や `wave` のその時刻の値です。揺れは、基準を動かしても乗ったままです。
+
+```yaml
+vehicle_sil_scenario: 1
+inputs:
+  Engine.engine.throttle:
+    dither: { triangle: { amplitude: 2, period_ms: 40 } }   # シナリオの終わりまで乗る
+steps:
+  - set: { Engine.engine.throttle: 50 }                     # 48〜52 で揺れる
+  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 1000 } }   # 基準が動く。揺れは続く
+  - after_ms: 500
+    dither: { Engine.engine.throttle: none }                # 外す。基準（80）を 1 回書く
+  - after_ms: 500
+    dither: { Engine.engine.throttle: { noise: { amplitude: 1, hold_ms: 10, seed: 7 } } }
+```
+
+書く場所は 2 つです（動かせる例は [examples/ecu_main/scenarios/throttle_dither.yaml](../../examples/ecu_main/scenarios/throttle_dither.yaml)）。
+
+- **最上位の `inputs`**: `inputs: { <変数>: { dither: <波形> } }`。シナリオの始めから乗っています。
+- **手順 `dither`**: `dither: { <変数>: <波形> }` はその時刻から揺れを替え、`dither: { <変数>: none }` は外します。手順は時間を取りません（終わりは T）。外す語は `none` です（`off` は、YAML の道具によっては `false` に読まれるので使いません）。
+
+波形は、`wave` と同じ書き方の `sine`、`triangle`、`sawtooth`、`amplitude` の `square`、`noise` です。キーも `wave` の同じ波形と同じで、数の位置に `${name}` を書けます。`for_ms`（終わりがない）と `around`（中心は基準）は書けません。長さのある波形（`pulse`、`lag`、`chatter`、`points`、`chirp`）と、`low`・`high` の `square` はエラーです。使える変数は integer と real の入力だけです。
+
+- **基準**: 揺れが乗るのは、手順がその入力に値を置いてからです。宣言しただけの入力には、最初の `set`、`ramp`、`wave` まで何も書きません。基準のない入力への手順 `dither` も、書かずに通ります（結果の時刻は T）。
+- **揺れは仮想時刻そのものの関数**です。手順 `dither` を置いた時刻からではなく、仮想時刻 0 から数えます（周期 40 ms の `triangle` は、いつ置いても 10、50、90 ms、… が山）。ずらすには `phase_deg` を書きます。`noise` は、`wave` と同じく `seed`、変数の名前、時刻から作ります。
+- **足してから丸める**: integer の入力では、丸める前の基準に足します。10 から 11 への `ramp` の途中（10.4）に +0.2 の揺れが乗ると、10.6 で 11 を書きます。`from` や `around` を省いた次の動きが始まる値は、揺れを含まない基準（型に丸めた値）です。
+- **書く時刻**:
+  - `set`、`ramp`、`wave` の書き込みは、今までどおりの時刻に、揺れを足した値を書きます。動きの間（T から終わりまで）に書くのは、動きの書き込みだけです。
+  - 動きのない間は、その ECU のステップの時刻（0、ステップ、2 × ステップ、…）ごとに 1 回、基準 + 揺れを書きます。その時刻に手順の書き込みがあれば、それが揺れを運ぶので、足しません。
+  - 手順 `dither` は、基準のある入力に、T に 1 回書きます（外すときは基準、替えるときは基準 + 新しい揺れ）。同じ時刻のほかの手順の書き込みも、その時刻に最後に置いた揺れで書きます。
+  - ステップの間の時刻の `set` と、ステップの間で終わる動きの終わりの値は、次のステップで、そのステップの時刻の揺れの書き込みより先に入ります（そのステップでは、揺れの書き込みが残ります）。
+- **揺れのない入力は変わりません**。書く回数も値も、ほかの入力に揺れがあるかどうかによりません。書くたびに 1 回働く入力（要求の入力など）に `dither` を重ねると、ステップごとに書くことになります。
+- **範囲**: 基準 + 揺れが変数の範囲を出ると、ECU がその書き込みを断り、シナリオは失敗します（値を黙って丸めません）。照合は、文面の基準 ± 振幅が範囲を出うるときに警告します（`scenario-dither-range`。下の「照合」）。
+- **機種**: 手順 `dither` の変数がその機種にないときは、ほかの手順と同じく、手順の全体をスキップします。`inputs` に宣言した入力がないときは、その宣言だけを使わず、注記（`scenario-input-skipped`）で言います。
+- 揺れが ECU のステップより細かいときの警告（`scenario-wave-*`）は、`wave` と同じです。黙らせるには、`inputs` のその入力か、手順 `dither` に `undersampled: ok` を書きます。
 
 ## 動かしている間ずっと確認する
 
@@ -632,13 +700,19 @@ steps:
 
 失敗として報告するのは、ランチャーが最初に知った失敗で、仮想時間の順とは限りません。ランチャーは、controller のステップ P ごとに、前の書き込みの結果、P より前のサンプル、次のタイムステップまでの書き込みの順に見ます。すぐに拒否される書き込み（範囲の外など）は、1 タイムステップ先の時刻のものを送信するときにわかります。そのため、それより前の時刻のサンプルで成り立たない条件より先に報告されることがあり、タイムステップを変えると入れ替わります。
 
+`dither` が動きのない間に出す書き込み（手順のものでない書き込み）が断られたときは、その時点で**まだ決まっていない最初の手順**が失敗します（`scenario-write`）。次の 2 つは controller のタイムステップによります。タイムステップによらない結果にするには、範囲を出ない振幅にします（照合の警告 `scenario-dither-range` が、出うる所を言います）。
+
+- **どの手順が失敗するか**: ランチャーが、断られる書き込みを送る時に、どの手順まで決めていたかで決まります。例: 30 ms と 60 ms の `expect` があり、50 ms の書き込みが断られるとき、タイムステップが 10 ms なら 30 ms の `expect` は決まっていて 60 ms の手順が失敗し、タイムステップが 30 ms なら 30 ms の手順が失敗します。失敗の時刻（`at`）と文は同じです。
+- **最後の手順が決まるタイムステップの書き込み**: シナリオは、手順が全部決まった時に終わり、その後の書き込みは送りません。上の例で手順が 30 ms の `expect` だけなら、タイムステップが 10 ms では 50 ms の書き込みを送る前に通り、タイムステップが 30 ms では送って失敗します。手順のものでない書き込みの結果を、シナリオの終わりで待つこともしません。
+
 ### 手順の `at`
 
 手順ごとの `at`（JSON の `at_ms`）は、その手順の結果が決まった仮想時間です。
 
 | 手順 | `at` |
 |---|---|
-| `set` | 値を反映した ECU のステップ |
+| `set`、書き込みのあった `dither` | 値を反映した ECU のステップ |
+| 書き込みのない `dither` | T |
 | `ramp`、`wave` | 終わり |
 | その時点の `expect` | T |
 | `wait_until`、`within_ms` | 成り立ったサンプルの時刻 |
@@ -763,16 +837,29 @@ failed: 5 errors, 0 warnings, 0 notes
 | `unknown-key`、`duplicate-key`、`missing-key`、`value` | エラー | キーと値の形のエラー（1 つの手順に 2 つの動作、`wait_until` に `timeout_ms` がない、`near` に `tolerance` がない、など）。 |
 | `scenario-variable` | エラー | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（無効にしている、`describe: false`、実時間で動く、変数を出していない）。 |
 | `scenario-not-writable` | エラー | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている。 |
-| `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。 |
+| `scenario-value` | エラー | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外。`dither` を bool か enum の変数に書いている。 |
 | `scenario-param` | エラー | `${name}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数のエラー `usage`）。 |
 | `scenario-variant` | エラー | シナリオの `only` に、選んだ機種がない。`only` の名前が設定ファイルの機種にない。 |
 | `scenario-time` | エラー | `at_ms` が前の手順の終わりより前。待つ手順より後ろに `at_ms` がある。手順の時間を合計すると、時刻の上限（1000000000000 ms）を超える。 |
-| `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。 |
+| `scenario-wave-undersampled`、`scenario-wave-duty` | 警告 | `wave` か `dither` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)）。integer の入力に、振幅が 0.5 より小さい `dither` も `scenario-wave-undersampled` です（下）。 |
 | `scenario-wave-coarse`、`scenario-wave-not-checked` | 注記 | 同じ節にあります。 |
+| `scenario-dither-range` | 警告 | `dither` が入力を範囲の外へ出すかもしれない（文面からの見積もり。下）。 |
+| `scenario-dither-unused` | 警告 | `inputs` に `dither` を宣言した入力に、実行する手順が 1 つも値を置かない（`set`、`ramp`、`wave` がない。スキップする手順は数えない）。揺れは 1 度も書かれない。 |
+| `scenario-input-skipped` | 注記 | `inputs` に宣言した入力が、`absent: true` の変数か、機種が外した participant の変数なので、その宣言を使わない。 |
+| `scenario-points-file` | エラー | `points` の CSV ファイル（[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）のパスが、シナリオのディレクトリの下を指していない。ファイルがない、読めない、空、UTF-8 でない、行のセルの数が列の数と違う、行が多すぎる。`value` や `time` の列がない、名前が 2 つある。 |
 | `scenario-nothing-checked` | 警告 | 確認する手順（`expect`、`wait_until`、`ramp` と `wave` の横の `expect`）を全部スキップするので、シナリオが何も確認しない。 |
 | `scenario-step-skipped` | 注記 | 手順が `absent: true` の変数か、機種が無効にした participant の変数を使うので、実行でスキップする。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけをスキップする。 |
 
+照合が `dither` をどう見るか:
+
+- `scenario-dither-range` は**文面からの見積もり**で、揺れごとに 1 つ出ます。見るのは、その揺れが乗っている間に手順がその入力に置く値（`set` の値、`ramp` の `from` と `to`、`wave` の `around` ± `amplitude` など、文面に書いた値）と、手順 `dither` が置かれた時に入力が留まっている値です。どの揺れが乗っているかは、手順の並び順でたどります（外した後の値、替える前の値とは組み合わせません。スキップする手順は数えません）。値に振幅を足し引きし、integer は実行と同じ丸めをかけて、範囲を出れば警告します。`gaussian` の `noise` は振幅（標準偏差）の 3 倍で見積もります（文に "about"）。
+- 時刻は数えないので、**当たらない警告が残ります**: 揺れの山と、下の `wave` の山が同じ時刻に来ないとき、`gaussian` の値が 3 倍まで出ないとき。その実行は通りますが、`--strict` では照合で落ちます。黙らせるキーはありません。振幅を下げるか、値を端から離すか、その値の前に `dither: { <変数>: none }` で外します。
+- 逆に、`around` を省いた `wave` のように実行しないと決まらない値は見ないので、警告なしで実行が失敗することもあります。
+- integer の入力に、振幅が 0.5 より小さい `dither` は `scenario-wave-undersampled` です（整数の値の上では、丸めると元の値に戻る）。その揺れの下の値が範囲の端にあって、0.5 にすると範囲を出るときは、「0.5 以上に」とは勧めず、値を端から離すよう言います。
+
 ## 出力
+
+`run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルにも書きます（手順の見張りの区間、失敗の値、値の列。[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。
 
 ### 人向けの出力
 
@@ -789,6 +876,17 @@ failed: 5 errors, 0 warnings, 0 notes
 - 合否の行には、確認しない横の `expect` があれば、末尾に `, <n> expect not checked` が付きます。
 - スキップした手順は、表の時刻が `-` で、実行中の行に ` at <時刻> ms` が付きません。
 
+`dither` のあるシナリオ（`inputs` があるか、実行する手順 `dither` がある）では、照合の部分に、入力に置くものの一覧が続きます（ほかのシナリオの出力は変わりません。`run` の出力でも、最初の照合の部分に出ます）。載るのは、`dither` を置くか外す入力だけです（揺れの下に何が来るかを見るための一覧で、ほかの入力の書き込みは載りません）。`inputs` の宣言、手順の順で、入力ごとに 1 行です。`from` と `to` は文面の時刻で、待つ手順の後ろは `?`、終わりのない `dither` の `to` は `-` です。宣言した揺れの `from` は `first write`（その入力への最初の書き込みから乗る。時刻は文面で決まらない）です。例は [examples/ecu_main/scenarios/throttle_dither.yaml](../../examples/ecu_main/scenarios/throttle_dither.yaml) の一覧です。
+
+<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->
+```text
+input                   from         to    what                                                line
+Engine.engine.throttle  first write  -     dither triangle amplitude 2 period 80 ms            10
+Engine.engine.throttle  0 ms         0 ms  set = 50                                            14
+Engine.engine.throttle  ?            ?     ramp to 80 over 300 ms (after the wait of line 16)  21
+Engine.engine.throttle  ?            -     dither none (after the wait of line 16)             26
+```
+
 ### `check --json` と `run --json` の `check`
 
 `scenario` があるのは、`--scenario` を付けたときだけです。
@@ -801,8 +899,17 @@ failed: 5 errors, 0 warnings, 0 notes
 | `params` | あるときだけ | シナリオが宣言したか使ったパラメーターごとに、`name`、`value`、`from` |
 | `skipped_steps` | あるときだけ | スキップする手順の数 |
 | `unchecked_expects` | あるときだけ | 確認しない横の `expect` の数 |
+| `inputs`、`lines` | `dither` のあるシナリオだけ | 次の表。`run --json` の `scenario` にも同じものがあります |
 
 `params` の `value` は有効な値（`true`・`false`、数、文字列）で、`from` は `scenario`、`configuration`、`variant`、`command_line` のどれかです。
+
+`dither` のあるシナリオのキー:
+
+| キー | 意味 |
+|---|---|
+| `inputs[]` | `inputs` に宣言した入力ごとに `variable`、`line`（その入力の行）、`dither`（`shape` と `text`。下の `lines[]` の同じキーと同じ書き方）です。その機種で使わない宣言は入りません。 |
+| `lines[]` | 文面が入力に置くものの一覧です（上の人向けの表と同じ並び。`dither` を置くか外す入力だけ）。`--timeline` のファイルの `lines[]`（[simulation-run.md](simulation-run.md) の「入力の線」。実行で起きたこと）と同じ名前のキーは、同じ意味、同じ書き方です: `variable`、`kind`（`dither`、`set`、`ramp`、`wave`）、`line`、`step`（手順の `index`。`inputs` の宣言は null）、`from_ms`、`to_ms`、`shape`（`set` と `none` は null）、`text`（変数を含む文）。`base` と `base_source` は、実行しないと決まらないのでありません。照合だけのキーは `time_source` と `after_line` です。 |
+| `lines[].time_source` | `from_ms` と `to_ms` がどこから決まるか、文面でわかるかです。`text`: 文面の時刻（`to_ms` が null なのは、終わりのない `dither` だけ。タイムラインと同じ）。`after_wait`: 待つ手順の後ろなので、実行の前にはわからない（両方 null で、`after_line` がその待つ手順の行）。`first_write`: `inputs` に宣言した揺れで、その入力への最初の書き込みから乗る（`from_ms` は null）。 |
 
 ### `run --json` の `scenario`
 
@@ -815,6 +922,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `over_at_ms` | シナリオが終わった controller のステップです（`passed` と `failed`。ほかは null）。 |
 | `skipped_steps` | スキップした手順の数です（1 つ以上あるときだけ、このキーがあります）。 |
 | `unchecked_expects` | 確認しなかった、`ramp` と `wave` の横の `expect` の数です（1 つ以上あるときだけ、このキーがあります）。 |
+| `inputs[]`、`lines[]` | `dither` のあるシナリオでだけあります。`inputs` に宣言した揺れと、文面が入力に置くものの一覧です（上の `check --json` の表と同じ。実行の前にわかること）。 |
 | `steps[]` | 手順ごとの結果です（次の表）。 |
 
 `unchecked_expects` に数えた手順は、動いたので `skipped_steps` には入りません。
@@ -823,7 +931,7 @@ failed: 5 errors, 0 warnings, 0 notes
 |---|---|
 | `index` | 手順の番号です（1 から）。 |
 | `line` | シナリオのファイルの行です。 |
-| `kind` | `set`、`ramp`、`wave`、`expect`、`wait_until` のどれかです。 |
+| `kind` | `set`、`ramp`、`wave`、`dither`、`expect`、`wait_until` のどれかです。 |
 | `text` | 手順の文です。 |
 | `status` | 手順の結果です（次の表）。 |
 | `start_ms` | 手順の時刻です。 |
@@ -959,6 +1067,8 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario` | `check --scenario` と `run --scenario` | シナリオを使えません。 |
 | `scenario-wave` | 手順 `wave` | `wave` は、知らないキーのエラーです。 |
 | `scenario-motion-expect` | `ramp` と `wave` の横の `expect` | 手順が 2 つの動作をする、というエラーです。 |
+| `scenario-points-file` | CSV ファイルの `points` | `points` の形のエラーです。 |
+| `timeline` | `run --scenario --timeline <file>` | `--timeline` は引数のエラーです。 |
 | `scenario-control` | `--scenario` と `--control` を一緒に使う | 一緒に使えません（Control Server を持つビルドだけにあります）。 |
 
 `features` の名前の全部は、[simulation-events.md](simulation-events.md) にあります。

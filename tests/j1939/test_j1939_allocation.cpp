@@ -6,8 +6,11 @@
 #include "allocation_counter.hpp"
 #include "codec_test_messages.hpp"
 #include "j1939_bench.hpp"
+#include "j1939_transport_util.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
+
+#include "frame_seat.hpp"
 
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/j1939/broadcast_suppression.hpp"
@@ -15,6 +18,7 @@
 #include "vehicle_sil/j1939/diagnostics.hpp"
 #include "vehicle_sil/j1939/address_commander.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
+#include "vehicle_sil/j1939/listener.hpp"
 #include "vehicle_sil/j1939/monitor.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
@@ -22,6 +26,7 @@
 #include "vehicle_sil/j1939/exchange.hpp"
 #include "vehicle_sil/j1939/requester.hpp"
 #include "vehicle_sil/j1939/toolbox.hpp"
+#include "vehicle_sil/j1939/transfer_sniffer.hpp"
 
 #include <array>
 #include <optional>
@@ -128,6 +133,92 @@ TEST_CASE(steady_state_steps_do_not_allocate)
     CHECK(bytes > 0u);
     CHECK_EQ(bench.network.statistics().receive_overflows, 0u);
     CHECK_EQ(bench.network.statistics().control_frames_dropped, 0u);
+}
+
+namespace {
+
+/// Counts what the seat is told (no allocation).
+struct CountingSeat final : vehicle_sil::j1939::detail::FrameSeat
+{
+    void on_frame(SimTime, const vehicle_sil::can::Frame& frame, bool local) override
+    {
+        ++frames;
+        local_frames += local ? 1u : 0u;
+        bytes += frame.length;
+    }
+    void on_message(const Message& message, bool) override
+    {
+        ++messages;
+        bytes += message.data.size();
+    }
+    void on_step_end(SimTime) override { ++step_ends; }
+    struct Counts
+    {
+        std::size_t frames, local_frames, messages, step_ends;
+    };
+    [[nodiscard]] Counts counts() const noexcept { return {frames, local_frames, messages, step_ends}; }
+    std::size_t frames = 0;
+    std::size_t local_frames = 0;
+    std::size_t messages = 0;
+    std::size_t step_ends = 0;
+    std::size_t bytes = 0;
+};
+
+} // namespace
+
+TEST_CASE(steady_state_steps_with_the_listeners_seat_taken_do_not_allocate)
+{
+    // The seat is empty in every other case of this file. Taken, the engine tells it about each
+    // frame, each message and each step without allocating.
+    Bench bench;
+    Node& a = bench.add_node(0x80);
+    Node& b = bench.add_node(0x81);
+    std::size_t handled = 0;
+    a.on_any_message([&](const Message&) { ++handled; });
+    b.on_any_message([&](const Message&) { ++handled; });
+    std::array<std::uint8_t, 40> big{};
+    bench.app = [&](SimTime now) {
+        const std::array<std::uint8_t, 3> data{static_cast<std::uint8_t>(vehicle_sil::to_ns(now) / 1000000), 1, 2};
+        CHECK(a.send(Pgn{kPgnPropB}, data) == SendStatus::Ok);
+        if (vehicle_sil::to_ns(now) % 500000000 == 0) // a broadcast now and then: transport frames, looped back
+        {
+            CHECK(b.send(Pgn{0xFF30}, big) == SendStatus::Ok);
+        }
+    };
+    CountingSeat seat;
+    NetworkTestAccess::set_seat(bench.network, &seat);
+    const auto inject_traffic = [&] {
+        const SimTime t = bench.next_time();
+        bench.inject(t, frame(6, kPgnPropB, 0x90, kGlobal, {9, 8, 7}));
+        bench.inject(t, frame(3, kPgnPropA, 0x91, 0x80, {1}));
+        bench.inject(t, frame(3, kPgnPropA, 0x92, 0x55, {1})); // to nobody here
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        inject_traffic();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    const CountingSeat::Counts before = seat.counts();
+    std::size_t counted = 0;
+    constexpr std::size_t kSteps = 120;
+    for (std::size_t i = 0; i < kSteps; ++i)
+    {
+        inject_traffic();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK_EQ(seat.step_ends - before.step_ends, kSteps);
+    CHECK(seat.frames - before.frames >= 4 * kSteps); // three from outside and the node's own, per step
+    CHECK(seat.local_frames - before.local_frames > kSteps); // also the broadcast's transport frames
+    CHECK(seat.messages - before.messages > 4 * kSteps); // also the broadcasts put together
+    CHECK(handled > 4 * kSteps);
+    CHECK(!bench.network.failed());
 }
 
 TEST_CASE(the_counter_sees_allocations)
@@ -865,4 +956,157 @@ TEST_CASE(typed_messages_do_not_allocate_in_steady_state)
     CHECK(resets > 300u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 40u);
+}
+
+TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
+{
+    // A Listener with handlers of every kind on a network with a node: single frames, a
+    // connection between two other ECUs in every step (sniffed) and now and then one that is
+    // never answered (it times out at a step's end). The frames are built before counting.
+    Bench bench;
+    Node& a = bench.add_node(0x80);
+    std::size_t handled = 0;
+    a.on_any_message([&](const Message&) { ++handled; });
+    vehicle_sil::j1939::ListenerOptions options;
+    options.sniffer.sessions = 4;
+    vehicle_sil::j1939::Listener listener(bench.network, options);
+    std::size_t messages = 0;
+    std::size_t bytes = 0;
+    std::size_t frames = 0;
+    std::size_t transfers = 0;
+    listener.on_message(Pgn{0xEF00}, [&](const Message& m) { bytes += m.data.size(); });
+    listener.on_any_message([&](const Message&) { ++messages; });
+    listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) { ++frames; });
+    listener.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer&) { ++transfers; });
+    // Handlers that are removed while the steps are counted: one from its own call, one from a
+    // node's handler.
+    std::size_t removed = 0;
+    vehicle_sil::j1939::ListenerSubscription once;
+    vehicle_sil::j1939::ListenerSubscription other(listener, listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) {}));
+    bool counting = false;
+    once = vehicle_sil::j1939::ListenerSubscription(listener, listener.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            once.reset();
+            ++removed;
+        }
+    }));
+    a.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            other.reset();
+        }
+    });
+    const Bytes message = payload(30);
+    std::vector<J1939Frame> round{frame(6, kPgnPropB, 0x90, kGlobal, {9, 8, 7}), frame(3, kPgnPropA, 0x91, 0x80, {1}),
+                                  rts(0x10, 0x20, 30, 0xEF00), cts(0x20, 0x10, 5, 1, 0xEF00)};
+    for (const auto& f : dts(0x10, 0x20, message, 1, 5))
+    {
+        round.push_back(f);
+    }
+    round.push_back(eoma(0x20, 0x10, 30, 0xEF00));
+    const J1939Frame unanswered = rts(0x40, 0x20, 30, 0xEF00);
+    int step = 0;
+    const auto inject_traffic = [&] {
+        const SimTime t = bench.last_time();
+        for (std::size_t i = 0; i < round.size(); ++i)
+        {
+            bench.inject(t + std::chrono::microseconds(100 * (i + 1)), round[i]);
+        }
+        if (++step % 160 == 0)
+        {
+            bench.inject(t + 5ms, unanswered);
+        }
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        inject_traffic();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    const std::size_t messagesBefore = messages;
+    counting = true;
+    std::size_t counted = 0;
+    constexpr std::size_t kSteps = 400;
+    for (std::size_t i = 0; i < kSteps; ++i)
+    {
+        inject_traffic();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK_EQ(messages - messagesBefore, 3 * kSteps); // two single frames and the sniffed connection
+    CHECK(bytes >= 30 * kSteps);
+    CHECK(frames >= 10 * kSteps);
+    CHECK(handled >= 2 * kSteps);
+    CHECK(transfers > kSteps);
+    CHECK_EQ(removed, 1u);
+    CHECK(!once.active());
+    CHECK(!other.active());
+    CHECK(listener.sniffer_statistics().timed_out >= 1u);
+    CHECK_EQ(listener.sniffer_statistics().completed, kSteps + 4); // the first step is before the first frames
+    CHECK(!bench.network.failed());
+}
+
+TEST_CASE(following_transfers_with_a_sniffer_does_not_allocate)
+{
+    // Connections and broadcasts that complete, are replaced, are aborted and time out: the
+    // sniffer reserved everything in its constructor. The frames are built before counting.
+    vehicle_sil::j1939::SnifferOptions options;
+    options.broadcasts = true;
+    options.sessions = 4;
+    vehicle_sil::j1939::TransferSniffer sniffer(options);
+    std::size_t ended = 0;
+    std::size_t bytes = 0;
+    sniffer.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer& t) {
+        ++ended;
+        bytes += t.message().data.size();
+    });
+    const Bytes message = payload(100);
+    std::vector<vehicle_sil::can::TimedFrame> frames;
+    const auto add = [&](std::chrono::milliseconds time, const J1939Frame& f) {
+        frames.push_back(vehicle_sil::can::TimedFrame{at(time), to_can(f)});
+    };
+    for (int round = 0; round < 20; ++round)
+    {
+        const std::chrono::milliseconds t0{round * 3000};
+        add(t0, rts(0x10, 0x20, 100, 0xEF00));
+        add(t0, bam(0x30, 100, 0xFECA));
+        add(t0, rts(0x40, 0x20, 100, 0xEF00)); // never answered: times out
+        add(t0 + 1ms, rts(0x50, 0x20, 100, 0xEF00));
+        add(t0 + 2ms, rts(0x60, 0x20, 100, 0xEF00)); // no place
+        add(t0 + 3ms, conn_abort(0x20, 0x50, 1, 0xEF00));
+        add(t0 + 10ms, cts(0x20, 0x10, 15, 1, 0xEF00));
+        for (std::uint8_t k = 1; k <= 15; ++k)
+        {
+            add(t0 + 20ms + std::chrono::milliseconds(k), dt(0x10, 0x20, k, message));
+            add(t0 + 20ms + std::chrono::milliseconds(k), dt(0x30, 0xFF, k, message));
+        }
+        add(t0 + 50ms, eoma(0x20, 0x10, 100, 0xEF00));
+        add(t0 + 60ms, rts(0x10, 0x20, 100, 0xEF00));
+        add(t0 + 70ms, rts(0x10, 0x20, 100, 0xEF00)); // replaces; then times out
+    }
+    g_allocations.store(0);
+    g_counting.store(true);
+    for (const auto& f : frames)
+    {
+        sniffer.feed(f);
+        sniffer.advance(f.time);
+    }
+    sniffer.advance(at(100s));
+    g_counting.store(false);
+    CHECK_EQ(g_allocations.load(), 0u);
+    CHECK_EQ(sniffer.active(), 0u);
+    const auto& statistics = sniffer.statistics();
+    CHECK_EQ(statistics.completed, 40u);
+    CHECK_EQ(statistics.aborted_by_receiver, 20u);
+    CHECK_EQ(statistics.replaced, 20u);
+    CHECK_EQ(statistics.timed_out, 40u);
+    CHECK_EQ(statistics.no_session, 20u);
+    CHECK_EQ(ended, 120u);
+    CHECK_EQ(bytes, 40u * 100u);
 }

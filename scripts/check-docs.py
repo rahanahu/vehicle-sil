@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Pages with no Japanese page, on purpose: the instructions for agents, the change log, the license notices, the
 # notes on the upstream patches, and the notes on test data.
 ENGLISH_ONLY = {"AGENTS.md", "CHANGELOG.md", "CLAUDE.md", "THIRD_PARTY_NOTICES.md", "patches/README.md",
-                "tests/control_server/testdata/README.md"}
+                "tests/control_server/testdata/README.md", "tests/launch/timeline/README.md"}
 
 
 def strip_code(text):

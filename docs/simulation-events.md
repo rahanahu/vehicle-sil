@@ -474,6 +474,10 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "manual-participants",
     "scenario-wave",
     "scenario-motion-expect",
+    "scenario-points-file",
+    "timeline",
+    "timeline-lines",
+    "scenario-inputs",
     "network-names"
   ]
 }
@@ -510,6 +514,10 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `scenario` | `check --scenario` and `run --scenario` (see [scenario.md](scenario.md)) |
 | `scenario-wave` | The scenario step `wave` (see "Waveforms (`wave`)" in [scenario.md](scenario.md#waveforms-wave)) |
 | `scenario-motion-expect` | An `expect` beside a scenario's `ramp` or `wave` (see "Checking values during a ramp or wave" in [scenario.md](scenario.md#checking-values-during-a-ramp-or-wave)) |
+| `scenario-points-file` | The `points` of a scenario's `wave` read from a CSV file (`points: { file, value, time, time_unit }`, see "Reading points from a CSV file" in [scenario.md](scenario.md#reading-points-from-a-csv-file)) |
+| `timeline` | `run --scenario --timeline <file>`, a file that records the scenario run on a timeline (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)) |
+| `timeline-lines` | `lines[]` in the `--timeline` file (the line of each input: the values and motions that steps placed, and the start value of each motion with where it came from), and `writes[]` of the steps (see the same section of [simulation-run.md](simulation-run.md#input-lines-lines)) |
+| `scenario-inputs` | The top-level `inputs` of a scenario (a `dither` overlaid on an input) and the `dither` step (see "Overlaying a dither (`dither`)" in [scenario.md](scenario.md#overlaying-a-dither-dither)) |
 | `network-names` | `network_names` in the configuration file (see "Matching network names (`network_names`)" in [simulation-config.md](simulation-config.md#matching-network-names-network_names)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
@@ -524,6 +532,9 @@ Each name indicates that the following are present:
 | `scenario` | `scenario` in the result and check JSON, the event `scenario_step`, the findings `scenario-*`, and a finding's `file` being the scenario file |
 | `scenario-wave` | `undersampled` of that step, the findings `scenario-wave-*`, and `"wave"` as the `kind` of a step in the result and in events |
 | `scenario-motion-expect` | `expect_skipped` of a step in the result and in events |
+| `scenario-points-file` | The finding `scenario-points-file` |
+| `timeline` | `scenario.timeline` in the result, the findings `timeline-write` and `timeline-limit` |
+| `scenario-inputs` | The findings `scenario-dither-*` and `scenario-input-skipped`, `"dither"` as the `kind` of a step in the result and in events, `scenario.inputs` and `scenario.lines` in the check and result JSON, `"dither"` as the `kind` of `lines[]` in the `--timeline` file, and the third column (`columns`) of `series` |
 | `network-names` | `--map-network` passed to executables, `participants[].network_map` in the check JSON, and the findings `network-map-*` |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
