@@ -102,6 +102,7 @@ participants:
 |---|---|---|
 | `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前。実行ファイルが別の名前で呼んでいるときは、その participant の `network_names` に書きます） |
 | `networks[].kind` | はい | `can`、`lin`、`ethernet` のどれか |
+| `networks[].external` | | ネットワークを外の実機のバスにつないだときのふるまい（`can` は `bitrate`、`ethernet` は `ethertypes`、`all_frames`）。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal) |
 
 `participants` の要素のキーは次のとおりです。
 
@@ -522,6 +523,34 @@ passed: 0 errors, 0 warnings, 1 note
 - 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
 - `check --json` では、`participants[].role` に出力されます。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
+
+### ネットワークを外につなぐ（`external`）
+
+ネットワークは、外の実機のバスにつなげます。`external` には、つないだときのネットワークのふるまいを書きます。使うのはつないだときだけで、つながない実行では読み飛ばします。書くのは、シミュレーションを走らせるどの PC でも同じことです。つなぐ先（アダプター、チャンネル）は PC ごとに違うので、ファイルには書きません。`external.connect` は誤りです。
+
+```yaml
+networks:
+  - name: J1939_CAN1
+    kind: can
+    external:
+      bitrate: 250000
+  - name: ETH_EXT
+    kind: ethernet
+    external:
+      ethertypes: [0x88b5, 0x0800]
+```
+
+| キー | 種類 | 値 | 省略したとき |
+|---|---|---|---|
+| `bitrate` | `can` | チャンネルに設定する速さ（bit/s。1 から 1000000 の整数）。つなぐ道具によっては、範囲がもっと狭くなります（Vector XL は 15000 から） | チャンネルの設定を変えません |
+| `ethertypes` | `ethernet` | ネットワークと外の間で通すフレームの EtherType。1 つ以上の一覧で、同じ値は 1 回だけ（`0x88b5`、`34997`、または引用符で囲んだ `"0x88b5"`。JSON には 16 進の数がありません） | `ethertypes` も `all_frames` もなければ、そのネットワークの participant が報告した MAC アドレスのフレームを通します |
+| `all_frames` | `ethernet` | `true` ですべてのフレームを通します。`ethertypes` とは一緒に書けません | `false` |
+
+そのほかのルールは次のとおりです。
+
+- `lin` のネットワークには `external` を書けません。LIN をつなぐブリッジがないので、SIL Kit の中だけで動きます。
+- ほかの種類のキー（`can` のネットワークの `ethertypes`、`ethernet` のネットワークの `bitrate`）は `unknown-key` の誤りです。
+- 機種（`variants`）では変えられません（`networks` のほかのキーと同じです）。
 
 ### 変数の名前と値を合わせる（`variables`）
 

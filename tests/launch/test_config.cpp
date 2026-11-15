@@ -157,7 +157,14 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "command, step_ms, describe, required, enabled, manual, role, variables, network_names, j1939_nodes)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
-               "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
+               "E 5 unknown-key: network 'N': unknown key 'bitrate': move it into external (external: { bitrate: ... }), "
+               "which says how the network behaves when it is connected outside (the keys here: name, kind, external)\n");
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    connect: eth0\n    nam: x\n"
+                    "participants:\n  - name: A\n    command: a\n"),
+               "E 5 unknown-key: network 'N': unknown key 'connect': where a network is connected is not written in the "
+               "file, since it differs from PC to PC: remove connect (the keys here: name, kind, external)\n"
+               "E 6 unknown-key: network 'N': unknown key 'nam': did you mean 'name'? (the keys here: name, kind, "
+               "external)\n");
 }
 
 TEST_CASE(the_speed_the_step_of_the_controller_and_the_tolerance)
@@ -297,6 +304,137 @@ TEST_CASE(a_network_without_a_valid_kind_stays_listed_but_invalid)
         read_config("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: x\nparticipants:\n  - name: P\n    command: p\n");
     CHECK_EQ(read.config->networks.size(), std::size_t{1});
     CHECK(read.config->networks[0].name == "A" && !read.config->networks[0].valid);
+}
+
+/// A file with `networks` as its networks list and one participant.
+std::string with_network_list(const std::string& networks)
+{
+    return "vehicle_sil_simulation: 1\nnetworks:\n" + networks + "participants:\n  - name: P\n    command: p\n";
+}
+
+TEST_CASE(external_of_a_network_is_read_for_its_kind_also_before_the_kind)
+{
+    const ConfigRead read = read_config(with_network_list(
+        "  - name: CAN1\n    external: { bitrate: 250000 }\n    kind: can\n"
+        "  - name: ETH1\n    kind: ethernet\n    external:\n      ethertypes: [0x88b5, 2048, \"0x86DD\", \"0x1\", 0o10]\n"
+        "  - name: ETH2\n    external: { all_frames: true }\n    kind: ethernet\n"
+        "  - name: ETH3\n    kind: ethernet\n    external: { all_frames: false }\n"
+        "  - name: CAN2\n    kind: can\n    external: {}\n"
+        "  - name: CAN3\n    kind: can\n"));
+    CHECK(read.findings.empty());
+    if (!(read.findings.empty()))
+    {
+        return;
+    }
+    const auto& networks = read.config->networks;
+    CHECK(networks.size() == std::size_t{6});
+    if (!(networks.size() == std::size_t{6}))
+    {
+        return;
+    }
+    CHECK(networks[0].external);
+    if (!(networks[0].external))
+    {
+        return;
+    }
+    CHECK(networks[0].external->bitrate == std::optional<std::uint32_t>(250000));
+    CHECK_EQ(networks[0].external->line, std::size_t{4});
+    CHECK(networks[1].external);
+    if (!(networks[1].external))
+    {
+        return;
+    }
+    const std::vector<std::uint16_t> ethertypes{0x88b5, 0x0800, 0x86dd, 0x0001, 8};
+    CHECK(networks[1].external->ethertypes == ethertypes);
+    CHECK(!networks[1].external->all_frames && !networks[1].external->bitrate);
+    CHECK(networks[2].external && networks[2].external->all_frames && networks[2].external->ethertypes.empty());
+    // all_frames: false is the same as no all_frames; an empty external is the same as none but for its line.
+    CHECK(networks[3].external && *networks[3].external == NetworkExternal{.line = 15});
+    CHECK(networks[4].external && *networks[4].external == NetworkExternal{.line = 18});
+    CHECK(!networks[5].external);
+
+    // In JSON, an EtherType in hexadecimal is a text.
+    const ConfigRead json = read_config(R"({"vehicle_sil_simulation": 1, "networks": [
+  {"name": "ETH1", "kind": "ethernet", "external": {"ethertypes": ["0x88b5", 34997]}}],
+  "participants": [{"name": "P", "command": "p"}]})");
+    CHECK(lines(json.findings) == "E 2 value: network 'ETH1': external.ethertypes lists 0x88b5 twice: keep one\n");
+}
+
+TEST_CASE(external_of_the_wrong_form_is_an_error_and_says_what_to_write)
+{
+    check_text(read(with_network_list("  - name: BODY_LIN\n    kind: lin\n    external: { bitrate: 19200 }\n"
+                                  "  - name: CAN1\n    kind: can\n    external: 500000\n"
+                                  "  - name: ETH1\n    kind: ethernet\n    external:\n")),
+               "E 5 value: network 'BODY_LIN': external is for a network that can be connected outside (can, ethernet); "
+               "there is no bridge for a lin network, so it runs on SIL Kit only: remove external\n"
+               "E 8 value: network 'CAN1': external must be a mapping (the keys of a can network: bitrate), e.g. "
+               "external: { bitrate: 500000 }, not '500000'\n"
+               "E 11 value: network 'ETH1': external must be a mapping (the keys of an ethernet network: ethertypes, "
+               "all_frames), e.g. external: { ethertypes: [0x88b5] }, not empty\n");
+    // Keys of the other kind, where the network is connected, a key that is not there, a key twice.
+    check_text(read(with_network_list("  - name: CAN1\n    kind: can\n    external: { ethertypes: [0x88b5], bitrat: 1 }\n"
+                                  "  - name: ETH1\n    kind: ethernet\n    external: { bitrate: 1, connect: eth0 }\n"
+                                  "  - name: ETH2\n    kind: ethernet\n    external: { all_frames: true, all_frames: true }\n")),
+               "E 5 unknown-key: network 'CAN1': external: unknown key 'ethertypes': it is for an ethernet network, and "
+               "this one is can (the keys here: bitrate)\n"
+               "E 5 unknown-key: network 'CAN1': external: unknown key 'bitrat': did you mean 'bitrate'? (the keys here: "
+               "bitrate)\n"
+               "E 8 unknown-key: network 'ETH1': external: unknown key 'bitrate': it is for a can network, and this one "
+               "is ethernet (the keys here: ethertypes, all_frames)\n"
+               "E 8 unknown-key: network 'ETH1': external.connect: where a network is connected is not written in the "
+               "file, since it differs from PC to PC: remove connect (the keys here: ethertypes, all_frames)\n"
+               "E 11 duplicate-key: network 'ETH2': external: 'all_frames' appears twice (first at line 11); keep one of "
+               "them\n");
+    // A network whose kind cannot be read: its external is not read.
+    const ConfigRead noKind = read_config(with_network_list("  - name: X\n    kind: flexray\n    external: { zz: 1 }\n"));
+    CHECK(lines(noKind.findings) ==
+          "E 4 value: network 'X': kind is 'flexray': write can, lin or ethernet (the kinds of network there are)\n");
+}
+
+TEST_CASE(the_values_of_external_are_checked)
+{
+    check_text(read(with_network_list("  - name: C0\n    kind: can\n    external: { bitrate: 0 }\n"
+                                  "  - name: C1\n    kind: can\n    external: { bitrate: 1000001 }\n"
+                                  "  - name: C2\n    kind: can\n    external: { bitrate: \"500000\" }\n")),
+               "E 5 value: network 'C0': external.bitrate must be the bit rate in bit/s, a whole number from 1 to "
+               "1000000 (e.g. 500000), not '0'\n"
+               "E 8 value: network 'C1': external.bitrate must be the bit rate in bit/s, a whole number from 1 to "
+               "1000000 (e.g. 500000), not '1000001'\n"
+               "E 11 value: network 'C2': external.bitrate must be the bit rate in bit/s, a whole number from 1 to "
+               "1000000 (e.g. 500000), not the text \"500000\"\n");
+    const ConfigRead ends = read_config(with_network_list("  - name: C\n    kind: can\n    external: { bitrate: 1 }\n"
+                                                      "  - name: D\n    kind: can\n    external: { bitrate: 1000000 }\n"
+                                                      "  - name: E\n    kind: ethernet\n    external: { ethertypes: [0, 0xFFFF] }\n"));
+    CHECK(ends.findings.empty());
+    check_text(read(with_network_list("  - name: E0\n    kind: ethernet\n    external: { ethertypes: [] }\n"
+                                  "  - name: E1\n    kind: ethernet\n    external: { ethertypes: 0x88b5 }\n"
+                                  "  - name: E2\n    kind: ethernet\n    external:\n      ethertypes: [0x10000, \"0x10000\", "
+                                  "\"34997\", -1, \"0x\", 0X88b5, 0x88b5, 0x88B5]\n"
+                                  "  - name: E3\n    kind: ethernet\n    external: { ethertypes: [0x0800], all_frames: true }\n"
+                                  "  - name: E4\n    kind: ethernet\n    external: { all_frames: 1 }\n")),
+               "E 5 value: network 'E0': external.ethertypes is empty: list the EtherTypes to pass, e.g. ethertypes: "
+               "[0x88b5], or remove ethertypes\n"
+               "E 8 value: network 'E1': external.ethertypes must be a list of EtherTypes (0x88b5, 34997, or \"0x88b5\" in "
+               "quotes), e.g. ethertypes: [0x88b5, 0x0800], not '0x88b5'\n"
+               "E 12 value: network 'E2': external.ethertypes[0] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not '0x10000'\n"
+               "E 12 value: network 'E2': external.ethertypes[1] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not the text \"0x10000\"\n"
+               "E 12 value: network 'E2': external.ethertypes[2] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not the text \"34997\"\n"
+               "E 12 value: network 'E2': external.ethertypes[3] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not '-1'\n"
+               "E 12 value: network 'E2': external.ethertypes[4] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not the text \"0x\"\n"
+               "E 12 value: network 'E2': external.ethertypes[5] must be an EtherType from 0 to 0xFFFF (0x88b5, 34997, or "
+               "\"0x88b5\" in quotes), not '0X88b5'\n"
+               "E 12 value: network 'E2': external.ethertypes lists 0x88b5 twice: keep one\n"
+               "E 15 value: network 'E3': external.all_frames: true passes every frame, so it cannot go with ethertypes: "
+               "keep one or the other\n"
+               "E 18 value: network 'E4': external.all_frames must be true or false, not '1'\n");
+    // A network whose external is wrong has none.
+    const ConfigRead wrong = read_config(with_network_list("  - name: C\n    kind: can\n    external: { bitrate: 0 }\n"));
+    CHECK(wrong.config && wrong.config->networks.size() == 1 && !wrong.config->networks[0].external);
 }
 
 TEST_CASE(names_twice_and_reserved_names_are_errors)

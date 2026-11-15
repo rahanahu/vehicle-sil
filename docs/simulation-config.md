@@ -102,6 +102,7 @@ Keys of each element of `networks` (list every network that the ECUs use):
 |---|---|---|
 | `networks[].name` | Yes | Name of the network (the name passed to the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`; if an executable calls it by another name, write that in the participant's `network_names`) |
 | `networks[].kind` | Yes | One of `can`, `lin` and `ethernet` |
+| `networks[].external` | | How the network behaves when it is connected outside to a real bus (`can`: `bitrate`; `ethernet`: `ethertypes`, `all_frames`). See [Connecting a network outside](#connecting-a-network-outside-external) |
 
 Keys of each element of `participants`:
 
@@ -524,6 +525,34 @@ Other rules:
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
+
+### Connecting a network outside (`external`)
+
+A network can be connected outside, to a real bus. `external` says how the network behaves when it is connected, and is used only then: a run that does not connect the network ignores it. It holds what is the same on every PC that runs the simulation. Where the network is connected (an adapter, a channel) differs from PC to PC, so it is not written in the file: `external.connect` is an error.
+
+```yaml
+networks:
+  - name: J1939_CAN1
+    kind: can
+    external:
+      bitrate: 250000
+  - name: ETH_EXT
+    kind: ethernet
+    external:
+      ethertypes: [0x88b5, 0x0800]
+```
+
+| Key | Kind | Value | If omitted |
+|---|---|---|---|
+| `bitrate` | `can` | The bit rate to set on the channel (bit/s, an integer from 1 to 1000000). The tool that connects the network may take a narrower range (Vector XL: from 15000). | The channel's setting is kept |
+| `ethertypes` | `ethernet` | The EtherTypes of the frames that pass between the network and the outside: a list of one or more, each once (`0x88b5`, `34997`, or `"0x88b5"` in quotes; JSON has no hexadecimal numbers) | Without `ethertypes` and `all_frames`, the frames of the MAC addresses that the participants on the network report pass |
+| `all_frames` | `ethernet` | `true`: every frame passes. Not together with `ethertypes` | `false` |
+
+Other rules:
+
+- A `lin` network cannot have `external`: there is no bridge for LIN, so it runs on SIL Kit only.
+- A key of the other kind (`ethertypes` on a `can` network, `bitrate` on an `ethernet` network) is an `unknown-key` error.
+- A variant (`variants`) cannot change it, as with every key of `networks`.
 
 ### Matching variable names and values (`variables`)
 

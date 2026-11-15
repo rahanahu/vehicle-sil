@@ -78,6 +78,22 @@ struct Finding
     friend bool operator==(const Finding&, const Finding&) = default;
 };
 
+/// A network's "external" key: how the network behaves when it is connected outside (to a real
+/// bus). It holds what is the same on every PC; where the network is connected is not in the file.
+/// Only the keys of the network's kind are read (can: bitrate; ethernet: ethertypes, all_frames).
+struct NetworkExternal
+{
+    std::size_t line = 0;
+    /// can: the bit rate to set on the channel; empty: the channel's setting is kept.
+    std::optional<std::uint32_t> bitrate{};
+    /// ethernet: the EtherTypes passed between the network and the outside, as written (none twice).
+    std::vector<std::uint16_t> ethertypes{};
+    /// ethernet: true passes every frame (never together with ethertypes).
+    bool all_frames = false;
+
+    friend bool operator==(const NetworkExternal&, const NetworkExternal&) = default;
+};
+
 struct NetworkConfig
 {
     std::string name;
@@ -85,6 +101,8 @@ struct NetworkConfig
     std::size_t line = 0;
     /// false if its kind is missing or wrong (reported when reading): it is not checked.
     bool valid = true;
+    /// Its "external" key; empty if it has none, or if the key is wrong (reported when reading).
+    std::optional<NetworkExternal> external{};
 };
 
 /// What a participant is for (its "role" key). The check reads it; running does not: a participant
