@@ -10,6 +10,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_tests
     test_peer_agent.cpp
     test_variable_map.cpp
     test_wire.cpp
+    test_wire_v1_golden.cpp
   LINK vehicle_sil::simulation)
 
 # A transport that outlives its ECU ends the process with a message (not a use after free).
