@@ -36,6 +36,16 @@ def api_path(session_id: int) -> str:
     return f"api/timeline/{session_id}"
 
 
+def written_whole(result: object) -> bool:
+    """Whether the launcher's run result says that it wrote the whole timeline file: there is a result, and it has
+    no timeline-write finding (a file written only in part)."""
+    if not isinstance(result, dict):
+        return False
+    findings = result.get("findings")
+    return not (isinstance(findings, list) and any(
+        isinstance(f, dict) and f.get("code") == "timeline-write" for f in findings))
+
+
 def find_page_dir() -> Path | None:
     """The page packaged with this module (vehicle_sil_gui/timeline), else gui/timeline of the repository, when this
     module runs from the repository's source tree."""

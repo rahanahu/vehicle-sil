@@ -33,7 +33,8 @@ from .scenarios import list_scenarios, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
 from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
-from .timelines import KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file
+from .timelines import (KEPT as TIMELINES_KEPT, PAGE_FILES, Timelines, api_path, find_page_dir, read_page_file,
+                        written_whole)
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
 PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
@@ -799,10 +800,8 @@ class GuiServer:
         timeline-write (a file written only in part), and a file that is not empty."""
         if run.timeline is None:
             return
-        findings = (run.session.result or {}).get("findings")
-        broken = not isinstance(run.session.result, dict) or (isinstance(findings, list) and any(
-            isinstance(f, dict) and f.get("code") == "timeline-write" for f in findings))
-        if await asyncio.to_thread(self.timelines.finish, run.session.id, run.timeline, not broken,
+        whole = written_whole(run.session.result)
+        if await asyncio.to_thread(self.timelines.finish, run.session.id, run.timeline, whole,
                                    run.session.scenario or ""):
             run.session.timeline_url = api_path(run.session.id)
 

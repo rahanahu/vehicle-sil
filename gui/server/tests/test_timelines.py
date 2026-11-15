@@ -12,7 +12,7 @@ from conftest import REPOSITORY, Client, gui_server, is_ended, is_synced, run_as
 
 from vehicle_sil_gui.launcher import Launcher, run_command
 from vehicle_sil_gui.server import CSP
-from vehicle_sil_gui.timelines import KEPT, Timelines, api_path, find_page_dir
+from vehicle_sil_gui.timelines import KEPT, Timelines, api_path, find_page_dir, written_whole
 
 PASS, FAIL = "scenarios/throttle.yaml", "scenarios/fails.yaml"
 WITHOUT_TIMELINE = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario"
@@ -126,6 +126,13 @@ def test_run_command_gives_timeline_only_with_a_scenario(tmp_path: Path) -> None
     assert argv[argv.index("--scenario"):argv.index("--")] == ["--scenario", "s.yaml", "--timeline", str(file)]
     assert "--timeline" not in run_command(launcher, "a.yaml", [], None, False, timeline=file)
     assert "--timeline" not in run_command(launcher, "a.yaml", [], None, False, scenario="s.yaml")
+
+
+def test_a_file_is_kept_only_when_the_result_says_it_was_written_whole() -> None:
+    assert written_whole({"result": "failed", "findings": [{"code": "scenario-failed"}]}) is True
+    assert written_whole({"result": "passed"}) is True
+    assert written_whole({"findings": [{"code": "scenario-failed"}, {"code": "timeline-write"}]}) is False
+    assert written_whole(None) is False  # no result: the launcher ended before it wrote the file
 
 
 def test_the_files_of_the_last_runs_are_kept_and_the_rest_removed(tmp_path: Path) -> None:
