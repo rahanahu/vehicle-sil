@@ -71,8 +71,9 @@ public:
     TapPort(const TapPort&) = delete;
     TapPort& operator=(const TapPort&) = delete;
 
-    /// Sets the listener (nullptr: none), replacing the previous one. Not from on_tap()
-    /// (std::logic_error).
+    /// Sets the listener (nullptr: none; a listener of another TapPort leaves it). A TapPort has
+    /// one listener: std::logic_error if it already has another (set_listener(nullptr) first),
+    /// and from on_tap().
     void set_listener(TapListener* listener);
     [[nodiscard]] TapListener* listener() const noexcept { return listener_; }
     [[nodiscard]] Port& inner() const noexcept { return inner_; }

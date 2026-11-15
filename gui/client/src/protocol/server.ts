@@ -485,6 +485,11 @@ export interface SummaryScenario {
   /** status of the result (null until there is a result). */
   status: ScenarioStatus | null;
   over_at_ms: number | null;
+  /**
+   * Where the server serves the run's timeline file (`api/timeline/<session id>`, relative to the server's URL; needs
+   * the token): set at the end of a run whose launcher wrote one, else null.
+   */
+  timeline_url: string | null;
 }
 
 const readSummaryScenario = (value: unknown, path: string, u: Unreadable): SummaryScenario => {
@@ -502,6 +507,7 @@ const readSummaryScenario = (value: unknown, path: string, u: Unreadable): Summa
     steps_omitted: field(f, path, 'steps_omitted', soft(integer, 0, u)),
     status: field(f, path, 'status', soft(nullable(string), null, u)),
     over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
+    timeline_url: field(f, path, 'timeline_url', soft(nullable(string), null, u)),
   };
 };
 

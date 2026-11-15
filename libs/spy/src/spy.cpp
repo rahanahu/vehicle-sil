@@ -74,11 +74,11 @@ void Scope::on_any_message(j1939::Listener::MessageHandler handler)
     keep(state_.listener.on_any_message(std::move(handler)));
 }
 
-void Scope::on_transfer(j1939::Listener::TransferHandler handler)
+void Scope::on_transfer_end(j1939::Listener::SniffHandler handler)
 {
-    require_set_up("on_transfer()");
+    require_set_up("on_transfer_end()");
     state_.handlers.reserve(state_.handlers.size() + 1);
-    keep(state_.listener.on_transfer(std::move(handler)));
+    keep(state_.listener.on_transfer_end(std::move(handler)));
 }
 
 void Scope::on_frame(j1939::Listener::FrameHandler handler)

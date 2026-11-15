@@ -652,7 +652,7 @@ ECU の Control Agent は、`Peer` と同じ時点（アプリの処理の前に
 
 ### テストキット
 
-`J1939Events`（Observer）と `FrameLog`（TapListener）は、イベントと生フレームをコピーして持ちます。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは、種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
+`J1939Events`（Observer）と `FrameLog`（TapListener）は、イベントと生フレームをコピーして持ちます。ネットワークごとに `J1939Events`、タップごとに `FrameLog` を 1 つ作れます（2 つ目は `std::logic_error`）。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは、種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
 
 `faults` は、仮想バスの `FaultInjector` を作る小さな関数です。
 

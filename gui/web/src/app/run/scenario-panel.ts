@@ -1,11 +1,20 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
 import { ScenarioStep, ScenarioView } from '@vehicle-sil/gui-client';
+import { LanguageChoice } from '../core/i18n/language-choice';
 import { scenarioOutcomeLabel, stepStateLabel } from './labels';
+
+/**
+ * サーバーが配る時間の軸のページ（gui/timeline）で、実行の時間の軸のファイルを開くアドレス。言語は画面と同じ。
+ * トークンはアドレスに入れない: 新しいタブ（rel="opener"）は、この画面のタブの sessionStorage の写しを持ち、
+ * ページはそこからトークンを読む（docs/gui.md の「シナリオの実行の時間の軸」）。
+ */
+export const timelinePageUrl = (timelineUrl: string, language: string): string =>
+  `timeline/?src=${encodeURIComponent(`/${timelineUrl}`)}&lang=${encodeURIComponent(language)}`;
 
 /**
  * シナリオの経過: 全体の合否と、手順の表（行、何をするか、状態、仮想時刻、失敗の理由）。手順は、ランチャーの
  * `scenario_step` の事象で進み、結果が出たら結果の手順（動かなかった手順を含む）になる。手順の文と理由は、
- * ランチャーの英語のまま出す。
+ * ランチャーの英語のまま出す。実行が時間の軸のファイルを残したら（終わった後）、それを開くリンクを出す。
  */
 @Component({
   selector: 'app-scenario-panel',
@@ -20,6 +29,20 @@ import { scenarioOutcomeLabel, stepStateLabel } from './labels';
       <span class="mark" aria-hidden="true">{{ mark() }}</span>
       {{ outcome() }}
     </p>
+    @if (timelineHref(); as href) {
+      <p class="timeline">
+        <a
+          [href]="href"
+          target="_blank"
+          rel="opener"
+          data-testid="scenario-timeline"
+          i18n-title
+          title="手順と値を時間の軸の図で見る（新しいタブ）"
+          i18n
+          >時間の軸</a
+        >
+      </p>
+    }
     <p class="file">
       <code data-testid="scenario-file">{{ s.file }}</code>
       @if (s.name) {
@@ -89,7 +112,8 @@ import { scenarioOutcomeLabel, stepStateLabel } from './labels';
     .outcome[data-tone='good'] {
       color: var(--mat-sys-primary);
     }
-    .file {
+    .file,
+    .timeline {
       margin: 0 0 var(--app-space-2);
       overflow-wrap: anywhere;
     }
@@ -139,11 +163,18 @@ import { scenarioOutcomeLabel, stepStateLabel } from './labels';
   `,
 })
 export class ScenarioPanel {
+  private readonly language = inject(LanguageChoice).current;
   readonly scenario = input.required<ScenarioView>();
   /** シナリオがまだ動いているか（ランチャーが動いていて、結果がまだ）。 */
   readonly running = input(false);
 
   protected readonly tableLabel = $localize`シナリオの手順`;
+
+  /** 時間の軸のページのアドレス。実行がファイルを残していなければ null（リンクを出さない）。 */
+  protected readonly timelineHref = computed(() => {
+    const url = this.scenario().timelineUrl;
+    return url ? timelinePageUrl(url, this.language) : null;
+  });
 
   protected readonly tone = computed(() => {
     const status = this.scenario().status;

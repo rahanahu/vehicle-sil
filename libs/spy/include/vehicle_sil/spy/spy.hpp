@@ -157,7 +157,7 @@ public:
     /// across the watchers). std::invalid_argument for an empty handler.
     void on_message(j1939::Pgn pgn, j1939::Listener::MessageHandler handler);
     void on_any_message(j1939::Listener::MessageHandler handler);
-    void on_transfer(j1939::Listener::TransferHandler handler);
+    void on_transfer_end(j1939::Listener::SniffHandler handler);
     void on_frame(j1939::Listener::FrameHandler handler);
     /// Runs `fn` in every step of the ECU, with the step's time (now() is that time too): after
     /// the step's handlers and before its variables are sampled. For what follows from time
