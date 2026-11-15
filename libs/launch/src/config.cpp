@@ -819,8 +819,9 @@ private:
             if (participant.describe && describeRead && !participant.required && participant.role != ParticipantRole::Bridge)
             {
                 error("not-required-ecu", requiredLine,
-                      prefix + "required: false is only for executables with describe: false or role: bridge: an ecu_main "
-                               "executable joins as a coordinated participant, which SIL Kit starts only among the required "
+                      prefix + "required: false is only for executables with describe: false and for bridges (role: "
+                               "bridge), which join on their own: an ecu_main executable, also one marked role: bridge, "
+                               "joins as a coordinated participant, which SIL Kit starts only among the required "
                                "participants; remove required: false (to run the simulation without this ECU, write "
                                "enabled: false instead, or give vehicle_sil_launch --disable " +
                           (who.empty() ? std::string("<name>") : who) + ")",

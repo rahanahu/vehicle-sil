@@ -123,9 +123,9 @@ participants:
 
 ネットワーク（`VehicleCAN`）は、`networks` に `kind: can` で書きます。`check` は `--describe --name XlBridge` を、`run` は `--name XlBridge --registry-uri <URI> --start-timeout-ms <ms>` を足します（そのため `registry_uri` のポートは 0 でもかまいません）。
 
-- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がそれを報告します）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、XL Driver を開かず SIL Kit にもつながずに、終了コード 0 で終わります。`--registry-uri` は要りません（書いてあっても使いません）。
+- `--describe` のとき、ブリッジは引数を実行のときと同じに確かめ（誤りは終了コード 4。`check` がブリッジの文を添えて `describe-failed` として報告します。ランチャーが `--name` を足すので、`command` に `--participant` も `--name` も書きません）、ecu_main の実行ファイルが `--describe` で書くのと同じ JSON（[ecu-executable.md](ecu-executable.md#json-の形式) の「JSON の形式」）を書いて、XL Driver を開かず SIL Kit にもつながずに、終了コード 0 で終わります。`--registry-uri` は要りません（書いてあっても使いません）。
 - JSON には、participant の名前、`"step_ns": null`（ブリッジは実時間で動く）、`--network` のネットワーク（`"kind": "can"`、`"use": "raw"`）、空の変数、`"control": null`、空の `features` が入ります。そのため `check` は、ブリッジがどのネットワークを中継するかを知っています（[simulation-config.md](simulation-config.md) の「テスト用の participant とブリッジ（`role`）」）。
-- 実行ファイルは、`--describe` でも、`vxlapi64.dll` がないと起動しません。Windows が実行ファイルといっしょに読み込むためです（ビルドは、見つけたときに実行ファイルの隣にコピーします）。
+- 実行ファイルは、`--describe` でも、`vxlapi64.dll` がないと起動しません。Windows が実行ファイルといっしょに読み込むためです（ビルドは、見つけたときに実行ファイルの隣にコピーします）。それがない PC では、`check` は、要る DLL がなくてブリッジが起動できなかったと `describe-failed` で報告します。その PC では `--disable XlBridge` でブリッジを外します。
 - `required: false`: シミュレーションはブリッジを待たず（「[起動の順序](#起動の順序)」）、実行が終わるとランチャーがブリッジに止める要求を送ります。
 
 ## 終了コード
