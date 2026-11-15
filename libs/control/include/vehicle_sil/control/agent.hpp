@@ -98,8 +98,9 @@ enum class LatePolicy
 };
 
 /// One or more writes applied together in the same step. A check failure at submit() rejects
-/// all of them; if a setter throws while they are applied, the writes before it stay (and
-/// CommandResult::reason names the variable whose setter threw).
+/// all of them (SubmitResult::failed_write says which write it was about); if a setter throws
+/// while they are applied, the writes before it stay (CommandResult::applied_writes says how
+/// many, and CommandResult::reason names the variable whose setter threw).
 struct Command
 {
     std::uint64_t seq = 0;  ///< assigned by the sender; orders commands that take effect in the same step
@@ -119,6 +120,11 @@ struct SubmitResult
 {
     SubmitStatus status = SubmitStatus::Queued;
     std::string reason; ///< for Invalid and Busy
+    /// The write the reason is about, as its position in Command::writes (from 0): set for
+    /// Invalid when one write was refused (an unknown name, a wrong type, a value out of range, not
+    /// writable). Empty otherwise, and when the answer came from an agent that does not say it
+    /// (wire version 1).
+    std::optional<std::uint32_t> failed_write = std::nullopt; // an initializer: the lists that end before it stay complete
 };
 
 enum class CommandStatus
@@ -140,6 +146,13 @@ struct CommandResult
     /// name of its variable: the writes of the command before that one were applied, that one
     /// and the ones after it were not. Without a name (a Parameter after the first step): none.
     std::string reason;
+    /// How many of the command's writes were applied, counted from the first: the writes
+    /// [0, applied_writes) of Command::writes took effect and the rest did not. Applied: all of
+    /// them. Rejected: the position of the write whose setter threw, or 0 for a Parameter after
+    /// the first step (no setter was called). Late and Cancelled: 0. Empty: not known (the result
+    /// came from an agent that does not say it, wire version 1). Tell which writes took effect
+    /// from this number, not from `reason`.
+    std::optional<std::uint32_t> applied_writes = std::nullopt; // an initializer: the lists that end before it stay complete
 };
 
 /// The values of all variables (in schema order) at the end of a step.
