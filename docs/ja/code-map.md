@@ -695,6 +695,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
 | ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
 | 引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| `Peer` の監視の出力の名前（`peer.*`、`j1939.<network>.*`）。`Peer` が登録し、ランチャーが読む | `ecu/monitor_names.hpp` |
 | バスからの切断（`ecu.connected`）の `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort` | `ecu/detail/bus_connection.hpp` |
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）

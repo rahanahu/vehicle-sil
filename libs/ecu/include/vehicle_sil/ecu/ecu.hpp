@@ -8,6 +8,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/detail/bus_connection.hpp"
+#include "vehicle_sil/ecu/monitor_names.hpp"
 #include "vehicle_sil/eth/channel.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
@@ -444,7 +445,7 @@ public:
         return *agent_;
     }
     /// The prefix of the names a Peer gives its own monitoring outputs (PeerOptions::monitor).
-    static constexpr std::string_view kReservedPrefix = "peer.";
+    static constexpr std::string_view kReservedPrefix = monitor_names::kPeerPrefix;
     /// The prefix of the variables every ECU has (kConnectedVariable).
     static constexpr std::string_view kBuiltinPrefix = "ecu.";
 
