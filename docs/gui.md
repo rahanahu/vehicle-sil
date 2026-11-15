@@ -902,6 +902,7 @@ The rules that apply to your own screen served with `--web`. For the steps to bu
 | Handling the token | "[Receiving the token](#receiving-the-token)" |
 | Working with a development server such as Vite | "[Use a development server](#use-a-development-server)" |
 | Building sliders and lamps | "[Build a variable widget](#build-a-variable-widget)" |
+| Reading a key of the launcher's results that the library's types do not name | "[Read the launcher's results](#read-the-launchers-results)" |
 | Rules that the library does not enforce for you | "[Rules for building a screen](#rules-for-building-a-screen)" |
 | Using the API without a screen | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
 
@@ -1086,6 +1087,16 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
   ```
 
 - They run outside a browser, so they send the server's own origin as `Origin`.
+
+### Read the launcher's results
+
+The check result, the run result, findings and launcher events come from the launcher. The GUI server relays them unchanged, and the client library passes on every key of them. Its typed fields (for example `traffic` of the run result) follow the launcher's format versions (`vehicle_sil_check`, `vehicle_sil_run`, `vehicle_sil_events`). Every object read from the launcher also has `raw`, the launcher's object as it arrived, so a screen or a panel can read a key that the types do not name without a new library. Values in `raw` are unchecked: check their type, and show them as text. An event that the library does not know reaches only `client.connection.onBatch`. See "The launcher's keys (`raw`)" in [gui/client/README.md](../gui/client/README.md#the-launchers-keys-raw).
+
+```ts
+const result = client.session.session.get()?.result; // RunResult | null
+for (const network of result?.traffic?.networks ?? []) console.log(network.name, network.delivered);
+const strict = result?.raw?.['strict']; // a key without a typed field: unknown
+```
 
 ### Rules for building a screen
 

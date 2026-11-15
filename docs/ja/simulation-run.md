@@ -575,7 +575,7 @@ passed: 0 errors, 1 warning, 1 note
 
 ### ネットワークの送受信（`traffic:`）
 
-シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU が変数の接続で送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です（[ECU の変数との接続](#ecu-の変数との接続control_link)）。
+シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU が変数の接続で送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です（[ECU の変数との接続](#ecu-の変数との接続control_link)）。接頭辞 `j1939.` は予約してあるので、ECU 自身の変数がこの名前になることはありません（[ecu-executable.md](ecu-executable.md) の「使えない変数名の接頭辞」）。
 
 - `traffic:` の行は、設定ファイルのネットワークごとに、数えた participant のうち、フレームを 1 つ以上送ったものの数と、1 つ以上受けたものの数です（`J1939_CAN: 1 participant sent, 1 received (2 counted)`）。上の最初の例は、Engine が送り、Dashboard が受けています。Dashboard は受けるだけで何も送らないので、送ったのは 1、受けたのも 1 で、これで正常です。割合ではないので、2 つの数が `counted` と同じである必要はありません。届いていないのは、送った participant がいるのに `0 received` で、括弧の中が `counted` だけのネットワークです。
 - 数えなかった participant がいれば、括弧の中に `1 not counted` と続けます。誰も送らず誰も受けておらず、全員を数えたネットワークは `nothing sent (2 counted)` です。そうでなければ、誰も送っていないネットワークも数で言います（`0 participants sent, 1 received (1 counted, 1 not counted)`）。数えた participant が 1 つもないネットワーク（LIN、イーサネット、生の CAN として使うネットワークなど）は `not counted (3 participants)`、誰がいるかをランチャーが知らないネットワークは `not counted (no participant known to be on it)` です（そのネットワークに居場所がわからない participant がいれば、括弧の中に `, 1 unplaced` と続けます。下）。設定ファイルにネットワークが 1 つもないときは、`traffic: no network in use` の 1 行だけです。

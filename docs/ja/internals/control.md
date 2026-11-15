@@ -243,8 +243,8 @@ N は、シミュレーションでのネットワークの名前です。`PeerO
 | 確定した後に `Peer::j1939()`（両方の形）を呼ぶ | 監視されないネットワークになるので `std::logic_error`（文言に Peer とネットワークの名前と、直し方: トランスポートを作る前、最初の `submit()` の前に追加するか、`PeerOptions::monitor = false`） |
 | 確定した後にノードを追加する | そのノードは監視されない |
 | 生の CAN と LIN | 監視の対象ではない |
-| ECU の変数を `peer.` で始まる名前で宣言する（`input()`、`output()` など） | `peer.` で始まる名前は予約なので、`monitor` の設定と実装（`Peer`、`LocalBench`）によらず、宣言のときに `std::invalid_argument`（文言に ECU と変数の名前、ルール） |
-| ネットワークの出力（`j1939.N.` で始まる名前）が ECU の変数と重なる | 確定させる呼び出しが `std::invalid_argument`（何も変えず、スキーマは確定しない。文言に Peer の名前と `PeerOptions::monitor = false`） |
+| ECU の変数を `peer.` か `j1939.` で始まる名前で宣言する（`input()`、`output()` など） | この接頭辞は予約なので（ほかのバスのための `can.`、`lin.`、`eth.` も。`ecu/monitor_names.hpp` の `monitor_names::kReservedPrefixes`）、`monitor` の設定と実装（`Peer`、`LocalBench`）によらず、宣言のときに `std::invalid_argument`（文言に ECU と変数の名前、ルール） |
+| `agent()` に直接登録した変数が監視の出力と重なる | 確定させる呼び出しが `std::invalid_argument`（何も変えず、スキーマは確定しない。文言に Peer の名前と `PeerOptions::monitor = false`） |
 
 最後の行の場合、スキーマは開いたままなので、確定させる呼び出しが例外を投げた後に宣言した変数も、`describe()` の ECU の変数です。
 

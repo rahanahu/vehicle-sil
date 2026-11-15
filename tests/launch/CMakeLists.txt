@@ -103,7 +103,18 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_target_defaults(vehicle_sil_launch_version1_ecu)
   vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_version1_ecu)
 
-  add_executable(vehicle_sil_launch_run_launcher launch_run_launcher.cpp)
+  # The scenarios by topic (launch_run_<topic>.cpp); launch_run_launcher.cpp has main().
+  add_executable(vehicle_sil_launch_run_launcher
+    launch_run_events.cpp
+    launch_run_launcher.cpp
+    launch_run_manual.cpp
+    launch_run_networks.cpp
+    launch_run_processes.cpp
+    launch_run_scenario.cpp
+    launch_run_support.cpp
+    launch_run_time.cpp
+    launch_run_timeline.cpp
+    launch_run_variants.cpp)
   target_include_directories(vehicle_sil_launch_run_launcher PRIVATE ${PROJECT_SOURCE_DIR}/tests/process)
   target_link_libraries(vehicle_sil_launch_run_launcher PRIVATE vehicle_sil_test_process)
   if(WIN32)

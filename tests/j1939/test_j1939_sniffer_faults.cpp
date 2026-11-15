@@ -38,7 +38,7 @@ using vehicle_sil::j1939::NetworkOptions;
 using vehicle_sil::j1939::Node;
 using vehicle_sil::j1939::SendStatus;
 using vehicle_sil::j1939::SniffedTransfer;
-using vehicle_sil::j1939::SniffEnd;
+using vehicle_sil::j1939::SniffResult;
 using vehicle_sil::j1939::SnifferOptions;
 using vehicle_sil::j1939::TransferResult;
 using vehicle_sil::j1939::TransferSniffer;
@@ -100,7 +100,7 @@ struct Receiver
 
 struct Heard
 {
-    SniffEnd end;
+    SniffResult end;
     std::uint32_t pgn;
     Address sa;
     Address da;
@@ -114,9 +114,9 @@ struct Listener
 {
     explicit Listener(SnifferOptions options = with_broadcasts()) : sniffer(options)
     {
-        sniffer.on_transfer([this](const SniffedTransfer& t) {
-            ends.push_back(Heard{t.end, t.pgn.value(), t.source, t.destination, t.size, t.time, t.reason});
-            if (t.end == SniffEnd::Completed)
+        sniffer.on_transfer_end([this](const SniffedTransfer& t) {
+            ends.push_back(Heard{t.result, t.pgn.value(), t.source, t.destination, t.length, t.time, static_cast<std::uint8_t>(t.reason)});
+            if (t.result == SniffResult::Completed)
             {
                 messages.push_back(seen_of(t.message()));
             }
@@ -327,7 +327,7 @@ TEST_CASE(sniffer_does_not_report_a_message_the_receiving_node_did_not_take)
     listener.replay(engines.trace, at(5s));
     CHECK(listener.messages.empty());
     CHECK_EQ(listener.ends.size(), 1u);
-    CHECK(listener.ends[0].end == SniffEnd::Refused);
+    CHECK(listener.ends[0].end == SniffResult::Refused);
     CHECK_EQ(engines.b->receiver.ends.size(), 1u);
     CHECK(listener.ends[0].time == engines.b->receiver.ends[0].time);
 }
@@ -339,7 +339,7 @@ TEST_CASE(sniffer_does_not_report_a_message_the_receiving_node_did_not_take)
 
 namespace {
 
-void check_aborted(const Engines& engines, SniffEnd expected, std::uint64_t leftOver = 0)
+void check_aborted(const Engines& engines, SniffResult expected, std::uint64_t leftOver = 0)
 {
     for (const SimDuration step : kListenerSteps)
     {
@@ -364,7 +364,7 @@ TEST_CASE(sniffer_hears_the_sender_give_up_when_nobody_answers_its_rts)
         Engines engines(steps[0], steps[1], false);
         engines.run(payload(100));
         CHECK(std::any_of(engines.trace.begin(), engines.trace.end(), [](const TimedFrame& f) { return is_cm(f, 255); }));
-        check_aborted(engines, SniffEnd::AbortedBySender);
+        check_aborted(engines, SniffResult::AbortedBySender);
     }
 }
 
@@ -389,7 +389,7 @@ TEST_CASE(sniffer_hears_the_receiver_give_up_when_the_sender_falls_silent)
         }
         CHECK(!aborts.empty());
         const bool receiverFirst = aborts[0] == kB;
-        check_aborted(engines, receiverFirst ? SniffEnd::AbortedByReceiver : SniffEnd::AbortedBySender, aborts.size() - 1);
+        check_aborted(engines, receiverFirst ? SniffResult::AbortedByReceiver : SniffResult::AbortedBySender, aborts.size() - 1);
         receiverGaveUp += receiverFirst ? 1 : 0;
         senderGaveUp += receiverFirst ? 0 : 1;
     }
@@ -407,7 +407,7 @@ TEST_CASE(sniffer_hears_the_sender_give_up_when_the_acknowledgement_is_lost)
         engines.b->port.set_fault_injector([](const TimedFrame& f) { return is_cm(f, 19) ? FaultAction::drop() : FaultAction::deliver(); });
         engines.run(payload(100));
         CHECK_EQ(engines.b->receiver.messages.size(), 1u);
-        check_aborted(engines, SniffEnd::AbortedBySender);
+        check_aborted(engines, SniffResult::AbortedBySender);
 
         SnifferOptions options;
         options.delivery = vehicle_sil::j1939::SniffDelivery::WhenAllPacketsSeen;
@@ -551,10 +551,10 @@ TEST_CASE(sniffer_follows_the_next_transfer_when_the_senders_address_changes_han
         listener.replay(rig.trace, at(3s), step);
         CHECK(listener.messages == rig.receiver.messages);
         CHECK_EQ(listener.ends.size(), 2u);
-        CHECK(listener.ends[0].end == SniffEnd::Replaced);
+        CHECK(listener.ends[0].end == SniffResult::Replaced);
         CHECK_EQ(listener.ends[0].pgn, kPgn);
         CHECK(listener.ends[0].time == at(320ms)); // the announcement the receiver took
-        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK(listener.ends[1].end == SniffResult::Completed);
         CHECK_EQ(listener.ends[1].pgn, kOther);
         CHECK(listener.ends[1].time == rig.receiver.ends[1].time);
         CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
@@ -594,10 +594,10 @@ TEST_CASE(sniffer_follows_the_new_owners_transfer_announced_just_before_the_old_
         listener.replay(rig.trace, at(5s), step);
         CHECK(listener.messages == rig.receiver.messages);
         CHECK_EQ(listener.ends.size(), 2u);
-        CHECK(listener.ends[0].end == SniffEnd::TimedOut);
+        CHECK(listener.ends[0].end == SniffResult::TimedOut);
         CHECK_EQ(listener.ends[0].pgn, kPgn);
         CHECK(listener.ends[0].time == at(45ms + 1250ms));
-        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK(listener.ends[1].end == SniffResult::Completed);
         CHECK_EQ(listener.ends[1].pgn, kOther);
         CHECK(listener.ends[1].time == rig.receiver.ends[1].time);
         CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
@@ -631,8 +631,8 @@ TEST_CASE(sniffer_follows_an_announcement_between_the_last_packet_and_the_acknow
         listener.replay(rig.trace, at(3s), step);
         CHECK(listener.messages == rig.receiver.messages);
         CHECK_EQ(listener.ends.size(), 2u);
-        CHECK(listener.ends[0].end == SniffEnd::Completed);
-        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK(listener.ends[0].end == SniffResult::Completed);
+        CHECK(listener.ends[1].end == SniffResult::Completed);
         CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
         CHECK_EQ(listener.sniffer.statistics().orphan_control, 0u);
         CHECK_EQ(listener.sniffer.statistics().orphan_data, 0u);
@@ -662,7 +662,7 @@ TEST_CASE(sniffer_marks_a_message_with_a_late_packet_of_the_transfer_before)
     Listener listener;
     std::vector<std::uint32_t> conflicts;
     Bytes heard;
-    listener.sniffer.on_transfer([&](const SniffedTransfer& t) {
+    listener.sniffer.on_transfer_end([&](const SniffedTransfer& t) {
         conflicts.push_back(t.conflicting_packets);
         heard.assign(t.data.begin(), t.data.end());
     });
@@ -983,19 +983,19 @@ private:
     switch (engine.result)
     {
     case TransferResult::Completed:
-        return sniffer.end == SniffEnd::Completed && sameTime;
+        return sniffer.end == SniffResult::Completed && sameTime;
     case TransferResult::Cancelled:
-        if (sniffer.end == SniffEnd::Refused)
+        if (sniffer.end == SniffResult::Refused)
         {
             return sameTime && (engine.pgn == kPgnRequest || engine.pgn == kPgnAddressClaim);
         }
-        return sniffer.end == SniffEnd::Replaced && sameTime;
+        return sniffer.end == SniffResult::Replaced && sameTime;
     case TransferResult::AbortedByPeer:
-        return sniffer.end == SniffEnd::AbortedBySender && sniffer.reason == reason && sameTime;
+        return sniffer.end == SniffResult::AbortedBySender && sniffer.reason == reason && sameTime;
     case TransferResult::Aborted:
-        return sniffer.end == SniffEnd::AbortedByReceiver && sniffer.reason == reason;
+        return sniffer.end == SniffResult::AbortedByReceiver && sniffer.reason == reason;
     case TransferResult::Lost:
-        return sameTime && sniffer.end == (engine.reason == AbortReason::Timeout ? SniffEnd::TimedOut : SniffEnd::Lost);
+        return sameTime && sniffer.end == (engine.reason == AbortReason::Timeout ? SniffResult::TimedOut : SniffResult::Lost);
     default:
         return false;
     }
@@ -1025,7 +1025,7 @@ template <typename T>
 
 struct Totals
 {
-    std::map<SniffEnd, int> ends;
+    std::map<SniffResult, int> ends;
     Tally tally;
     std::uint64_t retransmit_requests = 0;
     std::uint64_t announcements_ignored = 0;
@@ -1164,10 +1164,10 @@ TEST_CASE(sniffer_agrees_with_the_receiving_node_under_seeded_faults)
     CHECK(totals.messages > 400);
     CHECK(totals.retransmit_requests > 0);
     CHECK(totals.announcements_ignored > 0);
-    for (const SniffEnd end : {SniffEnd::Completed, SniffEnd::AbortedBySender, SniffEnd::AbortedByReceiver,
-                               SniffEnd::Replaced, SniffEnd::Lost, SniffEnd::TimedOut, SniffEnd::Refused})
+    for (const SniffResult end : {SniffResult::Completed, SniffResult::AbortedBySender, SniffResult::AbortedByReceiver,
+                               SniffResult::Replaced, SniffResult::Lost, SniffResult::TimedOut, SniffResult::Refused})
     {
         CHECK(totals.ends[end] > 0);
     }
-    CHECK_EQ(totals.ends[SniffEnd::Incomplete], 0);
+    CHECK_EQ(totals.ends[SniffResult::Incomplete], 0);
 }

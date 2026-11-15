@@ -43,6 +43,7 @@ Where scenario tests live:
 - `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
 - Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
 - The shared code is in `tests/integration/launcher_support.hpp`.
+- The `launch_run` scenarios are in `tests/launch/launch_run_<topic>.cpp`, one file for each topic. `main()` is in `launch_run_launcher.cpp`, and the code they share is in `launch_run_support.hpp`.
 
 Rules for areas (the directories directly under `tests/`):
 
@@ -369,6 +370,7 @@ What `simulation.*` checks:
 - `Ecu::describe()`
 - The arguments and exit codes of `ecu_main()` called as a function
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` applies only to the ECU it names (2 copies of the same ECU code), and the name of an ECU that does not exist or a line that applied to no node is refused before the start
+- `simulation.ecu_main_j1939_node*`: `--j1939-node` of `ecu_main()` gives the node the values of the line (also on a renamed network), the message for a line that applies to no node (exit code 3), a node added in a step keeps the values of the code; the usage errors of its value are in `simulation.ecu_main_refuses_bad_command_lines`
 
 For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
 
@@ -384,6 +386,7 @@ What `ecu_main.*` checks:
 - The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
 - `--local`
 - 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- 2 copies of the engine, the second with `--j1939-node` (`ecu_main.j1939_node`: the addresses in the monitoring output)
 - Usage, stop requests
 
 ### `core` / `lin`
@@ -651,7 +654,7 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
 | Transfer sniffer | `src/transfer_sniffer.cpp` |
-| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, checks on the form of an announcement; the timeouts are `ProtocolTiming` in `types.hpp`) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
 | `Listener`, which sits in the seat | `src/listener.cpp` |
 
@@ -692,6 +695,7 @@ Main classes and functions:
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
 | The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| The names of a `Peer`'s monitoring outputs (`peer.*`, `j1939.<network>.*`), which `Peer` registers and the launcher reads | `ecu/monitor_names.hpp` |
 | `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
@@ -1172,13 +1176,12 @@ No test compares the following. Keep them in sync by hand.
 
 ## Dependency direction
 
-In every diagram, an arrow means "links" (`target_link_libraries`), except the thick arrow (see the table). Do not create dependencies in the opposite direction.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
 
 | In the diagrams | Meaning |
 |---|---|
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
-| Thick arrow | No link of its own: the public headers include the other target's headers, and the link comes through another target's public link |
 | Node name | Target name (without `vehicle_sil::`) |
 
 ### Layers
@@ -1332,11 +1335,11 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch --> sim_base
+    launch --> control
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
     launch -.-> signal
-    launch ==> control
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -1347,7 +1350,6 @@ flowchart TD
     control_proto --> grpcpp
 ```
 
-- `launch` and `control`: the public headers of `launch` include headers of `control` (`hub.hpp`, `agent.hpp`, `variable_map.hpp`). `launch` gets `control` through the public link of `ecu`.
 - `launch` and `ecu`: the sources of `launch` also include an internal header of `ecu`, `vehicle_sil/ecu/detail/json_writer.hpp`: the launcher writes its JSON with the same writer as the `--describe` output.
 
 ### Vector XL CAN Bridge
