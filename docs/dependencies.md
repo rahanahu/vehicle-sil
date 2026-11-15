@@ -487,9 +487,9 @@ Remove the patch when the submodule is updated to an upstream commit that has th
 
 Nothing tells the joining participant that the other one is gone.
 
-**Impact**: Rarely, when a participant joins right after another one ended (an ECU that is started again at once, runs that follow each other at one registry), `CreateParticipant()` fails after twice `ConnectTimeoutSeconds` (10 seconds by default) with `Timeout while waiting for replies from known participants: <name> (...) is waiting for reply`. The constructor of `ParticipantRuntime` throws this error. A second attempt succeeds.
+**Impact**: Rarely, when a participant joins right after another one ended (an ECU that is started again at once, runs that follow each other at one registry), `CreateParticipant()` fails after twice `ConnectTimeoutSeconds` (10 seconds by default) with `Timeout while waiting for replies from known participants: <name> (...) is waiting for reply`. A second attempt succeeds.
 
-**Handling**: None so far. Patch 0005 covers only the moment in which the registry has already closed the socket of the participant that ended. A longer `ConnectTimeoutSeconds` does not help, because the reply never comes.
+**Handling**: `create_participant()` (and so `ParticipantRuntime`) creates the participant once more after this timeout and writes one line saying so to standard error. A participant that meets the bug therefore joins about 10 seconds late instead of failing. If the second attempt times out as well, it throws SIL Kit's error with a note that it tried again. It recognizes the error by its text; when you update upstream, the test `core.silkit_still_writes_the_texts_create_participant_matches` checks that SIL Kit's sources still contain it. Patch 0005 covers only the moment in which the registry has already closed the socket of the participant that ended. A longer `ConnectTimeoutSeconds` does not help, because the reply never comes.
 
 **Reported upstream**: Not yet.
 

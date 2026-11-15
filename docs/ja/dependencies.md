@@ -487,9 +487,9 @@ required でない coordinated の participant が、この順になります。
 
 相手がもういないことは、参加する側に伝わりません。
 
-**影響**: participant が終わった直後に別の participant が参加すると（すぐ起動し直す ECU、1 つの registry で続けて行う実行）、まれに `CreateParticipant()` が、`ConnectTimeoutSeconds` の 2 倍（既定では 10 秒）の後に `Timeout while waiting for replies from known participants: <名前> (...) is waiting for reply` で失敗します。`ParticipantRuntime` のコンストラクターは、このエラーを投げます。もう一度試すと成功します。
+**影響**: participant が終わった直後に別の participant が参加すると（すぐ起動し直す ECU、1 つの registry で続けて行う実行）、まれに `CreateParticipant()` が、`ConnectTimeoutSeconds` の 2 倍（既定では 10 秒）の後に `Timeout while waiting for replies from known participants: <名前> (...) is waiting for reply` で失敗します。もう一度試すと成功します。
 
-**対応**: いまはありません。パッチ 0005 が防ぐのは、registry が終わった participant のソケットをすでに閉じている間だけです。返事は来ないので、`ConnectTimeoutSeconds` を伸ばしても直りません。
+**対応**: `create_participant()`（したがって `ParticipantRuntime`）は、この時間切れの後に participant を 1 回だけ作り直し、そのことを標準エラーに 1 行出します。この不具合に当たった participant は、失敗せずに、約 10 秒遅れて参加します。2 回目も時間切れなら、やり直したことを書き足した SIL Kit のエラーを投げます。エラーは文で見分けます。上流を更新するときは、テスト `core.silkit_still_writes_the_texts_create_participant_matches` が、SIL Kit のソースにまだこの文があることを確かめます。パッチ 0005 が防ぐのは、registry が終わった participant のソケットをすでに閉じている間だけです。返事は来ないので、`ConnectTimeoutSeconds` を伸ばしても直りません。
 
 **上流への報告**: 未報告です。
 

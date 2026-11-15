@@ -303,6 +303,7 @@ The reason for TCP only: a SIL Kit registry that cannot listen on its TCP port k
 - The default of `name_in_use_wait` is 5000 ms. `PeerOptions` has the same option. `Simulation` uses a value no greater than `start_timeout`.
 - The retry exists because, for a process restarted with the same name, the registry may not yet have noticed that the previous connection ended (on a slow computer, or across a network).
 - When the time runs out, it throws `NameInUseError` (a `SilKit::ProtocolError`) with SIL Kit's message, extended with how long it waited and the hint that another participant may be using the same name.
+- After a join that timed out waiting for replies from known participants ("Timeout while waiting for replies from known participants"; see "SIL Kit: a participant that joins while another one leaves waits for the one that left" in [dependencies.md](../dependencies.md#sil-kit-a-participant-that-joins-while-another-one-leaves-waits-for-the-one-that-left)), it creates the participant once more and writes one line saying so to `std::cerr`. A second such timeout is thrown as a `SilKit::ProtocolError` with SIL Kit's message and a note that it tried again. This retry happens once in all and does not extend `name_in_use_wait`, so the whole wait is at most `name_in_use_wait` and two join timeouts.
 - Any other failure is thrown at once.
 - Programs that create a SIL Kit participant themselves (such as the raw Agent in the tests) can use this function too.
 
