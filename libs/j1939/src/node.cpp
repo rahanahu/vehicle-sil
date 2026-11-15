@@ -170,11 +170,12 @@ SimDuration cannot_claim_delay(Name name) noexcept
     return std::chrono::microseconds(600) * static_cast<int>(z % 256u);
 }
 
-Node::Node(Network& network, std::size_t index, const NodeOptions& options)
+Node::Node(Network& network, std::size_t index, const NodeOptions& options, Address coded_address)
   : network_(network),
     index_(index),
     address_(options.address),
     requested_address_(options.address),
+    coded_address_(coded_address),
     name_(options.name),
     state_(options.name ? AddressState::NotStarted : AddressState::Fixed),
     holding_(options.name && waits_after_claim(*options.name, options.address))

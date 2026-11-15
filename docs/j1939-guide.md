@@ -42,6 +42,8 @@ j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 - 1 ステップの順序は、ネットワークの受信と処理、時刻の来た変数の書き込みの反映、`on_step`、`every`、`at`（足した順）、LIN のノードの処理（足した順）、変数の記録、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`on_step()`、`every()`、`at()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
 - 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、「周期的な処理の使い分け」の「ステップの外から渡す」を参照してください。
 
+`j1939::Network` を自分で作るプログラム（`Ecu` を使わないもの）は、`NetworkOptions::node_overrides` で、ノードのコードを変えずにアドレスと NAME の一部（identity number、function instance、ECU instance）を替えられます。同じノードのコードを 1 本のバスに 2 つ載せるための口です。行は、コードのアドレス（`from`。省くと、そのネットワークのただ 1 つのノード）でノードを指します。`add_node()` は、指されたノードを替えた後の値で作ります（`Node::address()`、`requested_address()`、`name()` は替えた後の値、`Node::coded_address()` だけがコードのアドレス）。行が当たるのは、最初の `begin()` より前に足したノードだけです（`Network::close_node_overrides()` でも閉じられます。使われなかった行の番号を返します）。その後に足したノードは、コードの値のままです。当てられない行（NAME のないノードに NAME の欄、など）と、1 つの行が 2 つ目のノードに当たる場合は、`add_node()` が `std::invalid_argument` を投げます。`Ecu::j1939()` で作るネットワークは `node_overrides` を受け付けません（`std::invalid_argument`）。ECU のノードの値は、ECU を動かす側が外から替えます（下の「動かす」の `SilKitOptions::j1939_nodes`、`PeerOptions::j1939_nodes`）。
+
 ### 複数のネットワークを持つ ECU
 
 ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送ると、同じステップで出ます。
@@ -426,10 +428,29 @@ sim.run_for(3s);                                               // 仮想時間�
 | `controller` | `true`（既定）: このプロセスが simulation を始め、終える。`false`: 外の controller（`vehicle_sil_sim_controller`、Control Server）が決める。`run()` で終わりまで待つ |
 | `other_participants` | 始める前にそろっていなければならない、ほかのプロセスの Coordinated な participant（`controller` が `true` のときだけ） |
 | `start_timeout` | 始まるまでに許す時間（既定 30 秒） |
+| `network_names` | ネットワークの名前の対応（シミュレーションの名前 → ECU のコードの名前）。このプロセスの全部の ECU に効く |
+| `j1939_nodes` | J1939 のノードのアドレスと NAME の一部を、ECU のコードを変えずに替える（ECU の名前 → 行の並び）。下の説明を参照 |
+
+`j1939_nodes` は、同じ ECU のコードを 2 つ足すためのものです。そのままでは、2 つの ECU が同じアドレスを同じ NAME で要求し、どちらもアドレスを持てません。
+
+```cpp
+vehicle_sil::SilKitOptions options;
+options.j1939_nodes["Engine2"] = {{"VehicleCAN", {.from = 0x00, .address = 0x01, .identity_number = 2}}};
+vehicle_sil::Simulation sim(options);
+install_engine(sim.add_ecu("Engine1", 10ms), ...);   // コードのとおり 0x00
+install_engine(sim.add_ecu("Engine2", 10ms), ...);   // 0x01、identity number 2
+```
+
+- 行は、ネットワーク（シミュレーションでの名前。`network_names` で替えたネットワークは、替えた後の名前）と、ノードのコードのアドレス（`from`。省くと、その ECU のそのネットワークのただ 1 つのノード）で、ノードを指します。替えられるのは `address`（254 は、任意アドレス対応の NAME のノードだけ）、`identity_number`、`function_instance`、`ecu_instance` です。
+- `network_names` と違って ECU ごとに書きます。全部の ECU に同じ行を当てると、同じネットワークの 2 つの ECU がまた同じアドレスになるためです。
+- 当たるのは、開始までに足したノードだけです。開始の後に足したノードは、コードの値のままです。
+- 替わるのは、そのノード自身だけです。このノードのアドレスや NAME の全体をコードに持っているほかの ECU は、変わりません。
+- `std::invalid_argument` になるもの: 空のネットワーク名、範囲の外の値、同じネットワークと `from` の行が 2 つ、`from` のない行と同じネットワークの別の行（`add_ecu()`）。当てられない行（NAME のないノードに NAME の欄、任意アドレスに対応しない NAME に 254）、1 つの行が 2 つ目のノードに当たる場合（`add_node()`）。この simulation にない ECU の名前、どのノードにも当たらなかった行（`run()`、`run_for()`。何も始めずに投げます）。
+- プロセス内の仮想バス（`Simulation()`）には、この口はありません。
 
 `run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。`controller` が `true` のときは、Error で離脱した participant を失敗にします。Error 以外で離脱した participant が数秒のうちに simulation を終えなければ、それも失敗です。`controller` が `false` のときに失敗にするのは、このプロセスの ECU の失敗だけです。
 
-`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
+`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。`Peer` では、同じ行を `PeerOptions::j1939_nodes`（その ECU の行の並び）に書きます。どのノードにも当たらなかった行があると、`Peer::start()` が何も始めずに `std::invalid_argument` を投げます（先に `Peer::unused_j1939_nodes()` で、行ごとの理由を得られます）。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
 
 ## 試験する
 

@@ -105,6 +105,7 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 `unit` ラベルも付く）。
 聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を足しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらず、聞くだけの participant が何も送らないことも、仮想バスと SIL Kit で確かめる（`j1939_silkit.listen_only_participants_*`）。
 タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。
+ノードのアドレスと NAME の上書き（`NetworkOptions::node_overrides`。当てる関数と文字列の往復の表、上書きの後の値で claim すること、断るものとその文、開始で閉じた後のノードがコードの値のままであること、同じノードのコードを 1 本のバスに 2 つ載せる場面、負けた後・Request・Commanded Address でも上書きの後の値が使われること）も確かめる（`j1939.*override*`）。
 1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。
 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
 型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。
@@ -114,6 +115,7 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 ### `peer` / `testkit`
 
 `Peer` をプロセス内のレジストリで動かす試験（J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立ての誤り、失敗の報告）と、試験キットの試験（アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果）。
+`peer.*j1939_nodes*` は、`PeerOptions::j1939_nodes`（付け替えた名前のネットワークと外から渡したポートのネットワークに当たること、`start()` の後に足したノードに当たらないこと、どのノードにも当たらなかった行の理由と `start()` の文、コードが渡した `node_overrides` を断ること）を確かめる。
 `ecu_api.*` は、利用者が書く形の ECU（`examples/j1939/ecu_pair`、道具箱と `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確かめる試験）を仮想バスで動かす。
 `param_service.*` は、`examples/j1939/param_service` の独自プロトコルを仮想バスで動かし（正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中の部品の破棄）、`param_service.boundary` は例が公開 API だけを使うことを、`param_service.demo` は例の実行を確かめる。
 `ecu_api.*` と `param_service.*` のラベルは `testkit` で、`peer.*`、`testkit.*`、`ecu_api.*`、`param_service.*` には `unit` と `j1939` のラベルも付く。
@@ -123,11 +125,13 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 
 ECU の自己申告の JSON（`to_json(EcuDescription)`）の単体テスト（SIL Kit なし。
 空と全部入りの全文、キーの順、数値、64 ビットの列挙の値、NAME の文字列、文字列のエスケープ、版）。
+引数 `--j1939-node` の値を書く関数と読む関数の往復、誤った値ごとの文、1 つの ECU の行どうしの検査も確かめる（`ecu.j1939_node_argument*`）。
 `ecu.no_silkit_boundary` と `ecu.simulation_headers_boundary` は、`libs/ecu` と `libs/simulation/include` が SIL Kit のヘッダーを直接にも間接にも含まないことを、`ecu.boundary_check_*` はその検査自体を確かめる（`unit` ラベルも付く）
 
 ### `simulation` / `examples`
 
 `Simulation` の試験（同じ ECU が仮想バスと SIL Kit で同じ記録を残すこと、ECU が持つオブジェクトの破棄、ステップの失敗が `SimulationError` になって戻ること、使い方の誤り（同じ入力を両方の実装で拒否すること、`App` のコンストラクターの例外）、`request_stop` で終わる実行、ほかの participant の失敗、開始の時間切れ、`local()` から足した ECU、別プロセスの controller や participant との併用、2 つのネットワークを持つゲートウェイ、生の CAN、LIN の Master と Slave、イーサネットのチャネル（`test_ethernet.cpp`: 次のステップで届くこと、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、断る文言、`LocalBench` の参照）が両方で同じ結果になること、`Ecu::describe()`、関数として呼んだ `ecu_main()` の引数と終了コード）と、サンプルの実行（`vehicle_sil_getting_started`（仮想バスと `--silkit`）、`typed_messages`、`pid_stream`、`fault_injection`、`vehicle`（SIL Kit と `--local`）、`low_level`、`vehicle_sil_ethernet_example`（仮想ネットワークと `--silkit`、別の EtherType、引数の誤り））。
+`simulation.*j1939_nodes*` は、`SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ足す場面）と、ない ECU の名前や当たらなかった行を始める前に断ることを確かめる。
 サンプルは自分で結果を検査し、違えば 0 以外で終わる。
 `ecu_main.*` は `examples/ecu_main` の ECU の実行ファイルをプロセスとして動かす（`--describe` の JSON を [docs/ecu-executable.md](ecu-executable.md) の例と、vehicle-sil の版を除いてバイト単位で照合、`--local`、`vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU、使い方、止める要求）。
 ラベルは、`simulation.*` が `unit` と `simulation`、サンプルの実行が `examples` と `simulation`（`low_level.demo` は `examples` だけ）、`ecu_main.*` が `integration` と `simulation`
@@ -260,7 +264,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `libs/j1939`（エンジン）
 
-- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。
+- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、ノードのアドレスと NAME の上書き `NodeOverride`・`apply_node_overrides()`・文字列との往復（`j1939/node_override.hpp`。`Network` と、前もって照合する道具の両方が使う）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。
   Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp`
 - 試験: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
@@ -281,7 +285,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 ### `libs/ecu`
 
 - 主なクラス・関数（ヘッダー）: `Ecu`（`ecu/ecu.hpp`）、`EcuDescription`、`to_json()`、ネットワークの種類と使い方の一覧 `kNetworkKinds`・`kNetworkUses`（`ecu/describe.hpp`）、ECU の実行ファイルとランチャーの約束（引数、終了コード、`kMaxMillis`。
-  `ecu/executable.hpp`）、バスからの切り離し（`ecu.connected`。
+  `ecu/executable.hpp`）、引数 `--j1939-node` の値を書く関数と読む関数、`J1939NodeOverride`（`ecu/j1939_node_argument.hpp`）、バスからの切り離し（`ecu.connected`。
   `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort`、`ecu/detail/bus_connection.hpp`）
 - 試験: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
 - `ctest -R`: `^ecu\.`、`^simulation\.disconnect`

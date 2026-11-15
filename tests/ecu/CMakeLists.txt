@@ -1,7 +1,8 @@
-# What an ECU reports about itself in JSON (to_json(EcuDescription)), without SIL Kit.
+# What an ECU reports about itself in JSON (to_json(EcuDescription)) and the value of the argument
+# --j1939-node as it is written and read, without SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_ecu_tests
   PREFIX ecu LABELS unit ecu TIMEOUT 60
-  SOURCES test_describe_json.cpp
+  SOURCES test_describe_json.cpp test_j1939_node_argument.cpp
   LINK vehicle_sil::ecu)
 target_compile_definitions(vehicle_sil_ecu_tests PRIVATE VEHICLE_SIL_TEST_PROJECT_VERSION="${vehicle_sil_VERSION}")
 

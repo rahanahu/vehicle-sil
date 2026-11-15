@@ -29,6 +29,15 @@ inline constexpr std::string_view kLauncherArguments[] = {"--describe",   "--nam
 inline constexpr std::string_view kMapNetworkArgument = "--map-network";
 inline constexpr std::string_view kFeatureMapNetwork = "map-network";
 
+/// The argument that gives a J1939 node of an ECU executable other values than its code for one
+/// run (with --registry-uri, any number of times): `--j1939-node <simulation's network
+/// name>=<setting>:<value>[,...]`, split at the first '='; the settings are from, address,
+/// identity_number, function_instance and ecu_instance (vehicle_sil/ecu/j1939_node_argument.hpp
+/// writes and reads the value). An executable that takes it says so in its --describe:
+/// kFeatureJ1939Node in "features".
+inline constexpr std::string_view kJ1939NodeArgument = "--j1939-node";
+inline constexpr std::string_view kFeatureJ1939Node = "j1939-node";
+
 /// The exit codes of an ECU executable (the same as those of the other tools of vehicle-sil).
 inline constexpr int kExitOk = 0;
 inline constexpr int kExitFailed = 1;      ///< the ECU failed in the run

@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/can/host.hpp"
 #include "vehicle_sil/j1939/name.hpp"
+#include "vehicle_sil/j1939/node_override.hpp"
 #include "vehicle_sil/j1939/timer_set.hpp"
 #include "vehicle_sil/j1939/types.hpp"
 
@@ -363,8 +364,13 @@ public:
 
     /// The current source address (kNullAddress after losing it).
     [[nodiscard]] Address address() const noexcept { return address_; }
-    /// The address the node was added with (NodeOptions::address), whatever it has now.
+    /// The address the node asked for when it was added, whatever it has now: NodeOptions::address,
+    /// or the address of the override that the node took (NetworkOptions::node_overrides).
     [[nodiscard]] Address requested_address() const noexcept { return requested_address_; }
+    /// The address the code gave the node (NodeOptions::address as add_node() got it), whatever an
+    /// override made of it: the same as requested_address() without an override. For messages
+    /// about overrides, which name a node by this address; the protocol never uses it.
+    [[nodiscard]] Address coded_address() const noexcept { return coded_address_; }
     [[nodiscard]] AddressState address_state() const noexcept { return state_; }
     [[nodiscard]] const std::optional<Name>& name() const noexcept { return name_; }
     [[nodiscard]] Network& network() noexcept { return network_; }
@@ -512,7 +518,7 @@ private:
         kCannotClaim = 2,
     };
 
-    Node(Network& network, std::size_t index, const NodeOptions& options);
+    Node(Network& network, std::size_t index, const NodeOptions& options, Address coded_address);
 
     void on_timer(std::uint32_t tag) override;
     void start_claim();
@@ -563,7 +569,8 @@ private:
     Network& network_;
     std::size_t index_;
     Address address_;
-    Address requested_address_; ///< NodeOptions::address
+    Address requested_address_; ///< NodeOptions::address after the override, if one was taken
+    Address coded_address_;     ///< NodeOptions::address as the code gave it
     std::optional<Name> name_;
     AddressState state_;
     bool active_ = true;      ///< false until the network's next begin() if added during a step.
@@ -651,6 +658,24 @@ struct NetworkOptions
     /// What the nodes do when their ECU comes back to its buses (OnReconnect). Read by the ECU's
     /// runtime only.
     OnReconnect on_reconnect = OnReconnect::Announce;
+    /// Other values for nodes than their code gives (node_override.hpp), for a program that makes
+    /// its Network itself and runs the same node code more than once on one bus. add_node() gives
+    /// a node the values of the entry that is for it (`from` is the NodeOptions::address of the
+    /// call; an entry without `from` is for the only node) and goes on with them as if the code
+    /// had given them: the node claims, answers and is listed with the new address and NAME, and
+    /// only Node::coded_address() still says the old address. An entry that changes nothing is not
+    /// looked at.
+    /// Only the nodes added before the start take an entry: the first begin() closes the entries
+    /// (as Network::close_node_overrides() does), and a node added after that keeps the values in
+    /// its code, whatever the entries say.
+    /// std::invalid_argument from the constructor for two entries with the same `from`, for an
+    /// entry without `from` beside another one, and for a value out of its range; from add_node()
+    /// (before the entries are closed; nothing is added) for a second node that an entry would be
+    /// for, and for an entry that cannot be applied to its node (a field of the NAME for a node
+    /// without a NAME; address 254 for a node without a NAME or with a NAME that is not arbitrary
+    /// address capable).
+    /// An ECU's networks (Ecu::j1939()) do not take them: see PeerOptions::j1939_nodes.
+    std::vector<NodeOverride> node_overrides{};
     /// Receives warnings (e.g. a step size the network should not run with). Empty: written to
     /// std::cerr.
     std::function<void(std::string_view)> warning;
@@ -746,8 +771,21 @@ public:
     /// from the next begin(): it receives nothing and does not claim before. From a handler, a
     /// responder or a timer of this network it throws std::logic_error and fails the network.
     /// std::length_error above max_nodes; std::invalid_argument if the address is not 0..253
-    /// (254 is allowed for an arbitrary address capable NAME).
+    /// (254 is allowed for an arbitrary address capable NAME). With NetworkOptions::node_overrides,
+    /// the node gets the values of the entry that is for it first (see there, also for what it
+    /// throws).
     Node& add_node(const NodeOptions& options);
+
+    /// The entries of NetworkOptions::node_overrides (their indices, in order) that change
+    /// something and that no node took so far; after the entries were closed, those that no node
+    /// took in time.
+    [[nodiscard]] std::vector<std::size_t> unused_node_overrides() const;
+    /// Closes NetworkOptions::node_overrides: nodes added from now on keep the values in their
+    /// code, and add_node() does not look at the entries any more (it neither applies nor refuses).
+    /// Returns unused_node_overrides() the first time, nothing if the entries were closed before
+    /// (also by the first begin()). For whoever starts the network and wants to refuse entries
+    /// that no node took.
+    std::vector<std::size_t> close_node_overrides();
 
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
     [[nodiscard]] Node& node(std::size_t index) { return *nodes_.at(index); }
@@ -928,11 +966,19 @@ private:
     /// loopback if accepted.
     can::SendResult send_frame(const can::Frame& frame, std::int32_t sender, can::Port& port);
 
+    /// For add_node(): gives `options` (what the code gave) the values of the entry of
+    /// node_overrides that is for it and returns the entry's index; nothing without one. Throws
+    /// std::invalid_argument as NetworkOptions::node_overrides says; changes nothing then.
+    std::optional<std::size_t> take_node_override(NodeOptions& options) const;
+
     bool enqueue_data(const can::Frame& frame, std::size_t sender) noexcept;
     bool enqueue_control(const can::Frame& frame, std::size_t sender, std::uint32_t session = 0,
                          std::uint32_t generation = 0) noexcept;
 
     NetworkOptions options_;
+    /// For each entry of options_.node_overrides: the node that took it.
+    std::vector<std::optional<std::size_t>> node_override_users_;
+    bool node_overrides_closed_ = false;
     /// Expires when the network is destroyed: Subscriptions and Timers that outlive it see it.
     std::shared_ptr<const bool> alive_;
     std::vector<std::unique_ptr<Node>> nodes_;

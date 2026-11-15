@@ -5,6 +5,7 @@
 add_library(vehicle_sil_ecu STATIC
   src/bus_connection.cpp
   src/describe.cpp
+  src/j1939_node_argument.cpp
 )
 add_library(vehicle_sil::ecu ALIAS vehicle_sil_ecu)
 set_target_properties(vehicle_sil_ecu PROPERTIES EXPORT_NAME ecu)
