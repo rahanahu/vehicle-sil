@@ -67,7 +67,7 @@ python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `may not be published yet` と表示して止まる | この README のバージョンが、まだリリースされていません。 | vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリからビルドする」）、そのビルドの `vehicle_sil_launch` を使います。 |
+| `may not be published yet` と表示して止まる | この README のバージョンが、まだリリースされていません。 | そのバージョンのツールのアーカイブがファイルで手元にあれば（同僚からもらったものなど）、`python3 get_tools.py --archive <ファイル>` を実行します。なければ、vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリからビルドする」）、そのビルドの `vehicle_sil_launch` を使います。 |
 | ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `this copy of the template has no SHA-256` と表示して止まる | リポジトリの `template/` をコピーしたので、SHA-256 が入っていません。 | リリースのページの `SHA256SUMS` にある値を `--sha256` で渡します。 |
 

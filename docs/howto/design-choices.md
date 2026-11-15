@@ -4,7 +4,7 @@
 
 This page lists what the ECU authors and the integrator (the person who puts the ECUs together in a configuration file) should decide before anyone starts writing ECUs, and how to choose when you are unsure. It has no procedures; each section links to the page that shows how.
 
-These are recommendations, not rules. The `check` command only checks whether the ECUs agree with each other on what you chose.
+These are recommendations, not rules. The [`check` command](integrate-ecus.md#step-3-check-the-configuration-and-read-the-findings) only checks whether the ECUs agree with each other on what you chose.
 
 | Decision | Recommendation |
 |---|---|
@@ -21,7 +21,7 @@ These are recommendations, not rules. The `check` command only checks whether th
 Make one executable per ECU of the real vehicle. One ECU is then also one author, one build and one unit that you can swap.
 
 - The integrator can disable ECUs one at a time, or replace one with another version (see "Run with an ECU disabled (`enabled`, `--disable`)" in [Integrate and run several ECUs](integrate-ecus.md#run-with-an-ecu-disabled-enabled---disable)).
-- If an ECU that yours talks to does not exist yet, write a small ECU yourself that stands in for it, and run them together. In the example, the dashboard ECU is also a stand-in for the receiver that the engine ECU sends to.
+- If an ECU that yours talks to does not exist yet, write a small ECU yourself that stands in for it, and run them together. The dashboard ECU of the example is such a stand-in: it plays the ECU that receives the engine speed from the engine ECU.
 
 ## What goes on the bus and what becomes a variable
 
@@ -57,14 +57,14 @@ One name is one bus. ECUs that use the same name connect to the same bus. ECUs w
 - If there are 2 buses (for example, 2 CAN buses with different bit rates), decide on 2 names. An ECU on both buses opens 2 networks in its code.
 - The name is a value in the ECU's code. The configuration file cannot change it. Decide on the names before work starts and share them with everyone (see "Step 1: Agree on names and share them" in [Integrate and run several ECUs](integrate-ecus.md#step-1-agree-on-names-and-share-them)).
 - Do not scatter the name across an ECU's sources as string literals. Define it once, as a constant, in a header that the ECUs share. A change then touches one place, and the compiler catches typos.
-- The bit rate is separate from the name. A normal run does not use it: a frame arrives in the step after the step in which it was sent. Only 2 things use the bit rate: runs that include a CAN network simulator, and bridges to real hardware (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
+- The bit rate is separate from the name. A normal run does not use it: a frame arrives in the simulation step after the one in which it was sent (a simulation step is the interval by which the simulation advances virtual time). Only 2 things use the bit rate: runs that include a CAN network simulator, and bridges to real hardware (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
 
 ## Addresses and NAMEs
 
 J1939 addresses and NAMEs are also values in the ECU's code.
 
 - For an ECU that runs as a single instance, constants are fine.
-- If an executable may run as 2 or more instances (one ECU per wheel or per axle, for example), let it take its address and NAME as arguments from the start. If you add this later, the integrator has to wait for the rebuilt ECU (see "Run two instances of the same ECU" in [Integrate and run several ECUs](integrate-ecus.md#run-two-instances-of-the-same-ecu)).
+- If an executable may run as 2 or more instances (one ECU per wheel or per axle, for example), let it take its address and NAME as arguments from the start. If you add this later, `check` reports `name-conflict` for the 2 instances, the configuration file cannot fix it, and the integrator has to wait for the rebuilt ECU (see "Run two instances of the same ECU" in [Integrate and run several ECUs](integrate-ecus.md#run-two-instances-of-the-same-ecu)).
 - In examples, tests and documentation, use a Manufacturer Code that does not look like the code of a real company.
 
 ## Variable names
@@ -75,7 +75,7 @@ J1939 addresses and NAMEs are also values in the ECU's code.
 
 ## Code shared between ECUs
 
-Share between ECUs only the rules of the bus: message numbers, how values are packed, periods and network names. In the example, [examples/ecu_main/engine_speed.hpp](../../examples/ecu_main/engine_speed.hpp) is the header that holds the message number and how the value is packed. Because the example is small, each ECU writes the network name directly.
+Share between ECUs only the rules of the bus: message numbers, how values are packed, periods and network names. In the example, [examples/ecu_main/engine_speed.hpp](../../examples/ecu_main/engine_speed.hpp) is the header that holds the message number and how the value is packed. The example is small, so each ECU writes the network name as a string. In a real project, keep the name in the shared header, as "[Network names](#network-names)" recommends.
 
 Do not share models or state. If you do, different people can no longer build the ECUs separately, each at its own version.
 

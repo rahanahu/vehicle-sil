@@ -140,7 +140,7 @@ at 500 ms: engine.throttle = 50.0, engine.speed = 1800
 
 | 行 | すること |
 |---|---|
-| `Launch(..., start_paused=True)` | `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` を子プロセスとして起動します。 |
+| `Launch(..., start_paused=True)` | `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` を子プロセスとして起動します（`--control 0` は空いているポートを選びます）。 |
 | `launch.address` | `vehicle_sil_launch` が通知した Control Server のアドレスです。 |
 | `Control(launch.address)` | Control Server に gRPC で接続し、`with` を抜けると接続を閉じます。 |
 | `c.sim.wait_paused()` | シミュレーションが一時停止するまで待ち、時間の状態を返します。 |
@@ -181,7 +181,9 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
 
 端末が 1 つのとき（スクリプトや CI）は、端末 1 のコマンドの末尾に `> launch.log 2>&1 &` を付けてバックグラウンドで起動し、`launch.log` に上の 2 行が出てから、同じ端末で端末 2 のコマンドを実行します。途中でやめるときは、CLI の `stop` か `kill <PID>`（SIGTERM）で、シミュレーションと ECU が止まります（結果は `interrupted`、終了コード 130）。
 
-端末 2 で、`export PYTHONPATH="$PWD/python"` を実行してから、次のコマンドを順に実行します。CLI は、指定しなければ `127.0.0.1:8510` に接続します。時刻 0 で一時停止したまま 50 秒が過ぎると、端末 1 のシミュレーションはエラーで終わるので、それまでに `step` まで実行します。`step` の後は、一時停止したまま待てます。
+端末 2 で、`export PYTHONPATH="$PWD/python"` を実行してから、次のコマンドを順に実行します。CLI は、指定しなければ `127.0.0.1:8510` に接続します。
+
+急ぐ必要はありません。端末 1 は、`step` か `resume` を実行するまで時刻 0 で一時停止したまま待ちます。`step` の後も、次のコマンドまで一時停止して待ちます。
 
 | すること | コマンド |
 |---|---|
@@ -219,7 +221,7 @@ seq 1794666759502163 Engine: queued
 paused at 500 ms, speed max
 ```
 
-`show Engine` の最初の 3 行です。列は、名前、値、単位、入出力と型と範囲です。続きの行は、vehicle-sil が自動で追加する変数（`peer.`、`j1939.` で始まる名前）です。
+`show Engine` の最初の 3 行です。列は、名前、値、単位、入出力と型と範囲です。続きの行は、vehicle-sil が自動で追加する変数（`peer.`、`j1939.` で始まる名前）です。最初の `step` の前に `show` を実行すると、ECU がまだステップを 1 つも実行していないので、値の列は空です。
 
 <!-- vehicle_sil_control show Engine: the first lines -->
 ```text
@@ -263,7 +265,6 @@ CLI のほかのコマンドは、次のとおりです。
 |---|---|---|
 | 端末 1 が `--control needs a vehicle_sil_launch built with the control server` と表示して、終了コード 4 で終わる | Control Server なしでビルドした `vehicle_sil_launch` です。 | `build/linux-gcc-control/` の下のものを使います。 |
 | 端末 1 が、何も起動せずに終了コード 3 で終わる | ポート 8510 を、ほかのプロセスが使っています。 | `--control 0` で起動し、表示されたアドレスを CLI の `--server` に渡します。 |
-| 端末 1 が `the simulation did not start: ... did not reach Running within 50000 ms` と表示して、終了コード 1 で終わる | 時刻 0 で一時停止したまま、50 秒が過ぎました。 | 端末 1 を起動し直し、50 秒以内に最初の `step` か `resume` を実行します。 |
 | 端末 2 に `error: UNAVAILABLE: ... Connection refused` | 端末 1 のシミュレーションが終わっているか、ポートが違います。 | 端末 1 を起動し直し、`control server at` の行のアドレスを確認します。 |
 | `step` が `FAILED_PRECONDITION` のエラーになる | 一時停止していません。 | 先に `pause --wait` を実行します。 |
 | `watch --count` が終わらない | 一時停止している間は、新しい値が送信されません。 | `resume` か `step` で進めるか、Ctrl+C で止めます。 |
@@ -276,6 +277,8 @@ CLI のほかのコマンドは、次のとおりです。
 |---|---|
 | [write_before_start.py](../../../examples/launch_control/write_before_start.py) | 最初のステップの前に書き込み、500 ms 進めて、書き込みの結果と値を確認し、最後まで実行します。 |
 | [pause_and_step.py](../../../examples/launch_control/pause_and_step.py) | 実時間の 4 分の 1 の速度で動かし、回転数が 1000 rpm に達したら一時停止し、時刻を指定して書き込み、100 ms 進めて確認します。 |
+
+最初のスクリプトと違い、この 2 つの例は、ランチャーを `--launch` で受け取ります。
 
 ```sh
 uv run python examples/launch_control/write_before_start.py \
@@ -381,7 +384,7 @@ stands = c.sim.wait_paused()
 - どちらの場合も、`c.wait(seq, until="queued")` で ECU が受信したのを待ってから、時間を進めます。
 - 動いている途中で、`at` を指定しないか、一時停止している時刻を指定すると、結果が `late` になるか、反映されるステップが実行ごとに変わることがあります。
 - 範囲の外の値と、出力の変数への書き込みは、例外にならず、結果が `invalid` になります。
-- Parameter に書き込めるのは、最初のステップの前だけです。
+- Parameter（`show` が `input` ではなく `parameter` と表示する変数）に書き込めるのは、最初のステップの前だけです。
 - 同じ変数に、複数のクライアントが同じ時刻を指定して書き込むと、残る値は Server が受信した順で決まります。
 
 ECU をバスから切断するのも、変数への書き込みです。どの ECU にもある `ecu.connected` に `False` を書き込みます。J1939 でどう見えるかは、[j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」にあります。

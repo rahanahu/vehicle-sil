@@ -28,7 +28,7 @@ cd build/linux-gcc-control/examples/ecu_main
 |---|---|
 | ほかのプリセットでビルドした | 上の 2 行の `linux-gcc-control` を、そのプリセットの名前にします。シナリオは Control API のないビルドでも動きます。 |
 | Windows | MSYS2 UCRT64 のシェルで、同じコマンドを実行します。ビルドの手順は [build.md](../build.md) にあります。 |
-| テンプレートのプロジェクト | `simulation.yaml` のあるディレクトリで実行します。`PATH` には、`get_tools.py` が表示した行で追加します。`scenarios/` にあるのは `throttle_step.yaml` だけなので、`engine_disconnect.yaml` はこの文書のブロックから作ります。 |
+| テンプレートのプロジェクト | `simulation.yaml` のあるディレクトリで実行します。ツールの `bin` を、[最初の ECU を作る](first-ecu.md#手順-1-テンプレートをビルドして動かす) の手順 1 のとおりに `PATH` に追加します。`scenarios/` にあるのは `throttle_step.yaml` だけなので、`engine_disconnect.yaml` はこの文書のブロックから作ります。 |
 
 ## 全体の流れ
 
@@ -98,7 +98,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### シナリオの内容
 
-`scenarios/throttle_step.yaml` の、コメントを除いた内容です。スロットルを 50 % にして、回転数が上がるのを待ち、表示の ECU がそれを受信したことを確認してから、スロットルを戻します。
+`scenarios/throttle_step.yaml` の、コメントを除いた内容です。スロットルを 50 % にして、回転数が上がるのを待ち、表示の ECU がそれを受信したことを確認してから、スロットルを戻します。`expect` の `within_ms: 200` は 200 ms 以内に条件が 1 度でも成り立つこと、`hold_for_ms: 100` は 100 ms の間ずっと成り立つことを求めます（詳しくは手順 3）。
 
 <!-- examples/ecu_main/scenarios/throttle_step.yaml -->
 ```yaml
@@ -119,7 +119,7 @@ steps:
     within_ms: 100
 ```
 
-手順は上から順に進みます。1 つの手順には、すること（`set`、`wait_until`、`expect`、`ramp`、`wave` のどれか）を 1 つと、時刻を書きます。`within_ms` と `hold_for_ms` は、手順 3 で説明します。
+手順は上から順に進みます。1 つの手順には、すること（`set`、`wait_until`、`expect`、`ramp`、`wave` のどれか）を 1 つと、時刻を書きます。
 
 | 時刻の書き方 | 意味 |
 |---|---|
@@ -209,7 +209,7 @@ steps:
 
 条件には、値そのもの（等しい）か、`ge`、`le`、`gt`、`lt`、`eq`、`ne`、`near` と `tolerance` を書きます。キーと条件の全部は、[scenario.md](../scenario.md) の「ファイルの形式」にあります。
 
-`wait_until` と、`within_ms` を付けた `expect` は、どちらも条件が成り立つまで待ちます。テストの前提がそろうのを待つときは `wait_until` を、テストしたい応答には `expect` を使います。失敗したときの指摘のコードが `scenario-timeout` と `scenario-failed` に分かれるので、どちらで失敗したかが結果からわかります。
+`wait_until` と、`within_ms` を付けた `expect` は、どちらも条件が成り立つまで待ちます。テストの前提がそろうのを待つときは `wait_until` を、テストしたい応答には `expect` を使います。失敗したときの指摘のコードが `scenario-timeout` と `scenario-failed` に分かれるので、どちらで失敗したかが結果からわかります。待つ時間は、設定ファイルの `stop_at_ms`（`simulation.yaml` では 1000 ms）までにシナリオが終わる長さにします。終わらないと、`scenario-out-of-time` で失敗します。
 
 実行する前に、`check --scenario` で照合します。変数の名前、型、値の範囲、時刻の順序のエラーが、シミュレーションを起動せずにわかります。
 
@@ -326,6 +326,7 @@ failed: 1 error, 0 warnings, 0 notes
 |---|---|
 | `my_tests/response_time.yaml:5:` | 失敗した手順は、ファイルの 5 行目です。 |
 | `not true at any time within 200 ms (from 0 ms to 200 ms)` | 0 ms から 200 ms までの間に、条件が 1 度も成り立ちませんでした。 |
+| `at the end Engine.engine.speed ge 1700` | その時間の終わり（200 ms）にも成り立っていなかった条件です。 |
 | `but it was 1050 (its sample of 200 ms)` | 200 ms の時点のサンプル（ECU が一定の間隔、既定では 10 ms ごとに送信する変数の値）では、回転数は 1050 rpm でした。 |
 | `[scenario-failed]` | 指摘のコードです。`expect` の条件が成り立たなかったことを表します。 |
 
@@ -408,7 +409,7 @@ line  step                                                                      
 9     wave Engine.engine.throttle sine amplitude 10 period 100 ms for 200 ms, expecting Engine.engine.speed le 2600  ok      760 ms
 ```
 
-`ramp` と `wave` は、動かし終わるまで次の手順に進みません。動かした後の結果を確認するときは、次の手順に `expect` を書きます。その例が、手順 1 の `throttle_step.yaml` の最後の 2 つの手順と、`scenarios/throttle_wave.yaml` です。
+`ramp` と `wave` は、動かし終わるまで次の手順に進みません。動かした後の結果を確認するときは、次の手順に `expect` を書きます。その例が、手順 1 の `throttle_step.yaml` の最後の 2 つの手順と、リポジトリの `scenarios/throttle_wave.yaml`（テンプレートにはありません）です。
 
 ### うまくいかないとき
 
@@ -556,7 +557,7 @@ passed: 8 runs, 7 passed, 0 failed, 1 skipped
 |---|---|
 | 行の順 | 機種は設定ファイルに書いた順で、シナリオはファイルの名前の順です。 |
 | `skipped` | シナリオの `only` にその機種がないので、実行していません。失敗にはなりません。 |
-| `1 warning` | 設定ファイルへの警告です。`engine_only` では、`J1939_CAN` に参加する ECU が Engine だけになるためです。 |
+| `1 warning` | 設定ファイルへの警告です。`engine_only` では、`J1939_CAN` に参加する ECU が Engine だけになるためです（`single-participant`）。 |
 
 失敗する組があると、終了コードは 1 になります。パラメーターの `speed` を、達しない値に替えて確認します。
 
@@ -581,7 +582,7 @@ to see a failed run in full, run it alone: vehicle_sil_launch run simulation.var
 FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 ```
 
-失敗した組があっても、残りの組は実行されます。`to see a failed run in full` の行のコマンドで、失敗した 1 組だけを実行し直せます。
+失敗した組があっても、残りの組は実行されます。`to see a failed run in full` の行のコマンドで、失敗した 1 組だけを、`test` と同じ条件（`--speed max`: 最速）で実行し直せます。
 
 | したいこと | 書き方 |
 |---|---|

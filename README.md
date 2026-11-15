@@ -54,14 +54,14 @@ participants:
     step_ms: 5
 ```
 
-Build as described in "[Quick start](#quick-start)", then run the commands below in `build/linux-gcc-control/examples/ecu_main`, where the build puts the configuration file and the ECUs. The `run` output shown is an excerpt: it leaves out the lines about starting the registry and the ECUs, and the lines that the ECUs print (`[Dashboard] t=…`).
+These commands need a build. First build as described in "[Quick start](#quick-start)", then run the commands below in `build/linux-gcc-control/examples/ecu_main`, where the build puts the configuration file and the ECUs. The `run` output shown is an excerpt: it leaves out the lines about starting the registry and the ECUs, and the lines that the ECUs print (`[Dashboard] t=…`).
 
 | Command | What it does | What it starts |
 |---|---|---|
 | `vehicle_sil_launch check simulation.yaml` | Has each ECU print its own configuration and checks the configuration file against it. | Each ECU with `--describe` only. No simulation runs. |
 | `vehicle_sil_launch run simulation.yaml` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | Sets and checks values as the steps of the scenario say. | The same processes. The exit code is 0 if every step passes. |
-| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. |
+| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you. |
 
 The `check` output:
 
@@ -105,7 +105,7 @@ sed 's/name: J1939_CAN/name: Vehicle_CAN/' simulation.yaml > mistake.yaml
 vehicle_sil_launch check mistake.yaml
 ```
 
-The check reports 3 findings and exits with code 1. Here is one of the findings, followed by the last line. The line number counts the full file, comments included.
+The check reports 3 findings and exits with code 1. Below are one of the 3 findings and the last line; the other 2 findings are left out. The line number counts the full file, comments included.
 
 ```text
 error: mistake.yaml:11: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), which is not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its code [unknown-network]
@@ -150,10 +150,11 @@ vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 
 # browser GUI: go back to the repository root, build the web front end and start the GUI
+# (if something is missing, run-gui.py prints the command that builds it)
 cd ../../../..
 npm --prefix gui/web ci
 npm --prefix gui/web run build
-scripts/run-gui.py                   # if something is missing, prints the command that builds it
+scripts/run-gui.py                   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
 The `scripts/run-gui.py` script starts the GUI server with `examples/ecu_main/simulation.live.yaml` from the build and opens a browser. To start it without a browser, add `--no-browser`; the terminal prints the URL. To stop the GUI, press Ctrl+C in that terminal, or run `kill <PID>` (SIGTERM) from another terminal. Either way, a running simulation stops too.

@@ -67,7 +67,7 @@ If `vehicle_sil_launch version` prints the version, the tools are in `PATH`. The
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Prints `may not be published yet` and stops | The version of this README is not released yet. | Clone and build the vehicle-sil repository ("Build from the repository" in the vehicle-sil README) and use the `vehicle_sil_launch` of that build. |
+| Prints `may not be published yet` and stops | The version of this README is not released yet. | If you have the tools archive of that version as a file (for example from a colleague), run `python3 get_tools.py --archive <file>`. Otherwise clone and build the vehicle-sil repository ("Build from the repository" in the vehicle-sil README) and use the `vehicle_sil_launch` of that build. |
 | The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. It still checks the SHA-256. |
 | Prints `this copy of the template has no SHA-256` and stops | You copied `template/` from the repository, so it has no SHA-256. | Pass the value from `SHA256SUMS` on the releases page with `--sha256`. |
 

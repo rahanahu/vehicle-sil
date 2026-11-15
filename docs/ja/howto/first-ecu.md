@@ -37,6 +37,8 @@
 
 [リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)からテンプレートのアーカイブ（`vehicle-sil-template-<version>.zip`）をダウンロードして展開します。zip の中の `vehicle-sil-template-<version>` のディレクトリを、自分のプロジェクトの名前に変えます。そのディレクトリで次のコマンドを実行します。これ以降のコマンドも、すべて同じディレクトリ（`simulation.yaml` のある所）で実行します。
 
+`get_tools.py` がツールを置けずに止まったとき（`may not be published yet` と表示する、ダウンロードが失敗する）は、「[うまくいかないとき](#うまくいかないとき)」に進みます。手元にあるツールのアーカイブを `--archive` で渡すか、リポジトリでビルドしたものを使います。
+
 ```sh
 python3 get_tools.py             # ビルド済みのツールを tools/ にダウンロードし、最後に export PATH=... の行を表示する
 export PATH="$PWD/tools/vehicle-sil-tools-<version>-linux-x86_64/bin:$PATH"   # 表示された行。シェルを開くたびに実行する
@@ -133,7 +135,7 @@ participants:
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
+| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | そのバージョンのツールのアーカイブがファイルで手元にあれば（同僚からもらったものなど）、`python3 get_tools.py --archive <ファイル>` を実行します。なければ、README の「[リポジトリからビルドする](../../../README.ja.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
 | ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-<version>-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された `export` の行を実行します。 |
 | `check` が、末尾に `[executable]` の付いたエラーを表示する | ECU の実行ファイルが `bin/` にありません。 | `cmake --build --preset linux` を実行します。 |
@@ -198,7 +200,7 @@ ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。コン�
 
 - 変数の名前は、`ecu.` と `peer.` で始められません。vehicle-sil が自動で追加する変数の名前に使うためです。
 - 変数の読み書きと `every()` の処理は、同じスレッドで実行されます。モデルにロックは必要ありません。
-- `ecu_main()` は、`main()` の最後で呼びます。`--describe` のときに標準出力を標準エラーに切り替え、戻った後も元に戻さないためです。
+- `ecu_main()` は、上のように `main()` の最後で呼び、その戻り値を返します。`--describe` のときは、`ecu_main()` が戻った後も、プロセスが終わるまで、プログラムが標準出力に書いたものはすべて標準エラーに出ます。標準出力に出るのは JSON だけです。
 - この ECU のように、ネットワークを宣言せず、変数だけを持つ ECU も作れます。
 
 変数に使える型と宣言の種類は、[control-api.md](../control-api.md) の「ECU の変数」にあります。書いたコードは、次の手順のビルドで確認します。
@@ -248,7 +250,7 @@ bin/cooler_ecu --local --run-for-ms 1000; echo "exit code $?"
 
 ### 確認
 
-`--describe` は、何も実行せず、どこにも接続せずに、ECU の構成を JSON で標準出力に表示します。次は、その出力から、この手順で見るキーだけを抜き出したものです（変数は 1 行にまとめています）。
+`--describe` は、何も実行せず、どこにも接続せずに、ECU の構成を JSON で標準出力に表示します。次は、その出力から、この手順で見るキーだけを抜き出したものです（ほかのキーは省き、変数は 1 行にまとめています）。
 
 <!-- cooler_ecu --describe: an excerpt -->
 ```json
@@ -333,7 +335,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### うまくいかないとき
 
-設定ファイルと ECU の不整合は、`error:`、`warning:`、`note:` で始まる行で報告されます。1 行に、ファイルの行番号、不整合の内容、直し方、指摘のコードが入っています。`step_ms` を `10` と書き間違えたときの出力は、次のとおりです。
+設定ファイルと ECU の不整合は、`error:`、`warning:`、`note:` で始まる行で報告されます。1 行に、ファイルの行番号、不整合の内容、直し方、指摘のコードが入っています。`step_ms` を `10` と書き間違えたときの出力は、次のとおりです（行番号は、ファイルによって変わります）。
 
 <!-- first ECU: vehicle_sil_launch check simulation.yaml with step_ms: 10, the end -->
 ```text
@@ -395,7 +397,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 `Cooler` の目標の温度を書き込み、500 ms 進めてから、水温を読み出します。ECU のコードに追加するものはありません。`ecu_main()` で作った ECU の変数は、そのまま外から読み書きできます。
 
-`read_cooler.py` に次の内容を書きます。これがファイルの全文です。
+プロジェクトのディレクトリ（`simulation.yaml` のある所）の `read_cooler.py` に、次の内容を書きます。これがファイルの全文です。
 
 <!-- examples/first_ecu/read_cooler.py -->
 ```python
@@ -419,6 +421,7 @@ Python のクライアント（`vehicle_sil_control`）は、ビルド済みの�
 
 ```sh
 T=tools/vehicle-sil-tools-<version>-linux-x86_64
+export PATH="$PWD/$T/bin:$PATH"   # 手順 1 と同じ。スクリプトが vehicle_sil_launch を起動する
 PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
     --with-requirements $T/python/requirements.txt python read_cooler.py
 ```

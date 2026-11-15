@@ -29,13 +29,15 @@ The commands are for Linux. The table in step 1 lists the commands that differ o
 | 6 | Run the simulation | A table that shows all 3 ECUs ended with exit code 0 |
 | 7 | Read and write variables from Python | The target temperature you wrote and the coolant temperature you read |
 
-Do steps 1–7 in order. "Step 1" to "Step 7" are the parts of this guide; anywhere else, a "step" is a simulation step, the unit by which the simulation advances virtual time. Read "Add J1939 communication" and "Run the ECU from a debugger" when you need them.
+Do steps 1–7 in order. In the text, a "simulation step" is something else: the unit by which the simulation advances virtual time. Read "Add J1939 communication" and "Run the ECU from a debugger" when you need them.
 
 ## Step 1: Build and run the template
 
 First run the 2 ECUs that come with the template (engine and dashboard) as they are. This confirms that everything you need to build and run is in place.
 
 Download the template archive (`vehicle-sil-template-<version>.zip`) from the [releases page](https://github.com/rahanahu/vehicle-sil/releases) and extract it. Rename the directory `vehicle-sil-template-<version>` from the zip to the name of your project. Run the commands below in that directory, and every later command too: it is the directory that contains `simulation.yaml`.
+
+If `get_tools.py` stops without the tools (it prints `may not be published yet`, or the download fails), go to "[Troubleshoot the template run](#troubleshoot-the-template-run)": you can pass a tools archive that you already have with `--archive`, or use a build of the repository.
 
 ```sh
 python3 get_tools.py             # downloads the prebuilt tools to tools/, then prints an export PATH=... line
@@ -133,7 +135,7 @@ participants:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `get_tools.py` prints `may not be published yet` and stops | That version is not released yet. | Use a `vehicle_sil_launch` that you built as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| `get_tools.py` prints `may not be published yet` and stops | That version is not released yet. | If you have the tools archive of that version as a file (for example from a colleague), run `python3 get_tools.py --archive <file>`. Otherwise use a `vehicle_sil_launch` that you built as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
 | The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-<version>-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. The SHA-256 check is the same as for a download. |
 | `vehicle_sil_launch` is not found | You are in a new shell and have not added the tools to `PATH`. | Run `python3 get_tools.py` again, then run the `export` line it prints. |
 | `check` prints an error that ends in `[executable]` | The ECU executables are not in `bin/`. | Run `cmake --build --preset linux`. |
@@ -192,13 +194,13 @@ An ECU is an ordinary class that takes a `vehicle_sil::Ecu&`. Its constructor de
 | `ecu.every(100ms, ...)` | Registers work that runs every 100 ms of virtual time. |
 | `ecu_main<Cooler>(argc, argv, {...})` | Turns the class into an executable that takes the same arguments as every other ECU (`--describe`, `--local` and others). |
 | `.name = "Cooler"` | The name of the ECU. It becomes `name` in the `--describe` output. |
-| `.step = 100ms` | The step size: the virtual time that the ECU advances in one step. |
+| `.step = 100ms` | The step size: the virtual time that the ECU advances in one simulation step. |
 
 Follow these rules:
 
 - Variable names cannot start with `ecu.` or `peer.`. These prefixes are reserved for the variables that vehicle-sil adds automatically.
 - Reads and writes of variables and the work in `every()` run on the same thread. The model needs no locks.
-- Call `ecu_main()` at the end of `main()`. With `--describe`, it redirects stdout to stderr and does not restore stdout when it returns.
+- Call `ecu_main()` at the end of `main()` and return its result, as above. With `--describe`, everything the program writes to stdout goes to stderr until the process ends, even after `ecu_main()` returns; only the JSON goes to stdout.
 - An ECU can have variables and no network, like this one.
 
 For the variable types and the kinds of declaration, see "ECU variables" in [control-api.md](../control-api.md#ecu-variables). You verify the code by building it in the next step.
@@ -248,7 +250,7 @@ bin/cooler_ecu --local --run-for-ms 1000; echo "exit code $?"
 
 ### Verify the standalone ECU
 
-With `--describe`, the ECU prints its configuration as JSON to stdout. It runs nothing and connects to nothing. Here are the keys this step looks at, taken from that output (each variable on one line):
+With `--describe`, the ECU prints its configuration as JSON to stdout. It runs nothing and connects to nothing. Here are the keys this step looks at, taken from that output (other keys are left out, and each variable is put on one line):
 
 <!-- cooler_ecu --describe: an excerpt -->
 ```json
@@ -333,7 +335,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### Troubleshoot the check
 
-The check reports each mismatch between the configuration file and an ECU on a line that starts with `error:`, `warning:` or `note:`. Each line gives the line number in the file, the mismatch, how to fix it and the finding code. With `step_ms` mistyped as `10`, the output ends like this:
+The check reports each mismatch between the configuration file and an ECU on a line that starts with `error:`, `warning:` or `note:`. Each line gives the line number in the file, the mismatch, how to fix it and the finding code. With `step_ms` mistyped as `10`, the output ends like this (the line number depends on your file):
 
 <!-- first ECU: vehicle_sil_launch check simulation.yaml with step_ms: 10, the end -->
 ```text
@@ -395,7 +397,7 @@ To interrupt the run, press Ctrl+C. For the output format and the exit codes, se
 
 Write the target temperature of `Cooler`, advance the simulation by 500 ms, then read the coolant temperature. The ECU code needs no changes: you can read and write the variables of any ECU built with `ecu_main()` from outside the simulation.
 
-Write the following into `read_cooler.py`. This is the complete file.
+Write the following into `read_cooler.py` in the project directory (next to `simulation.yaml`). This is the complete file.
 
 <!-- examples/first_ecu/read_cooler.py -->
 ```python
@@ -419,6 +421,7 @@ The Python client (`vehicle_sil_control`) is in the `python/` directory of the p
 
 ```sh
 T=tools/vehicle-sil-tools-<version>-linux-x86_64
+export PATH="$PWD/$T/bin:$PATH"   # as in step 1: the script starts vehicle_sil_launch
 PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
     --with-requirements $T/python/requirements.txt python read_cooler.py
 ```
@@ -446,11 +449,11 @@ What each line of the script does:
 
 | Line | What it does |
 |---|---|
-| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run` as a child process and holds every ECU before its first step. |
+| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run` as a child process and holds every ECU before its first simulation step. |
 | `Control(launch.address)` | Connects over gRPC to the Control Server of the `vehicle_sil_launch` it started. |
 | `c.sim.wait_paused()` | Waits until the simulation is paused. |
 | `c.write({"Cooler": {"cooler.target": 22.0}})` | Writes a value. It names the participant as in the configuration file and the variable as in the `--describe` output. |
-| `c.wait(seq, until="queued")` | Waits until the ECU has received the write. The write is applied in the step at 0 ms. |
+| `c.wait(seq, until="queued")` | Waits until the ECU has received the write. The write is applied in the simulation step at 0 ms. |
 | `c.sim.step(ms(500))` | Advances virtual time by 500 ms, then pauses again. |
 | `c.values("Cooler").values` | Returns the values that the ECU sent last, as a dict keyed by variable name. |
 
@@ -462,7 +465,7 @@ Leaving the `with` block stops the simulation, and the script ends.
 |---|---|---|
 | `ModuleNotFoundError: No module named 'vehicle_sil_control'` | `PYTHONPATH` is not set. | Put `PYTHONPATH=$T/python` at the start of the command. |
 | `FileNotFoundError: ... 'vehicle_sil_launch'` | `vehicle_sil_launch` is not in `PATH`. | Run the `export` line from step 1. |
-| `AttributeError: 'NoneType' object has no attribute 'values'` | Until the simulation has advanced at least one step, there are no values, and `c.values()` returns `None`. | Advance with `c.sim.step()` before you read. |
+| `AttributeError: 'NoneType' object has no attribute 'values'` | Until the simulation has advanced at least one simulation step, there are no values, and `c.values()` returns `None`. | Advance with `c.sim.step()` before you read. |
 | A written value is not applied | Writing a value out of range (`cooler.target` takes 0–120) or writing to an `output()` variable raises no exception; the result of the write is `invalid`. | Look at the result with `c.wait(seq).target("Cooler").status`. |
 | The dict has names you did not declare, such as `peer.steps` | These are monitoring variables that vehicle-sil adds automatically. | Your own variables are the ones with `builtin` set to `false` in the `--describe` output. |
 

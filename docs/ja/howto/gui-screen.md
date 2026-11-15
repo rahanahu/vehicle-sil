@@ -13,10 +13,11 @@
 | ブラウザか `curl` | ブラウザは、GUI サーバーと同じ PC のものを使います。 |
 | Node.js | 22 以上。ブラウザを使わずに、手順 4 で値を確認するときだけ使います。 |
 
-コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを、次の変数に設定しておきます。
+コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを次の変数に設定し、その `bin` を `PATH` に入れておきます（新しいシェルでは、もう一度実行します）。
 
 ```sh
-TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version> は vehicle_sil_launch version が表示するもの
+TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version> は tools/ の下のディレクトリの名前のもの
+export PATH="$PWD/$TOOLS/bin:$PATH"                    # vehicle-sil-gui と vehicle_sil_launch
 ```
 
 リポジトリをビルドして使う場合は、次のように読み替えます。
@@ -43,7 +44,7 @@ TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version> は vehicle_s
 
 ```sh
 cp -r "$TOOLS/gui_starter" my-screen
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く（開かないときは --no-browser で URL だけ表示）。Ctrl+C で止まる
 ```
 
 `my-screen/` には、次のファイルができます。
@@ -55,6 +56,7 @@ vehicle-sil-gui --web my-screen simulation.live.yaml
 | `style.css` | 見た目です。 |
 | `vehicle-sil-gui-client.mjs` | クライアントのライブラリを 1 つにまとめたファイルです。 |
 | `README.md` | テンプレートの説明です（配信されません）。 |
+| `README.ja.md` | 同じ説明の日本語版です（配信されません）。 |
 
 ### 確認
 
@@ -126,7 +128,7 @@ Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more 
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `vehicle_sil_launch` が見つからない | ツールの `bin` が `PATH` にありません。 | `get_tools.py` が表示した `export PATH=...` の行を実行します。 |
+| `vehicle_sil_launch` か `vehicle-sil-gui` が見つからない | ツールの `bin` が `PATH` にありません（新しいシェルでは、もう一度入れる必要があります）。 | 「[前提](#前提)」の `TOOLS=...` と `export PATH=...` の行を実行します。 |
 
 ## 手順 3: 変数を 1 つ表示する画面に書き換える
 
@@ -214,7 +216,7 @@ client.connect();
 ## 手順 4: 配信して確認する
 
 ```sh
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # ブラウザを開く（開かないときは --no-browser で URL だけ表示）。Ctrl+C で止まる
 ```
 
 ### 確認
@@ -256,7 +258,7 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 {"session": {"id": 1, "file": "simulation.live.yaml", "disab
 ```
 
-値は WebSocket で届くので、`curl` では読めません。Node.js（22 以上）があれば、画面と同じライブラリで読めます。次の内容を `read-value.mjs` として保存し、実行します。
+値は WebSocket で届くので、`curl` では読めません。Node.js（22 以上）があれば、画面と同じライブラリで読めます。次の内容を、プロジェクトのディレクトリ（`my-screen/` のある所）に `read-value.mjs` として保存し、そこで実行します。
 
 ```js
 // 自分の画面と同じライブラリで、変数の値を 1 回読み取って表示する（Node 22 以上）。

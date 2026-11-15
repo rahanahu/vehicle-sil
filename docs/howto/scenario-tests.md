@@ -28,7 +28,7 @@ Some things differ in other environments:
 |---|---|
 | You built another preset | Replace `linux-gcc-control` in the 2 lines above with the name of that preset. Scenarios also work in a build without the Control API. |
 | Windows | Run the same commands in the MSYS2 UCRT64 shell. For how to build, see [build.md](../build.md). |
-| Template project | Run the commands in the directory that contains `simulation.yaml`. Add the tools to `PATH` with the line that `get_tools.py` printed. `scenarios/` contains only `throttle_step.yaml`, so create `engine_disconnect.yaml` from the block in this guide. |
+| Template project | Run the commands in the directory that contains `simulation.yaml`. Add the tools' `bin` directory to `PATH` as in step 1 of [Create your first ECU](first-ecu.md#step-1-build-and-run-the-template). `scenarios/` contains only `throttle_step.yaml`, so create `engine_disconnect.yaml` from the block in this guide. |
 
 ## Overview
 
@@ -98,7 +98,7 @@ Stderr shows the output of the ECUs, and a line each time the result of a step i
 
 ### What the scenario contains
 
-Here is `scenarios/throttle_step.yaml` without its comments. It sets the throttle to 50 %, waits for the engine speed to rise, checks that the dashboard ECU has received it, then brings the throttle back.
+Here is `scenarios/throttle_step.yaml` without its comments. It sets the throttle to 50 %, waits for the engine speed to rise, checks that the dashboard ECU has received it, then brings the throttle back. On an `expect`, `within_ms: 200` means that the condition must hold at least once within 200 ms, and `hold_for_ms: 100` that it must hold for the whole 100 ms (step 3 has the details).
 
 <!-- examples/ecu_main/scenarios/throttle_step.yaml -->
 ```yaml
@@ -119,7 +119,7 @@ steps:
     within_ms: 100
 ```
 
-The steps run from top to bottom. Each step has one action (`set`, `wait_until`, `expect`, `ramp` or `wave`) and a time. Step 3 explains `within_ms` and `hold_for_ms`.
+The steps run from top to bottom. Each step has one action (`set`, `wait_until`, `expect`, `ramp` or `wave`) and a time.
 
 | How to give the time | Meaning |
 |---|---|
@@ -209,7 +209,7 @@ steps:
 
 A condition is either a plain value (the variable must equal it) or one of `ge`, `le`, `gt`, `lt`, `eq`, `ne`, and `near` with `tolerance`. For all keys and conditions, see "File format" in [scenario.md](../scenario.md#file-format).
 
-`wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed.
+`wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed. Keep the waits short enough for the scenario to end before `stop_at_ms` of the configuration file (1000 ms in `simulation.yaml`); otherwise the run fails with `scenario-out-of-time`.
 
 Before you run the scenario, check it with `check --scenario`. It finds errors in variable names, types, value ranges and the order of times without starting the simulation.
 
@@ -326,6 +326,7 @@ The `error:` line tells you everything about the failure.
 |---|---|
 | `my_tests/response_time.yaml:5:` | The failed step is on line 5 of the file. |
 | `not true at any time within 200 ms (from 0 ms to 200 ms)` | The condition did not hold even once between 0 ms and 200 ms. |
+| `at the end Engine.engine.speed ge 1700` | The condition that still did not hold at the end of that time (200 ms). |
 | `but it was 1050 (its sample of 200 ms)` | In the sample at 200 ms, the engine speed was 1050 rpm. A sample is the value of a variable that the ECU sends at a fixed interval, every 10 ms by default. |
 | `[scenario-failed]` | The finding code. It means that the condition of an `expect` did not hold. |
 
@@ -408,7 +409,7 @@ line  step                                                                      
 9     wave Engine.engine.throttle sine amplitude 10 period 100 ms for 200 ms, expecting Engine.engine.speed le 2600  ok      760 ms
 ```
 
-`ramp` and `wave` do not move on to the next step until the movement ends. To check the result after the movement, put an `expect` in the next step. The last 2 steps of `throttle_step.yaml` in Step 1 do this, and so does `scenarios/throttle_wave.yaml`.
+`ramp` and `wave` do not move on to the next step until the movement ends. To check the result after the movement, put an `expect` in the next step. The last 2 steps of `throttle_step.yaml` in Step 1 do this, and so does `scenarios/throttle_wave.yaml` of the repository (the template does not have it).
 
 ### Troubleshoot ramps and waves
 
@@ -556,7 +557,7 @@ passed: 8 runs, 7 passed, 0 failed, 1 skipped
 |---|---|
 | Row order | Variants in the order of the configuration file, scenarios in the order of their file names. |
 | `skipped` | The variant is not in the scenario's `only`, so the scenario did not run. This does not count as a failure. |
-| `1 warning` | A warning about the configuration file: in `engine_only`, Engine is the only ECU on `J1939_CAN`. |
+| `1 warning` | A warning about the configuration file: in `engine_only`, Engine is the only ECU on `J1939_CAN` (`single-participant`). |
 
 If any run fails, the exit code is 1. Try it by changing the parameter `speed` to a value that the engine never reaches:
 
@@ -581,7 +582,7 @@ to see a failed run in full, run it alone: vehicle_sil_launch run simulation.var
 FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 ```
 
-When a run fails, the remaining runs still run. The command on the `to see a failed run in full` line reruns only the failed run.
+When a run fails, the remaining runs still run. The command on the `to see a failed run in full` line reruns only the failed run, as `test` ran it (`--speed max`: as fast as possible).
 
 | Goal | How |
 |---|---|

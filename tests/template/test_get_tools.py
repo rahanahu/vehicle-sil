@@ -110,6 +110,27 @@ def test_broken(tmp: Path) -> None:
           f"an archive that cannot be read: exit code 1, no traceback ({p.returncode}: {p.stderr})")
 
 
+def test_not_published() -> None:
+    """A download that answers 404 (the version is not on the releases page) names --archive."""
+    spec = importlib.util.spec_from_file_location("get_tools", GET_TOOLS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def not_found(url, timeout=None):
+        raise module.urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    module.urllib.request.urlopen, saved = not_found, module.urllib.request.urlopen
+    try:
+        module.download(module.URL.format(version=VERSION, name=f"{LINUX}.tar.gz"), Path(f"{LINUX}.tar.gz"))
+        said = ""
+    except module.Failure as e:
+        said = str(e)
+    finally:
+        module.urllib.request.urlopen = saved
+    check("HTTP 404" in said and f"have the file {LINUX}.tar.gz" in said and "--archive FILE" in said
+          and "from its sources" in said, f"a 404: says to pass the file with --archive or to build from source ({said})")
+
+
 def test_unsafe(tmp: Path) -> None:
     outside = tmp / "evil"
     for what, extra in [
@@ -323,6 +344,7 @@ def main() -> int:
             d = Path(tmp) / test.__name__
             d.mkdir()
             test(d)
+    test_not_published()
     test_version()
     test_changelog()
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failures")

@@ -49,7 +49,7 @@ With the template and the prebuilt tools, the locations differ as shown below. T
 | 4 | Ask the ECU authors to fix the mismatches that the configuration file cannot fix | Rebuilt executables and a `check` with no findings |
 | 5 | Run the simulation with `run` and verify that the ECUs communicate | Exit code 0 and the received values |
 
-Do steps 1–5 in order. "Step 1" to "Step 5" are the parts of this guide; anywhere else, a "step" is a simulation step, unless the text says "scenario step". Read the remaining sections when you need them.
+Do steps 1–5 in order. Read the remaining sections when you need them.
 
 | Goal | Use | Section |
 |---|---|---|
@@ -94,7 +94,7 @@ The participant name (the ECU's name in the simulation) appears only in the conf
 
 ## Step 2: Write the configuration file
 
-Put the executables you received under one directory and write `simulation.yaml` there. The example `simulation.yaml`:
+Put the executables you received under one directory and write `simulation.yaml` there. In the repository's example, the build has already put the ECUs and this `simulation.yaml` in the working directory, so read it instead of writing it. The example `simulation.yaml`:
 
 <!-- examples/integrate_ecus/simulation.yaml -->
 ```yaml
@@ -210,14 +210,16 @@ A finding has one of 3 severities:
 | `warning` | Still passes (fails with `--strict`) | Runs |
 | `note` | Still passes | Runs |
 
-The `error` line in the example reports that `VehicleCAN`, which the dashboard ECU uses, is not in `networks`. It gives 2 ways to fix this:
+The `error` line in the example reports that `VehicleCAN`, which the dashboard ECU uses, is not in `networks`. In this example, the configuration file cannot fix it. The dashboard ECU has to receive the engine speed, so both ECUs must be on the same bus, and only the ECU code can change the name that an ECU uses. Go to step 4.
+
+The `error` line names 2 fixes, because it cannot know which bus `VehicleCAN` is meant to be:
 
 | If `VehicleCAN` is meant to be | Fix | Where to fix |
 |---|---|---|
 | The same bus as `J1939_CAN` | Make the 2 ECUs use the same name. | The ECU code (the configuration file cannot do this) |
 | A separate bus | Add `VehicleCAN` to `networks`. | The configuration file |
 
-Adding it to `networks` makes `check` pass, but the 2 ECUs end up on separate buses and do not communicate (see "[If you add the name to `networks`](#if-you-add-the-name-to-networks)" below). In the example, the dashboard ECU receives the engine speed, so both names are meant to be the same bus. The fix belongs in the ECU code: go to step 4.
+The second fix makes `check` pass, but the 2 ECUs end up on separate buses and do not communicate (see "[If you add the name to `networks`](#if-you-add-the-name-to-networks)" below).
 
 ### If you add the name to `networks`
 
@@ -426,7 +428,7 @@ steps:
 vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml
 ```
 
-Both scenario steps are `ok`, and the run ends with exit code 0.
+Both scenario steps are `ok`, and the run ends with exit code 0. Here is the scenario's result, taken from the middle of the output:
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml, the result of the scenario -->
 ```text
@@ -437,7 +439,7 @@ line  step                                                             result  a
 8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      410 ms
 ```
 
-With `simulation.two-buses.yaml`, the same scenario fails at the `expect` step and the run ends with exit code 1.
+With `simulation.two-buses.yaml`, the same scenario fails at the `expect` step and the run ends with exit code 1. Here is the same part of its output:
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml --scenario scenarios/engine_speed.yaml
@@ -472,7 +474,7 @@ You can read variable values during a run in the browser GUI ([gui.md](../gui.md
 |---|---|---|
 | `nothing was started: the check found errors` | The check found an `error`. | Go back to step 3 and fix the `error`. |
 | Exit code 0, but the received value stays at 0 | The ECUs are on separate buses. | Read the network table and the warnings of `check` (step 3). |
-| The run never ends | An ECU is stuck in the middle of a step, so virtual time does not advance. | Stop the run with Ctrl+C. In CI, set a wall-clock time limit with `--timeout-ms`. |
+| The run never ends | An ECU is stuck in the middle of a simulation step, so virtual time does not advance. | Stop the run with Ctrl+C. In CI, set a wall-clock time limit with `--timeout-ms`. |
 | Findings such as `[participant-failed]`, `[not-joined]` or `[did-not-end]` | During the run, an ECU failed, did not join or did not end. | Read the output of the participant that the finding names. |
 
 For the finding codes of a run, see "Output" in [simulation-run.md](../simulation-run.md#output). For the conditions that abort a run, see "[Abort conditions and timeouts](../simulation-run.md#abort-conditions-and-timeouts)" in the same page.

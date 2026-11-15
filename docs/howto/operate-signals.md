@@ -140,7 +140,7 @@ What each line of the script does:
 
 | Line | What it does |
 |---|---|
-| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` as a child process. |
+| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` as a child process (`--control 0` picks a free port). |
 | `launch.address` | The address of the Control Server, as `vehicle_sil_launch` reported it. |
 | `Control(launch.address)` | Connects to the Control Server over gRPC, and closes the connection when the `with` block ends. |
 | `c.sim.wait_paused()` | Waits until the simulation is paused, and returns the time state. |
@@ -181,7 +181,9 @@ When these 2 lines appear, you can connect. Lines about starting the registry an
 
 With only one terminal (in a script or in CI), add `> launch.log 2>&1 &` to the end of the terminal 1 command to start it in the background. When the 2 lines above appear in `launch.log`, run the terminal 2 commands in the same terminal. To stop partway, use the CLI command `stop` or `kill <PID>` (SIGTERM). The simulation and the ECUs stop (result `interrupted`, exit code 130).
 
-In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`. If the simulation stays paused at time 0 for more than 50 seconds, the simulation in terminal 1 ends with an error, so run `step` before then. After `step`, the simulation can stay paused.
+In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`.
+
+Take your time: terminal 1 stays paused at time 0 until you run `step` or `resume`, and after each `step` it pauses again until the next command.
 
 | What you do | Command |
 |---|---|
@@ -219,7 +221,7 @@ seq 1794666759502163 Engine: queued
 paused at 500 ms, speed max
 ```
 
-Here are the first 3 lines of `show Engine`. The columns are name, value, unit, and then input or output with type and range. The lines that follow are the variables that vehicle-sil adds automatically (names that start with `peer.` and `j1939.`).
+Here are the first 3 lines of `show Engine`. The columns are name, value, unit, and then input or output with type and range. The lines that follow are the variables that vehicle-sil adds automatically (names that start with `peer.` and `j1939.`). If you run `show` before the first `step`, the value column is empty, because the ECUs have not run a simulation step yet.
 
 <!-- vehicle_sil_control show Engine: the first lines -->
 ```text
@@ -263,7 +265,6 @@ With `--control 0`, the launcher picks a free port. In that case, pass the addre
 |---|---|---|
 | Terminal 1 prints `--control needs a vehicle_sil_launch built with the control server` and exits with code 4 | This `vehicle_sil_launch` was built without the Control Server. | Use the one under `build/linux-gcc-control/`. |
 | Terminal 1 starts nothing and exits with code 3 | Another process uses port 8510. | Start with `--control 0`, and pass the printed address to the `--server` option of the CLI. |
-| Terminal 1 prints `the simulation did not start: ... did not reach Running within 50000 ms` and exits with code 1 | The simulation stayed paused at time 0 for more than 50 seconds. | Run the command in terminal 1 again, and run the first `step` or `resume` within 50 seconds. |
 | Terminal 2 shows `error: UNAVAILABLE: ... Connection refused` | The simulation in terminal 1 has ended, or the port is wrong. | Run the command in terminal 1 again, and check the address on the `control server at` line. |
 | `step` fails with `FAILED_PRECONDITION` | The simulation is not paused. | Run `pause --wait` first. |
 | `watch --count` does not end | While the simulation is paused, no new values are sent. | Advance with `resume` or `step`, or stop it with Ctrl+C. |
@@ -276,6 +277,8 @@ The sections from here on explain the calls of the Python client, one task per s
 |---|---|
 | [write_before_start.py](../../examples/launch_control/write_before_start.py) | Writes before the first step, advances 500 ms, checks the result of the write and the values, then runs to the end. |
 | [pause_and_step.py](../../examples/launch_control/pause_and_step.py) | Runs at a quarter of real-time speed, pauses when the engine speed reaches 1000 rpm, writes at a given time, advances 100 ms and checks the result. |
+
+Unlike the first script, these examples take the launcher with `--launch`:
 
 ```sh
 uv run python examples/launch_control/write_before_start.py \
@@ -381,7 +384,7 @@ The simulation paused at 190 ms, so `at` is 191 ms. The engine ECU steps every 1
 - In both cases, wait with `c.wait(seq, until="queued")` until the ECU has received the write, then advance time.
 - While the simulation runs, if you give no `at`, or give the time at which the simulation is paused, the result can be `late`, or the step in which the value is applied can differ from run to run.
 - A value out of range and a write to an output variable do not raise an exception. The result is `invalid`.
-- A parameter can be written only before the first step.
+- A parameter (a variable that `show` lists as `parameter` instead of `input`) can be written only before the first simulation step.
 - If several clients write the same variable with the same time, the value that remains depends on the order in which the Control Server received the writes.
 
 Disconnecting an ECU from the bus is also a write to a variable: write `False` to `ecu.connected`, which every ECU has. For how this looks on J1939, see "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected).

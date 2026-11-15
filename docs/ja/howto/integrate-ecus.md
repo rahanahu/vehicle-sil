@@ -94,7 +94,7 @@ participant 名（シミュレーションの中での ECU の名前）は、設
 
 ## 手順 2: 設定ファイルを書く
 
-受け取った実行ファイルを 1 つのディレクトリの下に置き、同じ場所に `simulation.yaml` を書きます。例の `simulation.yaml` は次のとおりです。
+受け取った実行ファイルを 1 つのディレクトリの下に置き、同じ場所に `simulation.yaml` を書きます。リポジトリの例では、ビルドが作業ディレクトリに ECU とこの `simulation.yaml` を置いているので、書かずに読みます。例の `simulation.yaml` は次のとおりです。
 
 <!-- examples/integrate_ecus/simulation.yaml -->
 ```yaml
@@ -210,14 +210,16 @@ failed: 1 error, 1 warning, 0 notes
 | `warning` | 成功のままです（`--strict` を付けると失敗）。 | 実行します。 |
 | `note` | 成功のままです。 | 実行します。 |
 
-例の `error` の行は、表示の ECU が使う `VehicleCAN` が `networks` にないことを報告し、直し方を 2 つ示しています。
+例の `error` の行は、表示の ECU が使う `VehicleCAN` が `networks` にないことを報告しています。この例は、設定ファイルでは直せません。エンジンの回転数を表示の ECU が受信するので、2 つの ECU は同じバスにいなければならず、ECU が使う名前を変えられるのは ECU のコードだけだからです。手順 4 に進みます。
+
+`error` の行が直し方を 2 つ示すのは、`VehicleCAN` がどのバスのつもりかを `check` が知らないからです。
 
 | `VehicleCAN` が | 直し方 | 直す場所 |
 |---|---|---|
 | `J1939_CAN` と同じバスのつもり | 2 つの ECU の名前をそろえます。 | ECU のコード（設定ファイルではできません） |
 | 別のバス | `networks` に `VehicleCAN` を追加します。 | 設定ファイル |
 
-`networks` に追加すると `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。例では、エンジンの回転数を表示の ECU が受信するので、同じバスのつもりです。直すのは ECU のコードで、手順 4 に進みます。
+2 つ目の直し方では `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。
 
 ### `networks` に名前を追加した場合
 
@@ -426,7 +428,7 @@ steps:
 vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml
 ```
 
-2 つの手順が `ok` になり、終了コード 0 で終わります。
+2 つの手順が `ok` になり、終了コード 0 で終わります。次は、出力の途中からシナリオの結果を抜き出したものです。
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml, the result of the scenario -->
 ```text
@@ -437,7 +439,7 @@ line  step                                                             result  a
 8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      410 ms
 ```
 
-同じシナリオを `simulation.two-buses.yaml` で実行すると、`expect` が失敗して、終了コード 1 で終わります。
+同じシナリオを `simulation.two-buses.yaml` で実行すると、`expect` が失敗して、終了コード 1 で終わります。次も、出力の同じところを抜き出したものです。
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml --scenario scenarios/engine_speed.yaml

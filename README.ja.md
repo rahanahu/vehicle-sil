@@ -54,14 +54,14 @@ participants:
     step_ms: 5
 ```
 
-次のコマンドは、「[クイックスタート](#クイックスタート)」のとおりにビルドした後、`build/linux-gcc-control/examples/ecu_main`（ビルドが設定ファイルと ECU を置くディレクトリ）で実行します。`run` の出力は抜粋で、registry と ECU の起動の行や、ECU が表示する行（`[Dashboard] t=…`）は省いています。
+次のコマンドにはビルドが要ります。先に「[クイックスタート](#クイックスタート)」のとおりにビルドしてから、`build/linux-gcc-control/examples/ecu_main`（ビルドが設定ファイルと ECU を置くディレクトリ）で実行します。`run` の出力は抜粋で、registry と ECU の起動の行や、ECU が表示する行（`[Dashboard] t=…`）は省いています。
 
 | コマンド | 動作 | 起動するもの |
 |---|---|---|
 | `vehicle_sil_launch check simulation.yaml` | 各 ECU に自身の構成を出力させて、設定ファイルと照合します。 | 各 ECU を `--describe` で起動するだけで、シミュレーションは実行しません。 |
 | `vehicle_sil_launch run simulation.yaml` | シミュレーションを `stop_at_ms` まで実行します。 | SIL Kit の registry とすべての ECU を起動し、終わったら終了させます。 |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | シナリオの手順どおりに値を設定して確認します。 | 同じものを起動し、すべての手順が成功すれば終了コード 0 で終わります。 |
-| `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。 |
+| `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。「クイックスタート」の `scripts/run-gui.py` は、このコマンドを代わりに実行します。 |
 
 `check` の出力です。
 
@@ -105,7 +105,7 @@ sed 's/name: J1939_CAN/name: Vehicle_CAN/' simulation.yaml > mistake.yaml
 vehicle_sil_launch check mistake.yaml
 ```
 
-終了コードは 1 で、指摘は 3 件です。次は、そのうちの 1 件と最後の行です（行番号は、コメントを含むファイルのもの）。
+終了コードは 1 で、指摘は 3 件です。次は、そのうちの 1 件と最後の行です（ほかの 2 件は省いています。行番号は、コメントを含むファイルのもの）。
 
 ```text
 error: mistake.yaml:11: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), which is not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its code [unknown-network]
@@ -150,10 +150,11 @@ vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 
 # ブラウザの GUI: リポジトリのルートに戻り、画面をビルドして起動する
+# （足りないものがあれば、run-gui.py がそれをビルドするコマンドを表示する）
 cd ../../../..
 npm --prefix gui/web ci
 npm --prefix gui/web run build
-scripts/run-gui.py                   # 足りないものがあれば、それをビルドするコマンドを表示する
+scripts/run-gui.py                   # ブラウザを開く（開かないときは --no-browser で URL だけ表示）。Ctrl+C で止まる
 ```
 
 `scripts/run-gui.py` は、ビルドの `examples/ecu_main/simulation.live.yaml` で GUI サーバーを起動し、ブラウザを開きます（開かないときは `--no-browser`。URL は端末に表示されます）。止めるときは、その端末で Ctrl+C を押すか、別の端末から `kill <PID>`（SIGTERM）を送ります。実行中のシミュレーションも止まります。

@@ -13,10 +13,11 @@ In this guide you copy the screen template (`gui_starter`), rewrite it into a sc
 | A browser or `curl` | Use a browser on the same computer as the GUI server. |
 | Node.js | 22 or later. Needed only to verify the value in step 4 without a browser. |
 
-Run the commands in the template project directory (the one that contains `simulation.yaml`). Set this variable to the directory of the prebuilt tools:
+Run the commands in the template project directory (the one that contains `simulation.yaml`). Set this variable to the directory of the prebuilt tools, and put its `bin` directory in `PATH` (again in every new shell):
 
 ```sh
-TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version> is what vehicle_sil_launch version prints
+TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version>: as in the directory name under tools/
+export PATH="$PWD/$TOOLS/bin:$PATH"                    # vehicle-sil-gui and vehicle_sil_launch
 ```
 
 If you use a repository build, use these replacements:
@@ -43,7 +44,7 @@ Copy the screen template to `my-screen/`, then start the GUI server and pass tha
 
 ```sh
 cp -r "$TOOLS/gui_starter" my-screen
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
 `my-screen/` contains these files:
@@ -55,6 +56,7 @@ vehicle-sil-gui --web my-screen simulation.live.yaml
 | `style.css` | The styles |
 | `vehicle-sil-gui-client.mjs` | The client library, bundled into one file |
 | `README.md` | A description of the template (not served) |
+| `README.ja.md` | The same description in Japanese (not served) |
 
 ### Verify the template screen
 
@@ -126,7 +128,7 @@ This guide shows `engine.speed` (the engine speed) of `Engine`. `output` variabl
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` is not found | The tools' `bin` directory is not in `PATH`. | Run the `export PATH=...` line that `get_tools.py` printed. |
+| `vehicle_sil_launch` or `vehicle-sil-gui` is not found | The tools' `bin` directory is not in `PATH` (each new shell needs it again). | Run the `TOOLS=...` and `export PATH=...` lines of "[Prerequisites](#prerequisites)". |
 
 ## Step 3: Rewrite the screen to show one variable
 
@@ -214,7 +216,7 @@ The screen no longer uses `style.css` and `README.md`, so you can delete them. W
 ## Step 4: Serve the screen and verify it
 
 ```sh
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
 ### Verify your screen
@@ -256,7 +258,7 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 {"session": {"id": 1, "file": "simulation.live.yaml", "disab
 ```
 
-Values arrive over WebSocket, so `curl` cannot read them. With Node.js (22 or later), you can read them with the same library as the screen. Save the following as `read-value.mjs` and run it.
+Values arrive over WebSocket, so `curl` cannot read them. With Node.js (22 or later), you can read them with the same library as the screen. Save the following as `read-value.mjs` in the project directory (next to `my-screen/`) and run it there.
 
 ```js
 // Read the value of a variable once with the same library as your screen, and print it (Node 22 or later).
