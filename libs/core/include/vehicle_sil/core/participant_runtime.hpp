@@ -269,6 +269,9 @@ public:
     /// system controller and all other required participants.
     /// Throws StartTimeoutError (a std::runtime_error) on timeout, std::runtime_error if the
     /// lifecycle fails, std::logic_error if virtual time is used without a step handler.
+    /// An Error that SIL Kit publishes for this participant before it begins to run is such a
+    /// failure whatever the state is afterwards (SIL Kit may go on from it, see "Known upstream
+    /// bugs" in docs/dependencies.md): start() throws, and the step handler is not called.
     /// `give_up`, if set, is asked while it waits (on the calling thread, every few milliseconds):
     /// a non-empty answer ends the wait at once with std::runtime_error that has the answer (for
     /// a required participant that has gone, which the lifecycle would wait for until the
@@ -444,6 +447,10 @@ private:
     /// The step handler runs, until its error (if any) is reported: a stop request waits.
     std::atomic<bool> handler_running_{false};
     std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
+    /// SIL Kit published Error for this participant before it began to run (neither flag above
+    /// was set). start() goes by this and not by the state alone: SIL Kit can leave Error again
+    /// (see "Known upstream bugs" in docs/dependencies.md), and the state then looks like a start.
+    std::atomic<bool> failed_before_start_{false};
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 
     std::mutex communication_ready_gate_;      // held while the CommunicationReady handlers run

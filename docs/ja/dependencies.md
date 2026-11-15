@@ -457,6 +457,18 @@ SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積�
 
 **上流への報告**: 未報告です。
 
+### SIL Kit: 開始の途中で Error になっても lifecycle が先へ進む
+
+**内容**: coordinated の participant の開始には、後から呼ばれるコールバックで終わる段階が 2 つあります。全 participant からの返事を待つ段階（`ServicesCreatedState::ServicesCreated()`）と、保留中の購読を待つ段階（`CommunicationInitializingState::CommunicationInitializing()`）です（どちらも `SilKit/source/services/orchestration/LifecycleStates.cpp`）。このコールバックは、現在の状態を見ずに次の状態を設定します。待っている間に participant が Error になると、コールバックが Error を CommunicationInitializing や CommunicationInitialized で上書きし、lifecycle はそこから先へ進みます。
+
+required でない coordinated の participant が、この順になります。`LifecycleService::SetWorkflowConfiguration()` は、エラーを後回しの呼び出しで報告します（`ReportError()`）。同じメッセージ、またはソケットから一緒に読んだメッセージで system state が ServicesCreated になると、後回しの呼び出しが動く前に、返事を待つ段階が始まります。
+
+**影響**: その後の動きは、どのメッセージが先に届くかで変わります。1 つは、SIL Kit が不正と報告した participant が Running まで進み、シミュレーションに加わる場合です。もう 1 つは、待っている system state がすでに過ぎていて、Running より前の状態にとどまり続ける場合です。時刻同期があると、ほかの participant がこの participant を待つので、この participant が抜けるまで仮想時間は 0 のままです。
+
+**対応**: `ParticipantRuntime` は、自分の participant が走り始める前に SIL Kit が出した Error を覚えます。そのとき `start()` は、状態がその後どう変わっていても、Error で終わった開始と同じように例外を投げます。ステップのハンドラーも呼びません。ecu_main の実行ファイルは、開始に失敗したときの終了コードで終わり、シミュレーションから抜けます（[internals/core.md](internals/core.md#start-が戻るときの状態) の「`start()` が戻るときの状態」）。試験 `core.participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_after_its_error` が、この順を作って確かめます。上流のコードは変えていないので、パッチは不要です。
+
+**上流への報告**: 未報告です。
+
 ## SIL Kit へのパッチ
 
 `patches/sil-kit/` のパッチは、上流のタグ `v5.0.8`（固定コミット）に `git format-patch` で作ったもので、上流のスタイル（clang-format）に合わせています。0001 は上流の統合テストを含みます。

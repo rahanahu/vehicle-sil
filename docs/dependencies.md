@@ -457,6 +457,18 @@ A status that arrives between 2 and 3 does not reach the new handler. If it is t
 
 **Reported upstream**: Not yet.
 
+### SIL Kit: the lifecycle goes on after an Error during the start
+
+**Description**: Two steps of the start of a coordinated participant are finished by a callback that runs later: the wait for the replies of all participants (`ServicesCreatedState::ServicesCreated()`) and the wait for the pending subscriptions (`CommunicationInitializingState::CommunicationInitializing()`, both in `SilKit/source/services/orchestration/LifecycleStates.cpp`). The callback sets the next state without looking at the current one. If the participant enters Error while one of these waits is under way, the callback replaces Error with CommunicationInitializing or CommunicationInitialized, and the lifecycle goes on from there.
+
+A coordinated participant that is not required gets into this order. `LifecycleService::SetWorkflowConfiguration()` reports the error with a deferred call (`ReportError()`). If the same message, or one that is read from the socket together with it, makes the system state ServicesCreated, the wait for the replies begins before the deferred call runs.
+
+**Impact**: What the participant does next depends on which message arrives first. Either it goes on to Running and takes part in the simulation, although SIL Kit reported it as invalid. Or it stays in a state before Running for good, because the system state it waits for has already passed. With time synchronization, the other participants then wait for it, and virtual time stays at 0 until it leaves.
+
+**Handling**: `ParticipantRuntime` remembers an Error that SIL Kit publishes for its own participant before the participant begins to run. `start()` then throws, as it does for a start that ended in Error, whatever the state is by then, and the step handler is not called. An ecu_main executable ends with the exit code of a failed start, so it leaves the simulation (see "State when `start()` returns" in [internals/core.md](internals/core.md#state-when-start-returns)). The test `core.participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_after_its_error` forces the order. The upstream code is not changed, so no patch is needed.
+
+**Reported upstream**: Not yet.
+
 ## Patches to SIL Kit
 
 The patches in `patches/sil-kit/` were created with `git format-patch` on the upstream tag `v5.0.8` (the pinned commit) and follow the upstream style (clang-format). 0001 includes an upstream integration test.

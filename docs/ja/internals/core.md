@@ -34,6 +34,8 @@ SIL Kit の participant と lifecycle を持つ `ParticipantRuntime` につい�
 
 2 つ目は、フラグと状態を読む順です。待ちの中では、フラグ（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る経路ができます。逆に、フラグを読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときはフラグを読み直します。`give_up` が「待つのをやめる」と答えたときも、同じ理由でフラグを読み直します。`give_up` がシミュレーションを見るのは待ちが状態を読んだ後なので、短い実行はその間に始まって終わっていることがあります。この participant が始まっていれば、その答えは採らず、`start()` は始まったものとして戻ります。
 
+participant が走り始める前の Error は、`start()` が見たときの状態が別のものでも、開始の失敗です。`start()` は、現在の状態だけでなく、SIL Kit がこの participant について出した Error（ステータスのハンドラーが覚えます）で判断します。SIL Kit は、Error を開始の次の状態で上書きして、Running まで進むことがあるためです（[dependencies.md](../dependencies.md#上流の既知の不具合) の「上流の既知の不具合」）。このとき `start()` は、Error で終わった開始と同じように例外を投げます。SIL Kit がその後もステップを進めても、ステップのハンドラーは呼びません。
+
 この 2 つの順は、`libs/core/src/participant_runtime_probe.hpp` のテスト用のフック（テストだけが使う。インストールしない）で順を決めて、`core.participant_start_*` が確認します。
 
 ### CommunicationReady のハンドラー

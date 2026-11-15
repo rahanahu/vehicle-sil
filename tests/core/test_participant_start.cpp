@@ -14,8 +14,11 @@
 
 #include "vehicle_sil/core/participant_runtime.hpp"
 
+#include <silkit/experimental/participant/ParticipantExtensions.hpp>
+#include <silkit/experimental/services/orchestration/ISystemController.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -429,4 +432,138 @@ TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_sta
 
     CHECK(!meeting.waitRanOut);
     CHECK(state == std::optional(orch::ParticipantState::Error));
+}
+
+TEST_CASE(participant_start_takes_a_run_whose_first_step_failed_between_its_two_looks_for_a_start)
+{
+    // Only an Error before the participant began to run is a start that failed. Here start() has
+    // read "no step has run" when the first step runs and fails: the participant is in Error, and
+    // its status has been handled, when start() reads the state. That is a run that began and
+    // failed, not a start that failed: start() returns, and the failure is the run's.
+    InProcessRegistry registry;
+    Meeting meeting;
+    ParticipantRuntime* started = nullptr;
+    std::atomic<int> endSeen{0};
+    bool sawError = false;
+    const ProbeInPlace probe([&](StartProbePoint point) {
+        if (point != StartProbePoint::BetweenFlagsAndState)
+        {
+            return;
+        }
+        {
+            const std::lock_guard lock(meeting.mutex);
+            if (meeting.flagsRead)
+            {
+                return;
+            }
+            meeting.flagsRead = true;
+        }
+        meeting.changed.notify_all();
+        // The stop observer is called when the runtime has handled the status of its own end.
+        sawError = unit::eventually(
+            [&] { return endSeen.load() > 0 && started->state() == orch::ParticipantState::Error; }, unit::scaled_timeout(20s));
+    });
+    ParticipantRuntimeOptions options{"Starter", registry.uri};
+    options.virtual_time = VirtualTimeOptions{1ms, std::nullopt};
+    ParticipantRuntime runtime(options);
+    started = &runtime;
+    runtime.set_step_handler([](SimTime, SimDuration) { throw std::runtime_error("the first step fails"); });
+    runtime.set_stop_observer([&endSeen] { ++endSeen; });
+    hold_the_lifecycle_until_the_flags_are_read(runtime, meeting);
+
+    std::string thrown;
+    try
+    {
+        runtime.start(unit::scaled_timeout(60s));
+    }
+    catch (const std::exception& e)
+    {
+        thrown = e.what();
+    }
+    runtime.stop("test");
+
+    CHECK(sawError);
+    CHECK(!meeting.waitRanOut);
+    if (!thrown.empty())
+    {
+        throw vehicle_sil::unit::Failure("start() threw for a participant whose first step had run (and failed): " + thrown);
+    }
+}
+
+TEST_CASE(participant_start_fails_for_a_participant_that_sil_kit_lets_go_on_after_its_error)
+{
+    // A coordinated participant that the system controller does not require: SIL Kit puts it into
+    // Error when the required names arrive. Here they arrive when the one required participant is
+    // in ServicesCreated already, so the same message also begins the stranger's start (the wait
+    // for the other participants' replies) before the Error is set; when the replies are there,
+    // SIL Kit sets the next state over the Error and the stranger goes on with the simulation, to
+    // Running. start() must go by the Error it saw, not by the state: the stranger fails, runs no
+    // step, and the simulation of the others is not touched when it leaves.
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions memberOptions{"Member", registry.uri};
+    memberOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    ParticipantRuntime member(memberOptions);
+    ParticipantRuntimeOptions strangerOptions{"Stranger", registry.uri};
+    strangerOptions.lifecycle_mode = LifecycleMode::Coordinated;
+    strangerOptions.virtual_time = VirtualTimeOptions{};
+    ParticipantRuntime stranger(strangerOptions);
+    std::atomic<int> steps{0};
+    stranger.set_step_handler([&steps](SimTime, SimDuration) { ++steps; });
+    unit::StateLog seen(registry.uri, "Stranger");
+    ParticipantRuntime boss(ParticipantRuntimeOptions{"Boss", registry.uri});
+    auto* const controller = SilKit::Experimental::Participant::CreateSystemController(&boss.participant());
+
+    std::string memberError;
+    std::thread memberStart([&] {
+        try
+        {
+            member.start(unit::scaled_timeout(20s));
+        }
+        catch (const std::exception& e)
+        {
+            memberError = e.what();
+        }
+    });
+    std::string strangerError;
+    bool strangerStarted = false;
+    std::thread strangerStart([&] {
+        try
+        {
+            stranger.start(unit::scaled_timeout(20s));
+            strangerStarted = true;
+        }
+        catch (const std::exception& e)
+        {
+            strangerError = e.what();
+        }
+    });
+    const auto created = [](const PeerStatus& status) { return status.state == orch::ParticipantState::ServicesCreated; };
+    const bool bothWait = boss.wait_for_peer("Member", created, unit::scaled_timeout(20s))
+                          && boss.wait_for_peer("Stranger", created, unit::scaled_timeout(20s));
+    controller->SetWorkflowConfiguration(orch::WorkflowConfiguration{{"Member"}});
+    strangerStart.join();
+    memberStart.join();
+    const auto strangerState = stranger.state();
+    stranger.stop("test");
+    // The stranger has left; the member still runs.
+    const auto memberState = member.state();
+    member.stop("test");
+
+    std::string states;
+    for (const auto state : seen.states())
+    {
+        states += " " + orch::to_string(state);
+    }
+    CHECK(bothWait);
+    CHECK(seen.reached(orch::ParticipantState::Error));
+    if (strangerStarted || strangerError.find("failed to start, state: Error") == std::string::npos)
+    {
+        throw vehicle_sil::unit::Failure(
+            std::string("start() of a participant that SIL Kit had put into Error ") +
+            (strangerStarted ? "returned" : "threw \"" + strangerError + "\"") + " in state " + orch::to_string(strangerState) +
+            ", expected it to throw \"... failed to start, state: Error ...\" (the states others saw:" + states + ")");
+    }
+    CHECK_EQ(steps.load(), 0);
+    CHECK(memberError.empty());
+    CHECK(memberState == orch::ParticipantState::Running);
 }
