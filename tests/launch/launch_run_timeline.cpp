@@ -42,7 +42,7 @@ void timeline(const Options& o)
             "the head of the timeline:\n" + file);
     // What the scenario wrote (the wave: one point a line, the end value last) and saw.
     require(contains(file, "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
-                           "      \"points\": [\n        [0, 20],\n        [100, 30],\n        [110, 30],\n        [120, 20],\n"),
+                           "      \"columns\": [\"at_ms\", \"value\"],\n      \"samples\": null,\n      \"first_ms\": null,\n      \"last_ms\": null,\n      \"not_applied_from\": null,\n      \"points\": [\n        [0, 20],\n        [100, 30],\n        [110, 30],\n        [120, 20],\n"),
             "the written values:\n" + file);
     require(contains(file, "      \"variable\": \"Body.level\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"),
             "the sampled values:\n" + file);
@@ -148,7 +148,7 @@ void timeline(const Options& o)
             require(from != std::string::npos && to != std::string::npos, "no " + source + " series of " + variable + ":\n" + text);
             return text.substr(from, to - from);
         };
-        require(!contains(series("Body.mode", "written"), "not_applied_from") && contains(series("Body.mode", "written"), "        [20, 2]\n"),
+        require(contains(series("Body.mode", "written"), "      \"not_applied_from\": null,\n") && contains(series("Body.mode", "written"), "        [20, 2]\n"),
                 "the write that was applied has no mark:\n" + text);
         require(contains(series("Body.level", "written"), "      \"not_applied_from\": 1,\n") &&
                     contains(series("Body.level", "written"), "        [0, 5],\n        [20, 13]\n"),

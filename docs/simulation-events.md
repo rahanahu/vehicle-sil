@@ -504,6 +504,15 @@ A reader decides by whether a name is in `features`, not by comparing versions. 
 | `test` | `vehicle_sil_test` of `test --json` |
 | `timeline` | `vehicle_sil_timeline` of the file that `run --timeline` writes |
 
+### Keys and values of the JSON forms
+
+These rules hold for every JSON form above (`check --json`, `run --json`, `test --json`, the events, `version --json` and the `--timeline` file):
+
+- Keys are in snake_case: `time_step_ms`, `not_applied_from`.
+- A key added after vehicle-sil 0.1.0 is always there. When it does not apply, its value is `null`. Some keys that 0.1.0 already had are written only when they apply, and their descriptions say when: for example `params`, `skipped_steps` and `unchecked_expects` of a scenario, `expect_skipped` of a step, and `variable_map` of a participant.
+- Values that are words of the form itself (states, statuses, reasons, sources) use underscores: `not_run`, `after_wait`.
+- Names that people also type or search for keep their hyphens: the names in `features` (`run-traffic`) and the codes of findings (`single-participant`).
+
 ### `features` names
 
 | Name in `features` | Feature |

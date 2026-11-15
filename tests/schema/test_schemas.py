@@ -875,6 +875,25 @@ class TimelineSchema(unittest.TestCase):
                     walk(value["items"], f"{where}{key}[].")
         walk(TIMELINE, "")
 
+    def test_every_key_is_required(self):
+        # Every key of the file is always there (null when it does not apply), but expect_skipped of a step, which
+        # the steps share with run --json and which is there only when it applies.
+        may_be_left_out = {"expect_skipped"}
+
+        def walk(node, where):
+            if isinstance(node, dict):
+                if "properties" in node:
+                    optional = set(node["properties"]) - set(node.get("required", [])) - may_be_left_out
+                    self.assertEqual(optional, set(), f"timeline.schema.json: {where or 'the file'} does not require "
+                                     f"{sorted(optional)}: the launcher writes every key, so add them to required "
+                                     "(and null to their type, if they may be null)")
+                for key, value in node.items():
+                    walk(value, f"{where}{key}." if key not in ("properties", "items") else where)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value, where)
+        walk(TIMELINE, "")
+
     def test_the_references_are_valid(self):
         files = sorted(TIMELINE_REFERENCES.glob("*.timeline.json"))
         self.assertGreater(len(files), 3, f"{TIMELINE_REFERENCES} has no timeline files any more")
@@ -924,6 +943,14 @@ class TimelineSchema(unittest.TestCase):
             "a failed step without its writes": lambda d: failed_step(d)["failed"].pop("writes"),
             "a failed write that is not an index": lambda d: failed_step(d)["failed"].update(write={"variable": "Body.level"}),
             "a line whose end is a text": lambda d: d["lines"][0].update(to_ms="never"),
+            # Every key is always there, null when it does not apply.
+            "no lines, in the file and in the steps": lambda d: (d.pop("lines"), [step.pop("lines") for step in d["steps"]]),
+            "no time_step_ms": lambda d: d.pop("time_step_ms"),
+            "a series without its columns": lambda d: d["series"][0].pop("columns"),
+            "a series without not_applied_from": lambda d: d["series"][0].pop("not_applied_from"),
+            "a series without samples": lambda d: d["series"][0].pop("samples"),
+            "a variable without its unit": lambda d: d["variables"][0].pop("unit"),
+            "a step without its message": lambda d: d["steps"][0].pop("message"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
@@ -932,8 +959,6 @@ class TimelineSchema(unittest.TestCase):
             "a key it does not know": lambda d: d.update(notes=[]),
             "a kind of line and a base_source it does not know": lambda d: d["lines"][0].update(kind="hold", base_source="given"),
             "a key of a shape it does not know": lambda d: d["lines"][-1]["shape"].update(steepness=2),
-            # A launcher without the feature timeline-lines writes the same format without them.
-            "no lines, in the file and in the steps": lambda d: (d.pop("lines"), [step.pop("lines") for step in d["steps"]]),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
             "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
             # A dither: a line of no step and without an end, and the columns of its input's points.

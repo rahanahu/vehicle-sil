@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "vehicle-sil timeline (vehicle_sil_launch run --scenario --timeline), format 1",
-  "description": "What a scenario did over the virtual time of one run: its steps, the values it wrote and the values it saw. Written by vehicle_sil_launch, read by tools that draw or compare a run. Every time is in milliseconds of virtual time and may have a fraction. A variable is named \"<participant>.<name>\" everywhere. A reader ignores keys it does not know, and does not draw (but names) a series, a watch or a step whose source, encoding, mode, op, kind or status it does not know: this schema therefore lists the values written today in the descriptions and does not close them, and allows more keys everywhere. The manual is docs/simulation-run.md of vehicle-sil.",
+  "description": "What a scenario did over the virtual time of one run: its steps, the values it wrote and the values it saw. Written by vehicle_sil_launch, read by tools that draw or compare a run. Every time is in milliseconds of virtual time and may have a fraction. A variable is named \"<participant>.<name>\" everywhere. A reader ignores keys it does not know, and does not draw (but names) a series, a watch or a step whose source, encoding, mode, op, kind or status it does not know: this schema therefore lists the values written today in the descriptions and does not close them, and allows more keys everywhere. Every key this schema lists is in every file (all are required, but a step's expect_skipped, which run --json has only when it applies); a key that does not apply has the value null. The manual is docs/simulation-run.md of vehicle-sil.",
   "type": "object",
   "required": [
     "vehicle_sil_timeline",
@@ -10,11 +10,12 @@
     "file",
     "variant",
     "params",
-    "tick_ms",
+    "time_step_ms",
     "scenario",
     "variables",
     "steps",
     "series",
+    "lines",
     "findings",
     "limits"
   ],
@@ -72,10 +73,10 @@
         }
       }
     },
-    "tick_ms": {
+    "time_step_ms": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "The step of the launcher's controller: how often the scenario's engine looked at the samples and sent writes."
+      "description": "The time step of the launcher's controller (timing.time_step_ms of run --json): how often the scenario's engine looked at the samples and sent writes."
     },
     "scenario": {
       "type": "object",
@@ -128,6 +129,12 @@
           "name",
           "participant",
           "type",
+          "causality",
+          "unit",
+          "min",
+          "max",
+          "items",
+          "ecu_step_ms",
           "written",
           "watched"
         ],
@@ -222,6 +229,9 @@
           "start_ms",
           "at_ms",
           "end_ms",
+          "code",
+          "message",
+          "lines",
           "watch",
           "failed"
         ],
@@ -288,7 +298,7 @@
           },
           "lines": {
             "type": "array",
-            "description": "Where the lines this step put are in the top-level lines[] (positions from 0); empty for a step that writes nothing, for one whose time is after scenario.recorded_to_ms, and for one that sent none of its writes. Not in a file of a launcher without the feature timeline-lines.",
+            "description": "Where the lines this step put are in the top-level lines[] (positions from 0); empty for a step that writes nothing, for one whose time is after scenario.recorded_to_ms, and for one that sent none of its writes.",
             "items": {
               "type": "integer",
               "minimum": 0
@@ -346,7 +356,8 @@
                         "type": "object",
                         "required": [
                           "op",
-                          "value"
+                          "value",
+                          "tolerance"
                         ],
                         "properties": {
                           "op": {
@@ -361,8 +372,11 @@
                             "description": "What the value is compared with."
                           },
                           "tolerance": {
-                            "type": "number",
-                            "description": "near only."
+                            "type": [
+                              "number",
+                              "null"
+                            ],
+                            "description": "near: how far the value may be from value; null for the other ops."
                           }
                         }
                       }
@@ -500,6 +514,11 @@
           "variable",
           "source",
           "encoding",
+          "samples",
+          "first_ms",
+          "last_ms",
+          "not_applied_from",
+          "columns",
           "points"
         ],
         "properties": {
@@ -516,39 +535,45 @@
             "description": "\"all\": every value is a point (written). \"changes\": a point only where the written text of the value differs from the one before (sampled)."
           },
           "samples": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0,
-            "description": "sampled: how many samples there were up to recorded_to_ms (also those whose points a limit dropped)."
+            "description": "sampled: how many samples there were up to recorded_to_ms (also those whose points a limit dropped). null for written."
           },
           "first_ms": {
             "type": [
               "number",
               "null"
             ],
-            "description": "sampled: the time of the first sample."
+            "description": "sampled: the time of the first sample; null without a sample, and for written."
           },
           "last_ms": {
             "type": [
               "number",
               "null"
             ],
-            "description": "sampled: the time of the last sample (the last point holds until there)."
+            "description": "sampled: the time of the last sample (the last point holds until there); null without a sample, and for written."
           },
           "not_applied_from": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0,
-            "description": "written, only if there are such points: the index in points from which on the points were sent and are not known to have been applied by the ECU. They are the first write of a failed request that was not applied or has no result (failed.writes[].applied of the failed step is false or null; its point is this index or after it) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
+            "description": "written: the index in points from which on the points were sent and are not known to have been applied by the ECU. They are the first write of a failed request that was not applied or has no result (failed.writes[].applied of the failed step is false or null; its point is this index or after it) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. null if there are no such points, and for sampled. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
           },
           "columns": {
             "type": "array",
-            "description": "written, only for an input that the scenario puts a dither on (its inputs, or a dither step with a shape that runs in this configuration; whether the run got to it does not matter): what a point is, [\"at_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [at_ms, value]. A reader takes the columns it knows by name.",
+            "description": "What a point is: [\"at_ms\", \"value\"], and [\"at_ms\", \"value\", \"base\"] for an input that the scenario puts a dither on (its inputs, or a dither step with a shape that runs in this configuration; whether the run got to it does not matter). base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. A reader takes the columns it knows by name.",
             "items": {
               "type": "string"
             }
           },
           "points": {
             "type": "array",
-            "description": "[at_ms, value], one per line of the file. at_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null. With columns, every point has what columns says.",
+            "description": "What columns says ([at_ms, value] or [at_ms, value, base]), one per line of the file. at_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null.",
             "items": {
               "type": "array",
               "minItems": 2,
@@ -571,7 +596,7 @@
     },
     "lines": {
       "type": "array",
-      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. A dither is a line too (kind \"dither\"): from the first write that carried it, after the lines that the steps put at that time; the next dither line of its variable is where it ends. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
+      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. A dither is a line too (kind \"dither\"): from the first write that carried it, after the lines that the steps put at that time; the next dither line of its variable is where it ends. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began.",
       "items": {
         "type": "object",
         "required": [
@@ -631,7 +656,7 @@
               "string",
               "null"
             ],
-            "description": "Where base is from: \"written\" (the step names it: a set's value, from, around, the other value of a bool), \"line\" (where the scenario left the variable: the value of its line at from_ms), \"sample\" (the scenario had not written the variable: its latest sample then, which may depend on tick_ms); null without a base."
+            "description": "Where base is from: \"written\" (the step names it: a set's value, from, around, the other value of a bool), \"line\" (where the scenario left the variable: the value of its line at from_ms), \"sample\" (the scenario had not written the variable: its latest sample then, which may depend on time_step_ms); null without a base."
           },
           "shape": {
             "type": [
@@ -658,11 +683,18 @@
     },
     "findings": {
       "type": "array",
-      "description": "The findings of the check and of the run that are about the scenario (code scenario-...), as in `run --json`; and, with its code alone, control-link-late-values (an ECU's values came later than promised: what such a run recorded may differ from run to run). No other finding: nothing of the run's pace in real time.",
+      "description": "The findings of the check and of the run that are about the scenario (code scenario-...), as in `run --json`; and control-link-late-values (an ECU's values came later than promised: what such a run recorded may differ from run to run) with its severity and code only, the rest null. No other finding: nothing of the run's pace in real time.",
       "items": {
         "type": "object",
         "required": [
-          "code"
+          "severity",
+          "code",
+          "file",
+          "line",
+          "participant",
+          "network",
+          "message",
+          "detail"
         ],
         "properties": {
           "severity": {
@@ -702,8 +734,11 @@
             "description": "The network it is about."
           },
           "message": {
-            "type": "string",
-            "description": "What is wrong and what to do, for people."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong and what to do, for people; null for control-link-late-values."
           },
           "detail": {
             "type": [

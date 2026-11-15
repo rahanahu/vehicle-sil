@@ -504,6 +504,15 @@ participant の `log` の終わりの側には、保証がありません。part
 | `test` | `test --json` の `vehicle_sil_test` |
 | `timeline` | `run --timeline` が書くファイルの `vehicle_sil_timeline` |
 
+### JSON の形のキーと値
+
+上のどの JSON の形（`check --json`、`run --json`、`test --json`、イベント、`version --json`、`--timeline` のファイル）にも、次の決まりがあります。
+
+- キーは snake_case です（`time_step_ms`、`not_applied_from`）。
+- vehicle-sil 0.1.0 の後に足したキーは、いつもあります。当てはまらないときの値は `null` です。0.1.0 にあったキーには、当てはまるときだけ書くものがあり、いつ書くかはそれぞれの説明にあります。たとえば、シナリオの `params`、`skipped_steps`、`unchecked_expects`、手順の `expect_skipped`、participant の `variable_map` です。
+- 形そのものの語である値（状態、結果、理由、出どころ）は、下線でつなぎます（`not_run`、`after_wait`）。
+- 人が打ったり探したりする名前は、ハイフンのままです。`features` の名前（`run-traffic`）と、指摘の `code`（`single-participant`）です。
+
 ### `features` の名前
 
 | `features` の名前 | 機能 |
