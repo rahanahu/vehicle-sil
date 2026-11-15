@@ -95,7 +95,10 @@ struct ListenerOptions
 /// which are called for the same transfer right after the message handlers
 /// (SniffedTransfer::conflicting_packets), and from sniffer_statistics().conflicting_packets,
 /// which counts them all: while it is 0, every message handed on was the receiver's. Publish
-/// that counter with the others, or take a value only when on_transfer() confirmed it.
+/// that counter with the others, or use the value in the message handler and discard it
+/// when the on_transfer() handler right after (same group, source and destination) reports it
+/// Completed with conflicting packets. Other messages (single frames, BAM, messages addressed
+/// to a node of this Network) get no on_transfer() call and cannot differ from the receiver's.
 /// With SniffDelivery::WhenAllPacketsSeen the receiver may also have dropped a transfer that is
 /// handed on here (it had no chance to say so; e.g. the sender's address changed hands, which
 /// the sniffer does not read).
@@ -178,8 +181,8 @@ public:
     /// The id removes it again (remove_handler(), ListenerSubscription); dropped, the handler
     /// stays for the Listener's life.
     /// A message of a connection between two other ECUs has the receiver's bytes if its transfer
-    /// had no conflicting packets, which the on_transfer() handlers are told right after (see
-    /// the class comment).
+    /// had no conflicting packets, which the on_transfer() handlers are told right after; other
+    /// messages get no on_transfer() call (see the class comment).
     HandlerId on_message(Pgn pgn, MessageHandler handler);
     HandlerId on_any_message(MessageHandler handler);
     /// Adds a handler for the end of every connection between two other ECUs. A Completed one
@@ -192,7 +195,10 @@ public:
     /// inside a step and in a handler of this Listener (the handler itself or another one): the
     /// removed handler is not called any more, not for the rest of that frame either, and the
     /// handler object is destroyed when the Listener is done with the frame, the message or the
-    /// step end it is handling. Allocates nothing.
+    /// step end it is handling. Removed from inside a handler, it is destroyed there, where
+    /// handlers only read: a handler that may be removed so must not own (also through what it
+    /// captured) a Node's Subscription or a Timer, whose destruction fails the Network. Allocates
+    /// nothing.
     bool remove_handler(HandlerId id) noexcept;
 
     /// The connections between other ECUs that are followed right now.
