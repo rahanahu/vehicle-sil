@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
-// A Spy does not allocate memory in steady-state steps: its watchers' handlers, its clock and
-// the getters of its variables. This executable counts every allocation of the process
+// A Spy does not allocate memory in steady-state steps: its watchers' handlers (also those of a
+// typed watch, Spy::watch()), its clock and the getters of its variables. This executable counts every allocation of the process
 // (allocation_counter.hpp), so it is built on its own.
 #include "allocation_counter.hpp"
+#include "hand_written_messages.hpp"
 #include "spy_rig.hpp"
 
 #include "vehicle_sil/spy/spy.hpp"
+#include "vehicle_sil/spy/watch.hpp"
 
 #include <cstdint>
 
@@ -63,6 +65,7 @@ TEST_CASE(steady_state_steps_of_a_spy_do_not_allocate)
     rig.ecu.set_agent_options({.sample_period = std::chrono::milliseconds(0)}); // sample every step
     Spy& spy = rig.ecu.emplace<Spy>(rig.ecu, rig.network);
     spy.add<Busy>("busy");
+    spy.watch<hand_written::FirstByte>("typed", {.from = 0x21, .stale_after = std::chrono::milliseconds(5)});
     const Bytes message = payload(20);
     std::uint8_t k = 0;
     // Each step: two single frames and a connection between two other ECUs (RTS/CTS).
@@ -101,4 +104,5 @@ TEST_CASE(steady_state_steps_of_a_spy_do_not_allocate)
     CHECK(integer_of(rig.ecu, "busy.count") > kSteps);
     CHECK(integer_of(rig.ecu, "busy.transfers") > kSteps);
     CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 0);
+    CHECK(integer_of(rig.ecu, "typed.count") > 2 * kSteps); // single frames and connections
 }

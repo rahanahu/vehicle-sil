@@ -161,6 +161,8 @@ Signals and messages cannot use the names that the generated types use.
 
 The generated code fully qualifies `std` and `vehicle_sil` (with a leading `::`), so you can use any other name, including `std`, `data` and `size_t`.
 
+A message that `vehicle_sil::spy::Spy::watch<M>()` watches also cannot have a signal named `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale` or `state` (they name its other variables; `watch()` does not build with such a signal). See "Listen-only participants" in [j1939-guide.md](j1939-guide.md#listen-only-participants).
+
 ### How YAML values are read
 
 | You write | Read as |

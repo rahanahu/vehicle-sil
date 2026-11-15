@@ -841,7 +841,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
       "log": null,
       "control_link": {
         "state": "connected",
-        "variables": 18,
+        "variables": 22,
         "version": null,
         "late_messages": 0
       }
@@ -858,7 +858,7 @@ For a program that decides whether frames arrived, read `delivered` of each netw
       "log": null,
       "control_link": {
         "state": "connected",
-        "variables": 18,
+        "variables": 22,
         "version": null,
         "late_messages": 0
       }

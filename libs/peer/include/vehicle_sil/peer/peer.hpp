@@ -175,7 +175,8 @@ struct PeerOptions
     ///   for each J1939 network N (its name in the simulation, see network_names): j1939.N.bus_state (-1 unknown, 0 error active, 1 error
     ///   passive, 2 bus off) and the counters j1939.N.frames_received, frames_sent,
     ///   send_failures, send_queue_full, receive_overflows, held_dropped, address_violations,
-    ///   transport_aborts_sent, transport_aborts_received;
+    ///   transport_aborts_sent, transport_aborts_received, transport_timeouts,
+    ///   transport_rejected, transport_bam_dropped, transport_bam_replaced (NetworkStatistics);
     ///   for each node i of N: j1939.N.node<i>.address and j1939.N.node<i>.address_state
     ///   (0 fixed, 1 not started, 2 claiming, 3 claimed, 4 cannot claim);
     /// and events "j1939.N.node<i>: <state> at address <a>" (the state named as in the items)

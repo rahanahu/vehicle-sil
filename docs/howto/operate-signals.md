@@ -202,8 +202,8 @@ The output of each command follows. The number after `seq` changes with every ru
 
 <!-- vehicle_sil_control peers -->
 ```text
-Dashboard  connected  18 variables  SIL Kit: ReadyToRun
-Engine     connected  18 variables  SIL Kit: ReadyToRun
+Dashboard  connected  22 variables  SIL Kit: ReadyToRun
+Engine     connected  22 variables  SIL Kit: ReadyToRun
 ```
 
 <!-- vehicle_sil_control time -->
