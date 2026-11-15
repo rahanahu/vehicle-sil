@@ -940,6 +940,9 @@ messages:
 <!-- tests/spy/guide_example.hpp -->
 
 ```cpp
+namespace j1939 = vehicle_sil::j1939;
+using namespace std::chrono_literals;
+
 namespace cal {
 inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
@@ -981,18 +984,18 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 
   | 変数 | 型 | 中身 |
   |---|---|---|
-  | `<名前>.<信号>` | 整数か実数 | 信号の最後の有効な値。単位は定義のもの。列挙（生の値。値の名前は書きません）と、scale が 1 で offset が整数の信号は整数、ほかは実数です。有効な値が来るまでは 0 で、有効でない値が来ても前の値のままです |
+  | `<名前>.<信号>` | 整数か実数 | 信号の最後の有効な値。単位は定義のもの。列挙（生の値。値の名前は書きません）と、scale が 1 で offset が整数で、有効な値が全部 64 ビットの符号付き整数に入る信号は整数、ほかは実数です（64 ビットのカウンターなど）。有効な値が来るまでは 0 で、有効でない値が来ても前の値のままです |
   | `<名前>.<信号>.state` | 列挙 | 有効でない値を持ちうる信号（特別な値がある、有効な範囲がビットより狭い、列挙）だけ。最後のメッセージで何だったか。`none`（まだ来ていない）、`valid`、`error`、`not_available`、`special`、`out_of_range`、`undefined` |
   | `<名前>.count` | 整数 | 受けたメッセージの数 |
   | `<名前>.last_ms` | 整数 | 最後のメッセージの時刻（ms 未満は切り捨て。-1: まだ来ていない） |
   | `<名前>.period_ms` | 整数 | 最後のメッセージとその前のメッセージの間隔（ms 未満は切り捨て。-1: 2 回来ていない） |
   | `<名前>.size` | 整数 | 最後のメッセージのバイト数（型より長く来たメッセージは、その長さ） |
   | `<名前>.invalid` | 整数 | 有効でない信号を含んでいたメッセージの数 |
-  | `<名前>.stale` | bool | `options.stale_after` を書いたときだけ。その時間より長く 1 回も来ていない間 true（最初のメッセージの前は、時刻 0 から数えます）。ECU のステップで変わるので、最大 1 ステップ遅れます |
+  | `<名前>.stale` | bool | `options.stale_after` を書いたときだけ。その時間より長く 1 回も来ていない間 true（最初のメッセージの前は、ECU の最初のステップから数えます）。ECU のステップで変わるので、最大 1 ステップ遅れます |
 
-  - 「最後」は `Message::time` で決めます。最後のメッセージより古いメッセージ（接続のメッセージは受け手の確認の後に渡るので、後から来た単一フレームより後に渡ることがあります）は、`count` と `invalid` にだけ数え、ほかは変えません。
+  - 「最後」は `Message::time` で決めます。最後のメッセージより古いメッセージ（接続のメッセージは受け手の確認の後に渡るので、後から来た単一フレームより後に渡ることがあります）は、`count` と `invalid` にだけ数え、ほかは変えません。同じ時刻の 2 つ（送り手の 1 つのステップで送ったもの）は、後に渡った方を最後とし、`period_ms` は 0 です。
   - 項目と同じ名前（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state`）の信号は、ビルドの誤りになり、文がそう言います（「a signal of M is named like an item the watch publishes ...」。どの信号かはコンパイラーが示します）。定義の側で信号の名前を変えます。
-  - `watch()` は `spy::Watch<M>&` を返します。その `count()` と `latest()`（最後のメッセージを `M` で）は、自分のコードから使えます。名前の誤り、空の名前、聞きこぼしの前置きと同じ名前、始まった後の追加は `add()` と同じに断り、0 以下の `stale_after` は `std::invalid_argument` です（「... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<名前>.stale"」）。
+  - `watch()` は `spy::Watch<M>&` を返します。その `count()` と `latest()`（最後のメッセージを `M` で）は、自分のコードから使えます。名前の誤り、空の名前、聞きこぼしの前置きと同じ名前、始まった後の追加は `add()` と同じに断り、0 以下の `stale_after` は `std::invalid_argument` です（「... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<名前>.stale"」）。見張りの変数のどれかを ECU が既に持っていると（ほかのコードの `write.count` など）、`watch()` は 1 つも足さずに `std::invalid_argument` を投げます（「... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)」）。
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラーは、追加した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer_end`、`on_frame`: `Listener` の同じ名前の口にハンドラーを追加します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
   - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を書きます。形は `ecu.output()` と同じです。
@@ -1005,6 +1008,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
     ```
 
   - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラーの中では 1 つ前のステップの時刻です。ハンドラーでは `Message::time` を使います。
+  - `has_variable(item)`: ECU が `<名前>.<item>` を既に持っていれば true。変数をいくつも書く見張りは、先に全部を確かめれば、最初の変数の前に失敗できます（変数は取り消せません）。
   - 見張りの追加も、ハンドラーと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
 - 見張りのコンストラクターの中から、受け取った `Spy&` で別の見張りを `add()` できます（見張りを組み合わせた見張り）。追加した見張りは、組み合わせた見張りより後に壊れます（`Spy` は `add()` が返った順の逆に壊します）。コンストラクターが投げると、それまでに登録したハンドラーと `on_step` の関数を外し、追加した見張りも壊します。
 - 聞きこぼしの変数: `Spy` は、`Listener` の数を、次の変数に書きます（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなら、`Spy` が追い始めた転送で途切れたものはありません。どちらの側で欠けたかは区別しません。送り手がバスに出さなかった BAM のパケットも数えます（`transport_bam_dropped` か `transport_bam_replaced`）。最後まで来なかった転送は `spy.timed_out` で見ます。

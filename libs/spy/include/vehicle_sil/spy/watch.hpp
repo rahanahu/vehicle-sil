@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -57,8 +58,28 @@ inline constexpr std::array<std::string_view, 7> kWatchItems{"count", "last_ms",
 template <class S>
 inline constexpr bool is_enum_signal = std::is_enum_v<typename decltype(std::declval<const S&>().value())::value_type>;
 
-/// true: the signal's value is published as an integer (an enumeration, or scale 1 with an integer
-/// offset); otherwise as a real number.
+/// true: every valid raw value of S plus `offset` (a whole number of std::int64_t) is a
+/// std::int64_t.
+template <class S, std::int64_t offset>
+[[nodiscard]] constexpr bool fits_int64() noexcept
+{
+    constexpr std::int64_t most = (std::numeric_limits<std::int64_t>::max)();
+    constexpr std::int64_t least = (std::numeric_limits<std::int64_t>::min)();
+    if constexpr (std::is_signed_v<typename S::raw_type>)
+    {
+        return offset >= 0 ? S::raw_max <= most - offset : S::raw_min >= least - offset;
+    }
+    else
+    {
+        // raw_min >= 0 and offset > -9.0e18: the sum stays above the least.
+        return S::raw_max <= static_cast<std::uint64_t>(most) &&
+               static_cast<std::int64_t>(S::raw_max) <= most - (offset > 0 ? offset : 0);
+    }
+}
+
+/// true: the signal's value is published as an integer (an enumeration, or scale 1 with a whole
+/// offset, where every valid value is a std::int64_t); otherwise as a real number (e.g. a 64-bit
+/// counter whose valid values go above 2^63 - 1).
 template <class S>
 [[nodiscard]] constexpr bool is_integer_signal() noexcept
 {
@@ -69,8 +90,15 @@ template <class S>
     else
     {
         constexpr double offset = S::layout.offset;
-        return S::layout.scale == 1.0 && offset > -9.0e18 && offset < 9.0e18 &&
-               offset == static_cast<double>(static_cast<std::int64_t>(offset));
+        if constexpr (S::layout.scale == 1.0 && offset > -9.0e18 && offset < 9.0e18 &&
+                      offset == static_cast<double>(static_cast<std::int64_t>(offset)))
+        {
+            return fits_int64<S, static_cast<std::int64_t>(offset)>();
+        }
+        else
+        {
+            return false;
+        }
     }
 }
 
@@ -110,7 +138,7 @@ inline std::vector<control::EnumItem> state_items()
 /// and the selector of M if it has one), and publishes:
 /// - "<as>.<signal>" for each signal of M: its latest valid value, with the signal's unit. An
 ///   integer for an enumeration (the raw value; no names yet) and for a signal of scale 1 with a
-///   whole offset, a real number otherwise. 0 until a valid value came; a value that is not
+///   whole offset whose valid values all fit std::int64_t, a real number otherwise. 0 until a valid value came; a value that is not
 ///   valid leaves it as it was.
 /// - "<as>.<signal>.state" for each signal that can hold a value that is not valid (special
 ///   values, a valid range narrower than its bits, an enumeration): an enumeration of none
@@ -122,15 +150,17 @@ inline std::vector<control::EnumItem> state_items()
 ///   (-1: fewer than two).
 /// - "<as>.size": the bytes of the latest message (more than M::kLength if it came longer).
 /// - "<as>.stale", with options.stale_after only: true while the latest message (before the
-///   first one: the time 0) is more than stale_after older than the ECU's step. It changes in
-///   the steps of the ECU, so how soon it shows depends on the step size.
+///   first one: the ECU's first step) is more than stale_after older than the ECU's step. It
+///   changes in the steps of the ECU, so how soon it shows depends on the step size.
 /// "Latest" is by Message::time: a message older than the latest one (a connection is handed on
 /// after the receiver's acknowledgement, after frames that came later) is counted in count and
-/// invalid and changes nothing else.
+/// invalid and changes nothing else. Of two messages with the same time (one sender's step), the
+/// one handed on later is the latest, and period_ms is 0.
 ///
 /// No signal of M may be named like an item above (count, last_ms, period_ms, size, invalid,
-/// stale, state): a build error says so; rename the signal in M's definition. Allocates when it is
-/// made only.
+/// stale, state): a build error says so; rename the signal in M's definition. If the ECU has one
+/// of the variables already, the watch publishes none (std::invalid_argument). Allocates when it
+/// is made only.
 template <class M>
 class Watch final
 {
@@ -150,6 +180,7 @@ public:
                                         ".stale\"");
         }
         M probe{};
+        require_free(scope);
         std::size_t count = 0;
         std::as_const(probe).for_each_signal([&count](const auto&) { ++count; });
         signals_.resize(count);
@@ -166,6 +197,12 @@ public:
         scope.output("invalid", &invalid_, {.description = "Messages with a signal that was not valid"});
         if (options_.stale_after)
         {
+            scope.on_step([this](SimTime now) {
+                if (!first_step_)
+                {
+                    first_step_ = now;
+                }
+            });
             scope.output("stale", [this] { return stale(); },
                          {.description = "true: no message for more than " +
                                          std::to_string(detail::whole_ms(*options_.stale_after)) + " ms"});
@@ -184,6 +221,38 @@ public:
     [[nodiscard]] const std::optional<M>& latest() const noexcept { return latest_; }
 
 private:
+    /// All or nothing: std::invalid_argument before the first variable if the ECU has one of
+    /// the watch's variables already.
+    void require_free(const Scope& scope) const
+    {
+        const auto require = [&scope](const std::string& item) {
+            if (scope.has_variable(item))
+            {
+                throw std::invalid_argument("vehicle_sil::spy::Spy::watch() \"" + scope.name() + "\": the ECU has the variable \"" +
+                                            scope.name() + "." + item +
+                                            "\" already, and the watch publishes it too: give the watch another name, or "
+                                            "rename the other variable (the watch published nothing)");
+            }
+        };
+        M probe{};
+        std::as_const(probe).for_each_signal([&require](const auto& signal) {
+            using S = std::remove_cvref_t<decltype(signal)>;
+            require(std::string(S::name));
+            if constexpr (detail::can_be_invalid<S>())
+            {
+                require(std::string(S::name) + ".state");
+            }
+        });
+        for (const char* item : {"count", "last_ms", "period_ms", "size", "invalid"})
+        {
+            require(item);
+        }
+        if (options_.stale_after)
+        {
+            require("stale");
+        }
+    }
+
     struct SignalValue
     {
         std::int64_t integer = 0;
@@ -282,7 +351,11 @@ private:
 
     [[nodiscard]] bool stale() const noexcept
     {
-        const SimTime since = latest_ ? latest_time_ : SimTime{};
+        if (!latest_ && !first_step_)
+        {
+            return false; // before the first step
+        }
+        const SimTime since = latest_ ? latest_time_ : *first_step_;
         return scope_.now() - since > *options_.stale_after;
     }
 
@@ -292,6 +365,7 @@ private:
     std::optional<M> latest_{};
     SimTime latest_time_{};
     std::optional<SimDuration> period_{};
+    std::optional<SimTime> first_step_{}; ///< "<as>.stale" before the first message counts from it
     std::int64_t count_ = 0;
     std::int64_t invalid_ = 0;
     std::int64_t size_ = 0;

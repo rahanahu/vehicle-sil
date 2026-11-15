@@ -315,11 +315,11 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 壊す順（ハンドラーを外してから見張り、最後に `Listener`）、見張りから追加した見張り、`Scope::on_step`
 - 変数を書いた `Spy` が ECU より先に壊れたときに、次のステップが止まること（仮想バスと SIL Kit）
 - 聞きこぼしの変数の内訳と和、誤りの文
-- 生成した型と手で書いた型での `watch<M>()`: 信号ごとの値（整数か実数）、その状態、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`from` と `to` の絞り、最後より古いメッセージ、誤りの文
-- `j1939_spy.watch_of_a_signal_named_count_does_not_build`: 見張りの項目と同じ名前の信号がビルドの誤りになること（ビルドに入らないターゲット `vehicle_sil_spy_watch_clash` を作る）
+- 生成した型と手で書いた型での `watch<M>()`: 信号ごとの値（整数か実数）、その状態、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`from` と `to` の絞り、最後より古いメッセージ、同じ時刻の 2 つ、`std::int64_t` に入らない 64 ビットのカウンター（実数）、ECU が既に持つ名前（変数を 1 つも出さない）、誤りの文
+- `j1939_spy.watch_of_a_signal_named_count_does_not_build`: 見張りの項目と同じ名前の信号がビルドの誤りになること（ビルドに入らないターゲット `vehicle_sil_spy_watch_clash` を、ビルド木でビルドの道具を呼んで作る。同じ木で同時にビルドしない）。vehicle-sil がサブプロジェクトのときと、構成が複数ある生成器では登録しない（構成のときにそう出す）
 - `Spy` があってもほかの ECU の記録が変わらず、`Spy` が何も送信しないこと
 - 定常状態のステップでメモリを確保しないこと
-- 手引きの見本（`tests/spy/guide_example.hpp`、`cal_messages.yaml`）。`j1939_spy.guide_example_is_the_guides`: 両方の版の手引きが、このファイルをそのまま載せていること
+- 手引きの見本（`tests/spy/guide_example.hpp`、`cal_messages.yaml`）。`j1939_spy.guide_example_is_the_guides`: 手引きが、このファイルをそのまま載せていること
 - `j1939_spy.boundary`: `libs/spy` がエンジンの内部を使っていないこと。`j1939.sniffer_boundary` は、エンジンが `vehicle_sil::spy` を知らないことも検査する
 
 ### `peer` / `testkit`

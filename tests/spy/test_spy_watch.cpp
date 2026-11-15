@@ -25,6 +25,7 @@ using vehicle_sil::spy::Spy;
 using vehicle_sil::spy::WatchOptions;
 using vehicle_sil::unit::spy::hand_written::FirstByte;
 using vehicle_sil::unit::spy::hand_written::Reading;
+using vehicle_sil::unit::spy::hand_written::Wide;
 namespace codec = vehicle_sil::j1939::codec;
 
 namespace {
@@ -232,6 +233,58 @@ TEST_CASE(watch_counts_an_older_message_and_keeps_the_latest)
     CHECK_EQ(integer_of(rig.ecu, "r.size"), 8); // a single frame has 8 bytes
 }
 
+TEST_CASE(watch_takes_the_later_of_two_messages_with_the_same_time)
+{
+    // One sender's step: both frames have its step time.
+    Rig rig;
+    make_spy(rig).watch<Reading>("r");
+    rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(reading(5.0, 5))));
+    rig.inject(at(3ms), frame(6, kPgnPropA, kA, kB, bytes_of(reading(10.0, 1))));
+    rig.bench.run_until(at(10ms) + 1ns);
+    CHECK_EQ(integer_of(rig.ecu, "r.count"), 2);
+    CHECK(real_of(rig.ecu, "r.level") == 10.0);
+    CHECK_EQ(integer_of(rig.ecu, "r.code"), 1);
+    CHECK_EQ(integer_of(rig.ecu, "r.period_ms"), 0);
+}
+
+// Scale 1 and a whole offset: an integer while every valid value fits std::int64_t.
+namespace wide_signals {
+template <std::uint8_t kLength, bool kSigned, std::uint64_t kRawMin, std::uint64_t kRawMax, double kOffset>
+struct Spec
+{
+    static constexpr codec::SignalLayout layout{
+        .length = kLength, .is_signed = kSigned, .offset = kOffset, .raw_min = kRawMin, .raw_max = kRawMax};
+    static constexpr std::string_view name{"s"};
+    static constexpr std::string_view unit{""};
+};
+template <std::uint8_t kLength, bool kSigned, std::uint64_t kRawMin, std::uint64_t kRawMax, double kOffset>
+constexpr bool integer = vehicle_sil::spy::detail::is_integer_signal<
+    codec::Signal<Spec<kLength, kSigned, kRawMin, kRawMax, kOffset>>>();
+constexpr std::uint64_t kInt64Max = 0x7FFF'FFFF'FFFF'FFFF;
+constexpr std::uint64_t kInt64Min = 0x8000'0000'0000'0000; // as a bit pattern
+static_assert(integer<32, false, 0, 0xFFFF'FFFF, -1000.0>);
+static_assert(integer<64, false, 0, kInt64Max, 0.0>);
+static_assert(!integer<64, false, 0, kInt64Max, 1.0>);
+static_assert(!integer<64, false, 0, kInt64Max + 1, 0.0>);
+static_assert(integer<64, false, 0, kInt64Max - 5, 5.0>);
+static_assert(integer<64, true, kInt64Min, kInt64Max, 0.0>);
+static_assert(!integer<64, true, kInt64Min, kInt64Max, -1.0>);
+static_assert(!integer<64, true, kInt64Min, kInt64Max, 1.0>);
+static_assert(integer<64, true, kInt64Min + 1, kInt64Max, -1.0>);
+} // namespace wide_signals
+
+TEST_CASE(watch_publishes_a_64_bit_counter_beyond_int64_as_a_real_number)
+{
+    Rig rig;
+    make_spy(rig).watch<Wide>("w");
+    Wide w;
+    w.total.set(1.0e19); // above 2^63 - 1: as a std::int64_t it would turn negative
+    rig.inject(at(3ms), frame(6, kPgnPropB, kA, kGlobal, bytes_of(w)));
+    rig.bench.run_until(at(10ms) + 1ns);
+    CHECK(info_of(rig.ecu, "w.total").type == ValueType::Real);
+    CHECK(real_of(rig.ecu, "w.total") == 1.0e19);
+}
+
 TEST_CASE(watch_stale_turns_on_when_nothing_came_for_longer_than_stale_after)
 {
     Rig rig; // a step of 10 ms
@@ -264,6 +317,24 @@ TEST_CASE(watch_errors_say_what_is_wrong_and_how_to_fix_it)
         CHECK_MESSAGE(message_of<std::invalid_argument>([&] { spy.watch<FirstByte>("r"); }),
                       "vehicle_sil::spy::Spy::watch() \"r\": the name is used already, by an earlier watch(): give "
                       "each watcher a name of its own");
+    }
+    {
+        // A variable of the watch that the ECU has already: the watch publishes none, and the
+        // ECU runs.
+        Rig rig;
+        std::int64_t other = 0;
+        rig.ecu.output("r.count", &other);
+        Spy& spy = make_spy(rig);
+        CHECK_MESSAGE(message_of<std::invalid_argument>([&] { spy.watch<Reading>("r"); }),
+                      "vehicle_sil::spy::Spy::watch() \"r\": the ECU has the variable \"r.count\" already, and the "
+                      "watch publishes it too: give the watch another name, or rename the other variable (the watch "
+                      "published nothing)");
+        for (const char* name : {"r.level", "r.level.state", "r.code"})
+        {
+            CHECK(!has_variable(rig.ecu, name));
+        }
+        rig.bench.run_until(at(10ms) + 1ns);
+        CHECK_EQ(integer_of(rig.ecu, "r.count"), 0);
     }
     {
         Rig rig;

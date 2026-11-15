@@ -104,6 +104,42 @@ struct FirstByte
 };
 static_assert(codec::MessageType<FirstByte>);
 
+/// Proprietary B, 8 bytes: a 64-bit counter whose every value is valid, so most of them do not
+/// fit std::int64_t: Spy::watch() publishes it as a real number.
+struct Wide
+{
+    static constexpr ::vehicle_sil::j1939::Pgn kPgn{0xFF10};
+    static constexpr ::vehicle_sil::j1939::Priority kPriority = 6;
+    static constexpr std::size_t kLength = 8;
+    static constexpr std::uint8_t kFill = 0xFF;
+
+    struct Signals
+    {
+        struct total
+        {
+            static constexpr codec::SignalLayout layout{.start_bit = 0, .length = 64, .raw_max = ~std::uint64_t{0}};
+            static constexpr std::string_view name{"total"};
+            static constexpr std::string_view unit{""};
+        };
+    };
+
+    codec::Signal<Signals::total> total;
+
+    template <typename V>
+    void for_each_signal(V&& v)
+    {
+        v(total);
+    }
+    template <typename V>
+    void for_each_signal(V&& v) const
+    {
+        v(total);
+    }
+    std::size_t encode(std::span<std::uint8_t> out) const { return codec::encode_message(*this, out); }
+    static std::optional<Wide> decode(std::span<const std::uint8_t> in) { return codec::decode_message<Wide>(in); }
+};
+static_assert(codec::MessageType<Wide>);
+
 /// A signal named like an item of the watch: Spy::watch<Clash>() does not build
 /// (j1939_spy.watch_of_a_signal_named_count_does_not_build).
 struct Clash

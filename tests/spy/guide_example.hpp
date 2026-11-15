@@ -16,10 +16,10 @@
 #include <chrono>
 #include <cstdint>
 
+// guide: begin
 namespace j1939 = vehicle_sil::j1939;
 using namespace std::chrono_literals;
 
-// guide: begin
 namespace cal {
 inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }

@@ -101,6 +101,13 @@ void Scope::on_step(std::function<void(SimTime now)> fn)
 
 SimTime Scope::now() const noexcept { return state_.shared->now; }
 
+bool Scope::has_variable(std::string_view item) const
+{
+    const std::string name = state_.name + "." + std::string(item);
+    const auto variables = ecu().describe().variables; // reads the declarations without closing them
+    return std::any_of(variables.begin(), variables.end(), [&](const auto& info) { return info.name == name; });
+}
+
 // --- Spy ---------------------------------------------------------------------------------------
 
 Spy::Spy(Ecu& ecu, j1939::Network& network, SpyOptions options) : Spy(ecu, network, nullptr, std::move(options)) {}
@@ -369,9 +376,10 @@ void Spy::abandon_add(Slot& slot) noexcept
     {
         try
         {
-            why = std::string(kSpy) + "::add() " + in_quotes(slot.state.name) +
+            why = std::string(kSpy) + "::" + slot.kind + " " + in_quotes(slot.state.name) +
                   ": the watcher's constructor threw after variables were published that refer to it (or to the "
-                  "watchers it added): do not run the ECU after a failed add(); fix what made the constructor throw";
+                  "watchers it added): do not run the ECU after a failed " + slot.kind +
+                  "; fix what made the constructor throw";
         }
         catch (...)
         {

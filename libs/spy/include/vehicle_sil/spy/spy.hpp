@@ -206,6 +206,10 @@ public:
     [[nodiscard]] SimTime now() const noexcept;
     /// The watcher's name (the `as` of Spy::add()): the prefix of its variables.
     [[nodiscard]] const std::string& name() const noexcept { return state_.name; }
+    /// true if the ECU has the variable "<name()>.<item>" already (declared by other code). A
+    /// watcher that publishes several variables checks them all first, so that it fails before
+    /// the first rather than after some (variables cannot be taken back).
+    [[nodiscard]] bool has_variable(std::string_view item) const;
 
 private:
     [[nodiscard]] Ecu& ecu() const noexcept { return state_.ecu; }

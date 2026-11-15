@@ -940,6 +940,9 @@ messages:
 <!-- tests/spy/guide_example.hpp -->
 
 ```cpp
+namespace j1939 = vehicle_sil::j1939;
+using namespace std::chrono_literals;
+
 namespace cal {
 inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
@@ -981,18 +984,18 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 
   | Variable | Type | What it holds |
   |---|---|---|
-  | `<name>.<signal>` | Integer or real | The signal's latest valid value, with the unit of the definition. An integer for an enumeration (its raw value; the names of its values are not written) and for a signal with scale 1 and a whole offset; a real number otherwise. 0 until a valid value came; a value that is not valid leaves it as it was |
+  | `<name>.<signal>` | Integer or real | The signal's latest valid value, with the unit of the definition. An integer for an enumeration (its raw value; the names of its values are not written) and for a signal with scale 1 and a whole offset whose valid values all fit a 64-bit signed integer; a real number otherwise (such as a 64-bit counter). 0 until a valid value came; a value that is not valid leaves it as it was |
   | `<name>.<signal>.state` | Enum | Only for a signal that can hold a value that is not valid (special values, a valid range narrower than its bits, an enumeration): what the latest message held. `none` (no message yet), `valid`, `error`, `not_available`, `special`, `out_of_range`, `undefined` |
   | `<name>.count` | Integer | Messages heard |
   | `<name>.last_ms` | Integer | Time of the latest message, in whole ms (-1: none yet) |
   | `<name>.period_ms` | Integer | Time between the latest message and the one before, in whole ms (-1: fewer than 2) |
   | `<name>.size` | Integer | Bytes of the latest message (a message that came longer than the type keeps its length) |
   | `<name>.invalid` | Integer | Messages with a signal that was not valid |
-  | `<name>.stale` | Bool | Only with `options.stale_after`: true while no message came for more than that (before the first one: since time 0). It changes in the ECU's steps, so it shows up to one step late |
+  | `<name>.stale` | Bool | Only with `options.stale_after`: true while no message came for more than that (before the first one: since the ECU's first step). It changes in the ECU's steps, so it shows up to one step late |
 
-  - "Latest" is by `Message::time`. A message older than the latest one (the message of a connection is passed after the receiver's acknowledgement, so possibly after a single frame that came later) is counted in `count` and `invalid` and changes nothing else.
+  - "Latest" is by `Message::time`. A message older than the latest one (the message of a connection is passed after the receiver's acknowledgement, so possibly after a single frame that came later) is counted in `count` and `invalid` and changes nothing else. Of two messages with the same time (sent in one step of the sender), the one passed later is the latest, and `period_ms` is 0.
   - A signal named like one of the items (`count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, `state`) is a build error that says so ("a signal of M is named like an item the watch publishes ..."; the compiler shows which signal). Rename the signal in the definition.
-  - `watch()` returns the `spy::Watch<M>&`; its `count()` and `latest()` (the latest message as `M`) are for code of your own. The names, the empty name, the name of the missed-traffic prefix and "after the run started" are refused as with `add()`, and a `stale_after` that is not above 0 is a `std::invalid_argument` ("... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<name>.stale"").
+  - `watch()` returns the `spy::Watch<M>&`; its `count()` and `latest()` (the latest message as `M`) are for code of your own. The names, the empty name, the name of the missed-traffic prefix and "after the run started" are refused as with `add()`, and a `stale_after` that is not above 0 is a `std::invalid_argument` ("... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<name>.stale""). If the ECU has one of the watch's variables already (for example `write.count` from other code), `watch()` adds none of them and throws `std::invalid_argument` ("... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)").
 - `add<W>(name, args...)` creates the watcher `W(scope, args...)`, and the `Spy` owns it. A watcher is a class whose constructor takes a `spy::Scope&` first; it has no base class. The watchers' handlers are called in the order the watchers were added (also across watchers). What `Scope` offers:
   - `on_message(pgn, handler)`, `on_any_message`, `on_transfer_end`, `on_frame`: add a handler to the `Listener` function of the same name (for what each passes, see "On J1939" below). The `Scope` keeps the registration, and the `Spy` removes it before it destroys the watcher, so a watcher holds no `ListenerSubscription`.
   - `output(item, …)`, `output_enum(item, …)`: write the variable `<name>.<item>`. They take the same arguments as `ecu.output()`.
@@ -1005,6 +1008,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
     ```
 
   - `now()`: the time of the ECU's last step. In a variable's getter it is the time of the step being sampled, so "how many ms since the last message" is the difference between `now()` and the last `Message::time` (the result depends on the granularity of the step size). In a handler it is the time of the previous step; use `Message::time` there.
+  - `has_variable(item)`: true if the ECU has `<name>.<item>` already. A watcher that writes several variables can check them all first, so that it fails before the first (variables cannot be taken back).
   - Add watchers, and register their handlers and variables, in the constructor of the ECU class. After the run has started, these are a `std::logic_error` ("... after the run started: add the watchers in the ECU class's constructor"). A wrong name is a `std::invalid_argument`: a name used a second time, an empty name, a name that starts or ends with `.`, or the name of the missed-traffic prefix (below). The message says how to fix it.
 - From inside a watcher's constructor, you can `add()` another watcher through the `Spy&` it received (a watcher composed of watchers). The added watcher is destroyed after the composing one (the `Spy` destroys watchers in the reverse order in which `add()` returned). If the constructor throws, the handlers and `on_step` functions it registered so far are removed, and the watchers it added are destroyed.
 - Missed-traffic variables: the `Spy` writes the counts of the `Listener` to the following variables (integers that only grow). If a scenario checks that `spy.missed` stays 0, no transfer that the `Spy` followed broke off. It does not tell on which side a frame was lost: a BAM packet that the sender never put on the bus also counts (in `transport_bam_dropped` or `transport_bam_replaced`). Transfers whose end never came are in `spy.timed_out`.

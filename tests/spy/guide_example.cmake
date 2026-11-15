@@ -1,10 +1,10 @@
 # The example of the guide "Listen-only participants" against the files the tests build: in DOC
-# (docs/j1939-guide.md) and DOC_JA (docs/ja/j1939-guide.md), the block after the line
-# "<!-- tests/spy/cal_messages.yaml -->" is MESSAGES without its comment lines, and the block after
-# "<!-- tests/spy/guide_example.hpp -->" is the lines of EXAMPLE between "// guide: begin" and
-# "// guide: end". Invoked by CTest with cmake -P.
+# (docs/j1939-guide.md; scripts/check-docs.py keeps the Japanese page's blocks the same), the
+# block after the line "<!-- tests/spy/cal_messages.yaml -->" is MESSAGES without its comment
+# lines, and the block after "<!-- tests/spy/guide_example.hpp -->" is the lines of EXAMPLE
+# between "// guide: begin" and "// guide: end". Invoked by CTest with cmake -P.
 cmake_minimum_required(VERSION 3.21)
-foreach(var DOC DOC_JA EXAMPLE MESSAGES)
+foreach(var DOC EXAMPLE MESSAGES)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "guide_example.cmake: ${var} is required")
   endif()
@@ -50,7 +50,7 @@ math(EXPR body_length "${end} - ${body_start}")
 string(SUBSTRING "${example}" ${body_start} ${body_length} example)
 
 set(failures "")
-foreach(doc IN ITEMS "${DOC}" "${DOC_JA}")
+foreach(doc IN ITEMS "${DOC}")
   foreach(pair "tests/spy/cal_messages.yaml|messages|${MESSAGES} without its comment lines"
                "tests/spy/guide_example.hpp|example|the lines of ${EXAMPLE} between the markers")
     string(REPLACE "|" ";" pair "${pair}")
@@ -66,4 +66,4 @@ endforeach()
 if(failures)
   message(FATAL_ERROR "${failures}Make them the same: the guide shows what the tests build (tests/spy/test_spy_watch.cpp)")
 endif()
-message(STATUS "guide_example: the example of both guides is the one the tests build")
+message(STATUS "guide_example: the example of the guide is the one the tests build")
