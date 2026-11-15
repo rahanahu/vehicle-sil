@@ -61,11 +61,13 @@ TEST_CASE(j1939_node_argument_names_are_fixed)
 {
     CHECK(vehicle_sil::ecu_executable::kJ1939NodeArgument == "--j1939-node");
     CHECK(vehicle_sil::ecu_executable::kFeatureJ1939Node == "j1939-node");
-    // The launcher does not give it yet: a command of the configuration may still have it.
+    // The launcher gives it (j1939_nodes in the configuration), so a command of the configuration may not have it.
+    bool given = false;
     for (const auto argument : vehicle_sil::ecu_executable::kLauncherArguments)
     {
-        CHECK(argument != vehicle_sil::ecu_executable::kJ1939NodeArgument);
+        given = given || argument == vehicle_sil::ecu_executable::kJ1939NodeArgument;
     }
+    CHECK(given);
 }
 
 TEST_CASE(j1939_node_argument_is_read_back_as_it_was_written)
