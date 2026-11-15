@@ -319,7 +319,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - `j1939_spy.watch_of_a_signal_named_count_does_not_build`: 見張りの項目と同じ名前の信号がビルドの誤りになること（ビルドに入らないターゲット `vehicle_sil_spy_watch_clash` を、ビルド木でビルドの道具を呼んで作る。同じ木で同時にビルドしない）。vehicle-sil がサブプロジェクトのときと、構成が複数ある生成器では登録しない（構成のときにそう出す）
 - `Spy` があってもほかの ECU の記録が変わらず、`Spy` が何も送信しないこと
 - 定常状態のステップでメモリを確保しないこと
-- 手引きの見本（`tests/spy/guide_example.hpp`、`cal_messages.yaml`）。`j1939_spy.guide_example_is_the_guides`: 手引きが、このファイルをそのまま載せていること
+- 手引きの見本（`tests/spy/guide_example.hpp`、`guide_analysis.hpp`、`cal_messages.yaml`）。`j1939_spy.guide_example_is_the_guides`: 手引きが、このファイルをそのまま載せていること。`j1939_spy.analysis_example_judges_each_write_by_its_answer`: 解析の見本を、合う応答、応答なし、値の違う応答、接続で来た応答、応答の前の 2 つ目の Write で動かすこと
 - `j1939_spy.boundary`: `libs/spy` がエンジンの内部を使っていないこと。`j1939.sniffer_boundary` は、エンジンが `vehicle_sil::spy` を知らないことも検査する
 
 ### `peer` / `testkit`

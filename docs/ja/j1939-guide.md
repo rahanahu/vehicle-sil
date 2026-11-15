@@ -915,7 +915,7 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。型のあるメッセージ（「データの形（Codec）」）なら、`watch<M>()` が、自分のコードなしで信号ごとの値と来た時刻を書きます。それ以外は、何を見るかを見張り（watch）のクラスに書いて `Spy` に追加します。
 
-見本は、作りものの較正の手順の 2 つのメッセージ（ツールが ECU 0x21 に値を書き、0x21 が答える）と、0x21 の Proprietary A のメッセージ全部を見張ります。メッセージは YAML に書き、CMake の `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` が `cal_messages.hpp` にします（`cal_messages` と `vehicle_sil::spy` をリンクし、下のコードは `cal_messages.hpp` と `vehicle_sil/spy/watch.hpp` をインクルードします）。下の 2 つのブロック（`tests/spy/cal_messages.yaml`、`tests/spy/guide_example.hpp`）は、試験が作って動かし、この手引きがそのまま載せていることも確かめます。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+見本は、作りものの較正の手順の 2 つのメッセージ（ツールが ECU 0x21 に値を書き、0x21 がアドレスといま持っている値を答える）と、0x21 の Proprietary A のメッセージ全部を見張ります。メッセージは YAML に書き、CMake の `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` が `cal_messages.hpp` にします（`cal_messages` と `vehicle_sil::spy` をリンクし、下のコードは `cal_messages.hpp` と `vehicle_sil/spy/watch.hpp` をインクルードします）。下の 2 つのブロック（`tests/spy/cal_messages.yaml`、`tests/spy/guide_example.hpp`）は、試験が作って動かし、この手引きがそのまま載せていることも確かめます。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
 
 <!-- tests/spy/cal_messages.yaml -->
 
@@ -935,6 +935,7 @@ messages:
     signals:
       - {name: address, start_bit: 8, length: 16}
       - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+      - {name: value, start_bit: 32, length: 16, scale: 0.1, unit: V}
 ```
 
 <!-- tests/spy/guide_example.hpp -->
@@ -973,6 +974,40 @@ private: vehicle_sil::spy::Spy spy_;
 ```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
+
+ほかの ECU どうしのやり取りを判定する（要求ごとに応答が来たか、どれだけで来たか、値が合っているか）には、解析を見張りに書きます。ハンドラーは聞いた順にメッセージを受け、`M::decode()` で型にします。状態は見張りのメンバーが持ち、`on_step` で時間内に来なかったものを見つけ、判定は見張りの変数に出して、シナリオの `expect` や GUI が読みます。接続や BAM で運ばれたメッセージも、同じハンドラーに同じ形で届きます。下の見本は、上の見本の宣言を使います。ツール 0xF9 の `Write` ごとに、ECU 0x21 の `WriteAnswer`（アドレスと、いま持っている値を返す）と照らします。試験は、合う応答、応答なし、値の違う応答、接続で来た応答、応答の前の 2 つ目の `Write` の場合を動かします。
+
+<!-- tests/spy/guide_analysis.hpp -->
+
+```cpp
+class WriteCheck {                  // judges each Write of the tool 0xF9 to the ECU 0x21 by the ECU's WriteAnswer
+public:
+    WriteCheck(vehicle_sil::spy::Scope& s, vehicle_sil::SimDuration limit) : limit_(limit) {
+        s.on_message(cal::kPgn, [this](const j1939::Message& m) {          // in the order heard; also long messages
+            if (const auto w = cal::Write::decode(m.data); w && m.source == 0xF9 && m.destination == 0x21) {
+                if (asked_) { ++no_answer_; }                               // a new Write before the answer
+                asked_ = w; asked_at_ = m.time;
+            } else if (const auto a = cal::WriteAnswer::decode(m.data); a && asked_ && m.source == 0x21 && m.destination == 0xF9) {
+                ++answered_; answer_ms_ = (m.time - asked_at_) / 1ms;
+                if (a->address.raw() != asked_->address.raw() || a->value.raw() != asked_->value.raw()) { ++mismatches_; }
+                asked_.reset();
+            }
+        });
+        s.on_step([this](vehicle_sil::SimTime now) {                        // every step, after its messages
+            if (asked_ && now - asked_at_ > limit_) { ++no_answer_; asked_.reset(); }
+        });
+        s.output("answered", &answered_); s.output("no_answer", &no_answer_); s.output("mismatches", &mismatches_);
+        s.output("answer_ms", &answer_ms_, {.unit = "ms", .description = "Time to the latest answer (-1: none yet)"});
+    }
+private:
+    vehicle_sil::SimDuration limit_;
+    std::optional<cal::Write> asked_{};             // the Write waiting for its answer
+    vehicle_sil::SimTime asked_at_{};
+    std::int64_t answered_ = 0, no_answer_ = 0, mismatches_ = 0, answer_ms_ = -1;
+};
+```
+
+`CalSpy` のコンストラクターで `spy_.add<WriteCheck>("check", 200ms);` と足します。シナリオは、判定をほかの変数と同じに確かめます: `expect: { CalSpy.check.no_answer: 0, CalSpy.check.mismatches: 0 }`、`expect: { CalSpy.check.answer_ms: { le: 50 } }`。
 
 | 受信のしかた | 使うもの | 見えるもの |
 |---|---|---|

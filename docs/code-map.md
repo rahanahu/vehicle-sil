@@ -319,7 +319,7 @@ Typed messages (`j1939_codec.*`):
 - `j1939_spy.watch_of_a_signal_named_count_does_not_build`: a signal named like an item of the watch is a build error (it builds a target outside the build, `vehicle_sil_spy_watch_clash`, by running the build tool in the build tree: do not build in the same tree at the same time). Not registered when vehicle-sil is a subproject or with a generator of several configurations (configure says so)
 - With a `Spy`, the records of the other ECUs do not change, and the `Spy` sends nothing
 - No memory allocation in steady-state steps
-- The example in the guide (`tests/spy/guide_example.hpp`, `cal_messages.yaml`); `j1939_spy.guide_example_is_the_guides`: the guide shows these files unchanged
+- The examples in the guide (`tests/spy/guide_example.hpp`, `guide_analysis.hpp`, `cal_messages.yaml`); `j1939_spy.guide_example_is_the_guides`: the guide shows these files unchanged. `j1939_spy.analysis_example_judges_each_write_by_its_answer`: the analysis example with an answer that matches, no answer, a different value, an answer over a connection and a second Write before the answer
 - `j1939_spy.boundary`: `libs/spy` does not use the engine's internals. `j1939.sniffer_boundary` also checks that the engine does not know `vehicle_sil::spy`
 
 ### `peer` / `testkit`

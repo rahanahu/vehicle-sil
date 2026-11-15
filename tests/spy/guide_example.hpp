@@ -3,7 +3,8 @@
 // The example of docs/j1939-guide.md and docs/ja/j1939-guide.md ("Listen-only participants"),
 // with cal_messages.yaml: the lines between "// guide: begin" and "// guide: end" are the guide's
 // block (j1939_spy.guide_example_is_the_guides compares them), and test_spy_watch.cpp builds and
-// runs them. Included by that one file only (it declares names at namespace scope).
+// runs them. Included by the tests only (it declares names at namespace scope), also through
+// guide_analysis.hpp.
 #pragma once
 
 #include "cal_messages.hpp"
