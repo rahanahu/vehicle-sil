@@ -1,6 +1,6 @@
-// 互換の約束の外（`@vehicle-sil/gui-client/internal`）。ライブラリの中の部品と、試験が使うもの。予告なく変わり、
-// 消えることもある。アプリの本番のコードからは import しない（gui/web の lint が止める）。要るものがあれば、
-// 公開の入口（index.ts）に足すかを決める。
+// Outside the compatibility promise (`@vehicle-sil/gui-client/internal`): the library's internal building blocks and
+// what the tests use. They may change or disappear without notice. Do not import them from application code (the
+// gui/web lint rejects it). If you need something here, decide whether to add it to the public entry point (index.ts).
 export { Connection, backoffMs } from './connection';
 export type { ConnectionOptions } from './connection';
 export { SessionFeed, MAX_NOTICES, STALE_EVENTS_NOTICE } from './session';

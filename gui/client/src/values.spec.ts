@@ -83,7 +83,7 @@ describe('readable values', () => {
     });
     value.subscribe((v) => seen.push(['b', v]));
     value.set(1);
-    // b は 2 だけを受ける（1 を後から受けて、get() と食い違うことがない）
+    // b receives only 2 (it never gets 1 later and disagrees with get())
     expect(seen).toEqual([
       ['a', 1],
       ['a', 2],

@@ -1,480 +1,1161 @@
-# コードの地図
+# Code map
 
-<!-- 書き方: 「試験のラベル」「ディレクトリごとの場所と試験」「これを変えるならここも」は、1 文を 1 行に書きます（改行 1 つは同じ段落）。項目は小見出しか、空行で区切った箇条書きにします。表にすると 1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
+[日本語](ja/code-map.md)
 
-vehicle-sil 自体を直す人と AI エージェント向けです。変える場所、その試験、試験だけを回す方法を、探さずに見つけるための地図です。先に [AGENTS.md](../AGENTS.md)（文書の管理、コミット、検証のスクリプト）を読みます。次は [architecture.md](architecture.md)（全体の形）で、中の仕組みは変える場所の [internals/](architecture.md#中の仕組み) の文書にあります。
+<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
 
-各ディレクトリと各ターゲットの内容は [architecture.md](architecture.md) の「構成」にあります。ここには書きません。
+Use this map when you develop vehicle-sil itself: it shows where to make a change, which tests cover it, how to run only those tests and what else to update with it. It does not describe what each directory and target contains; see "[Directories and targets](architecture.md#directories-and-targets)" in [architecture.md](architecture.md).
 
-## 試験の名前と回し方
+| To find | See |
+|---|---|
+| How tests are named, how to run a subset, rules for ports and timeouts | [Test names and how to run tests](#test-names-and-how-to-run-tests) |
+| What the tests of each label cover | [Test labels](#test-labels) |
+| Classes, headers, tests and the `ctest -R` regular expression of each directory | [Code and tests by directory](#code-and-tests-by-directory) |
+| Tests that compare the examples in the documentation, and their markers | [Documentation examples and tests](#documentation-examples-and-tests) |
+| What each target links | [Dependency direction](#dependency-direction) |
+| Tests that check the boundaries between layers | [Boundary tests](#boundary-tests) |
+| Documentation, code and tests to update with a change | [What to update together](#what-to-update-together) |
 
-- 試験の名前は `<前置き>.<名前>` です。前置きは `tests/<領域>/CMakeLists.txt` の `PREFIX` です。
-- `tests/` の直下の、`CMakeLists.txt` のあるディレクトリは、名前の順に自動で加わります（`tests/CMakeLists.txt` に行を足しません）。条件のある領域（`control_server`、`fetchcontent`、`integration`、`virtual_time` など）は、自分の `CMakeLists.txt` の先頭で条件を見て `return()` します。領域は、ほかの領域のターゲットを `if(TARGET ...)` で確かめません（順に頼るため）。
-- CMake の一覧（`add_subdirectory`、ソース、シナリオ）は、1 行に 1 つ、名前の順に書きます。順に意味がある所は、コメントに書いてあります。
-- 試験の実行ファイルの試験は、ソースの `TEST_CASE(名前)` から設定時に登録されます（`vehicle_sil_add_harness_tests()`、`cmake/VehicleSilTestHelpers.cmake`）。既存のソースに `TEST_CASE` を足すときは、CMake を書き換えません。新しいソースのファイルは、その `CMakeLists.txt` の `SOURCES` に足します。マクロ（`TEST_CASE`、`CHECK`、`CHECK_EQ`）は `tests/unit/test_harness.hpp` にあります。
-- 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
-- プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
-- 試験は決まったポートで待ち受けません。registry はポート 0（`RegistryProcess`、`registry_uri` を書かない構成ファイル）、Control Server は `--control 0`、GUI サーバーは `--port 0` か、e2e が起動のたびに選ぶ空いているポートです（`multi_host.two_hosts` の 18500 は、試験が作る network namespace の中）。同じ PC で、別の作業ツリーのビルドの試験と同時に回せます。文書が示す決まったポート（`manual` の 8500 など）が要るシナリオは、`vehicle_sil_add_scenario_tests()` の `MACHINE_LOCK` で PC 全体のロック（`/tmp` のファイルに `flock`。`cmake/vehicle_sil_machine_lock.sh`。Windows ではなし）を取り、順に回ります。待つ間は 1 行出し、待った時間はその試験の CTest の `TIMEOUT` に数えます。ロックのファイルを開けないとき（別の利用者のファイルなど）は、1 行言ってロックなしで回ります。
-- 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
-- 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを知らせる手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
-  - 待ちの上限には倍率が掛かります。倍率は、試験を動かすときの環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`、なければビルドの既定（CMake のキャッシュ変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`。既定は 1、TSan のプリセットは 4）です。値は数字と小数点 1 つだけで書き、0 より大きくします（`3`、`2.5`）。ほかの書き方（空白、指数、16 進）は、C++ の試験、GUI サーバーの試験、e2e が変数の名前と直し方を言って止まります。CI は 3 を与えます（TSan のジョブは与えずに、プリセットの既定を使います。`.github/workflows/ci.yml`）。
-  - 倍率を掛けるかどうかは、値の種類で決まります。
-    1. 起きるはずのことを待つ上限には掛けます。上限として製品に渡す時間（ランチャーが製品の `--timeout-ms` に渡す値など）も同じです。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
-    2. 時間切れになることを確かめる値のうち、時間切れの前に子プロセスや別のスレッドが何かを終えていなければならないもの（子が 1 行書いてから打ち切られる、など）には掛けます。期待の文に出る数も同じ値から作ります。この試験は、倍率の分だけ必ず長くなります。
-    3. 「起きないこと」を確かめる待ち、周期、時間切れの値そのものを確かめる試験の値（`receiver-timeout` の 1500 ms など）には掛けません。掛けると、試験が確かめることが変わります。
-  - 関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`。GUI サーバーの試験は `conftest.py` の `scaled()`、e2e は `scaled()`）を通します。上限を受け取って中で倍率を掛ける関数（`eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` など）は、そのドキュメントコメントに「scaled」と書きます。そうした関数に渡す値には、呼ぶ側で掛けません。
-  - ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` は、構成のときの倍率（環境変数、なければビルドの既定。切り上げた整数）で伸びます（`cmake/VehicleSilTestHelpers.cmake`）。構成の後で倍率を大きくしたら、構成し直します。そのままだと、止まった試験は自分で失敗を言う前に CTest に止められます。ハーネスとランチャーは、そのときに `warning: ... configure the build again ...` の 1 行を出します。
+## Test names and how to run tests
 
 ```sh
 ctest --preset linux-gcc-debug -R '^launch\.'
 scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 ```
 
-## 試験のラベル
+### Naming and registration
 
-各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。
+A test is named `<prefix>.<name>`. The prefix is `PREFIX` in `tests/<area>/CMakeLists.txt`.
 
-- テストケースの登録漏れは、テスト実行ファイルごとの `<ラベル>.registration` テストが検出します（実行ファイルの `--list` と登録した名前を比べる）。
-- クロスビルドでは、`CMAKE_CROSSCOMPILING_EMULATOR`（たとえば `wine`）を指定すると、`ctest` がテストの実行ファイルをそれで動かします（`registration` テストも含む）。Windows の DLL（MinGW の実行時ライブラリ）は、実行ファイルの隣に置くなどして見つかるようにしてください。
-- テストプリセットは 8 並列で実行します。`scripts/verify.py` は、CPU がそれより少ない PC では CPU の数だけ並べます。壁時計の所要時間を測るテスト（`virtual_time.*`、`core.virtual_time_*`、LIN の速度のテスト）は単独で実行されます。
+| Kind of test | Name | Registration |
+|---|---|---|
+| Test in a test executable (harness) | `<prefix>.<TEST_CASE name>` | Registered at configure time from `TEST_CASE(name)` in the source (`vehicle_sil_add_harness_tests()`, `cmake/VehicleSilTestHelpers.cmake`). |
+| Test that starts processes (scenario) | `<prefix>.<scenario>` | Registered with `vehicle_sil_add_scenario_tests()`. |
+
+To add a harness test:
+
+- Adding a `TEST_CASE` to an existing source file needs no change to CMake.
+- Add a new source file to `SOURCES` in the `CMakeLists.txt` of its directory.
+- The macros (`TEST_CASE`, `CHECK`, `CHECK_EQ`) are in `tests/unit/test_harness.hpp`.
+
+Where scenario tests live:
+
+- `SCENARIOS` in `CMakeLists.txt` lists the scenarios.
+- Their code is in `*launcher.cpp` in the same directory (`tests/integration/launcher.cpp`, `tests/launch/launch_run_launcher.cpp` and others).
+- The shared code is in `tests/integration/launcher_support.hpp`.
+
+Rules for areas (the directories directly under `tests/`):
+
+- Every directory with a `CMakeLists.txt` is added automatically, in name order (do not add a line to `tests/CMakeLists.txt`).
+- An area with a condition (`control_server`, `fetchcontent`, `integration`, `virtual_time` and others) checks the condition at the top of its own `CMakeLists.txt` and calls `return()`.
+- An area does not test for another area's targets with `if(TARGET ...)`. That would make it depend on the order in which areas are added.
+- Write CMake lists (`add_subdirectory`, sources, scenarios) one entry per line, in name order. Where the order matters, a comment says so.
+
+### Run a subset of tests
+
+- To run one test, pass its name to the test executable (`<executable> <name>`). This is also how ctest runs it.
+- To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.` and `j1939_silkit.`.
+- To select by label, use `-L` (see [Test labels](#test-labels)).
+
+### Ports and locks
+
+Tests do not listen on fixed ports. They can run on the same computer at the same time as the tests of a build in another work tree.
+
+| What listens | How the port is chosen |
+|---|---|
+| registry | Port 0 (`RegistryProcess`, a configuration file without `registry_uri`) |
+| Control Server | `--control 0` |
+| GUI server | `--port 0`, or a free port that the e2e tests pick at each start |
+| 18500 of `multi_host.two_hosts` | Inside a network namespace that the test creates |
+
+A scenario that needs a fixed port shown in the documentation (such as 8500 for `manual`) takes a lock for the whole computer with `MACHINE_LOCK` of `vehicle_sil_add_scenario_tests()`, and such scenarios run one at a time.
+
+- The lock is an `flock` on a file in `/tmp` (`cmake/vehicle_sil_machine_lock.sh`; there is no lock on Windows).
+- While it waits, the test prints one line. The time it waits counts toward the test's CTest `TIMEOUT`.
+- If the test cannot open the lock file (for example, it belongs to another user), it prints one line and runs without the lock.
+
+### Timeouts and the scale factor
+
+Wait for something that is expected to happen with `eventually(condition, limit)` (`test_harness.hpp`) or with a mechanism that signals that it happened. Do not sleep for a fixed time and assume that things have progressed.
+
+Wait limits are multiplied by a scale factor.
+
+| Topic | Details |
+|---|---|
+| How the factor is chosen | The environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` when the tests run; without it, the build's default. |
+| Build default | The CMake cache variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`. The default is 1, and 4 for the TSan presets. |
+| How to write the value | Digits and at most one decimal point, greater than 0 (`3`, `2.5`). |
+| Other forms (spaces, exponents, hexadecimal) | The C++ tests, the GUI server tests and the e2e tests stop and print the variable's name and how to fix it. |
+| CI | Sets 3. The TSan jobs do not set it and use the preset's default (`.github/workflows/ci.yml`). |
+
+Whether a value is scaled depends on its kind.
+
+| Kind of value | Scaled | Reason and caution |
+|---|---|---|
+| A limit for waiting for something that is expected to happen. The same applies to a time passed to the product as a limit (such as the value that a launcher passes to the product's `--timeout-ms`). | Yes | A passing test moves on as soon as what it waits for happens, so a larger factor does not slow it down. |
+| A value that checks a timeout, where a child process or another thread must finish something before the timeout (for example, a child writes one line and is then cut off) | Yes | Build the numbers in the expected text from the same value. Such a test always takes longer by the factor. |
+| A wait that checks that something does not happen, a period, or the value in a test that checks the timeout value itself (such as the 1500 ms of `receiver-timeout`) | No | Scaling it changes what the test checks. |
+
+Rules for writing limits:
+
+- When you pass a limit to a function, pass it through `scaled_timeout(20s)` (`tests/unit/test_timeout_scale.hpp`). The GUI server tests use `scaled()` in `conftest.py`, and the e2e tests use `scaled()`.
+- A function that takes a limit and scales it internally (`eventually`, the waits in `tests/process/spawn_sleeper.hpp`, `--timeout-ms` of a scenario launcher and others) says "scaled" in its documentation comment.
+- Do not scale a value on the caller's side when you pass it to such a function.
+
+The CTest `TIMEOUT`:
+
+- The `TIMEOUT` of harness tests and scenario tests is extended by the factor at configure time (the environment variable, or without it the build's default, rounded up to an integer) (`cmake/VehicleSilTestHelpers.cmake`).
+- If you raise the factor after configuring, configure again. Otherwise CTest kills a stuck test before the test can report its own failure.
+- When that happens, the harness and the launcher print a line `warning: ... configure the build again ...`.
+
+## Test labels
 
 ```sh
 ctest --preset linux-gcc-release -L integration
-# FetchContent テスト（依存ライブラリを一から再ビルドするので時間がかかる）
+# FetchContent test (slow: it rebuilds the dependencies from scratch)
 cmake --preset linux-gcc-release -DVEHICLE_SIL_TEST_FETCHCONTENT=ON
 ctest --preset linux-gcc-release -L fetchcontent
 ```
 
+For every label:
+
+- The log of each process stays under `build/<preset>/tests/`, in `integration/<scenario>/`, `virtual_time/<scenario>/`, `lin_cluster/<scenario>/` and `vector_xl/integration/<scenario>/`. When a test fails, the launcher prints all the logs.
+- The `<label>.registration` test of each test executable detects test cases that are not registered (it compares the executable's `--list` with the registered names).
+- In a cross build, if you set `CMAKE_CROSSCOMPILING_EMULATOR` (for example `wine`), `ctest` runs the test executables with it (the `registration` tests included). Make the Windows DLLs (the MinGW runtime libraries) findable, for example by placing them next to the executables.
+- The test presets run 8 tests in parallel. On a computer with fewer CPUs, `scripts/verify.py` runs as many as there are CPUs.
+- Tests that measure wall-clock duration (`virtual_time.*`, `core.virtual_time_*`, the LIN speed tests) run alone.
+
 ### `unit`
 
-コマンドライン解析と、標準出力・標準エラーへの書き出し（`unit.*`）。
-`core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。
-`template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。
-付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。
-ただし `param_service.demo` には付く）、Python のクライアントの試験（`python`）、`fetchcontent`
+Set on the tests of command-line parsing and of writing to stdout and stderr (`unit.*`).
+
+| Also set on | Details |
+|---|---|
+| `core`, `lin`, `step`, `can`, `eth`, `j1939`, `peer`, `testkit`, `ecu`, `simulation`, `control`, `control_server`, `launch`, `process`, `vector_xl` | Unit tests and boundary checks |
+| `template.get_tools` | Tests the template's `get_tools.py`, and `template` and `version` of `scripts/package.py`, with locally built archives |
+| `param_service.demo` | The only example run that has it |
+
+It is not set on the scenario tests that start processes (`integration`), the example runs (`examples`), the Python client tests (`python`) or `fetchcontent`.
 
 ### `integration`
 
-`sil-kit-registry`、receiver、sender（実時間の `Peer` と J1939 スタック）を別プロセスで起動し、終了コードで判定する。
-`address-claim-and-pgn` は Address Claim と PGN の CAN ID とペイロードの一致を、`receiver-timeout` はタイムアウト処理を検証する。
-`receiver-detects-wrong-name` と `receiver-detects-wrong-payload` は、receiver が誤った NAME と壊れたペイロードを失敗として報告することを確かめる（`integration.*`）。
-このラベルは、プロセスを起動するほかのシナリオの試験にも付く: `virtual_time.*`、`lin_cluster.*`、`launch_cli.*`、`launch_run.*`、`ecu_main.*`、`vector_xl.integration.*`、`control_server.launcher`（それぞれの項目）、`template.check_and_run`（ひな形の ECU を本体のビルドで作り、ランチャーで照合、実行、シナリオ。
-照合と実行の出力を手引き「最初の ECU を作る」と照合）
+`integration.*` starts `sil-kit-registry`, a receiver and a sender (the real-time `Peer` and the J1939 stack) as separate processes, and judges the result by their exit codes.
+
+| Scenario | What it checks |
+|---|---|
+| `address-claim-and-pgn` | Address Claim, and that the CAN ID and payload of the PGN match |
+| `receiver-timeout` | Timeout handling |
+| `receiver-detects-wrong-name`, `receiver-detects-wrong-payload` | The receiver reports a wrong NAME and a corrupted payload as failures |
+
+The label is also set on the other scenario tests that start processes.
+
+- `virtual_time.*`, `lin_cluster.*`, `launch_cli.*`, `launch_run.*`, `ecu_main.*`, `vector_xl.integration.*`, `control_server.launcher` (for what they cover, see the entry of each label)
+- `template.check_and_run`: builds the template's ECUs with the main build and confirms that the launcher's check, run and scenario pass. It compares the check and run output with the guide "Create your first ECU".
 
 ### `vector_xl`
 
-CAN ブリッジのテスト。
-全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かす。
-CanBridge の単体テスト、XL バックエンドのテスト、実際の SIL Kit を使うプロセス内のテスト、ブリッジの実行ファイルを使う E2E テストがある。
-E2E では、エコーノードとの往復（Virtual CAN と、ビットレートを設定する物理 CAN）、送信レシートが返ってくる場合のループ防止、`--list-channels`、存在しないチャネル、引数の誤り、registry につながらない場合、ドライバがない場合、止める要求で止めたときの統計の 1 行と終了コード 0（Windows では共有するコンソールがなければ飛ばす）を確かめる
+Tests of the CAN bridge. On every platform, they run the production code against a fake XL driver made for the tests.
+
+| Kind of test | Details |
+|---|---|
+| Unit tests | CanBridge |
+| XL backend tests | The XL backend |
+| In-process tests | Use the real SIL Kit |
+| E2E tests | Use the bridge executable |
+
+What the E2E tests check:
+
+- A round trip with an echo node (Virtual CAN, and physical CAN with a configured bit rate)
+- Loop prevention when transmit receipts come back
+- `--list-channels`, a channel that does not exist, argument errors
+- A registry that cannot be reached, a missing driver
+- The statistics line and exit code 0 after a stop request (skipped on Windows when there is no shared console)
 
 ### `step`
 
-`vehicle_sil::step` の単体テスト（CAN と SIL Kit なしでビルドする）。
-CAN でない試験用の参加者（`Member`）で、段の順序、`start()` が 1 回だけ最初のステップの前に呼ばれること、時間の領域の混在の拒否（ホストとドライバー）、失敗の扱い、`post()` と起こし方、`next_deadline()`、仮想時間の `StepDriver`、差し替えた時計の上の `RealTimeDriver`（締め切りと到着で起きる）を確かめる。
-`step.boundary` は `libs/step` が SIL Kit のヘッダーを直接にも間接にも含まないことを検査する（`unit` ラベルも付く）
+Unit tests of `vehicle_sil::step` (built without CAN and SIL Kit). The `unit` label is also set.
+
+With a non-CAN test participant (`Member`), they check:
+
+- The order of the phases
+- That `start()` is called exactly once, before the first step
+- Rejection of mixed time domains (host and driver)
+- Failure handling
+- `post()` and how the host is woken, `next_deadline()`
+- `StepDriver` in virtual time
+- `RealTimeDriver` on a substituted clock (woken by deadlines and arrivals)
+
+`step.boundary` checks that `libs/step` includes no SIL Kit header, directly or indirectly.
 
 ### `signal`
 
-`vehicle_sil::signal` の波形の関数の単体テスト（標準ライブラリだけでビルドする）。
-時刻の表と比べた値（周期の端、位相、デューティー 0 と 100）、乱数の列がどのプラットフォームでも同じ値であること、乱数とチャタリングが時刻だけで決まること、チャープの位相が飛ばないこと、点の並びの補間を確かめる。
-`signal.boundary` は `libs/signal` が SIL Kit のヘッダーを含まないことを検査する（`unit` ラベルも付く）
+Unit tests of the waveform functions of `vehicle_sil::signal` (built with the standard library only). The `unit` label is also set.
+
+- Values compared with a table of times (period edges, phase, duty 0 and 100)
+- The random sequence has the same values on every platform
+- Random noise and chatter depend only on the time
+- The chirp's phase does not jump
+- Interpolation of a list of points
+
+`signal.boundary` checks that `libs/signal` includes no SIL Kit header.
 
 ### `can`
 
-`vehicle_sil::can` の単体テスト（SIL Kit なしでビルドする）、SIL Kit のポートのテスト（`can_silkit.*`）、簡易 CAN Network Simulator のテスト（`can_netsim.*`）。
-フレームの検証、仮想バスの受信順序とあふれ、ホストの段階の順序と失敗、ステップドライバーの順序、送信時間と調停（11 ビット / 29 ビット）、混雑、送信キュー、受信側のステップ幅によらないこと、ポートの事象（送信の結果、受け箱のあふれ、バス状態、エラーフレーム）、故障注入と ECU 単位の通信断、`post()`、時間の領域の混在の拒否、実時間のドライバー（差し替えた時計での決定的な試験と、壁時計での到着と順序）を確かめる。
-簡易 CAN Network Simulator では、プロセス内の participant と実行ファイルの両方で、仮想バスと同じ受信の時刻になること、繰り返しても同じ結果になること、送信時刻のない送信者、コントローラーのモード（始めていないコントローラーの送信を捨てること、`Reset()` での送信の取り消し、止めたコントローラーへの配送）、設定ファイルの読み込みを確かめる。
-プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（ステップ幅の組み合わせを変えて）と、送信の続く中で participant を決まった順序で止めて破棄できることを確かめる（`unit` ラベルも付く）
+The `unit` label is also set.
+
+| Test | Covers |
+|---|---|
+| `can.*` | Unit tests of `vehicle_sil::can` (built without SIL Kit) |
+| `can_silkit.*` | The SIL Kit port |
+| `can_netsim.*` | The simple CAN Network Simulator |
+
+What they check:
+
+- Frame validation
+- Receive order and overflow on the virtual bus
+- The order of the host's phases and its failures, the order of the step driver
+- Transmission time and arbitration (11-bit / 29-bit), congestion, the transmit queue
+- Independence from the receiver's step size
+- Port events (transmit results, receive queue overflow, bus state, error frames)
+- Fault injection and disconnection of a single ECU
+- `post()`, rejection of mixed time domains
+- The real-time driver (deterministic tests on a substituted clock, and arrival and order on the wall clock)
+
+For the simple CAN Network Simulator, they check the following both with in-process participants and with executables:
+
+- The receive times are the same as on the virtual bus
+- Repeated runs give the same result
+- A sender without transmit times
+- Controller modes (frames sent by a controller that has not started are dropped, `Reset()` cancels transmissions, delivery to a stopped controller)
+- Loading the configuration file
+
+With an in-process registry, they check:
+
+- The trace of the same scenario is the same on the virtual bus and on SIL Kit (for several combinations of step sizes)
+- Participants can be stopped and destroyed in a fixed order while transmissions continue
 
 ### `eth`
 
-`vehicle_sil::eth` の単体テスト（`eth.*`。
-SIL Kit なしでビルドする）と SIL Kit のポートのテスト（`eth_silkit.*`）。
-フレームと MAC アドレスの型、仮想ネットワーク（ハブとしての配り方、次のステップに届くこと、短いフレームの埋め、自分のフレームを受けないこと、時刻の順、あふれ）、チャネル（`step::Host` と `StepDriver` の上で回ること、ゲートウェイ、同じ時刻のフレームを送り元のアドレスで並べること、`on_frame()` と `receive()`、送信の段、上限、絞り込み、ポートの事象、選択肢の誤り、ステップの中で確保しないこと（`eth.steps_do_not_allocate`。
-専用の実行ファイル））、偽のコントローラーに対するポート（時刻同期していない送り手のフレームの時刻、あふれた送信の確認を含む）、プロセス内のレジストリで同じシナリオの記録が仮想ネットワークと SIL Kit で一致すること（ステップ幅の組み合わせを変えて。
-3 つの送り手が同じ時刻に送る場合を含む。
-アドレスを登録の順とずらし、仮想ネットワークの側でもアドレスの順を確かめる）。
-`eth.boundary` は `libs/eth` が SIL Kit のヘッダーを直接にも間接にも含まないことを検査する（`unit` ラベルも付く）
+The `unit` label is also set.
+
+| Test | Covers |
+|---|---|
+| `eth.*` | Unit tests of `vehicle_sil::eth` (built without SIL Kit) |
+| `eth_silkit.*` | The SIL Kit port |
+| `eth.steps_do_not_allocate` | No memory allocation inside a step (an executable of its own) |
+| `eth.boundary` | `libs/eth` includes no SIL Kit header, directly or indirectly |
+
+What they check:
+
+- The frame and MAC address types
+- Virtual network: delivery of frames as a hub, reception in the next step, padding of short frames, no reception of a node's own frames, time order, overflow
+- Channel: runs on `step::Host` and `StepDriver`, gateways, frames with the same time ordered by source address
+- Channel: `on_frame()` and `receive()`, the transmit phase, limits, filters, port events, option errors
+- The port against a fake controller (including frame times from a sender without time synchronization, and the acknowledgement of a transmission that overflowed)
+- With an in-process registry, the record of the same scenario is the same on the virtual network and on SIL Kit (for several combinations of step sizes)
+
+The last item includes 3 senders that send at the same time. Their addresses are in a different order from their registration order, and the test checks the address order on the virtual network as well.
 
 ### `j1939`
 
-`vehicle_sil::j1939` の単体テスト（SIL Kit なしでビルドする）と SIL Kit 上の試験（`j1939_silkit.*`）。
-PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。
-プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。
-`unit` ラベルも付く）。
-聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を足しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらず、聞くだけの participant が何も送らないことも、仮想バスと SIL Kit で確かめる（`j1939_silkit.listen_only_participants_*`）。
-タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。
-1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。
-道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
-型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。
-`j1939_codec.generator` は生成器が誤った定義を止めることを確かめる。
-`local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` も、それぞれのディレクトリのソースがエンジンの内部を使っていないことを検査する（ラベルは `unit` と `j1939`）
+| Test | Covers | Labels |
+|---|---|---|
+| `j1939.*` | Unit tests of `vehicle_sil::j1939` (built without SIL Kit) | `unit` too |
+| `j1939_silkit.*` | Tests on SIL Kit | `unit` too |
+| `j1939_parts.*` | Protocol parts | |
+| `j1939_codec.*` | Typed messages | |
+| `local.boundary`, `testkit.boundary`, `peer.boundary`, `simulation.boundary`, `ecu.boundary` | The sources of each directory do not use the engine's internals | `unit` and `j1939` |
+
+What they check in the engine:
+
+- PGNs and identifiers, single-frame transmission and reception, dispatch by destination, local loopback
+- The order of frames with the same time and the firing of timers do not depend on step size or arrival order
+- Responses to a Request, and ACK/NACK
+- NAME and Address Claim (including contention between several nodes and several networks, picking an arbitrary address, the address table, address violations and Commanded Address)
+- Several networks on one host (gateways, failure of one of them)
+- Reentrancy and failures, step size checks, resource limits
+- No memory allocation in steady-state steps
+- On a virtual bus with timing, the protocol results do not change. Congestion delays transfers, and a saturated bus leads to timeouts.
+- TP timeouts and recovery when one ECU is disconnected from the bus (receive only, and both transmit and receive)
+- Resolution of a hidden address conflict
+- Real-time behavior on SIL Kit without time synchronization
+- The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
+
+Virtual bus and SIL Kit give the same result:
+
+- With an in-process registry, the trace of the same scenario is the same on the virtual bus and on SIL Kit (also with the simple CAN Network Simulator)
+- `j1939_silkit.listen_only_participants_*`: adding listen-only participants (raw CAN, a `Network` without nodes, various step sizes) does not change a single line of each ECU's received data, the frames passed to its port, or its transmit acknowledgements and statistics
+- In the same test, the listen-only participants send nothing (on both the virtual bus and SIL Kit)
+
+Protocol parts (`j1939_parts.*`):
+
+- DM13, diagnostics, identification, transmit contention, deferred ACK, results that do not depend on step size
+- `j1939_parts.boundary`: the protocol parts do not use the engine's internals
+
+Typed messages (`j1939_codec.*`):
+
+- The bit layout is compared with a bit-by-bit implementation
+- Conversion between raw and physical values, rounding and range edges
+- Special values (the J1939 profile, user profiles, inheritance and overriding, Proprietary B that uses every bit pattern as a value, keeping the raw value)
+- Enumerations, selectors, fill values, lengths
+- A round trip of every raw value of small signals
+- Transmission and reception on a node
+- `j1939_codec.generator`: the generator rejects wrong definitions
 
 ### `peer` / `testkit`
 
-`Peer` をプロセス内のレジストリで動かす試験（J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立ての誤り、失敗の報告）と、試験キットの試験（アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果）。
-`ecu_api.*` は、利用者が書く形の ECU（`examples/j1939/ecu_pair`、道具箱と `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確かめる試験）を仮想バスで動かす。
-`param_service.*` は、`examples/j1939/param_service` の独自プロトコルを仮想バスで動かし（正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中の部品の破棄）、`param_service.boundary` は例が公開 API だけを使うことを、`param_service.demo` は例の実行を確かめる。
-`ecu_api.*` と `param_service.*` のラベルは `testkit` で、`peer.*`、`testkit.*`、`ecu_api.*`、`param_service.*` には `unit` と `j1939` のラベルも付く。
-エンジンの内部を使っていないことの検査（`peer.boundary`、`testkit.boundary`、`local.boundary`）は `j1939` の行
+| Test | Details | Labels |
+|---|---|---|
+| `peer.*` | Runs `Peer` with an in-process registry | `peer`, `unit`, `j1939` |
+| `testkit.*` | Tests of the test kit | `testkit`, `unit`, `j1939` |
+| `ecu_api.*` | Runs ECUs written the way a user writes them, on the virtual bus | `testkit`, `unit`, `j1939` |
+| `param_service.*` | Runs the custom protocol of `examples/j1939/param_service` on the virtual bus | `testkit`, `unit`, `j1939` |
+
+What each one checks:
+
+- `peer.*`: 3 participants with J1939 and LIN, the same result as the virtual bus, real time and external ports, setup errors, failure reporting
+- `testkit.*`: loss of an address, a missing Address Claimed, a missing TP packet, disconnection, injection of raw frames, results that do not depend on the receiver's step size or on whether recording is on
+- `ecu_api.*`: `examples/j1939/ecu_pair`, a custom protocol built with the toolbox and `Requester`, tests that check communication with `Monitor`, `Observer` and a tap
+- `param_service.*`: the normal flow, session expiry, a second tool, an ECU that does not respond, address change and loss, rejection, destruction of a running protocol part
+- `param_service.boundary`: the example uses only the public API
+- `param_service.demo`: runs the example
+
+The checks that the engine's internals are not used (`peer.boundary`, `testkit.boundary`, `local.boundary`) are listed under `j1939`.
 
 ### `ecu`
 
-ECU の自己申告の JSON（`to_json(EcuDescription)`）の単体テスト（SIL Kit なし。
-空と全部入りの全文、キーの順、数値、64 ビットの列挙の値、NAME の文字列、文字列のエスケープ、版）。
-`ecu.no_silkit_boundary` と `ecu.simulation_headers_boundary` は、`libs/ecu` と `libs/simulation/include` が SIL Kit のヘッダーを直接にも間接にも含まないことを、`ecu.boundary_check_*` はその検査自体を確かめる（`unit` ラベルも付く）
+Unit tests of the JSON of an ECU's `--describe` output (`to_json(EcuDescription)`), without SIL Kit. The `unit` label is also set.
+
+- The full text when empty and when every field is set, the key order, numbers, 64-bit enumeration values, the NAME string, string escaping, the version
+- `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`: `libs/ecu` and `libs/simulation/include` include no SIL Kit header, directly or indirectly
+- `ecu.boundary_check_*`: tests of that check itself
 
 ### `simulation` / `examples`
 
-`Simulation` の試験（同じ ECU が仮想バスと SIL Kit で同じ記録を残すこと、ECU が持つオブジェクトの破棄、ステップの失敗が `SimulationError` になって戻ること、使い方の誤り（同じ入力を両方の実装で拒否すること、`App` のコンストラクターの例外）、`request_stop` で終わる実行、ほかの participant の失敗、開始の時間切れ、`local()` から足した ECU、別プロセスの controller や participant との併用、2 つのネットワークを持つゲートウェイ、生の CAN、LIN の Master と Slave、イーサネットのチャネル（`test_ethernet.cpp`: 次のステップで届くこと、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、断る文言、`LocalBench` の参照）が両方で同じ結果になること、`Ecu::describe()`、関数として呼んだ `ecu_main()` の引数と終了コード）と、サンプルの実行（`vehicle_sil_getting_started`（仮想バスと `--silkit`）、`typed_messages`、`pid_stream`、`fault_injection`、`vehicle`（SIL Kit と `--local`）、`low_level`、`vehicle_sil_ethernet_example`（仮想ネットワークと `--silkit`、別の EtherType、引数の誤り））。
-サンプルは自分で結果を検査し、違えば 0 以外で終わる。
-`ecu_main.*` は `examples/ecu_main` の ECU の実行ファイルをプロセスとして動かす（`--describe` の JSON を [docs/ecu-executable.md](ecu-executable.md) の例と、vehicle-sil の版を除いてバイト単位で照合、`--local`、`vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU、使い方、止める要求）。
-ラベルは、`simulation.*` が `unit` と `simulation`、サンプルの実行が `examples` と `simulation`（`low_level.demo` は `examples` だけ）、`ecu_main.*` が `integration` と `simulation`
+| Test | Details | Labels |
+|---|---|---|
+| `simulation.*` | Tests of `Simulation` | `unit` and `simulation` |
+| Example runs | Each example checks its own result and exits with a non-zero code if it is wrong | `examples` and `simulation` (`low_level.demo` has `examples` only) |
+| `ecu_main.*` | Runs the ECU executables of `examples/ecu_main` as processes | `integration` and `simulation` |
+
+What `simulation.*` checks:
+
+- The same ECU leaves the same record on the virtual bus and on SIL Kit
+- Destruction of the objects that an ECU owns
+- A failed step comes back as a `SimulationError`
+- Usage errors (both implementations reject the same input, exceptions from the `App` constructor)
+- A run that ends with `request_stop`, failure of another participant, a start timeout
+- ECUs added from `local()`, use together with a controller or participants in other processes
+- A gateway with 2 networks, raw CAN, LIN master and slave, and an Ethernet channel give the same result on both
+- `Ecu::describe()`
+- The arguments and exit codes of `ecu_main()` called as a function
+
+For the Ethernet channel (`test_ethernet.cpp`), the tests check reception in the next step, the order at the same time, filters, that no frame is dropped up to `receive_capacity` frames per step, the message text of a rejection, and the reference to `LocalBench`.
+
+Examples that are run:
+
+- `vehicle_sil_getting_started` (virtual bus and `--silkit`)
+- `typed_messages`, `pid_stream`, `fault_injection`, `low_level`
+- `vehicle` (SIL Kit and `--local`)
+- `vehicle_sil_ethernet_example` (virtual network and `--silkit`, another EtherType, argument errors)
+
+What `ecu_main.*` checks:
+
+- The `--describe` JSON is compared byte for byte with the example in [ecu-executable.md](ecu-executable.md), except for the vehicle-sil version
+- `--local`
+- 2 ECUs on SIL Kit under `vehicle_sil_sim_controller`
+- Usage, stop requests
 
 ### `core` / `lin`
 
-仮想時間の単体テスト。
-プロセス内のレジストリで、ステップ幅の違う参加者の同期、最も遅い参加者を待つこと、実時間への結合、`TickScheduler`、`StepInbox`、LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替えを確かめる。
-LIN は主なシナリオを仮想 LIN バスの上でも確かめ（`lin_local.*`）、仮想 LIN バスだけの試験（`lin_bus.*`）と、`vehicle_sil::lin` が SIL Kit を含まないことの検査（`lin.boundary`）もある（`unit` ラベルも付く）
+Unit tests of virtual time. The `unit` label is also set.
+
+With an in-process registry, they check:
+
+- Synchronization of participants with different step sizes, waiting for the slowest participant, coupling to real time
+- `TickScheduler`, `StepInbox`
+- LIN schedules, responses, reception of master frames, sleep and wake-up, schedule switching
+
+| LIN test | Details |
+|---|---|
+| `lin_local.*` | Checks the main scenarios on the virtual LIN bus too |
+| `lin_bus.*` | Tests of the virtual LIN bus only |
+| `lin.boundary` | Checks that `vehicle_sil::lin` does not include SIL Kit |
 
 ### `virtual_time`
 
-registry、controller、4 つのピア（1 / 2 / 5 / 10 ms。
-どれも `Peer` の上）を別プロセスで動かす。
-トレースを照合して、データがピアの間を予測どおりの仮想時刻で渡ること、J1939 の ECU が Address Claim の 250 ms 後から送ることを確かめる。
-全速、遅い `tick()`、4 倍速、0.5 倍速の各条件でトレースが一致し、壁時計の所要時間が実時間より速い・遅いことも確かめる。
-`peer-failure` は、途中で失敗したピアを controller が検出して中断し、全プロセスが終了コード 1 で終わることを確かめる（`integration` ラベルも付く）
+Runs a registry, a controller and 4 peers (1 / 2 / 5 / 10 ms, all on `Peer`) as separate processes. The `integration` label is also set.
 
-### `lin`（`lin_cluster.*`）
+- Compares traces to confirm that data passes between the peers at the predicted virtual times.
+- Confirms that a J1939 ECU starts transmitting 250 ms after its Address Claim.
+- Confirms that the traces match when running as fast as possible, with a slow `tick()`, at 4x speed and at 0.5x speed, and that the wall-clock duration is shorter or longer than real time accordingly.
+- `peer-failure`: confirms that the controller detects a peer that fails midway and aborts, and that every process ends with exit code 1.
 
-registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を別プロセスで動かす。
-トレースを照合して、スケジュール、両方向のフレーム、Master・Slave・bus idle による休止と起床を確かめる。
-Slave の 1 つを実時間に結合してもトレースが一致することも確かめる（`integration` ラベルも付く）
+### `lin` (`lin_cluster.*`)
+
+Runs a registry, a controller, a LIN master and 2 slaves (5 / 2 / 4 ms) as separate processes. The `integration` label is also set.
+
+- Compares traces to check the schedule, frames in both directions, and sleep and wake-up by the master, by a slave and by bus idle.
+- Confirms that the traces still match when one slave is coupled to real time.
 
 ### `launch` / `process`
 
-構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。
-各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。
-`launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。
-`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき、速さと一時停止とステップ送り、実時間への遅れ、`examples/ethernet` の 2 つの ECU の照合とシナリオ（`launch_run.ethernet`）、`vehicle_sil_launch test`（`launch_run.test_command`、`launch_run.test_interrupt`）、止めるまで動く例の構成 `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行（`launch_run.live`））。
-`process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、行ごとの受け渡し、時間切れ、空の標準入力、作業ディレクトリ、受け継がないハンドル、止める要求、起動したプロセスごとの終了、空白と ASCII 以外の文字を含むパスと引数）
+| Test | Details |
+|---|---|
+| `launch.*` | Loading of configuration files, the check rules, human-readable and JSON output (starts no processes) |
+| `launch_cli.*` | Runs `vehicle_sil_launch check` as an executable |
+| `launch_run.*` | Runs `vehicle_sil_launch run` as an executable |
+| `process.*` | Tests of child processes |
+
+`launch.*` compares a passing and a failing example of each rule, down to the message text and line numbers.
+
+What `launch_cli.*` checks:
+
+- Byte-for-byte comparison with the examples in [docs/simulation-config.md](simulation-config.md)
+- An executable whose `--describe` fails, `--strict`, an unreadable file, argument errors
+
+What `launch_run.*` checks:
+
+- Comparison with the examples in docs
+- A failing ECU, participants that do not all join, a participant that does not end, processes left behind, interruption, an abnormal exit of the launcher
+- Speed, pause and stepping, lateness behind real time
+- `launch_run.ethernet`: the check and scenario of the 2 ECUs of `examples/ethernet`
+- `launch_run.test_command`, `launch_run.test_interrupt`: `vehicle_sil_launch test`
+- `launch_run.live`: the check of `simulation.live.yaml`, the example configuration file that runs until stopped, and a run that goes past 1000 ms before it is stopped
+
+What `process.*` checks:
+
+- Capture of stdout and stderr, line-by-line forwarding, timeouts
+- Empty stdin, the working directory, handles that are not inherited
+- Stop requests, ending each process that was started
+- Paths and arguments that contain spaces and non-ASCII characters
 
 ### `control`
 
-Control Agent の試験（`control.*`）。
-転送なしで Agent を直接動かす試験、`Ecu` で宣言した変数への時刻つきの書き込みが仮想バスと SIL Kit で同じステップに反映され、同じ時刻に読み出されること、`Peer` の Agent（SIL Kit の participant で、反映の位置、実時間、監視の出力）、プロセス内でつないだ `Hub`、ECU より長く残った転送がプロセスを止めること（`unit` ラベルも付く）。
-`control_server` の試験にもこのラベルが付く
+Tests of the Control Agent (`control.*`). The `unit` label is also set. The `control_server` tests have this label too.
+
+- Tests that run the Agent directly, without a transport
+- Timed writes to variables declared with `Ecu` are applied in the same step and read at the same time on the virtual bus and on SIL Kit
+- The Agent of a `Peer` (as a SIL Kit participant: where writes are applied, real time, monitoring output)
+- A `Hub` connected within the process
+- A transport that outlives its ECU stops the process
 
 ### `control_server`
 
-`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ（プリセット `linux-gcc-control`。
-CI もこれで回し、GUI サーバーの試験もこのランチャーで回す）。
-Control Server の試験（`control_server.*`）: gRPC の生成コードと呼び出し、1 つのプロセスで端から端まで（2 つの J1939 の Peer の Agent が SIL Kit でつながる Hub、時間ゲート、gRPC のクライアント）、認証と役割と TLS と監査ログ、どの役割がどの RPC を呼べるか（proto の RPC と規則の表の対応も）、メッセージの変換、上限と入力の検査、`SimulationMonitor`（`unit` と `control` のラベルも付く）。
-grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` に対して動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証と TLS と監査、トークンつきの CLI）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かす（どれも `control` と `python` のラベル。
-`launcher` には `integration` も、例には `examples` も付く）
+Registered only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` (preset `linux-gcc-control`). CI also runs this preset, and the GUI server tests run with this launcher.
+
+What the Control Server tests (`control_server.*`; the `unit` and `control` labels are also set) check:
+
+- The generated gRPC code and calls
+- End to end in one process (a Hub that the Agents of 2 J1939 `Peer` objects connect to over SIL Kit, the time gate, a gRPC client)
+- Authentication, roles, TLS and the audit log
+- Which role can call which RPC (and that the RPCs in the proto match the table of rules)
+- Message conversion, limits and input checks
+- `SimulationMonitor`
+
+If a Python with grpcio and grpcio-tools is available, the following tests are registered too. All have the `control` and `python` labels.
+
+| Test | Details | Other labels |
+|---|---|---|
+| `control_server.python_client` | Runs the Python client and CLI against `vehicle_sil_launch run --control` | |
+| `control_server.launcher` | Runs `vehicle_sil_launch run --control` with the ECUs of `examples/ecu_main` | `integration` |
+| `control_server.example_write_before_start`, `control_server.example_pause_and_step` | Runs `examples/launch_control` | `examples` |
+| `control_server.guide_operate_signals` | Compares the marked blocks of the guide [Read and write signals from outside](howto/operate-signals.md) with the output of the same example, the CLI and the stdin commands | `examples` |
+
+`control_server.launcher` checks writes before the start, commands from both stdin and the Control Server, how the run ends, authentication, TLS and auditing, and the CLI with a token.
 
 ### `eth_link` / `ethernet_bridge`
 
-イーサネットのブリッジの試験（全プラットフォーム。
-`unit` ラベルも付く）。
-`eth_link.*` は SIL Kit なしで、MAC アドレス、絞り込み（EtherType、VLAN タグの先、MAC、最大長）、MAC の表、偽の口、pcap の口（`eth_link.pcap_*`: 文、インターフェースの選び方、実行時に読み込んだ偽の pcap のライブラリでの送受信と失敗。
-Windows では `eth_link.fake_pcap_imports.*` が、偽のライブラリの使う DLL がブリッジの探させる場所にあるものだけかを見る）を確かめ、`eth_link.boundary` が `libs/eth_link` に SIL Kit の include がないことを確かめる。
-`ethernet_bridge.*` は、偽の SIL Kit のコントローラーと偽の口で転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通る輪（止まる順序と止まらない順序）、失ったフレーム、`Fault`、警告を、ほかに統計と監視の行、引数の誤りの文言を確かめる。
-`ethernet_bridge.silkit_*` はプロセス内のレジストリ（空いているポート）で本物の SIL Kit の側を確かめる。
-`ethernet_bridge.integration.*`（`integration` ラベル）は、偽の口をリンクした実行ファイルをプロセスとして動かし、往復、終了コード、止め方を確かめる。
-`ethernet_bridge.integration.pcap-*` は、OS の口の実行ファイルに偽の pcap のライブラリを読み込ませて同じことを確かめる。
-`ethernet_bridge.netns.*`（Linux だけ、`integration` ラベル）は、名前空間の中の TAP デバイスと veth で、本物の実行ファイルの `tap`、`packet`、`pcap`（本物の libpcap）を確かめる（作れない所、libpcap がない所では飛ばす）
+Tests of the Ethernet Bridge (all platforms). The `unit` label is also set.
+
+| Test | Details |
+|---|---|
+| `eth_link.*` | Without SIL Kit, checks MAC addresses, filters (EtherType, behind a VLAN tag, MAC, maximum length), the MAC table and a fake external link |
+| `eth_link.pcap_*` | Checks the message texts of the pcap external link, how the interface is chosen, and transmission, reception and failures with a fake pcap library loaded at run time |
+| `eth_link.fake_pcap_imports.*` | On Windows, checks that the DLLs the fake library uses are only those in the places where the bridge looks |
+| `eth_link.boundary` | Checks that `libs/eth_link` has no SIL Kit include |
+| `ethernet_bridge.*` | Checks the bridge's behavior and output with a fake SIL Kit controller and a fake external link |
+| `ethernet_bridge.silkit_*` | Checks the real SIL Kit side with an in-process registry (on a free port) |
+| `ethernet_bridge.integration.*` (`integration` label) | Runs an executable linked with a fake external link as a process, and checks round trips, exit codes and shutdown |
+| `ethernet_bridge.integration.pcap-*` | Checks the same with the executable for the OS external link, made to load a fake pcap library |
+| `ethernet_bridge.netns.*` (Linux only, `integration` label) | Checks `tap`, `packet` and `pcap` (the real libpcap) of the real executable with TAP devices and veth in a namespace |
+
+`ethernet_bridge.*` checks forwarding, filters, the bridge's own frames coming back, loops through 2 bridges (frame orders in which the loop stops and in which it does not), lost frames, `Fault`, warnings, the statistics and health lines, and the message texts of argument errors. `ethernet_bridge.netns.*` is skipped where a namespace cannot be created and where libpcap is missing.
 
 ### `bridge_runtime`
 
-ブリッジの実行ファイルが共有する `run_bridge()` の試験（全プラットフォーム。
-`unit` ラベルも付く）。
-偽の `hooks` と状態を決めた偽の participant で、終了コード、止める順（統計を SIL Kit の participant の停止より先に出す）、`fault()` と participant の失敗、警告と監視の行、起動の途中の状態を失敗にしないこと、起動の上限を確かめる。
-1 つはプロセス内のレジストリ（空いているポート）で本物の participant を使う。
-registry につながらないときの文（`registry_failure_message()`）は、SIL Kit が実際に投げる文でも確かめる
+Tests of `run_bridge()`, which the bridge executables share (all platforms). The `unit` label is also set.
+
+With fake `hooks` and a fake participant whose states are scripted, they check:
+
+- Exit codes
+- The shutdown order (the statistics are printed before the SIL Kit participant stops)
+- `fault()` and participant failures
+- Warnings and health lines
+- A state in the middle of startup is not treated as a failure; the startup limit
+
+One test uses a real participant with an in-process registry (on a free port). The message for a registry that cannot be reached (`registry_failure_message()`) is also checked with the text that SIL Kit actually throws.
 
 ### `fetchcontent`
 
-既定では無効。
-このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する。
-`fetchcontent.template` は、ひな形を別のディレクトリに写し、いまの作業ツリーを FetchContent で取り込んでビルドし、照合と実行とシナリオを通す
+Disabled by default.
 
-## ディレクトリごとの場所と試験
+- Pulls in a commit of this repository with FetchContent, then builds and runs a usage example.
+- `fetchcontent.template`: copies the template to another directory, pulls in the current work tree with FetchContent, builds it and confirms that the check, run and scenario pass.
 
-ヘッダーは `include/` の下のパスです。
+## Code and tests by directory
+
+Each entry gives, in this order, a table of the main classes and functions (headers as paths under `include/`), the test directory and the regular expression to pass to `ctest -R`.
 
 ### `libs/core`
 
-- 主なクラス・関数（ヘッダー）: `ParticipantRuntime`（`vehicle_sil/core/participant_runtime.hpp`）、`SimulationController`、`StartWindow`（`core/simulation_controller.hpp`）、`TickScheduler`（`core/tick_scheduler.hpp`）、`bind_host()`（`core/bind_host.hpp`）。
-  `sim_base` の `SimTime`（`core/sim_time.hpp`）、`StepInbox`（`core/step_inbox.hpp`）、`periodic()`（`core/periodic.hpp`）
-- 試験: `tests/core`
+| Name | Location |
+|---|---|
+| `ParticipantRuntime` | `vehicle_sil/core/participant_runtime.hpp` |
+| `SimulationController`, `StartWindow` | `core/simulation_controller.hpp` |
+| `TickScheduler` | `core/tick_scheduler.hpp` |
+| `bind_host()` | `core/bind_host.hpp` |
+| `SimTime` (`sim_base`) | `core/sim_time.hpp` |
+| `StepInbox` (`sim_base`) | `core/step_inbox.hpp` |
+| `periodic()` (`sim_base`) | `core/periodic.hpp` |
+
+- Tests: `tests/core`
 - `ctest -R`: `^core\.`
 
 ### `libs/step`
 
-- 主なクラス・関数（ヘッダー）: `Member`、`Host`（`step/host.hpp`）、`StepDriver`（`step/step_driver.hpp`）、`RealTimeDriver`（`step/real_time_driver.hpp`）、`RealTimeClock`、`ManualRealTimeClock`（`step/real_time_clock.hpp`）、`TimeDomain`、`Wakeup`（`step/time_domain.hpp`）、`SinkRef`（`step/sink_ref.hpp`）
-- 試験: `tests/step`
+| Name | Location |
+|---|---|
+| `Member`, `Host` | `step/host.hpp` |
+| `StepDriver` | `step/step_driver.hpp` |
+| `RealTimeDriver` | `step/real_time_driver.hpp` |
+| `RealTimeClock`, `ManualRealTimeClock` | `step/real_time_clock.hpp` |
+| `TimeDomain`, `Wakeup` | `step/time_domain.hpp` |
+| `SinkRef` | `step/sink_ref.hpp` |
+
+- Tests: `tests/step`
 - `ctest -R`: `^step\.`
 
 ### `libs/signal`
 
-- 主なクラス・関数（ヘッダー）: 時刻の関数としての波形 `sine()`、`triangle()`、`sawtooth()`、`square()`、`noise_uniform()`、`noise_gaussian()`、`chirp()`、`lag()`、`chatter()`、`points_linear()`、`points_hold()`、乱数の列 `unit_random()`（`signal/waveform.hpp`。
-  ヘッダーだけで、何もリンクしない。
-  シナリオの `wave` と、利用者の C++ のコードの両方から使う）
-- 試験: `tests/signal`
+| Name | Location |
+|---|---|
+| Waveforms as functions of time: `sine()`, `triangle()`, `sawtooth()`, `square()`, `noise_uniform()`, `noise_gaussian()`, `chirp()`, `lag()`, `chatter()`, `points_linear()`, `points_hold()` | `signal/waveform.hpp` |
+| The random sequence `unit_random()` | `signal/waveform.hpp` |
+
+Header-only; it links nothing. Both the scenario's `wave` and the user's C++ code use it.
+
+- Tests: `tests/signal`
 - `ctest -R`: `^signal\.`
 
 ### `libs/can`
 
-- 主なクラス・関数（ヘッダー）: `Frame`（`can/frame.hpp`）、`Port`（`can/port.hpp`）、`Host`、`Steppable`（`can/host.hpp`。
-  `Host` は `step::Host` の上）、`StepDriver`、`RealTimeDriver`、時計（`can/step_driver.hpp`、`can/real_time_driver.hpp`、`can/real_time_clock.hpp`。
-  `vehicle_sil::step` のものの別名）、`RealTimeReceiver`（`can/real_time_receiver.hpp`）、`VirtualCanBus`（`can/virtual_can_bus.hpp`）、`CanBusModel`（`can/bus_model.hpp`）、`TapPort`（`can/tap_port.hpp`）、`RawChannel`（`can/raw_channel.hpp`）
-- 試験: `tests/can`
+| Name | Location |
+|---|---|
+| `Frame` | `can/frame.hpp` |
+| `Port` | `can/port.hpp` |
+| `Host`, `Steppable` | `can/host.hpp` |
+| `StepDriver`, `RealTimeDriver`, clocks | `can/step_driver.hpp`, `can/real_time_driver.hpp`, `can/real_time_clock.hpp` |
+| `RealTimeReceiver` | `can/real_time_receiver.hpp` |
+| `VirtualCanBus` | `can/virtual_can_bus.hpp` |
+| `CanBusModel` | `can/bus_model.hpp` |
+| `TapPort` | `can/tap_port.hpp` |
+| `RawChannel` | `can/raw_channel.hpp` |
+
+`Host` is built on `step::Host`. `StepDriver`, `RealTimeDriver` and the clocks are aliases of those in `vehicle_sil::step`.
+
+- Tests: `tests/can`
 - `ctest -R`: `^can\.`
 
 ### `libs/can_silkit`
 
-- 主なクラス・関数（ヘッダー）: `SilKitCanPort`、`bind_host()` の別名（`can_silkit/silkit_can_port.hpp`。
-  本体は `core/bind_host.hpp`）
-- 試験: `tests/can`
+| Name | Location |
+|---|---|
+| `SilKitCanPort`, the alias of `bind_host()` | `can_silkit/silkit_can_port.hpp` |
+
+The body of `bind_host()` is in `core/bind_host.hpp`.
+
+- Tests: `tests/can`
 - `ctest -R`: `^can_silkit\.`
 
-### `libs/can_netsim`、`tools/can_bus_simulator`
+### `libs/can_netsim`, `tools/can_bus_simulator`
 
-- 主なクラス・関数（ヘッダー）: `CanBusSimulator`（`can_netsim/can_bus_simulator.hpp`）、`NetworkSimulatorConfig`（`can_netsim/network_simulator_config.hpp`）
-- 試験: `tests/can`
+| Name | Location |
+|---|---|
+| `CanBusSimulator` | `can_netsim/can_bus_simulator.hpp` |
+| `NetworkSimulatorConfig` | `can_netsim/network_simulator_config.hpp` |
+
+- Tests: `tests/can`
 - `ctest -R`: `^can_netsim\.`
 
-### `libs/eth`、`libs/eth_silkit`
+### `libs/eth`, `libs/eth_silkit`
 
-- 主なクラス・関数（ヘッダー）: `Frame`、`MacAddress`（`eth/frame.hpp`）、`Port`、`PortEvent`（`eth/port.hpp`）、`Channel`（`eth/channel.hpp`）、`VirtualEthernetBus`（`eth/virtual_ethernet_bus.hpp`）、`SilKitEthPort`（`eth_silkit/silkit_eth_port.hpp`）
-- 試験: `tests/eth`
-- `ctest -R`: `^eth\.`、`^eth_silkit\.`
+| Name | Location |
+|---|---|
+| `Frame`, `MacAddress` | `eth/frame.hpp` |
+| `Port`, `PortEvent` | `eth/port.hpp` |
+| `Channel` | `eth/channel.hpp` |
+| `VirtualEthernetBus` | `eth/virtual_ethernet_bus.hpp` |
+| `SilKitEthPort` | `eth_silkit/silkit_eth_port.hpp` |
 
-### `libs/lin`、`libs/lin_silkit`
+- Tests: `tests/eth`
+- `ctest -R`: `^eth\.`, `^eth_silkit\.`
 
-- 主なクラス・関数（ヘッダー）: `LinMaster`（`lin/lin_master.hpp`）、`LinSlave`（`lin/lin_slave.hpp`）、`LinPort`（`lin/lin_port.hpp`）、`VirtualLinBus`（`lin/virtual_lin_bus.hpp`）、`SilKitLinPort`（`lin_silkit/silkit_lin_port.hpp`）
-- 試験: `tests/lin`
-- `ctest -R`: `^lin_bus\.`（仮想 LIN バス）、`^lin_local\.`（`LocalBench` の上）、`^lin\.`（SIL Kit の上）、`^lin_cluster\.`（`examples/lin` のプロセス）
+### `libs/lin`, `libs/lin_silkit`
 
-### `libs/j1939`（エンジン）
+| Name | Location |
+|---|---|
+| `LinMaster` | `lin/lin_master.hpp` |
+| `LinSlave` | `lin/lin_slave.hpp` |
+| `LinPort` | `lin/lin_port.hpp` |
+| `VirtualLinBus` | `lin/virtual_lin_bus.hpp` |
+| `SilKitLinPort` | `lin_silkit/silkit_lin_port.hpp` |
 
-- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。
-  Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp`
-- 試験: `tests/j1939`
-- `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
+- Tests: `tests/lin`
+- `ctest -R`: `^lin_bus\.` (virtual LIN bus), `^lin_local\.` (on `LocalBench`), `^lin\.` (on SIL Kit), `^lin_cluster\.` (the processes of `examples/lin`)
 
-### `libs/j1939/parts/<部品>`
+### `libs/j1939` (engine)
 
-- 主なクラス・関数（ヘッダー）: 部品ごとに 1 つのディレクトリとターゲット。
-  `PeriodicSender`（`j1939/periodic_sender.hpp`）、`Requester`、`Monitor`、`AddressCommander`、`Exchange`、`BroadcastSuppression`、`Diagnostics`、`parse_dtc_list`（受けた DM1、DM2 を読む）、`Identification`
-- 試験: `tests/j1939`
+| Name | Location |
+|---|---|
+| `Network`, `Node` | `j1939/network.hpp` |
+| `Pgn`, `Identifier` | `j1939/types.hpp` |
+| `Name` | `j1939/name.hpp` |
+| `Subscription`, `Timer` | `j1939/toolbox.hpp` |
+| `Observer` | `j1939/observer.hpp` |
+| Address Claim and Request | `src/node.cpp` |
+| Transport protocol | `src/transport.cpp` |
+
+- Tests: `tests/j1939`
+- `ctest -R`: `^j1939\.`, `^j1939_silkit\.`
+
+### `libs/j1939/parts/<part>`
+
+Each protocol part has one directory and one target.
+
+Main classes and functions:
+
+- `PeriodicSender` (`j1939/periodic_sender.hpp`)
+- `Requester`, `Monitor`, `AddressCommander`, `Exchange`, `BroadcastSuppression`, `Diagnostics`, `Identification`
+- `parse_dtc_list` (reads a received DM1 or DM2)
+
+- Tests: `tests/j1939`
 - `ctest -R`: `^j1939_parts\.`
 
-### `libs/j1939/codec`、`tools/j1939_codegen`
+### `libs/j1939/codec`, `tools/j1939_codegen`
 
-- 主なクラス・関数（ヘッダー）: `j1939/codec.hpp`（信号の型）、`j1939/codec_node.hpp`（`attach_sender()`、`on_message()`）、生成器 `j1939_codegen.py`、`vehicle_sil_add_j1939_codec()`（`cmake/VehicleSilJ1939Codec.cmake`）
-- 試験: `tests/j1939`
+| Name | Location |
+|---|---|
+| Signal types | `j1939/codec.hpp` |
+| `attach_sender()`, `on_message()` | `j1939/codec_node.hpp` |
+| Generator | `j1939_codegen.py` |
+| `vehicle_sil_add_j1939_codec()` | `cmake/VehicleSilJ1939Codec.cmake` |
+
+- Tests: `tests/j1939`
 - `ctest -R`: `^j1939_codec\.`
 
 ### `libs/ecu`
 
-- 主なクラス・関数（ヘッダー）: `Ecu`（`ecu/ecu.hpp`）、`EcuDescription`、`to_json()`、ネットワークの種類と使い方の一覧 `kNetworkKinds`・`kNetworkUses`（`ecu/describe.hpp`）、ECU の実行ファイルとランチャーの約束（引数、終了コード、`kMaxMillis`。
-  `ecu/executable.hpp`）、バスからの切り離し（`ecu.connected`。
-  `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort`、`ecu/detail/bus_connection.hpp`）
-- 試験: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
-- `ctest -R`: `^ecu\.`、`^simulation\.disconnect`
+| Name | Location |
+|---|---|
+| `Ecu` | `ecu/ecu.hpp` |
+| `EcuDescription`, `to_json()` | `ecu/describe.hpp` |
+| The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
+| The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
+| `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
+
+- Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
+- `ctest -R`: `^ecu\.`, `^simulation\.disconnect`
 
 ### `libs/local`
 
-- 主なクラス・関数（ヘッダー）: `LocalBench`（`local/local_bench.hpp`）
-- 試験: `tests/testkit`、`tests/lin`
-- `ctest -R`: `^testkit\.`、`^lin_local\.`、`^local\.`
+| Name | Location |
+|---|---|
+| `LocalBench` | `local/local_bench.hpp` |
+
+- Tests: `tests/testkit`, `tests/lin`
+- `ctest -R`: `^testkit\.`, `^lin_local\.`, `^local\.`
 
 ### `libs/testkit`
 
-- 主なクラス・関数（ヘッダー）: `J1939Events`、`FrameLog`（`testkit/recorders.hpp`）、`faults`（`testkit/faults.hpp`）、`LocalCan`（`testkit/local_can.hpp`）
-- 試験: `tests/testkit`
-- `ctest -R`: `^testkit\.`、`^ecu_api\.`、`^param_service\.`
+| Name | Location |
+|---|---|
+| `J1939Events`, `FrameLog` | `testkit/recorders.hpp` |
+| `faults` | `testkit/faults.hpp` |
+| `LocalCan` | `testkit/local_can.hpp` |
+
+- Tests: `tests/testkit`
+- `ctest -R`: `^testkit\.`, `^ecu_api\.`, `^param_service\.`
 
 ### `libs/peer`
 
-- 主なクラス・関数（ヘッダー）: `Peer`、`PeerOptions`、`start_together()`（`peer/peer.hpp`）。
-  監視の出力は `src/peer_monitor.cpp`
-- 試験: `tests/peer`
+| Name | Location |
+|---|---|
+| `Peer`, `PeerOptions`, `start_together()` | `peer/peer.hpp` |
+| Monitoring output | `src/peer_monitor.cpp` |
+
+- Tests: `tests/peer`
 - `ctest -R`: `^peer\.`
 
 ### `libs/simulation`
 
-- 主なクラス・関数（ヘッダー）: `Simulation`、`SilKitOptions`、`SimulationError`（`simulation/simulation.hpp`）、`ecu_main()`、`EcuMainOptions`（`simulation/ecu_main.hpp`）
-- 試験: `tests/simulation`
-- `ctest -R`: `^simulation\.`、`^ecu_main\.`（`examples/ecu_main` のプロセス）、サンプルの実行は `getting_started.`、`typed_messages.`、`pid_stream.`、`fault_injection.`、`vehicle.`、`low_level.`、`ethernet_example.` で始まる
+| Name | Location |
+|---|---|
+| `Simulation`, `SilKitOptions`, `SimulationError` | `simulation/simulation.hpp` |
+| `ecu_main()`, `EcuMainOptions` | `simulation/ecu_main.hpp` |
+
+- Tests: `tests/simulation`
+- `ctest -R`: `^simulation\.`, `^ecu_main\.` (the processes of `examples/ecu_main`)
+- The tests that run the examples start with `getting_started.`, `typed_messages.`, `pid_stream.`, `fault_injection.`, `vehicle.`, `low_level.` and `ethernet_example.`.
 
 ### `libs/control`
 
-- 主なクラス・関数（ヘッダー）: `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`）、変数の対応表 `MappedSchema`（`control/variable_map.hpp`）、Agent と Hub の間のメッセージの符号化と復号（`control/wire.hpp`）
-- 試験: `tests/control`
-- `ctest -R`: `^control\.`（`wire.hpp` は `^control\.wire_`、対応表は `test_variable_map.cpp`）
+| Name | Location |
+|---|---|
+| `Agent` | `control/agent.hpp` |
+| `Hub` | `control/hub.hpp` |
+| The variable map `MappedSchema` | `control/variable_map.hpp` |
+| Encoding and decoding of the messages between Agent and Hub | `control/wire.hpp` |
+
+- Tests: `tests/control`
+- `ctest -R`: `^control\.` (`^control\.wire_` for `wire.hpp`; the variable map is in `test_variable_map.cpp`)
 
 ### `libs/control_silkit`
 
-- 主なクラス・関数（ヘッダー）: `AgentTransport`（`control_silkit/agent_transport.hpp`）、`HubTransport`（`control_silkit/hub_transport.hpp`）。
-  トピックの名前は `src/topics.hpp`
-- 試験: `tests/control_silkit`、`tests/launch`（プロセスをまたぐ窓）
-- `ctest -R`: `^control_silkit\.`、`^launch_control\.`
+| Name | Location |
+|---|---|
+| `AgentTransport` | `control_silkit/agent_transport.hpp` |
+| `HubTransport` | `control_silkit/hub_transport.hpp` |
+| Topic names | `src/topics.hpp` |
 
-### `libs/control_grpc`、`proto/`、`python/`
+- Tests: `tests/control_silkit`, `tests/launch` (the start window across processes)
+- `ctest -R`: `^control_silkit\.`, `^launch_control\.`
 
-- 主なクラス・関数（ヘッダー）: `ControlServer`（`control_grpc/server.hpp`）、Python のクライアント（`python/vehicle_sil_control/client.py`）とランチャーを起動する助け（`python/vehicle_sil_control/launcher.py`）
-- 試験: `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。
-  `test_launcher.py` がランチャーの Control Server（認証、TLS、役割、監査も）、`test_python_client.py` が Python のクライアントと CLI、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control`）
+### `libs/control_grpc`, `proto/`, `python/`
+
+| Name | Location |
+|---|---|
+| `ControlServer` | `control_grpc/server.hpp` |
+| Python client | `python/vehicle_sil_control/client.py` |
+| Helper that starts the launcher | `python/vehicle_sil_control/launcher.py` |
+
+- Tests: `tests/control_server` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`)
 - `ctest -R`: `^control_server\.`
+
+| Test file or test | Covers |
+|---|---|
+| `test_launcher.py` | The launcher's Control Server (also authentication, TLS, roles and auditing) |
+| `test_python_client.py` | The Python client and CLI |
+| `control_server.example_write_before_start`, `control_server.example_pause_and_step` | `examples/launch_control` |
+| `test_guide_operate_signals.py` | Compares the guide `docs/howto/operate-signals.md` with the example, the CLI and the stdin commands (for the markers, see "[Documentation examples and tests](#documentation-examples-and-tests)") |
 
 ### `libs/process`
 
-- 主なクラス・関数（ヘッダー）: `ChildProcess`、`run_captured()`（`process/child_process.hpp`）、`Process`（`process/process.hpp`）
-- 試験: `tests/process`
+| Name | Location |
+|---|---|
+| `ChildProcess`, `run_captured()` | `process/child_process.hpp` |
+| `Process` | `process/process.hpp` |
+
+- Tests: `tests/process`
 - `ctest -R`: `^process\.`
 
-### `libs/launch`、`tools/launch`
+### `libs/launch`, `tools/launch`
 
-- 主なクラス・関数（ヘッダー）: `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）、シナリオの `read_scenario()`、時間の関数の口 `Waveform`（`launch/scenario.hpp`）と `ScenarioEngine`（`launch/scenario_run.hpp`）、`run --timeline` の記録 `TimelineRecord` とファイルを作る `format_timeline_json()`（`launch/timeline.hpp`）。
-  照合は `src/check.cpp`（段取り）、`src/describe_read.cpp`（`--describe` の JSON を読む）、`src/check_rules.cpp`（規則。
-  ネットワークは種類ごとの関数）、`src/check_format.cpp`（出力）、構成とシナリオの読み手の共通の部分は `src/yaml_reader.hpp`、`run` は `src/run.cpp`（段取り）と部品の `src/run_*.cpp`、`src/time_commands.cpp`、このコンピューターのアドレス（ほかのコンピューターに示す URI）は `src/host_addresses.cpp`、仮想時間が進まないことを言う `StandStill` は `src/run_watch.cpp`（部品の分担と、どのスレッドがどの状態をどのロックで触るかは、`run.cpp` の先頭のコメントと各 `run_*.hpp` のクラスのコメント）、コマンドラインと標準入力・標準出力のスレッドは `tools/launch/main.cpp`、`run --control` の Control Server は `tools/launch/control_server.cpp`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）
-- 試験: `tests/launch`、`tests/multi_host`（2 つのコンピューター: Linux のネットワーク名前空間。
-  作れない所では理由を出して飛ばす。
-  `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` なら失敗）
-- `ctest -R`: `^launch\.`（プロセスなし）、`^launch_cli\.`（`check`）、`^launch_run\.`（`run`）、`^multi_host\.`
+Public headers:
+
+| Name | Location |
+|---|---|
+| `read_config()` | `launch/config.hpp` |
+| `check_file()` | `launch/check.hpp` |
+| `run_file()`, `TimeCommands` | `launch/run.hpp` |
+| `EventStream`, `parse_command()` | `launch/events.hpp` |
+| `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
+| `ScenarioEngine` | `launch/scenario_run.hpp` |
+| `TimelineRecord`, the record of `run --timeline`; `format_timeline_json()`, which writes the file | `launch/timeline.hpp` |
+
+Implementation:
+
+| What | Location |
+|---|---|
+| The overall flow of the check | `src/check.cpp` |
+| Reading the `--describe` JSON | `src/describe_read.cpp` |
+| The check rules (one function per network kind) | `src/check_rules.cpp` |
+| The check output | `src/check_format.cpp` |
+| Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
+| The overall flow of `run` | `src/run.cpp` |
+| The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |
+| This computer's addresses (the URI shown to other computers) | `src/host_addresses.cpp` |
+| `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
+| The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
+| The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `tools/launch/control_server.cpp` |
+
+The comment at the top of `run.cpp` and the class comments in each `run_*.hpp` describe the role of each class that shares the work of `run`, and which thread handles which state under which lock.
+
+- Tests: `tests/launch`, `tests/multi_host`
+- `ctest -R`: `^launch\.` (no processes), `^launch_cli\.` (`check`), `^launch_run\.` (`run`), `^multi_host\.`
+
+`tests/multi_host` simulates 2 computers with Linux network namespaces. Where it cannot create the namespaces, it prints the reason and skips. With `VEHICLE_SIL_REQUIRE_MULTI_HOST=1`, it fails instead of skipping.
 
 ### `tools/common`
 
-- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、標準出力と標準エラーに UTF-8 の文を書く `write_text()`（Windows のコンソールには UTF-16 で）のある `vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
-  ターゲット `vehicle_sil_cli`）
-- 試験: `tests/unit`
+Command-line handling shared by the executables (target `vehicle_sil_cli`).
+
+| What | Location |
+|---|---|
+| Argument handling | `vehicle_sil/cli/args.hpp` |
+| `write_text()`, which writes UTF-8 text to stdout and stderr (UTF-16 to a Windows console) | `vehicle_sil/cli/console.hpp` |
+| Handling arguments and paths as UTF-8 | `vehicle_sil/cli/utf8.hpp` |
+
+- Tests: `tests/unit`
 - `ctest -R`: `^unit\.`
 
 ### `tools/sim_controller`
 
-- 主なクラス・関数（ヘッダー）: `vehicle_sil_sim_controller`（`main.cpp`）
-- 試験: 専用の試験はなく、プロセスの試験が使う
-- `ctest -R`: `^virtual_time\.`、`^ecu_main\.`、`^lin_cluster\.`
+| Name | Location |
+|---|---|
+| `vehicle_sil_sim_controller` | `main.cpp` |
+
+- Tests: no tests of its own; the process tests use it.
+- `ctest -R`: `^virtual_time\.`, `^ecu_main\.`, `^lin_cluster\.`
 
 ### `bridges/vector-xl`
 
-- 主なクラス・関数（ヘッダー）: `CanBridge`（`vector_xl/can_bridge.hpp`）、`ExternalPortAdapter`（`vector_xl/external_port_adapter.hpp`）、`XlDriver`、`XlCanPort`（`vector_xl/xl_driver.hpp`）
-- 試験: `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`）
+| Name | Location |
+|---|---|
+| `CanBridge` | `vector_xl/can_bridge.hpp` |
+| `ExternalPortAdapter` | `vector_xl/external_port_adapter.hpp` |
+| `XlDriver`, `XlCanPort` | `vector_xl/xl_driver.hpp` |
+
+- Tests: `tests/vector_xl` (the fake XL driver is in `tests/vector_xl/fake_xl`)
 - `ctest -R`: `^vector_xl\.`
 
 ### `bridges/common`
 
-- 主なクラス・関数（ヘッダー）: `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()`（`bridge_runtime/run_bridge.hpp`）、`registry_failure_message()`（`bridge_runtime/registry_failure.hpp`）
-- 試験: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
-- `ctest -R`: `^bridge_runtime\.`、`^vector_xl\.integration\.`
+| Name | Location |
+|---|---|
+| `run_bridge()`, `BridgeHooks`, `judge_participant_state()`, `request_stop()`, `finish_console_close()` | `bridge_runtime/run_bridge.hpp` |
+| `registry_failure_message()` | `bridge_runtime/registry_failure.hpp` |
 
-### `libs/eth_link`、`bridges/ethernet`
+- Tests: `tests/bridge_runtime`, the E2E tests of the bridge executable (`integration.*` in `tests/vector_xl`)
+- `ctest -R`: `^bridge_runtime\.`, `^vector_xl\.integration\.`
 
-- 主なクラス・関数（ヘッダー）: `ExternalLink`、`LinkEvent`、`LinkError`（`eth_link/external_link.hpp`）、`FrameFilter`（`eth_link/frame_filter.hpp`）、`MacSideTable`（`eth_link/mac_side_table.hpp`）、`MacAddress`（`eth_link/mac_address.hpp`）、`make_tap_link()`、`make_packet_link()`、`list_interfaces()`（`eth_link/os_links.hpp`。
-  中身は `libs/eth_link/src/linux`）、`make_pcap_link()`、`pcap_interface_list()`（`eth_link/pcap_link.hpp`。
-  中身は `libs/eth_link/src/pcap`: 関数の表 `pcap_api.hpp`、口 `pcap_link.cpp`、文 `pcap_errors.cpp`、読み込み `pcap_loader_win.cpp` と `pcap_loader_posix.cpp`）、`EthernetBridge`（`ethernet_bridge/ethernet_bridge.hpp`）、`parse_bridge_options()`（`ethernet_bridge/bridge_options.hpp`）、`format_start_line()`、`backend_unavailable()`、`PromiscuousHint`（`ethernet_bridge/bridge_app.hpp`）、実行ファイル（`bridges/ethernet/app/main.cpp`。
-  口を作る所は `app/link_factory.hpp` と `app/os_link_factory.cpp`、pcap のライブラリの場所は `app/pcap_library.hpp`）
-- 試験: `tests/eth_link`（偽の口は `tests/eth_link/fake_link`、偽の pcap のライブラリは `tests/eth_link/fake_pcap`）、`tests/ethernet_bridge`（偽の口の実行ファイルは `fake_link_factory.cpp`、偽の pcap のライブラリを読む実行ファイルは `fake_pcap_library.cpp`、名前空間の試験は `bridge_netns.py`）
-- `ctest -R`: `^eth_link\.`、`^ethernet_bridge\.`
+### `libs/eth_link`, `bridges/ethernet`
 
-### `examples/j1939`（sender と receiver）
+In this entry, "external link" means a connection to an interface outside SIL Kit (`ExternalLink`).
 
-- 試験: `tests/integration`
+| Name | Location |
+|---|---|
+| `ExternalLink`, `LinkEvent`, `LinkError` | `eth_link/external_link.hpp` |
+| `FrameFilter` | `eth_link/frame_filter.hpp` |
+| `MacSideTable` | `eth_link/mac_side_table.hpp` |
+| `MacAddress` | `eth_link/mac_address.hpp` |
+| `make_tap_link()`, `make_packet_link()`, `list_interfaces()` | `eth_link/os_links.hpp` (implemented in `libs/eth_link/src/linux`) |
+| `make_pcap_link()`, `pcap_interface_list()` | `eth_link/pcap_link.hpp` (implemented in `libs/eth_link/src/pcap`) |
+| `EthernetBridge` | `ethernet_bridge/ethernet_bridge.hpp` |
+| `parse_bridge_options()` | `ethernet_bridge/bridge_options.hpp` |
+| `format_start_line()`, `backend_unavailable()`, `PromiscuousHint` | `ethernet_bridge/bridge_app.hpp` |
+| Executable | `bridges/ethernet/app/main.cpp` |
+| Where external links are created | `app/link_factory.hpp`, `app/os_link_factory.cpp` |
+| Location of the pcap library | `app/pcap_library.hpp` |
+
+Contents of `libs/eth_link/src/pcap`:
+
+| File | Details |
+|---|---|
+| `pcap_api.hpp` | Function table |
+| `pcap_link.cpp` | External link |
+| `pcap_errors.cpp` | Error messages |
+| `pcap_loader_win.cpp`, `pcap_loader_posix.cpp` | Loading the library |
+
+- Tests: `tests/eth_link`, `tests/ethernet_bridge`
+- `ctest -R`: `^eth_link\.`, `^ethernet_bridge\.`
+
+| Used by the tests | Location |
+|---|---|
+| Fake external link | `tests/eth_link/fake_link` |
+| Fake pcap library | `tests/eth_link/fake_pcap` |
+| Executable with the fake external link | `fake_link_factory.cpp` in `tests/ethernet_bridge` |
+| Executable that loads the fake pcap library | `fake_pcap_library.cpp` in `tests/ethernet_bridge` |
+| Namespace tests | `bridge_netns.py` in `tests/ethernet_bridge` |
+
+### `examples/j1939` (sender and receiver)
+
+- Tests: `tests/integration`
 - `ctest -R`: `^integration\.`
 
 ### `examples/virtual_time`
 
-- 試験: `tests/virtual_time`
+- Tests: `tests/virtual_time`
 - `ctest -R`: `^virtual_time\.`
 
-### FetchContent での利用
+### `examples/fetchcontent_consumer` (use through FetchContent)
 
-- 主なクラス・関数（ヘッダー）: `examples/fetchcontent_consumer`
-- 試験: `tests/fetchcontent`（`VEHICLE_SIL_TEST_FETCHCONTENT=ON` のときだけ）
+- Tests: `tests/fetchcontent` (only when `VEHICLE_SIL_TEST_FETCHCONTENT=ON`)
 - `ctest -R`: `^fetchcontent\.`
 
-### `template`（ECU のプロジェクトのひな形）、`scripts/package.py`（ビルド済みの道具とひな形の圧縮ファイル）
+### `template` (ECU project template), `scripts/package.py` (archives of the prebuilt tools and the template)
 
-- 主なクラス・関数（ヘッダー）: `template/get_tools.py`（道具を取ってくる）
-- 試験: `tests/template`（ひな形を本体のビルドに入れて照合と実行。
-  `get_tools.py` と `package.py template`、`version` を手元の圧縮ファイルで）、`fetchcontent.template`（写して FetchContent で、opt-in）、`scripts/package.py verify`（道具の圧縮ファイルを使う人の手順で）
+| Name | Details |
+|---|---|
+| `template/get_tools.py` | Downloads the tools |
+
+| Test | Details |
+|---|---|
+| `tests/template` | Adds the template to the main build, then checks and runs it |
+| Same as above | Tests `get_tools.py`, and `template` and `version` of `package.py`, with local archives |
+| `fetchcontent.template` | Copies the template and pulls vehicle-sil in with FetchContent (opt-in) |
+| `scripts/package.py verify` | Tests the tools archive by following the user's steps |
+
 - `ctest -R`: `^template\.`
 
-### `schema/`（構成ファイルとシナリオの JSON Schema）
+### `examples/first_ecu` (example for the guide "Create your first ECU")
 
-- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）、`schema/timeline.schema.json`（`run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。道具の圧縮ファイルの `schema/` に入れます。ひな形の `template/schema/` には置きません）。
-  前の 2 つはエディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
-  ダッシュボードのスキーマは `gui/protocol/dashboard.schema.json` です。
-  ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` には、同じ 3 つと `timeline.schema.json` が入ります（`template/get_tools.py` が、道具の分を全部プロジェクトの `schema/` に写します）。
-  例をビルドするときは、構成のときにビルドのディレクトリにも写します（最上位の `CMakeLists.txt`。写された例の YAML の 1 行目が、そこを指します）
-- 試験: `tests/schema/test_schemas.py`（例、ひな形、文書の YAML がスキーマに通る。
-  通る見本と落ちる見本を、スキーマと `check` の両方に掛ける。
-  対応付けごとのキー、ネットワークの種類、手順の種類が、ランチャーの誤りの文が並べるものと同じ。
-  キーが文書の表にある。
-  ひな形の写しが同じ。
-  例とひな形の YAML の 1 行目がスキーマを指す。
-  ビルドのディレクトリに写された例の 1 行目の先に、スキーマの写しがある。
-  時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）と例の実行の出力がスキーマに通り、誤りのある形が落ちる）。
-  PyYAML と jsonschema のある Python が要ります（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`。なければ、構成のときに理由を出して登録しません。
-  CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確かめます）
-- `ctest -R`: `^schema\.`（ランチャーなしの分は `scripts/verify-python.py` の `schema` の段でも回る）
+The ECU that the guide [howto/first-ecu.md](howto/first-ecu.md) adds to the template. The files have the same content as the guide's code blocks; users write them themselves by following the guide.
 
-### `gui/server`、`gui/protocol`、`gui/client`、`gui/web`
+| File | Details |
+|---|---|
+| `cooler/main.cpp` | The ECU `Cooler` |
+| `CMakeLists.txt` | The 4 lines added to the template's `CMakeLists.txt` |
+| `simulation.yaml` | The template's 2 ECUs and `Cooler` |
+| `read_cooler.py` | The script that reads and writes from Python |
 
-- 主なクラス・関数（ヘッダー）: GUI サーバー（`gui/server/src/vehicle_sil_gui/`。
-  Control Server につなぐのは `control.py`）、口の契約と例（`gui/protocol`）、クライアントのライブラリ（`gui/client/src`）、サンプルの画面（`gui/web/src/app`）。
-  案内は [gui.md](gui.md)
-- 試験: `gui/server/tests`（pytest）、`gui/client/src` と `gui/web/src/app` の単体試験、`gui/web/e2e`（Playwright）
-- `ctest -R`: CTest には入っていません。
-  `scripts/verify-gui.py`（`-k` でサーバーの試験を絞る、`--skip-web`）と `scripts/verify-web.py`
+- Build: `tests/template` adds `cooler_ecu` to the template project (`build/<preset>/tests/template/project/bin/`). A build with only `VEHICLE_SIL_BUILD_EXAMPLES` does not include it.
+- `ctest -R`: `^template\.first_ecu`, `^control_server\.example_first_ecu`
 
-### `examples/gui_client`、`examples/gui_starter`
+| Test | Compares |
+|---|---|
+| `template.first_ecu` (`tests/template/first_ecu.cmake`) | The 4 files with the guide's blocks |
+| Same as above | The keys of the `--describe` excerpt, `--local` |
+| Same as above | The `check` and `run` output with 3 ECUs |
+| Same as above | The output with a wrong `step_ms`, and the output of `--disable Dashboard` |
+| `control_server.example_first_ecu` | The output of `read_cooler.py` |
 
-- 主なクラス・関数（ヘッダー）: 画面のない道具の例（`run.mjs`、`run-with-library.mjs`、`variables.mjs`）、自分の画面のひな形
-- 試験: `gui/server/tests/test_example_client.py`、`gui/web/e2e/starter.spec.ts`
-- `ctest -R`: CTest には入っていません。
-  `scripts/verify-gui.py`
+`control_server.example_first_ecu` is registered only in a build with the Control Server, and only when a Python with gRPC is available.
+
+### `examples/scenario_tests` (example for the guide "Write tests with scenarios")
+
+The files that the guide [howto/scenario-tests.md](howto/scenario-tests.md) has users write. The files have the same content as the guide's blocks; users write them themselves, following the guide, in the build directory of `examples/ecu_main`.
+
+| File | Details |
+|---|---|
+| `my_tests/throttle_up.yaml`, `my_tests/response_time.yaml`, `my_tests/throttle_motion.yaml`, `my_tests/dashboard_speed.yaml` | 4 scenarios |
+| `simulation.variants.yaml` | A configuration file with 2 added variants |
+
+The comments at the top of the files are not in the guide's blocks. The line numbers in the guide's output are those of the files without the comments.
+
+- Build: none (the executables are the 2 of `examples/ecu_main`).
+- `ctest -R`: `^launch_run\.scenario_guide`
+
+`launch_run.scenario_guide` (`tests/launch/scenario_guide.cmake`) does the following in a working directory, in the order of the guide:
+
+- Compares each file with the guide's block, then writes it
+- Compares the output and exit codes of `check`, `run` and `test`
+- Compares the keys of the `test --json` excerpt
+- Also compares the blocks and output of `throttle_step.yaml` and `engine_disconnect.yaml` in `examples/ecu_main/scenarios`
+
+### `examples/integrate_ecus` (example for the guide "Integrate and run several ECUs")
+
+| File | Details |
+|---|---|
+| `dashboard_v1/main.cpp` | The same code as the dashboard ECU of `examples/ecu_main`, except that the network name is `VehicleCAN` |
+| `simulation.yaml` | The engine and this ECU (`check` reports `unknown-network`) |
+| `simulation.two-buses.yaml` | `VehicleCAN` added to `networks` |
+| `simulation.fixed.yaml` | The dashboard ECU replaced with the one of `examples/ecu_main` |
+| `scenarios/engine_speed.yaml` | Scenario |
+
+- Build: with `VEHICLE_SIL_BUILD_EXAMPLES`, the executable and the YAML files go to `build/<preset>/examples/integrate_ecus/`. The engine and the rebuilt dashboard ECU are used from the neighboring `examples/ecu_main/` through relative paths.
+- `ctest -R`: `^launch_docs\.`
+
+What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares:
+
+- The files with the guide's blocks
+- The keys of the `--describe` and `check --json` excerpts
+- `check` of the 3 configuration files, `--disable Dashboard`
+- The result of `run` and the output of the dashboard ECU
+- `run` with a scenario
+
+### `simulation.two-pcs.yaml` in `examples/ecu_main` (example for the guide "Run on several computers")
+
+- Tests: `multi_host.docs` compares this file and its `check` output with the blocks of the guide [howto/multi-pc.md](howto/multi-pc.md).
+- `ctest -R`: `^multi_host\.docs`
+
+### `examples/launch_control` (example for the guide "Read and write signals from outside")
+
+- Tests: `control_server.example_write_before_start` and `control_server.example_pause_and_step` run the example.
+- Tests: `control_server.guide_operate_signals` (`test_guide_operate_signals.py` in `tests/control_server`) compares the marked blocks of the guide [howto/operate-signals.md](howto/operate-signals.md) with the output of the example, the CLI and the stdin commands.
+- `ctest -R`: `^control_server\.example_write_before_start`, `^control_server\.example_pause_and_step`, `^control_server\.guide_operate_signals`
+
+All of them are registered only in a build with the Control Server, and only when a Python with grpcio and grpcio-tools is available.
+
+### `schema/` (JSON Schemas for configuration files and scenarios)
+
+| File | Details |
+|---|---|
+| `schema/simulation.schema.json` | Configuration file |
+| `schema/scenario.schema.json` | Scenario |
+| `schema/timeline.schema.json` | The file that `run --timeline` writes. It describes launcher output, for the tools that read it. It is in `schema/` of the tools archive, not in the template's `template/schema/` |
+| `gui/protocol/dashboard.schema.json` | Dashboard |
+
+The configuration file and scenario schemas are for completion and checking in editors; the launcher does not read them. The code that the launcher uses to read files is `libs/launch/src/config.cpp` and `scenario.cpp`.
+
+| Where the copies are | Details |
+|---|---|
+| `template/schema/` | Copies of the 3 schemas |
+| `schema/` in the tools archive | The same 3 and `timeline.schema.json` (`template/get_tools.py` copies all of them to the project's `schema/`) |
+| Build directory | Copied at configure time when the examples are built (top-level `CMakeLists.txt`) |
+
+Line 1 of an example YAML file copied to the build directory points to the schema copied there.
+
+- Tests: `tests/schema/test_schemas.py`
+- `ctest -R`: `^schema\.` (the part that needs no launcher also runs in `schema` of `scripts/verify-python.py`)
+
+What `test_schemas.py` checks:
+
+- The YAML files of the examples, the template and the documentation pass the schemas
+- Passing and failing samples are run through both the schemas and `check`
+- The keys of each mapping, the network kinds and the step kinds are the same as those that the launcher's error messages list
+- The keys are in the tables of the documentation
+- The template's copies are identical
+- Line 1 of the example and template YAML files points to a schema
+- A schema copy exists where line 1 of an example copied to the build directory points
+- The reference timeline files (`tests/launch/timeline/`) and the timeline file of an example run pass the timeline schema, and malformed files fail it
+
+This test needs a Python with PyYAML and jsonschema (`uv sync`; on Windows, `mingw-w64-ucrt-x86_64-python-jsonschema` of MSYS2). Without them, configure prints the reason and does not register the test. CI confirms that `schema.files_and_launcher` is registered in `linux-gcc-debug`.
+
+### `gui/server`, `gui/protocol`, `gui/client`, `gui/web`
+
+For an introduction, see [gui.md](gui.md).
+
+| What | Location |
+|---|---|
+| GUI server | `gui/server/src/vehicle_sil_gui/` (`control.py` connects to the Control Server) |
+| API specification and examples | `gui/protocol` |
+| Client library | `gui/client/src` |
+| Sample screens | `gui/web/src/app` |
+
+- Tests: `gui/server/tests` (pytest), the unit tests of `gui/client/src` and `gui/web/src/app`, `gui/web/e2e` (Playwright)
+- `ctest -R`: not in CTest. Run them with `scripts/verify-gui.py` (`-k` narrows the server tests; `--skip-web`) and `scripts/verify-web.py`.
+
+### `examples/gui_client`, `examples/gui_starter`
+
+| What | Location |
+|---|---|
+| Examples of tools without a screen | `run.mjs`, `run-with-library.mjs` and `variables.mjs` in `examples/gui_client` |
+| Template for your own screen | `examples/gui_starter` |
+
+- Tests: `gui/server/tests/test_example_client.py`, `gui/web/e2e/starter.spec.ts`
+- `ctest -R`: not in CTest. Run them with `scripts/verify-gui.py`.
 
 ### `scripts/`
 
-- 主なクラス・関数（ヘッダー）: 開発と CI のスクリプト（[AGENTS.md](../AGENTS.md) の「検証とスクリプト」）
-- 試験: `scripts/verify-python.py`（各スクリプトの `--help`）、`tests/scripts/test_run_gui.py`（`scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言）、`tests/scripts/test_job_summary.py`（`scripts/job_summary.py`: GitHub Actions の job の Summary に書く中身、書かないとき）、`tests/template/test_get_tools.py`（`package.py template`、`version`）
-- `ctest -R`: `^template\.get_tools`、`^scripts\.`
+Scripts for development and CI. For the list, see "Verification and scripts" in [AGENTS.md](../AGENTS.md#verification-and-scripts).
+
+| Test | Covers |
+|---|---|
+| `scripts/verify-python.py` | `--help` of each script |
+| `tests/scripts/test_run_gui.py` | `scripts/run-gui.py`: how the launcher is chosen, the message for each missing item |
+| `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: what it writes to the Summary of a GitHub Actions job, and when it writes nothing |
+| `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: pairs of English and Japanese pages (headings, code blocks, links), pages without an English edition yet |
+| `tests/template/test_get_tools.py` | `package.py template`, `version` |
+
+- `ctest -R`: `^template\.get_tools`, `^scripts\.`
 
 ### `patches/sil-kit`
 
-- 主なクラス・関数（ヘッダー）: SIL Kit に当てるパッチ（構成のときに、ビルドのディレクトリの写しに当てる。
-  `cmake/VehicleSilDependencies.cmake`）。
-  書き方は [patches/README.md](../patches/README.md)
-- 試験: 構成が通ること
+Patches applied to SIL Kit. At configure time, they are applied to the copy in the build directory (`cmake/VehicleSilDependencies.cmake`). For how to write them, see [patches/README.md](../patches/README.md).
+
+- Tests: configure succeeds
 
 ### `cmake/`
 
-- 主なクラス・関数（ヘッダー）: 依存の取り込み（`VehicleSilDependencies.cmake`、`VehicleSilGrpc.cmake`）、試験の登録（`VehicleSilTestHelpers.cmake`）、境界の検査（`VehicleSilCheck*.cmake`）
+| What | Location |
+|---|---|
+| Pulling in dependencies | `VehicleSilDependencies.cmake`, `VehicleSilGrpc.cmake` |
+| Test registration | `VehicleSilTestHelpers.cmake` |
+| Boundary checks | `VehicleSilCheck*.cmake` |
 
-## 依存の向き
+## Documentation examples and tests
 
-矢印は「リンクする」（`target_link_libraries`）です。点線は非公開（`PRIVATE`）のリンクで、実線は `PUBLIC` と `INTERFACE` のリンクです。ノードの名前はターゲットの名前で、`vehicle_sil::` を省きます。逆向きの依存は作りません。
+Among the examples in the documentation (configuration files, code, command output), a code block that directly follows a `<!-- ... -->` marker line is compared with the real thing by a test. The tests below fail when you change a marker or its block.
 
-全体の層です。箱はターゲットのまとまりで、箱の間の矢印は、下の図の 1 本以上のリンクをまとめたものです。
+- The tests compare the English pages: the directory named by `VEHICLE_SIL_TESTED_DOCS` in `tests/CMakeLists.txt` is `docs/`. `scripts/check-docs.py` protects the Japanese pages in `docs/ja/` by comparing code blocks (the English and Japanese pages have the same number, order and language tags of blocks, and a block without Japanese is the same byte for byte).
+- Tests that look at the pages themselves (`tests/schema/test_schemas.py`, the GUI server tests, `gui/client/pack.mjs`, `scripts/package.py version`) read the pages of both languages.
+
+### Reference examples
+
+| Document | Marker, block | Test that compares it |
+|---|---|---|
+| [simulation-config.md](simulation-config.md), [simulation-check.md](simulation-check.md), [simulation-run.md](simulation-run.md), [simulation-events.md](simulation-events.md) | `check` markers | `launch_cli.docs` |
+| Same as above | `run` markers | `launch_run.docs` |
+| [simulation-events.md](simulation-events.md) | The event examples of "Programmatic use" | `launch_run.events` |
+| [simulation-config.md](simulation-config.md) | The examples of "[Starting a participant yourself (`manual`, `--manual`)](simulation-config.md#starting-a-participant-yourself-manual---manual)" | `launch_run.manual` |
+| [ecu-executable.md](ecu-executable.md) | `<!-- vehicle_sil_engine_ecu --describe -->` | `ecu_main.describe` |
+| [scenario.md](scenario.md) | `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` | `launch_run.scenario` |
+| [scenario.md](scenario.md) | `<!-- throttle_mistakes.yaml -->`, `<!-- throttle_response.yaml -->` | `launch_run.scenario` |
+| YAML in the documentation, and the key tables | No marker | `schema.files_and_launcher` (`tests/schema/test_schemas.py`) |
+
+- `launch_cli.docs` and `launch_run.docs` compare byte for byte, except for the vehicle-sil version.
+- `launch_run.events` compares byte for byte after substitution.
+- The examples with errors (`two-engines.yaml`, `engine-alone.yaml`, and the scenarios `throttle_mistakes.yaml` and `throttle_response.yaml`) come from the blocks in the documentation; the test writes them to its own working directory.
+- The working directory is under `build/<preset>/tests/launch/` and holds copies of the examples and links to the ECUs. The examples with errors are not placed in the directory of the working examples (`build/<preset>/examples/ecu_main/`).
+
+### Guide examples
+
+| Guide | Marker | Test that compares it |
+|---|---|---|
+| [howto/first-ecu.md](howto/first-ecu.md) | `<!-- examples/first_ecu/... -->`, `<!-- first ECU: ... -->`, `<!-- cooler_ecu --describe: an excerpt -->` | `template.first_ecu`, `control_server.example_first_ecu` |
+| Same as above | Output blocks of the template alone | `template.check_and_run` |
+| [howto/scenario-tests.md](howto/scenario-tests.md) | `<!-- examples/scenario_tests/... -->`, `<!-- examples/ecu_main/scenarios/... -->`, `<!-- scenario guide: ... -->` | `launch_run.scenario_guide` |
+| [howto/integrate-ecus.md](howto/integrate-ecus.md) | `<!-- examples/integrate_ecus/... -->`, `<!-- integrate ECUs: ... -->` | `launch_docs.integrate_ecus` |
+| [howto/multi-pc.md](howto/multi-pc.md) | `<!-- examples/ecu_main/simulation.two-pcs.yaml -->`, `<!-- multi-pc guide: ... -->` | `multi_host.docs` |
+| [howto/operate-signals.md](howto/operate-signals.md) | `<!-- examples/launch_control/... -->`, `<!-- vehicle_sil_control ... -->`, `<!-- standard input of run --start-paused --stdin-commands: ... -->`, `<!-- examples/ecu_main/dashboard/main.cpp: an excerpt -->` | `control_server.guide_operate_signals` |
+| All guides in [howto/](howto/) | The same `check` and `run` markers as the reference | `launch_cli.docs`, `launch_run.docs` |
+
+- The `check` and `run` output blocks in the guides are copies of the examples with the same markers in the documents directly under `docs/` (simulation-*.md and [scenario.md](scenario.md)). `launch_cli.docs` and `launch_run.docs` compare the guides' blocks with what they copy.
+- One `<!-- vehicle_sil_launch run ... -->` in howto/scenario-tests.md is a copy of the same block in scenario.md, and `launch_run.scenario` also compares it.
+- For the locations of the example files and what their tests cover, see the `examples/` entries in "[Code and tests by directory](#code-and-tests-by-directory)".
+
+### What the tests do not compare
+
+No test compares the following. Keep them in sync by hand.
+
+| Document | Not compared |
+|---|---|
+| The guides in [howto/](howto/) | Code quoted without a marker |
+| "[Add J1939 communication](howto/first-ecu.md#add-j1939-communication)" in [howto/first-ecu.md](howto/first-ecu.md) | Places that refer to the template's code by line number |
+| "[Run the ECU from a debugger](howto/first-ecu.md#run-the-ecu-from-a-debugger)" in [howto/first-ecu.md](howto/first-ecu.md) | The stderr lines and result table, the same as in the `launch_run.manual` example, shown with the name `Cooler` |
+| [simulation-check.md](simulation-check.md) | The table of `code` values in "Checks" |
+| [simulation-events.md](simulation-events.md) | The `features` table, and `kFeatures` in `events.hpp` |
+| [ethernet-bridge.md](ethernet-bridge.md) | Copies of the bridge's output and error messages |
+
+## Dependency direction
+
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
+
+| In the diagrams | Meaning |
+|---|---|
+| Solid arrow | `PUBLIC` or `INTERFACE` link |
+| Dotted arrow | Private (`PRIVATE`) link |
+| Node name | Target name (without `vehicle_sil::`) |
+
+### Layers
+
+A box is a group of targets. An arrow between boxes stands for one or more links of the later diagrams, and does not distinguish public from private.
 
 ```mermaid
 flowchart TD
-    subgraph no_silkit["no SIL Kit"]
+    subgraph no_silkit["Without SIL Kit"]
         protocols["sim_base, step, can, eth, lin, j1939"]
         control["control"]
         j1939_parts["J1939 parts, j1939_codec"]
         app["ecu, local, testkit"]
+        process["process"]
         eth_link_box["eth_link"]
     end
-    subgraph with_silkit["SIL Kit"]
+    subgraph with_silkit["With SIL Kit"]
         bindings["core, can_silkit, eth_silkit, lin_silkit, can_netsim, control_silkit"]
         run["peer, simulation"]
-        launch_process["launch, process"]
+        launch["launch"]
         grpc["control_grpc, control_proto"]
         tools["executables, vector_xl bridge, bridge_runtime"]
         ethernet_bridge["ethernet_bridge_core"]
@@ -489,20 +1170,24 @@ flowchart TD
     run --> bindings
     run --> protocols
     run --> control
-    launch_process --> app
-    launch_process -.-> bindings
+    launch --> app
+    launch --> process
+    launch --> protocols
+    launch --> bindings
     grpc --> control
     grpc --> bindings
     tools --> protocols
     tools --> bindings
-    tools -.-> launch_process
-    tools -.-> grpc
+    tools --> launch
+    tools --> process
+    tools --> grpc
+    tools --> ethernet_bridge
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process`、`signal` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません）。
+The targets that do not use SIL Kit are `sim_base`, `step`, `can`, `eth`, `lin`, `control`, `j1939` and its protocol parts, `j1939_codec`, `ecu`, `local`, `testkit`, `process`, `eth_link` and `signal`. `signal` is header-only and uses no other vehicle-sil library either (it is not in the diagram).
 
-### 土台と SIL Kit の実装
+### Foundation and SIL Kit implementations
 
 ```mermaid
 flowchart TD
@@ -532,7 +1217,7 @@ flowchart TD
     core -.-> rapidyaml
 ```
 
-### J1939 のエンジンと部品
+### J1939 engine and protocol parts
 
 ```mermaid
 flowchart TD
@@ -549,18 +1234,20 @@ flowchart TD
     j1939_codec --> j1939_periodic_sender
 ```
 
-### ECU とローカルの実行（SIL Kit なし）
+### ECU and local execution (without SIL Kit)
 
 ```mermaid
 flowchart TD
     ecu --> can
     ecu --> j1939
     ecu --> lin
+    ecu --> eth
     ecu --> control
     control --> sim_base
     local --> can
     local --> j1939
     local --> lin
+    local --> eth
     local --> ecu
     testkit --> local
     testkit --> can
@@ -568,7 +1255,7 @@ flowchart TD
     testkit --> ecu
 ```
 
-### Peer と Simulation
+### Peer and Simulation
 
 ```mermaid
 flowchart TD
@@ -578,6 +1265,7 @@ flowchart TD
     peer --> ecu
     peer --> j1939
     peer --> lin_silkit
+    peer --> eth_silkit
     peer --> control
     simulation --> ecu
     simulation --> peer
@@ -585,9 +1273,14 @@ flowchart TD
     simulation -.-> control_silkit
 ```
 
-### launch と Control API
+### launch and the Control API
 
-`control_proto` と `control_grpc` は `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ、`launch` は SIL Kit をサブモジュールからビルドしたとき（`rapidyaml` があるとき）だけ作ります。`grpcpp` は gRPC の C++ ライブラリです（`cmake/VehicleSilGrpc.cmake`）。
+| Target | Built when |
+|---|---|
+| `control_proto`, `control_grpc` | Only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` |
+| `launch` | Only when SIL Kit is built from the submodule (when `rapidyaml` is available) |
+
+`grpcpp` is the gRPC C++ library (`cmake/VehicleSilGrpc.cmake`).
 
 ```mermaid
 flowchart TD
@@ -610,7 +1303,12 @@ flowchart TD
 
 ### Vector XL CAN Bridge
 
-`vector_xl` と `vehicle_sil_vector_xl_bridge` は Windows で、XL Driver Library があるときだけ作ります。`bridge_runtime`（`bridges/common`）は、ブリッジの実行ファイルの止め方、監視のループ、終了コードを 1 か所に置いたもので、どのプラットフォームでも作ります。
+| Target | Built when |
+|---|---|
+| `vector_xl`, `vehicle_sil_vector_xl_bridge` | Only on Windows, when the XL Driver Library is available |
+| `bridge_runtime` (`bridges/common`) | On every platform |
+
+`bridge_runtime` keeps the shutdown, the monitoring loop and the exit codes of the bridge executables in one place.
 
 ```mermaid
 flowchart TD
@@ -632,8 +1330,6 @@ flowchart TD
 
 ### Ethernet Bridge
 
-`eth_link` は SIL Kit を使わず、vehicle-sil のほかのライブラリもリンクしません（`eth_link.boundary`）。`ethernet_bridge_core` と実行ファイル `vehicle_sil_ethernet_bridge` はどのプラットフォームでも作ります（OS の口 `tap` と `packet` の中身は Linux だけ。pcap の口は Windows と Linux で、ライブラリは実行時に読み込むのでリンクしません。Windows では接続の名前のために `iphlpapi` を、ほかでは `dlopen` のために `${CMAKE_DL_LIBS}` をリンクします）。試験は `tests/eth_link` の偽の口（`vehicle_sil_eth_link_fake`）をリンクします。プロセスの試験の実行ファイル `vehicle_sil_ethernet_bridge_on_fake` は、同じ `main.cpp` に、OS の口の代わりに偽の口を作る `fake_link_factory.cpp` を組み合わせたものです。`vehicle_sil_ethernet_bridge_on_fake_pcap` は、`main.cpp` と `os_link_factory.cpp` はそのままで、pcap のライブラリの場所だけを `fake_pcap_library.cpp`（環境変数 `VEHICLE_SIL_TEST_PCAP_LIBRARY`）に差し替えたものです。偽の pcap のライブラリ（`vehicle_sil_fake_pcap`、関数が 1 つ足りない `vehicle_sil_fake_pcap_old`）は MODULE で、どこにもリンクしません。
-
 ```mermaid
 flowchart TD
     ethernet_bridge_core --> SilKit["SilKit::SilKit"]
@@ -646,307 +1342,933 @@ flowchart TD
     vehicle_sil_ethernet_bridge -.-> vehicle_sil_cli
 ```
 
-### ほかの実行ファイル
+An "external link" is a connection to an interface outside SIL Kit (`ExternalLink`). There are 3 kinds: `tap`, `packet` and pcap.
 
-どれも非公開で `vehicle_sil_cli`（`tools/common`、ヘッダーのみ）をリンクします。ほかにリンクするのは、`vehicle_sil_sim_controller` が `core`、`vehicle_sil_can_bus_simulator` が `can_netsim`、`vehicle_sil_launch` が `launch` と `process`（Windows では `shell32` も。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` では `control_grpc` と `core` も）です。
-
-## 境界を検査する試験
-
-次の試験は、ソースの `#include` などを読んで、層の境界を検査します。内部のヘッダーや SIL Kit のヘッダーを足すと落ちます。
-
-| 試験 | 検査すること |
+| Target | Details |
 |---|---|
-| `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
-| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
-| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
-| `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
-| `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
-| `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
+| `eth_link` | Does not use SIL Kit and links no other vehicle-sil library (`eth_link.boundary`). |
+| `ethernet_bridge_core`, the executable `vehicle_sil_ethernet_bridge` | Built on every platform. |
+| `vehicle_sil_eth_link_fake` (`tests/eth_link`) | The fake external link that the tests link. |
+| `vehicle_sil_ethernet_bridge_on_fake` | The executable for the process tests: the same `main.cpp`, combined with `fake_link_factory.cpp`, which creates a fake external link instead of the OS external link. |
+| `vehicle_sil_ethernet_bridge_on_fake_pcap` | `main.cpp` and `os_link_factory.cpp` unchanged; only the location of the pcap library is replaced with `fake_pcap_library.cpp` (environment variable `VEHICLE_SIL_TEST_PCAP_LIBRARY`). |
+| `vehicle_sil_fake_pcap`, `vehicle_sil_fake_pcap_old` | Fake pcap libraries (`_old` lacks one function). They are MODULE libraries, so nothing links them. |
+
+Differences between platforms:
+
+- The OS external links `tap` and `packet` are implemented only on Linux.
+- The pcap external link exists on Windows and Linux. The library is loaded at run time, so it is not linked.
+- On Windows, `iphlpapi` is linked for adapter names.
+- On other platforms, `${CMAKE_DL_LIBS}` is linked for `dlopen`.
+
+### Other executables
+
+Each one links `vehicle_sil_cli` (`tools/common`, header-only) privately.
+
+| Executable | Also links |
+|---|---|
+| `vehicle_sil_sim_controller` | `core` |
+| `vehicle_sil_can_bus_simulator` | `can_netsim` |
+| `vehicle_sil_launch` | `launch` and `process` |
+| `vehicle_sil_launch` (Windows) | `shell32` too |
+| `vehicle_sil_launch` (`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `control_grpc` and `core` too |
+
+## Boundary tests
+
+These tests read the sources' `#include` lines and similar, and check the boundaries between layers. They fail when you add an internal header or a SIL Kit header.
+
+| Test | What it checks |
+|---|---|
+| `j1939_parts.boundary` | `libs/j1939/parts` uses only the engine's public API and the toolbox, and links only `vehicle_sil::j1939` and other protocol parts |
+| `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary`, `simulation.boundary`, `j1939_codec.boundary`, `param_service.boundary` | The sources of that directory do not use the engine's internals (`cmake/VehicleSilCheckJ1939Parts.cmake`) |
+| `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
+| `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |
+| `j1939_codec.independent_of_the_engine` | The only vehicle-sil header that `codec.hpp` includes is `j1939/types.hpp` (the value types); it does not include `Network` or `Node` |
+| `eth_link.boundary` | `libs/eth_link` includes no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
+
+## What to update together
+
+Each entry lists, in this order, where to change, the documentation to update with it, the code to update with it, the rules to keep and the tests (headings that do not apply are left out). Items marked "keep in sync by hand" are not compared by any test.
+
+| Area | What you change | Entry |
+|---|---|---|
+| Launcher | SIL Kit configuration defaults, the listen address | [SIL Kit configuration defaults](#sil-kit-configuration-defaults) |
+| Launcher | The output of `check` and `run`, `examples/ecu_main/simulation.yaml` | [`check` and `run` output](#check-and-run-output) |
+| Launcher | The example code and its copies in the guides | [Output and code copied into the guides](#output-and-code-copied-into-the-guides) |
+| Launcher | Check rules and `code` | [Check rules and `code`](#check-rules-and-code) |
+| Launcher | Configuration file or scenario keys, the schemas | [Configuration file or scenario keys](#configuration-file-or-scenario-keys) |
+| Launcher | `run --events`, `--stdin-commands`, `version --json` | [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) |
+| Launcher | Speed, pause, stepping, lateness | [Timing of `run`](#timing-of-run) |
+| Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
+| Launcher | `variants`, `params`, `--variant`, `--param`, `only` | [Variants and scenario parameters](#variants-and-scenario-parameters) |
+| Launcher | `run --scenario`, `check --scenario`, waveforms | [Scenarios](#scenarios) |
+| Launcher | `run --scenario --timeline` | [Timeline files](#timeline-files) |
+| Launcher | `vehicle_sil_launch test` | [Running several scenarios](#running-several-scenarios) |
+| Launcher | `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` | [Launcher limits](#launcher-limits) |
+| ECU | The `--describe` JSON | [The `--describe` JSON](#the---describe-json) |
+| ECU | `ecu_main` arguments and exit codes | [`ecu_main` arguments and exit codes](#ecu_main-arguments-and-exit-codes) |
+| ECU | `ecu.connected` | [Disconnecting an ECU from the bus](#disconnecting-an-ecu-from-the-bus) |
+| ECU | `NetworkKind`, `NetworkUse` | [Add a network kind or use](#add-a-network-kind-or-use) |
+| ECU | `template/`, the ECU API | [The template and the ECU API](#the-template-and-the-ecu-api) |
+| Control API | `participants[].variables` | [Variable maps](#variable-maps) |
+| Control API | `control.proto` | [`control.proto`](#controlproto) |
+| Control API | `run --control` | [The launcher's Control Server](#the-launchers-control-server) |
+| Control API | Read-only access while a scenario runs | [The Control Server during a scenario](#the-control-server-during-a-scenario) |
+| Control API | `GetSnapshot` | [Reading time and values together](#reading-time-and-values-together) |
+| Control API | `wire.cpp`, `kVersion` | [Messages between Agent and Hub](#messages-between-agent-and-hub) |
+| Control API | `control_silkit`, the start window | [The SIL Kit transport and the start window](#the-sil-kit-transport-and-the-start-window) |
+| Bridges | Shutdown, exit codes, health lines | [Bridge shutdown and exit codes](#bridge-shutdown-and-exit-codes) |
+| Bridges | Output and error messages of the Ethernet Bridge | [Ethernet Bridge output](#ethernet-bridge-output) |
+| Build and release | `project(... VERSION)` | [Version numbers](#version-numbers) |
+| Build and release | `VEHICLE_SIL_STATIC` | [`VEHICLE_SIL_STATIC`](#vehicle_sil_static) |
+| Build and release | `scripts/package.py tools` | [Contents of the tools archive](#contents-of-the-tools-archive) |
+| Build and release | The SIL Kit APIs in use | [Assumptions about SIL Kit APIs and upstream behavior](#assumptions-about-sil-kit-apis-and-upstream-behavior) |
+| Additions | A J1939 protocol part | [Add a J1939 protocol part](#add-a-j1939-protocol-part) |
+| Additions | A library in `libs/` | [Add a library to `libs/`](#add-a-library-to-libs) |
 
-## これを変えるならここも
+### SIL Kit configuration defaults
 
-- 変えるもの: SIL Kit の構成の既定（`libs/core/src/participant_runtime.cpp` の `default_participant_configuration()` など: 待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP。
-  渡された構成に重ねる `merged_participant_configuration()` と、ecu_main の `--silkit-config`）、それを使う所（`libs/launch/src/run.cpp` の controller とほかのコンピューターへの行、`run_participants.cpp` の環境変数、`config.cpp` の注記 `registry-on-network` と `inherited_listen_variable()`（注記 `listen-variable-ignored`）、manual のコマンドの `environment`）
+Where to change:
 
-  合わせて直すもの: [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」、[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」、[simulation-check.md](simulation-check.md) の所見の表、[dependencies.md](dependencies.md) の SIL Kit（Windows）の節、[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」。
-  試験は `core.a_participant_*`、`core.a_configuration_*`、`simulation.ecu_main_*silkit_configuration*`、`core.a_registry_uri_*`、`launch_run.network`、`launch_run.busy_port`、`multi_host.two_hosts`、`core.silkit_configuration_defaults`。
-  手引きは [howto/multi-pc.md](howto/multi-pc.md)
+- `default_participant_configuration()` and related functions in `libs/core/src/participant_runtime.cpp` (the listen address, TCP on Windows, TCP for the registry on every OS)
+- `merged_participant_configuration()`, which overlays a given configuration, and `--silkit-config` of ecu_main
+- Users of the defaults: the controller in `libs/launch/src/run.cpp`, and the lines addressed to other computers
+- Users of the defaults: the environment variables in `run_participants.cpp`, `environment` of the manual command
+- Users of the defaults: the note `registry-on-network` in `config.cpp`, and `inherited_listen_variable()` (the note `listen-variable-ignored`)
 
-- 変えるもの: `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）、`examples/ecu_main/simulation.yaml`
+Documentation to update:
 
-  合わせて直すもの: [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md)、[simulation-events.md](simulation-events.md) の、`<!-- ... -->` の行の直後のコードブロック。
-  `launch_cli.docs` と `launch_run.docs` が、vehicle-sil の版を除いてバイト単位で照合します。
-  誤りのある例（`two-engines.yaml`、`engine-alone.yaml`、シナリオの `throttle_mistakes.yaml`、`throttle_response.yaml`）は文書のブロックが正本で、試験が自分の作業ディレクトリ（`build/<preset>/tests/launch/` の下。例の写しと ECU へのリンク）に書き出します。
-  動く例のディレクトリ（`build/<preset>/examples/ecu_main/`）には置きません。
-  `examples/ecu_main/simulation.live.yaml`（`stop_at_ms` なし、`speed: 1`。GUI で触るための構成）は、`simulation.yaml` と participant、ネットワークが同じであることを `launch_run.live` が確かめます（ひな形の同じファイルは `template.check_and_run`）。
-  ビルドのディレクトリの `simulation.live.dashboard.yaml` は、CMake が `simulation.dashboard.yaml` を写したものです。
-  GUI の試験が流し直す録画（`gui/server/tests/recordings/`）も、`gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>` で録り直します（`scripts/verify-gui.py --launcher <path>` が、録画と本物のランチャーの食い違いを見つけます）
+- "[SIL Kit configuration defaults](internals/core.md#sil-kit-configuration-defaults)" in [internals/core.md](internals/core.md)
+- "[Listen addresses](simulation-run.md#listen-addresses)" in [simulation-run.md](simulation-run.md)
+- [simulation-check.md](simulation-check.md): the table of findings
+- [dependencies.md](dependencies.md): the SIL Kit (Windows) section
+- "[Passing a SIL Kit configuration file (`--silkit-config`)](ecu-executable.md#passing-a-sil-kit-configuration-file---silkit-config)" in [ecu-executable.md](ecu-executable.md)
+- [howto/multi-pc.md](howto/multi-pc.md): `examples/ecu_main/simulation.two-pcs.yaml` and the block of its `check` output (compared by `multi_host.docs`)
 
-- 変えるもの: 同じ出力と、`examples/ecu_main`（`scenarios/` を含む）・`examples/launch_control` のコード
+Tests:
 
-  合わせて直すもの: [howto/](howto/) の手引きにある写し（出力のコードブロックは、`docs/` の直下の文書（simulation-*.md と [scenario.md](scenario.md)）の同じ印の例の写しです。
-  `launch_cli.docs`（`check` の印）と `launch_run.docs`（`run` の印）が、手引きの同じ印のブロックが写しのとおりかを照合します。
-  コードは例のファイルと行を書いて引いています。
-  コードの写しは照合しないので、手で合わせます）
+- `core.a_participant_*`, `core.a_configuration_*`, `core.a_registry_uri_*`
+- `simulation.ecu_main_*silkit_configuration*`
+- `launch_run.network`, `launch_run.busy_port`
+- `multi_host.two_hosts`, `multi_host.docs`
+- `core.silkit_configuration_defaults`
 
-- 変えるもの: `template/`（ひな形）、ECU の API
+### `check` and `run` output
 
-  合わせて直すもの: [howto/first-ecu.md](howto/first-ecu.md)（ひな形のコードを行の番号で引いている。
-  出力のブロックは `template.check_and_run` がひな形の出力とも照合）、`template/README.md`。
-  ひな形の 2 つの ECU は `examples/ecu_main` と同じ名前、ネットワーク、アドレス、ステップ幅にしてあり、手引きの出力は両方で同じです
+Where to change:
 
-- 変えるもの: 版の番号（ルートの `CMakeLists.txt` の `project(... VERSION)`）
+- The output of `vehicle_sil_launch check` and `run` (`libs/launch/src`)
+- `examples/ecu_main/simulation.yaml`
 
-  合わせて直すもの: [CHANGELOG.md](../CHANGELOG.md) に書いてある場所（`pyproject.toml`、`gui/server/pyproject.toml`、`template/get_tools.py`、`template/CMakeLists.txt` の `GIT_TAG`、`template/README.md` の版、`CHANGELOG.md` の見出し `## [<版>] - Unreleased`）。タグを付けるコミットで、見出しの `Unreleased` をリリースの日付（`YYYY-MM-DD`）にします。
-  `scripts/package.py version`（と `template.get_tools`）が食い違いを見つけます。`--expect v<版>`（リリースのワークフロー）は、日付のない見出しも断ります。リリースノートは、`.github/workflows/release.yml` が `CHANGELOG.md` のこの版の節から切り出します
+Documentation to update:
 
-- 変えるもの: `VEHICLE_SIL_STATIC`（`cmake/VehicleSilDependencies.cmake` の SIL Kit の取り込みと、`SilKit::SilKit` に付ける静的なリンクの指定）
+- [simulation-config.md](simulation-config.md), [simulation-check.md](simulation-check.md), [simulation-run.md](simulation-run.md), [simulation-events.md](simulation-events.md): the code blocks directly after a `<!-- ... -->` line (compared by `launch_cli.docs` and `launch_run.docs`)
+- The guides in [howto/](howto/): the copies of the blocks with the same markers (next entry)
 
-  合わせて直すもの: [build.md](build.md) の「1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）」、[dependencies.md](dependencies.md) の「取り込み方」の表、[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) の「Distributing executables built with `VEHICLE_SIL_STATIC`」。
-  プリセット `linux-gcc-static`、`windows-mingw-static`（CI は linux-gcc-static だけ）。
-  道具の圧縮ファイルのランチャーも、これで作ります
+Code and files to update:
 
-- 変えるもの: 道具の圧縮ファイルの中身（`scripts/package.py tools`）
+- `examples/ecu_main/simulation.live.yaml` (no `stop_at_ms`, `speed: 1`; the configuration file for working from the GUI): `launch_run.live` confirms that it has the same participants and networks as `simulation.yaml`.
+- `template.check_and_run` checks the template's file of the same name.
+- `simulation.live.dashboard.yaml` in the build directory is a copy of `simulation.dashboard.yaml` made by CMake.
+- The recordings of launcher output that the GUI tests replay (`gui/server/tests/recordings/`): record them again with `gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>`.
+- `scripts/verify-gui.py --launcher <path>` finds mismatches between the recordings and the real launcher.
 
-  合わせて直すもの: 同じ中身を書いた [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)（同梱する物とライセンスの文の場所）、[build.md](build.md) の「ビルド済みの道具」、`.github/workflows/release.yml`。
-  gRPC の版を変えたら、`package.py` の `GRPC_LICENSES` と、THIRD_PARTY_NOTICES.md の表のライセンスの名前（gRPC が取り込む物のライセンスは版で変わる）
+For how the blocks are compared and where the examples with errors are placed, see "[Documentation examples and tests](#documentation-examples-and-tests)".
 
-- 変えるもの: `run --events` の事象、`--stdin-commands` の命令、`version --json`（`libs/launch/src/events.cpp`、`tools/launch/main.cpp`）
+### Output and code copied into the guides
 
-  合わせて直すもの: [simulation-events.md](simulation-events.md) の「機械から使う」（事象と `state` の表、命令の表、`features` の表、事象の例は `launch_run.events` が置き換えの後にバイト単位で照合）。
-  事象やキーを足したら `features` に名前を足すか決め、意味を変えるなら `kEventsFormat` を上げます。
-  `events.hpp` の `kFeatures` と、この表の `features` は手で合わせます。
-  事象を書くスレッドと待ち行列の不変条件（事象を作るスレッドは読む側を待たない、捨ててよいのは `log` だけ、読まない読む側を見切る時間）は `events.hpp` の `EventStream` のコメントが正本で、変えたら「読む側が遅いとき、読まないとき」も直します。
-  見切る時間は `--events-stall-ms`（`tools/launch/main.cpp` の `events_stall_timeout()` と `kMinEventsStallMs`、既定は `EventStreamOptions::stall_timeout`）で、引数の表と合わせます。
-  `participant` の `state` を足したら `state` の表に足し、所見を足したら `detail::settled_findings()`（途中で流してよいか）を見直します。
-  試験は `^launch\.`（`test_events.cpp`）と `launch_run.events_stalled`、`events_slow`、`events_nonblocking`
+Where to change:
 
-- 変えるもの: `run` の時間（速さ、一時停止、ステップ送り、遅れ。
-  `libs/launch/src/time_commands.cpp` の `TimeCommands`、`run_assess.cpp` の `detail::plan_time_step()`（controller の刻みの既定）と `RunTiming::actual_speed()`、`run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は `run_notes.hpp` の `detail::noted_paused()`）、`run_watch.cpp` の `RunWatch::note_timing()`。
-  時間のゲートは `libs/core/src/simulation_controller.cpp`、その状態と遅れの計算は `libs/core/src/time_gate.cpp`（時計を持たない）、期限までの待ちは `libs/core/src/deadline_waiter.cpp`）
+- The output of `check` and `run` (same as the previous entry)
+- The code of `examples/ecu_main` (including `scenarios/`) and `examples/launch_control`
 
-  合わせて直すもの: [simulation-run.md](simulation-run.md) の「等速で動かす」（遅れの定義、遅れたときに起きること、刻みと ECU のステップ）、構成のキーの表、`time` と `command` の事象、命令の表、`timing` の表、所見の表（`behind-real-time`、`coarse-time-step`）、`features` の表。
-  遅れの定義の正本は `TimeControlOptions` のコメント（`simulation_controller.hpp`）で、変えたら [internals/virtual-time.md](internals/virtual-time.md) の「一時停止、ステップ実行、速度（時間ゲート）」と simulation-config.md も合わせます。
-  命令は標準入力を読むスレッドがゲートに渡す（待たない）ので、`TimeCommands` のロックの中で待つものを足しません。
-  遅れの数は、時刻を決めた例の試験 `core.time_gate_model_*` で確かめます（実時間を使う試験は片側の検査だけにします）。
-  ほかの試験は `core.virtual_time_gate_*`、`core.*deadline_waiter*`、`^launch\.`、`launch_run.realtime`、`on_time`、`late`、`stall`、`speed_change`、`step_width`、`pause_step`、`paused_failures`、`time_usage`
+Documentation to update:
 
-- 変えるもの: `--describe` の JSON（`libs/ecu/src/describe.cpp`）、`examples/ecu_main/engine` の ECU
+- The guides in [howto/](howto/): the output code blocks (`launch_cli.docs` and `launch_run.docs` compare them with the reference blocks that have the same markers)
+- The guides in [howto/](howto/): code quoted without a marker (not compared; keep it in sync by hand)
 
-  合わせて直すもの: [ecu-executable.md](ecu-executable.md) の `<!-- vehicle_sil_engine_ecu --describe -->` の後のコードブロック（`ecu_main.describe` が照合）と「JSON の形式」。
-  JSON を読む側の `read_description()`（`libs/launch/src/describe_read.cpp`）。
-  形式の版は `kEcuDescriptionFormat`（`ecu/describe.hpp`）
+For the markers and tests of each guide, see "[Documentation examples and tests](#documentation-examples-and-tests)".
 
-- 変えるもの: ECU のバスからの切り離し（`ecu.connected`。
-  `libs/ecu/src/bus_connection.cpp`、ポートをゲートの後ろに置くのは `libs/peer/src/peer.cpp` と `libs/local/src/local_bench.cpp`、変数を作るのは `detail::EcuAgent::get()`、J1939 で戻ったときの選択は `j1939::NetworkOptions::on_reconnect`）
+### Check rules and `code`
 
-  合わせて直すもの: [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」（効く時点、CAN、J1939 で戻ったとき、LIN）、[j1939-guide.md](j1939-guide.md) の「ECU をバスから外す」、[scenario.md](scenario.md) の「ECU をバスから外す」と例 `examples/ecu_main/scenarios/engine_disconnect.yaml`。
-  受信の判定は事象の時刻で行い、ECU 自身のステップと事象の届く順に頼りません。
-  試験は `simulation.disconnect_*`（仮想バスの 2 つの ECU の順と SIL Kit で同じ記録、LIN の Master をスロットの途中で切る、戻したときのアドレスの競合）、`launch_run.scenario_disconnect`
+Where to change:
 
-- 変えるもの: `ecu_main` の引数と終了コード（`libs/simulation/src/ecu_main.cpp`）
+- `libs/launch/src/check_rules.cpp`
+- The code that reads configuration files is `config.cpp`
 
-  合わせて直すもの: `ecu_executable::kLauncherArguments`、終了コード、`kMaxMillis`（`libs/ecu/include/vehicle_sil/ecu/executable.hpp`。
-  ランチャーと `ecu_main` が同じものを使う。
-  `kLauncherArguments` は構成ファイルの `command` に書けない引数で、`simulation.ecu_main_takes_every_argument_the_launcher_gives` が `ecu_main` が全部を知っているかを確かめる）と、[ecu-executable.md](ecu-executable.md) の「引数」
+Documentation to update:
 
-- 変えるもの: ランチャーの上限（`kMaxMillis`、`kMinSpeed`、`kMaxSpeed`。
-  `libs/launch/include/vehicle_sil/launch/config.hpp`）
+- The table of `code` values in "[Checks](simulation-check.md#checks)" in [simulation-check.md](simulation-check.md) (no test compares this table; keep it in sync by hand)
 
-  合わせて直すもの: GUI の写し（`gui/server/src/vehicle_sil_gui/launcher.py`、`variables.py`、`gui/client/src/client.ts`、`protocol.ts`、`gui/web/src/app/run/speed-picker.ts`）。
-  `launch.the_gui_takes_the_launchers_limits` が食い違いを見つけます。
-  ほかの道具の終了コードと上限（`tools/common/include/vehicle_sil/cli/args.hpp`）は、同じ試験のファイルの `static_assert` が見ます
+### Configuration file or scenario keys
 
-- 変えるもの: ネットワークの種類か使い方を足す（`NetworkKind`、`NetworkUse`）
+Where to change:
 
-  合わせて直すもの: 手順の正本はこの項目です（`ecu/describe.hpp` のコメントがここを指す）。
-  1. `ecu/describe.hpp` の `kNetworkKinds`・`kNetworkUses`、名前・`kind_of()`・文言（`detail::network_kind_label()`、`network_kind_calls()`）の `switch`。
-     足し忘れはビルドで落ちます（`default` のない `switch` は vehicle-sil のターゲットでは常に `-Werror=switch`、一覧は `static_assert`）。
-  2. `switch` が求める所: `libs/launch/src/check_rules.cpp` の種類ごとの規則（`check_network()`）、`tests/simulation/test_network_kinds.cpp` の `put_on()`（Ecu の呼び出し）。
-  3. ビルドでは落ちず、`test_network_kinds.cpp` で落ちる所: 新しい種類の入れ物と、名前の種類を答える `libs/peer/src/peer.cpp` の `detail::network_kind()`、名前を確かめる `Peer::require_can_name()`・`require_lin_name()`・`require_ethernet_name()`（新しい種類にも同じ形のものを足す。
-     ほかの種類の名前かどうかは `detail::network_kind()` が答える）、`libs/local/src/local_bench.cpp` の `bus_kind()`（名前の種類を答える。
-     `require_name()` が使う）、両方の `describe()`。
-     断る文言は表から作るので（冠詞つきの種類の名前は `detail::network_kind_with_article()`）、直すのは名前を探す所だけです。
-  4. 試験が見ない所（手で合わせる）: [simulation-config.md](simulation-config.md) の構成の表の `networks[].kind`、[ecu-executable.md](ecu-executable.md) の「JSON の形式」の `networks` の説明と `networks[].use` の表、[simulation-check.md](simulation-check.md) の `code` の表（種類ごとの規則を足したとき）、`libs/launch/include/vehicle_sil/launch/check.hpp` の `check_participants()` の説明（どの規則がどの種類に効くか）。
-     構成と `--describe` の読み手、誤りの文言の一覧は表から作るので、直しは要りません
-
-- 変えるもの: 自分で起動する participant（`manual`、`--manual`。
-  読むのは `libs/launch/src/config.cpp`、起動の代わりにコマンドを書くのは `libs/launch/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`、開始の待ちは `run_start.cpp` の `RunStart::wait_for_start()`、終わりは `RunParticipants::end_manual()`）
-
-  合わせて直すもの: [simulation-config.md](simulation-config.md) の「participant を自分で起動する」と、その例（`launch_run.manual` が照合。
-  標準エラーの 2 行は [howto/first-ecu.md](howto/first-ecu.md) の「デバッガーから動かす」に写し）、事象 `participant` の `manual`、`features` の `manual-participants`。
-  開始の上限、ECU に渡す `--start-timeout-ms`（`detail::ecu_start_timeout_ms()`）、registry の既定のポート（`kManualRegistryUri`）を変えたら、同じ節と [internals/control.md](internals/control.md) の「ランチャーの Control Server」の開始の期限も直します。
-  `run` はそのプロセスを持たないので、失敗はシミュレーションから抜けたことでだけわかります。
-  試験は `launch_run.manual`（docs の例）と `launch_run.manual_*`（場面ごと。
-  `ctest -R '^launch_run\.manual'`）、`launch.a_participant_started_by_hand_from_the_file_or_the_command_line`、`launch.the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell`
-
-- 変えるもの: 照合の規則と `code`（`libs/launch/src/check_rules.cpp`、構成の読み手は `config.cpp`）
-
-  合わせて直すもの: [simulation-check.md](simulation-check.md) の「照合」の `code` の表。
-  試験はこの表を照合しないので、手で合わせます
-
-- 変えるもの: 変数の対応表（構成ファイルの `participants[].variables`。
-  読むのは `libs/launch/src/config.cpp` の `read_variables()`、規則と変換は `libs/control/src/variable_map.cpp` の `MappedSchema`、掛けるのは `control::Hub`（`set_variable_map()`）、渡すのは `libs/launch/src/run_control.cpp` の `RunControl::hub()`、照合は `check_rules.cpp` の `seen_variables()` と `variable_map_code()`）
-
-  合わせて直すもの: [simulation-config.md](simulation-config.md) の「変数の名前と値を合わせる」（形の表、見え方）、[simulation-check.md](simulation-check.md) の `variable-map-*` と JSON の `variables`、`variable_map`、[simulation-run.md](simulation-run.md) の `variable-map-not-applied`、[control-api.md](control-api.md) の `source`（`control.proto` の `VariableInfo.source`、Python の `Variable.source`）、[internals/control.md](internals/control.md) の Hub の「変数の対応表」（変換が掛かる 4 か所と順序）。
-  守ること: 変換は Hub の中だけ（読む口や通信の層に足さない）。
-  書ける値かどうかの判定は `MappedSchema::to_actual()` の 1 か所（シナリオの照合は `in_range()` で同じ判定を聞く。
-  `libs/launch/src/scenario.cpp`）。
-  当たらなかった対応の名前には書かせない（`not_writable()`）。
-  値は Hub が持つ前に直す（口による食い違いを作らない）。
-  書き込みは `write()` の検査と同じ所で直す。
-  照合と実行は同じ `MappedSchema::make()` を使う。
-  試験は `^control\.`（`test_variable_map.cpp`）、`^launch\.`（読み方、規則、JSON）、`launch_run.variable_map`（対応表を通したシナリオが、対応表なしと同じ時刻に進む）、`control_server.control_server_peer_info_names_the_source_of_a_mapped_variable`
-
-- 変えるもの: J1939 の部品を足す
-
-  合わせて直すもの: `libs/j1939/parts/<部品>/` と、`libs/j1939/CMakeLists.txt` の `add_subdirectory`。
-  試験は `tests/j1939/CMakeLists.txt` の `vehicle_sil_j1939_parts_tests` の `SOURCES` と `LINK`。
-  [architecture.md](architecture.md) の「構成」と [internals/j1939.md](internals/j1939.md) の「プロトコル部品」
-
-- 変えるもの: `libs/` にライブラリを足す
-
-  合わせて直すもの: ルートの `CMakeLists.txt` の `add_subdirectory`、[architecture.md](architecture.md) の「構成」
-
-- 変えるもの: `proto/vehicle_sil/control/v1/control.proto`
-
-  合わせて直すもの: `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`。
-  サービスを足したら `auth.cpp` の `rpc_rules()` と `test_authorization*.cpp` も）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。
-  Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`）
-
-- 変えるもの: 使う SIL Kit の API、上流の挙動への前提
-
-  合わせて直すもの: [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」
-
-- 変えるもの: ブリッジの止め方、participant の状態の判定（`judge_participant_state()`）、止める順、終了コード、監視の行の出し方（`bridges/common/src/run_bridge.cpp`）
-
-  合わせて直すもの: [bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」の終了コードと participant の状態の扱い。
-  出す文言は `bridge_runtime.*` が照合します。
-  止める順と終了コードは `vector_xl.integration.stop-request` と `device-lost` も確かめます。
-  コンソールのウィンドウを閉じたときの扱い（4 秒）を確かめる自動の試験はないので、変えたら Windows で手で確かめます
-
-- 変えるもの: イーサネットのブリッジの統計のキー、監視の行、起動の 1 行、警告、引数と誤りの文、口が開けないときの文（`bridges/ethernet/src`、`libs/eth_link/src`）
-
-  合わせて直すもの: [ethernet-bridge.md](ethernet-bridge.md) にある写し。
-  文言は試験 `ethernet_bridge.*`、`eth_link.os_link_*`、`eth_link.pcap_*` が照合しますが、文書の写しは照合しないので、手で合わせます。
-  口が開けないときの文は `tests/ethernet_bridge/bridge_netns.py` にも写しがあります
-
-- 変えるもの: ランチャーの Control Server（`tools/launch/control_server.cpp`、`RunOptions::serve_control`、`TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`、`ServerOptions::external_hub`）、`python/vehicle_sil_control/launcher.py`
-
-  合わせて直すもの: [control-api.md](control-api.md) の「ランチャーにつなぐ」（始まる前に書く、2 つの口の命令、認証）、[simulation-config.md](simulation-config.md) の事象 `control_server`、`command` の `source` と `at_ms`、引数の表、`features` の `control-server`（`kControlServerFeature`。
-  この名前は Control Server を持つビルドだけが出すので、`version --json` の例には入れず、`launch_cli.docs` が除いて照合します）、[internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、2 つの口の順序、始まる前の窓で止めること、終わり方）。
-  gRPC のスレッドから controller に触れるのは `TimeCommands` の中だけにします（`detach()` の後に controller が壊れるため）。
-  `run_file()` の中で gRPC を待つものを足しません。
-  試験は `control_server.launcher`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`、`^launch\.`（`TimeCommands`）、`launch_run.time_usage`（引数の誤り）
-
-- 変えるもの: Agent と Hub の間のメッセージ（`libs/control/src/wire.cpp`）
-
-  合わせて直すもの: 並びを変えたら `control/wire.hpp` の `kVersion` を上げます（復号は自分の版だけを受け付けます）。
-  相手が知らなくても困らない種類を足すだけなら上げません（知らない種類は捨てられます。
-  最後の知らせへの返事 `Kind::LastWordReceived` がそうです）。
-  hello の先頭から participant 名までは、どの版でも変えません（版の違う相手の名前を読むため）。
-  大きさの上限（`kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes`）と分け方は [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」。
-  試験は `^control\.wire_`（1 バイトずつ切る、欄を壊す、乱数の入力。
-  境界の外を読むと sanitizer のプリセットが落とします）
-
-- 変えるもの: SIL Kit の上の運び手（`libs/control_silkit/src`）、始まる前の窓（`libs/core/src/simulation_controller.cpp` の `run_window()` と `cancel_window()`、`libs/core/src/participant_runtime.cpp` の `set_communication_ready_handler_async()`）、`ecu_main()` が運び手を付ける所（`libs/simulation/src/ecu_main.cpp`）、ランチャーの Hub（`libs/launch/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`）
-
-  合わせて直すもの: 契約の正本は `agent_transport.hpp` と `hub_transport.hpp` のクラスのコメントで、[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」（スレッド、届く順序の約束、窓、接続の終わりと最後の知らせへの返事、認証がないこと）を合わせます。
-  `AgentTransport` のデストラクターは Hub の返事を待ちます（`AgentTransportOptions::last_word_wait`）。
-  待ちを長くする・なくす変更は、ECU の終わりの遅れと、実行の終わりの結果（Cancelled か Unknown か）を変えます。
-  頼っている SIL Kit の挙動は [dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」。
-  値と結果は、ステップのスレッドから、値を読んだ直後に送ります（別のスレッドに渡すと、順序の約束がなくなります。
-  `HubTransportStats::late_messages` が数えます）。
-  Hub の側の受信のハンドラーには、待つもの・重い処理を足しません（シミュレーション全体が待ちます）。
-  ランチャーの出力（事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered`、`before-start`）は [simulation-run.md](simulation-run.md) の「変数を読み書きする口」と表。
-  ECU の自己申告（`--describe` の `control`。
-  `libs/ecu/src/describe.cpp`、足すのは `ecu_main`、読むのは `libs/launch/src/describe_read.cpp`）は [ecu-executable.md](ecu-executable.md) の「JSON の形式」。
-  上限（`kMaxVariables`、`kMaxNameBytes`、`HubTransportOptions::max_links`）を変えたら internals/control.md の同じ節。
-  試験は `^control_silkit\.`、`^core\.`、`^launch_control\.`、`launch_run.control`、`simulation.ecu_main_offers_its_variables_to_the_simulation_unless_no_control`
-
-- 変えるもの: 機種とシナリオのパラメーター（構成ファイルの `variants` と `params`、`--variant`、`--param`、シナリオの `params`・`${名前}`・`only`、`absent: true` の変数や機種が外した participant の変数を使う手順の飛ばし。
-  構成の側は `libs/launch/src/config.cpp` の `read_variants()`、`kVariantKeys`・`kVariantParticipantKeys`（機種で変えられるキーの一覧）、`apply_variant()`、`choose_variant()`。
-  `params` の読み方は `yaml_reader.hpp` の `read_params()`。
-  シナリオの側は `scenario.cpp` の `take_params()`、`resolve_params()`、`read_only()`、`skip()`、渡すのは `check.cpp` の `ScenarioContext`、飛ばすのは `scenario_run.cpp` の `issue_step()`（`StepStatus::Skipped`）、引数は `tools/launch/main.cpp` の `common()`）
-
-  合わせて直すもの: [simulation-config.md](simulation-config.md) の「機種」と「シナリオのパラメーター」、[scenario.md](scenario.md) の「機種とパラメーター」と `code` の表、[simulation-check.md](simulation-check.md) の `code` の表と JSON のキー（`variant`、`variants`、`params`）、[simulation-run.md](simulation-run.md)、[simulation-events.md](simulation-events.md) の「実行に進まないときの事象」。
-  機種で変えられる項目を足すときは、キーの一覧、`VariantParticipant`、`read_variant_participants()`、`apply_variant()` と、simulation-config.md の表を一緒に直します。
-  試験は `launch.a_variant_*`、`launch.every_variant_*`、`launch.scenario_parameter*`、`launch.scenario_only_*`、`launch.scenario_steps_that_use_*`、`launch.scenario_times_are_the_same_*`、`launch.scenario_that_checks_nothing_*`、`launch_run.variants`
-
-- 変えるもの: シナリオをまとめて回す（`vehicle_sil_launch test`。
-  `libs/launch/include/vehicle_sil/launch/test.hpp` と `src/test.cpp` の `list_scenarios()`（ディレクトリの拾い方と順）、`test_file()`（組ごとに `run_file()`。
-  その前に構成を読み、機種を確かめ、どのシナリオにもない `--param` と、有効で manual の participant を断る）、`format_test_text()`（1 組だけを回し直すコマンドに並べる引数は `TestArguments`）、`format_test_json()`（`kTestFormat`）、`TestReport::remarks()`（`test` 全体の所見 `test-nothing-run`、`test-runs-left`。
-  結果と終了コードは `TestReport::result()`）。
-  `only` に合わない組を `skipped` にするのは `ScenarioCheck::not_for_variant`、`--param` を緩めるのは `CheckOptions::params_for_many`、構成だけ読むのは `CheckOptions::file_only`。
-  引数は `tools/launch/main.cpp` の `test()` と `spread_scenarios()`）
-
-  合わせて直すもの: [simulation-run.md](simulation-run.md) の「シナリオをまとめて回す」（表、終了コード、JSON のキー）、[simulation-config.md](simulation-config.md) の引数の表と終了コードの表、`vehicle_sil_launch` の使い方の文（`kUsage`）。
-  1 組の中身は `run` のままなので、`run --json` を変えたら `runs[].run` も変わります。
-  試験は `launch.the_scenarios_of_a_directory_*`、`launch.a_test_*`、`launch.the_report_of_a_test_*`、`launch.the_command_of_one_run_alone_*`（`tests/launch/test_batch.cpp`。
-  プロセスを起動しない）、`launch_run.test_command`、`launch_run.test_interrupt`
-
-- 変えるもの: 構成ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp`、`scenario.cpp` の読み手）
-
-  合わせて直すもの: `schema/simulation.schema.json`、`schema/scenario.schema.json`（キーには `description` を付けます。
-  エディターが、そのキーの説明として出す文です）と、ひな形の写し（`cp schema/*.schema.json template/schema/`。
-  ダッシュボードは `gui/protocol/dashboard.schema.json` から）。
-  読み手の多くは、キーを分岐（`key == "..."`）で受け、知らないキーの文には別の一覧（`config.cpp` と `scenario.cpp` の先頭の `k...Keys`）を出します。
-  分岐を足したら、一覧にも足します（試験が比べるのは一覧のほうなので、足し忘れると、スキーマが新しいキーを知らないまま通ります）。
-  手順の種類を足すときは、`scenario.schema.json` の `definitions` に `step_<種類>` を 1 つ足し（その種類のキーと、時刻の 2 つのキー）、`definitions.step` の `oneOf` に 1 行足します。
-  スキーマは、ランチャーが読むファイルを落としてはいけません（落とせない誤りは `check` が言います）。
-  迷う所は緩くし、`tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）に、通る形と落ちる形を足します。
-  例とひな形の YAML（`examples/`、`template/`）を足すときは、1 行目に `# yaml-language-server: $schema=<スキーマへの相対パス>` を書きます。
-  既にある例の先頭のコメントは、行数を変えません（所見と手順の行番号が、文書の出力と GUI の試験の録った出力に出ているため）。
-  試験は `schema.files_and_launcher`
-
-- 変えるもの: 時間の軸のファイル（`run --scenario --timeline`。
-  記録は `libs/launch/src/timeline.cpp` の `TimelineRecord`（上限と、古い側を捨てる決まりもここ）、記録に入れる所は `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`）、ファイルの形は `timeline.cpp` の `format_timeline_json()`、1 行に 1 点は `JsonWriter::begin_array_on_one_line()`（`libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp`）、ファイルを開く所と書く所は `run.cpp` の `Runner::open_timeline()` と `write_timeline()`、所見 `timeline-write` と `timeline-limit` は `run_assess.cpp`、引数は `tools/launch/main.cpp`）
-
-  合わせて直すもの: `schema/timeline.schema.json`、[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」、基準のファイル `tests/launch/timeline/*.timeline.json`（手で直さない。作り直し方と比べないキーは、そのディレクトリの `README.md`）。
-  守ること: 記録は、シナリオのスレッド（と、始まる前の窓のスレッドの `begin()`）でだけ行う。Hub の tap の中では何もしない。
-  記録の口がない（`--timeline` なし）とき、エンジンの動きと `run` の出力は 1 つも変わらない。
-  ファイルに入れるのは、仮想時刻で決まるものだけ（実時間、プロセス ID、遅れの数を入れない）。
-  キーと値は足すだけにし、読む側が知らないものを無視できる形を保つ（スキーマは値を `enum` で閉じない）。
-  基準のシナリオには `sine`、`chirp`、`lag` を入れない（最後のビットが C ライブラリで違いうるので、バイト単位で比べられない）。
-  試験は `launch.timeline_*`（刻みによらないこと、刻みで変わる手順、基準のファイル、上限、サンプルの数え方、断られた書き込みの点、途中で終わった実行）、`launch.a_timeline_that_dropped_points_or_was_not_written_is_said`、`launch_run.timeline`（本物のランチャー: 2 回回して同じ、速さを変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数）、`schema.files_and_launcher`
-
-- 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
-  読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）
-
-  合わせて直すもの: [scenario.md](scenario.md)（形式、時刻、値の見え方、書き込み、結果、所見の `code` の表、出力）と、その例（`<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロックを `launch_run.scenario` がバイト単位で照合。
-  例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml`。
-  `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、[howto/scenario-tests.md](howto/scenario-tests.md) の「波形で動かす」がその行を写している（`launch_run.scenario_wave` が実行する）。
-  誤りのある例と失敗する例は、ファイルも scenario.md のブロック（`<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->`）で、同じ試験が書き出して、`check --scenario` の出力、`run --scenario` の出力と `--json` の `scenario` を照合）、[simulation-config.md](simulation-config.md) の引数の表、事象 `scenario_step`、`features` の `scenario`、[internals/control.md](internals/control.md) の「シナリオ」。
-  約束の正本は `scenario_run.hpp` の `ScenarioEngine` のコメントです。
-  守ること: 判定に使うのは仮想時刻だけ（実時間の待ちと時間切れで結果を決めない）。
-  `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にする（`Waveform::value()`。呼ばれた回数や順に頼らない。乱数は種、変数の名前、時刻から作る: `scenario_shapes.cpp` の `seed_of_variable()`。整数だけの計算で、どの OS でも同じ）。
-  ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は `scenario.cpp` の `seen_between()` の決まり 1 つに従う。
-  `points` の CSV ファイル: 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`（`ScenarioContext::read_file` に渡す。`read_scenario()` はこれのほかにファイルに触らない。渡すのは `check.cpp` と `test.cpp`）、パスの検査とセルの意味は `scenario.cpp` の `path_problem()`、`file_points()`、`cell_value()`。
-  点を足す口（文面と CSV）は `read_points()` の 1 つで、同じ照合を通る。
-  例は `examples/ecu_main/scenarios/throttle_trace.yaml` と `.csv`（`launch_run.scenario_wave` が実行する）。
-  波形を足すときは、`signal/waveform.hpp` の関数、`scenario_shapes.cpp` の実装、`scenario.cpp` の `read_wave_of()`（キー、型、範囲、ステップ幅との比較）、`schema/scenario.schema.json` の `definitions.wave`（と `template/schema` の写し）、`tests/schema/test_schemas.py` の `WAVE_SHAPES_WITH_KEYS` と見本、[scenario.md](scenario.md) の波形の表を合わせる。
-  controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見る（P 以降のものは、届いていても次に回す）。
-  時刻 T の書き込みは、T より前の controller のステップを止めている間に積む（時刻 0 は開始前の窓）。
-  シナリオのある実行の controller の刻みは速さによらない（`detail::plan_time_step()` の `fine`）。
-  Hub の tap は controller の SIL Kit のスレッドで Hub のロックの中から呼ばれるので、待つもの・Hub を呼ぶものを足さない。
-  試験は `^launch\.scenario_`（偽の ECU のモデル。
-  届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見。`launch.scenario_expect_beside_*` は `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけ飛ばすこと）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_expect_beside`（横の `expect` が外れたサンプル、`expect_skipped`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
-  書き込みが効いたステップを ECU が申告する）、`scenario_failures`、`core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`、`control.control_hub_tap_*`
-
-- 変えるもの: シナリオの実行中の Control Server（見るだけ。
-  `ServerOptions::observe_only`、`libs/control_grpc/src/auth.hpp` の `Effect` と `auth.cpp` の `rpc_rules()`、断る所は `control_service.cpp` の `guarded()`、付けるのは `tools/launch/control_server.cpp`）
-
-  合わせて直すもの: [scenario.md](scenario.md) の「実行中に変数を見る」（断る呼び出しの表、理由 `scenario-running`）、[control-api.md](control-api.md) の「ランチャーにつなぐ」と `ControlError.reason`、[simulation-config.md](simulation-config.md) の `features` の `scenario-control`（`kScenarioControlFeature`。
-  `control-server` と同じく、持つビルドだけが出す）と引数の表、[internals/control.md](internals/control.md) の「ランチャーの Control Server」。
-  RPC を足したら、表の行に種類を書きます（変えるものは `Effect::Change`）。
-  守ること: 断るのは本体に入る前の 1 か所。
-  クライアントの呼び出しから、シナリオの tap、書き込み、ガードに触る道を足さない。
-  Hub の購読と tap に、待つものを足さない。
-  試験は `control_server.control_server_observe_only_*`、`control_server.control_server_that_only_observes_*`（呼び出しごとの表は試験の側にも書いてある）、`control_server.launcher`（読み手あり・なしでシナリオの結果が同じ、読まない読み手がいても終わる）、`control.control_hub_readers_that_never_read_*`
-
-- 変えるもの: 時刻と値をまとめて読む（`GetSnapshot`。
-  `libs/control_grpc/src/control_service.cpp`、`Hub::latest_of()` と `none_after()`、`Control.snapshot()`）
-
-  合わせて直すもの: 約束は `control.proto` の `GetSnapshotReply` のコメントと [control-api.md](control-api.md) の「時刻と値をまとめて読む」、読む順とロックは [internals/control.md](internals/control.md) の「Control Server と通信の層」。
-  時間の状態を先に、値を後に読む順を変えません（逆にすると、値が時刻より古くなりえます）。
-  試験は `^control_server\.control_server_snapshot`、`control_silkit.the_time_and_then_all_values_`（gRPC なしで同じ読み方）、`control_server.launcher`（止める、書く、ステップ送り、まとめて読む）
+- Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/launch/src/config.cpp` and `scenario.cpp`)
+
+Code and files to update:
+
+- `schema/simulation.schema.json`, `schema/scenario.schema.json`: give every key a `description`. Editors show it as the description of the key.
+- The template's copies: `cp schema/*.schema.json template/schema/` (the dashboard schema comes from `gui/protocol/dashboard.schema.json`)
+- The lists that the unknown-key error messages use (`k...Keys` at the top of `config.cpp` and `scenario.cpp`)
+- The samples in `tests/schema/test_schemas.py` (`CONFIG_SAMPLES`, `SCENARIO_SAMPLES`)
+
+How the key branches relate to the lists:
+
+- Most of the code that reads files accepts keys in branches (`key == "..."`) and prints a separate list in the unknown-key message.
+- When you add a branch, add the key to the list too.
+- The tests compare the list, not the branches. If you forget the list, the schema passes the tests without the new key.
+
+To add a step kind:
+
+1. Add one `step_<kind>` to `definitions` in `scenario.schema.json` (the keys of that kind and the 2 time keys).
+2. Add one line to `oneOf` of `definitions.step`.
+
+Rules:
+
+- The schema must not reject a file that the launcher reads (`check` reports the errors that the schema cannot reject).
+- Where in doubt, make the schema loose, and add a passing and a failing form to the samples in `test_schemas.py`.
+- When you add an example or template YAML file (`examples/`, `template/`), write `# yaml-language-server: $schema=<relative path to the schema>` on line 1.
+- Do not change the number of lines of the comments at the top of existing examples. The line numbers of findings and steps appear in the output in the documentation and in the recordings that the GUI tests replay.
+
+Tests:
+
+- `schema.files_and_launcher`
+
+### Events, stdin commands, `version --json`
+
+Where to change:
+
+- The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/events.cpp`, `tools/launch/main.cpp`)
+
+Documentation to update:
+
+- [simulation-events.md](simulation-events.md) ("Programmatic use"): the table of events and `state` values, the table of commands, the `features` table
+- [simulation-events.md](simulation-events.md) ("Programmatic use"): the event examples (`launch_run.events` compares them byte for byte after substitution)
+- "[Slow readers and readers that stop reading](simulation-events.md#slow-readers-and-readers-that-stop-reading)" in [simulation-events.md](simulation-events.md) ("Programmatic use"), when you change the invariants below
+- [simulation-config.md](simulation-config.md): the table of arguments, when you change `--events-stall-ms`
+
+Decisions for each change:
+
+- When you add an event or a key, decide whether to add a name to `features`.
+- If you change a meaning, raise `kEventsFormat`.
+- Keep `kFeatures` in `events.hpp` and the `features` table in the documentation in sync by hand.
+- When you add a `state` of `participant`, add it to the `state` table.
+- When you add a finding, review `detail::settled_findings()` (whether it may be streamed midway).
+
+Rules:
+
+- The invariants of the thread that writes events and of the queue are described in the comment of `EventStream` in `events.hpp`. Make the documentation match it.
+- The invariants are: the thread that produces events does not wait for the reader; only `log` may be dropped; and the time after which the launcher stops waiting for a reader that does not read.
+- That time is set by `--events-stall-ms` (`events_stall_timeout()` and `kMinEventsStallMs` in `tools/launch/main.cpp`; the default is `EventStreamOptions::stall_timeout`).
+
+Tests:
+
+- `^launch\.` (`test_events.cpp`)
+- `launch_run.events_stalled`, `events_slow`, `events_nonblocking`
+
+### Timing of `run`
+
+Speed, pause, stepping and lateness behind real time.
+
+Where to change:
+
+- `TimeCommands` in `libs/launch/src/time_commands.cpp`
+- `detail::plan_time_step()` (the default time step of the controller) and `RunTiming::actual_speed()` in `run_assess.cpp`
+- `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
+- `RunWatch::note_timing()` in `run_watch.cpp`
+- The time gate: `libs/core/src/simulation_controller.cpp`
+- The gate's state and the lateness calculation: `libs/core/src/time_gate.cpp` (it has no clock)
+- Waiting until a deadline: `libs/core/src/deadline_waiter.cpp`
+
+Documentation to update:
+
+- "[Running at a set speed (`speed`)](simulation-run.md#running-at-a-set-speed-speed)" in [simulation-run.md](simulation-run.md) (the definition of lateness, what happens when the run is late, time steps and ECU steps)
+- [simulation-run.md](simulation-run.md): the table of configuration file keys, the `time` and `command` events, the table of commands, the `timing` table, the `features` table
+- [simulation-run.md](simulation-run.md): the table of findings (`behind-real-time`, `coarse-time-step`)
+- "[Pause, step and speed (time gate)](internals/virtual-time.md#pause-step-and-speed-time-gate)" in [internals/virtual-time.md](internals/virtual-time.md), when you change the definition of lateness
+- simulation-config.md, when you change the definition of lateness
+
+Rules:
+
+- The definition of lateness is described in the comment of `TimeControlOptions` (`simulation_controller.hpp`). Make the documentation match it.
+- The thread that reads stdin passes commands to the gate (without waiting). Do not add anything that waits inside the lock of `TimeCommands`.
+- Check lateness numbers with the tests `core.time_gate_model_*`, examples with fixed times. Tests that use real time make one-sided checks only.
+
+Tests:
+
+- `core.time_gate_model_*`, `core.virtual_time_gate_*`, `core.*deadline_waiter*`
+- `^launch\.`
+- `launch_run.realtime`, `on_time`, `late`, `stall`, `speed_change`, `step_width`, `pause_step`, `paused_failures`, `time_usage`
+
+### Participants you start yourself
+
+`manual` and `--manual`. `run` does not own the process, so it learns of a failure only when the participant leaves the simulation.
+
+Where to change:
+
+- The code that reads them: `libs/launch/src/config.cpp`
+- The code that prints a command instead of starting the process: `RunParticipants::show_manual()` and `detail::shell_command_line()` in `libs/launch/src/run_participants.cpp`
+- Waiting for the start: `RunStart::wait_for_start()` in `run_start.cpp`
+- The end: `RunParticipants::end_manual()`
+
+Documentation to update:
+
+- "[Starting a participant yourself (`manual`, `--manual`)](simulation-config.md#starting-a-participant-yourself-manual---manual)" in [simulation-config.md](simulation-config.md) and its examples (compared by `launch_run.manual`)
+- [simulation-events.md](simulation-events.md): `manual` of the `participant` event, `manual-participants` of `features`
+- "[Run the ECU from a debugger](howto/first-ecu.md#run-the-ecu-from-a-debugger)" in [howto/first-ecu.md](howto/first-ecu.md) (shows the same stderr lines and result table with the name `Cooler`; not compared, so keep it in sync by hand)
+- The start deadline in "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md), when you change the values below
+
+If you change the start limit, the `--start-timeout-ms` passed to the ECUs (`detail::ecu_start_timeout_ms()`) or the default registry port (`kManualRegistryUri`), update the same section of simulation-config.md and the start deadline in internals/control.md.
+
+Tests:
+
+- `launch_run.manual` (the example in docs)
+- `launch_run.manual_*` (one per situation; `ctest -R '^launch_run\.manual'`)
+- `launch.a_participant_started_by_hand_from_the_file_or_the_command_line`
+- `launch.the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell`
+
+### Variants and scenario parameters
+
+`variants` and `params` of the configuration file, `--variant`, `--param`, and `params`, `${name}` and `only` of scenarios. This also covers skipping steps that use a variable with `absent: true` or a variable of a participant that the variant disabled.
+
+Where to change (configuration file side, `libs/launch/src/config.cpp`):
+
+- `read_variants()`
+- `kVariantKeys`, `kVariantParticipantKeys` (the lists of keys that a variant can change)
+- `apply_variant()`, `choose_variant()`
+
+Where to change (scenario side and around it):
+
+- How `params` is read: `read_params()` in `yaml_reader.hpp`
+- `take_params()`, `resolve_params()`, `read_only()` and `skip()` in `scenario.cpp`
+- The code that passes them on: `ScenarioContext` in `check.cpp`
+- The code that skips: `issue_step()` in `scenario_run.cpp` (`StepStatus::Skipped`)
+- Arguments: `common()` in `tools/launch/main.cpp`
+
+Documentation to update:
+
+- "[Variants (`variants`, `--variant`)](simulation-config.md#variants-variants---variant)" and "[Scenario parameters (`params`, `--param`)](simulation-config.md#scenario-parameters-params---param)" in [simulation-config.md](simulation-config.md)
+- "[Variants and parameters](scenario.md#variants-and-parameters)" and the `code` table in [scenario.md](scenario.md)
+- [simulation-check.md](simulation-check.md): the `code` table and the JSON keys (`variant`, `variants`, `params`)
+- [simulation-run.md](simulation-run.md)
+- "[Events when the run does not start](simulation-events.md#events-when-the-run-does-not-start)" in [simulation-events.md](simulation-events.md)
+
+When you add an item that a variant can change, update the key lists, `VariantParticipant`, `read_variant_participants()`, `apply_variant()` and the table in simulation-config.md together.
+
+Tests:
+
+- `launch.a_variant_*`, `launch.every_variant_*`
+- `launch.scenario_parameter*`, `launch.scenario_only_*`
+- `launch.scenario_steps_that_use_*`, `launch.scenario_times_are_the_same_*`, `launch.scenario_that_checks_nothing_*`
+- `launch_run.variants`
+
+### Scenarios
+
+`run --scenario` and `check --scenario`.
+
+Where to change:
+
+| What | Location |
+|---|---|
+| Reading and checking | `libs/launch/src/scenario.cpp` |
+| Advancing the steps | `libs/launch/src/scenario_run.cpp` |
+| The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
+| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario.cpp` check the path and convert the cells |
+| Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
+| Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
+| The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
+| The tap that receives every sample | `control::Hub::set_values_tap()` |
+
+Documentation to update:
+
+- [scenario.md](scenario.md): the format, times, how values are seen, writes, results, the table of finding codes, the output
+- [scenario.md](scenario.md): the block after `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` (`launch_run.scenario` compares it byte for byte)
+- [scenario.md](scenario.md): the blocks of `<!-- throttle_mistakes.yaml -->` and `<!-- throttle_response.yaml -->`
+- [howto/scenario-tests.md](howto/scenario-tests.md): the files, output and exit codes that the guide shows (`launch_run.scenario_guide` runs them in the guide's order and compares)
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): the `scenario_step` event, `scenario` of `features`
+- "[Scenarios (`vehicle_sil_launch run --scenario`)](internals/control.md#scenarios-vehicle_sil_launch-run---scenario)" in [internals/control.md](internals/control.md)
+
+Example files:
+
+- The example file that is compared is `examples/ecu_main/scenarios/throttle_step.yaml`.
+- The `wave` example is `examples/ecu_main/scenarios/throttle_wave.yaml`, and `launch_run.scenario_wave` runs it.
+- The example of `points` from a CSV file is `examples/ecu_main/scenarios/throttle_trace.yaml` with `throttle_trace.csv`, and `launch_run.scenario_wave` runs it.
+- The guide howto/scenario-tests.md shows `throttle_step.yaml`, `engine_disconnect.yaml` and the files of `examples/scenario_tests` (see "[`examples/scenario_tests`](#examplesscenario_tests-example-for-the-guide-write-tests-with-scenarios)").
+- For the examples with errors and the failing examples, the files too are blocks in scenario.md. `launch_run.scenario` writes them out and compares the output of `check --scenario`, the output of `run --scenario` and `scenario` in `--json`.
+
+Rules (the specification is in the comment of `ScenarioEngine` in `scenario_run.hpp`):
+
+- Only virtual time decides results. Real-time waits and timeouts do not decide a result.
+- The values of `ramp` and `wave` are functions only of the virtual time since the start of the step (`Waveform::value()`). They must not depend on how many times or in what order they are called.
+- Random values are built from the seed, the variable name and the time (`seed_of_variable()` in `scenario_shapes.cpp`). The calculation uses integers only and is the same on every OS.
+- Whether the ECU sees a value (a short `pulse`, the `points` of `hold`) follows one rule, `seen_between()` in `scenario.cpp`.
+- `read_scenario()` reads no file except through `ScenarioContext::read_file` (`check.cpp` and `test.cpp` pass `files_beside()`).
+- Inline points and points from a CSV file both go through `read_points()`, so they get the same checks.
+- In controller step P, only the samples and results of steps that started before P are looked at. Those from P on are handled in the next step, even if they have already been received.
+- A write at time T is queued while the controller step before T is held (time 0 is the start window).
+- In a run with a scenario, the controller's time step does not depend on the speed (`fine` of `detail::plan_time_step()`).
+- The Hub's tap is called on the controller's SIL Kit thread, inside the Hub's lock. Do not add anything that waits or that calls the Hub.
+
+What to update together when you add a waveform:
+
+- The function in `signal/waveform.hpp`
+- The implementation in `scenario_shapes.cpp`
+- `read_wave_of()` in `scenario.cpp` (keys, types, ranges, comparison with the step size)
+- `definitions.wave` in `schema/scenario.schema.json` (and the copy in `template/schema`)
+- `WAVE_SHAPES_WITH_KEYS` and the samples in `tests/schema/test_schemas.py`
+- The waveform table in [scenario.md](scenario.md)
+
+Tests:
+
+- `^launch\.scenario_`: with a fake ECU model, the result is the same when the receive order changes
+- `launch.scenario_wave_*`: waveform values, values after the waveform ends, findings
+- `launch.scenario_expect_beside_*`: the interval of an `expect` beside `ramp` and `wave`, the order in which steps are decided, skipping only the `expect` by variant
+- `^signal\.`
+- `launch_run.scenario`
+- `launch_run.scenario_wave`: the time at which the ECU saw the waveform, passing with a different time step, the warning and `undersampled: ok`
+- `launch_run.scenario_expect_beside`: the sample that failed an `expect` beside `ramp` or `wave`, `expect_skipped`
+- `launch_run.scenario_same`: the same result as fast as possible, at real-time speed, with a slow ECU and with pauses. The ECU reports the step in which a write was applied.
+- `launch_run.scenario_failures`
+- `core.time_gate_model_the_guard_*`, `core.virtual_time_gate_guard_*`
+- `control.control_hub_tap_*`
+
+### Timeline files
+
+`run --scenario --timeline` (see "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)).
+
+Where to change:
+
+| What | Location |
+|---|---|
+| The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| The file format | `format_timeline_json()` in `timeline.cpp` |
+| One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp` |
+| Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
+| The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
+| The argument | `tools/launch/main.cpp` |
+
+What to update together:
+
+- `schema/timeline.schema.json`
+- "Recording a scenario run on a timeline (`--timeline`)" in [simulation-run.md](simulation-run.md#recording-a-scenario-run-on-a-timeline---timeline)
+- The reference files `tests/launch/timeline/*.timeline.json`. Do not edit them by hand; the `README.md` in that directory says how to write them again and which keys are not compared.
+
+Rules:
+
+- Recording happens only on the scenario thread (and in `begin()` on the thread of the start window). Nothing is recorded inside the Hub's tap.
+- Without a recorder (no `--timeline`), the engine and the output of `run` do not change at all.
+- The file holds only what virtual time decides (no real time, process IDs or lateness counts).
+- Keys and values are only ever added, and readers must be able to ignore what they do not know (the schema does not close values with `enum`).
+- The reference scenarios use no `sine`, `chirp` or `lag`. Their last bit can differ between C libraries, so they cannot be compared byte for byte.
+
+Tests:
+
+- `launch.timeline_*`: independence from the time step, steps that change with the time step, the reference files, the limits, how samples are counted, the point of a refused write, a run that ended partway
+- `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
+- `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
+- `schema.files_and_launcher`
+
+### Running several scenarios
+
+`vehicle_sil_launch test`. Each run is a plain `run`, so a change to `run --json` also changes `runs[].run`.
+
+Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/test.cpp`):
+
+| Function or member | Details |
+|---|---|
+| `list_scenarios()` | How scenarios are collected from a directory, and their order |
+| `test_file()` | Calls `run_file()` for each run |
+| `format_test_text()` | The command that reruns a single run takes its arguments from `TestArguments` |
+| `format_test_json()` | `kTestFormat` |
+| `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run` and `test-runs-left` |
+| `TestReport::result()` | Result and exit code |
+| `ScenarioCheck::not_for_variant` | Marks a run that does not match `only` as `skipped` |
+| `CheckOptions::params_for_many` | Relaxes the check of `--param` |
+| `CheckOptions::file_only` | Reads only the configuration file |
+| `test()` and `spread_scenarios()` in `tools/launch/main.cpp` | Arguments |
+
+Before `run_file()`, `test_file()` reads the configuration file, checks the variants, and rejects both a `--param` that no scenario uses and any enabled manual participant.
+
+Documentation to update:
+
+- "[Running several scenarios (`vehicle_sil_launch test`)](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)" in [simulation-run.md](simulation-run.md) (the table, exit codes, JSON keys)
+- [simulation-config.md](simulation-config.md): the table of arguments and the table of exit codes
+- The usage text of `vehicle_sil_launch`: `kUsage`
+
+Tests:
+
+- `launch.the_scenarios_of_a_directory_*`, `launch.a_test_*`, `launch.the_report_of_a_test_*`, `launch.the_command_of_one_run_alone_*` (`tests/launch/test_batch.cpp`; they start no processes)
+- `launch_run.test_command`, `launch_run.test_interrupt`
+
+### Launcher limits
+
+Where to change:
+
+- `kMaxMillis`, `kMinSpeed`, `kMaxSpeed` (`libs/launch/include/vehicle_sil/launch/config.hpp`)
+
+Code to update:
+
+- Copies in the GUI: `gui/server/src/vehicle_sil_gui/launcher.py`, `variables.py`
+- Copies in the GUI: `gui/client/src/client.ts`, `protocol.ts`
+- Copies in the GUI: `gui/web/src/app/run/speed-picker.ts`
+
+Tests:
+
+- `launch.the_gui_takes_the_launchers_limits` finds mismatches.
+- The `static_assert`s in the same test file check the exit codes and limits of the other tools (`tools/common/include/vehicle_sil/cli/args.hpp`).
+
+### The `--describe` JSON
+
+Where to change:
+
+- `libs/ecu/src/describe.cpp`
+- The ECU in `examples/ecu_main/engine`
+
+Documentation to update:
+
+- [ecu-executable.md](ecu-executable.md): the code block after `<!-- vehicle_sil_engine_ecu --describe -->` (compared by `ecu_main.describe`)
+- "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)
+
+Code to update:
+
+- `read_description()`, which reads the JSON (`libs/launch/src/describe_read.cpp`)
+- The format version `kEcuDescriptionFormat` (`ecu/describe.hpp`)
+
+### `ecu_main` arguments and exit codes
+
+Where to change:
+
+- `libs/simulation/src/ecu_main.cpp`
+
+Code to update (`libs/ecu/include/vehicle_sil/ecu/executable.hpp`; the launcher and `ecu_main` share it):
+
+- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file)
+- Exit codes, `kMaxMillis`
+
+Documentation to update:
+
+- "[Arguments and exit codes](ecu-executable.md#arguments-and-exit-codes)" in [ecu-executable.md](ecu-executable.md)
+
+Tests:
+
+- `simulation.ecu_main_takes_every_argument_the_launcher_gives`: confirms that `ecu_main` knows every entry of `kLauncherArguments`.
+
+### Disconnecting an ECU from the bus
+
+`ecu.connected`.
+
+Where to change:
+
+- `libs/ecu/src/bus_connection.cpp`
+- The code that puts ports behind the gate: `libs/peer/src/peer.cpp` and `libs/local/src/local_bench.cpp`
+- The code that creates the variable: `detail::EcuAgent::get()`
+- The choice on reconnecting in J1939: `j1939::NetworkOptions::on_reconnect`
+
+Documentation to update:
+
+- "[Disconnecting from the bus (`ecu.connected`)](internals/execution.md#disconnecting-from-the-bus-ecuconnected)" under "The `Ecu` class" in [internals/execution.md](internals/execution.md) (when it takes effect, CAN, reconnecting in J1939, LIN)
+- "[Disconnect an ECU from the bus (`ecu.connected`)](j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected)" in [j1939-guide.md](j1939-guide.md)
+- "[Disconnecting an ECU from the bus](scenario.md#disconnecting-an-ecu-from-the-bus)" in [scenario.md](scenario.md), and the example `examples/ecu_main/scenarios/engine_disconnect.yaml`
+
+Rules:
+
+- Decide reception by the time of the event. It must not depend on the ECU's own steps or on the order in which events are received.
+
+Tests:
+
+- `simulation.disconnect_*`: the same record for both orders of 2 ECUs on the virtual bus and on SIL Kit, disconnecting a LIN master in the middle of a slot, address contention on reconnecting
+- `launch_run.scenario_disconnect`
+
+### Add a network kind or use
+
+`NetworkKind` and `NetworkUse`. This entry gives the steps, and the comment in `ecu/describe.hpp` points here.
+
+1. Add the kind or use to `kNetworkKinds` or `kNetworkUses` in `ecu/describe.hpp`, and to the `switch` statements for names, `kind_of()` and wording (`detail::network_kind_label()`, `network_kind_calls()`).
+2. Add it where a `switch` requires it.
+3. Add it in the places that do not fail the build but fail `test_network_kinds.cpp`.
+4. Update by hand the places that no test checks.
+
+If you forget something in step 1, the build fails: a `switch` without `default` is always `-Werror=switch` in the vehicle-sil targets, and `static_assert` checks the lists.
+
+Places in step 2 where a `switch` requires it:
+
+- The rules per kind in `libs/launch/src/check_rules.cpp` (`check_network()`)
+- `put_on()` in `tests/simulation/test_network_kinds.cpp` (the Ecu calls)
+
+Places to add to in step 3:
+
+- The container of the new kind
+- `detail::network_kind()` in `libs/peer/src/peer.cpp`, which returns the kind of a name
+- `Peer::require_can_name()`, `require_lin_name()` and `require_ethernet_name()`, which check a name (add one of the same shape for the new kind)
+- `bus_kind()` in `libs/local/src/local_bench.cpp` (returns the kind of a name; `require_name()` uses it)
+- `describe()` of `Peer` and `LocalBench`
+
+`detail::network_kind()` tells whether a name belongs to another kind. The rejection message is built from the table, so only the name lookup needs changing (the kind's name with an article comes from `detail::network_kind_with_article()`).
+
+Places to update by hand in step 4:
+
+- [simulation-config.md](simulation-config.md): `networks[].kind` in the configuration table
+- The description of `networks` and the `networks[].use` table in "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md)
+- [simulation-check.md](simulation-check.md): the `code` table (when you add a rule for a kind)
+- `libs/launch/include/vehicle_sil/launch/check.hpp`: the description of `check_participants()` (which rule applies to which kind)
+
+The code that reads configuration files and `--describe`, and the lists in error messages, are built from the table and need no change.
+
+### The template and the ECU API
+
+Where to change:
+
+- `template/`
+- The ECU API
+
+Documentation to update:
+
+- "[Add J1939 communication](howto/first-ecu.md#add-j1939-communication)" in [howto/first-ecu.md](howto/first-ecu.md) (refers to the template's code by line number; not compared, so keep it in sync by hand)
+- [howto/first-ecu.md](howto/first-ecu.md): the output blocks of the template alone (`template.check_and_run` compares them with the template's output)
+- `template/README.md`
+
+The ECU that the guide adds to the template (`examples/first_ecu`):
+
+- This example continues the template's `simulation.yaml` and `CMakeLists.txt`. If `template.first_ecu` fails, bring the example and the guide in line.
+- If you change the number of comment lines in the template's `simulation.yaml`, give the example's file of the same name the same number of lines, because the line numbers in the output change.
+- The template's 2 ECUs have the same names, networks, addresses and step sizes as in `examples/ecu_main`, so the guide's output is the same for both.
+
+### Variable maps
+
+`participants[].variables` of the configuration file.
+
+Where to change:
+
+| What | Location |
+|---|---|
+| The code that reads it | `read_variables()` in `libs/launch/src/config.cpp` |
+| Rules and conversion | `MappedSchema` in `libs/control/src/variable_map.cpp` |
+| Where the conversion is applied | `control::Hub` (`set_variable_map()`) |
+| Where it is passed to the Hub | `RunControl::hub()` in `libs/launch/src/run_control.cpp` |
+| Check | `seen_variables()` and `variable_map_code()` in `check_rules.cpp` |
+
+Documentation to update:
+
+- "[Matching variable names and values (`variables`)](simulation-config.md#matching-variable-names-and-values-variables)" in [simulation-config.md](simulation-config.md) (the table of forms, how values appear)
+- [simulation-check.md](simulation-check.md): `variable-map-*`, and `variables` and `variable_map` in the JSON
+- [simulation-run.md](simulation-run.md): `variable-map-not-applied`
+- [control-api.md](control-api.md): `source` (`VariableInfo.source` in `control.proto`, `Variable.source` in Python)
+- [internals/control.md](internals/control.md): the Hub's "[Variable map (`set_variable_map()`)](internals/control.md#variable-map-set_variable_map)" (the 4 places where the conversion is applied, and their order)
+
+Rules:
+
+- Conversion happens only inside the Hub (do not add it to the read API or the communication layer).
+- Whether a value can be written is decided in one place, `MappedSchema::to_actual()`. The scenario check uses the same decision through `in_range()` (`libs/launch/src/scenario.cpp`).
+- A mapping name that did not match cannot be written (`not_writable()`).
+- Values are converted before the Hub stores them (so that the read and write paths cannot disagree).
+- Writes are converted in the same place as the checks of `write()`.
+- The check and the run use the same `MappedSchema::make()`.
+
+Tests:
+
+- `^control\.` (`test_variable_map.cpp`)
+- `^launch\.` (reading, rules, JSON)
+- `launch_run.variable_map`: a scenario through a variable map advances at the same times as without one
+- `control_server.control_server_peer_info_names_the_source_of_a_mapped_variable`
+
+### `control.proto`
+
+Where to change:
+
+- `proto/vehicle_sil/control/v1/control.proto`
+
+Code and documentation to update:
+
+- `libs/control_grpc/src` (`convert.hpp`, `control_service.cpp`)
+- When you add a service, also update `rpc_rules()` in `auth.cpp` and `test_authorization*.cpp`.
+- `python/vehicle_sil_control/client.py`
+- [control-api.md](control-api.md)
+
+The Python stubs are generated in the test build (`python -m vehicle_sil_control.generate`).
+
+### The launcher's Control Server
+
+Where to change:
+
+- `tools/launch/control_server.cpp`
+- `RunOptions::serve_control`
+- `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
+- `ServerOptions::external_hub`
+- `python/vehicle_sil_control/launcher.py`
+
+Documentation to update:
+
+- "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md) (writing before the start, stdin and client commands, authentication)
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): the `control_server` event, `source` and `at_ms` of `command`, `control-server` of `features` (`kControlServerFeature`)
+- "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md) (threads, the order of stdin and client commands, pausing before the start, how the run ends)
+
+Only a build with the Control Server prints `control-server` in `features`. It is therefore not in the `version --json` example, and `launch_cli.docs` leaves this name out when it compares.
+
+Rules:
+
+- The gRPC threads operate the controller only inside `TimeCommands`, because the controller is destroyed after `detach()`.
+- Do not add anything inside `run_file()` that waits for gRPC.
+
+Tests:
+
+- `control_server.launcher`, `control_server.example_write_before_start`, `control_server.example_pause_and_step`
+- `^launch\.` (`TimeCommands`)
+- `launch_run.time_usage` (argument errors)
+
+### The Control Server during a scenario
+
+While a scenario runs, the Control Server is read-only.
+
+Where to change:
+
+- `ServerOptions::observe_only`
+- `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
+- The code that rejects calls: `guarded()` in `control_service.cpp`
+- The code that sets it up: `tools/launch/control_server.cpp`
+
+Documentation to update:
+
+- "[Watching variables during a run (`--control`)](scenario.md#watching-variables-during-a-run---control)" in [scenario.md](scenario.md) (the table of rejected calls, the reason `scenario-running`)
+- "[Connect to the launcher](control-api.md#connect-to-the-launcher)" in [control-api.md](control-api.md), and `ControlError.reason`
+- [simulation-config.md](simulation-config.md): the table of arguments
+- [simulation-events.md](simulation-events.md): `scenario-control` of `features` (`kScenarioControlFeature`)
+- "[The launcher's Control Server (`vehicle_sil_launch run --control`)](internals/control.md#the-launchers-control-server-vehicle_sil_launch-run---control)" in [internals/control.md](internals/control.md)
+
+Like `control-server`, `scenario-control` is printed only by builds that have it. When you add an RPC, write its kind in its row of the `rpc_rules()` table (an RPC that changes state is `Effect::Change`).
+
+Rules:
+
+- Calls are rejected in one place, before the body of the RPC.
+- Do not add a path from client calls that operates the scenario's tap, writes or guard.
+- Do not add anything that waits to the Hub's subscriptions or tap.
+
+Tests:
+
+- `control_server.control_server_observe_only_*`, `control_server.control_server_that_only_observes_*` (the tests also contain a table per call)
+- `control_server.launcher`: the scenario's result is the same whether or not a client reads. The run ends even with a client that does not read.
+- `control.control_hub_readers_that_never_read_*`
+
+### Reading time and values together
+
+`GetSnapshot`.
+
+Where to change:
+
+- `libs/control_grpc/src/control_service.cpp`
+- `Hub::latest_of()` and `none_after()`
+- `Control.snapshot()`
+
+Documentation to update:
+
+- The comment of `GetSnapshotReply` in `control.proto`: the guarantees
+- "[Read time and values together (`snapshot()`)](control-api.md#read-time-and-values-together-snapshot)" in [control-api.md](control-api.md) (the guarantees)
+- "[Control Server and communication layer (`vehicle_sil::control_grpc`)](internals/control.md#control-server-and-communication-layer-vehicle_silcontrol_grpc)" in [internals/control.md](internals/control.md) (the read order and locks)
+
+Rules:
+
+- Keep the order: read the time state first, then the values. In the opposite order, a value can be older than the time.
+
+Tests:
+
+- `^control_server\.control_server_snapshot`
+- `control_silkit.the_time_and_then_all_values_` (the same read order without gRPC)
+- `control_server.launcher` (pause, write, step, read together)
+
+### Messages between Agent and Hub
+
+Where to change:
+
+- `libs/control/src/wire.cpp`
+
+Rules:
+
+- If you change the layout, raise `kVersion` in `control/wire.hpp`. The decoder accepts only its own version.
+- If you only add a kind that the other side can safely ignore, do not raise it. Unknown kinds are discarded (`Kind::LastWordReceived`, the reply to the last word, is an example).
+- Never change the hello from its start up to the participant name, in any version. This lets a peer with a different version read the name.
+
+Documentation to update:
+
+- "[Transport over SIL Kit (`vehicle_sil::control_silkit`)](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)" in [internals/control.md](internals/control.md) (the size limits `kMaxMessageBytes`, `kMaxHelloBytes` and `kMaxTextBytes`, and how messages are split)
+
+Tests:
+
+- `^control\.wire_`: truncation one byte at a time, corrupted fields, random input. A read outside the bounds fails in the sanitizer presets.
+
+### The SIL Kit transport and the start window
+
+Where to change:
+
+- The transport over SIL Kit (`libs/control_silkit/src`)
+- The start window: `run_window()` and `cancel_window()` in `libs/core/src/simulation_controller.cpp`
+- The start window: `set_communication_ready_handler_async()` in `libs/core/src/participant_runtime.cpp`
+- Where `ecu_main()` attaches the transport (`libs/simulation/src/ecu_main.cpp`)
+- The launcher's Hub: `RunStartWindow::run()` in `libs/launch/src/run_start.cpp`, `RunControl::note_links()` in `run_control.cpp`
+
+Documentation to update:
+
+- "[Transport over SIL Kit (`vehicle_sil::control_silkit`)](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)" in [internals/control.md](internals/control.md) (threads, the guarantee of receive order, the wait before the first step, the end of a connection and the reply to the last word, the absence of authentication)
+- [internals/control.md](internals/control.md): the limits in the same section (when you change `kMaxVariables`, `kMaxNameBytes` or `HubTransportOptions::max_links`)
+- "[Upstream behavior the implementation relies on](dependencies.md#upstream-behavior-the-implementation-relies-on)" in [dependencies.md](dependencies.md) (the SIL Kit behavior it depends on)
+- "[Connection to ECU variables (`control_link`)](simulation-run.md#connection-to-ecu-variables-control_link)" and its table in [simulation-run.md](simulation-run.md) (the launcher output listed below)
+- "[JSON format](ecu-executable.md#json-format)" in [ecu-executable.md](ecu-executable.md) (`control` of `--describe`)
+
+The specification is in the class comments of `agent_transport.hpp` and `hub_transport.hpp`. Make internals/control.md match them.
+
+The launcher output described in simulation-run.md:
+
+- The `control_link` event
+- `participants[].control_link` of the result
+- `participants[].control` of the check JSON
+- The findings `control-link-no-hello`, `control-link-version`, `control-link-late-values`, `control-link-dropped`, `control-link-not-offered`, `before-start`
+
+The code that handles `control` of `--describe`:
+
+- The code that prints it: `libs/ecu/src/describe.cpp`
+- The code that adds it: `ecu_main`
+- The code that reads it: `libs/launch/src/describe_read.cpp`
+
+Rules:
+
+- The destructor of `AgentTransport` waits for the Hub's reply (`AgentTransportOptions::last_word_wait`).
+- A change that lengthens or removes this wait changes how late the ECU ends and the final result of the run (Cancelled or Unknown).
+- Values and results are sent from the step thread right after the values are read. Handing them to another thread breaks the order guarantee (`HubTransportStats::late_messages` counts such cases).
+- Do not add anything that waits, or heavy processing, to the receive handlers on the Hub side. The whole simulation would wait for it.
+
+Tests:
+
+- `^control_silkit\.`, `^core\.`, `^launch_control\.`
+- `launch_run.control`
+- `simulation.ecu_main_offers_its_variables_to_the_simulation_unless_no_control`
+
+### Bridge shutdown and exit codes
+
+Where to change:
+
+- The bridge shutdown, the judgment of participant state (`judge_participant_state()`), the shutdown order, the exit codes and the health line output (`bridges/common/src/run_bridge.cpp`)
+
+Documentation to update:
+
+- "[Exit codes](bridges.md#exit-codes)" and "[Participant state while running](bridges.md#participant-state-while-running)" in [bridges.md](bridges.md)
+
+Tests:
+
+- `bridge_runtime.*` compares the printed messages.
+- `vector_xl.integration.stop-request` and `device-lost` also check the shutdown order and exit codes.
+- No automated test checks what happens when the console window is closed (4 s). If you change it, check it by hand on Windows.
+
+### Ethernet Bridge output
+
+Where to change:
+
+- The statistics keys, the health line, the one-line start message, warnings, argument and error messages, the message when an external link cannot be opened (`bridges/ethernet/src`, `libs/eth_link/src`)
+
+Documentation to update:
+
+- [ethernet-bridge.md](ethernet-bridge.md): copies of the messages (not compared; keep them in sync by hand)
+
+Code to update:
+
+- `tests/ethernet_bridge/bridge_netns.py` also has a copy of the message for an external link that cannot be opened.
+
+Tests:
+
+- `ethernet_bridge.*`, `eth_link.os_link_*` and `eth_link.pcap_*` compare the messages.
+
+### Version numbers
+
+Where to change:
+
+- `project(... VERSION)` in the root `CMakeLists.txt`
+
+[CHANGELOG.md](../CHANGELOG.md) lists the places to update with it:
+
+- `pyproject.toml`, `gui/server/pyproject.toml`
+- `template/get_tools.py`
+- `GIT_TAG` in `template/CMakeLists.txt`
+- The version in `template/README.md`
+- The heading `## [<version>] - Unreleased` in `CHANGELOG.md`
+
+At a release:
+
+- In the commit that you tag, replace `Unreleased` in the heading with the release date (`YYYY-MM-DD`).
+- `.github/workflows/release.yml` cuts the release notes from this version's section of `CHANGELOG.md`.
+
+Tests:
+
+- `scripts/package.py version` (and `template.get_tools`) finds mismatches.
+- `--expect v<version>` (the release workflow) also rejects a heading without a date.
+
+### `VEHICLE_SIL_STATIC`
+
+Where to change:
+
+- How SIL Kit is pulled in, and the static link settings on `SilKit::SilKit`, in `cmake/VehicleSilDependencies.cmake`
+
+Documentation to update:
+
+- [build.md](build.md): the `VEHICLE_SIL_STATIC` section (it also has the license notices to include when you distribute)
+- The table in "[How dependencies are pulled in (`cmake/VehicleSilDependencies.cmake`)](dependencies.md#how-dependencies-are-pulled-in-cmakevehiclesildependenciescmake)" in [dependencies.md](dependencies.md)
+
+Related:
+
+- The presets `linux-gcc-static` and `windows-mingw-static` (CI builds only `linux-gcc-static`)
+- The launcher in the tools archive is built this way too.
+
+### Contents of the tools archive
+
+Where to change:
+
+- `scripts/package.py tools`
+
+Documentation and files to update:
+
+- [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): the part that describes the same contents (what is bundled, and where the license texts are)
+- "[Prebuilt tools](build.md#prebuilt-tools)" in [build.md](build.md)
+- `.github/workflows/release.yml`
+
+If you change the gRPC version, update `GRPC_LICENSES` in `package.py` and the license names in the table of THIRD_PARTY_NOTICES.md, because the licenses of what gRPC pulls in change with the version.
+
+### Assumptions about SIL Kit APIs and upstream behavior
+
+Where to change:
+
+- The SIL Kit APIs in use
+- Assumptions about upstream behavior
+
+Documentation to update:
+
+- "[APIs used](dependencies.md#apis-used)" and "[Upstream behavior the implementation relies on](dependencies.md#upstream-behavior-the-implementation-relies-on)" in [dependencies.md](dependencies.md)
+
+### Add a J1939 protocol part
+
+Where to add:
+
+- `libs/j1939/parts/<part>/`
+- `add_subdirectory` in `libs/j1939/CMakeLists.txt`
+- Tests: `SOURCES` and `LINK` of `vehicle_sil_j1939_parts_tests` in `tests/j1939/CMakeLists.txt`
+
+Documentation to update:
+
+- "[Directories and targets](architecture.md#directories-and-targets)" in [architecture.md](architecture.md)
+- "[Protocol parts (`libs/j1939/parts`)](internals/j1939.md#protocol-parts-libsj1939parts)" in [internals/j1939.md](internals/j1939.md)
+
+### Add a library to `libs/`
+
+Where to add:
+
+- `add_subdirectory` in the root `CMakeLists.txt`
+
+Documentation to update:
+
+- "[Directories and targets](architecture.md#directories-and-targets)" in [architecture.md](architecture.md)
+
+## See also
+
+| Document | Details |
+|---|---|
+| [AGENTS.md](../AGENTS.md) | Documentation rules, commits, verification scripts (read it first) |
+| [architecture.md](architecture.md) | The overall structure, and what each directory and each target contains |
+| The documents in [internals/](architecture.md#internals) | The internals of the places you change |

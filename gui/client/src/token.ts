@@ -1,22 +1,24 @@
 /**
- * サーバーが表示した URL（`http://127.0.0.1:<port>/#token=<...>`）からトークンを受け取る。
+ * Takes the token from the URL the server printed (`http://127.0.0.1:<port>/#token=<...>`).
  *
- * GUI サーバーが配る画面（サンプルの画面も、`--web` で配る自分の画面も）は、開いた URL の `#token=` を読み、すぐに URL
- * から消し（タブの戻る・進むの履歴からも。閲覧履歴には残ることがある）、タブの sessionStorage に持つ（再読み込みでは残り、タブを閉じると消える）。ブラウザの
- * ものは引数で受け取る（このライブラリは Node でも動くので、`window` を直接読まない）。ブラウザでは `takeToken(window)`。
+ * Every screen the GUI server serves (the sample screens, and your own screen served with `--web`) reads `#token=`
+ * from the URL it was opened with, removes it from the URL right away (also from the tab's back/forward history; the
+ * browsing history may still keep it) and keeps it in the tab's sessionStorage (it survives a reload and is gone when
+ * the tab closes). Browser objects come in as arguments (this library runs on Node too, so it does not read `window`
+ * directly). In the browser, call `takeToken(window)`.
  */
 
-/** sessionStorage の鍵。同じサーバー（同じ origin）の画面は、この鍵を分け合う。 */
+/** sessionStorage key. Screens of the same server (same origin) share this key. */
 export const TOKEN_STORAGE_KEY = 'vehicle-sil-gui-token';
 
-/** トークンを読む場所。ブラウザの `window` がこの形を持つ。 */
+/** Where to read the token from. The browser's `window` has this shape. */
 export interface TokenPlace {
   readonly location: { readonly hash: string; readonly pathname: string; readonly search: string };
   readonly history: {
     readonly state: unknown;
     replaceState(data: unknown, unused: string, url?: string | null): void;
   };
-  /** 読むだけで投げることがある（ブラウザがサイトのデータを禁じているとき）。そのときはメモリだけに持つ。 */
+  /** Even reading it can throw (when the browser blocks site data); the token is then kept in memory only. */
   readonly sessionStorage?: {
     getItem(key: string): string | null;
     setItem(key: string, value: string): void;
@@ -24,9 +26,10 @@ export interface TokenPlace {
 }
 
 /**
- * URL の `#token=` を読んで URL から消し、sessionStorage に置いて返す。URL になければ、sessionStorage に置いたもの
- * （同じタブで前に受け取ったもの）を返す。どちらにもなければ null（サーバーが表示した URL から開いていない）。
- * URL を書き換える前に呼ぶ（画面の経路が URL を書き換えると、`#token=` が消える）。
+ * Reads `#token=` from the URL, removes it from the URL, stores it in sessionStorage and returns it. If the URL has
+ * none, returns the one in sessionStorage (received earlier in the same tab). If neither has one, returns null (the
+ * page was not opened from the URL the server printed).
+ * Call it before anything rewrites the URL (when the screen's router rewrites the URL, `#token=` is lost).
  */
 export function takeToken(place: TokenPlace): string | null {
   const storage = storageOf(place);
@@ -34,7 +37,7 @@ export function takeToken(place: TokenPlace): string | null {
   if (!match) {
     return read(storage);
   }
-  // 読めない値でも URL からは消す（タブの履歴や、後で付けるブックマークに残さない）
+  // Remove it from the URL even if the value is unreadable (keep it out of the tab history and of later bookmarks)
   place.history.replaceState(
     place.history.state,
     '',
@@ -52,7 +55,7 @@ export function takeToken(place: TokenPlace): string | null {
   try {
     storage?.setItem(TOKEN_STORAGE_KEY, token);
   } catch {
-    // 置けなくても、メモリにはある
+    // Storing failed, but the token is still in memory
   }
   return token;
 }

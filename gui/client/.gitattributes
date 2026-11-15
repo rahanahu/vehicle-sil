@@ -1,2 +1,2 @@
-# Windows（core.autocrlf=true）でも LF で取り出す（gui/web の prettier の検査が、ここも見るため）。
+# Check out with LF even on Windows (core.autocrlf=true): the prettier check in gui/web covers these files too.
 * text=auto eol=lf

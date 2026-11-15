@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Of the guide docs/howto/scenario-tests.md: parameters (params, ${name}, --param) and a scenario
+# that is only for the variant with the dashboard (only), with ../simulation.variants.yaml.
+vehicle_sil_scenario: 1
+name: dashboard speed
+only: [full]
+params: { throttle: 50, speed: 1800 }
+steps:
+  - set: { Engine.engine.throttle: "${throttle}" }
+  - expect: { Dashboard.dashboard.engine_speed: { near: "${speed}", tolerance: 50 } }
+    within_ms: 600

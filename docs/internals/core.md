@@ -1,87 +1,315 @@
-# participant の土台（`vehicle_sil::core`）
+# Participant foundation (`vehicle_sil::core`)
 
-vehicle-sil 自体を直す人と、`ParticipantRuntime` を直接使う人向けです。SIL Kit の participant と lifecycle を持つ `ParticipantRuntime` の契約、所有と終了の順序、スレッドとキュー、実時間モードの時刻を扱います。仮想時間の進み方と時間ゲートは [virtual-time.md](virtual-time.md) にあります。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
+[日本語](../ja/internals/core.md)
 
-## 公開 API の契約
+`ParticipantRuntime` owns the SIL Kit participant and its lifecycle. This page describes the guarantees of its public API, ownership and shutdown order, threads and queues, time in real-time mode and the SIL Kit configuration defaults. For how virtual time advances and for the time gate, see [virtual-time.md](virtual-time.md).
 
-- `ParticipantRuntime` のコンストラクタはレジストリに接続します。失敗すると `SilKit::SilKitError` を投げます。
-- バスのコントローラは `start()` の前に作ります。`start()` が戻った時点で、接続済みの相手はそのコントローラの購読を確認済みです。
-- `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。戻った直後の `state()` は Running か、その後の状態です（短い実行は、見たときにもう終わっていることがあります。それも開始の成功です）。Running より前の状態（ReadyToRun など）のまま戻ることはありません。
-  - 時刻同期のない participant では、SIL Kit は starting のハンドラーを ReadyToRun で呼び、戻ってから Running にします。`start()` は、ハンドラーが呼ばれた印だけでは戻らず、状態が ReadyToRun を離れるまで待ちます。
-  - `start()` の待ちの中では、印（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る道ができます。逆に、印を読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときは印を読み直します。
-  - この 2 つの順は、`libs/core/src/participant_runtime_probe.hpp` の差し込み口（試験だけが使う。インストールしない）で順を決めて、`core.participant_start_*` が確かめます。
-- `add_communication_ready_handler(handler)`: SIL Kit の CommunicationReady（SIL Kit のスレッドの上、最初のステップの前。autonomous の participant でも同じスレッドです）で呼ぶハンドラーを足します。コントローラーを始める所です（`SilKitCanPort::start()`、`SilKitEthPort::start()`、LIN の `init()`、ブリッジの `start_controller()`。SIL Kit は、CAN の `SetBaudRate` と `Start`、LIN の `Init`、Ethernet の `Activate` を、ここで呼ぶよう勧めています）。足した順に、`set_communication_ready_handler()` や `set_communication_ready_handler_async()` のハンドラーより前に呼ばれ、互いに置き換えません。足したハンドラーの例外は、participant の失敗として報告し（`report_failure()`、「CommunicationReady handler failed: ...」）、残りのハンドラーは呼びます。`Peer` も自分のコントローラー（CAN の `start()`、LIN の `init()`）をこれで足すので、`peer.runtime()` に `set_communication_ready_handler()` でハンドラーを設定しても、置き換わりません（`Peer` は、失敗したコントローラーのネットワークの名前を付けて `report_failure()` に渡します）。`start()` の前にだけ呼べます。ハンドラーが使うものは、`stop()` が戻るまで（または `ParticipantRuntime` を破棄するまで）生かしておきます。
-- `set_communication_ready_handler_async(handler)` と `complete_communication_ready()`: ハンドラーが戻った後も、`complete_communication_ready()` を呼ぶまで、participant は最初のステップの前（CommunicationInitialized）にとどまります。Coordinated では全員がそこで待つので、その間に publish/subscribe でやりとりできます（ハンドラーの中ではできません）。完了は、ハンドラーが起こした別のスレッドから呼びます（ハンドラーの中からは呼べません。ハンドラーが呼ばれる前と、2 回目は何もせずに偽を返します）。完了するまで誰のステップも始まらないので、窓の用が失敗したときも必ず完了させます。`stop()` が戻った後に窓が開く場合は、ハンドラーを呼ばず、runtime が自分で完了させます。`SimulationController::set_start_window()` がこれを使います（[control.md](control.md) の「SIL Kit の上の運び手」）。
-- `set_peer_status_observer(observer)`: ほかの participant（と自分）のライフサイクルの状態がわかるたびに、名前と状態を渡して呼びます。呼ぶのは、それを知ったスレッド（SIL Kit のスレッドか、状態を読み直すスレッド）で、1 つずつです。同じ状態でもう一度呼ぶことがあります。短く、`peer_status()` のほかはこの runtime を呼ばないこと。`start()` の前に登録します。
-- `stop()` は何度呼んでもよく、例外を投げません。
-- `stop()` が戻った後は、ステップのハンドラーも CommunicationReady のハンドラー（設定したもの、足したもの、非同期のもの）も呼ばれません。動いている途中のハンドラーは、終わるまで待ちます。ハンドラーが使うもの（ポート、ブリッジ、スタック）は、`stop()` の後で壊せます。
-  - CommunicationReady のハンドラーにこの約束が要るのは、開始が Running の前に失敗したとき（時間切れ、`give_up`）です。SIL Kit は Running の前の停止を受け付けないので、`stop()` の後も lifecycle は `ParticipantRuntime` を破棄するまで生きていて、待っていた相手が遅れて来ると CommunicationReady に進みます。そのときは、ハンドラーを呼ばずに先へ進み（コントローラーは始まらず、ステップも動きません）、停止が届く所で止まります。
-  - `stop()` が終了を待っている間に来た CommunicationReady では、ハンドラーをふつうに呼びます。
-  - `stop()` は、SIL Kit のハンドラー（ステップ、CommunicationReady）の中から呼べません（自分を待って止まります）。そこでは `request_stop()` を使います。`report_failure()` と `request_stop()` は、どのハンドラーの中からも呼べます。
-  - 確かめる試験は `core.communication_ready_after_stop_*` と `core.communication_ready_handler_that_runs_is_waited_for_by_stop` です。
-- participant が失敗すると（ステップのハンドラ、実時間のドライバー、`report_failure()`）、自分の `stop()` と `request_stop()` は、Error になるまで lifecycle に停止を渡しません（先にふつうの停止が渡ると、Coordinated ではシミュレーション全体が正常に止まり、controller から失敗が見えないためです）。失敗の印を立てることと SIL Kit に Error を報告することは 1 つのロックの下で行うので、失敗が見えた後の停止が報告を追い越すことはありません。SIL Kit が後回しにした処理を実行する順序には頼りません。`stop()` の待ちは Error と Shutdown を合わせて `shutdown_timeout` までで、過ぎれば Error の前でも停止を渡します。次の場合は Error を経ないか、Stopping の後で Error になります。失敗より前に届いた `request_stop()`（失敗するステップのハンドラが始まる前、`report_failure()` の前）は、ふつうの停止です。controller の中断やほかの participant の停止が先に届いたときも同じです。`report_failure()` は、`start()` が lifecycle を始めるまでは何もしません。
-  - `report_failure()` は、`start()` の前には何もしません（SIL Kit が無視するためです）。`start()` が lifecycle を始めている最中の呼び出し（autonomous の participant の CommunicationReady のハンドラーは、`start()` がそこから戻る前に呼ばれることがあります）は覚えておき、`start()` が報告します。この順は、差し込み口で決めて `core.participant_start_reports_a_failure_*` が確かめます。
-- `bind_host(runtime, host)`（`vehicle_sil/core/bind_host.hpp`）: `ParticipantRuntime` のステップのハンドラから、`vehicle_sil::step::Host` の `step(now)` を呼ぶようにします。最初のステップの前に、participant のステップ幅を `Host::set_step_size()` に渡します。仮想時間の runtime だけに使えて（それ以外は `std::invalid_argument`）、ホストに `Virtual` の時間の領域を求めます（`std::logic_error`）。`start()` の前に呼びます。ホストの例外は、ステップのハンドラの失敗として participant を Error にします。ホストは runtime のステップより長く生かします（runtime を先に止めます）。`core` はこのために `vehicle_sil::step` をリンクしますが、バスの種類には依存しません（[can.md](can.md) の「仮想時間での駆動」）。
-- `wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[docs/dependencies.md](../dependencies.md) の既知の不具合を参照）。SIL Kit のハンドラの中からは呼べません。
-- コントローラを参照するもの（`SilKitCanPort`、`SilKitLinPort`）はコントローラを所有しません。participant より先に閉じるか破棄します。`LinMaster` と `LinSlave` はポートを所有しないので、ポートより先に破棄します。
-- J1939 スタックはプロセス全体の状態を持ちません。1 つのプロセスに、いくつでも `Network` と `Peer` を置けます。
+| Section | Contents |
+|---|---|
+| [Public API guarantees](#public-api-guarantees) | `start()`, `stop()`, CommunicationReady handlers, stopping a failed participant, `bind_host()` |
+| [Ownership and shutdown order](#ownership-and-shutdown-order) | What owns what, and the order in which `Peer` shuts down |
+| [Threads and queues](#threads-and-queues) | Which thread does what, and queue capacities |
+| [Time (real-time mode)](#time-real-time-mode) | The clock used without time synchronization |
+| [SIL Kit configuration defaults](#sil-kit-configuration-defaults) | The default participant configuration, the keys added to your own configuration, registry settings |
 
-## 所有権と終了順序
+## Public API guarantees
 
-```
-ParticipantRuntime ──owns──> SilKit::IParticipant ──owns──> ICanController、ILinController
-SilKitCanPort、SilKitLinPort ──refers to──> コントローラ（所有しない）
-LinMaster、LinSlave ──refers to──> LinPort（所有しない）
-Host ──refers to──> ポートと Network（所有しない）
-```
+### Constructor and controllers
 
-`Peer` は次の順で終了します（自分で組み立てるときも同じ順にします）。
+- The `ParticipantRuntime` constructor connects to the registry. On failure it throws `SilKit::SilKitError`.
+- Create bus controllers before `start()`. When `start()` returns, every connected peer has confirmed its subscription to those controllers.
+- Objects that refer to a controller (`SilKitCanPort`, `SilKitLinPort`) do not own it. Close or destroy them before the participant.
+- `LinMaster` and `LinSlave` do not own their port. Destroy them before the port.
+- The J1939 stack has no process-wide state. A process can hold any number of `Network` and `Peer` objects.
 
-1. ステップを止める（実時間では `RealTimeDriver`、続いて lifecycle。仮想時間では lifecycle）。
-2. SIL Kit のポートを閉じる（ハンドラを外し、コントローラを止める）。
-3. LIN のノード（それぞれのポートより先）、`Network`（部品が先）、ポート、ホストを破棄する。
-4. participant を破棄する。
+### State when `start()` returns
 
-## スレッドとキュー
+`start(timeout)` waits until the lifecycle is Running. On a timeout or a failure it throws `std::runtime_error`.
 
-| スレッド | 所属 | 処理 |
+Right after it returns, `state()` is Running or a later state. A short run may already be over by the time you look; that still counts as a successful start. `start()` never returns in a state before Running (such as ReadyToRun).
+
+To keep this guarantee, the wait in `start()` keeps 2 orderings.
+
+First, it waits until the state leaves ReadyToRun. For a participant without time synchronization, SIL Kit calls the starting handler in ReadyToRun and switches to Running only after the handler returns. So `start()` does not return on the flag that says the handler was called; it waits until the state has left ReadyToRun.
+
+Second, it reads the flags before the state. Inside the wait, it reads the flags (starting handler, first step) first and the state after them. Reversing this order opens a path that returns in ReadyToRun. Conversely, when the wait sees a stopping or ended state, it reads the flags again, so that a run that passed through Running and stopped after the flags were read does not count as a failure.
+
+The tests `core.participant_start_*` check both orders, using a test hook in `libs/core/src/participant_runtime_probe.hpp` to force the order (only tests use it; it is not installed).
+
+### CommunicationReady handlers
+
+| Function | What it does |
+|---|---|
+| `add_communication_ready_handler(handler)` | Adds a handler that is called on SIL Kit's CommunicationReady |
+| `set_communication_ready_handler_async(handler)` and `complete_communication_ready()` | Keeps the participant before the first step (CommunicationInitialized), even after the handler returns, until `complete_communication_ready()` is called |
+
+#### `add_communication_ready_handler()`
+
+The handler is called on a SIL Kit thread, before the first step. The thread is the same for an autonomous participant.
+
+Start the controllers in this handler: `SilKitCanPort::start()`, `SilKitEthPort::start()`, LIN `init()` and the bridge's `start_controller()`. SIL Kit recommends calling CAN `SetBaudRate` and `Start`, LIN `Init` and Ethernet `Activate` at this point.
+
+- You can call it only before `start()`.
+- Added handlers are called in the order they were added, before the handler of `set_communication_ready_handler()` or `set_communication_ready_handler_async()`. They do not replace each other.
+- An exception from an added handler is reported as a failure of the participant (`report_failure()`, "CommunicationReady handler failed: ..."). The remaining handlers are still called.
+- Keep everything the handler uses alive until `stop()` returns (or until the `ParticipantRuntime` is destroyed).
+
+`Peer` adds its own controllers (CAN `start()`, LIN `init()`) with this function too. Setting a handler on `peer.runtime()` with `set_communication_ready_handler()` therefore does not replace them. `Peer` passes the name of the network whose controller failed to `report_failure()`.
+
+#### `set_communication_ready_handler_async()` and `complete_communication_ready()`
+
+In coordinated mode every participant waits before the first step, so participants can exchange data over publish/subscribe during that wait. They cannot do so inside the handler. Call `complete_communication_ready()` from another thread that the handler starts.
+
+| Situation | What happens |
+|---|---|
+| `complete_communication_ready()` is called inside the handler | Not allowed |
+| It is called before the handler is called, or a second time | Does nothing and returns false |
+| The wait before the first step begins after `stop()` has returned | The handler is not called; the runtime completes by itself |
+
+No participant's step starts until the wait is completed. So always complete it, even when the work done during the wait fails. `SimulationController::set_start_window()` uses this function (see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [control.md](control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)).
+
+### Notifications of other participants' states
+
+`set_peer_status_observer(observer)` calls the observer with a name and a state each time the lifecycle state of another participant (or of this one) becomes known.
+
+- The observer is called on the thread that learned the state (a SIL Kit thread or the thread that re-reads the states), one call at a time.
+- It may be called again with the same state.
+- Keep the observer short, and do not call this runtime from it except `peer_status()`.
+- Register it before `start()`.
+
+`wait_for_peer()` waits until the peer's state meets a condition. While it waits, it re-reads the states from SIL Kit periodically (see "SIL Kit: status updates lost while `AddParticipantStatusHandler` registers" in [dependencies.md](../dependencies.md#sil-kit-status-updates-lost-while-addparticipantstatushandler-registers)). It cannot be called from inside a SIL Kit handler.
+
+### Guarantees of `stop()`
+
+- You can call `stop()` any number of times. It does not throw.
+- After `stop()` returns, neither the step handler nor any CommunicationReady handler (set, added or asynchronous) is called.
+- `stop()` waits for a running handler to finish.
+- You can destroy what the handlers use (ports, bridges, stacks) after `stop()`.
+
+CommunicationReady handlers need this guarantee when the start fails before Running (a timeout, `give_up`). SIL Kit does not accept a stop before Running, so after `stop()` the lifecycle stays alive until the `ParticipantRuntime` is destroyed. If a peer it was waiting for arrives late, the lifecycle moves on to CommunicationReady.
+
+| When CommunicationReady arrives | Handlers |
+|---|---|
+| After `stop()` has returned | Not called; the lifecycle moves on (no controller starts and the step handler is not called). In virtual time, the stop that `stop()` kept is passed at the first step, and the lifecycle stops there |
+| While `stop()` waits for the shutdown | Called as usual |
+
+The tests are `core.communication_ready_after_stop_*` and `core.communication_ready_handler_that_runs_is_waited_for_by_stop`.
+
+`stop()` cannot be called from inside a SIL Kit handler (step or CommunicationReady), because it would wait for itself. Use `request_stop()` there. `report_failure()` and `request_stop()` can be called from inside any handler.
+
+### Stopping a failed participant
+
+When a participant fails (in the step handler, in the real-time driver, or through `report_failure()`), its own `stop()` and `request_stop()` do not pass a stop to the lifecycle until the lifecycle is in Error. If an ordinary stop got there first, in coordinated mode the whole simulation would stop normally and the controller would not see the failure.
+
+Setting the failure flag and reporting Error to SIL Kit happen under one lock. A stop issued after the failure became visible therefore never overtakes the report. The implementation does not rely on the order in which SIL Kit runs work it has deferred.
+
+`stop()` waits at most `shutdown_timeout` for Error and Shutdown together. After that, it passes the stop even before Error.
+
+In these cases the participant does not go through Error, or reaches Error after Stopping:
+
+- A `request_stop()` before the failure (before the failing step handler starts, or before `report_failure()`) is an ordinary stop.
+- The same applies when an abort by the controller or a stop by another participant comes first.
+
+What `report_failure()` does depends on when it is called:
+
+| When it is called | What happens |
+|---|---|
+| Before `start()` begins the lifecycle (before `start()`) | Nothing (SIL Kit ignores it) |
+| While `start()` is beginning the lifecycle | Remembered; `start()` reports it |
+
+A call can happen during the start because the CommunicationReady handler of an autonomous participant may be called before `start()` returns from beginning the lifecycle. The tests `core.participant_start_reports_a_failure_*` check this, using the test hook to force the order.
+
+### `bind_host()`
+
+`bind_host(runtime, host)` (`vehicle_sil/core/bind_host.hpp`) makes the step handler of `ParticipantRuntime` call `step(now)` of a `vehicle_sil::step::Host`. Before the first step, it passes the participant's step size to `Host::set_step_size()`.
+
+| Situation | Result |
+|---|---|
+| Used on a runtime that is not in virtual time | `std::invalid_argument` |
+| The host's time domain is not `Virtual` | `std::logic_error` |
+| The host throws | A failure of the step handler: the participant goes to Error |
+
+- Call it before `start()`.
+- Keep the host alive longer than the runtime's steps (stop the runtime first).
+- For this, `core` links `vehicle_sil::step`, but it does not depend on any bus type (see "Driving in virtual time" in [can.md](can.md#driving-in-virtual-time)).
+
+## Ownership and shutdown order
+
+| Owner or referrer | Object | Relation |
 |---|---|---|
-| SIL Kit I/O | SIL Kit | `SilKitCanPort` の受信ハンドラがフレームに時刻を付けて受け箱に積む。満杯なら捨てて `receive_overflows` に数え、`ReceiveOverflow` の事象にする。仮想時間では、ステップハンドラもこのスレッドで呼ばれる |
-| ドライバー | vehicle-sil（実時間のみ） | `RealTimeDriver` がホストのステップ（受信、プロトコル処理、アプリ、送信）を回す |
+| `ParticipantRuntime` | `SilKit::IParticipant` | Owns |
+| `SilKit::IParticipant` | `ICanController`, `ILinController` | Owns |
+| `SilKitCanPort`, `SilKitLinPort` | Controller | Refers to (does not own) |
+| `LinMaster`, `LinSlave` | `LinPort` | Refers to (does not own) |
+| `Host` | Ports and `Network` | Refers to (does not own) |
 
-プロトコル処理（`Network`、部品、ハンドラ）はロックを持たず、ステップを回すスレッドだけが触ります。仮想時間では SIL Kit のステップハンドラ、実時間ではドライバーのスレッドです。ほかのスレッドからは、ホストの `post()` で処理を渡します。
+`Peer` shuts down in this order. Use the same order when you assemble the parts yourself.
 
-キューの容量は、ホストの `post()` の待ち行列を除いて固定です。生成時に確保します。`post()` の待ち行列は上限がなく、呼ぶたびに確保します（外部からの操作のための口で、ステップごとに使うものではありません）。
+1. Stop the steps (in real time, `RealTimeDriver` and then the lifecycle; in virtual time, the lifecycle).
+2. Close the SIL Kit ports (remove their handlers and stop the controllers).
+3. Destroy the LIN nodes (each before its port), `Network` (its protocol parts first), the ports and the host.
+4. Destroy the participant.
 
-| キュー | 既定の容量 | 備考 |
+## Threads and queues
+
+| Thread | Belongs to | Work |
 |---|---|---|
-| `SilKitCanPort` の受け箱 | 1024 フレーム | `SilKitCanPortOptions::inbox_capacity` |
-| `SilKitCanPort` の事象の受け箱 | 1024 | `SilKitCanPortOptions::event_capacity` |
-| `Network` の 1 ステップの受信数 | 1024 フレーム | `NetworkOptions::receive_capacity`。ほかの上限は [j1939.md](j1939.md) の「ステップ幅と資源の上限」 |
-| サンプル Receiver の受信箱 | 256 | |
+| SIL Kit I/O | SIL Kit | Calls the receive handler of `SilKitCanPort` and the virtual-time step handler |
+| Driver | vehicle-sil (real time only) | `RealTimeDriver` runs the host's step (receive, protocol processing, application, transmit) |
 
-## 時刻（実時間モード）
+The receive handler of `SilKitCanPort` stamps each frame with a time and pushes it to the receive queue. If the queue is full, it drops the frame, counts it in `receive_overflows` and turns it into a `ReceiveOverflow` event.
 
-`ParticipantRuntimeOptions::virtual_time` が空（既定）の場合と、`PeerOptions::virtual_time` に `std::nullopt` を渡した場合（J1939 の最小ピアと Vector XL CAN Bridge）は、SIL Kit の時刻同期を使いません。`PeerOptions::virtual_time` の既定は、ステップ幅 1 ms の仮想時間です。autonomous lifecycle で、すべて実時間で動きます。
+Protocol processing (`Network`, protocol parts, handlers) holds no locks. Only the thread that runs the step touches it: the SIL Kit step handler in virtual time, the driver thread in real time. Other threads hand work over with the host's `post()`.
 
-- J1939 のタイマー（Address Claim の後の待ちなど）は、ドライバーの時計（`RealTimeClock`）で進みます。
-- 受信フレームの時刻は、ポートが時計で付けた到着時刻です。時刻同期をしない participant の SIL Kit のタイムスタンプは使いません（[can.md](can.md) の「実時間での駆動」）。
+Queue capacities are fixed and allocated at construction, except the queue behind the host's `post()`. That queue has no limit and allocates on every call. `post()` is an API for operations from outside; it is not meant for use every step.
 
-## SIL Kit の構成の既定
+| Queue | Default capacity | Notes |
+|---|---|---|
+| `SilKitCanPort` receive queue | 1024 frames | `SilKitCanPortOptions::inbox_capacity` |
+| `SilKitCanPort` event queue | 1024 | `SilKitCanPortOptions::event_capacity` |
+| Frames `Network` receives in one step | 1024 frames | `NetworkOptions::receive_capacity`. For the other limits, see "Step size and resource limits" in [j1939.md](j1939.md#step-size-and-resource-limits) |
+| Receive queue of the example Receiver | 256 | |
 
-- `ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
-  - registry の URI のホストがループバックのアドレス（`is_loopback_registry_uri()`: `127.0.0.0/8` を `getaddrinfo()` が読む数の書き方で、`::1`、IPv6 に写した `127.x.x.x`、`localhost`。名前は引きません）なら、`Middleware.AcceptorUris` でループバックのアドレスだけで待ち受けます（TCP の `127.0.0.1` か `::1`、ポート 0。Windows 以外では、ほかに一時ディレクトリの新しい名前の local-domain ソケット）。
-  - `ParticipantRuntimeOptions::listen_on_network`（`std::optional<bool>`。`SimulationControllerOptions` にも同じもの）が `true` なら足さず、`false` なら URI だけで決めます。空なら環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`（`kListenOnNetworkVariable`）を読みます: `1` なら足さない、`0`・空・なしなら URI で決める、ほかの値は `std::invalid_argument`。`vehicle_sil_launch run` は controller に値を渡し、子にはいつも変数を渡します（[simulation-run.md](../simulation-run.md) の「待ち受けるアドレス」）。
-  - Windows では `Middleware.EnableDomainSockets: false`（[dependencies.md](../dependencies.md) の SIL Kit（Windows）の節）。
-  - いつも `Experimental.TimeSynchronization.DynamicSimulationStep: false`。このキーがない participant は、ほかの participant（ネットワークのシミュレーターなど）が `true` で参加すると、SIL Kit にステップを全員の最小の幅まで縮められます。`false` なら、自分の幅のままです。
-- 自分の構成（YAML か JSON の文字列）を渡したときは、`merged_participant_configuration()` が、その構成に上の既定を重ねます。`ParticipantRuntime`（`Peer`、`SimulationController`、`Simulation` もこれを通ります）のコンストラクターが呼びます。
-  - まず SIL Kit に読ませます（`ParticipantConfigurationFromString()`。schema の検査と `Includes` の解決。誤りは SIL Kit の `ConfigurationError` のまま。YAML として読めない文字列のときは、SIL Kit の文の後ろに「(at line <行>, column <列> of the configuration text)」を足します。SIL Kit の文に場所がないことがあるためです）。構成が何を言っているかは、その結果（`ParticipantConfigurationToJson()`。これも rapidyaml で読みます）で見ます。`Includes` のどのファイルに書いたキーも、同じに数えます。
-  - `Middleware.AcceptorUris` がなければ、上の決まりで足します。Windows で `Middleware.EnableDomainSockets` が `false` でなければ `false` にします（SIL Kit の JSON は既定の `true` を書かないので、`true` と書いた構成を、書いていない構成と見分けられません）。`DynamicSimulationStep` がなければ `false` を足します。
-  - 足す先は、渡された文字列そのものです（SIL Kit 付属の rapidyaml で読み、キーを足して YAML で書き戻す）。ほかのキーは、書いたとおりに残ります。`Experimental:` のように下に何も書いていないキー（コメントだけの場合も）は、SIL Kit が「ない」と読むので、その下に足します。SIL Kit の JSON を構成の代わりに使うことはしません。SIL Kit の JSON は、読んだものの一部を書かないためです（ログの sink の `Format` など）。足すものがない構成は、1 文字も変えません。
-  - `ParticipantName` が participant 名と違う、`Middleware.RegistryUri` が registry の URI と違う（URI が空なら比べない）、`DynamicSimulationStep` が `true`、のどれかなら `std::invalid_argument` です（どのキーをどうするかを言います）。SIL Kit は構成の名前と URI を採るので、そのまま進めると、別の名前で参加するか、別の registry につながります。同じ値は通します。
-  - `participant_configuration_from_file()` は、ファイルの文字列を返します。`Includes` があれば、ファイルのディレクトリを `Includes.SearchPathHints` に足します（文字列の構成では、SIL Kit は作業ディレクトリと `SearchPathHints` からしか探さないため）。中身は確かめません。YAML として読めないファイル、`Includes` の下が空のファイル、`SearchPathHints` がリストでないファイルは、文字列をそのまま返します（誤りは、その文字列を使うときに SIL Kit が言います）。
-  - rapidyaml のないビルド（SIL Kit をサブモジュールからビルドしないとき）では、渡された構成をそのまま使います。キーは足しません（待ち受けるアドレスも、その構成のとおり）。上の 3 つの検査（`ParticipantName`、`Middleware.RegistryUri`、`DynamicSimulationStep: true`）もしません。`merged_participant_configuration()` は SIL Kit に読ませることもしないので、SIL Kit が受け付けない構成は、participant を作るときに分かります。`participant_configuration_from_file()` は `SearchPathHints` を足しません。そのビルドでは、Windows の `Middleware: {EnableDomainSockets: false}` と `"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}` を自分で書き、`ParticipantName` と `Middleware.RegistryUri` は書かないでください。構成を渡さないとき（`{}`）の既定は、このビルドでも同じです。
-- 仮想時間の `ParticipantRuntime` は、SIL Kit が渡したステップの幅が `VirtualTimeOptions::step` と違うと、ステップのハンドラーを呼ばずにそのステップを失敗にします（participant は Error、`step_error()` は「SIL Kit gave this participant a step of ... ns at t=... ns, not its own ... ns: ...」で、構成で `false` にするキーを言います）。ステップの格子、`TickScheduler`、時間ゲートが固定の幅を前提にしているためです。既定の構成でも、自分の構成でも起きません（キーを足すため）。起きるのは、rapidyaml のないビルドで、キーのない構成か `true` の構成を渡したときだけです。幅を比べる所は `libs/core/src/participant_runtime_checks.hpp` の `detail::step_width_error()` で、試験 `core.a_step_that_silkit_cut_fails_with_the_key_that_keeps_the_step` が SIL Kit なしで確かめます。
-- vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は `default_registry_configuration()` で作ります。registry は自分の URI のアドレスで待ち受けます（`AcceptorUris` を使いません）。どの OS でも `Middleware.EnableDomainSockets: false` です（TCP だけ）。SIL Kit の registry は、TCP のポートで待ち受けられなくても local-domain ソケットだけで動き続け、同じ URI のほかの registry の local-domain のパスを奪います。TCP だけにすると、ふさがったポートで `StartListening()` がすぐ失敗します。
-- `ParticipantRuntime` は participant を `create_participant()` で作ります。registry が名前を使用中として断る間（「A participant with the same name ... already exists」）、`ParticipantRuntimeOptions::name_in_use_wait`（既定 5000 ms。`PeerOptions` にも同じもの。`Simulation` は `start_timeout` を超えない値にします）まで、50 ms おきに作り直します。同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い機械、ネットワーク越し）。過ぎたら、SIL Kit の文に、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを足して `SilKit::ProtocolError` です。ほかの失敗はすぐに投げます。SIL Kit の participant を自分で作るプログラム（試験の生の Agent など）も、この関数を使えます。
-- `libs/`、`tools/`、`bridges/`、`tests/` で文字列から SIL Kit の構成を作る所は、これらの関数を通ります（試験 `core.silkit_configuration_defaults`）。
+## Time (real-time mode)
+
+In these cases the participant does not use SIL Kit time synchronization. It runs with the autonomous lifecycle, entirely in real time.
+
+- `ParticipantRuntimeOptions::virtual_time` is empty (the default).
+- `std::nullopt` is passed as `PeerOptions::virtual_time` (the minimal J1939 peer and the Vector XL CAN Bridge).
+
+The default of `PeerOptions::virtual_time` is virtual time with a step size of 1 ms.
+
+- J1939 timers (such as the wait after Address Claim) advance on the driver's clock (`RealTimeClock`).
+- The time of a received frame is the receive time the port took from that clock. The SIL Kit timestamps of a participant without time synchronization are not used (see "Driving in real time" in [can.md](can.md#driving-in-real-time-realtimedriver)).
+
+## SIL Kit configuration defaults
+
+### Without a configuration
+
+If `ParticipantRuntimeOptions::participant_configuration` is `"{}"` (the default) or empty, `ParticipantRuntime` creates the participant with `default_participant_configuration(registry_uri)` (`participant_runtime.hpp`). It changes 3 things from the SIL Kit defaults:
+
+| Condition | Key it changes |
+|---|---|
+| The host of the registry URI is a loopback address | `Middleware.AcceptorUris`, to listen on loopback addresses only |
+| Windows | `Middleware.EnableDomainSockets: false` (see "SIL Kit (Windows): closing a local-domain socket to a process with suspended threads may not return" in [dependencies.md](../dependencies.md#sil-kit-windows-closing-a-local-domain-socket-to-a-process-with-suspended-threads-may-not-return)) |
+| Always | `Experimental.TimeSynchronization.DynamicSimulationStep: false` |
+
+A participant without the `DynamicSimulationStep` key has its step shrunk by SIL Kit to the smallest step of all participants when another participant (a network simulator, for example) joins with `true`. With `false`, it keeps its own step size.
+
+### Listen address
+
+`is_loopback_registry_uri()` decides whether the address is a loopback address. These count as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names.
+
+On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On systems other than Windows, it also listens on a local-domain socket with a new name in the temporary directory.
+
+`ParticipantRuntimeOptions::listen_on_network` (`std::optional<bool>`; `SimulationControllerOptions` has the same option) controls whether `AcceptorUris` is added.
+
+| `listen_on_network` | `AcceptorUris` |
+|---|---|
+| `true` | Not added |
+| `false` | Decided by the URI alone |
+| Empty | Read from the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK` (`kListenOnNetworkVariable`) |
+
+| Value of the environment variable | `AcceptorUris` |
+|---|---|
+| `1` | Not added |
+| `0`, empty, or variable not set | Decided by the URI |
+| Any other value | `std::invalid_argument` |
+
+`vehicle_sil_launch run` passes the value to the controller and always passes the variable to its child processes (see "Listen addresses" in [simulation-run.md](../simulation-run.md#listen-addresses)).
+
+### With your own configuration
+
+If you pass your own configuration (a YAML or JSON string), `merged_participant_configuration()` merges the defaults above into it. The `ParticipantRuntime` constructor calls it. `Peer`, `SimulationController` and `Simulation` use this constructor too.
+
+First, SIL Kit reads the configuration (`ParticipantConfigurationFromString()`: schema check and resolution of `Includes`). Errors stay SIL Kit's `ConfigurationError`. If the string cannot be read as YAML, " (at line <line>, column <column> of the configuration text)" is appended to SIL Kit's message, because SIL Kit's message sometimes has no location.
+
+The content of the configuration is taken from what SIL Kit read (`ParticipantConfigurationToJson()`, also read with rapidyaml). A key counts the same whichever file in `Includes` it is written in.
+
+Missing keys are added as follows. They are added to the passed-in string itself.
+
+| State of the key | What is added |
+|---|---|
+| `Middleware.AcceptorUris` is missing | Added by the rules in "Listen address" above |
+| On Windows, `Middleware.EnableDomainSockets` is not `false` | Set to `false` |
+| `DynamicSimulationStep` is missing | `false` is added |
+
+On Windows, `EnableDomainSockets` is set to `false` even when the configuration says `true`, because SIL Kit's JSON does not write the default `true`. A configuration that says `true` cannot be told apart from one that does not set the key.
+
+To add keys, the string is read with the rapidyaml bundled with SIL Kit, the keys are added, and the result is written back as YAML.
+
+- Other keys stay as written.
+- A key with nothing under it, such as `Experimental:` (also when only a comment is under it), counts as missing for SIL Kit, so the new key is added under it.
+- SIL Kit's JSON is never used in place of the configuration, because it leaves out part of what was read (such as `Format` of a log sink).
+- A configuration that needs nothing added is left unchanged, byte for byte.
+
+### Rejected settings
+
+`merged_participant_configuration()` throws `std::invalid_argument` if the configuration passed in has any of these settings. The message says which key to change and how.
+
+- `ParticipantName` differs from the participant name.
+- `Middleware.RegistryUri` differs from the registry URI (not compared if the URI is empty).
+- `DynamicSimulationStep` is `true`.
+
+SIL Kit takes the name and the URI from the configuration, so accepting a different value would make the participant join under another name or connect to another registry. Identical values are accepted.
+
+### `participant_configuration_from_file()`
+
+`participant_configuration_from_file()` returns the content of the file as a string. If the file has `Includes`, it adds the file's directory to `Includes.SearchPathHints`, because for a configuration given as a string SIL Kit searches only the working directory and `SearchPathHints`.
+
+It does not check the content. For these files it returns the string unchanged, and SIL Kit reports the error when the string is used:
+
+- A file that cannot be read as YAML
+- A file with nothing under `Includes`
+- A file whose `SearchPathHints` is not a list
+
+### Builds without rapidyaml
+
+A build without rapidyaml (when SIL Kit is not built from the submodule) uses the configuration passed in as it is.
+
+| Action | Build without rapidyaml |
+|---|---|
+| Adding keys | Not done (the listen address is also whatever the configuration says) |
+| The 3 checks above (`ParticipantName`, `Middleware.RegistryUri`, `DynamicSimulationStep: true`) | Not done |
+| `merged_participant_configuration()` has SIL Kit read the configuration | Not done (a configuration SIL Kit does not accept shows up when the participant is created) |
+| `participant_configuration_from_file()` adds `SearchPathHints` | Not done |
+| Defaults when no configuration is passed (`{}`) | Same as in other builds |
+
+In such a build, write `Middleware: {EnableDomainSockets: false}` (on Windows) and `"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}` yourself, and do not write `ParticipantName` or `Middleware.RegistryUri`.
+
+### Step size check
+
+If SIL Kit gives a virtual-time `ParticipantRuntime` a step whose size differs from `VirtualTimeOptions::step`, the runtime fails that step without calling the step handler. The participant goes to Error. `step_error()` is "SIL Kit gave this participant a step of ... ns at t=... ns, not its own ... ns: ...", and the message names the key to set to `false` in the configuration. The check exists because the step grid, `TickScheduler` and the time gate assume a fixed step size.
+
+This does not happen with the default configuration or with your own configuration, because the key is added. It happens only in a build without rapidyaml, when you pass a configuration without the key or with `true`.
+
+The comparison is `detail::step_width_error()` in `libs/core/src/participant_runtime_checks.hpp`. The test `core.a_step_that_silkit_cut_fails_with_the_key_that_keeps_the_step` checks it without SIL Kit.
+
+### Registry settings
+
+The registry that vehicle-sil starts (`vehicle_sil_launch run`, `Simulation`) is created with `default_registry_configuration()`.
+
+- The registry listens on the address of its own URI (it does not use `AcceptorUris`).
+- `Middleware.EnableDomainSockets: false` on every OS (TCP only).
+
+The reason for TCP only: a SIL Kit registry that cannot listen on its TCP port keeps running on a local-domain socket alone, and takes over the local-domain path of another registry with the same URI. With TCP only, `StartListening()` fails at once on a port that is in use.
+
+### Recreating the participant when the name is taken
+
+`ParticipantRuntime` creates the participant with `create_participant()`. While the registry rejects the name as in use ("A participant with the same name ... already exists"), it creates the participant again every 50 ms, for up to `ParticipantRuntimeOptions::name_in_use_wait`.
+
+- The default of `name_in_use_wait` is 5000 ms. `PeerOptions` has the same option. `Simulation` uses a value no greater than `start_timeout`.
+- The retry exists because, for a process restarted with the same name, the registry may not yet have noticed that the previous connection ended (on a slow computer, or across a network).
+- When the time runs out, it throws `SilKit::ProtocolError` with SIL Kit's message, extended with how long it waited and the hint that another participant may be using the same name.
+- Any other failure is thrown at once.
+- Programs that create a SIL Kit participant themselves (such as the raw Agent in the tests) can use this function too.
+
+### One place that builds the configuration
+
+Every place in `libs/`, `tools/`, `bridges/` and `tests/` that builds a SIL Kit configuration from a string uses these functions (test `core.silkit_configuration_defaults`).
+
+## See also
+
+- Overview: [architecture.md](../architecture.md)
+- Where things are: [code-map.md](../code-map.md)
+- The other internals pages: "[Internals](../architecture.md#internals)" in architecture.md

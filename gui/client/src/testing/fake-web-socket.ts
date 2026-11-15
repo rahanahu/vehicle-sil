@@ -1,11 +1,11 @@
-// 試験のための偽の WebSocket（SocketFactory）。本番のコードからは import しない。
+// Fake WebSocket (SocketFactory) for tests. Do not import it from production code.
 import { SocketFactory, SocketHandlers } from '../connection';
 
-/** 偽の接続 1 本。開く、サーバーからの通知、切れるを試験から起こす。 */
+/** One fake connection. The test makes it open, receive server notifications and drop. */
 export class FakeSocket {
-  /** クライアントが閉じた。 */
+  /** The client closed it. */
   closedByClient = false;
-  /** クライアントが送ったメッセージ（JSON を読んだもの）。開いた直後の認証も入る。 */
+  /** Messages the client sent (parsed JSON), including the authentication right after opening. */
   readonly sent: unknown[] = [];
 
   constructor(
@@ -13,7 +13,7 @@ export class FakeSocket {
     private readonly handlers: SocketHandlers,
   ) {}
 
-  /** 開いた直後にクライアントが送ったメッセージ（認証）。開く前は空。 */
+  /** The message the client sent right after opening (authentication). Empty before opening. */
   get greeting(): readonly unknown[] {
     return this.sent;
   }
@@ -22,28 +22,28 @@ export class FakeSocket {
     this.handlers.open();
   }
 
-  /** サーバーからの通知（JSON にして渡す）。 */
+  /** A notification from the server (passed as JSON). */
   send(value: unknown): void {
     this.handlers.message(JSON.stringify(value));
   }
 
-  /** サーバーからのテキスト（JSON でないものを試すとき）。 */
+  /** Text from the server (to test something that is not JSON). */
   sendText(text: string): void {
     this.handlers.message(text);
   }
 
-  /** 切れた（エラーで閉じた）。 */
+  /** The connection dropped (closed with an error). */
   fail(): void {
     this.handlers.close(1006, '');
   }
 
-  /** サーバーが閉じた。code と reason は閉じるコードと理由の文。 */
+  /** The server closed it. code and reason are the close code and the reason text. */
   close(code = 1000, reason = ''): void {
     this.handlers.close(code, reason);
   }
 }
 
-/** 開かれた偽の接続を順に持つ。createClient の `socket` に factory を渡す。 */
+/** Holds the fake connections opened, in order. Pass `factory` as `socket` to createClient. */
 export class FakeWebSockets {
   readonly sockets: FakeSocket[] = [];
 
@@ -58,7 +58,7 @@ export class FakeWebSockets {
     };
   };
 
-  /** 最後に開かれた接続。 */
+  /** The connection opened last. */
   last(): FakeSocket {
     const socket = this.sockets.at(-1);
     if (!socket) {

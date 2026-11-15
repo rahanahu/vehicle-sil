@@ -44,7 +44,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
 
 const emptySession = () => sessionFromSummary(summary());
 
-/** 試験の事象を作る。seq は渡した順に from から。 */
+/** Builds test events. seq counts from from, in the order given. */
 function eventsFrom(from: number, items: Record<string, unknown>[]): LauncherEvent[] {
   return items.map(
     (item, i) => ({ seq: from + i, t_ms: (from + i) * 10, ...item }) as unknown as LauncherEvent,
@@ -215,7 +215,7 @@ describe('applyEvents', () => {
     let session = emptySession();
     let seq = 0;
     for (let n = 0; n < sources; n++) {
-      // 最後の出どころは少しだけ
+      // Only a few for the last source
       const count = n === sources - 1 ? 10 : MAX_LOG_LINES_PER_SOURCE;
       session = applyEvents(session, eventsFrom(seq, logs(`S${n}`, count)));
       seq += count;
@@ -254,7 +254,7 @@ describe('applyEvents', () => {
       ['A', 'joined', 'connected'],
       ['B', null, 'no_hello'],
     ]);
-    // 結果のほうが新しい（遅れて届いたメッセージの数を持つ）
+    // The result is newer (it has the count of messages that arrived late)
     const ended = applyEvents(
       session,
       eventsFrom(3, [
@@ -331,7 +331,7 @@ describe('applyEvents', () => {
       ['A', null, false, null, null],
       ['B', 'joined', true, '/b --name B', '/root'],
     ]);
-    // つなぎ直した画面: 要約の participant から
+    // A screen that reconnected: from the participants of the summary
     const again = sessionFromSummary(
       summary({
         participants: [
@@ -390,7 +390,8 @@ describe('applyEvents', () => {
       ['A', 'joined', environment],
       ['B', 'manual', {}],
     ]);
-    // つなぎ直した画面: 要約の participant から（ほかの欄と同じく、サーバーが事象の欄を重ねて持つ）
+    // A screen that reconnected: from the participants of the summary (like the other fields, the server holds the
+    // event fields laid over each other)
     const again = sessionFromSummary(
       summary({
         participants: [
@@ -780,14 +781,14 @@ describe('applySummary', () => {
       working_directory: null,
       environment: null,
     };
-    // サーバーの印がなくても、手元で知っていれば残す
+    // Kept if known locally, even without the server's flag
     const later = applySummary(
       asked,
       summary({ last_seq: 5, participants: [{ ...participant, stop_requested: false }] }),
       true,
     );
     expect(later.participants[0].stopRequested).toBe(true);
-    // 再読み込み（手元に何もない）では、サーバーの印で
+    // After a reload (nothing held locally), from the server's flag
     const fresh = sessionFromSummary(
       summary({ last_seq: 5, participants: [{ ...participant, stop_requested: true }] }),
     );
@@ -841,13 +842,13 @@ describe('applySummary', () => {
     );
     expect(next.unreadable).toEqual(['result.participants', 'log.level']);
     expect(next.elapsedMs).toBe(0);
-    // 届いた時点の正の要約で置き換わる
+    // Replaced by the summary, which is correct at the time it arrives
     expect(applySummary(next, summary({ last_seq: 2 }), true).unreadable).toEqual([]);
   });
 
   it('counts the events whose seq is not after the last one', () => {
     const session = applyEvents(emptySession(), events(...logs('A', 3)));
-    // 再送の重なりは数えない。再送でないのに戻った seq は数える
+    // Overlap with the resend is not counted. A seq that went back outside a resend is
     expect(applyEvents(session, eventsFrom(1, logs('A', 2)))).toBe(session);
     const again = applyEvents(session, eventsFrom(1, logs('A', 2)), true);
     expect(again.staleEvents).toBe(2);
@@ -896,7 +897,7 @@ describe('addDropped', () => {
       at_least: ['B'],
       events: 0,
     });
-    // 印は行に数えない
+    // Markers do not count as lines
     expect(dropped.logSources).toEqual({
       A: { lines: 2, dropped: 4 },
       B: { lines: 0, dropped: 1 },
@@ -939,11 +940,11 @@ describe('addDropped', () => {
       events: 0,
     });
     session = applyEvents(session, eventsFrom(3, logs('A', MAX_LOG_LINES_PER_SOURCE - 3)));
-    // 上限ちょうど（印は数えない）: 印は残る
+    // Exactly at the limit (markers not counted): the marker stays
     expect(session.logSources['A'].lines).toBe(MAX_LOG_LINES_PER_SOURCE);
     expect(session.logs.filter((l) => l.gap)).toHaveLength(1);
     session = applyEvents(session, eventsFrom(MAX_LOG_LINES_PER_SOURCE, logs('A', 4)));
-    // 印をはさむ 4 行（seq 0 から 3）を落としたので、印も落ちる
+    // The 4 lines around the marker (seq 0 to 3) were dropped, so the marker goes too
     expect(session.logs.filter((l) => l.gap)).toHaveLength(0);
     expect(session.logs[0].seq).toBe(4);
     expect(session.logSources['A']).toEqual({ lines: MAX_LOG_LINES_PER_SOURCE, dropped: 11 });
@@ -1001,7 +1002,7 @@ describe('addProblem', () => {
       failure: 'left_simulation',
       exitCode: 1,
     });
-    // つなぎ直した画面は、要約の reason から同じものを知る
+    // A screen that reconnected learns the same from the summary's reason
     const again = sessionFromSummary(
       summary({
         last_seq: 2,

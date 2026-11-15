@@ -1,116 +1,261 @@
-# イーサネットのブリッジ
+# Ethernet Bridge
 
-SIL Kit の Ethernet ネットワークを、SIL Kit の外のイーサネットのインターフェース（PC の中の TAP デバイス、ネットワークのインターフェース、Windows のネットワークのアダプター）につなぐ人と、ブリッジを直す人向けです。前に読む文書はありません。直す人は、次に [code-map.md](code-map.md) の「Ethernet Bridge」を読みます。
+[日本語](ja/ethernet-bridge.md)
 
-`vehicle_sil_ethernet_bridge` は、SIL Kit の Ethernet ネットワークと外のインターフェースの間で、イーサネットのフレームを書き換えずに双方向に運びます。実時間で動き、時刻同期には参加しません。
+`vehicle_sil_ethernet_bridge` forwards Ethernet frames, unchanged, in both directions between a SIL Kit Ethernet network and an interface outside SIL Kit. It runs in real time and does not take part in time synchronization. This page covers the connection steps, arguments, exit codes, messages, the behavior of each backend, statistics, filtering and loop prevention, the library API and what is verified.
+
+| Connects to | `--backend` | OS | What to install | Verified |
+|---|---|---|---|---|
+| The network stack of the same computer's OS, and programs that open the TAP device | `tap` | Linux | Nothing | Automated tests against the real kernel in a network namespace |
+| Devices beyond a network interface (NIC, veth) | `packet` | Linux | Nothing | Automated tests on a veth pair (physical NICs not verified) |
+| Same as `packet` | `pcap` | Linux | libpcap | Automated tests on a veth pair with the real libpcap (physical NICs not verified) |
+| Devices beyond a network adapter | `npcap` | Windows | Npcap | With the real Npcap, only manual checks on the virtual NIC of a virtual machine |
 
 > [!WARNING]
-> Windows の `npcap` は、本物の Npcap に対しては、仮想マシンの仮想の NIC で手で確かめただけです。実の NIC では確かめていません。試験は、同じ関数を持つ偽のライブラリに対するものです。確かめた範囲は「[確かめたことと、確かめていないこと](#確かめたことと確かめていないこと)」にあります。
+> On Windows, `npcap` is verified against the real Npcap only by hand, on the virtual NIC of a virtual machine. It is not verified on a physical NIC. The tests run against a fake library that has the same functions. For what is verified, see "[Verified and not verified](#verified-and-not-verified)".
 
-| ターゲット | 中身 |
-|---|---|
-| `vehicle_sil_ethernet_bridge`（実行ファイル） | ブリッジの CLI。止め方、監視、終了コードは `run_bridge()`（[bridges.md](bridges.md) と同じ）。どのプラットフォームでもビルドする |
-| `vehicle_sil::eth_link` | 外のインターフェースの口 `ExternalLink`、MAC アドレス、絞り込み `FrameFilter`、輪を防ぐ表 `MacSideTable`、OS がライブラリなしで持つ口（`os_links.hpp`: Linux の TAP デバイスと packet ソケット）、OS に入っている pcap のライブラリを実行時に読み込む口（`pcap_link.hpp`: Windows の Npcap、Linux の libpcap）。SIL Kit を使わない |
-| `vehicle_sil::ethernet_bridge_core` | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `EthernetBridge`、統計と監視の行、引数の解釈（`parse_bridge_options()`）、実行ファイルが言うこと（起動の 1 行、OS ごとに使えるバックエンド、プロミスキャスの手がかり: `bridge_app.hpp`）。プラットフォームに依存しない |
+For the Vector XL CAN Bridge, see [bridges.md](bridges.md).
 
-```mermaid
-flowchart LR
-    silkit["SIL Kit Ethernet<br/>IEthernetController"] <--> bridge["EthernetBridge<br/>FrameFilter, MacSideTable"]
-    bridge <--> link["ExternalLink<br/>(eth_link)"]
-    link <--> nic["外のインターフェース"]
-```
+## First connection
 
-## 使い方（`vehicle_sil_ethernet_bridge`）
+These steps connect the bridge to a TAP device inside the computer, on Linux. With a TAP device that you created beforehand and own, you need no external library and no privileges at run time. The steps assume that `vehicle_sil_ethernet_bridge` and `sil-kit-registry` are in `PATH`.
+
+| Step | What you do | What you see |
+|---|---|---|
+| 1 | Create a TAP device owned by your user and bring it up. | `--list-interfaces` shows `vsil0  Ethernet, up`. |
+| 2 | Start the SIL Kit registry. | The registry listens on `silkit://127.0.0.1:8500`. |
+| 3 | Start the bridge in another terminal. | The line `bridging SIL Kit network ...` appears. |
+| 4 | Stop the bridge with Ctrl+C. | `stopping`, the statistics and `stopped` appear in that order, and the bridge exits with code 0. |
+
+The commands for step 1:
 
 ```sh
-# PC の中だけ: 先に作った自分の TAP デバイスにつなぐ（権限は要らない）
 sudo ip tuntap add dev vsil0 mode tap user $USER
 sudo ip link set vsil0 up
-vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend tap --interface vsil0
-
-# ネットワークのインターフェース: 何を通すかの指定が要る
-sudo setcap cap_net_raw+ep ./vehicle_sil_ethernet_bridge
-vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend packet --interface enp3s0 \
-    --ethertype 0x88b5 --promiscuous
-
 vehicle_sil_ethernet_bridge --list-interfaces
 ```
 
+The command for step 2:
+
+```sh
+sil-kit-registry --listen-uri silkit://127.0.0.1:8500
+```
+
+The command for step 3, and what the bridge prints when it is connected:
+
+```sh
+vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend tap --interface vsil0
+```
+
+```
+[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> tap 'vsil0' (TAP device in this computer): every frame, both ways; MAC guard on; Ctrl+C to stop
+```
+
+Step 4 prints the following. If the OS sent frames to the TAP device, `ext_to_silkit` is not 0.
+
+```
+[eth-bridge] stopping
+[eth-bridge] stats silkit_to_ext=0 ext_to_silkit=6 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
+[eth-bridge] stopped
+```
+
+If something goes wrong, find the symptom in this table.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Prints `error: ...` and exits with code 4 | An argument is wrong. | Correct it as described in "[Arguments](#arguments)". |
+| `FAIL setup: cannot connect to the SIL Kit registry ...` | The bridge cannot connect to the registry. | Do what the message says: start the registry or correct the address. |
+| `FAIL setup: no TAP device 'vsil0' ...` and similar | The bridge cannot open the TAP device. | Follow the fix for that message in the list in "[`tap`](#tap)". |
+| The warning `interface 'vsil0' is down: ...` | The TAP device is down. | Run `sudo ip link set vsil0 up`. |
+
+### Connect to a network interface (Linux)
+
+To connect to a network interface, the bridge needs `CAP_NET_RAW`, and you must say what may pass.
+
+```sh
+sudo setcap cap_net_raw+ep ./vehicle_sil_ethernet_bridge
+vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend packet --interface enp3s0 \
+    --ethertype 0x88b5 --promiscuous
+```
+
+### Connect to a network adapter (Windows)
+
+Install Npcap first (see "[`npcap` and `pcap`](#npcap-and-pcap)"). Write the `--interface` name exactly as `--list-interfaces` shows it.
+
 ```bat
-rem Windows: Npcap を入れてから（「npcap と pcap」の節）。名前は --list-interfaces が出すとおりに書く
 vehicle_sil_ethernet_bridge --list-interfaces
 vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend npcap --interface "Ethernet 2" ^
     --ethertype 0x88b5 --promiscuous
 ```
 
-引数は「[引数](#引数parse_bridge_options)」にあります。ブリッジは次の順に動きます。
+## Arguments
 
-1. 引数を調べます。誤りには、誤りの 1 行と、使い方の見方の 1 行だけを標準エラーに出して、終了コード 4 で終わります（使い方の全文は `--help`）。Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（`--participant`、`--network`、`--interface` に ASCII 以外の文字を使えます）。
+```
+vehicle_sil_ethernet_bridge --list-interfaces [--backend <backend>]
+vehicle_sil_ethernet_bridge --registry-uri <silkit://host:port> --network <name> --backend <tap|packet|npcap|pcap> --interface <name> [options]
+```
 
-   ```
-   error: --backend must be tap, packet, npcap or pcap, got: usb
-   Run 'vehicle_sil_ethernet_bridge --help' for the options.
-   ```
-2. `--backend` がこの OS で使えるかを調べます。使えなければ、SIL Kit に接続する前に、理由と代わりを言って終了コード 3 で終わります。`npcap` と `pcap` は、ここでライブラリを読み込みます。入っていなければ、入れ方を言って終了コード 3 で終わります。
-3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。registry に接続できなければ、どこに接続しようとしたかと次にすることを言って、終了コード 3 で終わります（括弧の中は SIL Kit の文です）。
+| Argument | Meaning |
+|---|---|
+| `--registry-uri <uri>` | Address of the SIL Kit registry (required). |
+| `--network <name>` | Name of the SIL Kit Ethernet network (required; there is no default name). |
+| `--participant <name>` | Participant name (default `EthernetBridge`). |
+| `--backend <tap\|packet\|npcap\|pcap>` | How the external interface is opened (required; see "[Backends](#backends)"). |
+| `--interface <name>` | The interface to connect to (required; the bridge never picks "the first one found"). |
+| `--ethertype <hex>,...` | EtherTypes that may pass (hexadecimal starting with `0x`; repeating the option adds more). |
+| `--src-mac <mac>,...` | MAC addresses of the SIL Kit side (6 bytes separated by `:` or `-`; repeating the option adds more). |
+| `--all-frames` | No filtering (cannot be combined with `--ethertype` or `--src-mac`). |
+| `--vlan-tpid <hex>,...` | Values that mark a VLAN tag (default `0x8100,0x88a8`). |
+| `--max-frame-bytes <n>` | Maximum length without FCS (60–65535, default 1522). |
+| `--promiscuous` | Also receives frames not addressed to the interface (not available with `tap`). |
+| `--tap-create` | Creates the TAP device for as long as the bridge runs (`tap` only). |
+| `--no-mac-guard` | Does not use the MAC rules (see "[Loop prevention](#loop-prevention-macsidetable)"). |
+| `--mac-table-size <n>` | Size of the MAC table (16–65536, default 1024). |
+| `--list-interfaces` | Prints the interfaces of this computer and exits (needs no other arguments). |
+| `--help` | Prints the usage. |
 
-   ```
-   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
-   ```
+Notes on the arguments:
 
-   アドレスがこの PC のループバック（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動せよとは言わず、そのアドレスの PC で確かめることを言います。そのアドレスが別の PC のものか、この PC 自身のものかは、調べません。`0.0.0.0` と `[::]` は待ち受けるためのアドレスなので、registry の動いている PC のアドレスを書くよう言います（文は `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです。[docs/bridges.md](bridges.md)）。
+- `--network` has no default name so that the bridge never connects to the wrong network by mistake.
+- The `tap` backend is treated as a virtual interface inside the computer; the others are treated as able to put frames on a physical adapter. `tap`, `packet` and `pcap` are available on Linux, `npcap` on Windows.
+- The minimum of `--max-frame-bytes` is 60 because SIL Kit does not pass on frames shorter than 60 bytes.
+- `--list-interfaces` with `--backend npcap` or `--backend pcap` prints the list that the pcap library returns.
+- On Windows, the bridge reads its arguments as UTF-8 from the wide-character command line. `--participant`, `--network` and `--interface` can therefore contain non-ASCII characters.
 
-   ```
-   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
-   ```
-4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
-5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
-6. 起動の 1 行を出し、止める要求か失敗まで動きます。
+With a `--backend` that can put frames on a physical adapter (`packet`, `npcap`, `pcap`), you must say what may pass: one of `--ethertype`, `--src-mac` or `--all-frames`. Without it, the bridge reports this error:
 
-起動の 1 行は、何をどこにつないだか、何を通すか、プロミスキャスと MAC の規則の状態を言います。
+```
+--backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.
+```
+
+`parse_bridge_options()` in `vehicle_sil/ethernet_bridge/bridge_options.hpp` parses the arguments. An error is a `BridgeUsageError` that says what is wrong and how to fix it. `bridge_usage()` returns the full usage.
+
+## Exit codes
+
+| Exit code | Meaning | Output |
+|---|---|---|
+| 0 | Stopped by a stop request. Also 0 when `--list-interfaces` or `--help` finishes. | The statistics line and `stopped` |
+| 1 | Failure while running. | `FAIL: <reason>` |
+| 3 | Failure during setup (a backend not available on this OS, a pcap library that is not installed, the interface, SIL Kit). | `FAIL setup: <reason>` |
+| 4 | Argument error. | `error: <reason>` |
+
+The exit code is 1 in any of these cases:
+
+- The external interface stopped working (it disappeared, or reading failed).
+- The SIL Kit participant stopped or ended by itself, or did not reach Running.
+
+The participant states are handled as in the Vector XL CAN Bridge (see "Participant state while running" in [bridges.md](bridges.md#participant-state-while-running)). Both bridges share `run_bridge()`, which handles stopping, monitoring and the exit codes.
+
+## Behavior from start to stop
+
+The bridge goes through these steps in order:
+
+| Order | What the bridge does | If it fails |
+|---|---|---|
+| 1 | Checks the arguments. | Prints only 2 lines to stderr, the error and a pointer to the usage, and exits with code 4. |
+| 2 | Checks that `--backend` is available on this OS. | Prints the reason and a backend to use instead, and exits with code 3 before connecting to SIL Kit. |
+| 3 | Connects to the SIL Kit registry and creates the Ethernet controller. | Prints the address it tried and what to do next, and exits with code 3. |
+| 4 | Opens the external interface and starts forwarding (`EthernetBridge::start()`). | Says what happened and how to fix it, and exits with code 3. |
+| 5 | Starts the participant lifecycle. | — |
+| 6 | Prints the startup line and runs until a stop request or a failure. | — |
+
+- In step 2, `npcap` and `pcap` load their library. If it is not installed, the bridge says how to install it and exits with code 3.
+- For the messages of step 4, see the sections under "[Backends](#backends)".
+- Forwarding (step 4) starts before the lifecycle (step 5) because other participants start sending as soon as they see the bridge reach Running.
+
+### Argument errors
+
+`--help` prints the full usage.
+
+```
+error: --backend must be tap, packet, npcap or pcap, got: usb
+Run 'vehicle_sil_ethernet_bridge --help' for the options.
+```
+
+### Message when the registry is unreachable
+
+The text in parentheses comes from SIL Kit.
+
+```
+[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
+```
+
+If the address is not a loopback address of this computer (`localhost`, `127.x.y.z`, `::1`), the message does not tell you to start the registry; it tells you what to check on the computer with that address. The bridge does not determine whether that address belongs to another computer or to this one.
+
+```
+[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
+```
+
+`0.0.0.0` and `[::]` are addresses to listen on, so the message tells you to give the address of the computer the registry runs on. `registry_failure_message()` in `bridges/common` builds the message, the same as for the Vector XL CAN Bridge (see "Message when the registry is unreachable" in [bridges.md](bridges.md#message-when-the-registry-is-unreachable)).
+
+### The startup line
+
+The startup line shows what is connected to what, what may pass, and the state of promiscuous mode and of the MAC rules.
 
 ```
 [eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous off (only frames to the interface's own address and to group addresses arrive); MAC guard on; Ctrl+C to stop
 ```
 
-- 何を通すかは `every frame, both ways`、`EtherType 0x88b5,0x0800 only, both ways`、`SIL Kit MAC 02:00:00:00:00:01 only, both ways`、またはその 2 つを `and` でつないだものです。
-- プロミスキャスの部分は `promiscuous on` か上の `promiscuous off (...)` で、`tap` では出しません。
-- 動いている間は、警告を `[eth-bridge] warning: <文>`、監視の行（「[監視の行](#監視の行)」）を `[eth-bridge] interface <名前>: ...` として、1 秒に 1 回まで出します。止める直前に出た警告は、`stopping` の後、統計の前に出します。
-- 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、Windows でコンソールを閉じたとき）で、`stopping`、統計の 1 行（「[統計](#統計)」）、最後の誤りがあれば `last error: <文>`、`stopped` の順に出して終わります。止める順は、SIL Kit のハンドラーを外す、外の受信を止める（インターフェースを閉じる）、統計を出す、lifecycle を止める、です。
-
-終了コードです。participant の状態の扱いは Vector XL CAN Bridge と同じです（[bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」）。
-
-| 終了コード | 意味 |
+| Part | Text |
 |---|---|
-| 0 | 止める要求で止まった。`--list-interfaces`、`--help` が終わった |
-| 1 | 動いている間の失敗。外のインターフェースが動かなくなった（なくなった、読み取りの失敗）: `FAIL: <理由>`。SIL Kit の participant が自分で止まった、終わった、Running にならなかった |
-| 3 | 準備の失敗（この OS で使えないバックエンド、入っていない pcap のライブラリ、インターフェース、SIL Kit）: `FAIL setup: <理由>` |
-| 4 | 引数の誤り |
+| What may pass | `every frame, both ways`, `EtherType 0x88b5,0x0800 only, both ways`, `SIL Kit MAC 02:00:00:00:00:01 only, both ways`, or the last 2 joined with `and` |
+| Promiscuous mode | `promiscuous on`, or `promiscuous off (...)` as in the example above (not shown for `tap`) |
 
-プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。ブリッジが最初に送るより前に届いた分も数えます（その宛先からブリッジが後で送れば、届いていたとみなします）。最初に送るより前の宛先は 32 個まで覚え、それより多い分は覚えません（その分は、届いていたとはみなしません）。この PC の OS が同じインターフェースから送ったフレームもブリッジに届くので、宛先の数が多いことからは、インターフェースが宛先で絞らないとは言えないためです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
+### Output while running
+
+| Output | Form | When |
+|---|---|---|
+| Warning | `[eth-bridge] warning: <text>` | At most once a second |
+| Health line (see "[Health lines](#health-lines)") | `[eth-bridge] interface <name>: ...` | At most once a second |
+
+### Stopping
+
+A stop request is Ctrl+C, Ctrl+Break, SIGTERM or, on Windows, closing the console window. The bridge then prints `stopping`, the statistics line (see "[Statistics](#statistics)"), `last error: <text>` if there was an error, and `stopped`, in that order, and ends. Warnings raised just before the stop are printed after `stopping` and before the statistics.
+
+The stop sequence:
+
+| Order | What happens |
+|---|---|
+| 1 | The SIL Kit handler is removed. |
+| 2 | External receiving stops (the interface is closed). |
+| 3 | The statistics are printed. |
+| 4 | The lifecycle is stopped. |
+
+### Hint when promiscuous mode is off
+
+With promiscuous mode off (`packet`, `npcap`, `pcap`), if no frame addressed to a MAC address of the SIL Kit side has been received 5 seconds after the bridge sent its first frame out, the bridge prints a hint as a warning, once. Here, a MAC address of the SIL Kit side means the source address of a frame that the bridge sent out.
 
 ```
 no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
 ```
 
-## バックエンド
+The reason for the warning: without promiscuous mode, an interface passes on only frames to its own address and to group addresses, and the SIL Kit devices have addresses other than the interface's. The warning also appears when you do not expect responses (when you only send frames out), so the text is conditional.
 
-| `--backend` | OS | 相手 | 仕組み | 要る権限 |
+A frame also counts when its destination was not yet known as a MAC address of the SIL Kit side at the time the bridge received it (including frames received before the bridge's first transmission). The bridge remembers the destination of such a frame (not a group address), and if it later sends a frame with that address as the source, the frame to that address counts as received. The bridge remembers up to 32 such destinations and ignores the rest (those do not count as received). The limit exists because the bridge also receives the frames that this computer's OS sends from the same interface: many destination addresses therefore do not prove that the interface passes frames regardless of their destination.
+
+## Backends
+
+| `--backend` | OS | Peer | Mechanism | Privileges needed |
 |---|---|---|---|---|
-| `tap` | Linux | 同じ PC の OS のネットワークスタックと、その TAP デバイスを開くソフト（Wireshark など） | `/dev/net/tun` の TAP デバイス | 先に作った自分の持ち物のデバイスなら不要。`--tap-create` は `CAP_NET_ADMIN` |
-| `packet` | Linux | ネットワークのインターフェース（NIC、veth）の先の機器と、同じ PC で同じインターフェースを packet ソケットや pcap で開くソフト。同じ PC の OS のネットワークスタックは相手にできません（「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」） | インターフェースに結び付けた packet ソケット（`AF_PACKET`） | `CAP_NET_RAW` |
-| `pcap` | Linux | `packet` と同じ | この PC に入っている libpcap を実行時に読み込む | `CAP_NET_RAW` |
-| `npcap` | Windows | ネットワークのアダプター（NIC、Microsoft KM-TEST Loopback Adapter）の先の機器と、同じ PC で同じアダプターを Npcap で開くソフト | この PC に入っている Npcap（`wpcap.dll`）を実行時に読み込む | ふつうは不要。Npcap を「管理者だけ」の設定で入れた PC では管理者 |
+| `tap` | Linux | The network stack of the same computer's OS, and programs that open that TAP device (Wireshark and others) | A TAP device of `/dev/net/tun` | None for a device that you created beforehand and own. `CAP_NET_ADMIN` for `--tap-create` |
+| `packet` | Linux | Devices beyond a network interface (NIC, veth), and programs on the same computer that open the same interface with a packet socket or pcap | A packet socket (`AF_PACKET`) bound to the interface | `CAP_NET_RAW` |
+| `pcap` | Linux | Same as `packet` | Loads the libpcap installed on this computer at run time | `CAP_NET_RAW` |
+| `npcap` | Windows | Devices beyond a network adapter (NIC, Microsoft KM-TEST Loopback Adapter), and programs on the same computer that open the same adapter with Npcap | Loads the Npcap installed on this computer (`wpcap.dll`) at run time | Usually none. Administrator on a computer where Npcap was installed for administrators only |
 
-`tap` と `packet` は Linux のカーネルの口だけを使い、外のライブラリは要りません。`pcap` と `npcap` は、PC に入っているライブラリを実行時に読み込みます。vehicle-sil はそのライブラリを同梱せず、ビルドにも使いません（[dependencies.md](dependencies.md)）。Linux では、ふつうは `packet` を使います（入れるものがなく、チェックサムが未完成のフレームを見分けられます）。`pcap` は、同じ口を libpcap で開きたいときのものです。
+- `packet` cannot talk to the network stack of the same computer's OS (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)").
+- `tap` and `packet` use only Linux kernel APIs and need no external library.
+- `pcap` and `npcap` load the library installed on the computer at run time. vehicle-sil neither ships that library nor uses it in the build ([dependencies.md](dependencies.md)).
+- On Linux, use `packet` as a rule: it needs nothing installed and can detect frames with incomplete checksums. `pcap` is for when you want to open the same interface with libpcap.
 
-ブリッジは、インターフェースに IP アドレスを振ることも、上げることもしません。インターフェースが下がっていると、起動のときに 1 回警告し、上げ方を言います。
+The bridge neither sets an IP address on the interface nor brings it up. If the interface is down, the bridge warns once at startup and says how to bring it up.
 
 ```
 interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sudo ip link set vsil0 up'.
 ```
 
-`--list-interfaces` は、この PC のインターフェースを、イーサネットかどうかと上がっているかを付けて並べます。
+### Listing interfaces (`--list-interfaces`)
+
+`--list-interfaces` prints the interfaces of this computer, with whether each is Ethernet and whether it is up.
 
 ```
 interfaces of this computer (--backend packet and --backend pcap take the Ethernet ones; --backend tap takes a TAP device):
@@ -119,7 +264,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`--list-interfaces --backend pcap`（Windows では `--list-interfaces` だけでも、`--backend npcap` を付けても）は、pcap のライブラリが出すインターフェースを並べます。行の先頭が `--interface` に渡す名前で、空白のある名前は `"` で囲んであります。その後ろは、ライブラリが言う状態（`up` / `down`、`connected` / `disconnected`、`wireless`、`loopback`）と、括弧の中に説明と pcap の名前です。イーサネットでないもの（Linux の `any` など）も並びます。開くときに断ります。Npcap の一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ）ときは、最後に 1 行、Npcap の「管理者だけ」の入れ方と無効のアダプターのことを足します（`Npcap offers no network adapter here: ...`）。
+`--list-interfaces --backend pcap` prints the interfaces that the pcap library returns. On Windows, `--list-interfaces` alone gives the same output as with `--backend npcap`.
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -128,17 +273,26 @@ interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); -
   --interface \Device\NPF_Loopback  up, loopback  (Adapter for loopback traffic capture)
 ```
 
+| Part of the line | Content |
+|---|---|
+| First | The name to pass to `--interface` (a name with spaces is enclosed in `"`). |
+| Next | The state that the library returns (`up` / `down`, `connected` / `disconnected`, `wireless`, `loopback`). |
+| In parentheses | The description and the pcap name. |
+
+- Interfaces that are not Ethernet (`any` on Linux, for example) are listed too. The bridge refuses to open them.
+- If the Npcap list contains no network adapter (only `\Device\NPF_Loopback`), the bridge adds a last line about Npcap installed for administrators only and about disabled adapters (`Npcap offers no network adapter here: ...`).
+
 ### `tap`
 
-TAP デバイスは PC の中の仮想のイーサネットのインターフェースで、ブリッジはその線の向こう側になります。ブリッジが送ったフレームは、OS がそのインターフェースで受けたフレームになります。OS やほかのソフトがそのインターフェースに送ったフレームを、ブリッジが受けます。
+A TAP device is a virtual Ethernet interface inside the computer, and the bridge is at the other end of its wire. A frame that the bridge sends becomes a frame that the OS receives on that interface. Frames that the OS or other programs send on that interface are received by the bridge.
 
-- 既定では、すでにあるデバイスにつなぎます。自分の持ち物として作ってあれば（`ip tuntap add ... user $USER`）、権限は要りません。
-- `--tap-create` を付けると、ブリッジがデバイスを作ります（`CAP_NET_ADMIN` が要ります）。作ったデバイスは下がった状態で、ブリッジが止まるとなくなります。上げるのは使う人です（上がると監視の行が `link up` と言います）。
-- 絞り込みの指定は要りません（既定で全部通します）。フレームは PC の中にとどまるからです。その TAP デバイスを OS のブリッジで NIC につないだ場合に外へ出るフレームは、つないだ人の責任です。
-- 1 つの TAP デバイスにつなげるソフトは 1 つです。
-- OS が TAP デバイスへ渡す前に捨てたフレームは、ブリッジからは見えません（`ext_overruns` は増えません）。OS の側のインターフェースの統計（`ip -s link show <名前>`）で見ます。
+- By default, the bridge connects to an existing device. If you created it with yourself as owner (`ip tuntap add ... user $USER`), no privileges are needed.
+- With `--tap-create`, the bridge creates the device (needs `CAP_NET_ADMIN`). The device it creates is down, and it disappears when the bridge stops. Bringing it up is up to you (once it is up, the health line shows `link up`).
+- No filter is needed (by default every frame passes), because the frames stay inside the computer. If you connect that TAP device to a NIC with an OS bridge, whoever connected it is responsible for the frames that leave the computer.
+- Only one program can connect to a TAP device.
+- Frames that the OS drops before handing them to the TAP device are invisible to the bridge (`ext_overruns` does not increase). Check them in the OS interface statistics (`ip -s link show <name>`).
 
-開けないときの文です（終了コード 3）。
+The messages when the device cannot be opened (exit code 3):
 
 ```
 no TAP device 'vsil0'. Make it first: 'sudo ip tuntap add dev vsil0 mode tap user $USER' and 'sudo ip link set vsil0 up'; or let the bridge make it while it runs with --tap-create (needs CAP_NET_ADMIN). Interfaces here: lo, enp3s0.
@@ -153,36 +307,19 @@ cannot open /dev/net/tun: No such file or directory. The kernel's TUN/TAP driver
 
 ### `packet`
 
-インターフェースに結び付けた packet ソケットで、フレームをそのまま送り受けします。
+The bridge sends and receives frames unchanged through a packet socket bound to the interface.
 
-- `CAP_NET_RAW` が要ります。実行ファイルに 1 回付けるか（`sudo setcap cap_net_raw+ep <実行ファイル>`）、root で動かします。誤りの文は、この実行ファイルのパスを入れたコマンドを言います。
-- 実のネットワークに出うるので、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。
-- 受けるのは、インターフェースに届いたフレームと、同じ PC の OS やほかのソフトがそのインターフェースに送ったフレームです。ブリッジ自身が送ったフレームは受けません。
-- ブリッジが送ったフレームは、線の先へ出るだけです。届くのは、線の先の機器と、同じインターフェースを packet ソケットや pcap で開いているソフトです。同じ PC の OS のネットワークスタック（普通のソケットを使うソフト）には届きません。
-- 受けたフレームの外側の VLAN タグは、カーネルがフレームのバイト列から外して、別の情報として渡します。ブリッジはそれを元の位置に戻すので、タグつきのフレームはタグを保ったまま両方向に通ります。
-- `--promiscuous` は、ブリッジが動いている間だけ、自分宛てでないフレームも受けます（ソケットの設定で、止まると元に戻ります）。付けないと、実の NIC は自分の MAC アドレス宛てとグループのアドレス宛てのフレームしか渡しません。SIL Kit の機器宛てのユニキャストを外から受けるには、付けます。
-- イーサネットでないインターフェース（`lo` など）は開きません。
-- OS がソケットへ渡す前に捨てたフレームは `ext_overruns` に数えます。
-- 受信のオフロード（GRO、LRO）が効いていると、最大長より長いフレームが見えることがあります。そのフレームは `oversize` として捨てます。困るときは、インターフェースのオフロードを切ります（`sudo ethtool -K <名前> gro off lro off`）。
+- Needs `CAP_NET_RAW`. Grant it to the executable once (`sudo setcap cap_net_raw+ep <executable>`), or run as root. The error message shows the command with the path of this executable filled in.
+- Frames can reach the physical network, so you must say what may pass (one of `--ethertype`, `--src-mac` or `--all-frames`).
+- The bridge receives the frames that the interface receives, and the frames that the OS or other programs on the same computer send on that interface. It does not receive the frames it sends itself.
+- Frames that the bridge sends only go out over the wire. They are received by the devices beyond the wire and by programs that have the same interface open with a packet socket or pcap. The network stack of the same computer's OS (programs that use ordinary sockets) does not receive them.
+- The kernel removes the outer VLAN tag from the bytes of a received frame and passes it separately. The bridge puts it back in its original position, so tagged frames pass in both directions with their tags.
+- `--promiscuous` makes the bridge also receive frames not addressed to the interface, for as long as it runs (a socket setting; it is undone when the bridge stops). Without it, a physical NIC passes on only frames to its own MAC address and to group addresses. Give it to receive unicast frames that outside devices send to SIL Kit devices.
+- The bridge does not open interfaces that are not Ethernet (`lo`, for example).
+- Frames that the OS drops before handing them to the socket are counted in `ext_overruns`.
+- With receive offload (GRO, LRO) enabled, frames longer than the maximum length can appear. The bridge drops them as `oversize`. If this is a problem, turn off the offload on the interface (`sudo ethtool -K <name> gro off lro off`).
 
-#### 同じ PC の OS のネットワークスタックが相手のとき
-
-同じ PC のソフトが、OS の普通のソケット（UDP、TCP）で SIL Kit の機器と話すなら、`tap` を使います。`packet` では、次の 3 つが起きます。
-
-- **返事が届きません。** ソフトが送ったフレームはブリッジが受けて SIL Kit へ渡しますが、SIL Kit からの返事はブリッジが線の先へ送るだけで、同じ PC の OS のスタックには上がりません。片方向だけ通り、統計は両方向とも増えます。veth の対の片方をブリッジが開き、もう片方に IP アドレスを付けて使う形なら、両方向に届きます。
-- **チェックサムが未完成のフレームが SIL Kit へ入ります。** OS は、送る UDP と TCP のチェックサムの計算を NIC に任せます（送信のチェックサムのオフロード）。packet ソケットは NIC が計算する前のフレームを見るので、チェックサムの欄は正しい値ではありません。veth の対の向こうの端から OS が送ったフレームも同じです（計算する NIC がありません）。ブリッジはこのフレームを捨てず、チェックサムを埋めることもせず、そのまま渡して `ext_checksum_incomplete` に数え、最初の 1 回だけ警告します。チェックサムを確かめる受け手（自分の TCP/IP スタックを持つ ECU）は、このフレームを黙って捨てます。直すには、フレームを送る側のインターフェース（veth なら向こうの端）で送信のオフロードを切ります（`sudo ethtool -K <名前> tx off`）。
-- **TCP の長いフレームを `oversize` で捨てます。** OS は、TCP のデータを分けるのも NIC に任せ（送信の分割のオフロード、TSO、GSO）、packet ソケットには分ける前の、最大長より長いフレームが見えます。上と同じ `tx off` で、分けた後の長さになります。
-
-警告の文です。1 つ目はブリッジのインターフェース自身から OS が送ったフレーム、2 つ目はインターフェースに届いたフレーム（veth の向こうの端から）のときです。
-
-```
-interface 'enp3s0': a frame this computer's OS sent on it has no TCP/UDP checksum yet: the OS leaves the checksum to the network adapter (checksum offload), and the bridge sees the frame before that. The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off with 'sudo ethtool -K enp3s0 tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
-interface 'va': a frame received on it has no TCP/UDP checksum: this computer's OS sent it through a virtual interface (the other end of a veth pair) and left the checksum to a network adapter that is not there (checksum offload). The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off on the interface the frames are sent from (for a veth pair the other end, not 'va'): 'sudo ethtool -K <that interface> tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
-```
-
-`tap` には、チェックサムと長さの 2 つは起きません（TAP デバイスから読むフレームは、チェックサムが入っていて、分けた後の長さです）。
-
-開けないときの文です（終了コード 3）。
+The messages when the interface cannot be opened (exit code 3):
 
 ```
 no interface 'eth9' for --backend packet. Interfaces here: lo, enp3s0, vsil0 (run --list-interfaces).
@@ -190,44 +327,126 @@ interface 'lo' is not Ethernet (link type 772): --backend packet carries Etherne
 cannot open a packet socket on 'enp3s0': Operation not permitted. A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.
 ```
 
-### `npcap` と `pcap`
+#### Talking to the network stack of the same computer
 
-同じコードが、Windows では Npcap の `wpcap.dll` を、Linux では libpcap を、実行時に読み込んで使います。どちらも vehicle-sil には入っていません。使う人が入れます。
+If a program on the same computer talks to the SIL Kit devices through ordinary OS sockets (UDP, TCP), use `tap`. With `packet`, 3 things happen:
 
-- **Windows（`npcap`）**: [Npcap](https://npcap.com) を入れます。無料版には使える範囲の制限があります。入れる前に Npcap のライセンスを読んでください（vehicle-sil はその内容を解釈しません）。
-- **Linux（`pcap`）**: ディストリビューションの libpcap を入れます（Debian と Ubuntu は `libpcap0.8`、Fedora は `libpcap`）。`CAP_NET_RAW` が要るのは `packet` と同じです。
+| What happens | Statistics | Fix |
+|---|---|---|
+| The OS stack does not receive the responses from SIL Kit. | The counts of both directions increase. | Use `tap`, or use a veth pair. |
+| Frames with incomplete checksums enter SIL Kit. | `ext_checksum_incomplete` | Run `sudo ethtool -K <name> tx off` on the interface that sends the frames. |
+| Long TCP frames are dropped. | `oversize` | With the same `tx off`, the bridge sees the frames after segmentation. |
 
-ライブラリを読み込む場所は決まっていて、変える引数、環境変数、ファイルはありません。
+**Why the responses are not received**: the bridge receives the frames that the program sends and passes them to SIL Kit, but it only sends the responses from SIL Kit out over the wire, so they never reach the OS stack of the same computer. Only one direction passes. If the bridge opens one end of a veth pair and the program uses the other end with an IP address on it, both directions pass.
 
-- Windows: `<システムのディレクトリ>\Npcap\wpcap.dll`（ふつうは `C:\Windows\System32\Npcap\wpcap.dll`）を、絶対パスで読み込みます。`wpcap.dll` が使う DLL（`Packet.dll`）は、`wpcap.dll` と同じディレクトリ、次にシステムのディレクトリからだけ探します。`wpcap.dll` もそれが使う DLL も、カレントディレクトリ、`PATH`、実行ファイルのあるディレクトリからは読みません。人から受け取ったフォルダに `wpcap.dll` や `Packet.dll` が入っていても、それを読み込まないためです（システムのディレクトリに書けるのは管理者だけです）。この 2 か所で見つからない DLL があると、Npcap が入っていないときと同じ文で断ります。`System32` の直下の `wpcap.dll`（WinPcap と互換の入れ方）は使いません。
-- Linux: `libpcap.so.1`、なければ `libpcap.so.0.8` を、システムのローダーが探すとおりに読み込みます（ほかの共有ライブラリと同じ扱いです）。
-- 試験は偽のライブラリを読み込みますが、そのための口は、試験用にビルドした別の実行ファイルにだけあります（`tests/ethernet_bridge/fake_pcap_library.cpp`。入れる実行ファイルは `bridges/ethernet/app/pcap_library.cpp` をリンクし、場所は空 = 上の決まった場所です）。ライブラリの口（`eth_link::PcapLinkOptions::library`）は、呼ぶプログラムが決める引数です。
+**Why the checksums are incomplete**: the OS offloads the checksum calculation of outgoing UDP and TCP to the NIC (transmit checksum offload). A packet socket sees the frame before the NIC calculates it, so the checksum field does not hold the correct value. The same applies to frames that the OS sends from the other end of a veth pair (there is no NIC to calculate it). The bridge neither drops these frames nor calculates the checksum: it passes them on as they are, counts them in `ext_checksum_incomplete` and warns the first time only. A receiver that verifies checksums (an ECU with its own TCP/IP stack) silently drops these frames. Turn off the offload on the interface that sends the frames (for a veth pair, the other end).
 
-`--interface` に書ける名前です。
+**Why long frames appear**: the OS also offloads the segmentation of TCP data to the NIC (transmit segmentation offload, TSO, GSO). The packet socket sees the frame before segmentation, longer than the maximum length.
 
-- pcap の名前（Linux はインターフェースの名前そのもの、Windows は `\Device\NPF_{...}`）。
-- Windows では、ネットワーク接続の名前（「Ethernet 2」。`--list-interfaces` の行の先頭）と、アダプターの識別子（`{4D36E972-...}`。波括弧はあってもなくても、大文字でも小文字でもよい）も書けます。
-- 接続の名前が 2 つのアダプターに当たるときは誤りで、pcap の名前を挙げます。
-- 接続の名前は、UTF-8 の文字列として比べます（引数は UTF-8 で読みます）。一覧も誤りの文も、コンソールにはコードページによらず読める形で出し、ファイルとパイプには UTF-8 で出します（[docs/bridges.md](bridges.md) の「出力の文字コード」）。`chcp` は要りません。Npcap が返す文（デバイスの説明、誤りの文）は、Windows の ANSI コードページの文として読んで UTF-8 に直します。日本語の名前が日本語の Windows で表示され、一致するかは、未確認です。
+The checksum warning has 2 texts. The first is for frames that the OS sent from the bridge's own interface; the second is for frames that the interface received (from the other end of a veth pair).
 
-動きです。
+```
+interface 'enp3s0': a frame this computer's OS sent on it has no TCP/UDP checksum yet: the OS leaves the checksum to the network adapter (checksum offload), and the bridge sees the frame before that. The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off with 'sudo ethtool -K enp3s0 tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
+interface 'va': a frame received on it has no TCP/UDP checksum: this computer's OS sent it through a virtual interface (the other end of a veth pair) and left the checksum to a network adapter that is not there (checksum offload). The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off on the interface the frames are sent from (for a veth pair the other end, not 'va'): 'sudo ethtool -K <that interface> tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
+```
 
-- 開くときに、受けたフレームをすぐ渡す設定（immediate mode）と、ブロックしない読み取りを必ず使います。ライブラリがこの設定の関数を持たないほど古ければ、開かずに断ります。
-- 受信は、ライブラリの「フレームがある」という合図（Windows はイベント、Linux は記述子）を待って読みます。合図がなくても、100 ms ごとに 1 回は読みます。合図が立たないライブラリでも、フレームは遅れて届き、届かないままにはなりません。合図では 1 つも読めず、この見回りでだけフレームが見つかることが 3 回あると、1 回警告します（下の文）。
-- 実のネットワークに出うるので、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。
-- `--promiscuous` は、ライブラリにプロミスキャスを頼みます。Linux の `pcap` は、インターフェースが受け付けなければ、1 回警告して続けます。Windows の `npcap` は、ライブラリが警告を伝えない開き方をするので、この警告は出ません。プロミスキャスを受け付けないアダプターが `npcap` で開けるのか、開けない誤りになるのかは、**未確認**です。`--promiscuous` を付けて開けなかったときの文は、付けずに試すように言います（下の文）。
-- イーサネットでないインターフェースは開きません。
-- ライブラリが捨てたフレーム（読むのが間に合わなかった分）は `ext_overruns` に数えます。
-- **チェックサムが未完成のフレームは見分けられません。** pcap のライブラリは、その印を渡さないからです。同じ PC の OS が送ったフレーム（「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」）は、チェックサムの欄が正しくないまま SIL Kit へ渡り、`ext_checksum_incomplete` は 0 のままで、警告も出ません。Linux でこれを知りたいときは `packet` を使います。
-- Linux の `pcap`: 受けたフレームの VLAN タグは、libpcap が元の位置に戻して渡します。ブリッジが送ったフレームはブリッジに戻りません。リンクの上下は監視の行に出て、インターフェースがなくなると `FAIL` で終わります（`packet` と同じ）。インターフェースが下がっていると、開けません（`packet` は警告だけで開きます）。
-- Windows の `npcap`: リンクの上下は見ません（監視の行にリンクの状態は出ません）。アダプターがなくなったことは、ライブラリの読み取りが失敗したときにだけわかります。
-- Windows の `npcap`: Npcap は、アダプターを開いたソフトに、そのソフト自身が送ったフレームも渡します。ブリッジは、それを渡さない指定（`pcap_open()` の `PCAP_OPENFLAG_NOCAPTURE_LOCAL`）でアダプターを開くので、ブリッジが送ったフレームはブリッジに戻りません（`ExternalLink::echoes_own_transmissions()` は false）。同じアダプターを開いているほかのソフトが送ったフレームは届きます。`pcap_open` のない `wpcap.dll` は、読み込むときに断ります（下の文）。
-- Windows の `npcap`: 無効にしたアダプターは、Npcap の一覧に出ません。`--interface` に書くと、「下がっている」ではなく、「ない」の誤り（`no interface ...`）になります。この誤りの文は、無効のアダプターが一覧に出ないことを言います。
-- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、`--list-interfaces` の一覧の最後の行と「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
-- Windows の `npcap`: VLAN タグつきのフレームが通るかは、アダプターのドライバーとその設定で決まります（ブリッジも Npcap も、タグを変えません）。ドライバーが、既定の設定では、VLAN タグつきのフレームを渡さないことがあります。ドライバーの優先度と VLAN の処理を切ると届きますが、今度は、ブリッジが送ったフレームから外側のタグが 1 つ外れて出ることがあります。そのときも送信は成功を返し、統計にも警告にも出ません。VLAN タグを使う前に、そのアダプターで両方向を確かめてください。
-- 無線のアダプター（ライブラリが `wireless` と言うもの）では、起動のときに 1 回警告します。
+Neither the checksum problem nor the length problem occurs with `tap`, because frames read from a TAP device carry their checksums and have the length after segmentation.
 
-警告の文です。
+### `npcap` and `pcap`
+
+The same code loads Npcap's `wpcap.dll` on Windows and libpcap on Linux at run time. Neither is included in vehicle-sil; install them yourself.
+
+| OS | `--backend` | What to install |
+|---|---|---|
+| Windows | `npcap` | [Npcap](https://npcap.com) |
+| Linux | `pcap` | Your distribution's libpcap (`libpcap0.8` on Debian and Ubuntu, `libpcap` on Fedora) |
+
+- The free edition of Npcap has limits on where you can use it. Read the Npcap license before you install it (vehicle-sil does not interpret it).
+- On Linux, `pcap` needs `CAP_NET_RAW`, the same as `packet`.
+
+#### Where the library is loaded from
+
+The location of the library is fixed. No argument, environment variable or file changes it.
+
+| OS | What is loaded |
+|---|---|
+| Windows | `<system directory>\Npcap\wpcap.dll` (usually `C:\Windows\System32\Npcap\wpcap.dll`), by absolute path. |
+| Linux | `libpcap.so.1`, or `libpcap.so.0.8` if that is missing, as the system loader finds it (the same as any other shared library). |
+
+How DLLs are found on Windows:
+
+- The DLL that `wpcap.dll` uses (`Packet.dll`) is searched for only in the directory of `wpcap.dll`, then in the system directory.
+- Neither `wpcap.dll` nor the DLLs it uses are loaded from the current directory, `PATH` or the directory of the executable. A `wpcap.dll` or `Packet.dll` in a folder you received from someone is therefore never loaded (only administrators can write to the system directory).
+- If a DLL is not found in these 2 places, the bridge refuses with the same message as when Npcap is not installed.
+- A `wpcap.dll` directly in `System32` (an installation compatible with WinPcap) is not used.
+
+The tests load a fake library, but the means to do so exists only in a separate executable built for the tests (`tests/ethernet_bridge/fake_pcap_library.cpp`). The installed executable links `bridges/ethernet/app/pcap_library.cpp`, which leaves the location empty, meaning the fixed location above. The library location (`eth_link::PcapLinkOptions::library`) is an argument that the calling program decides.
+
+#### Names accepted by `--interface`
+
+| Name | Example | OS |
+|---|---|---|
+| pcap name | On Linux, the interface name itself; on Windows, `\Device\NPF_{...}` | Linux, Windows |
+| Network connection name (the start of a `--list-interfaces` line) | `Ethernet 2` | Windows |
+| Adapter identifier | `{4D36E972-...}` | Windows |
+
+- The adapter identifier can be given with or without braces, in upper or lower case.
+- If a connection name matches 2 adapters, the bridge reports an error and shows their pcap names.
+- Connection names are compared as UTF-8 strings (the arguments are read as UTF-8).
+- Both the list and the error messages are written in a form that is readable in a console whatever the code page, and as UTF-8 to files and pipes (see "Output encoding" in [bridges.md](bridges.md#output-encoding)). You do not need `chcp`.
+- Text that Npcap returns (device descriptions, error texts) is read in the Windows ANSI code page and converted to UTF-8.
+- Whether Japanese names are shown and matched on Japanese Windows is not verified.
+
+#### Behavior common to `npcap` and `pcap`
+
+- When opening, the bridge always uses immediate delivery of received frames (immediate mode) and non-blocking reads. If the library is so old that it lacks the functions for these settings, the bridge refuses to open it.
+- To receive, the bridge waits for the library's notification that frames are there (an event on Windows, a descriptor on Linux), then reads. It also reads at least once every 100 ms without a notification. With a library that gives no notifications, frames arrive late, but they do arrive.
+- If, 3 times, frames are found only by the read every 100 ms and not through a notification, the bridge warns once (see the warning texts below).
+- Frames can reach the physical network, so you must say what may pass (one of `--ethertype`, `--src-mac` or `--all-frames`).
+- The bridge does not open interfaces that are not Ethernet.
+- Frames that the library drops (because they were not read in time) are counted in `ext_overruns`.
+- For a wireless adapter (one that the library reports as `wireless`), the bridge warns once at startup.
+
+`--promiscuous` asks the library for promiscuous mode.
+
+| Backend | If the interface does not accept it |
+|---|---|
+| `pcap` on Linux | The bridge warns once and continues. |
+| `npcap` on Windows | There is no such warning: with the way the bridge opens the adapter, the library does not pass warnings on. |
+
+Whether `npcap` can open an adapter that does not accept promiscuous mode, or fails to open it, is **not verified**. If opening with `--promiscuous` fails, the message tells you to try without it (see the messages below).
+
+**Frames with incomplete checksums cannot be told apart.** The pcap library does not pass that flag on. Frames sent by the OS of the same computer (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)") reach SIL Kit with an incorrect checksum field, `ext_checksum_incomplete` stays 0, and no warning appears. On Linux, use `packet` if you need to know.
+
+#### Behavior of `pcap` on Linux only
+
+- libpcap puts the VLAN tags of received frames back in their original position.
+- Frames that the bridge sends do not come back to the bridge.
+- The link going up and down appears in the health line, and if the interface disappears, the bridge ends with `FAIL` (the same as `packet`).
+- An interface that is down cannot be opened (`packet` opens it with only a warning).
+
+#### Behavior of `npcap` on Windows only
+
+| Item | Behavior |
+|---|---|
+| Link state | The bridge does not watch the link going up and down (the health line shows no link state). |
+| When the adapter disappears | Detected only when a read from the library fails. |
+| Frames the bridge sends | Do not come back to the bridge (`ExternalLink::echoes_own_transmissions()` is false). |
+| Disabled adapters | Not in the Npcap list, so giving one to `--interface` gives the "no interface" error (`no interface ...`). |
+| Npcap installed for administrators only, used by a user who is not an administrator | Npcap shows an elevation prompt, and the bridge waits until the prompt is closed (`--list-interfaces` too). |
+| Frames with VLAN tags | Whether they pass depends on the adapter driver and its settings (neither the bridge nor Npcap changes tags). |
+
+Frames the bridge sends: Npcap passes a program that has an adapter open the frames that the program itself sent. The bridge opens the adapter with the option that stops this (`PCAP_OPENFLAG_NOCAPTURE_LOCAL` of `pcap_open()`). It still receives frames sent by other programs that have the same adapter open. A `wpcap.dll` without `pcap_open` is refused when it is loaded (see the messages below).
+
+Disabled adapters: the error is "no interface", not "down". The error message says that disabled adapters are not in the list.
+
+Npcap installed for administrators only: if you close the elevation prompt, the list contains only `\Device\NPF_Loopback`, and the adapter gives the "no interface" error. Npcap does not report missing privileges, so when the list contains no network adapter, the bridge names this case in the last line of the `--list-interfaces` output and in the "no interface" error message (see the messages below). Run the bridge from a console started as administrator, or install Npcap again without that limit.
+
+VLAN tags: with its default settings, a driver may not pass frames with VLAN tags. Disabling the driver's priority and VLAN handling makes them arrive, but then the outer tag may be stripped from frames that the bridge sends. Transmitting still reports success, and neither the statistics nor a warning shows it. Before you use VLAN tags, verify both directions on that adapter.
+
+#### Warning and error messages
+
+The warning texts:
 
 ```
 interface 'Wi-Fi' is a wireless adapter: wireless adapters and access points often pass only frames from and to the adapter's own MAC address, and the devices of the SIL Kit side have other addresses. If frames do not pass, use a wired adapter.
@@ -237,7 +456,7 @@ Npcap does not tell when frames arrive on interface 'Ethernet 2': the bridge fin
 libpcap does not tell when frames arrive on interface 'va': the bridge finds them by looking every 100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, update libpcap, or use --backend packet.
 ```
 
-ライブラリが使えないときの文です（終了コード 3。SIL Kit に接続する前に出ます）。
+The messages when the library cannot be used (exit code 3; printed before the bridge connects to SIL Kit):
 
 ```
 Npcap is not installed: cannot load C:\Windows\System32\Npcap\wpcap.dll (Windows error 126). Npcap is not part of vehicle-sil: install it yourself from https://npcap.com (see its licence for the limits of the free edition), then run --list-interfaces.
@@ -245,12 +464,9 @@ libpcap is not installed: cannot load libpcap.so.1 or libpcap.so.0.8 (libpcap.so
 C:\Windows\System32\Npcap\wpcap.dll (WinPcap version 4.1.3) lacks the function pcap_set_immediate_mode, which the bridge needs: it is too old, or it is not Npcap. Install a current one. Npcap is not part of vehicle-sil: install it yourself from https://npcap.com (see its licence for the limits of the free edition), then run --list-interfaces.
 ```
 
-3 つ目は、足りない関数が 1 つのときの形です。`pcap_open` が足りないときも、関数の名前が変わるだけで同じ文です。
+The third shows the form for one missing function. If `pcap_open` is missing, the text is the same with only the function name changed.
 
-開けないときの文です（終了コード 3）。括弧の中の `result` はライブラリの関数の結果で、その後ろはライブラリの文です。Npcap の開き方（`pcap_open()`）は結果の番号を返さないので、`npcap` の文にあるのはライブラリの文だけです（下の例の `pcap_open:` の後ろは、ライブラリの文が入る場所を示す作り物です）。
-
-- `npcap` の「ない」の誤りには、無効のアダプターが一覧に出ないことを必ず足します。一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ、または空）ときは、「管理者だけ」の入れ方のことも足します（2 つ目の例）。
-- `npcap` の「開けない」の誤りには、`--promiscuous` を付けて開いたときだけ、付けずに試すことを足します（最後の例）。
+The messages when the interface cannot be opened (exit code 3):
 
 ```
 no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: "Ethernet 2", Ethernet (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows.
@@ -263,16 +479,27 @@ cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). R
 cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter. The adapter may not accept promiscuous mode: try without --promiscuous.
 ```
 
-#### Windows で PC の中だけでつなぐ
+- In parentheses, `result` is the result of the library function, and the text after it comes from the library.
+- The Npcap way of opening (`pcap_open()`) returns no result number, so an `npcap` message contains only the library's text. In the example above, the text after `pcap_open:` is a placeholder for the library's text.
+- The `npcap` "no interface" error always adds that disabled adapters are not in the list.
+- If the list contains no network adapter (only `\Device\NPF_Loopback`, or nothing), the error also mentions an installation for administrators only (the second example).
+- The `npcap` "cannot open" error adds the advice to try without `--promiscuous` only when the adapter was opened with `--promiscuous` (the last example).
 
-Windows には TAP デバイスに当たるバックエンドがありません。PC の中のソフトどうしをつなぐには、Windows に付いている仮想のアダプター「Microsoft KM-TEST Loopback Adapter」を入れ、ブリッジと相手のソフトの両方が、そのアダプターを Npcap で開きます。同じアダプターを Wireshark で開けば、SIL Kit から出たフレームを見られます。同じアダプターを Npcap で開いたソフトどうしでは、フレームは両方向に届き、VLAN タグも保たれます。OS の普通のソケットを使うソフトに届くかは、**未確認**です。
+#### Connecting within one computer on Windows
 
-### 動いている間にインターフェースが変わったとき
+Windows has no backend that corresponds to a TAP device. To connect programs within one computer, install the virtual adapter that comes with Windows, "Microsoft KM-TEST Loopback Adapter", and have both the bridge and the other program open that adapter with Npcap. If you open the same adapter in Wireshark, you can see the frames that come out of SIL Kit. Between programs that open the same adapter with Npcap, frames pass in both directions and VLAN tags are kept. Whether programs that use ordinary OS sockets can receive them is **not verified**.
 
-- リンクが下がった、上がった（`tap`、`packet`、`pcap`）: 監視の行が `link down`、`link up` と言い、ブリッジは動き続けます。下がっている間に送って OS が断ったフレームは `ext_tx_failures` に数えます。
-- インターフェースがなくなった（消した、名前を変えた）、読み取りが失敗した: `FAIL: interface 'vsil0' is gone (removed or renamed while the bridge ran)`、`FAIL: reading from 'Ethernet 2' failed: <ライブラリの文>` などと言い、統計を出して終了コード 1 で終わります。
+### When the interface state changes while running
 
-### この OS で使えないバックエンド
+| What happened | Backend | What the bridge does |
+|---|---|---|
+| The link went down or up | `tap`, `packet`, `pcap` | Shows `link down` or `link up` in the health line and keeps running. |
+| The interface disappeared (deleted or renamed), or reading failed | All | Prints a `FAIL:` line and the statistics, and exits with code 1. |
+
+- Frames sent while the link is down and rejected by the OS are counted in `ext_tx_failures`.
+- `FAIL:` lines look like `FAIL: interface 'vsil0' is gone (removed or renamed while the bridge ran)` and `FAIL: reading from 'Ethernet 2' failed: <library text>`.
+
+### Backends not available on this OS
 
 ```
 --backend npcap is for Windows. On Linux use --backend packet or --backend pcap (a network interface), or --backend tap (a TAP device).
@@ -280,139 +507,160 @@ Windows には TAP デバイスに当たるバックエンドがありません�
 --backend tap cannot be used here: vehicle_sil_ethernet_bridge has no backend for this operating system (tap, packet and pcap are for Linux; npcap is for Windows). Run the bridge on a Linux or Windows computer that reaches the same SIL Kit registry.
 ```
 
-3 つ目は Linux でも Windows でもない OS の文で、そこでは `--list-interfaces` も同じ理由（`there is no interface to list here: ...`）で、終了コード 3 で終わります。
+The third is the message on an OS that is neither Linux nor Windows. There, `--list-interfaces` also exits with code 3 for the same reason (`there is no interface to list here: ...`).
 
-## 外のインターフェースの口（`ExternalLink`）
+## Statistics
 
-`vehicle_sil::eth_link::ExternalLink`（`vehicle_sil/eth_link/external_link.hpp`）は、外のイーサネットのインターフェース 1 つです。フレームはバイト列で、宛先 MAC アドレスから payload の終わりまでです。FCS は含みません。
+`format_statistics()` puts all the counts on one line. This page defines the key names and their order, and the tests parse them.
 
-| 関数 | 契約 |
+```
+stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
+```
+
+| Key | Counts | Problem |
+|---|---|---|
+| `silkit_to_ext` | Frames sent from SIL Kit to the outside | — |
+| `ext_to_silkit` | Frames passed from the outside to SIL Kit (where `SendFrame()` returned) | — |
+| `own_tx_dropped` | Frames the bridge sent that came back from the external link (only with an external link that echoes its own transmissions) | — |
+| `loop_suspected` | Frames whose source address is on both sides | Yes |
+| `mac_unguarded` | Frames that did not fit in the MAC table and were passed without the loop check | Yes |
+| `filtered_to_ext`, `filtered_from_ext` | Frames that the filter did not pass (per direction) | — |
+| `oversize` | Frames longer than the maximum length (both directions) | Yes |
+| `malformed` | Frames shorter than the Ethernet header (both directions) | Yes |
+| `ext_overruns` | Frames that the OS dropped before they were read | Yes |
+| `ext_queue_full` | Frames lost because the transmit queue of the external link was full | Yes |
+| `ext_tx_failures` | Other transmit failures on the external link (including exceptions thrown by `transmit()`) | Yes |
+| `silkit_tx_failures` | Frames for which `SendFrame()` threw an exception, or that SIL Kit confirmed it could not send (`ControllerInactive`, `LinkDown`, `Dropped`, `InvalidFrameFormat`) | Yes |
+| `ext_checksum_incomplete` | Frames passed from the outside to SIL Kit with an incomplete UDP or TCP checksum | Yes |
+
+- When a key marked Yes in the Problem column increases, a health line appears (`problems_grew()`). The forwarded counts, the filter counts and `own_tx_dropped` are not problems.
+- Frames in `silkit_tx_failures` that SIL Kit confirmed it could not send are also counted in `ext_to_silkit`, at the time they were passed on.
+- `ext_checksum_incomplete` counts frames sent by the OS of the same computer, with `packet` (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)"). They are also counted in `ext_to_silkit`.
+
+## Health lines
+
+`format_health_change(before, now, interface, problems_before)` turns the change between 2 snapshots (`EthernetBridge::health()`) that the caller took into one line. If nothing changed, it makes no line.
+
+| Case | Line |
 |---|---|
-| `start(handler)` | インターフェースを開き、受信スレッドから `handler` に `LinkEvent` を渡し始める。開けなければ `LinkError` を投げる |
-| `stop()` | 渡すのをやめる。戻る前に、前の知らせの後で OS が捨てたフレームの数を、呼んだスレッドから `Overrun` で知らせてよい。戻った時点で、ハンドラーは動いていない。始めていなくても呼べる |
-| `transmit(frame)` | フレームを 1 つ送る。結果は `Ok`、`QueueFull`（送信のキューがいっぱいで送らなかった）、`Failed`（ほかの誤り。理由は `last_error()`）。フレームは呼び出しの間だけ読む。ブロックしない |
-| `echoes_own_transmissions()` | `transmit()` で送ったフレームが、受けたフレームとしてハンドラーに戻るか。口の寿命の間は変わらない。ブリッジは `start()` のときに読み、輪の防ぎ方を変える（下の「輪の防ぎ方」） |
-| `describe()` | 起動のときに出す 1 行の部品。種類、名前、実か仮想か（例: `tap 'vsil0' (TAP device in this computer)`、`packet 'enp3s0' (network interface)`） |
+| A problem count increased or the link state changed | `interface enp3s0: link down; since the last report: ext_tx_failures +12` |
+| Nothing increased, but the previous snapshot had increases (`problems_before`) | `interface enp3s0: link up; no new problems since the last report` |
 
-スレッド: ハンドラーは一度に 1 つのスレッドからだけ呼ばれます（受信スレッドと、`stop()` を呼んだスレッド）。`transmit()` はどのスレッドからでも、ハンドラーと並行にも呼べます。受信の時刻は渡しません。OS の時計はシミュレーションの時計と別のものだからです。
+- A change from an unknown state to `link up` is the first report of a healthy link, so it makes no line.
+- The link state is one of `link up`, `link down` and `link state unknown`.
 
-`transmit()` は、ブロックせず、例外を投げず、受信スレッドを待ちません。また、口がハンドラーを呼んでいる間、`transmit()` が取る錠を持ってはいけません。ブリッジは、SIL Kit がフレームのハンドラーの錠を持ったまま呼ぶ受信スレッドで `transmit()` を呼び、口のハンドラーの中で呼ぶ `SendFrame()` は同じ錠を取るからです（[dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」）。口の錠をハンドラーの間も持つと、2 つのスレッドが互いを待って止まります。ブリッジは、契約に反して `transmit()` が投げた例外を捕まえて `ext_tx_failures` に数え、続けます。
+## Filter (`FrameFilter`)
 
-`LinkEvent` の種類です。
+The same rules apply in both directions (`vehicle_sil/eth_link/frame_filter.hpp`).
 
-| 種類 | 意味 |
-|---|---|
-| `Frame` | 受けたフレーム（`frame`。ハンドラーの呼び出しの間だけ有効）。`checksum_incomplete` が真なら、UDP や TCP のチェックサムが未完成のフレーム（同じ PC の OS が送り、計算を NIC に任せたもの）。口はそのまま渡し、最初の 1 つの前に `Warning` を 1 回出す。ブリッジは渡して `ext_checksum_incomplete` に数える |
-| `Overrun` | OS が読み取りの前に捨てたフレームの数（`count`。前の知らせからの増分） |
-| `LinkState` | リンクが上がった、下がった（`state`: `Up`、`Down`、`Unknown`） |
-| `Fault` | リンクが動かなくなった（インターフェースがなくなった、読み取りが失敗し続ける）。理由は `detail`。この後フレームは届かず、`transmit()` は失敗する |
-| `Warning` | 止めるほどではないが利用者に知らせること（`detail`） |
+| Condition | Setting | Frames that pass |
+|---|---|---|
+| Length | Maximum length (default 1522 bytes, without FCS) | Frames of at least the Ethernet header (14 bytes) and at most the maximum length |
+| EtherType | `FrameFilterOptions::ether_types` | Only frames with a listed EtherType |
+| SIL Kit side MAC | `FrameFilterOptions::silkit_macs` | Only frames whose source (from SIL Kit to the outside) or destination (from the outside to SIL Kit) is one of them |
 
-`LinkError` の種類（`kind()`）は `NoSuchInterface`、`PermissionDenied`、`LibraryMissing`、`NotEthernet`、`Other` です。`what()` は、何が起きたかと直し方を言います。
-
-OS の口は `vehicle_sil/eth_link/os_links.hpp` の `make_tap_link()` と `make_packet_link()` で作ります（Linux だけ。ほかの OS では `has_os_links()` が `false` で、作る関数は `LinkError` を投げます）。`list_interfaces()` はこの PC のインターフェースを返します。どちらの口も、受信スレッドが 250 ms ごとにインターフェースを見て、リンクの上下、なくなったこと、OS が捨てた数を知らせます。`LinkError` の文は、直し方が引数のときは `vehicle_sil_ethernet_bridge` の引数の名前で言います。
-
-pcap のライブラリの口は `vehicle_sil/eth_link/pcap_link.hpp` の `make_pcap_link()` で作ります（Windows と Linux）。作るときにライブラリを読み込み、なければ `LinkError`（`LibraryMissing`）を投げます。インターフェースを開くのは `start()` です。`pcap_interface_list()` は `--list-interfaces` の文を返します。`PcapLinkOptions::library` が空なら PC に入っているライブラリ、空でなければそのファイルを読み込みます（試験が偽のライブラリを渡すための口で、実行ファイルは空を渡します）。
-
-試験用の偽の口は `tests/eth_link/fake_link`（`FakeLink` と、偽の口どうしをつなぐ `FakeSegment`）です。受信スレッドを持ち、送信の詰まり、取りこぼし、`Fault`、リンクの上下、自分が送ったフレームが戻るインターフェースを模擬します。
-
-## 転送（`EthernetBridge`）
-
-`vehicle_sil::ethernet_bridge::EthernetBridge`（`vehicle_sil/ethernet_bridge/ethernet_bridge.hpp`）は、フレームを書き換えずに両方向に運びます。
-
-- `start()` は、外の口を始め、SIL Kit のフレームのハンドラーを RX の向きだけで登録し、送信の確認のハンドラーを登録します。participant の lifecycle を始める前に呼びます。失敗したら、始めたものを戻してから例外を投げます。
-- コントローラーの `Activate()` は `start_controller()` で、participant の CommunicationReady のハンドラーから呼びます（`runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); })`）。SIL Kit が勧めている時点です（SIL Kit のスレッドの上、Running の前）。それまでに外の口から届いたフレームは、SIL Kit に渡しません（数えません）。SIL Kit から外への向きは、`start()` から運びます。`Activate()` が失敗したら、例外ではなく `fault()` で知らせます。`start_controller()` の後の `start()`（止めて始め直す）は、`Activate()` もします。ブリッジは autonomous の participant なので、Ethernet を模擬するネットワークシミュレーターをその時点で見つけている保証はありません。
-- `stop()` は、SIL Kit のフレームのハンドラーを外し、外の口を止め、送信の確認のハンドラーを外し、コントローラーを `Deactivate()` します。何度呼んでもかまいません。
-- 自分のキューは持ちません。SIL Kit から外へは SIL Kit の受信スレッドで `transmit()` し、外から SIL Kit へは外の口の受信スレッドで `SendFrame()` します。押し戻しはなく、失ったフレームは数えます。
-- `Fault` が届いても、ブリッジは動き続けます。`fault()` が理由を返すので、止めるかどうかは呼ぶ側が決めます。
-- 警告は `take_warnings()` で、古い順に受け取ります。外の口の `Warning` と、ブリッジ自身の警告（下の「輪の防ぎ方」）です。
-
-1 つのフレームは、次の順に調べます。
-
-| 向き | 順序 |
-|---|---|
-| SIL Kit から外へ | 長さ（`malformed`、`oversize`）→ 絞り込み（`filtered_to_ext`）→ MAC の規則（`loop_suspected`）→ `transmit()` |
-| 外から SIL Kit へ | 長さ（`malformed`、`oversize`）→ MAC の規則（`own_tx_dropped`、`loop_suspected`）→ 絞り込み（`filtered_from_ext`）→ `SendFrame()` |
-
-外から来たフレームは、絞り込みより先に MAC の規則を見ます。自分が送ったフレームの戻りと、両側にあるアドレスのフレームは、絞り込みで落ちるものでもそれとして数えるためです。
-
-## 絞り込み（`FrameFilter`）
-
-同じ規則を両方向にかけます（`vehicle_sil/eth_link/frame_filter.hpp`）。
-
-- 長さ: イーサネットのヘッダー（14 バイト）より短いフレームは `malformed`、最大長（既定 1522 バイト、FCS なし）より長いフレームは `oversize` として捨てます。
-- EtherType（`FrameFilterOptions::ether_types`）: 挙げた EtherType のフレームだけを通します。送り元 MAC の後の 2 バイトが VLAN タグの印（TPID。既定は `0x8100` と `0x88A8`）なら、その 4 バイトのタグの後ろを見ます。見るタグは 2 つまでです。タグの途中で終わるフレームは通しません。
-- SIL Kit の側の MAC（`FrameFilterOptions::silkit_macs`）: SIL Kit から外へは、送り元がそのどれかのフレームだけを通します。外から SIL Kit へは、宛先がそのどれかか、グループのアドレス（ブロードキャスト、マルチキャスト）のフレームだけを通します。グループのアドレスは挙げられません。
-- 両方を挙げたときは、両方を満たすフレームだけを通します。どちらも挙げなければ、長さのほかは絞りません。
+- Length: frames shorter than the header are dropped as `malformed`, frames longer than the maximum length as `oversize`.
+- EtherType: if the 2 bytes after the source MAC are a value that marks a VLAN tag (TPID; by default `0x8100` and `0x88A8`), the filter looks behind that 4-byte tag. It looks behind at most 2 tags. A frame that ends inside a tag does not pass.
+- SIL Kit side MAC: from the outside to SIL Kit, frames whose destination is a group address (broadcast, multicast) pass too. Group addresses cannot be listed in `silkit_macs`.
+- If you list both EtherTypes and MAC addresses, only frames that meet both pass. If you list neither, there is no filtering except by length.
 
 > [!NOTE]
-> VLAN の TPID の既定（`0x8100`、`0x88A8`）、最大長の既定 1522 バイト、EtherType の位置は、一般の資料の値で、規格では確かめていません。どれも `FrameFilterOptions`（引数では `--vlan-tpid`、`--max-frame-bytes`）で変えられます。試験と例が使う EtherType `0x88B5` は、ローカルの実験用として知られた値で、これも規格では確かめていません。プロトコルの EtherType はライブラリに入れていないので、利用者が挙げます。
+> The default VLAN TPIDs (`0x8100`, `0x88A8`), the default maximum length of 1522 bytes and the position of the EtherType are values from general sources and are not verified against the standards. All of them can be changed with `FrameFilterOptions` (`--vlan-tpid`, `--max-frame-bytes` on the command line). The EtherType `0x88B5` used by the tests and examples is a value known for local experiments, also not verified against the standards. The library contains no protocol EtherTypes; you list them yourself.
 
-SIL Kit は、60 バイトより短いフレームを受け手の側で 0 で埋めます（[dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」）。そのため SIL Kit から来るフレームは 60 バイト以上で、外から来た短いフレームは、埋められて SIL Kit の相手に届きます。
+SIL Kit pads frames shorter than 60 bytes with zeros on the receiving side (see "Upstream behavior the implementation relies on" in [dependencies.md](dependencies.md#upstream-behavior-the-implementation-relies-on)). Frames from SIL Kit are therefore at least 60 bytes, and short frames from the outside reach their receiver in SIL Kit padded.
 
-## 輪の防ぎ方（`MacSideTable`）
+## Loop prevention (`MacSideTable`)
 
-同じ 2 つのネットワーク（SIL Kit の Ethernet ネットワークと外の線）の間には、ブリッジを 1 つだけ置きます。2 つ置くのは構成の誤りで、フレームが 2 つのブリッジを回り続けることがあります。ブリッジは、フレームの送り元 MAC から、見つけられる場合にこの誤りを見つけ、そのアドレスのフレームを止めて警告します。どの場合でも止めるとは約束しません（下の「止まらない場合」）。OS の設定には頼りません（`vehicle_sil/eth_link/mac_side_table.hpp`）。
+Put only one bridge between the same 2 networks (the SIL Kit Ethernet network and the external wire). A second bridge makes a wrong setup in which frames can keep circling through both bridges. When it can, the bridge detects this setup from the source MAC addresses of frames, stops the frames from that address and warns. It does not guarantee to stop every case (see "[When a loop is not stopped](#when-a-loop-is-not-stopped)"). It does not rely on OS settings (`vehicle_sil/eth_link/mac_side_table.hpp`).
 
-規則:
+### MAC rules
 
-- SIL Kit から来て、絞り込みを通ったフレームの送り元を「SIL Kit の側」として覚えます。`--src-mac`（`FrameFilterOptions::silkit_macs`）で挙げたアドレスは、ブリッジを作るときに SIL Kit の側として入れておきます。
-- 外から来て、絞り込みを通ったフレームの送り元を「外の側」として覚えます。絞り込みで落ちたフレームでは覚えません。
-- SIL Kit から来たフレームの送り元が外の側なら、そのアドレスは両側にあります（同じネットワークの間に 2 つのブリッジがある、または同じ MAC アドレスが両側にある）。
-- 外から来たフレームの送り元が SIL Kit の側のとき:
-  - 口が自分の送信を戻さない（`echoes_own_transmissions()` が `false`）なら、そのフレームは自分の送ったものではありえないので、そのアドレスは両側にあります。
-  - 口が自分の送信を戻す（`true`）なら、自分が送ったフレームの戻りとして捨て、`own_tx_dropped` に数えます。警告は出しません。
-- 両側にあるアドレスのフレームは、以後両方向で捨て、`loop_suspected` に数えます。警告は、アドレスごとに 1 回、最初の 8 つまでアドレスを挙げて出し、それより多いときは 1 回だけまとめて出します。両側の印は、ブリッジを起動し直すまで消えません。誤りを直したら（ブリッジを 1 つにしたら）、残ったブリッジも起動し直します。
-- グループの送り元アドレス（ブロードキャスト、マルチキャスト）は覚えず、調べずに通します。
+| Received frame | What the bridge does |
+|---|---|
+| From SIL Kit, passed by the filter | Remembers the source as "SIL Kit side". |
+| From the outside, passed by the filter | Remembers the source as "outside". |
+| From SIL Kit, with a source on the outside | Marks the address as "on both sides". |
+| From the outside, with a source on the SIL Kit side (the external link does not echo its own transmissions) | Marks the address as "on both sides". |
+| From the outside, with a source on the SIL Kit side (the external link echoes its own transmissions) | Drops it as an echo of a frame the bridge sent, and counts it in `own_tx_dropped`. |
+| With a source address that is on both sides | From then on, drops it in both directions and counts it in `loop_suspected`. |
+| With a group source address (broadcast, multicast) | Passes it without remembering or checking it. |
 
-止まる場合（偽の口と偽のコントローラーの 2 つのブリッジで、試験が確かめています。`npcap` の開き方は、偽の pcap のライブラリの同じデバイスに 2 つのブリッジをつないで確かめています）:
+- The addresses given with `--src-mac` (`FrameFilterOptions::silkit_macs`) are registered as SIL Kit side when the bridge is created.
+- The source of a frame that the filter did not pass is not remembered.
+- "On both sides" means that there are 2 bridges between the same networks, or that the same MAC address is on both sides.
+- `echoes_own_transmissions()` tells whether the external link echoes its own transmissions. If it does not (`false`), a frame from the outside cannot be one the bridge sent. If it does (`true`), dropping such frames gives no warning.
+- The warning for an address on both sides is printed once per address for the first 8 addresses; beyond that, one warning covers all the rest.
+- The record that an address is on both sides lasts until the bridge restarts. Once you fix the setup (down to one bridge), restart the remaining bridge too.
 
-- 自分の送信を戻さない口では、SIL Kit の機器が始めた輪も、外の機器が始めた輪も、写しが届く順序によらず止まります。輪が回るのは、遅れた側のブリッジが、もとのフレームを自分の側で受けるまでの間です。受けた時点で、そのアドレスが両側にあると分かります。
-- 自分の送信を戻さない口では、片方のブリッジだけが `--no-mac-guard` でも、規則を使う側のブリッジが見つけて止め、警告します。規則を使わない側も、自分が送ったばかりのフレームが外から来たことを 1 回警告することがあります（下の「口が『戻さない』と申告しているとき」）。
-- 自分の送信を戻す口でも、SIL Kit の機器が始めた輪は止まります（アドレスを外で先に見たブリッジが、SIL Kit から来たフレームで両側と分かる）。
+### When a loop is stopped
 
-止まらない場合（「自分の送信を戻す口」は、`ExternalLink` を自分で実装した口がそう申告した場合です。vehicle-sil の口は、どれも戻しません）:
+The tests verify these 3 cases. They use 2 bridges with fake external links and fake controllers. The `npcap` way of opening is verified with 2 bridges connected to the same device of the fake pcap library.
 
-- 自分の送信を戻す口で、外の機器が始めた輪。ブリッジ 1 が外のフレームを SIL Kit に入れ、ブリッジ 2 がそれを自分の外の写しより先に SIL Kit から受けると、ブリッジ 2 はそのアドレスを SIL Kit の側と覚え、後から来る外の写しを自分の戻りとして捨てます。どちらのブリッジもアドレスを両側に見ず、輪は続き、警告も出ません（試験はこの事実も確かめています）。この口では、自分の戻りと、別のブリッジや同じアドレスの別の機器から来たフレームを、送り元だけからは見分けられません。
-- 自分の送信を戻す口で、片方が `--no-mac-guard` の場合。規則を使う側は、相手の写しを自分の戻りとして捨てます。
-- 両方のブリッジが `--no-mac-guard` の場合。
-- MAC の表がいっぱいで覚えられなかったアドレス（`mac_unguarded` に数える）と、グループの送り元アドレスのフレーム。
+- With an external link that does not echo its own transmissions, a loop is stopped whether a SIL Kit device or an outside device started it, whatever order the copies arrive in. The loop lasts only until the later bridge receives the original frame on its own side. At that point it learns that the address is on both sides.
+- With an external link that does not echo its own transmissions, if only one bridge has `--no-mac-guard`, the bridge that uses the rules detects the loop, stops it and warns. The bridge without the rules may also warn once that a frame it had just sent came from the outside (see "[With `--no-mac-guard`](#with---no-mac-guard)").
+- With an external link that echoes its own transmissions, a loop started by a SIL Kit device is still stopped: the bridge that saw the address outside first learns from the frame from SIL Kit that the address is on both sides.
 
-どの口が自分の送信を戻すかは、口の実装が申告します。vehicle-sil の口は、どれも「戻さない」と申告します。`tap`、`packet`、`pcap` は、Linux のカーネルと libpcap で確かめた挙動です（試験 `ethernet_bridge.netns.*`）。
+### When a loop is not stopped
 
-- `tap`: ブリッジが TAP デバイスに書いたフレームは OS へ行き、ブリッジの読み取りには戻りません。
-- `packet`: ブリッジのソケットが送ったフレームは、そのソケットには戻りません。同じインターフェースのほかのソケットが送ったフレームは届きます。
-- `pcap`: libpcap のソケットも同じです。
-- `npcap`: Npcap は自分の送信を戻しますが、ブリッジは戻さない指定でアダプターを開きます（「[`npcap` と `pcap`](#npcap-と-pcap)」）。同じアダプターを開いたほかのソフトが送ったフレームは届くので、同じアダプターにつないだ 2 つ目のブリッジも見つけられます。
+"An external link that echoes its own transmissions" means an `ExternalLink` that you implement yourself and that declares it echoes them. None of the external links of vehicle-sil echo.
 
-そのため、これらの口では「止まる場合」の全部が当てはまり、SIL Kit の側のアドレスを送り元に持つフレームが外から来たら、そのアドレスは両側にあるものとして止めて警告します。同じ PC で、SIL Kit の機器と同じ MAC アドレスを送り元にして同じインターフェースに送るソフトがあると、この警告になります。
+- A loop started by an outside device, with an external link that echoes its own transmissions.
+- With an external link that echoes its own transmissions, when one bridge has `--no-mac-guard`. The bridge that uses the rules drops the other bridge's copies as its own echoes.
+- When both bridges have `--no-mac-guard`.
+- Frames from addresses that did not fit in a full MAC table (counted in `mac_unguarded`) and frames with a group source address.
 
-**口が「戻さない」と申告しているのに、自分の送信を戻す場合**（たとえば、戻さない指定が効かない Npcap やアダプター。あるかどうかは未確認です）も、ブリッジからは同じに見えます。
+What happens in the first case: bridge 1 passes an outside frame into SIL Kit. If bridge 2 receives it from SIL Kit before the copy on its own outside side, bridge 2 remembers the address as SIL Kit side and drops the copy that comes later from the outside as its own echo. Neither bridge sees the address on both sides, so the loop goes on with no warning (the tests verify this too). With this kind of external link, the source address alone cannot tell an echo of the bridge's own frame from a frame of another bridge or of another device with the same address.
 
-- MAC の規則を使っていると、SIL Kit の機器が最初のフレームを送ったところで、その戻りが外から届き、その機器のアドレスが両側にあるものとして止まります（止まる向きです）。そのため、SIL Kit の側のアドレスを外で見たときの警告は、最後に、2 つ目のブリッジも同じアドレスの機器もないなら口が自分の送信を戻していることと、次にすること（`npcap` なら Npcap を新しくする、別のアダプターを試す、直らなければ vehicle-sil に報告する）を言います（下の文の 2 つ目）。
-- `--no-mac-guard` のときは、下の「口が『戻さない』と申告しているとき」のとおり、1 回警告します。
+### Whether an external link echoes its own transmissions
 
-両側にあるアドレスのフレームを両方向で捨てるので、同じ MAC アドレスを持つ機器が両側に本当にあると、そのアドレスのフレームは届かなくなります。警告がアドレスを挙げるので、構成の誤りとして見つけられます。ただし、自分の送信を戻す口では、SIL Kit の側で先に覚えたアドレスを外で見ても、戻りと区別できないので、黙って捨てます。
+The implementation of an external link declares whether it echoes its own transmissions. Every external link of vehicle-sil declares that it does not. For `tap`, `packet` and `pcap`, this is the behavior verified with the Linux kernel and libpcap (tests `ethernet_bridge.netns.*`).
 
-MAC の表の大きさは既定 1024 アドレス（`--mac-table-size`、16〜65536）で、確保はブリッジを作るときだけです。いっぱいになると、SIL Kit の側のアドレス（と両側の印）は、外の側の最も古いアドレスを追い出して入ります。外の側の新しいアドレスは覚えません。覚えられなかったアドレスのフレームは、調べずに通して `mac_unguarded` に数え、最初の 1 回だけ警告します。
+| Backend | Behavior |
+|---|---|
+| `tap` | A frame that the bridge writes to the TAP device goes to the OS and does not come back to the bridge's reads. |
+| `packet` | A frame that the bridge's socket sends does not come back to that socket. |
+| `pcap` | The libpcap socket behaves the same as `packet`. |
+| `npcap` | Npcap echoes a program's own transmissions, but the bridge opens the adapter with the option that stops this (see "[`npcap` and `pcap`](#npcap-and-pcap)"). |
 
-`EthernetBridgeOptions::mac_guard` を `false`（引数では `--no-mac-guard`）にすると、この規則を使いません。輪は使う人が防ぎます。
+- With `packet`, the bridge does receive frames that other sockets on the same interface send.
+- With `npcap`, the bridge does receive frames that other programs with the same adapter open send, so it can also detect a second bridge on the same adapter.
 
-**自分の送信を戻す口で `--no-mac-guard` にすると**、SIL Kit から出たフレームが SIL Kit に戻ります。自分が送ったフレームの戻りを捨てるのは、この規則だけだからです。
+So with these external links, all of "When a loop is stopped" applies: if a frame from the outside has a SIL Kit side address as its source, the bridge treats that address as on both sides, stops it and warns. A program on the same computer that sends on the same interface with the MAC address of a SIL Kit device as source causes this warning.
 
-- ブリッジが外へ送ったフレームは、口から戻り、外から来たフレームとして絞り込みを通って SIL Kit へ入ります（`ext_to_silkit` に数えます）。送った機器は自分のフレームを受け、ほかの機器は同じフレームを 2 回受けます。ブリッジは SIL Kit から受けたフレームだけを外へ送るので、回り続けはしません。
-- 自分のアドレスがほかで使われていないかを調べるネットワークスタックは、自分のフレームを見て「使われている」と判断することがあります。
-- ブリッジは、口が「戻す」と申告していて規則を使わないとき、起動のたびに 1 回警告します（下の文の最後から 2 つ目）。
-- 規則を使っていても、同じことが起きるフレームがあります。MAC の表がいっぱいで覚えられなかった SIL Kit の側のアドレスのフレーム（`mac_unguarded` に数え、表があふれた警告が出ます）と、送り元がグループのアドレスのフレームです。どちらも、戻ったときに調べずに通します。
-- vehicle-sil の口に、「戻す」と申告するものはありません。`ExternalLink` を自分で実装した口が申告した場合の動きです。
+**If an external link declares that it does not echo, but does** (for example, an Npcap or adapter on which the option against echoes does not work; whether one exists is not verified), the bridge sees each echo as a frame from the outside with a SIL Kit side address as its source, the case above.
 
-**口が「戻さない」と申告しているときに `--no-mac-guard` にすると**、ブリッジは、外から来て SIL Kit へ渡すフレームを、自分が最後に外へ送ったフレームと比べます（長さと、先頭の 64 バイトまで）。同じなら、1 回だけ警告します（下の文の最後）。フレームは捨てずに SIL Kit へ渡します。規則を使わないときは、どこから来たかでは何も捨てないからです。統計は変わりません（`ext_to_silkit` に数えるだけです）。
+- With the MAC rules on, as soon as a SIL Kit device sends its first frame, the bridge receives the echo from the outside, and the address of that device is stopped as on both sides (it errs on the side of stopping). The warning for a SIL Kit side address seen outside therefore ends by saying that, if there is no second bridge and no device with the same address, the external link echoes its own transmissions, and what to do next (the second text in "[Warning messages](#warning-messages)"). What to do next, for `npcap`: install a current Npcap, try another adapter, and if that does not help, report it to vehicle-sil.
+- With `--no-mac-guard`, the bridge warns once, as described in "[With `--no-mac-guard`](#with---no-mac-guard)".
 
-- この警告になるのは、口が申告に反して自分の送信を戻しているとき、同じネットワークの間に 2 つ目のブリッジがあるとき、外の機器が受けたフレームをそのまま送り返しているときです。ブリッジからは見分けられないので、文は全部を挙げます。
-- 比べるのは最後に送った 1 つだけです。戻りが届く前に次のフレームを送っていると、見つけません。口が戻すときに長さを変える（短いフレームを最小の長さまで埋める）場合も、見つけません。警告が出ないことは、戻っていないことの確かめにはなりません。
-- 警告は、起動のたびに 1 回までです。
+### When the same MAC address is on both sides
 
-警告の文は次のとおりです（試験が文言まで確かめています）。アドレスを先に見た側と、いま見た側（`SIL Kit`、`the external link`）が入ります。SIL Kit の側のアドレスを外で見たとき（2 つ目）だけ、口が自分の送信を戻している場合の文が後ろに付きます。
+Frames from an address on both sides are dropped in both directions, so if devices with the same MAC address really are on both sides, frames from that address no longer pass. The warning names the address, so you can find the wrong setup. However, with an external link that echoes its own transmissions, an address first remembered on the SIL Kit side and then seen outside cannot be told from an echo, so its frames are dropped silently.
+
+### MAC table size
+
+The MAC table holds 1024 addresses by default (`--mac-table-size`, 16–65536). Memory is allocated only when the bridge is created. When the table is full, a SIL Kit side address (and a record of an address on both sides) evicts the oldest outside address. New outside addresses are not remembered. Frames from addresses that are not remembered are passed without the check and counted in `mac_unguarded`, with a warning the first time only.
+
+### With `--no-mac-guard`
+
+Setting `EthernetBridgeOptions::mac_guard` to `false` (`--no-mac-guard` on the command line) turns off the MAC rules. Preventing loops is then up to you.
+
+**With `--no-mac-guard` and an external link that echoes its own transmissions**, frames from SIL Kit come back into SIL Kit, because only the MAC rules drop the echoes of the bridge's own frames.
+
+- A frame that the bridge sends out comes back from the external link, passes the filter as a frame from the outside and enters SIL Kit (counted in `ext_to_silkit`). The sending device receives its own frame, and every other device receives the frame twice. The bridge sends out only frames it received from SIL Kit, so the frame does not keep circling.
+- A network stack that checks whether its own address is used by others may see its own frame and conclude that the address is in use.
+- If the external link declares that it echoes and the rules are off, the bridge warns once at every startup (the second-to-last text in "[Warning messages](#warning-messages)").
+- Even with the rules on, the same happens to some frames: frames from SIL Kit side addresses that did not fit in a full MAC table (counted in `mac_unguarded`, with the table-full warning) and frames with a group source address. Both are passed without the check when they come back.
+- None of the external links of vehicle-sil declare that they echo. This is the behavior when an `ExternalLink` that you implement yourself declares it.
+
+**With `--no-mac-guard` and an external link that declares it does not echo**, the bridge compares each frame from the outside that it passes to SIL Kit with the last frame it sent out (the length and up to the first 64 bytes). If they are the same, it warns once (the last text in "[Warning messages](#warning-messages)"). It does not drop the frame but passes it to SIL Kit, because without the rules nothing is dropped based on where it came from. The statistics do not change (the frame is only counted in `ext_to_silkit`).
+
+- This warning appears when the external link echoes its own transmissions against its declaration, when there is a second bridge between the same networks, or when an outside device sends received frames straight back. The bridge cannot tell these apart, so the text lists them all.
+- Only the last frame sent is compared. If the bridge sends the next frame before the echo arrives, the echo is not detected. It is not detected either if the external link changes the length when echoing (padding a short frame to the minimum length). The absence of the warning does not prove that nothing is echoed.
+- The warning appears at most once per startup.
+
+### Warning messages
+
+The warning texts follow (the tests check them word for word). They name the side that saw the address first and the side that sees it now (`SIL Kit`, `the external link`). Only when a SIL Kit side address is seen outside (the second text) is a sentence about an external link that echoes its own transmissions added at the end.
 
 ```
 MAC 02:00:00:00:00:99 is on both sides: frames from it came from the external link and now come from SIL Kit, so frames from it are dropped both ways (loop_suspected). Run one bridge between these networks and give each device its own MAC address, then restart the bridge: it keeps dropping them until it restarts.
@@ -423,129 +671,287 @@ the MAC guard is off (--no-mac-guard) and this external link gives the bridge's 
 a frame like the one the bridge had just sent out (the same length and first bytes) came from the external link, and with the MAC guard off (--no-mac-guard) it was passed into SIL Kit again (counted in ext_to_silkit). A second bridge or a device outside sends the frames back, or the external link gives the bridge's own transmissions back although it says it does not: with --backend npcap, install the current Npcap or try another adapter, and report it to vehicle-sil if it stays. Run without --no-mac-guard to have such frames dropped and their addresses named. This is said once.
 ```
 
-## 統計
+## Library structure
 
-`format_statistics()` は、全部の数を 1 行にします。キーの名前と順序はこの文書の契約で、試験が読みます。
+A frame passes in both directions through SIL Kit's `IEthernetController`, `EthernetBridge` (which uses `FrameFilter` and `MacSideTable`), `ExternalLink` and the external interface, in that order.
 
-```
-stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
-```
+| Target | Contents | Dependencies |
+|---|---|---|
+| `vehicle_sil_ethernet_bridge` (executable) | The command line of the bridge. | `ethernet_bridge_core`, `bridge_runtime` and `core`. Built on every platform, with the external links of that OS; the pcap library is loaded at run time. |
+| `vehicle_sil::eth_link` | `ExternalLink`, which represents an external interface, its implementations, the filter and the MAC table. | Does not use SIL Kit. |
+| `vehicle_sil::ethernet_bridge_core` | `EthernetBridge`, which forwards frames, plus the output and argument parsing of the executable. | SIL Kit and `eth_link`. Platform-independent. |
 
-| キー | 数えるもの |
+`vehicle_sil::eth_link` contains:
+
+- `ExternalLink`, which represents an external interface
+- MAC addresses
+- The filter `FrameFilter`
+- The loop prevention table `MacSideTable`
+- External links that use APIs the OS offers without a library (`os_links.hpp`: Linux TAP devices and packet sockets)
+- External links that load the pcap library installed on the OS at run time (`pcap_link.hpp`: Npcap on Windows, libpcap on Linux)
+
+`vehicle_sil::ethernet_bridge_core` contains:
+
+- `EthernetBridge`, which forwards frames between SIL Kit's `IEthernetController` and an `ExternalLink`
+- Statistics and health lines
+- Argument parsing (`parse_bridge_options()`)
+- What the executable prints (`bridge_app.hpp`: the startup line, the backends available on each OS, the promiscuous mode hint)
+
+For the source locations, see "Ethernet Bridge" in [code-map.md](code-map.md#ethernet-bridge).
+
+## External link (`ExternalLink`)
+
+`vehicle_sil::eth_link::ExternalLink` (`vehicle_sil/eth_link/external_link.hpp`) represents one external Ethernet interface. This page calls its implementations "external links". A frame is a byte sequence from the destination MAC address to the end of the payload, without FCS.
+
+| Function | Contract |
 |---|---|
-| `silkit_to_ext` | SIL Kit から外へ送ったフレーム |
-| `ext_to_silkit` | 外から SIL Kit へ渡したフレーム（`SendFrame()` が戻ったもの） |
-| `own_tx_dropped` | 外の口から戻ってきた、自分が送ったフレーム（自分の送信を戻す口だけ） |
-| `loop_suspected` | 送り元が両側にあるアドレスのフレーム |
-| `mac_unguarded` | MAC の表に入らず、輪を調べずに通したフレーム |
-| `filtered_to_ext`、`filtered_from_ext` | 絞り込みで通さなかったフレーム（向きごと） |
-| `oversize` | 最大長より長いフレーム（両方向） |
-| `malformed` | イーサネットのヘッダーより短いフレーム（両方向） |
-| `ext_overruns` | OS が読み取りの前に捨てたフレーム |
-| `ext_queue_full` | 外の口の送信のキューがいっぱいで失ったフレーム |
-| `ext_tx_failures` | 外の口でのほかの送信の失敗（`transmit()` が投げた例外を含む） |
-| `silkit_tx_failures` | `SendFrame()` が例外を投げたもの、または SIL Kit が送れなかったと確認したもの（`ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat`）。後者のフレームは、渡した時点で `ext_to_silkit` にも数えてある |
-| `ext_checksum_incomplete` | 外から SIL Kit へ渡したフレームのうち、UDP や TCP のチェックサムが未完成のもの（`packet` で、同じ PC の OS が送ったフレーム。「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」）。`ext_to_silkit` にも数えてある |
+| `start(handler)` | Opens the interface and starts passing `LinkEvent`s to `handler` from the receive thread. Throws `LinkError` if the interface cannot be opened |
+| `stop()` | Stops passing events. Before it returns, it may report, as an `Overrun` from the calling thread, the number of frames the OS dropped since the last report. Once it returns, the handler is not running. Can be called even if the link was not started |
+| `transmit(frame)` | Sends one frame. The result is `Ok`, `QueueFull` (not sent because the transmit queue was full) or `Failed` (another error; the reason is in `last_error()`). Reads the frame only during the call. Does not block |
+| `echoes_own_transmissions()` | Whether frames sent with `transmit()` come back to the handler as received frames. Does not change during the lifetime of the external link. The bridge reads it in `start()` and adapts its loop prevention (see "[Loop prevention](#loop-prevention-macsidetable)") |
+| `describe()` | The string for the startup line: kind, name, physical or virtual (for example `tap 'vsil0' (TAP device in this computer)`, `packet 'enp3s0' (network interface)`) |
 
-問題の数は `loop_suspected`、`mac_unguarded`、`oversize`、`malformed`、`ext_overruns`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`、`ext_checksum_incomplete` です（`problems_grew()`）。転送した数、絞り込みの数、`own_tx_dropped` は問題に数えません。
+### Threads and locks
 
-## 監視の行
+- The handler is called from only one thread at a time (the receive thread or the thread that called `stop()`).
+- `transmit()` can be called from any thread, also concurrently with the handler.
+- `transmit()` does not block, does not throw and does not wait for the receive thread.
+- An external link must not hold a lock that `transmit()` takes while it calls the handler.
+- No receive time is passed, because the OS clock is not the simulation clock.
 
-`format_health_change(before, now, interface, problems_before)` は、呼ぶ側が取った 2 つの見本（`EthernetBridge::health()`）の間の変化を 1 行にします。何もなければ行を作りません。
+The reason for the lock constraint: the bridge calls `transmit()` in a receive thread that SIL Kit calls while holding the lock of the frame handler. `SendFrame()`, which the bridge calls inside the external link's handler, takes the same lock (see "Upstream behavior the implementation relies on" in [dependencies.md](dependencies.md#upstream-behavior-the-implementation-relies-on)). If the external link held its lock during the handler, the 2 threads would wait for each other and hang.
 
-- 問題の数が増えたか、リンクの状態が変わったとき（ただし、状態不明から `link up` への変化は、健全なリンクの最初の知らせなので出しません）:
-  ```
-  interface enp3s0: link down; since the last report: ext_tx_failures +12
-  ```
-- 何も増えていないが、前の見本では増えていたとき（`problems_before`）:
-  ```
-  interface enp3s0: link up; no new problems since the last report
-  ```
+If `transmit()` throws an exception against its contract, the bridge catches it, counts it in `ext_tx_failures` and continues.
 
-リンクの状態は `link up`、`link down`、`link state unknown` のどれかです。
+### `LinkEvent` and `LinkError`
 
-## 引数（`parse_bridge_options()`）
-
-`vehicle_sil/ethernet_bridge/bridge_options.hpp` の `parse_bridge_options()` が解釈する引数です。誤りは `BridgeUsageError` で、何が誤りかと直し方を言います。使い方の全文は `bridge_usage()` です。
-
-| 引数 | 意味 |
+| `LinkEvent` kind | Meaning |
 |---|---|
-| `--registry-uri <uri>` | SIL Kit の registry。必須 |
-| `--network <name>` | SIL Kit の Ethernet ネットワーク。必須で、既定の名前はない（別のネットワークに誤ってつながないため） |
-| `--participant <name>` | participant の名前（既定 `EthernetBridge`） |
-| `--backend <tap\|packet\|npcap\|pcap>` | 外のインターフェースの開き方。必須。`tap` は PC の中の仮想のインターフェース、ほかは実のアダプターに届きうるものとして扱う。`tap`、`packet`、`pcap` は Linux、`npcap` は Windows（「[バックエンド](#バックエンド)」） |
-| `--interface <name>` | つなぐインターフェース。必須で、「最初に見つかったもの」は選ばない |
-| `--ethertype <hex>,...` | 通す EtherType（`0x` で始まる 16 進。繰り返すと足される） |
-| `--src-mac <mac>,...` | SIL Kit の側の MAC アドレス（`:` か `-` で区切った 6 バイト。繰り返すと足される） |
-| `--all-frames` | 絞らない。`--ethertype`、`--src-mac` とは一緒に使えない |
-| `--vlan-tpid <hex>,...` | VLAN タグの印（既定 `0x8100,0x88a8`） |
-| `--max-frame-bytes <n>` | 最大長、FCS なし、60〜65535（既定 1522）。SIL Kit が 60 バイトより短いフレームを渡さないので、60 が下限 |
-| `--promiscuous` | 自分宛てでないフレームも受ける。`tap` では使えない |
-| `--tap-create` | TAP デバイスをブリッジが動く間だけ作る。`tap` だけ |
-| `--no-mac-guard` | MAC の規則を使わない |
-| `--mac-table-size <n>` | MAC の表の大きさ、16〜65536（既定 1024） |
-| `--list-interfaces` | この PC のインターフェースの一覧を出して終わる（ほかの引数は要らない）。`--backend npcap` か `--backend pcap` を付けると、pcap のライブラリが出す一覧 |
-| `--help` | 使い方 |
+| `Frame` | A received frame (`frame`; valid only during the handler call) |
+| `Overrun` | The number of frames the OS dropped before they were read (`count`; the increase since the last report) |
+| `LinkState` | The link went up or down (`state`: `Up`, `Down`, `Unknown`) |
+| `Fault` | The external link stopped working (the interface disappeared, or reads keep failing). The reason is in `detail` |
+| `Warning` | Something to tell the user that is not reason enough to stop (`detail`) |
 
-実のアダプターに届きうる `--backend`（`packet`、`npcap`、`pcap`）では、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。ないと次の誤りになります。
+- If `checksum_incomplete` of a `Frame` is true, the frame has an incomplete UDP or TCP checksum (sent by the OS of the same computer, which left the calculation to the NIC). The external link passes it on as it is and emits a `Warning` once, before the first such frame. The bridge passes it on and counts it in `ext_checksum_incomplete`.
+- After a `Fault`, no more frames are passed and `transmit()` fails.
 
-```
---backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.
-```
+The kinds of `LinkError` (`kind()`) are `NoSuchInterface`, `PermissionDenied`, `LibraryMissing`, `NotEthernet` and `Other`. `what()` says what happened and how to fix it.
 
-## 確かめたことと、確かめていないこと
+### Functions that create external links
 
-確かめたこと（Linux。試験 `ethernet_bridge.netns.*` が、ユーザー名前空間の中のネットワーク名前空間で、本物の実行ファイルとカーネルに対して確かめます）:
+| External link | Header | Function | OS |
+|---|---|---|---|
+| TAP device | `vehicle_sil/eth_link/os_links.hpp` | `make_tap_link()` | Linux |
+| packet socket | `vehicle_sil/eth_link/os_links.hpp` | `make_packet_link()` | Linux |
+| pcap library | `vehicle_sil/eth_link/pcap_link.hpp` | `make_pcap_link()` | Windows, Linux |
 
-- `tap`: TAP デバイスの側の packet ソケットから送ったフレームが SIL Kit の相手にそのまま届き、返事が戻る。ブリッジが書いたフレームがブリッジに戻らない。2 つ目のブリッジは断られる。`--tap-create` で作ったデバイスが、下がった状態で作られ、ブリッジが止まるとなくなる。
-- `packet`（veth の対）: タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。同じインターフェースの別のソケットが送ったフレームが SIL Kit の相手に届く。ブリッジが送ったフレームがブリッジに戻らない。`--promiscuous` がインターフェースの promiscuity を、動いている間だけ上げる。リンクの上下の監視の行。OS のスタックが送った UDP（veth の向こうの端からと、ブリッジのインターフェース自身から）が、SIL Kit の相手にそのまま届き、`ext_checksum_incomplete` に数えられ、警告が 1 回だけ出る。警告のとおりに `ethtool -K <名前> tx off` をすると、数も警告も出ない。
-- `pcap`（同じ veth の対、この PC に入っている本物の libpcap）: ライブラリの読み込みと、ブリッジが使う関数と構造体の形。タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。同じインターフェースの別のソケットが送ったフレームが SIL Kit の相手に届く。ブリッジが送ったフレームがブリッジに戻らない。`--promiscuous`、`--list-interfaces`、リンクの上下の監視の行。開けないときの文（ない、イーサネットでない、下がっている、権限を落としたとき）。CI は Ubuntu のパッケージ `libpcap0.8` の libpcap で同じ試験を回し、飛ばしたら失敗にします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`）。
-- 開けないときの文と終了コード 3（ない、TAP でない、イーサネットでない、すでにある、使用中、権限を落としたとき）。インターフェースを消したときの `FAIL` と終了コード 1。registry がないときの文と終了コード 3。
+The external links of `os_links.hpp`:
 
-確かめたこと（全プラットフォーム。偽の pcap のライブラリ `tests/eth_link/fake_pcap` に対して。偽物は、本物と同じ名前の関数を持つ共有ライブラリで、ブリッジは本物と同じ道で読み込みます）:
+- On an OS other than Linux, `has_os_links()` is `false` and the create functions throw `LinkError`.
+- `list_interfaces()` returns the interfaces of this computer.
+- In both external links, the receive thread looks at the interface every 250 ms and reports the link going up and down, the interface disappearing and the number of frames the OS dropped.
+- When the fix is an argument, the `LinkError` text names it with the argument name of `vehicle_sil_ethernet_bridge`.
 
-- ライブラリをパスで読み込み、関数を名前で引く。ライブラリがないとき、関数が足りない古い版のときの文と終了コード 3。
-- 開くときに頼むこと（immediate mode、ブロックしない読み取り、プロミスキャス。Npcap の開き方では、自分の送信を受けない指定も）。フレームの送受信、長すぎるフレーム、止め方、開けないデバイス、送信の失敗と詰まり、読み取りの失敗（`FAIL` と終了コード 1）、捨てた数、警告。
-- 「フレームがある」という合図を 1 回も立てないデバイスで、フレームが全部、順序どおりに届き、警告が 1 回出る。フレームがない間は、待ち 1 回につき 1 回しか読まない。
-- Npcap の開き方（`pcap_open()`）と libpcap の開き方（`pcap_create()`）の両方を、どの OS でも。Npcap の開き方では、送ったフレームを戻すデバイスでも自分の送信が戻らず、同じデバイスのほかのハンドルが送ったフレームは届く。同じデバイスにつないだ 2 つのブリッジの輪が、写しの届く順序によらず止まる。`--no-mac-guard` でも自分のフレームが SIL Kit に戻らない。`pcap_open` のないライブラリは、Npcap としては断る。
-- Windows では、偽のライブラリが使う DLL が、偽のライブラリと同じディレクトリかシステムのディレクトリにあるものだけであること（試験 `eth_link.fake_pcap_imports.*`。ブリッジが DLL を探させるのはこの 2 か所だけなので、偽のライブラリにはコンパイラーのランタイムを静的にリンクしています）。
+The external link of `pcap_link.hpp`:
 
-確かめたこと（Windows。本物の Npcap に対して、仮想マシンの仮想の NIC と Microsoft KM-TEST Loopback Adapter で、手で確かめました。試験にはなっていません）:
+- Loads the library when it is created, and throws `LinkError` (`LibraryMissing`) if the library is missing. `start()` opens the interface.
+- `pcap_interface_list()` returns the text of `--list-interfaces`.
+- If `PcapLinkOptions::library` is empty, the library installed on the computer is loaded; otherwise the given file is. The option exists so that tests can pass a fake library; the executable passes an empty value.
 
-- `wpcap.dll` を `System32\Npcap` から読み込める（`Packet.dll` も見つかる）。ブリッジが使う関数があり、構造体の形が合う（一覧、フレームの長さと中身、捨てた数）。
-- 受信を待つイベントで、空回りせず、取りこぼしなく受ける。
-- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows、ASCII の名前。引数と名前を ANSI コードページで扱っていた頃の確認で、UTF-8 で扱い、コンソールに UTF-16 で書くようにしてからは、本物の Npcap では確かめていません）。
-- SIL Kit の相手と、アダプターの先の機器との往復。`--promiscuous` なしでは、SIL Kit の機器宛てのユニキャストが届かず、手がかりの警告が出る。
-- 同じアダプターを Npcap で開いたほかのソフトと、両方向に届く（仮想の NIC でも、KM-TEST Loopback Adapter でも）。
-- Npcap は、ハンドルが送ったフレームをそのハンドルに戻す。`PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルは、自分の送信を受けず、ほかのハンドルの送信は受ける。
-- ブリッジが今の開き方（`pcap_open()` と自分の送信を受けない指定）で開いたアダプターで、ブリッジの送信がブリッジに戻らない（`--no-mac-guard` でも）。同じアダプターの 2 つのブリッジは、どちらを先に始めても、警告を出して転送を止める。受信は遅れず、何もないときに CPU を使わない。
-- 同じアダプターで OS が送ったフレーム（ARP）が、ブリッジに届く。
-- VLAN タグつきのフレームが通るかは、アダプターのドライバーと設定しだい（「[`npcap` と `pcap`](#npcap-と-pcap)」）。全部を保つ NIC と、どちらの設定でも片方向が欠ける NIC があった。
-- 止める要求（Ctrl+C、Ctrl+Break）で、統計を出して終了コード 0。動いている間にアダプターを無効にすると、`FAIL` と終了コード 1。無効のアダプターは一覧に出ない。
-- 制限なしで入れた Npcap は、管理者でない利用者でも使える。「管理者だけ」で入れた Npcap を管理者でない利用者が使うと、昇格を求める画面で止まる。
+The fake external link for tests is `tests/eth_link/fake_link` (`FakeLink`, and `FakeSegment`, which connects fake external links to each other). It has a receive thread and simulates transmit congestion, lost frames, `Fault`, the link going up and down, and an interface that echoes its own transmissions.
 
-確かめていないこと:
+## Forwarding (`EthernetBridge`)
 
-- Windows で、実の NIC と線、無線のアダプター。日本語の Windows（日本語の接続の名前）。Npcap を WinPcap 互換ありで入れた PC。プロミスキャスを受け付けないアダプターを `--promiscuous` で開いたときに、開けるのか、開けない誤りになるのか（誤りになるときのライブラリの文も）。戻さない指定を受け付けて、それでも自分の送信を戻す Npcap やアダプターがあるか。KM-TEST Loopback Adapter で、OS の普通のソケットを使うソフトに届くか。「管理者だけ」の Npcap で、デスクトップのある Windows が出す確認の画面。送信の詰まり（`ext_queue_full`）と取りこぼし（`ext_overruns`）が、本物の Npcap で数えられるか。
-- libpcap で、送信の待ち行列が詰まったことを見分けられるか（`ext_queue_full`。ライブラリは失敗を 1 種類でしか返さないので、OS の誤りの番号が残っていれば見分けます。偽のライブラリでだけ確かめています）。
+`vehicle_sil::ethernet_bridge::EthernetBridge` (`vehicle_sil/ethernet_bridge/ethernet_bridge.hpp`) forwards frames unchanged in both directions.
 
-- 実の NIC と、その先の実機や別の PC との往復。`--promiscuous` のありなしでの届き方（veth は、プロミスキャスでなくても全部のフレームをソケットに渡すので、名前空間では違いが出ません）。プロミスキャスの手がかりの警告は、時計を差し替えた試験でだけ確かめています。
-- `setcap cap_net_raw+ep` した実行ファイルが、共有ライブラリの SIL Kit を見つけられるか（権限を付けた実行ファイルでは、ライブラリを探す環境変数が効かないことがあります）。
-- ほかの人の持ち物の TAP デバイスにつなごうとしたときの文（文言は試験で確かめていますが、カーネルがその誤りを返す場面は作れていません）。
-- 受信のオフロードで長いフレームが見える場面、無線のアダプター。
-- 実の NIC での、チェックサムが未完成のフレームの警告と、`ethtool -K <名前> tx off` の効き方（試験は veth の対だけです）。送信の分割のオフロードで TCP の長いフレームが見えることと、それが `tx off` でなくなることは、veth の対で確かめましたが、試験にはありません。
-- ランチャーの構成ファイル（`describe: false`、`required: false`）から起動する形。
-- EtherType の位置、VLAN の TPID、最大長は、上の「絞り込み」の注のとおり、規格では確かめていません。
+| Function | Behavior |
+|---|---|
+| `start()` | Starts the external link, registers the SIL Kit frame handler for the RX direction only, and registers the transmit acknowledgement handler. |
+| `start_controller()` | Calls `Activate()` on the controller. |
+| `stop()` | Removes the SIL Kit frame handler, stops the external link, removes the transmit acknowledgement handler and calls `Deactivate()` on the controller. |
+| `fault()` | Returns the reason of a `Fault`. |
+| `take_warnings()` | Returns the warnings, oldest first. |
 
-## 試験
+- Call `start()` before the participant lifecycle starts. If it fails, it undoes what it started, then throws.
+- `stop()` can be called any number of times.
+- The bridge has no queue of its own. From SIL Kit to the outside it calls `transmit()` in SIL Kit's receive thread; from the outside to SIL Kit it calls `SendFrame()` in the receive thread of the external link. There is no backpressure; lost frames are counted.
+- On a `Fault`, the bridge keeps running. The caller decides whether to stop.
+- Warnings are the external link's `Warning`s and the bridge's own warnings (see "[Loop prevention](#loop-prevention-macsidetable)").
 
-`ctest -R '^(eth_link|ethernet_bridge)\.'` で回ります。名前空間の試験のほかは実時間に頼らず、偽の口と偽のコントローラーで起きたことを待ちます。
+### When the controller starts
 
-- `eth_link.*`: MAC アドレス、絞り込み（EtherType、VLAN タグの先、MAC、最大長）、MAC の表（戻り、両側、上限、並行）、偽の口。`eth_link.boundary` は、`libs/eth_link` が SIL Kit のヘッダーを直接にも間接にも含まないことを確かめます。
-- `ethernet_bridge.*`: 偽のコントローラーと偽の口での転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通る輪（止まる順序と、自分の送信を戻す口で止まらない順序、片方が `--no-mac-guard` の場合。`ethernet_bridge.*_npcap_adapter_*` は、Npcap の開き方の pcap の口を、偽の pcap のライブラリの同じデバイスに 2 つ開いて、輪が止まることと、`--no-mac-guard` でも自分のフレームが戻らないことを確かめます）、MAC の表があふれたとき、流れの最中の `stop()`、失ったフレーム、`Fault`、警告、始め方と止め方。統計と監視の行、引数の誤りの文言。`ethernet_bridge.silkit_*` は、プロセス内の registry（空いているポート）と 2 つの participant で、本物の SIL Kit の側を確かめます。
-- `eth_link.os_link_*`: OS の口が開けないときの文と種類、`--list-interfaces` の並べ方（文だけなので全プラットフォーム）。
-- `ethernet_bridge.app_*`: OS ごとに使えるバックエンドと使えないときの文、起動の 1 行、プロミスキャスの手がかり（時計を差し替えて、5 秒を待たずに確かめる）。
-- `ethernet_bridge.integration.*`（全プラットフォーム）: 実行ファイルに偽の口をリンクしたもの（`vehicle_sil_ethernet_bridge_on_fake`。`tests/ethernet_bridge/fake_link_factory.cpp`）を、registry と SIL Kit の相手（`eth_bridge_it_peer`。SIL Kit の `IEthernetController` を直接使う）と一緒にプロセスとして動かします。往復と統計、起動の 1 行、引数の誤り（4）、開けないインターフェース（3）、`Fault`（1）、止める要求（統計、`stopped`、0）。`backend-not-here` は本物の実行ファイルで、その OS で使えないバックエンドの文と、pcap の一覧（その PC にライブラリがあれば一覧、なければ入れ方の文）を確かめます。
-- `eth_link.pcap_*`（全プラットフォーム）: pcap の口の文（Npcap と libpcap の両方の文を、どの OS でも照合）、開き方（Npcap の `pcap_open()` と libpcap の `pcap_create()` の両方を、どの OS でも）、`--interface` の名前の当て方、一覧の並べ方、偽のライブラリ（`tests/eth_link/fake_pcap`。本物と同じ名前の関数を持つ共有ライブラリで、`fake0` は返事をする機器、ほかに開けない、送れない、読めない、捨てる、無線、送ったものを戻す、のデバイスと、関数が 1 つ足りない版が 2 つ: 古い版と、`pcap_open` のない版）を実行時に読み込んでの送受信と失敗。
-- `ethernet_bridge.integration.pcap-*`（Linux と Windows）: 入れる実行ファイルと同じ中身で、ライブラリを読み込む場所だけを偽のライブラリに変えたもの（`vehicle_sil_ethernet_bridge_on_fake_pcap`）で、往復と統計、一覧、ライブラリがない・古いときの文（3。SIL Kit に触る前）、ないデバイス（3）、読み取りの失敗（1）。
-- `ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`、`ethernet_bridge.netns.pcap`（Linux だけ。`tests/ethernet_bridge/bridge_netns.py`）: 上の「確かめたこと」。`pcap` は、libpcap が入っていない PC では飛ばします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば失敗）。ユーザー名前空間を作れない所では飛ばします（終了コード 77。環境変数 `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` があれば失敗）。名前空間は作れるが、その中で TAP デバイス、veth、packet ソケットを作れない所でも飛ばします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば失敗）。どちらで飛ばしたかは、出力の `skipped:` の行が言います。`setpriv` や `ethtool` がない所では、それが要る部分だけを省いて `NOT CHECKED` と言います（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば、これも失敗）。CI は 2 つの変数を両方与えるので、飛ばしも省きも失敗になります。
+`start_controller()` is called from the participant's CommunicationReady handler (`runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); })`). This is the point that SIL Kit recommends (on a SIL Kit thread, before Running).
+
+- Frames received from the external link before then are not passed to SIL Kit (and not counted). From SIL Kit to the outside, forwarding runs from `start()`.
+- If `Activate()` fails, it is reported through `fault()`, not by an exception.
+- `start()` after `start_controller()` (stopping and starting again) also calls `Activate()`.
+- The bridge is an autonomous participant, so there is no guarantee that it has found a network simulator for Ethernet by that point.
+
+### Order of frame checks
+
+| Direction | Order |
+|---|---|
+| SIL Kit to the outside | Length (`malformed`, `oversize`) → filter (`filtered_to_ext`) → MAC rules (`loop_suspected`) → `transmit()` |
+| Outside to SIL Kit | Length (`malformed`, `oversize`) → MAC rules (`own_tx_dropped`, `loop_suspected`) → filter (`filtered_from_ext`) → `SendFrame()` |
+
+For frames from the outside, the MAC rules apply before the filter, so that echoes of the bridge's own frames and frames from addresses on both sides are counted as such even if the filter would not pass them.
+
+## Verified and not verified
+
+### Verified (Linux, automated tests)
+
+The tests `ethernet_bridge.netns.*` verify the following against the real executable and kernel, in a network namespace inside a user namespace.
+
+`tap`:
+
+- A frame sent from a packet socket on the TAP device side is received unchanged by a peer on the SIL Kit side, and the response comes back.
+- Frames that the bridge writes do not come back to the bridge.
+- A second bridge is refused.
+- A device created with `--tap-create` is created down and disappears when the bridge stops.
+
+`packet` (veth pair):
+
+- Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
+- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
+- Frames that the bridge sends do not come back to the bridge.
+- `--promiscuous` raises the promiscuity of the interface only while the bridge runs.
+- Health lines for the link going up and down.
+- UDP sent by the OS stack (from the other end of the veth pair and from the bridge's own interface) is received unchanged by a peer on the SIL Kit side, counted in `ext_checksum_incomplete`, and warned about once only.
+- After `ethtool -K <name> tx off` as the warning says, there is neither a count nor a warning.
+
+`pcap` (the same veth pair, with the real libpcap installed on this computer):
+
+- Loading the library, and the shape of the functions and structures that the bridge uses.
+- Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
+- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
+- Frames that the bridge sends do not come back to the bridge.
+- `--promiscuous`, `--list-interfaces`, and health lines for the link going up and down.
+- The messages when the interface cannot be opened (missing, not Ethernet, down, privileges dropped).
+- CI runs the same tests with the libpcap of the Ubuntu package `libpcap0.8` and fails if they are skipped (`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1`).
+
+Common to all backends:
+
+- The messages and exit code 3 when the interface cannot be opened (missing, not a TAP device, not Ethernet, already exists, busy, privileges dropped).
+- `FAIL` and exit code 1 when the interface is deleted.
+- The message and exit code 3 when there is no registry.
+
+### Verified (all platforms, fake pcap library)
+
+Verified against the fake pcap library `tests/eth_link/fake_pcap`. The fake is a shared library with functions of the same names as the real one, and the bridge loads it the same way as the real one.
+
+- Loading the library by path and getting the functions by name. The messages and exit code 3 when the library is missing or is an old version that lacks functions.
+- What the bridge requests when it opens (immediate mode, non-blocking reads, promiscuous mode; with the Npcap way of opening, also the option not to receive its own transmissions).
+- Sending and receiving frames, frames that are too long, stopping, devices that cannot be opened, transmit failures and congestion, read failures (`FAIL` and exit code 1), the dropped count and warnings.
+- On a device that never notifies that frames are there, all frames are received in order and one warning appears. While there are no frames, the bridge reads only once per wait.
+- Both the Npcap way of opening (`pcap_open()`) and the libpcap way (`pcap_create()`), on every OS.
+- With the Npcap way of opening, the bridge's own transmissions do not come back even on a device that echoes sent frames, and frames that other handles on the same device send are received.
+- A loop of 2 bridges connected to the same device is stopped, whatever order the copies arrive in. Even with `--no-mac-guard`, the bridge's own frames do not come back into SIL Kit.
+- A library without `pcap_open` is refused as Npcap.
+- On Windows, the DLLs that the fake library uses are only those in the fake library's directory or the system directory (tests `eth_link.fake_pcap_imports.*`). The bridge has DLLs searched for only in these 2 places, so the fake library links the compiler runtime statically.
+
+### Verified (Windows, real Npcap, manual)
+
+Verified by hand against the real Npcap, on the virtual NIC of a virtual machine and on the Microsoft KM-TEST Loopback Adapter. These checks are not automated tests.
+
+- `wpcap.dll` loads from `System32\Npcap` (and `Packet.dll` is found). The functions the bridge uses are there, and the structures have the expected shape (the list, frame length and content, the dropped count).
+- With the receive event, the bridge receives without busy-waiting and without losing frames.
+- Connection names appear in the list and match `--interface` (English Windows, ASCII names). This was checked when arguments and names were handled in the ANSI code page. Since they are handled as UTF-8 and written to the console as UTF-16, this has not been checked with the real Npcap.
+- Round trips between a peer on the SIL Kit side and a device beyond the adapter. Without `--promiscuous`, unicast frames to SIL Kit devices are not received and the hint warning appears.
+- Frames pass in both directions with other programs that open the same adapter with Npcap (on the virtual NIC and on the KM-TEST Loopback Adapter).
+- Npcap gives a handle back the frames that handle sent. A handle opened with `PCAP_OPENFLAG_NOCAPTURE_LOCAL` does not receive its own transmissions but receives those of other handles.
+- On an adapter that the bridge opens the current way (`pcap_open()` with the option not to receive its own transmissions), the bridge's transmissions do not come back to it (also with `--no-mac-guard`). 2 bridges on the same adapter warn and stop forwarding, whichever starts first. Receiving is not delayed, and the bridge uses no CPU when idle.
+- The bridge receives frames that the OS sends on the same adapter (ARP).
+- Whether frames with VLAN tags pass depends on the adapter driver and its settings (see "[`npcap` and `pcap`](#npcap-and-pcap)"). One NIC kept all tags; on another, one direction lost them with either setting.
+- On a stop request (Ctrl+C, Ctrl+Break), the bridge prints the statistics and exits with code 0. Disabling the adapter while the bridge runs gives `FAIL` and exit code 1. Disabled adapters are not in the list.
+- Npcap installed without the limit can be used by users who are not administrators. If Npcap was installed for administrators only and a user who is not an administrator uses it, the bridge stops at the elevation prompt.
+
+### Not verified
+
+Windows:
+
+- Physical NICs and wires, wireless adapters.
+- Windows in Japanese (connection names in Japanese).
+- Computers with Npcap installed in WinPcap compatible mode.
+- Whether an adapter that does not accept promiscuous mode can be opened with `--promiscuous`, or fails to open (and the library's text if it fails).
+- Whether there is an Npcap or adapter that accepts the option against echoes but still echoes the bridge's own transmissions.
+- Whether programs that use ordinary OS sockets can receive on the KM-TEST Loopback Adapter.
+- The confirmation prompt that Windows with a desktop shows for Npcap installed for administrators only.
+- Whether transmit congestion (`ext_queue_full`) and lost frames (`ext_overruns`) are counted with the real Npcap.
+
+Linux:
+
+- Whether libpcap can tell that the transmit queue is congested (`ext_queue_full`). The library reports failures as a single kind, so the bridge tells them apart if the OS error number is still there. Verified with the fake library only.
+- Physical NICs, and round trips with real hardware or another computer beyond them.
+- How frames are received with and without `--promiscuous`. A veth passes every frame to the socket even without promiscuous mode, so there is no difference in a namespace. The promiscuous mode hint warning is verified only in tests with a replaced clock.
+- Whether an executable with `setcap cap_net_raw+ep` can find SIL Kit as a shared library. In an executable granted privileges, the environment variables for finding libraries may have no effect.
+- The message when connecting to a TAP device owned by another user. The tests check the wording, but no test could create a situation in which the kernel returns that error.
+- Situations in which receive offload makes long frames appear; wireless adapters.
+- The warning for frames with incomplete checksums on a physical NIC, and the effect of `ethtool -K <name> tx off` there (the tests use a veth pair only).
+- That transmit segmentation offload makes long TCP frames appear, and that `tx off` stops it, was checked on a veth pair but is not in the tests.
+
+Other:
+
+- Starting the bridge from a launcher configuration file (`describe: false`, `required: false`).
+- The position of the EtherType, the VLAN TPIDs and the maximum length are not verified against the standards, as the note in "[Filter](#filter-framefilter)" says.
+
+## Tests
+
+Run them with `ctest -R '^(eth_link|ethernet_bridge)\.'`. Except for the namespace tests, they do not rely on real time: they use a fake external link and a fake controller and wait for events.
+
+| Test | Platform | What it verifies |
+|---|---|---|
+| `eth_link.*` | All | MAC addresses, the filter, the MAC table, the fake external link |
+| `ethernet_bridge.*` | All | Forwarding with a fake controller and a fake external link, statistics and health lines, argument error texts |
+| `eth_link.os_link_*` | All | The messages and kinds when an OS external link cannot be opened, the `--list-interfaces` output |
+| `ethernet_bridge.app_*` | All | The backends available on each OS and the message when one is not, the startup line, the promiscuous mode hint |
+| `ethernet_bridge.integration.*` | All | The behavior of an executable linked with a fake external link, run as a process |
+| `eth_link.pcap_*` | All | Messages of the pcap external link, the way of opening, name matching, the list, and sending, receiving and failures with the fake library |
+| `ethernet_bridge.integration.pcap-*` | Linux, Windows | The behavior of an executable in which only the library location is changed to the fake |
+| `ethernet_bridge.netns.*` | Linux | What "Verified (Linux, automated tests)" lists |
+
+### `eth_link.*`
+
+- The filter tests check EtherTypes, the position behind VLAN tags, MAC addresses and the maximum length.
+- The MAC table tests check echoes, both sides, the limit and concurrency.
+- `eth_link.boundary` checks that `libs/eth_link` includes no SIL Kit header, directly or indirectly.
+- `eth_link.os_link_*` checks texts only, so it runs on all platforms.
+
+### `ethernet_bridge.*`
+
+- These tests check forwarding, the filter and echoes of the bridge's own frames.
+- For a loop through 2 bridges, they check the orders in which it is stopped, the order in which it is not stopped with an external link that echoes its own transmissions, and the case of one bridge with `--no-mac-guard`.
+- `ethernet_bridge.*_npcap_adapter_*` opens 2 pcap external links the Npcap way on the same device of the fake pcap library, and checks that the loop is stopped and that, even with `--no-mac-guard`, the bridge's own frames do not come back.
+- They check a full MAC table, `stop()` in the middle of forwarding, lost frames, `Fault`, warnings, and starting and stopping.
+- `ethernet_bridge.silkit_*` checks the real SIL Kit side with an in-process registry (on a free port) and 2 participants.
+- `ethernet_bridge.app_*` checks the promiscuous mode hint with a replaced clock, without waiting 5 seconds.
+
+### `ethernet_bridge.integration.*`
+
+These tests run, as processes, the executable linked with a fake external link (`vehicle_sil_ethernet_bridge_on_fake`, `tests/ethernet_bridge/fake_link_factory.cpp`), together with a registry and a peer on the SIL Kit side. The peer is `eth_bridge_it_peer`, which uses SIL Kit's `IEthernetController` directly.
+
+- They check round trips and statistics, the startup line, argument errors (4), an interface that cannot be opened (3), `Fault` (1) and a stop request (statistics, `stopped`, 0).
+- `backend-not-here` uses the real executable and checks the message for a backend not available on that OS, and the pcap list. If the library is on that computer, the output is the list; otherwise it is the message that says how to install the library.
+
+### `eth_link.pcap_*` and `ethernet_bridge.integration.pcap-*`
+
+- `eth_link.pcap_*` checks the messages of both Npcap and libpcap, on every OS.
+- The ways of opening, Npcap's `pcap_open()` and libpcap's `pcap_create()`, are both checked on every OS.
+- The fake library (`tests/eth_link/fake_pcap`) is a shared library with functions of the same names as the real one, loaded at run time.
+- In the fake library, `fake0` is a device that responds. There are also devices that cannot be opened, cannot send, cannot be read, drop frames, are wireless, and echo what they send.
+- There are 2 versions that lack one function each (an old version, and a version without `pcap_open`).
+- `ethernet_bridge.integration.pcap-*` uses an executable with the same content as the installed one, except that the library location is changed to the fake library (`vehicle_sil_ethernet_bridge_on_fake_pcap`).
+- `ethernet_bridge.integration.pcap-*` checks round trips and statistics, the list, the messages when the library is missing or old (3, before connecting to SIL Kit), a missing device (3) and a read failure (1).
+
+### `ethernet_bridge.netns.*`
+
+`tests/ethernet_bridge/bridge_netns.py` runs `ethernet_bridge.netns.tap`, `ethernet_bridge.netns.packet` and `ethernet_bridge.netns.pcap`. The conditions for skipping and for leaving parts out:
+
+| Condition | What happens | Environment variable that makes it a failure |
+|---|---|---|
+| A user namespace cannot be created | Skipped (exit code 77). | `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` |
+| The namespace can be created, but a TAP device, veth or packet socket cannot be created in it | Skipped. | `VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` |
+| libpcap is not installed (`pcap` only) | Skipped. | `VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` |
+| `setpriv` or `ethtool` is missing | Only the parts that need it are left out, with `NOT CHECKED` in the output. | `VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` |
+
+The `skipped:` line of the output shows which condition caused a skip. CI sets both variables, so both a skip and a left-out part are failures.

@@ -1,7 +1,7 @@
-// 試験のための偽の HTTP（HttpTransport）。本番のコードからは import しない。
+// Fake HTTP (HttpTransport) for tests. Do not import it from production code.
 import { HttpError, HttpOutcome, HttpRequest, HttpTransport } from '../http';
 
-/** 送られた要求 1 つ。flush で答える（答えるまで、クライアントは待つ）。 */
+/** One request sent. Answer it with flush (the client waits until then). */
 export class FakeRequest {
   constructor(
     readonly request: HttpRequest,
@@ -9,7 +9,8 @@ export class FakeRequest {
   ) {}
 
   /**
-   * 答える。status が 400 以上なら失敗（本文がサーバーの誤りの形なら、その文の HttpError）。status 0 は届かなかった。
+   * Answers. A status of 400 or above is a failure (an HttpError with the server's message when the body has the
+   * server's error shape). Status 0 means the request never arrived.
    */
   flush(
     body: unknown,
@@ -22,13 +23,13 @@ export class FakeRequest {
     );
   }
 
-  /** 答えずに失敗させる（届かなかった、待つ時間を過ぎた: `HttpError.noAnswer`）。 */
+  /** Fails without an answer (never arrived, or timed out: `HttpError.noAnswer`). */
   fail(error: HttpError): void {
     this.done({ ok: false, error });
   }
 }
 
-/** 偽の HTTP。createClient の `http` に transport を渡す。送られた要求を、答えるまで順に持つ。 */
+/** Fake HTTP. Pass `transport` as `http` to createClient. Holds the requests sent, in order, until answered. */
 export class FakeHttp {
   readonly requests: FakeRequest[] = [];
 
@@ -36,7 +37,7 @@ export class FakeHttp {
     this.requests.push(new FakeRequest(request, done));
   };
 
-  /** その path の、まだ答えていない要求を 1 つ取り出す（ちょうど 1 つでなければ投げる）。 */
+  /** Takes the one unanswered request for that path (throws unless there is exactly one). */
   expectOne(path: string): FakeRequest {
     const found = this.requests.filter((r) => r.request.path === path);
     if (found.length !== 1) {
@@ -46,13 +47,13 @@ export class FakeHttp {
     return found[0];
   }
 
-  /** その path の、まだ答えていない要求がない。 */
+  /** No unanswered request for that path. */
   expectNone(path: string): void {
     const found = this.requests.filter((r) => r.request.path === path);
     if (found.length > 0) throw new Error(`expected no request to ${path}, found ${found.length}`);
   }
 
-  /** まだ答えていない要求がない。 */
+  /** No unanswered request. */
   verify(): void {
     if (this.requests.length > 0) {
       const paths = this.requests.map((r) => r.request.path).join(', ');

@@ -3,12 +3,12 @@ import { ProtocolError, RunRequest, SessionSummary, readSessionResponse } from '
 import { SessionFeed } from './session';
 import { ErrorSink, Readable, Writable, derived, rethrowLater } from './values';
 
-/** 停止の操作: 順に止める、待たずに止める。 */
+/** Stop action: stop in order, or stop without waiting. */
 export type StopAction = 'stop' | 'force';
 
 /**
- * 答えが来なかった（待つ時間を過ぎた）操作の文。断られたのではなく、サーバーはしたかもしれない: 開始なら、実行が
- * 始まったかは WebSocket の状態（セッションの写し）でわかる。答えが来なかったのでなければ null。
+ * Text for an action that got no answer (timed out). It was not refused, so the server may have carried it out: for
+ * a start, the WebSocket state (the session copy) tells whether the run started. null unless no answer came.
  */
 function answerMissing(path: string, error: HttpError): string | null {
   if (!error.timedOut) return null;
@@ -18,46 +18,49 @@ function answerMissing(path: string, error: HttpError): string | null {
     : `${error.message}: the server may have done it; the session over the WebSocket shows what happened`;
 }
 
-/** 断られた操作の理由と、そのときの実行（実行が変わったら、古い理由は出さない）。 */
+/** Why an action was refused, and the run at that time (once the run changes, the old reason is no longer shown). */
 interface ActionFailure {
   message: string;
   session: number | null;
   running: boolean;
 }
 
-/** 実行の操作と、その状態（GuiClient.run）。 */
+/** Run control and its state (GuiClient.run). */
 export interface ClientRun {
-  /** 開始を送って、応答を待っている。 */
+  /** A start was sent and its answer is pending. */
   readonly starting: Readable<boolean>;
-  /** 停止を送って、応答を待っている（どちらの停止か）。 */
+  /** A stop was sent and its answer is pending (which kind of stop). */
   readonly stopping: Readable<StopAction | null>;
-  /** 開始の応答を待っている間に、止めるよう頼んだ。 */
+  /** A stop was asked for while the answer to a start was pending. */
   readonly stopWhileStarting: Readable<boolean>;
-  /** 最後の操作が断られた理由（サーバーの文をそのまま）。実行が始まるか終わったら null。 */
+  /** Why the last action was refused (the server's text, unchanged). null once a run starts or ends. */
   readonly error: Readable<string | null>;
   /**
-   * 実行を始める（`POST api/run`）。応答の要約で解け、断られたら HttpError で reject する。サーバーは、開始の中で
-   * 構成ファイルを照合し直すことがあるので、照合の上限の 2 倍（順番待ちと照合）に余裕を足した時間まで待つ。それでも
-   * 答えがなければ、`timedOut` の HttpError で reject し、error に「答えが来なかった（始まったかは WebSocket の
-   * 状態でわかる）」と出す。サーバーは始めたかもしれない。
+   * Starts a run (`POST api/run`). Resolves with the summary in the answer; rejects with an HttpError if refused.
+   * The server may check the configuration file again as part of the start, so this waits up to twice the check limit
+   * (waiting its turn, then checking) plus a margin. If there is still no answer, it rejects with an HttpError with
+   * `timedOut` and error says that no answer came (the WebSocket state tells whether the run started). The server may
+   * have started it.
    */
   start(request: RunRequest): Promise<SessionSummary | null>;
-  /** 順に止める（`POST api/stop` `{force: false}`）。何度頼んでも同じ。 */
+  /** Stops in order (`POST api/stop` `{force: false}`). Asking again has no further effect. */
   stop(): Promise<SessionSummary | null>;
-  /** 待たずに止める（`POST api/stop` `{force: true}`）。 */
+  /** Stops without waiting (`POST api/stop` `{force: true}`). */
   forceStop(): Promise<SessionSummary | null>;
 }
 
 /**
- * 実行の操作: 開始（`POST api/run`）、順に止める・待たずに止める（`POST api/stop`）と、そのための状態。
+ * Run control: start (`POST api/run`), stop in order or without waiting (`POST api/stop`), and the state for them.
  *
- * - 操作の応答（いまの要約）は、通知を待たずにセッションの写しへ当てる（押した直後に古い表示が残らない）。
- * - 開始と停止は別々に送る。開始の応答を待っている間も、止めるよう頼める（サーバーは、ランチャーが起動した
- *   ところで届ける。順に止める停止は何度頼んでも同じなので、開始の応答の要約がまだ「頼んでいない」なら頼み直す）。
- * - 断られた理由（サーバーの英語の文）は error に出す。実行が始まるか終わったら出さない。
- * - start() と stop() の Promise は、応答の要約（読めなければ null）で解け、断られたら HttpError で reject する。
- *   答えが来なかった（`timedOut`）ときは、断られたのではない: 実行が始まったかは、セッションの写しでわかる。
- *   状態（starting など）は、Promise が解ける前に変わっている。
+ * - The answer to an action (the current summary) is applied to the session copy without waiting for the notification
+ *   (no stale display right after a click).
+ * - Start and stop are sent separately. A stop can be asked for while the answer to a start is pending (the server
+ *   delivers it once the launcher has started; stopping in order has no further effect when asked again, so if the
+ *   summary in the start's answer does not show the stop as asked for yet, it is asked for again).
+ * - error holds the reason for a refusal (the server's English text). It is cleared once a run starts or ends.
+ * - The Promises of start() and stop() resolve with the summary in the answer (null if unreadable) and reject with an
+ *   HttpError when refused. No answer (`timedOut`) is not a refusal: the session copy tells whether the run started.
+ *   The state (starting and so on) has already changed when the Promise resolves.
  */
 export class RunControl implements ClientRun {
   private readonly startSending: Writable<boolean>;
@@ -74,7 +77,9 @@ export class RunControl implements ClientRun {
     private readonly feed: SessionFeed,
     private readonly transport: HttpTransport,
     onError: ErrorSink = rethrowLater,
-    /** 開始の応答を待つ時間（ミリ秒）。サーバーが開始の中で照合し直すことがあるので長い。 */
+    /**
+     * How long to wait for the answer to a start (ms). Long, because the server may check again as part of the start.
+     */
     private readonly startTimeoutMs: () => number = () => 0,
   ) {
     this.startSending = new Writable<boolean>(false, Object.is, onError);
@@ -100,7 +105,7 @@ export class RunControl implements ClientRun {
     );
   }
 
-  /** 実行を始める。 */
+  /** Starts a run. */
   start(request: RunRequest): Promise<SessionSummary | null> {
     this.startSending.set(true);
     this.stopAskedWhileStarting.set(false);
@@ -108,7 +113,8 @@ export class RunControl implements ClientRun {
       this.startSending.set(false);
       const asked = this.stopAskedWhileStarting.get();
       this.stopAskedWhileStarting.set(false);
-      // 開始の応答の要約が、待っている間に頼んだ停止をまだ映していなければ、頼み直す（何度頼んでも同じ）
+      // If the summary in the start's answer does not yet reflect a stop asked for meanwhile, ask again (no further
+      // effect)
       const session = this.feed.session.get();
       if (asked && session?.launcher.running && session.stopRequests === 0) {
         this.stop().catch(() => undefined);
@@ -116,20 +122,23 @@ export class RunControl implements ClientRun {
     });
   }
 
-  /** 順に止める（participant の終わりを待つ）。何度頼んでも、待たずに止めることにはならない。 */
+  /** Stops in order (waits for the participants to end). Asking again never turns it into a stop without waiting. */
   stop(): Promise<SessionSummary | null> {
     if (this.startSending.get()) this.stopAskedWhileStarting.set(true);
     this.stopSending.set('stop');
     return this.send('api/stop', { force: false }, undefined, () => this.stopSending.set(null));
   }
 
-  /** 待たずに止める（participant を強制終了する）。 */
+  /** Stops without waiting (kills the participants). */
   forceStop(): Promise<SessionSummary | null> {
     this.stopSending.set('force');
     return this.send('api/stop', { force: true }, undefined, () => this.stopSending.set(null));
   }
 
-  /** 送って、応答の要約を当てる。done は応答（失敗も）の後、Promise が解ける前に呼ぶ。 */
+  /**
+   * Sends and applies the summary in the answer. done is called after the answer (failures too), before the Promise
+   * settles.
+   */
   private send(
     path: string,
     body: object,
@@ -155,7 +164,7 @@ export class RunControl implements ClientRun {
           summary = readSessionResponse(outcome.body);
           this.feed.adopt(summary);
         } catch (error) {
-          // 要約の芯が読めない応答は、知らせに出して、続く通知の要約に任せる
+          // An answer whose summary core is unreadable is reported, and the summary of the next notification takes over
           this.feed.report(
             error instanceof ProtocolError ? `unreadable answer: ${error.message}` : String(error),
           );

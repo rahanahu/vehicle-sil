@@ -1,30 +1,32 @@
 import { ServerProblem, readServerProblem } from './protocol';
 
-/** GUI サーバーへの 1 つの要求。path は base からの相対（`api/run` など。先頭に / を付けない）。 */
+/** One request to the GUI server. path is relative to the base (`api/run` and so on, with no leading /). */
 export interface HttpRequest {
   method: 'GET' | 'POST';
   path: string;
-  /** POST の本文（JSON にして送る）。 */
+  /** Body of a POST (sent as JSON). */
   body?: unknown;
-  /** 応答を待つ時間（ミリ秒）。省くと HTTP の口の既定（fetchTransport は DEFAULT_TIMEOUT_MS）。 */
+  /** How long to wait for the answer (ms). Omitted: the transport's default (DEFAULT_TIMEOUT_MS for fetchTransport). */
   timeoutMs?: number;
 }
 
-/** 応答を待つ時間の既定（ミリ秒）。照合（`api/check`）は、サーバーの照合の上限に、この時間を足して待つ。 */
+/** Default time to wait for an answer (ms). A check (`api/check`) waits for the server's check limit plus this. */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** 要求の結果。成功なら応答の JSON、失敗なら HttpError。 */
+/** Outcome of a request: the answer's JSON on success, an HttpError on failure. */
 export type HttpOutcome = { ok: true; body: unknown } | { ok: false; error: HttpError };
 
 /**
- * GUI サーバーへ要求を送る口。done は 1 回だけ、結果を持って呼ぶ。トークン（Authorization）と Origin を付けるのは
- * この口の役目。既定は fetchTransport。枠組みの HTTP の道具（Angular の HttpClient など）に差し替えられる。
+ * Sends requests to the GUI server. Calls done exactly once, with the outcome. Adding the token (Authorization) and
+ * Origin is the transport's job. The default is fetchTransport; it can be replaced with a framework's HTTP tool
+ * (such as Angular's HttpClient).
  */
 export type HttpTransport = (request: HttpRequest, done: (outcome: HttpOutcome) => void) => void;
 
 /**
- * HTTP の失敗。status 0 はサーバーから答えがなかった（届かなかったか、待つ時間を過ぎた）。problem はサーバーの誤りの形
- * （`{"error": {...}}`）の中身。timedOut は、待つ時間を過ぎて諦めた（サーバーは要求を受けて、まだ働いているかもしれない）。
+ * HTTP failure. Status 0 means the server did not answer (the request never arrived, or the wait timed out). problem
+ * is the content of the server's error shape (`{"error": {...}}`). timedOut means the client gave up after the
+ * timeout (the server may have received the request and still be working on it).
  */
 export class HttpError extends Error {
   constructor(
@@ -39,7 +41,7 @@ export class HttpError extends Error {
     this.name = 'HttpError';
   }
 
-  /** 待つ時間を過ぎて諦めた要求の誤り。 */
+  /** Error for a request given up after the timeout. */
   static noAnswer(method: string, path: string, timeoutMs: number): HttpError {
     return new HttpError(
       0,
@@ -49,7 +51,10 @@ export class HttpError extends Error {
     );
   }
 
-  /** 応答の本文（JSON を読んだもの）から作る。サーバーの誤りの形でなければ problem は null。 */
+  /**
+   * Builds the error from the answer's body (parsed JSON). problem is null unless the body has the server's error
+   * shape.
+   */
   static from(status: number, statusText: string, body: unknown): HttpError {
     let problem: ServerProblem | null = null;
     if (typeof body === 'object' && body !== null && 'error' in body) {
@@ -64,33 +69,33 @@ export class HttpError extends Error {
 }
 
 /**
- * 失敗から、人に見せる文を取り出す。サーバーの誤りなら、その message（英語。直し方を含む）、ほかの HTTP の失敗は
- * 状態の番号。
+ * Gets the text to show a person for a failure: the server's message for a server error (in English, including how
+ * to fix it), the status code for other HTTP failures.
  */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** fetchTransport の設定。 */
+/** Options of fetchTransport. */
 export interface FetchTransportOptions {
-  /** サーバーの URL（`http://127.0.0.1:<port>/`）。要求の path はここからの相対。 */
+  /** URL of the server (`http://127.0.0.1:<port>/`). Request paths are relative to it. */
   baseUrl: string;
-  /** トークン（サーバーが表示した URL の `#token=` の後ろ）。関数なら要求のたびに呼ぶ。 */
+  /** The token (what follows `#token=` in the URL the server printed). A function is called for each request. */
   token: string | (() => string | null);
   /**
-   * POST に付ける Origin。ブラウザは自分で付ける（ここで渡しても使われない）。ブラウザの外（Node など）では
-   * サーバー自身の origin（baseUrl の origin）を渡す。
+   * Origin to send with POST. Browsers add it themselves (a value given here is not used). Outside the browser (Node
+   * and so on), pass the server's own origin (the origin of baseUrl).
    */
   origin?: string;
-  /** 使う fetch（既定は globalThis.fetch）。 */
+  /** The fetch to use (default globalThis.fetch). */
   fetch?: typeof fetch;
-  /** 応答を待つ時間の既定（ミリ秒。要求の timeoutMs が優先）。 */
+  /** Default time to wait for an answer (ms; a request's timeoutMs takes precedence). */
   timeoutMs?: number;
 }
 
 /**
- * 標準の fetch で送る HttpTransport。ブラウザと Node（18 以上）で動く。転送（リダイレクト）には従わない（トークンを
- * ほかへ送らない）。応答を待つ時間を過ぎたら、状態 0 の HttpError にする。
+ * HttpTransport that sends with the standard fetch. Works in browsers and in Node 18 or later. Does not follow
+ * redirects (so the token is never sent elsewhere). After the timeout, fails with an HttpError of status 0.
  */
 export function fetchTransport(options: FetchTransportOptions): HttpTransport {
   const send = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -127,10 +132,10 @@ export function fetchTransport(options: FetchTransportOptions): HttpTransport {
       });
     send(url, init)
       .then(async (response) => {
-        // 本文が JSON でなければ null（誤りの形でなければ、状態の番号で知らせる）
+        // null if the body is not JSON (unless it has the error shape, the status code reports the failure)
         const body: unknown = await response.json().catch(() => null);
         clearTimeout(timer);
-        // 本文を読んでいる途中で待つ時間を過ぎた: 読めなかった本文ではなく、答えがなかったとする
+        // Timed out while reading the body: count it as no answer, not as an unreadable body
         if (timedOut) {
           fail(null);
           return;

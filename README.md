@@ -1,132 +1,263 @@
 # vehicle-sil
 
-[Vector SIL Kit](https://github.com/vectorgrp/sil-kit) の上で、車載通信のシミュレーションピアを作るための C++20 ライブラリです。J1939 over CAN と LIN に対応しています。ピアは Windows と Linux の独立したプロセスとして動きます。
+[日本語](README.ja.md)
+
+A set of tools for simulating vehicle ECUs (electronic control units) in software. You connect several ECUs, run them together on a computer and test them. You write each ECU in C++20. [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) carries the communication between the ECUs and keeps their time in sync. All ECUs follow one shared simulation time (virtual time) instead of the wall clock, so repeated runs give the same result. The tools run on Linux and on Windows (MinGW).
 
 > [!NOTE]
-> vehicle-sil は最初のリリースの前です。公開 API は、互換性を保たずに変わることがあります。わかっている制限は「[既知の制限](#既知の制限)」に、全体の形と設計の決まりは [docs/architecture.md](docs/architecture.md) に、契約と制約の詳細は [docs/internals/](docs/architecture.md#中の仕組み) の各文書にあります。
+> While the version is 0.x, the public API can change incompatibly.
 
-使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（Vector Virtual CAN と VN5620 の物理 CAN ループバックで確認済み）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
+## What you can do
 
-## どれを読むか
-
-役割ごとに、読む順と、読まなくてよい文書です。docs の各文書の冒頭にも、対象と前後に読むものを書いています。
-
-| 役割 | 読む順 | 読まなくてよいもの |
+| Goal | Use | Documentation |
 |---|---|---|
-| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ひな形とビルド済みの道具）→ 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → [docs/architecture.md](docs/architecture.md)（全体の形）→ 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは [docs/lin-guide.md](docs/lin-guide.md) も | docs/simulation-*.md、docs/dependencies.md、docs/code-map.md。docs/internals/ は、契約や制限を確かめるときに該当する節だけ |
-| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ビルド済みの道具）→ [docs/architecture.md](docs/architecture.md)（全体の形）→ 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」（ほかの人の PC から ECU を参加させるなら「[複数の PC で動かす](docs/howto/multi-pc.md)」）→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md)（構成ファイル）→ [docs/simulation-check.md](docs/simulation-check.md)（照合）→ [docs/simulation-run.md](docs/simulation-run.md)（実行）→ 決まった手順で値を入れて確かめるなら手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md、docs/internals/ |
-| 試験する人（決まった手順で値を入れて確かめる、CI で回す） | 手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」（シナリオを書き、照合して回し、終了コードと結果を読むまで）→ [docs/scenario.md](docs/scenario.md) → [docs/simulation-config.md](docs/simulation-config.md) の「引数と終了コード」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/control-api.md（シナリオは gRPC を使わない）、docs/dependencies.md、docs/code-map.md |
-| 外から操作する人（Python、CLI、試験） | 手引き「[信号を外から操作する](docs/howto/operate-signals.md)」（どの口を使うか、読む・書く・待つ、時間の操作）→ [docs/control-api.md](docs/control-api.md)（`vehicle_sil_launch run --control` で、ランチャーの Control Server につなぐ）→ [examples/launch_control](examples/launch_control) → [docs/simulation-events.md](docs/simulation-events.md)（事象と命令）。変数の名前は、`ecu_main` で作った ECU の実行ファイルなら `--describe` の `variables` で調べる（[docs/ecu-executable.md](docs/ecu-executable.md) の「JSON の形式」） | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
-| ブラウザで見る人、自分の画面を作る人（GUI を、好きな枠組みで） | [docs/gui.md](docs/gui.md)（起動、画面、変数）→ 自分の画面を作るなら [docs/gui.md](docs/gui.md) の「自分の画面を作る」→ ひな形 [examples/gui_starter](examples/gui_starter) → [gui/client](gui/client/README.md)（クライアントのライブラリ）→ [gui/protocol](gui/protocol/README.md)（サーバーの口） | docs/gui.md の「サンプルの画面」（Angular の部品を写して使うときだけ）、docs/j1939-guide.md、docs/j1939-codec.md |
-| 実機の CAN につなぐ人 | [docs/bridges.md](docs/bridges.md)（Vector XL CAN Bridge の使い方、ビルド、契約） | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-*.md、docs/code-map.md |
-| SIL Kit の Ethernet を外のインターフェースにつなぐ人 | [docs/ethernet-bridge.md](docs/ethernet-bridge.md)（`vehicle_sil_ethernet_bridge` の使い方、Linux の TAP デバイスとネットワークのインターフェース、Windows の Npcap、確かめた範囲） | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-*.md、docs/code-map.md |
-| `Peer` や SIL Kit の participant を自分で組み立てる人 | [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/peers.md](docs/peers.md)（ピアを別々のプロセスで動かす、仮想時間、CAN バスの模擬）→ [docs/internals/](docs/architecture.md#中の仕組み) の該当する文書 | docs/simulation-*.md、docs/gui.md |
-| vehicle-sil 自体を直す人 | [AGENTS.md](AGENTS.md) → [docs/code-map.md](docs/code-map.md) → [docs/architecture.md](docs/architecture.md) → [docs/build.md](docs/build.md) → [docs/dependencies.md](docs/dependencies.md) → 変える場所の [docs/internals/](docs/architecture.md#中の仕組み) の文書 | なし（利用者向けの文書は、変える機能のものを読む） |
+| Build your own ECU | One C++ class plus a one-line call to `ecu_main()` gives you an ECU executable. | [Create your first ECU](docs/howto/first-ecu.md) |
+| Make ECUs communicate | ECUs send and receive J1939 (CAN), LIN and raw Ethernet frames. | [j1939-guide.md](docs/j1939-guide.md), [lin-guide.md](docs/lin-guide.md), [examples/ethernet](examples/ethernet) |
+| Plan how to split ECUs and what to name things, before you start | Guidance on choosing what goes on the bus and what becomes a variable, network names, addresses and more. | [Decisions to make before you start](docs/howto/design-choices.md) |
+| Run several ECUs as one simulation | `vehicle_sil_launch` checks a YAML configuration file against each ECU for mismatches (`check`), and starts and runs everything (`run`). | [Integrate and run several ECUs](docs/howto/integrate-ecus.md) |
+| Write tests and run them automatically | A YAML scenario lists steps that set values, wait and check the results. | [Write tests with scenarios](docs/howto/scenario-tests.md) |
+| Read and write values of a running simulation from Python | The Control API (gRPC) and its Python client. | [Read and write signals from outside](docs/howto/operate-signals.md) |
+| Watch and change values in a browser | `vehicle-sil-gui` shows variables as sliders and charts. | [gui.md](docs/gui.md) |
+| Connect to real CAN hardware or real networks | Bridges relay frames between a simulated bus and a real one. There is one for Vector XL CAN and one for Ethernet. | [bridges.md](docs/bridges.md), [ethernet-bridge.md](docs/ethernet-bridge.md) |
+| Let ECUs on other computers join | In the configuration file, give the address of the SIL Kit registry (the server that introduces participants to each other) and list the ECUs that the people on the other computers start themselves. | [Run on several computers](docs/howto/multi-pc.md) |
 
-ライブラリの CMake ターゲットとディレクトリの一覧は、[docs/architecture.md](docs/architecture.md) の「構成」にあります。やりたいこと別のサンプルの索引は [examples/README.md](examples/README.md) です。
+```mermaid
+flowchart LR
+    a["ECU A"] --- silkit(["SIL Kit"])
+    b["ECU B"] --- silkit
+    launch["vehicle_sil_launch<br>check / run / scenario"] --- silkit
+    bridge["Bridge"] --- silkit
+    bridge --- real["Real CAN,<br>external networks"]
+    client["Python, browser"] --- launch
+```
 
-## 取得とビルド
+Each line in the diagram is a connection. The ECUs, `vehicle_sil_launch` and the bridges connect through SIL Kit. Python and the browser connect to `vehicle_sil_launch` to read and write values.
 
-### ECU を作って動かす（ひな形とビルド済みの道具）
+Each ECU is a separate executable. Different people can build ECUs separately, and someone who does not know their internals can list them in a configuration file and run them. For the overall architecture, see [docs/architecture.md](docs/architecture.md). For examples sorted by task, see [examples/README.md](examples/README.md).
 
-ECU を書く人とまとめる人は、vehicle-sil のリポジトリをビルドしなくて構いません。手順は 3 つです。Node.js は要りません。ひな形と道具は、[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)に公開した版にだけあります。公開した版がまだないときは、下の「vehicle-sil 自体をビルドする」の手順で使います。
+## Example
 
-1. リリースのページから `vehicle-sil-template-<版>.zip`（ECU のプロジェクトのひな形）を取って展開し、自分のプロジェクトにします。中身は 2 つの ECU、構成ファイル、シナリオ、GUI のダッシュボードで、vehicle-sil を FetchContent で取り込みます（[template/](template/) と同じもの）。
-2. ひな形の中で `python3 get_tools.py`（Windows の UCRT64 シェルでは `python get_tools.py`）を実行します。リリースから自分の OS のビルド済みの道具（`vehicle_sil_launch` とブラウザの GUI）を取り、ひな形に書いてある SHA-256 で確かめて、`tools/` に展開します。表示されたコマンドで、その `bin` を `PATH` に入れます。
-3. ECU をビルドして（`cmake --preset linux`、`cmake --build --preset linux`。Windows は `windows`）、`vehicle_sil_launch check simulation.yaml`、`vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml`、`vehicle-sil-gui simulation.yaml` で動かします。
+The example has 2 ECUs. The engine ECU sets the engine speed from the throttle position and sends it over J1939. The dashboard ECU receives the speed and displays it. This configuration file puts both into one simulation ([examples/ecu_main/simulation.yaml](examples/ecu_main/simulation.yaml), comments removed). Each entry in `participants` is one ECU executable.
 
-- 必要なものと各段の詳しい説明は、ひな形の [README](template/README.md) にあります。続きは手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」です。
-- 待ち時間は、最初のビルドで SIL Kit をコンパイルする数分だけです（ECU がリンクするライブラリは、ソースからビルドします）。
-- ECU と道具は同じ版でそろえます（ひな形の `GIT_TAG` と `get_tools.py` の `VERSION`）。版ごとの変更と、互換を壊す変更の直し方は [CHANGELOG.md](CHANGELOG.md) にあります。
-- 道具の圧縮ファイルの中身と作り方は [docs/build.md](docs/build.md) の「ビルド済みの道具」にあります。
+```yaml
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+    step_ms: 5
+```
 
-### vehicle-sil 自体をビルドする
+These commands need a build. First build as described in "[Quick start](#quick-start)", then run the commands below in `build/linux-gcc-control/examples/ecu_main`, where the build puts the configuration file and the ECUs. The `run` output shown is an excerpt: it leaves out the lines about starting the registry and the ECUs, and the lines that the ECUs print (`[Dashboard] t=…`).
 
-vehicle-sil を直す人、試験を回す人、ビルド済みの道具がない環境で使う人の手順です。
+| Command | What it does | What it starts |
+|---|---|---|
+| `vehicle_sil_launch check simulation.yaml` | Has each ECU print its own configuration and checks the configuration file against it. | Each ECU with `--describe` only. No simulation runs. |
+| `vehicle_sil_launch run simulation.yaml` | Runs the simulation until `stop_at_ms`. | The SIL Kit registry and every ECU. It ends them when the run is over. |
+| `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | Sets and checks values as the steps of the scenario say. | The same processes. The exit code is 0 if every step passes. |
+| `vehicle-sil-gui simulation.live.yaml` | Runs the same 2 ECUs until you stop them, with a configuration file that has no time limit (next to `simulation.yaml`). You watch and change values in a browser. | The GUI server. Click **Start** in the GUI to start the simulation. In "Quick start", `scripts/run-gui.py` runs this command for you. |
+
+The `check` output:
+
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+The scenario sets the throttle to 50 % and waits until the engine speed rises and the dashboard ECU receives it. The end of the `run --scenario` output:
+
+```text
+scenario scenarios/throttle_step.yaml (throttle step): passed, 6 of 6 steps passed
+
+line  step                                                              result  at
+8     set Engine.engine.throttle = 50                                   ok      0 ms
+10    wait_until Engine.engine.speed ge 1700 (timeout 500 ms)           ok      330 ms
+12    expect Engine.engine.speed near 1800 (tolerance 10) (for 100 ms)  ok      490 ms
+15    expect Dashboard.dashboard.engine_speed ge 1700 (within 200 ms)   ok      490 ms
+17    ramp Engine.engine.throttle to 0 over 200 ms                      ok      700 ms
+18    expect Engine.engine.speed le 1000 (within 100 ms)                ok      700 ms
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    yes       exit code 0
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+Before anything runs, `check` reports each mismatch with its location, how to fix it and a finding code. Try it on a copy of the configuration file with a mistyped network name:
+
+```sh
+sed 's/name: J1939_CAN/name: Vehicle_CAN/' simulation.yaml > mistake.yaml
+vehicle_sil_launch check mistake.yaml
+```
+
+The check reports 3 findings and exits with code 1. Below are one of the 3 findings and the last line; the other 2 findings are left out. The line number counts the full file, comments included.
+
+```text
+error: mistake.yaml:11: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), which is not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its code [unknown-network]
+failed: 2 errors, 1 warning, 0 notes
+```
+
+In the browser GUI, moving the throttle slider changes the engine speed.
+
+![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed chart rises from 1200 rpm to 2000 rpm](docs/images/gui-variables.png)
+
+## Quick start
+
+| Way to start | Suited to | Requirements | What you get |
+|---|---|---|---|
+| [Build from the repository](#build-from-the-repository) | Trying it out right away; developing vehicle-sil itself | The tools in the next table | The examples, the tests and all the tools, built by you |
+| [Use the template and the prebuilt tools](#use-the-template-and-the-prebuilt-tools) | Writing your own ECUs; integrating and running ECUs | A compiler, CMake, Ninja, Git and Python | A project with 2 ECUs, and tools that need no build |
+
+### Build from the repository
+
+| Requirement | Version | Used for |
+|---|---|---|
+| C++ compiler | GCC or Clang with C++20 support | Every build |
+| CMake | 3.21 or later (3.28 or later to build gRPC) | Configuring and building |
+| Ninja, Git | Any | Building, and fetching SIL Kit |
+| [uv](https://docs.astral.sh/uv/) | Any | Installing the Python (3.11 or later) and the packages that the build and the GUI use |
+| Node.js, npm | 24.15 or later, 11.12 or later | Building the web front end of the GUI |
+
+The commands below build the repository, run the example above and start the GUI. The first configure and build download and compile SIL Kit (and gRPC, if your computer does not have it). This needs a network connection and takes from a few minutes to more than 10 minutes. The commands are for Linux. For Windows, other presets and running the tests, see [docs/build.md](docs/build.md).
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
-# --recursive を付けずにクローンした場合
-git submodule update --init --recursive
+scripts/doctor.py                    # one line per requirement. MISSING: needed to build (exit code 1); absent: needed only for the GUI or another part
+uv sync                              # installs the Python packages that the build and the GUI use
+cmake --preset linux-gcc-control     # with the Control API server (needed to read and write values from Python and the GUI)
+cmake --build --preset linux-gcc-control   # slow the first time: compiles SIL Kit (and gRPC, if the computer does not have it)
+
+# reproduce the output shown in "Example"
+export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"
+cd build/linux-gcc-control/examples/ecu_main
+vehicle_sil_launch check simulation.yaml
+vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
+
+# browser GUI: go back to the repository root, build the web front end and start the GUI
+# (if something is missing, run-gui.py prints the command that builds it)
+cd ../../../..
+npm --prefix gui/web ci
+npm --prefix gui/web run build
+scripts/run-gui.py                   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
+
+The `scripts/run-gui.py` script starts the GUI server with `examples/ecu_main/simulation.live.yaml` from the build and opens a browser. To start it without a browser, add `--no-browser`; the terminal prints the URL. To stop the GUI, press Ctrl+C in that terminal, or run `kill <PID>` (SIGTERM) from another terminal. Either way, a running simulation stops too.
+
+### Use the template and the prebuilt tools
+
+With this approach you do not build the repository. The [releases page](https://github.com/rahanahu/vehicle-sil/releases) provides 2 release assets:
+
+| Release asset | Contents |
+|---|---|
+| Template | A starting-point ECU project with the same 2 ECUs as the example above, configuration files and a scenario (the same as [template/](template/)). |
+| Prebuilt tools | `vehicle_sil_launch`, the browser GUI and the Python client, in one archive per OS. |
+
+In the directory where you extracted the template, run these commands in order:
 
 ```sh
-cmake --preset linux-gcc-release
-cmake --build --preset linux-gcc-release
-ctest --preset linux-gcc-release
+python3 get_tools.py             # downloads the prebuilt tools and prints the command that adds them to PATH
+cmake --preset linux             # Windows (MSYS2 UCRT64): cmake --preset windows
+cmake --build --preset linux     # Windows: cmake --build --preset windows
+vehicle_sil_launch check simulation.yaml
+vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
+vehicle-sil-gui simulation.live.yaml
 ```
 
-上は Linux（GCC）の例です。要るものの確かめ方（`scripts/doctor.py`）、必要なもの、ほかのプリセット、Windows（MSYS2 UCRT64）の手順は [docs/build.md](docs/build.md) に、試験のラベルと回し方は [docs/code-map.md](docs/code-map.md) の「試験のラベル」にあります。
+The template's [README](template/README.md) lists the required versions and explains each step. [CHANGELOG.md](CHANGELOG.md) lists the changes in each version.
 
-## 最初の ECU を動かす
+## Writing an ECU
 
-次のコマンドは、エンジンの ECU（回転数を周期送信する）と表示の ECU（受けて表示する）を動かします。動かす場所は 2 つあり、ECU のコードはどちらでも同じです。
-
-- 引数なし（既定）: 1 つのプロセスの中の仮想バスの上で動かします。SIL Kit を使わないので、registry を起動する必要はありません。ECU のロジックを作って試すときに向いています。
-- `--silkit`: 同じ ECU を SIL Kit の participant として動かします（registry はプロセス内に立てます）。ほかのプロセスや道具とつなぐ前の確認に使います。すでに動いている registry につなぐときは `--registry-uri <uri>` を渡します。
-
-```sh
-B=build/linux-gcc-release
-$B/examples/getting_started/vehicle_sil_getting_started
-$B/examples/getting_started/vehicle_sil_getting_started --silkit
-```
-
-ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。どこで動かすかは、`Simulation` のコンストラクターだけで決まります。
+An ECU is an ordinary class that takes a `vehicle_sil::Ecu&`. Here are the class and `main()` of the engine ECU from the example, as they appear in [examples/ecu_main/engine/main.cpp](examples/ecu_main/engine/main.cpp) without the `#include` lines and the namespace declarations:
 
 ```cpp
-class Engine {
+class Engine
+{
 public:
-    explicit Engine(vehicle_sil::Ecu& ecu) {
-        auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x00});
-        codec::attach_sender<EngineStatus>(node, 20ms, [this](EngineStatus& m) { m.speed.set(rpm_); });
-        ecu.every(10ms, [this](vehicle_sil::SimTime) { rpm_ = rpm_ < 1500 ? rpm_ + 25 : rpm_; });   // モデルを進める
+    explicit Engine(vehicle_sil::Ecu& ecu) :
+      node_(ecu.j1939("J1939_CAN").add_node(
+          {.address = 0x00, .name = j1939::Name{}.set_identity_number(1).set_manufacturer_code(0x7F0)}))
+    {
+        ecu.input("engine.throttle", &throttle_,
+                  {.unit = "%", .min = 0.0, .max = 100.0, .description = "accelerator pedal position"});
+        ecu.output("engine.speed", &rpm_, {.unit = "rpm"});
+        // The model: the speed moves towards 800 rpm plus 20 rpm per percent of throttle.
+        ecu.every(10ms, [this](vehicle_sil::SimTime) {
+            const int target = 800 + static_cast<int>(throttle_ * 20.0);
+            rpm_ += rpm_ < target ? 50 : rpm_ > target ? -50 : 0;
+        });
+        ecu.every(100ms, [this](vehicle_sil::SimTime) {
+            static_cast<void>(node_.send(ecu_main_example::kEngineSpeed, ecu_main_example::encode_speed(rpm_)));
+        });
     }
-private:
-    int rpm_ = 0;
-};   // Display も同じ形: codec::on_message<EngineStatus>(node, ...) で受ける
 
-int main() {
-    vehicle_sil::Simulation sim;                                // プロセス内の仮想バス
- // vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});  // SIL Kit（プロセス内の registry）。変えるのはこの 1 行
-    sim.add<Engine>("Engine", 10ms);                            // ステップ幅 10 ms の ECU。Engine は ECU が持つ
-    auto& display = sim.add<Display>("Display", 5ms);
-    sim.run_for(2s);                                            // 仮想時間で 2 秒。ステップの失敗は SimulationError
-    // 戻った後は、ステップが書いた値（display の記録など）を読んでよい
+private:
+    j1939::Node& node_;
+    double throttle_ = 20.0;
+    int rpm_ = 0;
+};
+```
+
+```cpp
+int main(int argc, char** argv)
+{
+    return vehicle_sil::ecu_main<Engine>(argc, argv, {.name = "Engine", .step = 10ms});
 }
 ```
 
-- メッセージ（`EngineStatus`）は YAML から生成した型です（[docs/j1939-codec.md](docs/j1939-codec.md)）。完全なコードは [examples/getting_started](examples/getting_started) にあります。
-- 動かす場所を実行時に選ぶときは、`std::optional<vehicle_sil::SilKitOptions>` を渡します。空ならプロセス内の仮想バス、値があれば SIL Kit です（`Simulation sim(silkit);`）。
-- ECU は、外から読み書きする変数も宣言できます（`ecu.input("engine.accelerating", &accelerating_, {.description = "Accelerates while true"})`、`ecu.output("engine.speed", &speed_, {.unit = "km/h"})`）。同じプロセスからは `sim.ecu("Engine").agent()` の `submit()` で時刻を指定して書き、`latest()` で読みます。Control API のクライアント（Python、CLI）からも操作できます。仮想バスでも SIL Kit でも、書き込みは同じステップで反映されます。例は [examples/vehicle](examples/vehicle)、使い方は [docs/control-api.md](docs/control-api.md) にあります。
-- やりたいこと別のサンプル（型付きメッセージ、独自プロトコル、故障注入、複数の ECU と LIN、生のイーサネットのフレームなど）は [examples/README.md](examples/README.md) にまとめています。
-- 作り方、試験の書き方、`Peer` を直接使う場合は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。
-- `Peer` を別プロセスで動かす構成（ピアを手動で動かす、仮想時間で動かす、CAN バスの調停と送信時間を模擬する）は [docs/peers.md](docs/peers.md) に、LIN の使い方は [docs/lin-guide.md](docs/lin-guide.md) に、vehicle-sil を自分の CMake プロジェクトに取り込む方法は [docs/build.md](docs/build.md) の「外部プロジェクトから使う（FetchContent）」にあります。
+| Code | What it does | Details |
+|---|---|---|
+| `ecu.j1939("J1939_CAN")` | Connects to the network of the same name in `networks` of the configuration file. If the names do not match, `check` reports the error shown above. | [j1939-guide.md](docs/j1939-guide.md) |
+| `ecu.input()`, `ecu.output()` | Declare the variables that scenarios, Python and the GUI read and write. | "ECU variables" in [control-api.md](docs/control-api.md#ecu-variables) |
+| `ecu.every()` | Updates the model and sends the message periodically, in virtual time. | [Create your first ECU](docs/howto/first-ecu.md) |
+| `node_.send()` | Sends the message defined in [engine_speed.hpp](examples/ecu_main/engine_speed.hpp), next to this file. | [j1939-codec.md](docs/j1939-codec.md) (define signals in YAML and generate types from them) |
+| `ecu_main<Engine>()` | Makes an executable that takes the same arguments as every other ECU (`--describe`, `--local --run-for-ms 1000` and others). | [ecu-executable.md](docs/ecu-executable.md) |
 
-## 既知の制限
+You can also run several ECUs in one process. This runs without SIL Kit, which makes it a good way to try ECU logic on your own ([examples/getting_started](examples/getting_started)).
 
-- 仮想時間の一時停止とステップ実行は、C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力の命令と Control API（`--control`）からできます。`vehicle_sil_sim_controller` からはできません。
-- シミュレーションを始めからやり直す操作（リセット）はありません。止めてから `run` をやり直します。CAN と LIN のチャネルやデバイスは、Control API、構成ファイル、GUI からは選べません（Vector XL CAN Bridge のチャネルは、起動の引数で選びます）。
-- SIL Kit で動かすとき、LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
-- LIN の Slave が受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）は、仮想 LIN バスでは渡されず、SIL Kit では購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
-- 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。
-- J1939 スタックに ETP（1785 バイトを超えるメッセージ）はありません。制限と規格との一致を確かめていない点は [docs/internals/j1939.md](docs/internals/j1939.md) の「J1939 の既知の制限」と各節にあります。
-- 試験キットに LIN の故障注入と記録の道具はありません（記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます）。LIN は仮想時間だけで動きます（実時間の `Peer` では `std::logic_error`）。
-- `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
-- 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
-- `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。
-- Windows 10 は未確認です（Windows 11 の MSYS2 UCRT64 ビルドと試験は確認済み）。
-- Vector XL CAN Bridge は Vector Virtual CAN と VN5620 の物理ループバックで確認済みです。他の物理 CAN 構成や機器での動作は未確認です。
-- Vector XL CAN Bridge が扱うのはクラシック CAN だけです。CAN FD には対応していません。
+## Known limitations
 
-## 開発者向け
+| Area | Limitation | Notes and workarounds |
+|---|---|---|
+| CAN | Classic CAN (8 bytes or less) only. | RTR, CAN FD and CAN XL frames are dropped on reception and counted. |
+| J1939 | No ETP (messages longer than 1785 bytes). | For the other limitations and for what is not verified for conformance to the standard, see "Known J1939 limitations" and the individual sections in [docs/internals/j1939.md](docs/internals/j1939.md#known-j1939-limitations). |
+| LIN | Runs in virtual time only. | A real-time `Peer` throws `std::logic_error`. |
+| LIN | Uses experimental SIL Kit APIs, such as LIN dynamic response. | — |
+| LIN | A slave that runs on SIL Kit needs a step size shorter than the slot length of the frames it responds to. | Set the step size with `step_ms` in the configuration file. |
+| LIN | A slave receives only the frames that the master sends. | On the virtual LIN bus, a slave cannot receive the responses of other slaves. On SIL Kit, it receives them for the IDs it subscribes to, but the step and the time at which it receives them are not deterministic. |
+| Ethernet | Raw frames only; there is no TCP/IP stack. | Connect to external networks with the bridge described in [ethernet-bridge.md](docs/ethernet-bridge.md). |
+| Time and control | There is no operation that restarts a simulation from the beginning (reset). | Stop the simulation and run `run` again. |
+| Time and control | `vehicle_sil_sim_controller` cannot pause virtual time or step it. | The C++ API (the time gate of `SimulationController`), the stdin commands of `vehicle_sil_launch run` and the Control API (`--control`) can. |
+| Time and control | The Control API, the configuration file and the GUI cannot select CAN or LIN channels or devices. | Give the channel of the Vector XL CAN Bridge as an argument when you start the bridge. |
+| Time and control | If the DLL of an existing ECU uses real time internally (sleeping, reading the clock), vehicle-sil cannot replace it with virtual time. | — |
+| Tools and build | The test library (`vehicle_sil::testkit`) has no LIN fault injection or recording. | To record, observe the virtual LIN bus. To disconnect a single ECU, use `ecu.connected`. |
+| Tools and build | The APIs of `LocalBench` (`vehicle_sil::local`) and `vehicle_sil::testkit` are not stable. | — |
+| Tools and build | `install()` and packaging (`find_package`) are not supported. | Include vehicle-sil with FetchContent or `add_subdirectory` (see "Use from another project (FetchContent)" in [docs/build.md](docs/build.md#use-from-another-project-fetchcontent)). |
+| OS and hardware | Windows 10 is not verified. | Verified on Windows 11 with MSYS2 UCRT64. |
+| OS and hardware | The Vector XL CAN Bridge handles classic CAN only. | For how to use it and how it behaves, see [bridges.md](docs/bridges.md). |
+| OS and hardware | The Vector XL CAN Bridge is not verified with other physical CAN setups or devices. | Verified with Vector Virtual CAN and with a physical loopback on a VN5620. |
 
-ドキュメントの管理ルールは [AGENTS.md](AGENTS.md) にあります。
+## Contributing
 
-## ライセンス
+To work on vehicle-sil itself, read [AGENTS.md](AGENTS.md) first. It sets the rules for documentation, commit messages and the verification scripts. [docs/code-map.md](docs/code-map.md) describes how the source code is organized.
 
-vehicle-sil は MIT License で公開しています（[LICENSE](LICENSE)）。ECU のプロジェクトのひな形 `template/` のファイルだけは MIT-0（MIT No Attribution、[template/LICENSE](template/LICENSE)）で、写して作ったプロジェクトに表示を残す必要はありません。
+## License
 
-依存ライブラリのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+The project is released under the MIT License ([LICENSE](LICENSE)). Only the files of the template, `template/`, are under MIT-0 ([template/LICENSE](template/LICENSE)): a project you create by copying them does not have to keep the license notice. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the licenses of the dependencies.
 
-vehicle-sil は、Vector Informatik や SAE International とは関係のない、独立したプロジェクトです。文中の製品名と規格名は、それぞれの権利者のものです。
+This is an independent project, not affiliated with Vector Informatik or SAE International. Product names and names of standards belong to their respective owners.
