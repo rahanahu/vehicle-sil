@@ -11,7 +11,7 @@ recording of the command line it is given and writes the same lines in the same 
 
 Which recording: the one whose command line is the same, where the configuration file and the scenario file are
 compared by their text (SHA-256 of the text with LF line ends), not by their names, and the token file of
---control-credentials is left out. Several may match (the same command line with other commands written to the
+--control-credentials and the file of --timeline are left out. Several may match (the same command line with other commands written to the
 launcher): see below; REPLAY_CASE=<case> plays only that one. When none matches, it writes what to do on standard
 error and exits with code 2.
 
@@ -37,7 +37,8 @@ How it plays:
   ends it the same way, so that a test sees every command the GUI server writes, and so does one that came later
   than in the recordings that have it (going back would write their answers twice); standard error says which.
   Only after the result is a command not read (as the launcher reads none then).
-- The recording's marks are put back: <root> (the directory it runs in), <file> and <scenario> (the arguments),
+- The recording's marks are put back: <root> (the directory it runs in), <file>, <scenario> and <timeline> (the
+  arguments),
   "<pid>" (its own pid in hello; for a started participant the pid of a sleeping child process that it starts in
   its place and ends when the participant ends, so that a test can see whether stopping left processes behind),
   <control> (the address of the control server below).
@@ -46,6 +47,8 @@ How it plays:
   starts that stand-in (fake_control.py, gRPC) for the participants whose control link is connected, with the token
   of the --control-credentials file, and moves its time as the time events say. With --scenario it refuses every
   write, as the real control server does while a scenario runs (the feature scenario-control).
+- A recording made with --timeline holds the file the launcher wrote (its timeline_file entry, where the file was
+  whole: before the line that names it): it is written to the file of --timeline there.
 
 Faults (what the real launcher does not do on purpose, to see how the GUI server takes it): a line
 `# replay-fault: <name>` in the configuration file, or REPLAY_FAULT=<name>. The findings and log lines that a fault
@@ -139,6 +142,16 @@ def text_sha256(path: str | None) -> str | None:
     return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
+MARKED = {"--scenario": "<scenario>", "--control-credentials": "<credentials>", "--timeline": "<timeline>"}
+
+
+def option_value(argv: list[str], option: str) -> str | None:
+    """The value of an option before the configuration file ("--"), or None."""
+    end = argv.index("--") if "--" in argv else len(argv)
+    i = argv.index(option) if option in argv[:end] else -1
+    return argv[i + 1] if 0 <= i < end - 1 else None
+
+
 def shape(argv: list[str]) -> tuple[list[str], str | None, str | None]:
     """The command line with the files as marks, the configuration file, the scenario file."""
     out, file, scenario = [], None, None
@@ -149,10 +162,10 @@ def shape(argv: list[str]) -> tuple[list[str], str | None, str | None]:
             file = argv[i + 1]
             out += ["--", "<file>", *argv[i + 2:]]
             break
-        if a in ("--scenario", "--control-credentials") and i + 1 < len(argv):
+        if a in MARKED and i + 1 < len(argv):
             if a == "--scenario":
                 scenario = argv[i + 1]
-            out += [a, "<scenario>" if a == "--scenario" else "<credentials>"]
+            out += [a, MARKED[a]]
             i += 2
             continue
         out.append(a)
@@ -479,6 +492,7 @@ class Player:
         self.has_accepted = False
         self.fault = fault
         _, self.file, self.scenario = shape(argv)
+        self.timeline = option_value(argv, "--timeline")
         self.root = os.getcwd()
         self.start = time.monotonic()
         self.seq = 0
@@ -549,6 +563,7 @@ class Player:
         if isinstance(value, str):
             value = value.replace("<root>", self.root).replace("<file>", self.file or "")
             value = value.replace("<scenario>", self.scenario or "")
+            value = value.replace("<timeline>", self.timeline or "")
             if self.control is not None:
                 value = value.replace("<control>", self.control_address)
         return value
@@ -824,6 +839,12 @@ class Player:
                 self.model(event)
                 for n in range(entry.get("repeat", 1)):
                     self.emit(self.event(event, n) if "repeat" in entry else event)
+            elif "timeline_file" in entry:
+                if self.timeline:  # as the launcher: the directories that are missing are made
+                    path = Path(self.timeline)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(self.marks(entry["timeline_file"]), ensure_ascii=False,
+                                               separators=(",", ":")) + "\n", encoding="utf-8", newline="\n")
             elif "print" in entry:
                 printed = self.marks(entry["print"])
                 self.model(printed)

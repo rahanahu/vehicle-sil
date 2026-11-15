@@ -192,6 +192,7 @@ module.exports = defineConfig([
             'aria-labelledby',
             'aria-current',
             'xPosition',
+            'rel',
           ],
         },
       ],

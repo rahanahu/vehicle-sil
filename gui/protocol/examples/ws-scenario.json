@@ -1,5 +1,5 @@
 {
-  "description": "A run with a scenario whose second step fails: scenario_step events as the steps run and end, the finding scenario-failed with the scenario's file and line, the run's end; the summary's scenario keeps the steps.",
+  "description": "A run with a scenario whose second step fails: scenario_step events as the steps run and end, the finding scenario-failed with the scenario's file and line, the timeline file (--timeline: the launcher has the feature timeline), the run's end; the summary's scenario keeps the steps, and has timeline_url at the end.",
   "client": [
     {
       "type": "auth",
@@ -62,7 +62,8 @@
           "steps": [],
           "steps_omitted": 0,
           "status": null,
-          "over_at_ms": null
+          "over_at_ms": null,
+          "timeline_url": null
         }
       }
     },
@@ -97,6 +98,8 @@
           "--stdin-commands",
           "--scenario",
           "scenarios/fails.yaml",
+          "--timeline",
+          "/path/to/vehicle-sil-gui-timelines/run.timeline.json",
           "--",
           "simulation.yaml"
         ]
@@ -858,9 +861,20 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "phase",
+        "event": "log",
         "seq": 39,
         "t_ms": 390,
+        "source": "vehicle_sil_launch",
+        "line": "timeline: /path/to/vehicle-sil-gui-timelines/run.timeline.json"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 40,
+        "t_ms": 400,
         "phase": "ended"
       }
     },
@@ -869,8 +883,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 40,
-        "t_ms": 400,
+        "seq": 41,
+        "t_ms": 410,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1306,7 +1320,8 @@
                 "code": null,
                 "message": null
               }
-            ]
+            ],
+            "timeline": "/path/to/vehicle-sil-gui-timelines/run.timeline.json"
           }
         }
       }
@@ -1332,8 +1347,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 40,
-        "last_t_ms": 400,
+        "last_seq": 41,
+        "last_t_ms": 410,
         "time": {
           "event": "time",
           "seq": 28,
@@ -2116,12 +2131,13 @@
                 "code": null,
                 "message": null
               }
-            ]
+            ],
+            "timeline": "/path/to/vehicle-sil-gui-timelines/run.timeline.json"
           }
         },
         "log": {
           "vehicle_sil_launch": {
-            "kept": 11,
+            "kept": 12,
             "dropped": 0
           },
           "Dashboard": {
@@ -2175,7 +2191,8 @@
           ],
           "steps_omitted": 0,
           "status": "failed",
-          "over_at_ms": 101
+          "over_at_ms": 101,
+          "timeline_url": "api/timeline/1"
         }
       }
     }
