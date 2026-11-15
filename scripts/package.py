@@ -118,6 +118,8 @@ RAPIDYAML = "ThirdParty/rapidyaml/rapidyaml.hpp"
 # What a Linux executable of the archive may need besides the libraries in bin/.
 LINUX_SYSTEM_LIBRARIES = {"libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1",
                           "ld-linux-x86-64.so.2"}
+# CMake's environment variable that leaves libraries out of the implicit link libraries it detects for C.
+IMPLICIT_EXCLUDE = "CMAKE_C_IMPLICIT_LINK_LIBRARIES_EXCLUDE"
 
 
 class Usage(Exception):
@@ -230,11 +232,12 @@ def version_problems(version: str, release: bool = False) -> list[str]:
             problems.append(f"{name}: no version found (expected {want})")
         elif m.group(1) != want:
             problems.append(f"{name} says {m.group(1)}, CMakeLists.txt says {version}: make it {want}")
-    readme = (ROOT / "template" / "README.md").read_text(encoding="utf-8")
-    others = sorted(set(re.findall(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", readme)) - {version})
-    if others:
-        problems.append(f"template/README.md names version {', '.join(others)}, CMakeLists.txt says {version}: make "
-                        f"it {version}")
+    for readme in sorted((ROOT / "template").glob("README*.md")):  # English and Japanese
+        others = sorted(set(re.findall(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", readme.read_text(encoding="utf-8")))
+                        - {version})
+        if others:
+            problems.append(f"template/{readme.name} names version {', '.join(others)}, CMakeLists.txt says {version}: "
+                            f"make it {version}")
     changelog = ROOT / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
     problems += changelog_problems(text, version, release)
@@ -503,7 +506,16 @@ def tools_command(args: argparse.Namespace) -> int:
         # One executable: SIL Kit and the C++ runtime linked statically (VEHICLE_SIL_STATIC).
         command.append(f"-DVEHICLE_SIL_STATIC={'OFF' if args.shared_runtime else 'ON'}")
         command += args.cmake_arg or []
-        s.run(command)
+        # GCC 16's gcc implies gcc_s_asneeded where its g++ implies gcc_s, and CMake before 4.2.6 and 4.3.3 lists
+        # the one the linker language does not imply (-lgcc_s_asneeded) for an executable of C and C++: the
+        # launcher then needs libgcc_s.so.1 in spite of -static-libgcc (CMake issue 27796). CMake's own way to
+        # leave a library out of what it detected (4.1 and newer; older ones do not read it, and a compiler that
+        # has no such library is not touched). Not needed once every CMake in use has the fix.
+        env = None
+        if not WINDOWS and not args.shared_runtime:
+            excluded = [e for e in os.environ.get(IMPLICIT_EXCLUDE, "").split(";") if e]
+            env = dict(os.environ, **{IMPLICIT_EXCLUDE: ";".join(dict.fromkeys(excluded + ["gcc_s_asneeded"]))})
+        s.run(command, env=env)
 
     def build_step(s: Step) -> None:
         s.run(["cmake", "--build", build, "--target", "vehicle_sil_launch", "--parallel", str(args.jobs)])
@@ -607,7 +619,10 @@ def tools_command(args: argparse.Namespace) -> int:
             extra = [n for n in needed if n not in allowed and not (stage / "bin" / n).is_file()]
             if extra:
                 raise StepFailed(f"{elf.name} needs {', '.join(extra)}, which the archive does not have and a Linux "
-                                 "system may not either (libstdc++ and libgcc are to be linked statically)")
+                                 "system may not either (libstdc++ and libgcc are to be linked statically)"
+                                 + (": GCC 16 with a CMake older than 4.1 does this; use CMake 4.3.3 or newer, or "
+                                    "--shared-runtime (an archive that uses the system's libstdc++ and libgcc)"
+                                    if "libgcc_s.so.1" in extra else ""))
             symbols = s.run(["objdump", "-T", elf], capture=True).stdout
             for major, minor in re.findall(r"GLIBC_(\d+)\.(\d+)", symbols):
                 newest = max(newest, (int(major), int(minor)))

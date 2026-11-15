@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// GUI サーバー（vehicle-sil-gui）を、クライアントのライブラリ（gui/client）で使う最小の例。素の JavaScript で、
-// ライブラリを 1 つにまとめたファイル（ESM）を読む。run.mjs と同じことを、接続、再接続、要約と事象の当て方を
-// ライブラリに任せて行う: 照合して実行を始め、状態の変化を読みながら終わりを待ち、結果を表示する。
+// The smallest client of the GUI server (vehicle-sil-gui) that uses the client library (gui/client). Plain JavaScript
+// that loads the library bundled into one file (ESM). It does what run.mjs does, but leaves connecting, reconnecting
+// and applying the summary and events to the library: it checks, starts a run, waits for the end while it reads the
+// state changes, and prints the result.
 //
-//   (cd gui/web && npm run build:client)   # build/gui-client/vehicle-sil-gui-client.mjs を作る
-//   VEHICLE_SIL_GUI_URL='<サーバーが表示した URL（#token= つき）>' node examples/gui_client/run-with-library.mjs simulation.yaml
+//   (cd gui/web && npm run build:client)   # builds build/gui-client/vehicle-sil-gui-client.mjs
+//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/run-with-library.mjs simulation.yaml
 //
-// URL は環境変数で渡す（コマンドの引数に書くと、トークンが同じ PC のほかの利用者のプロセスの一覧と、シェルの
-// 履歴に残るため）。引数の先頭に URL を書いてもよい。ライブラリのファイルの場所は VEHICLE_SIL_GUI_CLIENT で変えられる。
+// Pass the URL in the environment variable (on the command line, the token would show in the process list to other
+// users of the computer and stay in the shell history). The URL may also be the first argument. VEHICLE_SIL_GUI_CLIENT
+// overrides where the library file is.
 //
-// 終了コード: 0 は結果が passed、1 は失敗（照合の誤り、実行の失敗、サーバーの誤り、時間切れ）、2 は使い方の誤り。
+// Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -22,7 +24,7 @@ function usage(message) {
   process.exit(2);
 }
 
-/** つないで、hello と再送を受け終えるまで待つ時間（秒）。 */
+/** How long to wait for the connection, hello and the replay to finish (seconds). */
 const READY_TIMEOUT_S = 15;
 
 const args = process.argv.slice(2);
@@ -61,7 +63,7 @@ const token = new URLSearchParams(printed.hash.slice(1)).get("token");
 if (!token) usage("the URL has no #token=...: use the URL the server printed");
 printed.hash = "";
 
-// Node では、ライブラリがサーバー自身の Origin を付ける
+// In Node, the library sends the server's own Origin
 const client = createClient({ baseUrl: printed.href, token });
 
 function finish(code, message) {
@@ -70,7 +72,7 @@ function finish(code, message) {
   process.exit(code);
 }
 
-/** 読める値が条件を満たすまで待つ。 */
+/** Waits until a readable value meets the condition. */
 function until(readable, condition) {
   return new Promise((resolve) => {
     if (condition(readable.get())) return resolve(readable.get());
@@ -84,7 +86,7 @@ function until(readable, condition) {
 }
 
 async function main() {
-  const app = await client.loadApp(); // 版が違えば読めない（ProtocolError）
+  const app = await client.loadApp(); // fails on another protocol version (ProtocolError)
   if (!app.launcher.usable) {
     finish(
       1,
@@ -100,7 +102,7 @@ async function main() {
   );
   client.session.incompatible.subscribe((why) => why && finish(1, why));
   client.connect();
-  // 揃ってから始める（始めた実行の事象を取りこぼさない）。つながらなければ、わけを言って終わる
+  // Start only once synced, so no event of the run we start is missed. If it cannot connect, say why and exit
   const connecting = setTimeout(() => {
     const close = client.connection.lastClose.get();
     finish(
@@ -133,7 +135,7 @@ async function main() {
     timeoutS * 1000,
   ).unref();
 
-  // ランチャーが終わった（結果を出したか、出さずに終わった）
+  // The launcher has ended (with or without a result)
   const ended = await until(
     client.session.session,
     (s) => s?.id === started?.id && !s.launcher.running,
@@ -145,7 +147,7 @@ async function main() {
   finish(result === "passed" ? 0 : 1, `result: ${result}`);
 }
 
-// サーバーの誤りは、機械が読む code と、人向けの文（直し方を含む）
+// A server error carries a code for machines and a message for people (including how to fix it)
 main().catch((error) =>
   finish(
     1,

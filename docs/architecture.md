@@ -1,189 +1,234 @@
-# アーキテクチャ
+# Architecture
 
-ECU を作る人、ECU をまとめる人、vehicle-sil 自体を直す人が、最初に全体の形をつかむための文書です。中の仕組み（スレッド、順序、不変条件）は、下の「[中の仕組み](#中の仕組み)」に挙げた文書に分けています。直す人は、[code-map.md](code-map.md)（どこに何があるか）の次にこれを読み、その後に [dependencies.md](dependencies.md) と、変える場所の中の仕組みの文書を読みます。
+[日本語](ja/architecture.md)
 
-vehicle-sil は、Vector SIL Kit の上で車載通信のシミュレーションピアを作るためのライブラリ群と道具です。対象は CAN（J1939 と生の CAN）と LIN です。ピアは Windows（MinGW）または Linux の上で、独立したプロセスとして動きます。同じ ECU のコードを、SIL Kit を使わないプロセス内の仮想バスでも動かせます。
+This page describes the overall structure of vehicle-sil (the processes and how they connect), lists the directories and targets, and explains the main classes and the design rules. For threads, ordering, invariants and other details, see the documents in the table under "[Internals](#internals)".
 
-## 全体の形
+| To find | See |
+|---|---|
+| Which processes there are and how they connect | [Overview](#overview) |
+| What each directory and target contains | [Directories and targets](#directories-and-targets) |
+| What the main classes are responsible for | [Main classes](#main-classes) |
+| Where code goes, and how time and execution modes are handled | [Design rules](#design-rules) |
+| Behavior, threads and ordering in detail | [Internals](#internals) |
 
-ECU ごとに実行ファイルを作り（`ecu_main()`）、まとめる人が構成ファイルで 1 つのシミュレーションにします（`vehicle_sil_launch run`）。ランチャーは SIL Kit の registry と controller を自分のプロセスに持ち、ECU の実行ファイルを子プロセスで起動します（`manual` の participant は利用者が起動します）。
+## Overview
+
+vehicle-sil is a set of libraries and tools for building peers that simulate in-vehicle communication on Vector SIL Kit. It covers CAN (J1939 and raw CAN), LIN and Ethernet (raw frames). Peers run as separate processes on Windows (MinGW) or Linux. The same ECU code also runs on an in-process virtual bus without SIL Kit.
+
+You build one executable per ECU (`ecu_main()`) and combine the executables into one simulation with a configuration file (`vehicle_sil_launch run`). The launcher hosts the SIL Kit registry and controller in its own process and starts the ECU executables as child processes. You start `manual` participants yourself.
 
 ```mermaid
 flowchart LR
-    ecu["ECU executables<br>(ecu_main)"] -- "CAN, LIN, time sync, variables" --- silkit(["SIL Kit"])
-    launch["vehicle_sil_launch run<br>(registry, controller, Hub)"] --- silkit
-    bridge["Vector XL CAN Bridge<br>(real time)"] --- silkit
-    bridge --- bus["physical CAN,<br>Vector Virtual CAN"]
-    client["Python, CLI, GUI server"] -- "gRPC (Control API)" --> launch
+    ecu["ECU executable"] --- silkit(["SIL Kit"])
+    launch["vehicle_sil_launch"] --- silkit
+    bridge["Vector XL CAN Bridge"] --- silkit
+    bridge --- bus["Real CAN bus,<br>Vector Virtual CAN"]
+    client["Python, CLI,<br>GUI server"] --- launch
 ```
 
-- バスと仮想時間は SIL Kit が運びます。ECU の変数（Control Agent）も SIL Kit の publish/subscribe でランチャーの Hub に届きます（[internals/control.md](internals/control.md)）。
-- 外からの操作は Control API（gRPC）で、ランチャーの Control Server（`run --control`）が受けます（[control-api.md](control-api.md)）。
-- GUI は別のプロセスです。GUI サーバー（`gui/server`）がランチャーを動かし、Control API のクライアントになって、ブラウザの画面に中継します（[gui.md](gui.md)）。
-- 実機の CAN には、Vector XL CAN Bridge が実時間でつなぎます（[bridges.md](bridges.md)）。
-- SIL Kit の Ethernet と外のイーサネットの間でフレームを運ぶブリッジ `vehicle_sil_ethernet_bridge` があります。外のインターフェースを開けるのは、いまは Linux の TAP デバイスと packet ソケットだけです（[ethernet-bridge.md](ethernet-bridge.md)）。
+Each line in the diagram is a connection. The table lists what each one carries.
 
-## 構成
+| Connection | What it carries | Details |
+|---|---|---|
+| ECU and SIL Kit | SIL Kit carries the buses (CAN, LIN, Ethernet) and the synchronization of virtual time. | — |
+| ECU variables and the launcher | The ECU's variables (Control Agent) go to the launcher's Hub over SIL Kit publish/subscribe. | [internals/control.md](internals/control.md) |
+| Python, CLI and the launcher | The launcher's Control Server (`run --control`) receives operations from outside the simulation through the Control API (gRPC). | [control-api.md](control-api.md) |
+| GUI server and the launcher | The GUI server (`gui/server`), a separate process, starts the launcher and, as a Control API client, relays it to the browser screens. | [gui.md](gui.md) |
+| Vector XL CAN Bridge and the real CAN bus | The bridge connects them in real time. | [bridges.md](bridges.md) |
+| Ethernet Bridge and external Ethernet | `vehicle_sil_ethernet_bridge` forwards frames between SIL Kit Ethernet and external Ethernet. The external interfaces are TAP devices, packet sockets and libpcap on Linux, and Npcap on Windows. | [ethernet-bridge.md](ethernet-bridge.md) |
+
+## Directories and targets
+
+### Directories
 
 ```
 vehicle-sil/
-├── libs/core/        vehicle_sil::core   SIL Kit participant、lifecycle、他参加者の監視、時間ゲート、ホストを participant のステップにつなぐ bind_host()
-├── libs/step/        vehicle_sil::step   参加者のプロトコル処理をステップで回す仕組み（ホスト、仮想時間と実時間のドライバー、時計。バスの種類と SIL Kit に依存しない）
-├── libs/lin/         vehicle_sil::lin    LIN の Master と Slave（スケジュールテーブル、フレームの送受信、診断フレーム、Sleep/Wakeup）、LIN のポートの抽象、プロセス内の仮想 LIN バス（SIL Kit と J1939 に依存しない）
-├── libs/lin_silkit/  vehicle_sil::lin_silkit  vehicle_sil::lin のポートの SIL Kit 実装（仮想時間）
-├── libs/can/         vehicle_sil::can    バックエンドに依存しない CAN の基盤（フレーム、ポート、vehicle_sil::step の上のホスト、仮想バス。SIL Kit に依存しない）
-├── libs/can_silkit/  vehicle_sil::can_silkit  vehicle_sil::can のポートの SIL Kit 実装（仮想時間と実時間）
-├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API）
-├── libs/eth/         vehicle_sil::eth    生のイーサネットのフレームの基盤（フレーム、ポート、vehicle_sil::step の上のチャネル、仮想ネットワーク。SIL Kit に依存しない）
-├── libs/eth_silkit/  vehicle_sil::eth_silkit  vehicle_sil::eth のポートの SIL Kit 実装（仮想時間）
-├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表、Linux の TAP デバイスと packet ソケットの口、実行時に読み込む pcap のライブラリ（Npcap、libpcap）の口（SIL Kit に依存しない）
-├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/）
-├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（変数の宣言と、自己申告 describe() とその JSON を含む。SIL Kit に依存しない）
-├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バスと仮想 LIN バスの上で ECU を仮想時間で回す LocalBench（SIL Kit に依存しない）
-├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 の試験の記録と故障注入（SIL Kit に依存しない）
-├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノード、Control Agent（監視の出力を含む）の組み立てと実行。Ecu の実装
-├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）
-├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ、行ごとの受け渡しと止める要求とプロセスの木ごとの終了。POSIX と Win32。内部用）
-├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイル、ECU の実行ファイルの自己申告との照合、シミュレーション全体の実行（内部用）
-├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）、両者の間のメッセージのバイト列の形式。通信と SIL Kit に依存しない
-├── libs/control_silkit/ vehicle_sil::control_silkit  Agent と Hub の間を SIL Kit の publish/subscribe で運ぶ層（AgentTransport、HubTransport）
-├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
-├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
-├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
-├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
-├── bridges/vector-xl/ Vector XL CAN Bridge（転送のコアは移植可能、XL バックエンドと実行ファイルは Windows 専用）
-├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外のインターフェースの間の転送、統計、引数の解釈、実行ファイル。どのプラットフォームでもビルドする）
-├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
-├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
-├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
-├── tools/launch/     構成ファイルの照合とシミュレーション全体の実行をする vehicle_sil_launch
-├── tools/j1939_codegen/ YAML の定義から J1939 の型付きメッセージ（C++ のヘッダー）を作る生成器（Python。ビルドのときに vehicle_sil_add_j1939_codec() が呼ぶ）
-├── examples/getting_started/ 最初の例: Ecu& を受け取る 2 つの ECU を Simulation で動かす
-├── examples/         やりたいこと別のサンプル（typed_messages、pid_stream、fault_injection、vehicle、low_level など。索引は examples/README.md）
-├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。Simulation で動かし、試験も同じコードを使う）、独自プロトコルのパラメーターサービス（param_service）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
-├── examples/virtual_time/ 仮想時間のピア（Peer の上の物理モデル、tick() 型の既存 ECU を載せた J1939 ECU、LIN Master と Slave）
-├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
-├── examples/ethernet/ 生のイーサネットのフレームを送受信する 2 つの ECU（1 つのプロセスで動かす例と、ecu_main の実行ファイル、構成ファイル、シナリオ）
-├── examples/ecu_main/ ECU ごとの実行ファイル（ecu_main）と、それをまとめる構成ファイル、シナリオ、ダッシュボード
-├── examples/launch_control/ ランチャーの Control Server に Python からつなぐ例（write_before_start.py、pause_and_step.py）
-├── examples/gui_client/ GUI サーバーの口を JavaScript から使う例
-├── examples/gui_starter/ GUI サーバーに配らせる自分の画面のひな形
-├── examples/fetchcontent_consumer/   外部プロジェクトからの利用例
-├── tests/            ユニットテスト、統合テスト、FetchContent テスト、XL ドライバのフェイク（tests/vector_xl/fake_xl）
-├── external/         SIL Kit（サブモジュール）
-├── patches/          SIL Kit へのパッチ（ビルドツリーのコピーに当てる。上流への提出用の形式）
-├── gui/server/       ブラウザの GUI のサーバー（Python、vehicle-sil-gui。ランチャーを動かし、HTTP と WebSocket の口を出す）
-├── gui/protocol/     GUI サーバーの HTTP と WebSocket の口の契約と例
-├── gui/client/       GUI サーバーのクライアントのライブラリ（TypeScript）
-├── gui/web/          サンプルの画面（Angular）
-├── template/         ECU のプロジェクトのひな形（ビルド済みの道具を取ってくる get_tools.py を含む）
-├── scripts/          開発と CI のスクリプト（verify.py、package.py など。AGENTS.md の「検証とスクリプト」）
-├── cmake/            依存の取り込み、試験の登録、境界の検査
+├── libs/core/        vehicle_sil::core   SIL Kit participant, lifecycle, monitoring of other participants, time gate, bind_host() that connects a host to the participant's steps
+├── libs/step/        vehicle_sil::step   Runs a participant's protocol processing in steps (host, virtual-time and real-time drivers, clocks; independent of the bus type and of SIL Kit)
+├── libs/lin/         vehicle_sil::lin    LIN master and slave (schedule tables, frame transmission and reception, diagnostic frames, sleep/wakeup), LIN port abstraction, in-process virtual LIN bus (independent of SIL Kit and J1939)
+├── libs/lin_silkit/  vehicle_sil::lin_silkit  SIL Kit implementation of the vehicle_sil::lin port (virtual time)
+├── libs/can/         vehicle_sil::can    Backend-independent CAN foundation (frames, ports, host on top of vehicle_sil::step, virtual bus; independent of SIL Kit)
+├── libs/can_silkit/  vehicle_sil::can_silkit  SIL Kit implementation of the vehicle_sil::can port (virtual time and real time)
+├── libs/can_netsim/  vehicle_sil::can_netsim  Simple CAN Network Simulator (SIL Kit Network Simulator API)
+├── libs/eth/         vehicle_sil::eth    Foundation for raw Ethernet frames (frames, ports, channel on top of vehicle_sil::step, virtual network; independent of SIL Kit)
+├── libs/eth_silkit/  vehicle_sil::eth_silkit  SIL Kit implementation of the vehicle_sil::eth port (virtual time)
+├── libs/eth_link/    vehicle_sil::eth_link  External side of the Ethernet Bridge: external interface abstraction, filter, MAC table against loops, Linux TAP devices and packet sockets, pcap libraries loaded at run time (Npcap, libpcap) (independent of SIL Kit)
+├── libs/j1939/       vehicle_sil::j1939  J1939 stack (on top of vehicle_sil::can; independent of SIL Kit), its protocol parts (parts/) and typed messages (codec/)
+├── libs/ecu/         vehicle_sil::ecu    Ecu, the class that ECU applications are built with (includes variable declarations and describe(), which describes the ECU's configuration, with its JSON; independent of SIL Kit)
+├── libs/local/       vehicle_sil::local  LocalBench, which runs ECUs in virtual time on in-process virtual CAN and LIN buses (independent of SIL Kit)
+├── libs/testkit/     vehicle_sil::testkit  J1939 test recording and fault injection on top of LocalBench (independent of SIL Kit)
+├── libs/peer/        vehicle_sil::peer   Setup and execution of one participant with its J1939, raw CAN and LIN nodes and its Control Agent (including the monitoring outputs); implements Ecu
+├── libs/simulation/  vehicle_sil::simulation  Simulation, which runs ECUs on a virtual bus or on SIL Kit, and main() for ECU executables (ecu_main)
+├── libs/process/     vehicle_sil::process  Child processes (output to a log file, capture of stdout and stderr with a timeout, line-by-line delivery, stop requests, ending a whole process tree; POSIX and Win32; internal)
+├── libs/launch/      vehicle_sil::launch  Simulation configuration file, check against the --describe output of the ECU executables, running the whole simulation (internal)
+├── libs/control/     vehicle_sil::control  Core of the Control Agent and the Control Server (Hub), byte format of the messages between them; independent of the transport and of SIL Kit
+├── libs/control_silkit/ vehicle_sil::control_silkit  Layer that carries messages between Agent and Hub over SIL Kit publish/subscribe (AgentTransport, HubTransport)
+├── libs/control_grpc/ vehicle_sil::control_grpc  gRPC layer of the Control API (ControlServer for clients; only with VEHICLE_SIL_BUILD_CONTROL_SERVER)
+├── proto/            Control API definition (vehicle_sil/control/v1/control.proto)
+├── python/vehicle_sil_control/ Python client and CLI for the Control API, helpers that run `vehicle_sil_launch run --control` as a child process
+├── bridges/common/  run_bridge(), shared by the bridge executables (stopping, monitoring loop, stop order, exit codes; internal)
+├── bridges/vector-xl/ Vector XL CAN Bridge (portable forwarding core; XL backend and executable for Windows only)
+├── bridges/ethernet/ Ethernet Bridge (forwarding between SIL Kit Ethernet and the external interface, statistics, argument parsing, executable; built on every platform)
+├── tools/common/     Command-line parsing, exit codes and logging shared by the executables (internal, header-only)
+├── tools/sim_controller/ System controller that starts and stops virtual-time simulations (vehicle_sil_sim_controller)
+├── tools/can_bus_simulator/ Executable of the simple CAN Network Simulator (vehicle_sil_can_bus_simulator)
+├── tools/launch/     vehicle_sil_launch, which checks configuration files and runs whole simulations
+├── tools/j1939_codegen/ Generator that turns YAML definitions into J1939 typed messages (C++ headers) (Python; vehicle_sil_add_j1939_codec() calls it at build time)
+├── examples/getting_started/ First example: two ECUs that take Ecu&, run with Simulation
+├── examples/         Examples by task (typed_messages, pid_stream, fault_injection, vehicle, low_level and others; index in examples/README.md)
+├── examples/j1939/   Two ECUs built from protocol parts (ecu_pair; runs with Simulation, and the tests use the same code), a parameter service with a custom protocol (param_service) and minimal peers (sender, which sends with a real-time Peer, and receiver, which receives directly with SIL Kit CAN and checks)
+├── examples/virtual_time/ Virtual-time peers (physical model on top of Peer, J1939 ECU that hosts an existing tick()-style ECU, LIN master and slave)
+├── examples/lin/     LIN cluster peers (a master and slaves with different roles; frame transmission and reception, sleep/wakeup)
+├── examples/ethernet/ Two ECUs that send and receive raw Ethernet frames (an example that runs both in one process, and ecu_main executables, a configuration file and a scenario)
+├── examples/ecu_main/ One executable per ECU (ecu_main), with a configuration file, scenarios and a dashboard that combine them into one simulation
+├── examples/launch_control/ Connecting to the launcher's Control Server from Python (write_before_start.py, pause_and_step.py)
+├── examples/gui_client/ Using the GUI server's API from JavaScript
+├── examples/gui_starter/ Template for your own screen, served by the GUI server
+├── examples/fetchcontent_consumer/   Use from an external project
+├── tests/            Unit tests, integration tests, FetchContent tests, fake XL driver (tests/vector_xl/fake_xl)
+├── external/         SIL Kit (submodule)
+├── patches/          Patches to SIL Kit (applied to the copy in the build tree; in the form for submission upstream)
+├── gui/server/       Browser GUI server (Python, vehicle-sil-gui; runs the launcher and provides the HTTP and WebSocket API)
+├── gui/protocol/     Specification and examples of the GUI server's HTTP and WebSocket API
+├── gui/client/       Client library for the GUI server (TypeScript)
+├── gui/web/          Sample screens (Angular)
+├── template/         ECU project template (includes get_tools.py, which downloads the prebuilt tools)
+├── scripts/          Development and CI scripts (verify.py, package.py and others; "Verification and scripts" in AGENTS.md)
+├── cmake/            Dependency inclusion, test registration, boundary checks
 └── docs/
 ```
 
-空のディレクトリや空のターゲットは作りません。
+Do not create empty directories or empty targets.
 
-区分は、どこから使い始めるかの目安です。利用者向けは、ECU を書く人と ECU をまとめる人が直接使うライブラリで、入口は `vehicle_sil::Ecu` と `vehicle_sil::Simulation` です。土台は利用者向けのライブラリを通して使うもので、直接も使えますが、API は上の層の必要に合わせて変わります。試験用は、試験とサンプルのための道具です。実行ファイル、生成コード、CAN ブリッジは区分に入れていません（「—」）。
+### Targets
 
-各ターゲットがリンクするもの（依存の向き）は、[code-map.md](code-map.md) の「依存の向き」の図にあります。
+The category tells you where to start.
 
-| ターゲット | 区分 | 内容 |
-|---|---|---|
-| `vehicle_sil::sim_base` | 土台 | `SimTime` と `SimDuration`、`StepInbox`、`periodic()` と `once_at()`（ヘッダーのみ。SIL Kit なしで使う） |
-| `vehicle_sil::core` | 土台 | `vehicle_sil::ParticipantRuntime`（SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理する）、`SimulationController`（仮想時間のシミュレーションの開始と停止、一時停止、ステップ実行、速度）、`TickScheduler`、`RealTimePacer`、`step::Host` を participant のステップにつなぐ `vehicle_sil::bind_host()`。プロトコルに依存しない。`sim_base` の型（`SimTime`、`StepInbox`）も使える |
-| `vehicle_sil::step` | 土台 | 1 つの参加者のプロトコル処理をステップで回す仕組み。ステップの参加者 `Member`、それを段の順に回す `Host`、仮想時間の `StepDriver`、実時間の `RealTimeDriver`、時計（`SteadyRealTimeClock`、試験用の `ManualRealTimeClock`）、時間の領域 `TimeDomain`。バスの種類にも SIL Kit にも依存しない（[internals/can.md](internals/can.md) のホストと駆動の節） |
-| `vehicle_sil::lin` | 土台 | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）と `vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）、バスへの口 `LinPort` と、プロセス内の仮想 LIN バス `VirtualLinBus`。仮想時間で使う。SIL Kit にも J1939 にも依存しない。ふつうは `Ecu::lin_master()` と `Ecu::lin_slave()` から使う。ほかに `LinScheduleTable`、`validate_schedule()`（[internals/lin.md](internals/lin.md)） |
-| `vehicle_sil::lin_silkit` | 土台 | `vehicle_sil::lin` のポートの SIL Kit 実装 `vehicle_sil::lin::SilKitLinPort`（`Peer` が使う） |
-| `vehicle_sil::can` | 土台 | バックエンドに依存しない CAN の基盤。フレームの型、ポートの契約、複数のプロトコル処理をステップで回す `Host`（`step::Host` の上。`StepDriver`、`RealTimeDriver`、時計は `vehicle_sil::step` のものを同じ名前で使える）、テスト用の仮想バス（調停と送信時間の模擬、故障注入、ECU 単位の通信断を選べる）、生フレームを読み取り専用で観測する `TapPort`。SIL Kit に依存しない。J1939 スタックの土台。ほかに `vehicle_sil::can::Frame`、`Port`、`Steppable`、`VirtualCanBus`、`CanBusModel`（[internals/can.md](internals/can.md)） |
-| `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can` のポートの SIL Kit 実装（仮想時間と、時刻同期なしの実時間）。`core` の `bind_host()` を `vehicle_sil::can::bind_host` の名前でも使える。ほかに `vehicle_sil::can::SilKitCanPort` |
-| `vehicle_sil::can_netsim` | 土台 | 簡易 CAN Network Simulator: SIL Kit の Network Simulator API で、CAN の調停、送信時間、バスの占有を仮想時間で模擬する（`CanBusSimulator`）。Vector SIL Kit Network Simulator と共用の設定ファイルの読み込み（[internals/can.md](internals/can.md)） |
-| `vehicle_sil::eth` | 土台 | 生のイーサネットのフレーム（宛先から payload の終わりまで。FCS なし）の基盤。フレームと MAC アドレスの型、ポートの契約、アプリケーションがステップの中で送受信するチャネル `Channel`（`step::Member`。同じ時刻のフレームを送り元のアドレスで並べる）、ハブとして振る舞うプロセス内の仮想ネットワーク `VirtualEthernetBus`。EtherType と payload は解釈しない。SIL Kit に依存しない（[internals/ethernet.md](internals/ethernet.md)） |
-| `vehicle_sil::eth_silkit` | 土台 | `vehicle_sil::eth` のポートの SIL Kit 実装（仮想時間）。ほかに `vehicle_sil::eth::SilKitEthPort` |
-| `vehicle_sil::j1939` | 利用者向け | J1939 スタック（名前空間 `vehicle_sil::j1939`、ヘッダー `vehicle_sil/j1939/`）。単一フレームの送受信、Request、Acknowledgement、NAME と Address Claim（要求、競合、Cannot Claim、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address の処理、状態の通知）、トランスポートプロトコル（BAM、RTS/CTS）、部品を作る道具箱（`Subscription`、`Timer`、`Node::attach`）、読み取り専用の観測口（`Observer`）。SIL Kit に依存しない。ほかに `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`（[internals/j1939.md](internals/j1939.md)） |
-| `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939` の公開 API と道具箱だけで作ったプロトコル部品。DM13 による放送の抑制、DTC と DM1/DM2/DM3/DM11/DM22、識別情報（ソフトウェア ID、ECU ID、製品 ID、診断プロトコル ID）。ほかに `BroadcastSuppression`、`Diagnostics`、`Identification`（[internals/j1939.md](internals/j1939.md)） |
-| `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](../examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](j1939-guide.md)（[internals/j1939.md](internals/j1939.md)、[j1939-guide.md](j1939-guide.md)） |
-| `vehicle_sil::j1939_codec`（ヘッダーのみ） | 利用者向け | J1939 の型付きメッセージ。YAML で PG と信号（位置、符号、スケーリング、範囲、列挙、Proprietary A/B、名前を付けた特別な値とそのプロファイル、埋め値）を定義すると、`vehicle_sil_add_j1939_codec()` がビルドのときに C++ の型を生成する。ビット操作を書かずに、信号を値として送受信する。使い方は [docs/j1939-codec.md](j1939-codec.md)。ほかに `codec.hpp`、`PeriodicSender`、`codec_node.hpp`、`vehicle_sil::j1939_codec`（[internals/j1939.md](internals/j1939.md)、[j1939-codec.md](j1939-codec.md)） |
-| `vehicle_sil::ecu` | 利用者向け | ECU のアプリケーションを組み立てる入口 `vehicle_sil::Ecu`: J1939 の `Network`、生の CAN チャネル（J1939 でないプロトコル用の `can::RawChannel`）、LIN の Master と Slave（`lin_master()`、`lin_slave()`）、生のイーサネットのフレームのチャネル（`ethernet()`。`eth::Channel`）、外から読み書きする変数（`input`、`output`、ECU の Control Agent `agent()`）、ステップごとの処理（`on_step`、`every`、ある時刻に 1 回の `at`）、ECU が持つオブジェクト（`emplace`）。`Peer` と `LocalBench` の ECU が実装するので、`Ecu&` を受け取るクラスは仮想バスでも SIL Kit でも同じコードで動く。ECU の構成の自己申告（`describe()`、JSON）。SIL Kit に依存しない。ほかに `EcuDescription`、`to_json()`、`detail::OwnedObjects`、`detail::EcuAgent`（[internals/execution.md](internals/execution.md)、[ecu-executable.md](ecu-executable.md)） |
-| `vehicle_sil::local` | 土台 | SIL Kit なしでプロセス内の仮想バスに ECU を載せて回す `vehicle_sil::LocalBench`: 仮想バス（CAN、LIN、イーサネット）の上の ECU（`Ecu`）とその `Network` を名前で組み立て、呼んだスレッドで仮想時間で進める。`Simulation` のローカルの実行もこれを使う（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::testkit` | 試験用 | `LocalBench` の上の J1939 の試験の道具: 出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`）。`testkit::LocalCan` は `LocalBench` の別名（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）、生の CAN、LIN の Master/Slave、イーサネットのチャネル（SIL Kit の Ethernet。仮想時間だけ）、Control Agent（J1939 の通信状態の監視の出力を含む）をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する。ほかに `start_together()`（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`: ECU をプロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告する。動かす場所はコンストラクターで選ぶ（SIL Kit では、registry をプロセス内に立てられる）。入門は [examples/getting_started](../examples/getting_started)。ECU のクラスを 1 つの実行ファイルにする `ecu_main()`（どの ECU も同じ引数: `--describe`、`--registry-uri`、`--local`。[docs/ecu-executable.md](ecu-executable.md)）。ほかに `SilKitOptions`、`SimulationError`、`EcuMainOptions`（[internals/execution.md](internals/execution.md)、[ecu-executable.md](ecu-executable.md)） |
-| `vehicle_sil_sim_controller`（実行ファイル） | — | system controller の CLI |
-| `vehicle_sil::process`（内部用） | — | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
-| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
-| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil_launch check`、`vehicle_sil_launch run`（[simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md)）。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のビルドでは `run --control` の Control Server も持つ |
-| `vehicle_sil::control` | 利用者向け | ECU の Control Agent（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映。固定容量のキュー）と、Control Server の中核の `Hub`。Agent は ECU が持って動かす（`Ecu::input()`、`output()` で変数を宣言する）。ほかに `vehicle_sil::control::Agent`、`wire`（[internals/control.md](internals/control.md)） |
-| `vehicle_sil::control_silkit` | 利用者向け | Control Agent と `Hub` の間を SIL Kit の publish/subscribe で運ぶ層（`AgentTransport`、`HubTransport`）。`ecu_main()` で作った ECU と `vehicle_sil_launch run` が使う。gRPC は要らない。ほかに `vehicle_sil::control_silkit::AgentTransport`（[internals/control.md](internals/control.md)） |
-| `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部） |
-| `vehicle_sil::control_grpc`（同上） | 利用者向け | Control API（gRPC）の Server（クライアント向け。ECU の Agent は SIL Kit の `vehicle_sil::control_silkit` でつながる）。認証（TLS、トークン、役割）。`vehicle_sil_launch run --control` が使う。[使い方](control-api.md)。ほかに `vehicle_sil::control_grpc::ControlServer`、`time_control_of()` |
-| `vehicle_sil::bridge_runtime`（内部用） | — | ブリッジの実行ファイルが準備の後に呼ぶ `vehicle_sil::bridge_runtime::run_bridge()`: 止める要求の受け方（シグナル、Windows のコンソールを閉じたとき）、監視のループ（participant の状態の判定、外の側の失敗、警告、監視の行）、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード。ブリッジごとの部分は `BridgeHooks` で渡す。プラットフォームに依存しない（[bridges.md](bridges.md)） |
-| `vehicle_sil::vector_xl_bridge_core` | — | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない。ほかに `ExternalCanPort` |
-| `vehicle_sil::vector_xl`（Windows のみ） | — | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要。ほかに `vehicle_sil::vector_xl::XlDriver` |
-| `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI |
-| `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側: 外のインターフェースの口 `vehicle_sil::eth_link::ExternalLink`、絞り込み `FrameFilter`、輪を防ぐ `MacSideTable`、OS の口（`make_tap_link()`、`make_packet_link()`。Linux だけ）、pcap のライブラリの口（`make_pcap_link()`。Windows の Npcap、Linux の libpcap を実行時に読み込む）。SIL Kit に依存しない（[ethernet-bridge.md](ethernet-bridge.md)） |
-| `vehicle_sil::ethernet_bridge_core` | — | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `vehicle_sil::ethernet_bridge::EthernetBridge`、統計と監視の行、引数の解釈、起動の 1 行。プラットフォームに依存しない |
-| `vehicle_sil_ethernet_bridge`（実行ファイル） | — | イーサネットのブリッジの CLI。どのプラットフォームでもビルドする（外のインターフェースを開けるのは Linux の `tap` と `packet`） |
-
-利用側は必要なターゲットだけをリンクします。依存ライブラリは `EXCLUDE_FROM_ALL` で追加しているので、リンクしないものはビルドされません（外部プロジェクトから取り込んだときは vehicle-sil のライブラリも同じです）。
-
-主なクラスは次のとおりです。
-
-| クラス | 責務 |
+| Category | Meaning |
 |---|---|
-| `vehicle_sil::ParticipantRuntime` | SIL Kit の participant、lifecycle（autonomous または coordinated）、SystemMonitor、時刻同期（任意）を RAII で所有する。他参加者の状態（Running か、終了したか）を待てる |
-| `vehicle_sil::SimulationController` | coordinated で起動するシミュレーションの system controller。必要な参加者がそろったら一斉に開始させ、指定した仮想時刻で停止させる |
-| `vehicle_sil::StepInbox` | SIL Kit のスレッドで届いたメッセージをステップの境界までため、決まった順序で渡す |
-| `vehicle_sil::TickScheduler` | 1 つの participant の中で、固定周期のタスク（既存 ECU の `tick()` など）をステップから呼ぶ |
-| `vehicle_sil::RealTimePacer` | 仮想時間を壁時計に一定の比率で結合するための待ち時間を計算する |
-| `vehicle_sil::Ecu` | ECU のアプリケーションを組み立てる入口（J1939 の `Network`、生の CAN、LIN の Master と Slave、ステップごとの処理、ECU が持つオブジェクト）。`Peer` と `LocalBench` の ECU が実装する（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::Simulation` | `Ecu` を仮想バスか SIL Kit の仮想時間で動かし、失敗を `SimulationError` で報告する（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::Peer` | 1 つの participant と、その J1939 の `Network`、LIN の Master と Slave、ステップごとのアプリの処理を組み立てて動かし、正しい順序で片付ける。`Ecu` を実装する（[internals/execution.md](internals/execution.md)） |
-| `vehicle_sil::lin::LinMaster` | LIN のスケジュールテーブルを仮想時間で実行し、ヘッダーごとの結果（応答の衝突は Error）を返す。Master が送るフレーム、診断のマスターリクエスト、go-to-sleep コマンド、wakeup パルスを送る |
-| `vehicle_sil::lin::LinSlave` | ステップで設定された値で Master のヘッダーに応答し（診断のスレーブレスポンスは 1 回だけ）、Master が送るフレームを受信する。休止と起床の状態を管理する |
-| `vehicle_sil::lin::LinPort` | LIN のノードがバスに触れる唯一の口。実装は `VirtualLinBus` のエンドポイントと `SilKitLinPort` |
-| `vehicle_sil::lin::VirtualLinBus` | プロセス内の LIN バス。送った側の呼び出しの中で、同期に配る。`LocalBench` が LIN のネットワーク名ごとに 1 つ作る |
+| User-facing | Libraries you use directly to write ECUs and to combine them into one simulation. Start with the classes `vehicle_sil::Ecu` and `vehicle_sil::Simulation`. |
+| Foundation | Libraries you use through the user-facing libraries. You can also use them directly, but their API changes with the needs of the layers above. |
+| Testing | Tools for tests and examples. |
+| — | Executables, generated code and the CAN bridge have no category. |
 
-`ParticipantRuntime` の契約、所有と終了の順序、スレッドとキューは [internals/core.md](internals/core.md) にあります。
+For what each target links (the dependency direction), see the diagrams in "Dependency direction" in [code-map.md](code-map.md#dependency-direction).
 
-### 共通化の規則
+| Target | Category | Description | Main types and features | Details |
+|---|---|---|---|---|
+| `vehicle_sil::sim_base` (header-only) | Foundation | Basic types and functions for virtual time. Used without SIL Kit. | `SimTime`, `SimDuration`, `StepInbox`, `periodic()`, `once_at()` | — |
+| `vehicle_sil::core` | Foundation | Manages the SIL Kit participant, the lifecycle, the status of other participants and the virtual-time steps with RAII. Independent of protocols. | `vehicle_sil::ParticipantRuntime`, `SimulationController` (start, stop, pause, single-step and speed of virtual-time simulations), `TickScheduler`, `RealTimePacer`, `vehicle_sil::bind_host()` (connects a `step::Host` to the participant's steps), the `sim_base` types (`SimTime`, `StepInbox`) | [internals/core.md](internals/core.md) |
+| `vehicle_sil::step` | Foundation | Runs the protocol processing of one participant in steps. Independent of the bus type and of SIL Kit. | `Member` (one member of a step), `Host` (runs the `Member`s in stage order), `StepDriver` (virtual time), `RealTimeDriver` (real time), clocks (`SteadyRealTimeClock`, and `ManualRealTimeClock` for tests), `TimeDomain` (time domain) | The sections on the host and on driving in [internals/can.md](internals/can.md) |
+| `vehicle_sil::lin` | Foundation | LIN master and slave, the interface to the bus and an in-process virtual LIN bus. Used in virtual time. Independent of SIL Kit and J1939. You usually use it through `Ecu::lin_master()` and `Ecu::lin_slave()`. | `vehicle_sil::lin::LinMaster` (schedule tables, frames the master sends, master requests, go-to-sleep and wakeup), `vehicle_sil::lin::LinSlave` (responds with the values set in a step, slave responses, reception of the master's frames, sleep and wakeup), `LinPort`, `VirtualLinBus`, `LinScheduleTable`, `validate_schedule()` | [internals/lin.md](internals/lin.md) |
+| `vehicle_sil::lin_silkit` | Foundation | SIL Kit implementation of the `vehicle_sil::lin` port. `Peer` uses it. | `vehicle_sil::lin::SilKitLinPort` | — |
+| `vehicle_sil::can` | Foundation | Backend-independent CAN foundation (the layer below the J1939 stack). Independent of SIL Kit. | `vehicle_sil::can::Frame`, `Port` (the port contract), `Steppable`, `Host` (runs several protocol handlers in steps; built on `step::Host`, and the `StepDriver`, `RealTimeDriver` and clocks of `vehicle_sil::step` are available under the same names), a virtual bus for tests (optional simulation of arbitration and transmission time, fault injection and disconnection per ECU), `VirtualCanBus`, `CanBusModel`, `TapPort` (read-only observation of raw frames) | [internals/can.md](internals/can.md) |
+| `vehicle_sil::can_silkit` | Foundation | SIL Kit implementation of the `vehicle_sil::can` port (virtual time, and real time without time synchronization). | `vehicle_sil::can::SilKitCanPort`, `vehicle_sil::can::bind_host` (an alias of `bind_host()` in `core`) | — |
+| `vehicle_sil::can_netsim` | Foundation | Simple CAN Network Simulator. Uses the SIL Kit Network Simulator API to simulate CAN arbitration, transmission time and bus load in virtual time. | `CanBusSimulator`, reading of a configuration file shared with the Vector SIL Kit Network Simulator | [internals/can.md](internals/can.md) |
+| `vehicle_sil::eth` | Foundation | Foundation for raw Ethernet frames (from the destination address to the end of the payload, without FCS). Does not interpret the EtherType or the payload. Independent of SIL Kit. | Frame and MAC address types, the port contract, `Channel` (a `step::Member` through which the application sends and receives within a step; orders frames of the same time by source address), `VirtualEthernetBus` (an in-process virtual network that behaves as a hub) | [internals/ethernet.md](internals/ethernet.md) |
+| `vehicle_sil::eth_silkit` | Foundation | SIL Kit implementation of the `vehicle_sil::eth` port (virtual time). | `vehicle_sil::eth::SilKitEthPort` | — |
+| `vehicle_sil::j1939` | User-facing | The J1939 stack (namespace `vehicle_sil::j1939`, headers in `vehicle_sil/j1939/`). Independent of SIL Kit. | Single-frame transmission and reception, Request, Acknowledgement, NAME and Address Claim (claiming, contention, Cannot Claim, choice of an arbitrary address, address table, address violation, handling of Commanded Address, status notification), transport protocol (BAM, RTS/CTS), the toolbox for building protocol parts (`Subscription`, `Timer`, `Node::attach`), read-only observation (`Observer`), `vehicle_sil::j1939::Network`, `Node`, `Pgn`, `Identifier` | [internals/j1939.md](internals/j1939.md) |
+| `vehicle_sil::j1939_broadcast_suppression`, `vehicle_sil::j1939_diagnostics` | User-facing | Protocol parts built only from the public API and the toolbox of `vehicle_sil::j1939`. | Broadcast suppression with DM13, DTCs and DM1/DM2/DM3/DM11/DM22, identification (software ID, ECU ID, product ID, diagnostic protocol ID), `BroadcastSuppression`, `Diagnostics`, `Identification` | [internals/j1939.md](internals/j1939.md) |
+| `vehicle_sil::j1939_periodic_sender`, `vehicle_sil::j1939_requester`, `vehicle_sil::j1939_monitor`, `vehicle_sil::j1939_address_commander`, `vehicle_sil::j1939_exchange` | User-facing | Protocol parts for ECU applications, also built only from the public API and the toolbox. | `PeriodicSender` (periodic transmission of a PG), `Requester` (sends a Request and reports the response, ACK or timeout), `Monitor` (latest received value and message loss), `AddressCommander` (sends Commanded Address), `Exchange` (commands and responses of a custom protocol; for an example, see [examples/j1939/param_service](../examples/j1939/param_service)) | Usage: [j1939-guide.md](j1939-guide.md); internals: [internals/j1939.md](internals/j1939.md) |
+| `vehicle_sil::j1939_codec` (header-only) | User-facing | J1939 typed messages. From PGs and signals defined in YAML, `vehicle_sil_add_j1939_codec()` generates C++ types at build time, so you send and receive signals as values without writing bit operations. | What you can define (position, sign, scaling, range, enumerations, Proprietary A/B, named special values and their profiles, fill values), `codec.hpp`, `PeriodicSender`, `codec_node.hpp` | Usage: [j1939-codec.md](j1939-codec.md); internals: [internals/j1939.md](internals/j1939.md) |
+| `vehicle_sil::ecu` | User-facing | `vehicle_sil::Ecu`, the class that ECU applications are built with. `Peer` and the ECUs of `LocalBench` implement it, so a class that takes `Ecu&` runs with the same code on a virtual bus and on SIL Kit. Independent of SIL Kit. | The J1939 `Network`, raw CAN channels (`can::RawChannel`, for protocols other than J1939), LIN master and slave (`lin_master()`, `lin_slave()`), channels for raw Ethernet frames (`ethernet()`; `eth::Channel`), variables that are read and written from outside the simulation (`input`, `output`, the ECU's Control Agent `agent()`), per-step work (`on_step`, `every`, and `at` for a one-time action at a given time), objects the ECU owns (`emplace`), the JSON that describes the ECU's configuration (`describe()`; the `--describe` output), `EcuDescription`, `to_json()`, `detail::OwnedObjects`, `detail::EcuAgent` | [internals/execution.md](internals/execution.md), [ecu-executable.md](ecu-executable.md) |
+| `vehicle_sil::local` | Foundation | `vehicle_sil::LocalBench` runs ECUs without SIL Kit on in-process virtual buses (CAN, LIN, Ethernet) and advances virtual time on the calling thread. The local execution of `Simulation` uses it too. | `LocalBench` (sets up ECUs (`Ecu`) on virtual buses and their `Network`s by name) | [internals/execution.md](internals/execution.md) |
+| `vehicle_sil::testkit` | Testing | J1939 test tools on top of `LocalBench`. | Recording of events and raw frames (`J1939Events`, `FrameLog`), fault injection functions (`faults`), `testkit::LocalCan` (an alias of `LocalBench`) | [internals/execution.md](internals/execution.md) |
+| `vehicle_sil::peer` | Foundation | `vehicle_sil::Peer` creates one SIL Kit participant with its nodes and runs it in virtual time or in real time. Implements `Ecu`. | The J1939 `Network` (SIL Kit CAN or an external port), raw CAN, LIN master/slave, Ethernet channels (SIL Kit Ethernet; virtual time only), the Control Agent (including the monitoring outputs of the J1939 communication status), `start_together()` | [internals/execution.md](internals/execution.md) |
+| `vehicle_sil::simulation` | User-facing | `vehicle_sil::Simulation`, which runs ECUs in virtual time on an in-process virtual bus or as SIL Kit participants and reports failures as exceptions, and `ecu_main()`, which turns an ECU class into an executable. | The constructor selects where to run (with SIL Kit, the registry can run in the same process), every ECU takes the same `ecu_main()` arguments (`--describe`, `--registry-uri`, `--local`), `SilKitOptions`, `SimulationError`, `EcuMainOptions` | Introduction: [examples/getting_started](../examples/getting_started); [ecu-executable.md](ecu-executable.md), [internals/execution.md](internals/execution.md) |
+| `vehicle_sil_sim_controller` (executable) | — | CLI of the system controller. | — | — |
+| `vehicle_sil::process` (internal) | — | Starts and manages child processes (see the paragraph below the table). | `ChildProcess` (output to a log file), `run_captured()` (captures stdout and stderr separately and stops the child on timeout), `Process` (delivers stdout and stderr line by line; working directory, stop requests, ending the started process and every process of its group (on Windows, its job)) | — |
+| `vehicle_sil::launch` (internal; when SIL Kit is built from the submodule) | — | The core of the launcher: reads configuration files, checks them and runs whole simulations. | Reading of the `--describe` JSON, check rules (functions that start no process), running (hosts the registry and `SimulationController` in its own process and runs the participants as child processes; the decisions about the run are functions that start no process), human-readable and JSON output | [simulation-config.md](simulation-config.md) |
+| `vehicle_sil_launch` (executable) | — | `vehicle_sil_launch check` and `vehicle_sil_launch run`. A build with `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` also has the Control Server of `run --control`. | — | [simulation-config.md](simulation-config.md), [simulation-check.md](simulation-check.md), [simulation-run.md](simulation-run.md) |
+| `vehicle_sil::control` | User-facing | The ECU's Control Agent, and `Hub`, the core of the Control Server. | `vehicle_sil::control::Agent` (exposes variables with type, range and unit; applies writes from outside the simulation within a step, at a specified virtual time; fixed-capacity queues; the ECU owns and runs it and declares variables with `Ecu::input()` and `output()`), `Hub`, `wire` | [internals/control.md](internals/control.md) |
+| `vehicle_sil::control_silkit` | User-facing | The layer that carries messages between the Control Agent and `Hub` over SIL Kit publish/subscribe. ECUs built with `ecu_main()` and `vehicle_sil_launch run` use it. It needs no gRPC. | `vehicle_sil::control_silkit::AgentTransport`, `HubTransport` | [internals/control.md](internals/control.md) |
+| `vehicle_sil::control_proto` (with `VEHICLE_SIL_BUILD_CONTROL_SERVER`) | — | Code generated from `control.proto` (internal to `control_grpc`). | — | — |
+| `vehicle_sil::control_grpc` (same condition) | User-facing | The Control API (gRPC) server, for clients. ECU Agents connect through SIL Kit with `vehicle_sil::control_silkit`. `vehicle_sil_launch run --control` uses it. | `vehicle_sil::control_grpc::ControlServer`, `time_control_of()`, authentication (TLS, tokens, roles) | [control-api.md](control-api.md) |
+| `vehicle_sil::bridge_runtime` (internal) | — | `vehicle_sil::bridge_runtime::run_bridge()`, which the bridge executables call after their setup. Platform-independent. | How stop requests are received (signals, closing the Windows console), the monitoring loop (evaluating the participant status, failures of the external side, warnings, health lines), the stop order (statistics are printed before the SIL Kit participant stops), exit codes, `BridgeHooks` (passes in the parts specific to each bridge) | [bridges.md](bridges.md) |
+| `vehicle_sil::vector_xl_bridge_core` | — | The core of the CAN bridge. Platform-independent. | `vehicle_sil::vector_xl::CanBridge` and others, `ExternalPortAdapter` (turns an external CAN port into a real-time `vehicle_sil::can` port), `ExternalCanPort` | — |
+| `vehicle_sil::vector_xl` (Windows only) | — | The Vector XL Driver backend. Windows only; requires the XL Driver Library. | `vehicle_sil::vector_xl::XlDriver`, `XlCanPort` | — |
+| `vehicle_sil_vector_xl_bridge` (Windows only, executable) | — | CLI of the bridge. | — | — |
+| `vehicle_sil::eth_link` | — | The external side of the Ethernet Bridge. Independent of SIL Kit. | `vehicle_sil::eth_link::ExternalLink` (external interface abstraction), `FrameFilter` (filter), `MacSideTable` (loop prevention), `make_tap_link()` and `make_packet_link()` (OS interfaces; Linux only), `make_pcap_link()` (pcap libraries; loads Npcap on Windows and libpcap on Linux at run time) | [ethernet-bridge.md](ethernet-bridge.md) |
+| `vehicle_sil::ethernet_bridge_core` | — | `vehicle_sil::ethernet_bridge::EthernetBridge`, which carries frames between SIL Kit's `IEthernetController` and an `ExternalLink`. Platform-independent. | Statistics and health lines, argument parsing, the startup line | — |
+| `vehicle_sil_ethernet_bridge` (executable) | — | CLI of the Ethernet Bridge. Built on every platform. The external interfaces are `tap`, `packet` and `pcap` on Linux, and `npcap` on Windows. | — | — |
 
-- `core` に置くのは、どのプロトコルでも同じになる処理だけです。具体的には、SIL Kit への接続、lifecycle、他参加者の監視、仮想時間（ステップ、受信のバッファ、周期タスク、実時間との結合、時間ゲート）、失敗の判定（`FailureCheck`）です。外部操作（Control Agent と Hub）は `control` にあります。Control API の時間の操作は `core` の時間ゲートを使います。
-- `core` は CAN、LIN、J1939 に依存しません。バスのコントローラ（`ICanController` など）は、利用側が `ParticipantRuntime::participant()` から SIL Kit の API で作ります。
-- J1939 と LIN のプロトコル処理は共通化しません。
-- ステップを回す仕組み（ホスト、ドライバー、時計、時間の領域）は、バスの種類によらない `step` に置きます。バスごとのライブラリ（`can`、`eth`）は、自分のプロトコル処理とポートの組を `step::Member` にしてホストに載せます（`eth::Channel` はそれ自体が `step::Member`）。
-- LIN はホストに載せません。いまの 1 ステップの順序は「アプリケーション → LIN の `step(now)` → 変数の読み出し → CAN の送信」で、LIN をホストの送信の段に移すと、LIN のハンドラが書いた値を読み出す時点が 1 ステップずれるためです。LIN のポートは受け箱を持たず、仮想時間だけで動きます。
-- 将来のためだけの抽象クラスや空の実装は作りません。
+The children of `run_captured()` and `Process` in `vehicle_sil::process` run in their own process group (on Windows, a process group and a job object) and inherit no handles other than the three standard ones. On Linux they receive SIGKILL when the calling thread ends. Processes are started with `fork` and `exec` on POSIX (`posix_spawn` for `ChildProcess`) and with `CreateProcessW` on Windows (paths and arguments are converted from UTF-8).
 
-## 設計の決まり
+Consumers link only the targets they need. Dependencies are added with `EXCLUDE_FROM_ALL`, so a library you do not link is not built. This also applies to the vehicle-sil libraries when you include vehicle-sil from an external project.
 
-### 時間の扱い
+## Main classes
 
-- 実時間（壁時計）とシミュレーション時間（SIL Kit の仮想時刻）を、型と名前で区別します（`SimTime`）。
-- 時間管理は `core` に置きます。J1939 や LIN の内部には埋め込みません。
-- 一時停止とステップ実行は、`SimulationController` の時間ゲートで行います（[internals/virtual-time.md](internals/virtual-time.md) の「一時停止、ステップ実行、速度（時間ゲート）」）。Control API はこれを操作します。
-- 受信ハンドラから反応的に送ったメッセージは、SIL Kit の到着保証の対象外です。新しいプロトコルを仮想時間に載せるときは、送信をステップの中で行うか、LIN と同じように到着の上限を示してから使います。
-
-### 実行モードと通信バックエンド
-
-- 実行モード（仮想時間か実時間か。`PeerOptions::virtual_time`）と、バスの口（SIL Kit のポートか、利用者が渡すポート。Vector XL の `ExternalPortAdapter` など）は、別々に選びます。
-- 実時間でも、SIL Kit の中だけで動かせます（J1939 の最小ピア `examples/j1939/sender`）。
-- 仮想時間を壁時計に合わせるのは、ピアの `VirtualTimeOptions::real_time_factor` か、時間ゲートの速度です（[internals/virtual-time.md](internals/virtual-time.md) の「実時間との結合」）。
-- 物理 CAN と Vector Virtual CAN は実時間で動かします。仮想時間のシミュレーションには参加させません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
-
-## 中の仕組み
-
-vehicle-sil 自体を直す人と、契約や制限を確かめたい人が、必要なものだけを読みます。
-
-| 文書 | 内容 |
+| Class | Responsibility |
 |---|---|
-| [internals/core.md](internals/core.md) | `ParticipantRuntime` の契約、所有と終了の順序、スレッドとキュー、実時間モードの時刻 |
-| [internals/can.md](internals/can.md) | CAN の共通基盤: ポート、事象、`Steppable`、ホスト、ドライバー、仮想バス、`TapPort`、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator |
-| [internals/j1939.md](internals/j1939.md) | J1939 スタック: エンジン、Address Claim、トランスポートプロトコル、道具箱、プロトコル部品、型付きメッセージ、`Observer`、資源の上限、既知の制限 |
-| [internals/lin.md](internals/lin.md) | LIN の Master と Slave、スケジュール、診断フレーム、休止と起床、ポートと仮想 LIN バス |
-| [internals/ethernet.md](internals/ethernet.md) | イーサネットの土台: フレーム、ポート、チャネル（受信の順、時間、上限、絞り込み）、仮想ネットワーク、SIL Kit のポート（時刻同期していない送り手）、未確認の値 |
-| [internals/execution.md](internals/execution.md) | `Ecu`、`Simulation`、`Peer`、`LocalBench` と試験キット（1 ステップの順序、所有と破棄、バスからの切り離し） |
-| [internals/virtual-time.md](internals/virtual-time.md) | 共通仮想時間: 進み方、実時間との結合、時間ゲート（一時停止、ステップ実行、速度、遅れ）、受信の順序、固定周期 `tick()` の統合 |
-| [internals/control.md](internals/control.md) | Control API の中: Control Agent、Hub、SIL Kit の上の運び手、Control Server、ランチャーの Control Server、シナリオ |
-| [bridges.md](bridges.md) | Vector XL CAN Bridge: 使い方、転送の契約、バスの監視、スレッド、検証の範囲 |
-| [ethernet-bridge.md](ethernet-bridge.md) | イーサネットのブリッジ: 使い方、バックエンド（`tap`、`packet`）と権限、外のインターフェースの口、転送、絞り込み、輪の防ぎ方、統計と監視の行、引数、確かめた範囲 |
+| `vehicle_sil::ParticipantRuntime` | Owns the SIL Kit participant, the lifecycle (autonomous or coordinated), SystemMonitor and time synchronization (optional) with RAII. It can wait until other participants reach a status (Running, or ended). |
+| `vehicle_sil::SimulationController` | System controller for simulations started in coordinated mode. It starts all participants together once the required participants are present, and stops them at a given virtual time. |
+| `vehicle_sil::StepInbox` | Holds messages received on the SIL Kit thread until the step boundary and delivers them in a fixed order. |
+| `vehicle_sil::TickScheduler` | Calls fixed-period tasks (such as the `tick()` of an existing ECU) from the steps of one participant. |
+| `vehicle_sil::RealTimePacer` | Computes the wait that couples virtual time to the wall clock at a fixed ratio. |
+| `vehicle_sil::Ecu` | The class that ECU applications are built with (J1939 `Network`, raw CAN, LIN master and slave, per-step work, objects the ECU owns). `Peer` and the ECUs of `LocalBench` implement it ([internals/execution.md](internals/execution.md)). |
+| `vehicle_sil::Simulation` | Runs `Ecu`s on a virtual bus or in SIL Kit virtual time and reports failures with `SimulationError` ([internals/execution.md](internals/execution.md)). |
+| `vehicle_sil::Peer` | Sets up and runs one participant with its J1939 `Network`, LIN master and slave and per-step application work, and tears them down in the correct order. Implements `Ecu` ([internals/execution.md](internals/execution.md)). |
+| `vehicle_sil::lin::LinMaster` | Executes a LIN schedule table in virtual time and returns the result of each header (colliding responses are Error). Sends the master's own frames, diagnostic master requests, go-to-sleep commands and wakeup pulses. |
+| `vehicle_sil::lin::LinSlave` | Responds to the master's headers with the values set in a step (a diagnostic slave response only once), receives the frames the master sends, and manages the sleep and wakeup state. |
+| `vehicle_sil::lin::LinPort` | The only interface through which a LIN node accesses the bus. Its implementations are the endpoint of `VirtualLinBus` and `SilKitLinPort`. |
+| `vehicle_sil::lin::VirtualLinBus` | An in-process LIN bus. It delivers synchronously within the sender's call. `LocalBench` creates one for each LIN network name. |
+
+For the guarantees of `ParticipantRuntime`, the order of ownership and shutdown, and threads and queues, see [internals/core.md](internals/core.md).
+
+## Design rules
+
+### Rules for shared code
+
+Which library each kind of processing goes into:
+
+| Processing | Where it goes |
+|---|---|
+| Processing that is the same for every protocol (connection to SIL Kit, lifecycle, monitoring of other participants, virtual time (steps, receive buffering, periodic tasks, coupling to real time, time gate), the failure check `FailureCheck`) | `core` |
+| External operation (Control Agent and Hub) | `control` (the time operations of the Control API use the time gate in `core`) |
+| The machinery that runs steps (host, drivers, clocks, time domains) | `step`, which does not depend on the bus type |
+| The protocol processing of each bus, together with its port | The library of that bus (`can`, `eth`), as a `step::Member` on the host (`eth::Channel` is itself a `step::Member`) |
+| Bus controllers (`ICanController` and others) | The consumer creates them with the SIL Kit API from `ParticipantRuntime::participant()`. |
+| J1939 and LIN protocol processing | Not shared. |
+
+`core` does not depend on CAN, LIN or J1939.
+
+LIN is not on the host. The order within one step is currently "application → LIN `step(now)` → variable reads → CAN transmission". If LIN moved to the transmit stage of the host, the values written by LIN handlers would be read one step later. LIN ports have no receive buffer and run in virtual time only.
+
+Do not create abstract classes or empty implementations only for future use.
+
+### How time is handled
+
+- Real time (wall clock) and simulation time (SIL Kit virtual time) are distinguished by type and name (`SimTime`).
+- Time management lives in `core`. It is not embedded in the J1939 or LIN internals.
+- Pause and single-step use the time gate of `SimulationController`, and the Control API operates that gate (see "Pause, step and speed (time gate)" in [internals/virtual-time.md](internals/virtual-time.md#pause-step-and-speed-time-gate)).
+
+Messages sent reactively from a receive handler are outside SIL Kit's delivery guarantee. To run a new protocol in virtual time, send within the step, or, as LIN does, establish an upper bound on arrival before you rely on it.
+
+### Execution modes and communication backends
+
+- The execution mode (virtual time or real time; `PeerOptions::virtual_time`) and the bus connection (a SIL Kit port, or a port you pass in, such as `ExternalPortAdapter` of Vector XL) are chosen independently.
+- Real time also works entirely within SIL Kit (the minimal J1939 peer `examples/j1939/sender`).
+- To pace virtual time to the wall clock, use the peer's `VirtualTimeOptions::real_time_factor` or the speed of the time gate (see "Coupling to real time" in [internals/virtual-time.md](internals/virtual-time.md#coupling-to-real-time)).
+- Physical CAN and Vector Virtual CAN run in real time and do not take part in virtual-time simulations (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
+
+## Internals
+
+When you change vehicle-sil, or look up behavior and limitations, read only the document that covers it.
+
+| Document | Contents |
+|---|---|
+| [internals/core.md](internals/core.md) | Guarantees of `ParticipantRuntime`, order of ownership and shutdown, threads and queues, time in real-time mode |
+| [internals/can.md](internals/can.md) | CAN foundation: ports, events, `Steppable`, host, drivers, virtual bus, `TapPort`, SIL Kit port, bus timing, simple CAN Network Simulator |
+| [internals/j1939.md](internals/j1939.md) | J1939 stack: engine, Address Claim, transport protocol, toolbox, protocol parts, typed messages, `Observer`, resource limits, known limitations |
+| [internals/lin.md](internals/lin.md) | LIN master and slave, schedules, diagnostic frames, sleep and wakeup, ports and the virtual LIN bus |
+| [internals/ethernet.md](internals/ethernet.md) | Ethernet foundation: frames, ports, channels (receive order, time, limits, filter), virtual network, SIL Kit port (senders without time synchronization), unverified values |
+| [internals/execution.md](internals/execution.md) | `Ecu`, `Simulation`, `Peer`, `LocalBench` and the test kit (order within one step, ownership and destruction, disconnection from the bus) |
+| [internals/virtual-time.md](internals/virtual-time.md) | Shared virtual time: how it advances, coupling to real time, time gate (pause, single-step, speed, lateness), receive order, integration of fixed-period `tick()` |
+| [internals/control.md](internals/control.md) | Internals of the Control API: Control Agent, Hub, the SIL Kit transport, Control Server, the launcher's Control Server, scenarios |
+| [bridges.md](bridges.md) | Vector XL CAN Bridge: first connection, forwarding behavior, bus monitoring, threads, test coverage |
+| [ethernet-bridge.md](ethernet-bridge.md) | Ethernet Bridge: first connection, backends (`tap`, `packet`, `pcap`, `npcap`) and permissions, external interfaces, forwarding, filter, loop prevention, statistics and health lines, arguments, what was verified |
+
+## See also
+
+- Where things are: [code-map.md](code-map.md)
+- SIL Kit pinning, patches, upstream behavior, gRPC: [dependencies.md](dependencies.md)
+- Building, and including vehicle-sil in your own CMake project: [build.md](build.md)

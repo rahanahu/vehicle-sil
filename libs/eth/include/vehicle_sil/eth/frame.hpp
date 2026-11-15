@@ -18,7 +18,7 @@
 namespace vehicle_sil::eth {
 
 // The values below come from general references, not from the standard; docs/internals/ethernet.md
-// lists them ("未確認の値"). Where they matter, the user can change them (ChannelOptions,
+// lists them ("Unverified values"). Where they matter, the user can change them (ChannelOptions,
 // VirtualEthernetBusOptions).
 
 /// Bytes before the payload that vehicle-sil reads: destination address (bytes 0..5) and source
