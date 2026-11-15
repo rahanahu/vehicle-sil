@@ -3,9 +3,12 @@
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
 //
-// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), package.json (exports), README.md, README.ja.md, LICENSE.
-// Checked after it is made: Node imports the installed package, and the TypeScript example of
-// examples/gui_starter/README.md (and of README.ja.md) type-checks with the module resolutions nodenext and bundler.
+// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), timeline/ (the element <vehicle-sil-timeline> of
+// gui/timeline as a script, the same as an ES module for @vehicle-sil/gui-client/timeline, and its .d.ts),
+// package.json (exports), README.md, README.ja.md,
+// LICENSE. Checked after it is made: Node imports the installed package, and the TypeScript example of
+// examples/gui_starter/README.md (and of README.ja.md) and a use of the element type-check with the module
+// resolutions nodenext and bundler.
 // Exit codes: 0 made, 1 failed, 2 usage error.
 import { execFileSync } from 'node:child_process';
 import {
@@ -25,6 +28,26 @@ const CLIENT = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(CLIENT, '../..');
 const WEB = join(REPOSITORY, 'gui', 'web');
 const NAME = '@vehicle-sil/gui-client';
+const TIMELINE = join(REPOSITORY, 'gui', 'timeline');
+/** A screen's use of the element, type-checked against the package: the import, properties and events. */
+const TIMELINE_EXAMPLE = `
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+const timeline: VehicleSilTimelineElement = document.createElement('vehicle-sil-timeline');
+timeline.src = '/api/timeline/3';
+timeline.token = null;
+timeline.variables = ['Body.*'];
+timeline.labels = { 'Body.body.speed': 'Speed' };
+timeline.hide = 'tables help';
+timeline.compact = true;
+timeline.from = 0;
+timeline.addEventListener('load', (e) => console.log(e.detail.status, e.detail.end));
+timeline.addEventListener('error', (e) => console.log(e.detail.message, e.detail.status));
+timeline.addEventListener('cursorchange', (e) => console.log(e.detail.cursor));
+timeline.addEventListener('stepselect', (e) => console.log(e.detail.step));
+timeline.addEventListener('viewchange', (e) => console.log(e.detail.from, e.detail.to));
+document.body.append(timeline);
+`;
 const fromWeb = createRequire(join(WEB, 'package.json'));
 
 const USAGE = `usage: node gui/client/pack.mjs [--out <dir>] [--version <x.y.z>]
@@ -142,7 +165,7 @@ function check(packageDir, checkDir, tsc) {
       config,
       JSON.stringify({ compilerOptions: { ...base, ...settings }, files: ['main.ts'] }),
     );
-    for (const example of examples) {
+    for (const example of [...examples, TIMELINE_EXAMPLE]) {
       writeFileSync(join(checkDir, 'main.ts'), `export {};\n${example}`);
       node(tsc, ['-p', config], checkDir);
     }
@@ -150,7 +173,10 @@ function check(packageDir, checkDir, tsc) {
   const probe =
     `const m = await import('${NAME}');` +
     "for (const name of ['createClient', 'takeToken', 'WriteError']) " +
-    "if (typeof m[name] !== 'function') throw new Error('not exported: ' + name);";
+    "if (typeof m[name] !== 'function') throw new Error('not exported: ' + name);" +
+    // Without a DOM the element's file defines only its functions that need none.
+    `await import('${NAME}/timeline');` +
+    "if (typeof globalThis.VehicleSilTimeline?.readTimeline !== 'function') throw new Error('timeline: no VehicleSilTimeline');";
   try {
     execFileSync(process.execPath, ['--input-type=module', '-e', probe], {
       cwd: checkDir,
@@ -182,6 +208,14 @@ function main() {
   const types = join(packageDir, 'types');
   node(tsc, ['-p', join(CLIENT, 'tsconfig.package.json'), '--declarationDir', types], CLIENT);
   addExtensions(types);
+  mkdirSync(join(packageDir, 'timeline'));
+  for (const name of ['vehicle-sil-timeline.js', 'vehicle-sil-timeline.d.ts'])
+    cpSync(join(TIMELINE, name), join(packageDir, 'timeline', name));
+  // The same script as an ES module, for import: a bundler takes a file without export for CommonJS and warns.
+  writeFileSync(
+    join(packageDir, 'timeline', 'vehicle-sil-timeline.mjs'),
+    `${readFileSync(join(TIMELINE, 'vehicle-sil-timeline.js'), 'utf8')}\nexport {};\n`,
+  );
 
   const manifest = {
     name: NAME,
@@ -190,10 +224,17 @@ function main() {
       'Client library of the vehicle-sil GUI server: connection, run and time control, ECU variables. No dependencies; browser and Node.',
     license: 'MIT',
     type: 'module',
-    exports: { '.': { types: './types/index.d.ts', default: './dist/index.js' } },
+    exports: {
+      '.': { types: './types/index.d.ts', default: './dist/index.js' },
+      './timeline': {
+        types: './timeline/vehicle-sil-timeline.d.ts',
+        default: './timeline/vehicle-sil-timeline.mjs',
+      },
+    },
     types: './types/index.d.ts',
-    sideEffects: false,
-    files: ['dist', 'types', 'README.ja.md'],
+    // Importing the timeline defines the element: a bundler must keep that import.
+    sideEffects: ['./timeline/vehicle-sil-timeline.js', './timeline/vehicle-sil-timeline.mjs'],
+    files: ['dist', 'types', 'timeline', 'README.ja.md'],
     engines: { node: '>=22' },
   };
   writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -229,13 +270,17 @@ function main() {
     'LICENSE',
     'dist/index.js',
     'types/index.d.ts',
+    'timeline/vehicle-sil-timeline.js',
+    'timeline/vehicle-sil-timeline.mjs',
+    'timeline/vehicle-sil-timeline.d.ts',
   ]) {
     if (!files.includes(needed)) fail(`the package has no ${needed}`);
   }
   const tgz = join(args.out, packed.filename);
   console.log(
     `pack-client: ${relative(process.cwd(), tgz)} (${NAME} ${version}, ${files.length} files; ` +
-      'imported with Node, the example of examples/gui_starter type-checked with nodenext and bundler)',
+      'imported with Node, the example of examples/gui_starter and the timeline element type-checked with ' +
+      'nodenext and bundler)',
   );
 }
 

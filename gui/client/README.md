@@ -36,15 +36,16 @@ Where to find the 2 files:
 The releases page has the same `.tgz`. `build/` is the one at the top of the repository and is not tracked in Git.
 
 - **Bundled file**: loads in the browser and in Node (22 or later). `scripts/verify-gui.py` runs an example that uses this file from Node against the replay launcher.
-- **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). The only entry point is `.` (`testing` and `internal` are not included).
+- **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). Its entry points are `.` and `./timeline` (`testing` and `internal` are not included).
 
 ## Entry points
 
-| Entry point            | Name                               | Contents                                                                                |
-| ---------------------- | ---------------------------------- | --------------------------------------------------------------------------------------- |
-| `src/index.ts`         | `@vehicle-sil/gui-client`          | The public API ("Public API" below). Only this entry point is kept compatible           |
-| `src/testing/index.ts` | `@vehicle-sil/gui-client/testing`  | Test helpers (usable in tests of your own widgets)                                      |
-| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **No compatibility guarantee.** Internal classes and functions; do not use them in apps |
+| Entry point                           | Name                               | Contents                                                                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                        | `@vehicle-sil/gui-client`          | The public API ("Public API" below). Only this entry point is kept compatible                                                                                                                              |
+| `src/testing/index.ts`                | `@vehicle-sil/gui-client/testing`  | Test helpers (usable in tests of your own widgets)                                                                                                                                                         |
+| `src/internal.ts`                     | `@vehicle-sil/gui-client/internal` | **No compatibility guarantee.** Internal classes and functions; do not use them in apps                                                                                                                    |
+| `../timeline/vehicle-sil-timeline.js` | `@vehicle-sil/gui-client/timeline` | The element `<vehicle-sil-timeline>`, with its types: importing it defines the element ("Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen)) |
 
 - `testing` contains a fake WebSocket (`FakeWebSockets`), a fake HTTP (`FakeHttp`), loaders for `gui/protocol/examples/`, and `sessionViewFrom`, which builds a `SessionView` from a summary.
 - `internal` contains the internal classes, the functions that apply a summary, and the parsers. They are public for tests only, and change or disappear without notice.

@@ -1843,11 +1843,15 @@ Where to change:
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
-| The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
-| The page's words (English and Japanese) | `gui/timeline/messages.js`: every text the page shows, by key, in both languages (the unit tests check the keys; the page's lint refuses a string of words in `viewer.js`) |
+| The element `<vehicle-sil-timeline>` that draws the file | `gui/timeline/viewer.js` (the part above "The element" needs no DOM and is what the unit tests call; below it, the drawing functions work on the element that `enter()` makes current, and the class `VehicleSilTimelineElement` with its attributes, properties and events). Its CSS is `gui/timeline/timeline.css` (in its shadow root; `hide`, `compact` and `theme` are read there) |
+| The one file that users load | `gui/timeline/vehicle-sil-timeline.js`, made by `gui/timeline/bundle.js` from `messages.js`, `timeline.css` and `viewer.js` (`npm run bundle:timeline` in `gui/web`; `npm run test:timeline` fails when it is out of date). Its types: `gui/timeline/vehicle-sil-timeline.d.ts` (by hand: keep it in step with the class) |
+| The timeline page | `gui/timeline/timeline.html` and `page.js`: one element, and what the page adds (`?src=`, `?lang=`, `#token=`, a file dropped or chosen, a file embedded). The smallest page of a user: `gui/timeline/example.html` |
+| The words (English and Japanese) | `gui/timeline/messages.js`: every text the element and the page show, by key, in both languages (the unit tests check the keys; the lint refuses a string of words in `viewer.js` and `page.js`). The page says the element's `load.*` texts in its own words (`pageLoad.*`) through the element's `messages` property |
 | The GUI server: `--timeline` for a scenario run, the files it keeps, the page and the file it serves | `gui/server/src/vehicle_sil_gui/timelines.py`, and `_start()`, `_keep_timeline()`, `get_timeline()` and `get_timeline_page()` in `server.py` |
 | The **Timeline** link of the sample screen | `ScenarioPanel` and `timelinePageUrl()` in `gui/web/src/app/run/scenario-panel.ts` |
-| A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.html`, and `KNOWN` for a value the page should draw instead of naming |
+| The timeline inside the sample screen (the model for Angular) | `TimelineView` in `gui/web/src/app/run/timeline-view.ts` |
+| The element in the npm package and the tools archive | `gui/client/pack.mjs` (`@vehicle-sil/gui-client/timeline`), `TIMELINE_ELEMENT` in `scripts/package.py` (`client/`) |
+| A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.css` (then `npm run bundle:timeline`), and `KNOWN` for a value the page should draw instead of naming |
 
 What to update together:
 
@@ -1870,8 +1874,8 @@ Tests:
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`
-- The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
-- The GUI server's part: `gui/server/tests/test_timelines.py` (the argument with and without the feature, the file and the page with and without the token, the files kept), on the recordings `run-scenario-*-timeline` (made with `--timeline`; `record_launcher.py --compare` compares them with the real launcher). The link and the page from the GUI: `gui/web/e2e/timeline-link.spec.ts` (`--e2e-grep 'timeline'`).
+- The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser), `gui/web/e2e/timeline-element.spec.ts` (the element on pages of a user: the plain example, two on a page, every property and event, CSS in and out, a policy with no inline style). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`, `--e2e-grep 'timeline element'`).
+- The GUI server's part: `gui/server/tests/test_timelines.py` (the argument with and without the feature, the file and the page with and without the token, the files kept), on the recordings `run-scenario-*-timeline` (made with `--timeline`; `record_launcher.py --compare` compares them with the real launcher). The link and the page from the GUI, and the element inside the sample screen: `gui/web/e2e/timeline-link.spec.ts` (`--e2e-grep 'timeline'`); in the screen template: `gui/web/e2e/starter.spec.ts`.
 
 ### Running several scenarios
 

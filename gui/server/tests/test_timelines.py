@@ -98,8 +98,9 @@ def test_the_page_is_served_without_a_token_under_the_servers_checks(tmp_path: P
         async def talk(c: Client) -> None:
             for path, media, name in (("timeline/", "text/html", "timeline.html"),
                                       ("timeline/timeline.html", "text/html", "timeline.html"),
-                                      ("timeline/viewer.js", "text/javascript", "viewer.js"),
-                                      ("timeline/messages.js", "text/javascript", "messages.js")):
+                                      ("timeline/vehicle-sil-timeline.js", "text/javascript",
+                                       "vehicle-sil-timeline.js"),
+                                      ("timeline/page.js", "text/javascript", "page.js")):
                 status, body, headers = await get_raw(c, path, token=None)
                 assert status == 200, (path, body[:200])
                 assert body == (page / name).read_bytes()
@@ -110,8 +111,10 @@ def test_the_page_is_served_without_a_token_under_the_servers_checks(tmp_path: P
             # The page's query (the file and the language) goes along
             status, _, headers = await get_raw(c, "timeline?src=/api/timeline/3&lang=ja", token=None)
             assert status == 308 and headers["Location"] == "/timeline/?src=/api/timeline/3&lang=ja"
+            # The sources of the one file, and the files to work on it, are not served
             for path in ("timeline/eslint.config.js", "timeline/tests/viewer.test.js", "timeline/..%2Fweb",
-                         "timeline/x.js"):
+                         "timeline/x.js", "timeline/viewer.js", "timeline/messages.js", "timeline/bundle.js",
+                         "timeline/timeline.css"):
                 status, body, _ = await get_raw(c, path, token=None)
                 assert status == 404, (path, body[:200])
             status, body, _ = await get_raw(c, "timeline/", token=None, host="localhost:1")
@@ -174,12 +177,12 @@ def test_the_files_of_the_last_runs_are_kept_and_the_rest_removed(tmp_path: Path
     assert not directory.exists() and timelines.ready == {}
 
 
-@pytest.mark.parametrize("name", ["timeline.html", "viewer.js", "messages.js"])
+@pytest.mark.parametrize("name", ["timeline.html", "vehicle-sil-timeline.js", "page.js"])
 def test_the_page_dir_is_found_only_with_all_its_files(tmp_path: Path, monkeypatch, name: str) -> None:
     import vehicle_sil_gui.timelines as module
     fake = tmp_path / "vehicle_sil_gui"
     (fake / "timeline").mkdir(parents=True)
-    for other in ("timeline.html", "viewer.js", "messages.js"):
+    for other in ("timeline.html", "vehicle-sil-timeline.js", "page.js"):
         if other != name:
             (fake / "timeline" / other).write_text("x")
     monkeypatch.setattr(module, "__file__", str(fake / "timelines.py"))

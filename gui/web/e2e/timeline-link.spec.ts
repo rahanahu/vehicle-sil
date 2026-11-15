@@ -107,6 +107,44 @@ test('timeline: a failed scenario run links its timeline, which opens in the GUI
   }
 });
 
+test('timeline: the Scenario card shows the timeline on the screen itself, with the element', async ({
+  page,
+}) => {
+  await runFailingScenario(page);
+  const card = page.getByTestId('scenario-card');
+  await expect(card.getByTestId('scenario-outcome')).toHaveText(/シナリオは失敗しました/, {
+    timeout: RUN_TIMEOUT,
+  });
+  // The link stays; the toggle beside it puts the element <vehicle-sil-timeline> into the card
+  await expect(card.getByTestId('scenario-timeline')).toBeVisible();
+  const toggle = card.getByTestId('timeline-toggle');
+  await expect(toggle).toHaveText('時間の軸をここに表示');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const timeline = card.getByTestId('timeline-element');
+  // [src], [lang] and [token] from the screen's signals: the run's file, in the GUI's language, with its token
+  await expect(timeline.getByTestId('failure').getByRole('heading', { level: 2 })).toHaveText(
+    /^手順 2 が [\d.]+ ms で失敗しました$/,
+    { timeout: RUN_TIMEOUT },
+  );
+  await expect(timeline).toHaveAttribute('lang', 'ja');
+  await expect(timeline).toHaveAttribute('compact', '');
+  await expect(timeline.locator('#help')).toBeHidden();
+  // (cursorchange) and (stepselect) come back to the screen's signals
+  await timeline.locator('#chart').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(card.getByTestId('timeline-readout')).toContainText(/カーソル: [\d.]+ ms/);
+  await timeline.getByTestId('steps-table').getByRole('button', { name: '#1' }).click();
+  await expect(card.getByTestId('timeline-readout')).toContainText('選んだ手順: 1');
+  if (shots) {
+    await page.setViewportSize({ width: 1280, height: 1100 });
+    await card.scrollIntoViewIfNeeded();
+    await card.screenshot({ path: `${shots}/element-in-sample-ja.png` });
+  }
+  await toggle.click();
+  await expect(timeline).toHaveCount(0);
+});
+
 test('timeline: in an English GUI the link says Timeline and the page is in English', async ({
   page,
 }) => {

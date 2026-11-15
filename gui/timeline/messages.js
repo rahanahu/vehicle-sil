@@ -2,7 +2,8 @@
 // shows comes from here; names, units, values and messages from the file and the launcher are shown as they are.
 // A value is a string, a function of named arguments that returns a string, or (for a paragraph with markup) an
 // array of strings and [tag, text] pairs. Both languages have the same keys (tests/viewer.test.js checks it).
-// A plain script like viewer.js (no build), loaded before it; in Node, module.exports.
+// A plain script like viewer.js (no build), loaded before it (bundle.py puts both in vehicle-sil-timeline.js).
+// A page adds a language or changes a text with the element's messages property, without changing this file.
 (function (global) {
   'use strict';
 
@@ -261,20 +262,34 @@
     'mark.write': ({ value, at, word, cause }) => `Write of ${value} for ${at}: ${word}${cause}`,
     'mark.label': ({ value, word }) => `${value} ${word}`,
 
-    // --- loading
-    'load.cannotRead': ({ name, error }) =>
-      `"${name}" could not be read (${error}). Choose the file again.`,
+    // --- loading (the element: src, data and token are its properties)
     'load.fileProtocol':
+      'src works only on a page that comes from a web server, and this page was opened as a file. ' +
+      'Give the file with the data property instead.',
+    'load.notAddress': ({ src }) =>
+      `src "${src}" is not an address. Name a timeline file on this page's own server.`,
+    'load.otherOrigin': ({ origin, other }) =>
+      `src must name a file on this page's own server (${origin}), and ${other} is another one, so the file ` +
+      'was not loaded. Fetch the file yourself and give it with the data property.',
+    'load.failed': ({ url, error }) => `${url} could not be loaded (${error}). Check the address.`,
+    'load.unauthorized':
+      'HTTP 401: the server did not accept the token. Give the element the token of the GUI server (its token ' +
+      'property), or open this screen from the GUI server: its screens keep the token in the tab, where the ' +
+      'element finds it.',
+    // --- loading on the timeline page (timeline.html): ?src=, a file dropped or chosen
+    'pageLoad.cannotRead': ({ name, error }) =>
+      `"${name}" could not be read (${error}). Choose the file again.`,
+    'pageLoad.fileProtocol':
       '?src= works only when the page comes from a web server, and this page was opened as a file. ' +
       'Drop the timeline file on the page instead.',
-    'load.notAddress': ({ src }) =>
+    'pageLoad.notAddress': ({ src }) =>
       `?src=${src} is not an address. Name the timeline file on this server, or drop the file on the page.`,
-    'load.otherOrigin': ({ origin, other }) =>
+    'pageLoad.otherOrigin': ({ origin, other }) =>
       `?src= must name a file on this page's own server (${origin}), and ${other} is another one, so the file ` +
       'was not loaded. Download the file and drop it on the page instead.',
-    'load.failed': ({ url, error }) =>
+    'pageLoad.failed': ({ url, error }) =>
       `${url} could not be loaded (${error}). Check the address, or drop the file on the page.`,
-    'load.unauthorized':
+    'pageLoad.unauthorized':
       "HTTP 401: the GUI server did not accept this page's token. Open the timeline with a left click on the " +
       'GUI\'s "Timeline" link (a middle click or "Open link in new tab" does not pass the token on), or add ' +
       '"#token=<token>" from the address the GUI server printed to the end of this page\'s address.',
@@ -532,20 +547,34 @@
     'mark.write': ({ value, at, word, cause }) => `${at} の ${value} の書き込み: ${word}${cause}`,
     'mark.label': ({ value, word }) => `${value} ${word}`,
 
-    // --- 読み込み
-    'load.cannotRead': ({ name, error }) =>
-      `「${name}」を読めませんでした（${error}）。ファイルを選び直してください。`,
+    // --- 読み込み（要素: src、data、token は要素のプロパティ）
     'load.fileProtocol':
+      'src は、Web サーバーから開いたページでだけ使えます。このページはファイルとして開いています。' +
+      'ファイルは data のプロパティで渡してください。',
+    'load.notAddress': ({ src }) =>
+      `src の「${src}」はアドレスではありません。このページと同じサーバーの時間の軸のファイルを指してください。`,
+    'load.otherOrigin': ({ origin, other }) =>
+      `src は、このページと同じサーバー（${origin}）のファイルを指す必要があります。${other} は別のサーバーなので、` +
+      '読みませんでした。ファイルを自分で取得して、data のプロパティで渡してください。',
+    'load.failed': ({ url, error }) =>
+      `${url} を読み込めませんでした（${error}）。アドレスを確かめてください。`,
+    'load.unauthorized':
+      'HTTP 401: サーバーがトークンを受け付けませんでした。GUI サーバーのトークンを要素に渡すか（token のプロパティ）、' +
+      'この画面を GUI サーバーから開いてください。GUI サーバーの画面はトークンをタブに持ち、要素はそれを使います。',
+    // --- 時間の軸のページ（timeline.html）での読み込み: ?src=、落とした・選んだファイル
+    'pageLoad.cannotRead': ({ name, error }) =>
+      `「${name}」を読めませんでした（${error}）。ファイルを選び直してください。`,
+    'pageLoad.fileProtocol':
       '?src= は、ページを Web サーバーから開いたときだけ使えます。このページはファイルとして開いています。' +
       '時間の軸のファイルをページに落としてください。',
-    'load.notAddress': ({ src }) =>
+    'pageLoad.notAddress': ({ src }) =>
       `?src=${src} はアドレスではありません。このサーバーの時間の軸のファイルを指すか、ファイルをページに落としてください。`,
-    'load.otherOrigin': ({ origin, other }) =>
+    'pageLoad.otherOrigin': ({ origin, other }) =>
       `?src= は、このページと同じサーバー（${origin}）のファイルを指す必要があります。${other} は別のサーバーなので、` +
       '読みませんでした。ファイルをダウンロードして、ページに落としてください。',
-    'load.failed': ({ url, error }) =>
+    'pageLoad.failed': ({ url, error }) =>
       `${url} を読み込めませんでした（${error}）。アドレスを確かめるか、ファイルをページに落としてください。`,
-    'load.unauthorized':
+    'pageLoad.unauthorized':
       'HTTP 401: GUI サーバーが、このページのトークンを受け付けませんでした。GUI の「時間の軸」のリンクを左クリックで' +
       '開いてください（中ボタンや「新しいタブで開く」では、トークンが渡りません）。または、GUI サーバーが表示した' +
       'アドレスの「#token=<トークン>」を、このページのアドレスの末尾に付けてください。',
@@ -553,6 +582,5 @@
   };
 
   const MESSAGES = { en, ja };
-  if (typeof module === 'object' && module.exports) module.exports = MESSAGES;
-  else global.VehicleSilTimelineMessages = MESSAGES;
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+  global.VehicleSilTimelineMessages = MESSAGES;
+})(globalThis);

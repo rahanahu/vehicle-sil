@@ -20,11 +20,13 @@ from pathlib import Path
 KEPT = 4  # the timeline files kept: of the last runs that wrote one
 PAGE_PATH = "timeline/"  # where the page is served (relative to the server's URL)
 # The page's files, by the name they are served under (the page itself also as the directory).
+# vehicle-sil-timeline.js is the element <vehicle-sil-timeline> in one file: screens of this server (--web, custom
+# panels) load it from timeline/vehicle-sil-timeline.js too.
 PAGE_FILES = {
     "": ("timeline.html", "text/html; charset=utf-8"),
     "timeline.html": ("timeline.html", "text/html; charset=utf-8"),
-    "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
-    "messages.js": ("messages.js", "text/javascript; charset=utf-8"),
+    "vehicle-sil-timeline.js": ("vehicle-sil-timeline.js", "text/javascript; charset=utf-8"),
+    "page.js": ("page.js", "text/javascript; charset=utf-8"),
 }
 MAX_PAGE_FILE_BYTES = 4 * 1024 * 1024
 

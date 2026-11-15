@@ -1,4 +1,4 @@
-// The timeline page (gui/timeline/timeline.html, viewer.js and messages.js) with the timeline references that the
+// The timeline page (gui/timeline/timeline.html with page.js and vehicle-sil-timeline.js) with the timeline references that the
 // launcher's tests compare (tests/launch/timeline), and the page's fixtures (gui/timeline/tests/fixtures) for
 // what the references do not have. The page is a plain file, not part of the app: the test serves it at an
 // address of its own, under the Content-Security-Policy that the GUI server sends. The browser's language is
@@ -91,7 +91,9 @@ async function onTopAtCentre(element: Locator): Promise<boolean> {
   await element.scrollIntoViewIfNeeded();
   return element.evaluate((e) => {
     const r = e.getBoundingClientRect();
-    return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e;
+    // In the element's shadow root: the document would answer with the element itself.
+    const where = e.getRootNode() as Document | ShadowRoot;
+    return where.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e;
   });
 }
 
