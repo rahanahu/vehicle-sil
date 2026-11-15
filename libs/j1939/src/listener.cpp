@@ -34,7 +34,7 @@ public:
       : network_(network), options_(without_broadcasts(options)), sniffer_(options_.sniffer, network.timing())
     {
         options_.sniffer = sniffer_.options(); // with the timeouts taken from the network
-        sniffer_.on_transfer([this](const SniffedTransfer& transfer) { on_sniffed(transfer); });
+        sniffer_.on_transfer_end([this](const SniffedTransfer& transfer) { on_sniffed(transfer); });
         sit(network);
     }
 
@@ -50,10 +50,10 @@ public:
         messages_.push_back(Entry<MessageHandler>{next_id(), false, any, pgn, std::move(handler)});
         return messages_.back().id;
     }
-    HandlerId add(const char* what, TransferHandler handler)
+    HandlerId add(const char* what, SniffHandler handler)
     {
         check(what, static_cast<bool>(handler));
-        transfers_.push_back(Entry<TransferHandler>{next_id(), false, false, Pgn{}, std::move(handler)});
+        transfers_.push_back(Entry<SniffHandler>{next_id(), false, false, Pgn{}, std::move(handler)});
         return transfers_.back().id;
     }
     HandlerId add(const char* what, FrameHandler handler)
@@ -299,7 +299,7 @@ private:
     void on_sniffed(const SniffedTransfer& transfer)
     {
         const Calling calling(calling_);
-        if (transfer.end == SniffEnd::Completed)
+        if (transfer.result == SniffResult::Completed)
         {
             hand_on(transfer.message());
         }
@@ -310,7 +310,7 @@ private:
     ListenerOptions options_;
     TransferSniffer sniffer_;
     std::vector<Entry<MessageHandler>> messages_;
-    std::vector<Entry<TransferHandler>> transfers_;
+    std::vector<Entry<SniffHandler>> transfers_;
     std::vector<Entry<FrameHandler>> frames_;
     std::uint64_t last_id_ = 0;
     bool swept_ = true;     ///< false: a handler was removed while handlers ran.
@@ -335,7 +335,7 @@ Listener::HandlerId Listener::on_any_message(MessageHandler handler)
     return seat_->add("on_any_message()", true, Pgn{}, std::move(handler));
 }
 
-Listener::HandlerId Listener::on_transfer(TransferHandler handler) { return seat_->add("on_transfer()", std::move(handler)); }
+Listener::HandlerId Listener::on_transfer_end(SniffHandler handler) { return seat_->add("on_transfer_end()", std::move(handler)); }
 
 Listener::HandlerId Listener::on_frame(FrameHandler handler) { return seat_->add("on_frame()", std::move(handler)); }
 

@@ -81,6 +81,22 @@ inline constexpr Pgn kPgnTransportData{0xEB00u};
 /// The longest message the transport protocol carries.
 inline constexpr std::size_t kMaxTransportLength = 1785;
 
+/// Reason byte of a transport Connection Abort.
+enum class AbortReason : std::uint8_t
+{
+    None = 0,              ///< No abort (a transfer that was not aborted).
+    Busy = 1,              ///< Already in a connection with the sender; cannot take another one.
+    ResourcesNeeded = 2,   ///< The system needs the resources of the session.
+    Timeout = 3,
+    CtsWhileSending = 4,   ///< A clear-to-send came before the packets of the last one were sent.
+    RetransmitLimit = 5,   ///< Too many retransmission requests.
+    UnexpectedData = 6,    ///< A data packet came when none was expected.
+    BadSequence = 7,       ///< A sequence number that cannot be recovered from.
+    DuplicateSequence = 8,
+    TooLarge = 9,          ///< The message is longer than the receiver can take.
+    Other = 250,           ///< Any other error.
+};
+
 /// The times and the count of the transport protocol and the wait after an address claim, as a
 /// Network uses them (NetworkOptions::timing). A TransferSniffer derives its timeouts from them
 /// (SnifferOptions::timeout, broadcast_timeout).
