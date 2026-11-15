@@ -185,7 +185,9 @@ public:
         std::as_const(probe).for_each_signal([&count](const auto&) { ++count; });
         signals_.resize(count);
         std::size_t index = 0;
-        std::as_const(probe).for_each_signal([this, &index](const auto& signal) {
+        // [&], not [this, &index]: the call depends on the signal's type, so Clang sees no use of `this` before
+        // the lambda is instantiated and warns about the capture.
+        std::as_const(probe).for_each_signal([&](const auto& signal) {
             publish_signal<std::remove_cvref_t<decltype(signal)>>(index++);
         });
         scope.output("count", &count_, {.description = "Messages heard"});
