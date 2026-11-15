@@ -186,7 +186,7 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 
 ### 設定を渡さないとき
 
-`ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
+`ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_configuration.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
 
 | 条件 | 変えるキー |
 |---|---|

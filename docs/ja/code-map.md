@@ -532,6 +532,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | 名前 | 場所 |
 |---|---|
 | `ParticipantRuntime` | `vehicle_sil/core/participant_runtime.hpp` |
+| `default_participant_configuration()`, `merged_participant_configuration()` | `core/participant_configuration.hpp` |
 | `SimulationController`、`StartWindow` | `core/simulation_controller.hpp` |
 | `TickScheduler` | `core/tick_scheduler.hpp` |
 | `bind_host()` | `core/bind_host.hpp` |
@@ -1476,7 +1477,7 @@ flowchart TD
 
 変える場所:
 
-- `libs/core/src/participant_runtime.cpp` の `default_participant_configuration()` など（待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP）
+- `libs/core/src/participant_configuration.cpp` の `default_participant_configuration()` など（待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP）
 - 渡された設定に重ねる `merged_participant_configuration()` と、ecu_main の `--silkit-config`
 - 既定を使う所: `libs/launch/src/run.cpp` の controller と、ほかの PC に向けた行
 - 既定を使う所: `run_participants.cpp` の環境変数、manual のコマンドの `environment`

@@ -186,7 +186,7 @@ The default of `PeerOptions::virtual_time` is virtual time with a step size of 1
 
 ### Without a configuration
 
-If `ParticipantRuntimeOptions::participant_configuration` is `"{}"` (the default) or empty, `ParticipantRuntime` creates the participant with `default_participant_configuration(registry_uri)` (`participant_runtime.hpp`). It changes 3 things from the SIL Kit defaults:
+If `ParticipantRuntimeOptions::participant_configuration` is `"{}"` (the default) or empty, `ParticipantRuntime` creates the participant with `default_participant_configuration(registry_uri)` (`participant_configuration.hpp`). It changes 3 things from the SIL Kit defaults:
 
 | Condition | Key it changes |
 |---|---|
