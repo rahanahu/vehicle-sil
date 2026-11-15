@@ -1,22 +1,24 @@
-# J1939 の型付きメッセージ（Codec）
+# J1939 typed messages (Codec)
 
-PG の信号を YAML で定義して C++ の型を生成し、信号を値として読み書きする方法と、定義のキーと生成される型の API の一覧です。API はまだ変わることがあります。
+[日本語](ja/j1939-codec.md)
 
-YAML で定義すると、ビルドのときに C++ の型ができます。アプリはビット位置やスケーリングを書かずに、信号を値として読み書きします。送受信はこれまでどおりノードとコンポーネント（`PeriodicSender`、`Monitor` など）が行い、Codec はバイト列との変換だけを受け持ちます。
+This page shows how to define the signals of a PG in YAML, generate C++ types from the definition, and read and write signals as values. It also lists the keys of a definition and the API of the generated types. The API may still change.
 
-| したいこと | 使うもの | 節 |
+When you define messages in YAML, the build generates C++ types from them. The application reads and writes signals as values, without writing bit positions or scaling. Nodes and protocol parts (`PeriodicSender`, `Monitor` and others) still send and receive the messages; the Codec only converts between the types and bytes.
+
+| Goal | Use | Section |
 |---|---|---|
-| 定義から型を生成してリンクする | `vehicle_sil_add_j1939_codec()` | [CMake に組み込む](#cmake-に組み込む) |
-| メッセージと信号を定義する | YAML のキー | [定義の書き方](#定義の書き方) |
-| 信号の位置を数える | `start_bit`、`byte_order` | [ビットの位置](#ビットの位置) |
-| Error や Not Available のような値を定義する | `indicators`、`special_values` | [特別な値（`indicators`）](#特別な値indicators) |
-| 信号のないビットの値を決める | `fill` | [未使用のビットの埋め値（`fill`）](#未使用のビットの埋め値fill) |
-| 信号を読み書きする | `Signal`、`EnumSignal` | [信号の API（`vehicle_sil/j1939/codec.hpp`）](#信号の-apivehicle_silj1939codechpp) |
-| 型でメッセージを送受信する | `codec::attach_sender`、`codec::on_message` など | [ノードで使う（`vehicle_sil/j1939/codec_node.hpp`）](#ノードで使うvehicle_silj1939codec_nodehpp) |
-| 境界値と特別な値をテストする | `set_raw()`、`for_each_signal` | [テストで使う](#テストで使う) |
-| 生成器を使わずに型を書く | `codec::MessageType` | [手で書く型](#手で書く型) |
+| Generate types from definitions and link them | `vehicle_sil_add_j1939_codec()` | [Add to CMake](#add-to-cmake) |
+| Define messages and signals | YAML keys | [Writing definitions](#writing-definitions) |
+| Work out the position of a signal | `start_bit`, `byte_order` | [Bit positions](#bit-positions) |
+| Define values such as Error or Not Available | `indicators`, `special_values` | [Special values (`indicators`)](#special-values-indicators) |
+| Set the value of the bits that carry no signal | `fill` | [Fill value for unused bits (`fill`)](#fill-value-for-unused-bits-fill) |
+| Read and write signals | `Signal`, `EnumSignal` | [Signal API (`vehicle_sil/j1939/codec.hpp`)](#signal-api-vehicle_silj1939codechpp) |
+| Send and receive messages as types | `codec::attach_sender`, `codec::on_message` and others | [Use with a node (`vehicle_sil/j1939/codec_node.hpp`)](#use-with-a-node-vehicle_silj1939codec_nodehpp) |
+| Test boundary values and special values | `set_raw()`, `for_each_signal` | [Use in tests](#use-in-tests) |
+| Write types without the generator | `codec::MessageType` | [Hand-written types](#hand-written-types) |
 
-[examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) の `install_engine()` の一部です（`node` はノード、`engine` はモデル）。メッセージの定義は、同じディレクトリの `ecu_pair_messages.yaml` です。
+Here is part of `install_engine()` in [examples/j1939/ecu_pair/ecu_pair.hpp](../examples/j1939/ecu_pair/ecu_pair.hpp) (`node` is the node, `engine` the model). The messages are defined in `ecu_pair_messages.yaml` in the same directory.
 
 ```cpp
     codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) {
@@ -31,45 +33,45 @@ YAML で定義すると、ビルドのときに C++ の型ができます。ア�
     });
 ```
 
-YAML で定義して使う、単独で動く例は [examples/typed_messages](../examples/typed_messages) です。
+[examples/typed_messages](../examples/typed_messages) is a standalone example that defines messages in YAML and uses them.
 
-## CMake に組み込む
+## Add to CMake
 
-`engine_messages` と `my_ecu` は、自分のターゲットの名前に置き換えます。リポジトリでの使い方は [examples/typed_messages/CMakeLists.txt](../examples/typed_messages/CMakeLists.txt) にあります。
+Replace `engine_messages` and `my_ecu` with the names of your own targets. For how the repository uses it, see [examples/typed_messages/CMakeLists.txt](../examples/typed_messages/CMakeLists.txt).
 
 ```cmake
-vehicle_sil_add_j1939_codec(engine_messages engine_messages.yaml)   # engine_messages.hpp ができる
+vehicle_sil_add_j1939_codec(engine_messages engine_messages.yaml)   # generates engine_messages.hpp
 target_link_libraries(my_ecu PRIVATE engine_messages)
 ```
 
-`vehicle_sil_add_j1939_codec(<target> <定義.yaml>...)` は、次のことをします。
+`vehicle_sil_add_j1939_codec(<target> <definition.yaml>...)` does the following:
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 生成するもの | 定義ごとのヘッダーを、ビルドのときに生成します。 |
-| ヘッダーの名前 | `<ファイル名から最後の拡張子を除いたもの>.hpp` です（`engine.v2.yaml` なら `engine.v2.hpp`）。 |
-| `<target>` | 生成したヘッダーを include パスに置く INTERFACE ライブラリで、`vehicle_sil::j1939_codec` をリンクします。 |
-| 作り直すとき | 定義か生成器を変えると、ヘッダーを作り直します。 |
-| 生成したヘッダーの include | `vehicle_sil/j1939/codec.hpp` だけです。 |
+| What it generates | One header per definition, at build time. |
+| Header name | `<file name without its last extension>.hpp` (`engine.v2.hpp` for `engine.v2.yaml`). |
+| `<target>` | An INTERFACE library that puts the generated headers on the include path and links `vehicle_sil::j1939_codec`. |
+| Regeneration | Changing a definition or the generator regenerates the header. |
+| Includes of the generated header | `vehicle_sil/j1939/codec.hpp` only. |
 
-生成には Python 3.11 以上と PyYAML が必要です（この関数を呼んだときだけ）。使う Python は次の順に決まります（[依存ライブラリ](dependencies.md)）。
+If you call this function, generating needs Python 3.11 or later and PyYAML. The Python interpreter is chosen in this order (see [Dependencies](dependencies.md)):
 
-1. vehicle-sil を最上位のプロジェクトとしてビルドするときは、`uv sync` で作ったリポジトリの `.venv`
-2. それがなければ、`find_package(Python3)` で見つかる Python
+1. When you build vehicle-sil as the top-level project, the repository's `.venv` that `uv sync` created
+2. If there is none, the Python that `find_package(Python3)` finds
 
-生成器は、次のコマンドで直接実行することもできます。
+You can also run the generator directly:
 
 ```sh
-tools/j1939_codegen/j1939_codegen.py <定義.yaml> -o <ヘッダー>
+tools/j1939_codegen/j1939_codegen.py <definition.yaml> -o <header>
 ```
 
-## 定義の書き方
+## Writing definitions
 
-`vehicle_sil_add_j1939_codec()` に渡せる、1 つの定義ファイルの全体です。
+A complete definition file that you can pass to `vehicle_sil_add_j1939_codec()`:
 
 ```yaml
-namespace: engine::messages        # 生成する型の名前空間
-indicators: j1939                  # 特別な値のプロファイル（全体の既定。書かなければ none）
+namespace: engine::messages        # namespace of the generated types
+indicators: j1939                  # special value profile (default for the whole file; none if omitted)
 messages:
   - name: EngineStatus
     comment: Engine -> all, every 20 ms.
@@ -79,7 +81,7 @@ messages:
       - name: speed
         start_bit: 0
         length: 16
-        scale: 0.125               # 1/8 とも書ける
+        scale: 0.125               # or write 1/8
         unit: rpm
       - name: state
         start_bit: 16
@@ -87,227 +89,227 @@ messages:
         values: {stopped: 0, running: 1}
 ```
 
-### ファイルの最上位
+### Top level of the file
 
-| キー | 意味 |
+| Key | Meaning |
 |---|---|
-| `namespace` | 生成する型の名前空間 |
-| `messages` | メッセージの並び |
-| `indicators` | 全体の既定の、特別な値のプロファイル |
-| `indicator_profiles` | プロファイルの定義 |
-| `fill` | 全体の既定の埋め値（1 バイト） |
+| `namespace` | Namespace of the generated types |
+| `messages` | List of messages |
+| `indicators` | Special value profile, the default for the whole file |
+| `indicator_profiles` | Profile definitions |
+| `fill` | Fill value, the default for the whole file (1 byte) |
 
-### メッセージ
+### Messages
 
-| キー | 意味 |
+| Key | Meaning |
 |---|---|
-| `name` | 型の名前（C++ の識別子） |
-| `pgn` | PGN（18 ビット。PDU1 は下位 8 ビットが 0） |
-| `proprietary_a` | Proprietary A（`{}` で PGN 0xEF00、`{data_page: 1}` で 0x1EF00）。PDU1 なので、送信するときに宛先を指定する |
-| `proprietary_b` | Proprietary B のグループ拡張（`0x10` で PGN 0xFF10、`{group_extension: 0x10, data_page: 1}` で 0x1FF10） |
-| `priority` | 優先度 0〜7（既定 6）。`codec::send()` と `codec::attach_sender()` はこの優先度で送信する |
-| `length` | バイト数 1〜1785（既定 8）。9 以上はトランスポートプロトコルで送信する |
-| `fill` | 信号のないビットの値。1 バイトの値（各バイトに使う）か、メッセージの長さのバイト列（既定はファイルの `fill`、それもなければ 0xFF） |
-| `indicators` | このメッセージの信号の、特別な値のプロファイル（既定はファイルの `indicators`）。下の「特別な値」 |
-| `selector` | 同じ PGN の別のメッセージと区別する定数のフィールド（`{start_bit, length, value}`、`byte_order` も可） |
-| `signals` | 信号の並び（なくてもよい） |
-| `comment` | 型のコメントになる |
+| `name` | Name of the type (a C++ identifier) |
+| `pgn` | PGN (18 bits; for PDU1, the low 8 bits are 0) |
+| `proprietary_a` | Proprietary A (`{}` for PGN 0xEF00, `{data_page: 1}` for 0x1EF00). It is PDU1, so you give a destination when you send it |
+| `proprietary_b` | Group extension of Proprietary B (`0x10` for PGN 0xFF10, `{group_extension: 0x10, data_page: 1}` for 0x1FF10) |
+| `priority` | Priority 0–7 (default 6). `codec::send()` and `codec::attach_sender()` send with this priority |
+| `length` | Length in bytes, 1–1785 (default 8). A message of 9 bytes or more is sent with the transport protocol |
+| `fill` | Value of the bits that carry no signal: a 1-byte value (used for every byte) or a list of bytes as long as the message (default: the file's `fill`, or 0xFF if the file has none) |
+| `indicators` | Special value profile for the signals of this message (default: the file's `indicators`). See "Special values" below |
+| `selector` | Constant field that tells this message apart from other messages with the same PGN (`{start_bit, length, value}`; `byte_order` is allowed too) |
+| `signals` | List of signals (optional) |
+| `comment` | Becomes the comment of the type |
 
-`pgn`、`proprietary_a`、`proprietary_b` のどれか 1 つを書きます。
+Write exactly one of `pgn`, `proprietary_a` and `proprietary_b`.
 
-### 信号
+### Signals
 
-| キー | 意味 |
+| Key | Meaning |
 |---|---|
-| `name` | メンバーの名前（C++ の識別子） |
-| `start_bit`、`length` | 位置と長さ（1〜64 ビット。下の「ビットの位置」） |
-| `byte_order` | `little`（既定）か `big` |
-| `signed` | `true` で 2 の補数（既定 `false`） |
-| `scale`、`offset` | 物理値 = raw × `scale` + `offset`（既定 1 と 0、`scale` は正の数）。数のほかに `"1/8"`、`"1e-3"` のような文字列も書ける |
-| `min`、`max` | 物理値の有効範囲。raw の有効範囲は、この範囲に入る raw 値（端は切り上げと切り捨て）に狭まる |
-| `unit` | 単位（文字列） |
-| `indicators` | この信号の、特別な値のプロファイル（既定はメッセージの `indicators`）。下の「特別な値」 |
-| `special_values` | この信号だけの特別な値（名前と値。書き方はプロファイルの `values` と同じ）。継承したプロファイルを置き換える |
-| `not_available`、`error` | `special_values` の `not_available`、`error` の短い書き方 |
-| `values` | 名前と raw 値の列挙で、scoped enum の型を作る（unsigned だけ。`scale`、`offset`、`min`、`max`、`unit` と一緒には書けない） |
-| `spn` | SPN の番号（読む人のための値。Codec は使わない） |
-| `comment` | メンバーのコメントになる |
+| `name` | Name of the member (a C++ identifier) |
+| `start_bit`, `length` | Position and length (1–64 bits; see "Bit positions" below) |
+| `byte_order` | `little` (default) or `big` |
+| `signed` | `true` for two's complement (default `false`) |
+| `scale`, `offset` | Physical value = raw × `scale` + `offset` (defaults 1 and 0; `scale` is positive). Besides numbers, you can write strings such as `"1/8"` and `"1e-3"` |
+| `min`, `max` | Valid range of the physical value. The valid raw range narrows to the raw values inside this range (the raw end for `min` is rounded up, the raw end for `max` is rounded down) |
+| `unit` | Unit (a string) |
+| `indicators` | Special value profile for this signal (default: the message's `indicators`). See "Special values" below |
+| `special_values` | Special values of this signal only (names and values, written like `values` in a profile). Replaces the inherited profile |
+| `not_available`, `error` | Short forms of `not_available` and `error` in `special_values` |
+| `values` | Enumeration of names and raw values; generates a scoped enum type (unsigned only; cannot be combined with `scale`, `offset`, `min`, `max` or `unit`) |
+| `spn` | SPN number (for the reader; the Codec does not use it) |
+| `comment` | Becomes the comment of the member |
 
-### 生成器が確認すること
+### What the generator checks
 
-生成器は次のことを確認し、違反があれば行番号か場所を示して失敗します。
+The generator checks the following. On a violation, it fails and shows the line number or the location.
 
-| 対象 | 確認すること |
+| What | Checked |
 |---|---|
-| 信号の位置 | 信号がメッセージに収まり、信号どうしとセレクターが重ならない。 |
-| 名前 | C++ の識別子（キーワードと予約された名前を除く）で、互いに重ならない。 |
-| 同じ PGN のメッセージ | 1 つの定義ファイルの中に複数あれば、すべてがセレクターを持ち、その位置が同じで値が違う（1 つのフレームが複数の型で decode されないように）。 |
-| キー | 知らないキーと重複したキーがない。 |
-| 特別な値 | 信号のビットに収まり、互いに重ならず、有効範囲の内側にない（下の「特別な値」）。 |
+| Signal positions | Each signal fits in the message, and the signals and the selector do not overlap. |
+| Names | They are C++ identifiers (not keywords or reserved names) and do not clash with each other. |
+| Messages with the same PGN | If one definition file has several, all of them have a selector, at the same position, with different values (so that one frame is never decoded as several types). |
+| Keys | There are no unknown keys and no duplicate keys. |
+| Special values | They fit in the signal's bits, do not overlap each other and are not inside the valid range (see "Special values" below). |
 
-マージキー（`<<: *base`）で取り込んだキーは上書きできます。
+Keys brought in with a merge key (`<<: *base`) can be overridden.
 
-### 使えない名前
+### Reserved names
 
-生成する型が使う名前は、信号の名前とメッセージの名前に使えません。
+Signals and messages cannot use the names that the generated types use.
 
-| 名前 | 信号の名前 | メッセージの名前 |
+| Name | Signal name | Message name |
 |---|---|---|
-| `encode`、`decode`、`bytes`、`for_each_signal`、`kPgn`、`kPriority`、`kLength`、`kFill`、`Signals`、`Selector`、`output_bytes`、`input_bytes`、`visitor`、`Visitor`、`kFillBytes` | 使えない | 使えない |
-| 信号の定義のメンバー `layout`、`name`、`unit`、`spn`、`enumerators`、`special_values` | 使えない | 使える |
-| メッセージ自身の名前 | 使えない | — |
+| `encode`, `decode`, `bytes`, `for_each_signal`, `kPgn`, `kPriority`, `kLength`, `kFill`, `Signals`, `Selector`, `output_bytes`, `input_bytes`, `visitor`, `Visitor`, `kFillBytes` | Not allowed | Not allowed |
+| Members of the signal definition: `layout`, `name`, `unit`, `spn`, `enumerators`, `special_values` | Not allowed | Allowed |
+| The message's own name | Not allowed | — |
 
-生成したコードは `std` と `vehicle_sil` を `::` から書くので、それ以外の名前（`std`、`data`、`size_t` など）は使えます。
+The generated code fully qualifies `std` and `vehicle_sil` (with a leading `::`), so you can use any other name, including `std`, `data` and `size_t`.
 
-### YAML の値の読み方
+### How YAML values are read
 
-| 書いたもの | 読み方 |
+| You write | Read as |
 |---|---|
-| `on`、`off`、`yes`、`no` | 文字列です（列挙の名前に使えます）。 |
-| 整数 | 10 進（先頭に 0 を付けない）、16 進（`0x`）、2 進（`0b`）だけです。 |
-| `010`、`1:10`、`1:30.0` | エラーです（YAML 1.1 では 8 進と 60 進になるため）。 |
-| `double` に収まらない数 | エラーです。 |
+| `on`, `off`, `yes`, `no` | Strings (you can use them as enumerator names). |
+| Integers | Decimal (no leading 0), hexadecimal (`0x`) and binary (`0b`) only. |
+| `010`, `1:10`, `1:30.0` | Errors (YAML 1.1 reads them as octal and base 60). |
+| A number that does not fit in a `double` | An error. |
 
-### ビットの位置
+### Bit positions
 
-位置はメッセージの先頭から数えます。バイト n のビット b（b = 0 が最下位）が位置 n × 8 + b です。
+Positions count from the start of the message. Bit b of byte n (b = 0 is the least significant bit) is at position n × 8 + b.
 
-| `byte_order` | `start_bit` が指すもの | 残りのビットの並び |
+| `byte_order` | What `start_bit` points to | Order of the other bits |
 |---|---|---|
-| `little` | 最下位ビットの位置 | 上位のビットは位置を 1 つずつ増やした所にある（バイトの上位へ、続いて次のバイトへ） |
-| `big` | 最上位ビットの位置 | 下位のビットはバイトの中で位置を 1 つずつ減らし、バイトのビット 0 の次は次のバイトのビット 7（DBC ファイルの Motorola と同じ数え方） |
+| `little` | The position of the least significant bit | Each higher bit is one position higher (up through the byte, then into the next byte) |
+| `big` | The position of the most significant bit | Each lower bit is one position lower within the byte; bit 0 of a byte is followed by bit 7 of the next byte (the same counting as Motorola in DBC files) |
 
-1 から数える「バイト n、ビット m」の書き方なら、`start_bit` = (n − 1) × 8 + (m − 1) です。
+If you count "byte n, bit m" from 1, `start_bit` = (n − 1) × 8 + (m − 1).
 
-### 特別な値（`indicators`）
+### Special values (`indicators`)
 
-特別な値は、raw 値の一部に「Error」「Not Available」「校正中」のような意味を持たせるものです。特別な値は信号ごとに決まり、Codec 全体で予約する値はありません。特別な値のない信号では、すべてのビットパターンが値です。
+A special value gives some raw values a meaning, such as "Error", "Not Available" or "calibrating". Special values belong to each signal; the Codec reserves no values across signals. In a signal without special values, every bit pattern is a value.
 
-特別な値は、名前と raw 値（1 つか範囲）の組です。
+A special value is a name with a raw value (one value or a range).
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 名前 | 小文字、数字、`_` で書きます。 |
-| `error`、`not_available` という名前 | 状態 `Error`、`NotAvailable` になります。 |
-| それ以外の名前 | 状態 `Special` になり、`special()` で名前を引けます。 |
-| 値 | raw 値で書きます。 |
-| signed の信号の値 | 負の数でも、ビットパターンでも書けます（8 ビットの signed で `-1` と `0xFF` は同じ値）。 |
-| 範囲 `[first, last]` | raw 値で `first <= last` です（signed で符号をまたぐ範囲は、2 つの特別な値に分けます）。 |
-| 列挙の値 | 特別な値と重ねられません。 |
+| Name | Lower-case letters, digits and `_`. |
+| The names `error` and `not_available` | Give the states `Error` and `NotAvailable`. |
+| Other names | Give the state `Special`. `special()` returns the name. |
+| Value | Written as a raw value. |
+| Values of a signed signal | Written as a negative number or as a bit pattern (in an 8-bit signed signal, `-1` and `0xFF` are the same value). |
+| Range `[first, last]` | Raw values with `first <= last` (in a signed signal, split a range that crosses the sign into 2 special values). |
+| Enumerator values | Cannot overlap special values. |
 
-送信する値は、`set_special(名前)` が書く値です。`not_available` なら、新しいメッセージの初期値にもなります。
+The value sent is the value that `set_special(name)` writes. For `not_available`, it is also the initial value in a new message.
 
-| 書き方 | 送信する値 |
+| Written as | Value sent |
 |---|---|
-| 値が 1 つ | その値 |
-| 範囲 | 範囲の最初の値 |
+| One value | That value |
+| A range | The first value of the range |
 | `{range: [first, last], send: v}` | `v` |
 
-組み込みの `j1939` の `not_available` は、`send` で全ビット 1 を送信します。範囲で書いた `not_available` で同じく全ビット 1 を送信するときは、`send` を書きます。
+The built-in `j1939` profile's `not_available` uses `send` to send all bits set to 1. To send all bits set to 1 for a `not_available` that you write as a range, write `send` as well.
 
-有効範囲（`raw_min`〜`raw_max`）は、端にある特別な値の分だけ狭まります。このため、物理値を設定して特別な値になることはありません。有効範囲の内側に特別な値があればエラーなので、`min` と `max` で外します。
+The valid range (`raw_min`–`raw_max`) is narrowed to exclude the special values at its ends. So setting a physical value never produces a special value. A special value inside the valid range is an error; exclude it with `min` and `max`.
 
-列挙の信号では、特別な値でも列挙子でもない値はすべて `Undefined` です（列挙には範囲がないので、`OutOfRange` にはなりません）。
+In an enum signal, every value that is neither a special value nor an enumerator is `Undefined` (an enumeration has no range, so it is never `OutOfRange`).
 
-#### プロファイル
+#### Profiles
 
-特別な値の組に名前を付けたものがプロファイルです。`indicator_profiles` に一度定義し、名前で選びます。定義ファイルの最上位に書く部分です。
+A profile is a named set of special values. Define it once in `indicator_profiles` and select it by name. This part goes at the top level of the definition file:
 
 ```yaml
 indicator_profiles:
-  vendor:                                  # 名前は自由
-    - when: {length: 8, signed: false}     # この規則は 8 ビットの unsigned の信号に
+  vendor:                                  # any name
+    - when: {length: 8, signed: false}     # this rule is for 8-bit unsigned signals
       values: {sensor_error: 0xFE, not_available: 0xFF}
     - when: {length: 16, signed: false}
       values:
-        sensor_error: [0xFE00, 0xFEFF]     # 範囲
-        not_available: {range: [0xFF00, 0xFFFF], send: 0xFFFF}   # 全ビット 1 を送る（既定は 0xFF00）
+        sensor_error: [0xFE00, 0xFEFF]     # a range
+        not_available: {range: [0xFF00, 0xFFFF], send: 0xFFFF}   # sends all bits 1 (default 0xFF00)
     - when: {length: 16, signed: true}
-      values: {sensor_error: -32768}       # signed は負の数でも書ける（0x8000 と同じ）
-  calibration:                             # 規則が 1 つなら、並びにしなくてよい
+      values: {sensor_error: -32768}       # signed values can be negative (same as 0x8000)
+  calibration:                             # a single rule need not be a list
     when: {length: 8, signed: false}
     values: {calibrating: 0, not_available: 0xFF}
 ```
 
-プロファイルは規則の並びです。
+A profile is a list of rules.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 規則が持つもの | `values`（特別な値）と、任意の `when` です。 |
-| `when` | `length`（長さか長さの並び）と `signed`（true か false）で、規則を適用する信号を限定します。 |
-| 信号に使う規則 | `when` が合う最初の規則です。 |
-| `when` のない規則 | どの信号にも合います（値が信号のビットに入らない、または有効範囲の内側に来る信号があればエラー）。 |
-| 組み込みのプロファイル | `none`（特別な値なし）と `j1939`（下の表）です。 |
-| ファイルで `j1939` を定義したとき | 組み込みのものを置き換えます。 |
-| `none` | 定義できません。 |
+| What a rule has | `values` (the special values) and an optional `when`. |
+| `when` | Limits the signals the rule applies to, by `length` (a length or a list of lengths) and `signed` (true or false). |
+| Rule used for a signal | The first rule whose `when` matches. |
+| Rule without `when` | Matches every signal (an error if a value does not fit in a signal's bits, or falls inside its valid range). |
+| Built-in profiles | `none` (no special values) and `j1939` (table below). |
+| Defining `j1939` in the file | Replaces the built-in one. |
+| `none` | Cannot be defined. |
 
-ファイルやメッセージ全体に適用するプロファイルでは、規則ごとに `length` と `signed` を書くのが安全です。signed の信号では `0xFF` が −1 になり、有効範囲の内側に来るためです。
+In a profile that applies to a whole file or message, it is safest to write `length` and `signed` in every rule: in a signed signal, `0xFF` is −1, which falls inside the valid range.
 
-#### 継承と上書き
+#### Inheritance and overrides
 
-信号の特別な値は、次の順に最初に見つかったもので決まります。継承元と継承先の特別な値は混ぜず、見つかったもので丸ごと置き換えます。どの信号がどの特別な値を持つかは、生成のときに決まります。
+A signal's special values come from the first of these that exists. Inherited special values and the signal's own are never merged: the one found replaces the others entirely. Which signal has which special values is decided at generation time.
 
-1. 信号の `special_values`（と `not_available`、`error`）
-2. 信号の `indicators`
-3. メッセージの `indicators`
-4. ファイルの `indicators`
-5. どれもなければ `none`
+1. The signal's `special_values` (and `not_available`, `error`)
+2. The signal's `indicators`
+3. The message's `indicators`
+4. The file's `indicators`
+5. If none of these exists, `none`
 
-既定は `none` です。J1939 の特別な値は `indicators: j1939` を書いたときだけ使います（Proprietary B のメッセージに、意図せず J1939 の解釈が適用されないように）。`indicators: none` は、上の階層の指定を打ち消します。
+The default is `none`. The J1939 special values apply only when you write `indicators: j1939` (so that a Proprietary B message never gets the J1939 interpretation by accident). `indicators: none` cancels a setting at a higher level.
 
-選んだプロファイルに、信号の長さと符号に合う規則がないときの扱いは、選んだ場所で変わります。
+If the selected profile has no rule that matches the signal's length and signedness, the result depends on where the profile was selected:
 
-| プロファイルを選んだ場所 | 合う規則がないとき |
+| Where the profile is selected | No matching rule |
 |---|---|
-| 信号の `indicators` | エラーです。 |
-| メッセージかファイル（信号は継承する） | その信号は特別な値を持ちません。 |
-| メッセージかファイルで、ファイルで定義したプロファイルが、継承する信号のどれにも合わない | エラーです（`when` の書き間違いで、すべての信号から特別な値が黙って消えないように）。 |
+| The signal's `indicators` | An error. |
+| A message or the file (the signal inherits it) | The signal has no special values. |
+| A message or the file, and the profile is defined in the file and matches none of the signals that inherit it | An error (so that a mistake in `when` does not silently remove the special values from every signal). |
 
-- 全体に `j1939` を指定しても、1 ビットのフラグや 12 ビットの値は値のままです。
-- 組み込みの `j1939` は、どの信号にも合わないときのエラーの対象外です（表示灯やフラグだけのファイルにも `indicators: j1939` を書けます）。
-- 生成器のエラーメッセージは、特別な値の名前、値（16 進）、どこで選んだプロファイルか（例: `profile vendor of the file`）を示します。
+- Even with `j1939` for the whole file, 1-bit flags and 12-bit values stay plain values.
+- The built-in `j1939` is exempt from the error for matching no signal (you can write `indicators: j1939` even in a file with only lamps and flags).
+- The generator's error messages show the name of the special value, its value (in hexadecimal) and where the profile was selected (for example `profile vendor of the file`).
 
-#### 組み込みの `j1939` プロファイル
+#### The built-in `j1939` profile
 
-| 信号 | 有効 | `parameter_specific` | `reserved` | `error` | `not_available`（送信する値） |
+| Signal | Valid | `parameter_specific` | `reserved` | `error` | `not_available` (value sent) |
 |---|---|---|---|---|---|
-| 8 ビット unsigned | 0x00〜0xFA | 0xFB | 0xFC〜0xFD | 0xFE | 0xFF |
-| 16 ビット unsigned | 0x0000〜0xFAFF | 0xFB00〜0xFBFF | 0xFC00〜0xFDFF | 0xFE00〜0xFEFF（0xFE00） | 0xFF00〜0xFFFF（0xFFFF） |
-| 32 ビット unsigned | 0x00000000〜0xFAFFFFFF | 0xFB000000〜0xFBFFFFFF | 0xFC000000〜0xFDFFFFFF | 0xFE000000〜0xFEFFFFFF（0xFE000000） | 0xFF000000〜0xFFFFFFFF（0xFFFFFFFF） |
-| 2 ビット unsigned | 0、1 | — | — | 2 | 3 |
+| 8-bit unsigned | 0x00–0xFA | 0xFB | 0xFC–0xFD | 0xFE | 0xFF |
+| 16-bit unsigned | 0x0000–0xFAFF | 0xFB00–0xFBFF | 0xFC00–0xFDFF | 0xFE00–0xFEFF (0xFE00) | 0xFF00–0xFFFF (0xFFFF) |
+| 32-bit unsigned | 0x00000000–0xFAFFFFFF | 0xFB000000–0xFBFFFFFF | 0xFC000000–0xFDFFFFFF | 0xFE000000–0xFEFFFFFF (0xFE000000) | 0xFF000000–0xFFFFFFFF (0xFFFFFFFF) |
+| 2-bit unsigned | 0, 1 | — | — | 2 | 3 |
 
-ほかの長さ（1 ビット、3〜7 ビット、24 ビット、64 ビットなど）と signed の信号には規則がありません。規格での扱いを確認していない長さに、推測した規則は適用しません。必要なときは、ファイルで `j1939` を定義し直すか、信号に `special_values` を書きます。
+Other lengths (1 bit, 3–7 bits, 24 bits, 64 bits and so on) and signed signals have no rule. The profile applies no guessed rules to lengths whose treatment in the standard has not been verified. If you need one, redefine `j1939` in the file, or write `special_values` on the signal.
 
-表の値は広く使われている慣行に合わせたもので、規格の本文とは照合していません（末尾の「規格との一致」）。
+The values in the table follow widely used practice and have not been checked against the text of the standard (see "Conformance to the standard" at the end of this page).
 
-#### 標準の J1939 と Proprietary B の使い分け
+#### Standard J1939 versus Proprietary B
 
-| ファイルの内容 | 書き方 |
+| Contents of the file | How to write it |
 |---|---|
-| 標準の PG を定義するファイル | 最上位に `indicators: j1939` を 1 行書き、値域や意味が決まっている SPN は、信号の `min`、`max`、`special_values` で上書きします。 |
-| Proprietary B だけのファイル（独自の特別な値なし） | 何も書きません（すべてのビットパターンが値です）。 |
-| Proprietary B だけのファイル（メーカー独自の特別な値あり） | プロファイルを 1 つ定義してファイルかメッセージの `indicators` で選び、例外の信号だけに `indicators` か `special_values` を書きます。 |
-| 1 つのファイルに混ぜるとき | ファイルの `indicators` をよく使う方にし、もう一方のメッセージに `indicators` を書きます。 |
+| Standard PGs | Write one line, `indicators: j1939`, at the top level. For SPNs with a defined range or meaning, override with the signal's `min`, `max` and `special_values`. |
+| Proprietary B only, with no custom special values | Write nothing (every bit pattern is a value). |
+| Proprietary B only, with manufacturer-specific special values | Define one profile and select it with the `indicators` of the file or the message. Write `indicators` or `special_values` only on the signals that are exceptions. |
+| Both in one file | Set the file's `indicators` to the kind you use more, and write `indicators` on the messages of the other kind. |
 
-信号の `special_values` は、継承したプロファイルを丸ごと置き換えます（足し合わせません）。標準の信号で 1 つの値だけを変えるときも、残したい値を一緒に書きます。
+A signal's `special_values` replaces the inherited profile entirely (it does not add to it). Even to change one value of a standard signal, write the values you want to keep along with it.
 
-メッセージの `signals` の 1 つです。
+Here is one entry of a message's `signals`:
 
 ```yaml
-# 8 ビットの標準の信号で、0xFB（parameter_specific）を独自の意味にする
+# a standard 8-bit signal that gives 0xFB (parameter_specific) a meaning of its own
 - name: coolant_level
   start_bit: 0
   length: 8
   special_values: {level_unknown: 0xFB, reserved: [0xFC, 0xFD], error: 0xFE, not_available: 0xFF}
 ```
 
-1 つの定義ファイルの全体です。
+A complete definition file:
 
 ```yaml
-# 数百の信号を持つ Proprietary B のファイル
+# a Proprietary B file with hundreds of signals
 namespace: vendor::messages
-indicators: vendor                 # 全部の信号に
-fill: 0x00                         # 全部のメッセージの未使用のビット
+indicators: vendor                 # for every signal
+fill: 0x00                         # unused bits of every message
 indicator_profiles:
   vendor:
     - when: {length: 8, signed: false}
@@ -320,33 +322,33 @@ messages:
     signals:
       - {name: p1, start_bit: 0, length: 8, scale: 0.5, unit: kPa}
       - {name: p2, start_bit: 8, length: 8, scale: 0.5, unit: kPa}
-      - {name: raw_count, start_bit: 16, length: 16, indicators: none}            # すべての値を使う
-      - {name: level, start_bit: 32, length: 8, special_values: {calibrating: 0}} # この信号だけ別
+      - {name: raw_count, start_bit: 16, length: 16, indicators: none}            # uses every value
+      - {name: level, start_bit: 32, length: 8, special_values: {calibrating: 0}} # this signal differs
   - name: Debug
     proprietary_b: 0x41
-    indicators: none                                                               # このメッセージは特別な値なし
+    indicators: none                                                               # no special values in this message
     signals:
       - {name: word, start_bit: 0, length: 32}
 ```
 
-### 未使用のビットの埋め値（`fill`）
+### Fill value for unused bits (`fill`)
 
-信号もセレクターもないビットを埋める値です。特別な値とは別のもので、信号の値は変えません。
+`fill` is the value of the bits that carry neither a signal nor a selector. It is separate from special values and does not change the value of any signal.
 
-| 書く場所 | 書けるもの |
+| Where | What you write |
 |---|---|
-| ファイルの `fill` | 1 バイトの値で、全メッセージの既定になります。 |
-| メッセージの `fill` | ファイルの既定を上書きします。 |
-| メッセージの `fill`（バイト列） | 長さぶんのバイト列（`[0xFF, 0x00, ...]`）で、ビットパターンを指定できます。 |
-| どれもないとき | 0xFF です。 |
+| `fill` of the file | A 1-byte value. It is the default for every message. |
+| `fill` of a message | Overrides the file's default. |
+| `fill` of a message (list of bytes) | A list of bytes as long as the message (`[0xFF, 0x00, ...]`), to set a bit pattern. |
+| None of these | 0xFF. |
 
-### Windows のマクロと名前の衝突
+### Name clashes with Windows macros
 
-`<windows.h>` を `NOMINMAX` なしで include すると、`min` と `max` のマクロが `Signal::min()` の呼び出しを壊します（`(S::min)()` と書くか、`NOMINMAX` を定義します）。同じ理由で、`ERROR`、`IN`、`OUT` など Windows のマクロと同じ名前は避けます。
+If you include `<windows.h>` without `NOMINMAX`, the `min` and `max` macros break calls to `Signal::min()` (write `(S::min)()`, or define `NOMINMAX`). For the same reason, avoid names that match Windows macros, such as `ERROR`, `IN` and `OUT`.
 
-## 生成される型
+## Generated types
 
-「定義の書き方」の最初の定義から、次の形の型ができます。要点だけを示したもので、このままではコンパイルできません（`...` は省いた部分。実際のコードは名前を `::std::`、`::vehicle_sil::` から書きます）。
+The first definition in "Writing definitions" generates a type of the form below. It shows only the main points and does not compile as is (`...` marks omitted parts; the real code fully qualifies names with `::std::` and `::vehicle_sil::`).
 
 ```cpp
 struct EngineStatus
@@ -361,155 +363,155 @@ struct EngineStatus
     codec::Signal<Signals::speed> speed;
     codec::EnumSignal<Signals::state, State> state;
 
-    std::size_t encode(std::span<std::uint8_t> output_bytes) const;     // kLength バイトを書く
+    std::size_t encode(std::span<std::uint8_t> output_bytes) const;     // writes kLength bytes
     static std::optional<EngineStatus> decode(std::span<const std::uint8_t> input_bytes);
     std::array<std::uint8_t, kLength> bytes() const;
-    template <typename Visitor> void for_each_signal(Visitor&& visitor); // 各信号で visitor(signal)（const 版もある）
+    template <typename Visitor> void for_each_signal(Visitor&& visitor); // visitor(signal) for each signal (a const version exists too)
     friend bool operator==(const EngineStatus&, const EngineStatus&) = default;
 };
 ```
 
-| 項目 | 動作 |
+| Item | Behavior |
 |---|---|
-| 新しいメッセージの信号 | Not Available です（`not_available` のない信号は raw 0）。 |
-| `encode(out)` | 信号のないビットを `kFill`（バイト列の埋め値では `kFillBytes`）にして `kLength` バイトを書き、`kLength` を返します。 |
-| `encode(out)` で `out` が短いとき | `std::length_error` です。 |
-| `decode(data)` | `data` が `kLength` より短いか、セレクターの値が違えば空を返します（長い分は無視します）。 |
-| 状態とメモリ | 型は状態を持たず、`encode` と `decode` はメモリを確保しません。 |
-| `Signal` と `EnumSignal` | 数値や列挙に暗黙に変換されず、数値も代入できません。 |
+| Signals of a new message | Not Available (raw 0 for signals without `not_available`). |
+| `encode(out)` | Sets the bits that carry no signal to `kFill` (`kFillBytes` for a list-of-bytes fill value), writes `kLength` bytes and returns `kLength`. |
+| `encode(out)` with a short `out` | Throws `std::length_error`. |
+| `decode(data)` | Returns empty if `data` is shorter than `kLength` or the selector value differs (extra bytes are ignored). |
+| State and memory | The type holds no state, and `encode` and `decode` allocate no memory. |
+| `Signal` and `EnumSignal` | Do not convert implicitly to numbers or enums, and do not accept numbers by assignment. |
 
-### 信号の API（`vehicle_sil/j1939/codec.hpp`）
+### Signal API (`vehicle_sil/j1939/codec.hpp`)
 
-| | 意味 |
+| | Meaning |
 |---|---|
-| `state()` | 信号の状態（下の表）。判定は特別な値が先で、それから範囲か列挙子 |
-| `special()` | 持っている特別な値の名前（`std::optional<std::string_view>`）。特別な値でなければ空 |
-| `value()` | `Valid` のときだけ値（`Signal` は物理値の `std::optional<double>`、`EnumSignal` は列挙）。それ以外は空 |
-| `value_or(x)` | `value()` が空なら `x` |
-| `set(physical)` | 物理値を最も近い raw 値にする（下の表） |
-| `set(enumerator)` | `EnumSignal` の値 |
-| `raw()` | raw 値（signed の信号は符号付き）。特別な値、範囲外、未定義の値でも、受信した raw 値はそのまま残る |
-| `set_raw(raw)` | 信号のビットに入る値なら何でも設定でき、特別な値の制限を受けない。入らなければ `std::out_of_range` |
-| `bits()` | メッセージの中のビット列（unsigned） |
-| `set_special(name)` | 特別な値をその名前で設定する（送信する値を書く）。その名前の特別な値がなければ `std::invalid_argument` |
-| `set_not_available()`、`set_error()` | `set_special("not_available")`、`set_special("error")`（その送信する値を書く）。その特別な値がない信号ではコンパイルエラー |
-| `has_special(name)`、`specials` | 名前の特別な値があるか（constexpr）、特別な値の定義の配列（`SpecialValue`: `name`、`first`、`last`、`send`） |
-| `min()`、`max()`、`resolution()`、`to_physical(raw)` | 有効な物理値の範囲、raw 1 あたりの物理値、raw から物理値（`Signal` だけ。`resolution()` は constexpr） |
-| `raw_min`、`raw_max`、`lowest_raw()`、`highest_raw()` | 有効な raw 値の範囲（`EnumSignal` では最小と最大の列挙子）と、ビットに入る raw 値の範囲 |
-| `layout`、`name`、`unit`、`spn` | 定義（constexpr） |
+| `state()` | State of the signal (table below). Special values are checked first, then the range or the enumerators |
+| `special()` | Name of the special value it holds (`std::optional<std::string_view>`); empty if it holds no special value |
+| `value()` | The value, only when `Valid` (the physical value as `std::optional<double>` for `Signal`, the enumerator for `EnumSignal`); empty otherwise |
+| `value_or(x)` | `x` if `value()` is empty |
+| `set(physical)` | Sets the raw value nearest to the physical value (table below) |
+| `set(enumerator)` | Sets the value of an `EnumSignal` |
+| `raw()` | Raw value (signed for a signed signal). The received raw value is kept as is, even for special, out-of-range and undefined values |
+| `set_raw(raw)` | Sets any value that fits in the signal's bits, without the restrictions of special values; `std::out_of_range` if it does not fit |
+| `bits()` | The signal's bits in the message (unsigned) |
+| `set_special(name)` | Sets the special value with that name (writes the value sent for it); `std::invalid_argument` if there is no special value with that name |
+| `set_not_available()`, `set_error()` | `set_special("not_available")`, `set_special("error")` (write the values sent for them). A compile error for a signal without that special value |
+| `has_special(name)`, `specials` | Whether there is a special value with that name (constexpr); the array of special value definitions (`SpecialValue`: `name`, `first`, `last`, `send`) |
+| `min()`, `max()`, `resolution()`, `to_physical(raw)` | Valid range of the physical value, physical value per raw step of 1, raw to physical (`Signal` only; `resolution()` is constexpr) |
+| `raw_min`, `raw_max`, `lowest_raw()`, `highest_raw()` | Valid range of raw values (for `EnumSignal`, the lowest and highest enumerators), and the range of raw values that fit in the bits |
+| `layout`, `name`, `unit`, `spn` | The definition (constexpr) |
 
-| `state()` | なるとき |
+| `state()` | When |
 |---|---|
-| `Valid` | 値として読めるとき |
-| `Error`、`NotAvailable` | その名前の特別な値のとき |
-| `Special` | そのほかの名前の特別な値のとき |
-| `OutOfRange` | `Signal` で、特別な値でなく有効範囲の外のとき |
-| `Undefined` | `EnumSignal` で、特別な値でもどの列挙子でもない値のとき |
+| `Valid` | The value can be read as a value |
+| `Error`, `NotAvailable` | It is the special value with that name |
+| `Special` | It is a special value with another name |
+| `OutOfRange` | For a `Signal`: it is not a special value and is outside the valid range |
+| `Undefined` | For an `EnumSignal`: it is neither a special value nor an enumerator |
 
-| `set(physical)` に渡した値 | 設定される値 | 戻り値 |
+| Value passed to `set(physical)` | Value set | Returns |
 |---|---|---|
-| 有効範囲の中の物理値 | 最も近い raw 値（ちょうど半分は 0 から遠い方） | `true` |
-| 丸めた値が有効範囲の外 | 近い端 | `false` |
-| 64 ビットの信号で、`double` にすると端と同じになる値 | 端 | `true` |
-| NaN | Not Available（Not Available のない信号は変えない） | `false` |
+| A physical value in the valid range | The nearest raw value (exact halves round away from 0) | `true` |
+| A value that rounds to outside the valid range | The nearer end | `false` |
+| For a 64-bit signal, a value that equals an end once converted to `double` | That end | `true` |
+| NaN | Not Available (a signal without Not Available is unchanged) | `false` |
 
-受信した値は、状態で分けて読みます。特別な値でも範囲外でも、`raw()` は受信した値をそのまま返します（範囲で定義した特別な値なら、範囲の中のどの値だったかまでわかります）。
+Read a received value according to its state. For special and out-of-range values too, `raw()` returns the received value as is (for a special value defined as a range, it tells you which value in the range arrived).
 
-断片です（`m` は受信した型付きメッセージ、`use`、`log`、`detail` は利用者のもの）。特別な値の名前を読む動く例は [examples/typed_messages/main.cpp](../examples/typed_messages/main.cpp) にあります。
+A fragment (`m` is a received typed message; `use`, `log` and `detail` are yours). For a working example that reads the names of special values, see [examples/typed_messages/main.cpp](../examples/typed_messages/main.cpp).
 
 ```cpp
 if (const auto v = m.speed.value()) {
-    use(*v);                                        // 物理値
+    use(*v);                                        // physical value
 } else if (const auto name = m.speed.special()) {
-    log(*name, m.speed.raw());                      // 例: "sensor_error", 0xFE42
-    // 範囲の先頭からの差（下位のバイトに詳細を載せる独自の特別な値など）
+    log(*name, m.speed.raw());                      // e.g. "sensor_error", 0xFE42
+    // offset from the start of the range (e.g. a custom special value with details in the low byte)
     for (const auto& s : decltype(m.speed)::specials) {
         if (s.name == *name) { detail = m.speed.raw() - s.first; }
     }
 } else {
-    log("out of range", m.speed.raw());             // 範囲外（列挙の信号では Undefined）
+    log("out of range", m.speed.raw());             // out of range (Undefined for an enum signal)
 }
 ```
 
-物理値は `double` で計算します。raw × scale を `double` に丸めてから offset を足すので、コンパイラーや最適化が掛け算と足し算を 1 回の丸めにまとめることはありません。そのため、IEEE の倍精度で計算する環境（x86-64 の SSE、AArch64 など）ではどこでも同じ値になります（拡張精度の x87 で計算する 32 ビットの x86 は対象外です）。53 ビットを超える raw 値の物理値は丸められます（raw 値は正確です）。
+Physical values are computed in `double`. The product raw × scale is rounded to `double` before the offset is added, so the compiler and the optimizer never fuse the multiplication and the addition into one rounding. As a result, the value is the same on every platform that computes in IEEE double precision (SSE on x86-64, AArch64 and others). 32-bit x86, which computes in x87 extended precision, is not covered. Physical values of raw values wider than 53 bits are rounded (the raw values stay exact).
 
-## ノードで使う（`vehicle_sil/j1939/codec_node.hpp`）
+## Use with a node (`vehicle_sil/j1939/codec_node.hpp`)
 
-| 関数 | 意味 |
+| Function | Meaning |
 |---|---|
-| `codec::attach_sender<M>(node, period, fill, options)` | `PeriodicSender` を付け、送信のたびに新しい `M` を作り、`fill(M&)` で信号を設定して送信する |
-| `codec::encoder<M>(fill)` | 同じことをする `PeriodicSender::Encoder`（自分で `PeriodicSender` を作るとき。`max_length` は `M::kLength` 以上にする） |
-| `codec::on_message<M>(node, handler)` | `M` の PGN を受信して、decode できたものだけを `handler(const M&)` か `handler(const M&, const Message&)` に渡す（戻り値の `HandlerId` で解除する） |
-| `codec::send(node, message, destination, when_busy)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority, when_busy)`（`when_busy` の既定は `WhenBusy::Fail`） |
-| `codec::decode<M>(message)` | `message.pgn` が `M::kPgn` のときだけ `M::decode(message.data)`（ほかは空）。いろいろな PGN が来る所（`Exchange` の `match` など）で使う |
+| `codec::attach_sender<M>(node, period, fill, options)` | Attaches a `PeriodicSender`. For each transmission, it creates a new `M`, sets the signals with `fill(M&)` and sends it |
+| `codec::encoder<M>(fill)` | A `PeriodicSender::Encoder` that does the same (for when you create the `PeriodicSender` yourself; set `max_length` to `M::kLength` or more) |
+| `codec::on_message<M>(node, handler)` | Receives the PGN of `M` and passes only the messages that decode to `handler(const M&)` or `handler(const M&, const Message&)` (remove it with the returned `HandlerId`) |
+| `codec::send(node, message, destination, when_busy)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority, when_busy)` (`when_busy` defaults to `WhenBusy::Fail`) |
+| `codec::decode<M>(message)` | `M::decode(message.data)` only when `message.pgn` is `M::kPgn` (empty otherwise). Use it where many PGNs arrive (such as the `match` of an `Exchange`) |
 
-`codec::attach_sender` には、次のルールがあります。
+`codec::attach_sender` follows these rules:
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 新しい `M` の信号 | Not Available のある信号は Not Available、ない信号は raw 0 です。 |
-| 優先度 | `M::kPriority` で送信します。 |
-| `options.priority` | 既定値（6）のままか `M::kPriority` にします（違えば `std::invalid_argument`）。 |
-| バッファ | `M::kLength` 以上にします。 |
+| Signals of a new `M` | Not Available for signals that have Not Available, raw 0 for the others. |
+| Priority | Sends with `M::kPriority`. |
+| `options.priority` | Leave it at the default (6) or set it to `M::kPriority` (any other value throws `std::invalid_argument`). |
+| Buffer | `M::kLength` bytes or more. |
 
-そのほかの使い方です。
+Other uses:
 
-| 場面 | 書き方 |
+| Situation | How |
 |---|---|
-| `on_message<M>` が渡さないもの（短いもの、セレクターの違うもの）を見る | `node.on_message()` と `M::decode()` を使います。 |
-| `Monitor` の最新の受信を読む | `M::decode(monitor.data())` で読みます（まだ受信していなければ空）。 |
-| `Monitor` で、同じ PGN に別の型が載る | `MonitorOptions::accept` で `codec::decode<M>(message)` が値を返すものだけにします。 |
-| `Requester` の応答を読む | `M::decode(result.data)` で読みます。 |
-| 同じ PGN の複数の型（Proprietary A をセレクターで分けたもの） | 型ごとに `on_message<M>` を登録します。 |
+| See what `on_message<M>` does not pass (short messages, other selector values) | Use `node.on_message()` and `M::decode()`. |
+| Read the latest message a `Monitor` received | Read it with `M::decode(monitor.data())` (empty if nothing has been received yet). |
+| Another type arrives on the PGN of a `Monitor` | Use `MonitorOptions::accept` to accept only the messages for which `codec::decode<M>(message)` returns a value. |
+| Read the response of a `Requester` | Read it with `M::decode(result.data)`. |
+| Several types on the same PGN (Proprietary A told apart by selectors) | Register one `on_message<M>` per type. |
 
-`fill` とハンドラは、ほかのハンドラと同じくステップの中で呼ばれます。投げた例外は `Network` を失敗状態にします。
+`fill` and the handlers are called within a step, like any other handler. An exception thrown from them puts the `Network` in the failed state.
 
-## テストで使う
+## Use in tests
 
-| 確認したいもの | 方法 |
+| To check | How |
 |---|---|
-| 境界値と特別な値 | `set_raw()`、`set_special()` で作り、`state()`、`special()`、`value()`、`raw()` で確認します。 |
-| 範囲と特別な値の定義 | 範囲は `raw_min`、`raw_max`、`min()`、`max()`、特別な値は `specials` で引けます。 |
-| メッセージのすべての信号 | `for_each_signal` で、同じ確認をすべての信号にできます。 |
-| 壊れたメッセージ（短い、セレクターが違う） | `M::decode()` が空を返します。 |
+| Boundary values and special values | Create them with `set_raw()` and `set_special()`, and check them with `state()`, `special()`, `value()` and `raw()`. |
+| Definitions of ranges and special values | Look up the ranges with `raw_min`, `raw_max`, `min()` and `max()`, and the special values with `specials`. |
+| Every signal of a message | `for_each_signal` runs the same check on every signal. |
+| Broken messages (short, wrong selector) | `M::decode()` returns empty. |
 
-`tests/j1939/test_j1939_codec.cpp` は、`for_each_signal` を使って、16 ビット以下の信号のすべての raw 値で encode と decode の往復を確認しています。
+`tests/j1939/test_j1939_codec.cpp` uses `for_each_signal` to check the encode and decode round trip for every raw value of every signal of 16 bits or less.
 
-## 手で書く型
+## Hand-written types
 
-生成器を使わずに、同じ形の型を C++ で書けます。`codec::MessageType` の要件を満たし、`encode`、`decode`、`bytes` は `codec::encode_message`、`codec::decode_message`、`codec::message_bytes` に任せます。
+You can write a type of the same form in C++ without the generator. The type must satisfy `codec::MessageType`. Leave `encode`, `decode` and `bytes` to `codec::encode_message`, `codec::decode_message` and `codec::message_bytes`.
 
-| 書くもの | 要件 |
+| What you write | Requirement |
 |---|---|
-| メッセージの型 | `kPgn`、`kPriority`、`kLength`、`kFill` か `kFillBytes`、`for_each_signal`、`encode`、`decode` を持ちます。 |
-| `kFill` と `kFillBytes` | どちらか一方だけを持ちます（`kFillBytes` は `std::array<std::uint8_t, kLength>`）。 |
-| 信号の `Spec` | `layout`、`name`、`unit`（と、任意で `spn`、`special_values`、列挙なら `enumerators`）を持つ型です。 |
+| Message type | Has `kPgn`, `kPriority`, `kLength`, `kFill` or `kFillBytes`, `for_each_signal`, `encode` and `decode`. |
+| `kFill` and `kFillBytes` | Has exactly one of them (`kFillBytes` is a `std::array<std::uint8_t, kLength>`). |
+| Signal `Spec` | A type with `layout`, `name` and `unit` (and optionally `spn` and `special_values`, plus `enumerators` for an enum). |
 
-| 確認の時点 | 確認すること |
+| When | What is checked |
 |---|---|
-| コンパイルのとき | 有効範囲、特別な値の範囲と送信する値、列挙の値が信号のビットに収まること、信号がメッセージの長さに収まること |
-| 確認しない（生成器のルールに合わせて書く） | 特別な値と有効範囲の重なり、同じ PGN の型の区別 |
+| At compile time | That the valid range, the special value ranges and values sent, and the enumerator values fit in the signal's bits, and that the signals fit in the message length |
+| Not checked (follow the generator's rules yourself) | Overlap between special values and the valid range, and telling apart types with the same PGN |
 
-## 制限
+## Limitations
 
-- マルチプレクス（セレクターの値で配置が変わる信号）、可変長のデータ（文字列、`*` で区切るフィールド）、配列と繰り返し（DM1 の DTC など）は扱いません。
-- SAE J1939 の PGN と SPN の定義（J1939DA）は同梱していません。標準の PG を使うときは、利用者が入手した定義から YAML を書きます。
+- Multiplexing (signals whose layout changes with the selector value), variable-length data (strings, fields delimited by `*`), and arrays and repetitions (such as the DTCs of DM1) are not supported.
+- The SAE J1939 PGN and SPN definitions (J1939DA) are not included. To use standard PGs, write the YAML from definitions that you have obtained yourself.
 
-## 規格との一致
+## Conformance to the standard
 
-規格の本文で確認した事項は、まだありません。組み込みの `j1939` プロファイルは、広く使われている慣行に合わせたものです。確認していない点は次のとおりです。
+Nothing has been verified against the text of the standard yet. The built-in `j1939` profile follows widely used practice. These points are not verified:
 
-- 8、16、32 ビットの範囲と、`parameter_specific`（0xFB…）と `reserved`（0xFC〜0xFD…）の区別。
-- 2 ビットの範囲（2 が Error、3 が Not Available）。コマンドの信号でも同じかどうか。
-- 規則を設けていない長さ（1 ビット、3〜7 ビット、24 ビット、64 ビット）と、signed の信号の特別な値。
-- 送信する値: Error は範囲の最初の値（0xFE00 など）、Not Available は全ビット 1。
-- 未使用のビットとバイトの埋め値の既定（0xFF）。
+- The ranges for 8, 16 and 32 bits, and the distinction between `parameter_specific` (0xFB…) and `reserved` (0xFC–0xFD…).
+- The 2-bit ranges (2 is Error, 3 is Not Available), and whether command signals use the same ones.
+- Special values for the lengths that have no rule (1 bit, 3–7 bits, 24 bits, 64 bits) and for signed signals.
+- The values sent: the first value of the range for Error (0xFE00 and so on), all bits set to 1 for Not Available.
+- The default fill value for unused bits and bytes (0xFF).
 
-確認した値と違うときは、ファイルで `j1939` プロファイルを定義し直せば、Codec の更新を待たずに使えます（範囲で書く `not_available` に、全ビット 1 を送る `send` を書くのを忘れずに）。
+If the verified values turn out to differ, redefine the `j1939` profile in your file; you do not have to wait for an update of the Codec. Remember to write a `send` that sends all bits set to 1 for a `not_available` written as a range.
 
-## 関連するドキュメント
+## See also
 
-| 読むもの | 内容 |
+| Page | Contents |
 |---|---|
-| [j1939-guide.md](j1939-guide.md) | この文書の前に読む、ノード、送受信、コンポーネントの使い方 |
-| [ecu-executable.md](ecu-executable.md) | ECU を実行ファイルにする方法 |
+| [j1939-guide.md](j1939-guide.md) | Nodes, sending and receiving, and protocol parts. Read it before this page. |
+| [ecu-executable.md](ecu-executable.md) | How to build an ECU as an executable |

@@ -1,188 +1,190 @@
 # gui/client
 
-GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ（TypeScript、`@vehicle-sil/gui-client`）のリファレンスです。入手とインポートの方法、公開 API の一覧、使い方、ECU の変数の読み書き、ライフサイクルが書いてあります。
+[日本語](README.ja.md)
 
-ライブラリが持つのは、接続（トークン、再接続）、セッションのコピー（サーバーの要約とイベントから組み立てた、実行の状態のコピー）、実行と時間の操作、ECU の変数（一覧、値の watch、書き込みと結果）、サーバーの API の型と読み取りです。Angular にも RxJS にも、ほかのパッケージにも依存しません。サンプルの画面（`gui/web`）も、Angular の薄いラッパー（`gui/web/src/app/core/session/`）を通して、これだけを使います。
+Reference for the client library of the GUI server (`vehicle-sil-gui`), written in TypeScript and published as `@vehicle-sil/gui-client`. It covers how to get and import the library, the public API, basic usage, reading and writing ECU variables, and the lifecycle.
 
-| 知りたいこと                                                | 節                                                               |
-| ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| ライブラリをどこから入手し、どう import するか              | [入手とインポート](#入手とインポート)                            |
-| どの名前が公開されているか                                  | [エントリーポイント](#エントリーポイント)、[公開 API](#公開-api) |
-| 接続して実行を始めるまでのコード                            | [基本の使い方](#基本の使い方)                                    |
-| 変数の値を読む、書き込む                                    | [ECU の変数](#ecu-の変数)                                        |
-| スライダーやランプを作る（`condition`、`block` の値の一覧） | [コンポーネントを作る（`bind`）](#コンポーネントを作るbind)      |
-| `connect()` と `close()` の後に何が起きるか                 | [ライフサイクル](#ライフサイクル)                                |
-| ライブラリを開発する                                        | [コーディングのルール](#コーディングのルール)、[テスト](#テスト) |
+The library handles the connection (token, reconnection), the session copy (a copy of the run state, built from the server's summary and events), run and time control, ECU variables (list, watching values, writes and their results), and the types and parsers of the server API. It depends on no other package, not even Angular or RxJS. The sample screens (`gui/web`) use only this library, through a thin Angular wrapper (`gui/web/src/app/core/session/`).
 
-## 入手とインポート
+| To find                                                            | See                                                      |
+| ------------------------------------------------------------------ | -------------------------------------------------------- |
+| Where to get the library and how to import it                      | [Installing and importing](#installing-and-importing)    |
+| Which names are public                                             | [Entry points](#entry-points), [Public API](#public-api) |
+| The code to connect and start a run                                | [Basic usage](#basic-usage)                              |
+| Reading and writing variable values                                | [ECU variables](#ecu-variables)                          |
+| Building sliders and lamps (the values of `condition` and `block`) | [Build widgets (`bind`)](#build-widgets-bind)            |
+| What happens after `connect()` and `close()`                       | [Lifecycle](#lifecycle)                                  |
+| Developing the library                                             | [Coding rules](#coding-rules), [Tests](#tests)           |
 
-ライブラリは TypeScript のソースで、依存はありません。npm のレジストリには公開していません。
+## Installing and importing
 
-| 使い方                                                | 入手                                                                                                                 | import の書き方                                               |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| ビルドなしの素の JavaScript                           | 1 つの ESM のファイルにまとめた `vehicle-sil-gui-client.mjs` を、画面のディレクトリに置く                            | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
-| TypeScript と好きなフレームワーク                     | パッケージ `vehicle-sil-gui-client-<バージョン>.tgz` を入手し、自分のプロジェクトで `npm install <その .tgz>` をする | `import { createClient } from '@vehicle-sil/gui-client'`      |
-| このリポジトリの中の TypeScript のアプリ（`gui/web`） | `tsconfig.json` の `paths` で、エントリーポイントの名前を `src/` に向ける                                            | `import { createClient } from '@vehicle-sil/gui-client'`      |
+The library is TypeScript source with no dependencies. It is not published to the npm registry.
 
-2 つのファイルは、次の場所にあります。
+| Use                                             | How to get it                                                                                            | Import                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Plain JavaScript, no build step                 | Put `vehicle-sil-gui-client.mjs`, the library bundled into one ESM file, in the screen's directory       | `import { createClient } from './vehicle-sil-gui-client.mjs'` |
+| TypeScript and any framework                    | Get the package `vehicle-sil-gui-client-<version>.tgz` and run `npm install <that .tgz>` in your project | `import { createClient } from '@vehicle-sil/gui-client'`      |
+| A TypeScript app in this repository (`gui/web`) | Point the entry point names to `src/` with `paths` in `tsconfig.json`                                    | `import { createClient } from '@vehicle-sil/gui-client'`      |
 
-| ファイル                                  | ビルド済みのツール                                        | リポジトリでビルドする（`gui/web` で実行）                                                 |
-| ----------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `vehicle-sil-gui-client.mjs`              | `<ツール>/client/vehicle-sil-gui-client.mjs`              | `npm run build:client` が `build/gui-client/vehicle-sil-gui-client.mjs` を作る             |
-| `vehicle-sil-gui-client-<バージョン>.tgz` | `<ツール>/client/vehicle-sil-gui-client-<バージョン>.tgz` | `npm run pack:client` が `build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` を作る |
+Where to find the 2 files:
 
-同じ `.tgz` は、リリースのページにもあります。`build/` はリポジトリの直下のもので、Git では追跡しません。
+| File                                   | Prebuilt tools                                        | Build in the repository (run in `gui/web`)                                            |
+| -------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `vehicle-sil-gui-client.mjs`           | `<tools>/client/vehicle-sil-gui-client.mjs`           | `npm run build:client` creates `build/gui-client/vehicle-sil-gui-client.mjs`          |
+| `vehicle-sil-gui-client-<version>.tgz` | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` | `npm run pack:client` creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz` |
 
-- **1 つにまとめたファイル**: ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、記録を再生するランチャーを相手に動かして確認します。
-- **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.` だけです（`testing` と `internal` は入りません）。
+The releases page has the same `.tgz`. `build/` is the one at the top of the repository and is not tracked in Git.
 
-## エントリーポイント
+- **Bundled file**: loads in the browser and in Node (22 or later). `scripts/verify-gui.py` runs an example that uses this file from Node against the replay launcher.
+- **Package**: contains the bundled ESM, `.d.ts` files, `exports`, the README and the LICENSE (`pack.mjs` builds it). Its version is the same as the GUI server's. Its types use the browser types (`DOM` in `lib`). The only entry point is `.` (`testing` and `internal` are not included).
 
-| エントリーポイント     | 名前                               | 中身                                                         |
-| ---------------------- | ---------------------------------- | ------------------------------------------------------------ |
-| `src/index.ts`         | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ     |
-| `src/testing/index.ts` | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）   |
-| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない |
+## Entry points
 
-- `testing` にあるのは、偽の WebSocket（`FakeWebSockets`）、偽の HTTP（`FakeHttp`）、`gui/protocol/examples/` の読み込み、要約から `SessionView` を作る `sessionViewFrom` です。
-- `internal` にあるのは、内部のクラス、要約を反映する関数、読み取りの関数です。テストのために公開していて、予告なく変わり、消えます。
+| Entry point            | Name                               | Contents                                                                                |
+| ---------------------- | ---------------------------------- | --------------------------------------------------------------------------------------- |
+| `src/index.ts`         | `@vehicle-sil/gui-client`          | The public API ("Public API" below). Only this entry point is kept compatible           |
+| `src/testing/index.ts` | `@vehicle-sil/gui-client/testing`  | Test helpers (usable in tests of your own widgets)                                      |
+| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **No compatibility guarantee.** Internal classes and functions; do not use them in apps |
 
-公開 API は狭く始めます（追加は互換を保ち、削除は互換を壊すため）。必要なものが公開のエントリーポイントにないときは、`internal` に頼らず、追加するかを決めます。
+- `testing` contains a fake WebSocket (`FakeWebSockets`), a fake HTTP (`FakeHttp`), loaders for `gui/protocol/examples/`, and `sessionViewFrom`, which builds a `SessionView` from a summary.
+- `internal` contains the internal classes, the functions that apply a summary, and the parsers. They are public for tests only, and change or disappear without notice.
 
-## 公開 API
+The public API is kept small, because adding to it keeps compatibility and removing from it breaks compatibility. If the public entry point lacks something you need, do not reach into `internal`; decide whether to add it to the public API.
 
-`src/index.ts` が公開する名前を、グループごとに挙げます。括弧の中は、そのオブジェクトのメンバーです。
+## Public API
 
-### クライアント
+The names that `src/index.ts` exports, by group. Parentheses list the members of the object.
 
-| 種類 | 名前                                                                                                                                                                                                                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 関数 | `createClient(options)`                                                                                                                                                                                                 |
-| 型   | `ClientOptions`（`baseUrl`、`token`、`origin`、`http`、`socket`、`answerTimeoutMs`、`onError`）                                                                                                                         |
-| 型   | `GuiClient`（`connection`、`session`、`run`、`time`、`variables`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`check()`、`fetchSession()`、`dashboard(file)`、`scenarios(file)`、`recording()`） |
-| 定数 | `DEFAULT_LIMITS`                                                                                                                                                                                                        |
+### Client
 
-### トークン
+| Kind     | Name                                                                                                                                                                                                                   |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Function | `createClient(options)`                                                                                                                                                                                                |
+| Type     | `ClientOptions` (`baseUrl`, `token`, `origin`, `http`, `socket`, `answerTimeoutMs`, `onError`)                                                                                                                         |
+| Type     | `GuiClient` (`connection`, `session`, `run`, `time`, `variables`, `app`, `limits`, `connect()`, `close()`, `loadApp()`, `configs()`, `check()`, `fetchSession()`, `dashboard(file)`, `scenarios(file)`, `recording()`) |
+| Constant | `DEFAULT_LIMITS`                                                                                                                                                                                                       |
 
-| 種類 | 名前                |
-| ---- | ------------------- |
-| 関数 | `takeToken(place)`  |
-| 型   | `TokenPlace`        |
-| 定数 | `TOKEN_STORAGE_KEY` |
+### Token
 
-ブラウザでは `takeToken(window)` と呼びます。URL の `#token=` を読んで URL から消し、sessionStorage に置きます。URL になければ sessionStorage に置いたものを返し、どちらにもなければ `null` を返します。
+| Kind     | Name                |
+| -------- | ------------------- |
+| Function | `takeToken(place)`  |
+| Type     | `TokenPlace`        |
+| Constant | `TOKEN_STORAGE_KEY` |
 
-### 接続（読むだけ）
+In the browser, call `takeToken(window)`. It reads `#token=` from the URL, removes it from the URL and stores it in sessionStorage. If the URL has no token, it returns the one in sessionStorage; if neither has one, it returns `null`.
 
-| 種類 | 名前                                                                                                |
-| ---- | --------------------------------------------------------------------------------------------------- |
-| 型   | `ClientConnection`（`state`、`failures`、`lastClose`、`tryAgainReason`、`onBatch`、`onUnreadable`） |
-| 型   | `ConnectionState`、`CloseInfo`                                                                      |
-| 定数 | `BATCH_MS`、`TRY_AGAIN_LATER`                                                                       |
+### Connection (read-only)
 
-### セッションのコピー
+| Kind     | Name                                                                                               |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| Type     | `ClientConnection` (`state`, `failures`, `lastClose`, `tryAgainReason`, `onBatch`, `onUnreadable`) |
+| Type     | `ConnectionState`, `CloseInfo`                                                                     |
+| Constant | `BATCH_MS`, `TRY_AGAIN_LATER`                                                                      |
 
-| 種類 | 名前                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 型   | `ClientSession`（`session`、`ready`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`          |
-| 関数 | `runOutcome`、`phaseIndex`                                                                                                           |
+### Session copy
 
-### 実行の操作
+| Kind     | Name                                                                                                                                |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Type     | `ClientSession` (`session`, `ready`, `lastEventAt`, `notices`, `rejected`, `incompatible`, `onMessages`, `report`, `dismissNotice`) |
+| Type     | `Notice`, `SessionView`, `ParticipantView`, `LauncherView`, `LogLine`, `LogSource`, `TimeView`, `CommandView`, `RunOutcome`         |
+| Function | `runOutcome`, `phaseIndex`                                                                                                          |
 
-| 種類 | 名前                                                                                              |
-| ---- | ------------------------------------------------------------------------------------------------- |
-| 型   | `ClientRun`（`starting`、`stopping`、`stopWhileStarting`、`error`、`start`、`stop`、`forceStop`） |
-| 型   | `StopAction`                                                                                      |
+### Run control
 
-### 時間
+| Kind | Name                                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------ |
+| Type | `ClientRun` (`starting`, `stopping`, `stopWhileStarting`, `error`, `start`, `stop`, `forceStop`) |
+| Type | `StopAction`                                                                                     |
 
-| 種類 | 名前                                                                                      |
-| ---- | ----------------------------------------------------------------------------------------- |
-| 型   | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`setSpeed`、`send`） |
-| 型   | `TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`                     |
-| 定数 | `ANSWER_TIMEOUT_MS`、`FEATURE_SPEED`、`FEATURE_START_PAUSED`、`FEATURE_TIME_COMMANDS`     |
+### Time
 
-### ECU の変数
+| Kind     | Name                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------- |
+| Type     | `ClientTime` (`state`, `answerTimeoutMs`, `pause`, `resume`, `step`, `setSpeed`, `send`) |
+| Type     | `TimeState`, `TimeFailure`, `Lateness`, `SendResult`, `NotSentReason`                    |
+| Constant | `ANSWER_TIMEOUT_MS`, `FEATURE_SPEED`, `FEATURE_START_PAUSED`, `FEATURE_TIME_COMMANDS`    |
 
-| 種類   | 名前                                                                                                                                                                  |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 型     | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`、`bind`）                                                                                  |
-| 型     | `VariableWatch`（`values`、`value`、`history`、`close`）                                                                                                              |
-| 型     | `VariablesState`、`VariablesStatus`、`VariablePeer`、`VariableInfo`、`VariableRef`、`VariableValue`、`WatchOptions`、`WatchValues`、`VariableReading`、`HistoryPoint` |
-| 型     | `WriteOptions`、`OperationView`、`OperationPeer`、`WatchProblem`                                                                                                      |
-| クラス | `WriteError`                                                                                                                                                          |
-| 定数   | `WATCH_PERIOD_MS`、`WATCH_PERIODS_MS`、`WRITE_TIMEOUT_MS`、`HISTORY_MAX`、`HISTORY_TOTAL_MAX`、`OPERATIONS_KEPT`                                                      |
+### ECU variable API
 
-### 変数とコンポーネントの接続（`bind`）
+| Kind     | Name                                                                                                                                                                  |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type     | `ClientVariables` (`state`, `operations`, `watchProblem`, `watch`, `write`, `bind`)                                                                                   |
+| Type     | `VariableWatch` (`values`, `value`, `history`, `close`)                                                                                                               |
+| Type     | `VariablesState`, `VariablesStatus`, `VariablePeer`, `VariableInfo`, `VariableRef`, `VariableValue`, `WatchOptions`, `WatchValues`, `VariableReading`, `HistoryPoint` |
+| Type     | `WriteOptions`, `OperationView`, `OperationPeer`, `WatchProblem`                                                                                                      |
+| Class    | `WriteError`                                                                                                                                                          |
+| Constant | `WATCH_PERIOD_MS`, `WATCH_PERIODS_MS`, `WRITE_TIMEOUT_MS`, `HISTORY_MAX`, `HISTORY_TOTAL_MAX`, `OPERATIONS_KEPT`                                                      |
 
-| 種類     | 名前                                                                                                                  |
-| -------- | --------------------------------------------------------------------------------------------------------------------- |
-| メソッド | `client.variables.bind(ref, options)`                                                                                 |
-| 型       | `BindOptions`（`periodMs`、`history`、`needsRange`、`needsValue`、`visible`）                                         |
-| 型       | `VariableBinding`（`ref`、`state`、`history()`、`write(value)`、`reject(message)`、`setVisible(visible)`、`close()`） |
-| 型       | `BoundVariable`（`ref`、`info`、`reading`、`condition`、`block`、`writeStatus`、`pending`）                           |
-| 型       | `ValueCondition`、`WriteBlock`、`WriteStatus`、`WriteValue`                                                           |
-| 関数     | `isWriteError`、`hasRange`                                                                                            |
-| 関数     | `valueCondition`（`ConditionInput`）、`writeBlock`（`WriteBlockInput`）                                               |
-| 定数     | `DROPPED_MESSAGE`                                                                                                     |
+### Binding variables to widgets (`bind`)
 
-`valueCondition`、`writeBlock`、`hasRange` は、`bind` が組み立てに使っている純粋な関数です。
+| Kind     | Name                                                                                                                 |
+| -------- | -------------------------------------------------------------------------------------------------------------------- |
+| Method   | `client.variables.bind(ref, options)`                                                                                |
+| Type     | `BindOptions` (`periodMs`, `history`, `needsRange`, `needsValue`, `visible`)                                         |
+| Type     | `VariableBinding` (`ref`, `state`, `history()`, `write(value)`, `reject(message)`, `setVisible(visible)`, `close()`) |
+| Type     | `BoundVariable` (`ref`, `info`, `reading`, `condition`, `block`, `writeStatus`, `pending`)                           |
+| Type     | `ValueCondition`, `WriteBlock`, `WriteStatus`, `WriteValue`                                                          |
+| Function | `isWriteError`, `hasRange`                                                                                           |
+| Function | `valueCondition` (`ConditionInput`), `writeBlock` (`WriteBlockInput`)                                                |
+| Constant | `DROPPED_MESSAGE`                                                                                                    |
 
-### `Readable`（読み取り専用の値）
+`valueCondition`, `writeBlock` and `hasRange` are the pure functions that `bind` builds its state with.
 
-| 種類 | 名前                                      |
-| ---- | ----------------------------------------- |
-| 型   | `Readable<T>`（`get()`、`subscribe(fn)`） |
+### `Readable` (read-only value)
 
-### 差し替え用の API
+| Kind | Name                                     |
+| ---- | ---------------------------------------- |
+| Type | `Readable<T>` (`get()`, `subscribe(fn)`) |
 
-| 種類 | 名前                                                                   |
-| ---- | ---------------------------------------------------------------------- |
-| 型   | `SocketFactory`、`SocketHandlers`、`SocketLike`                        |
-| 型   | `HttpTransport`、`HttpRequest`、`HttpOutcome`、`FetchTransportOptions` |
-| 関数 | `webSocketFactory`、`fetchTransport`                                   |
-| 定数 | `DEFAULT_TIMEOUT_MS`                                                   |
+### APIs for substitution
 
-### エラー
+| Kind     | Name                                                                   |
+| -------- | ---------------------------------------------------------------------- |
+| Type     | `SocketFactory`, `SocketHandlers`, `SocketLike`                        |
+| Type     | `HttpTransport`, `HttpRequest`, `HttpOutcome`, `FetchTransportOptions` |
+| Function | `webSocketFactory`, `fetchTransport`                                   |
+| Constant | `DEFAULT_TIMEOUT_MS`                                                   |
 
-| 種類   | 名前                                                         |
-| ------ | ------------------------------------------------------------ |
-| クラス | `HttpError`（`status`、`statusText`、`problem`、`timedOut`） |
-| クラス | `ProtocolError`                                              |
-| 関数   | `errorMessage`                                               |
+### Errors
 
-### サーバーの API の型と読み取り
+| Kind     | Name                                                        |
+| -------- | ----------------------------------------------------------- |
+| Class    | `HttpError` (`status`, `statusText`, `problem`, `timedOut`) |
+| Class    | `ProtocolError`                                             |
+| Function | `errorMessage`                                              |
 
-`gui/protocol` が決める形の型と、サーバーの API を自分で読むときに使う読み取り関数です。
+### Server API types and parsing
 
-| 対象                                                       | 名前                                                                                                                                                                                                                            |
+Types for the shapes that `gui/protocol` defines, and the parsers to use when you read the server API yourself.
+
+| Subject                                                    | Name                                                                                                                                                                                                                            |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gui/protocol` の形の型                                    | `SessionSummary`、`ServerMessage`、`LauncherEvent`、`CheckResult`、`RunResult`、`AppInfo` など                                                                                                                                  |
-| 定数と関数                                                 | `PROTOCOL_VERSION`、`PHASES`、`severityRank`                                                                                                                                                                                    |
-| 読み取り関数                                               | `readServerMessage`、`readAppInfo`、`readConfigList`、`readCheckResponse`、`readSessionResponse`、`readTimeResponse`、`readWriteResponse`、`readVariablesSummary`、`readDashboardResponse`、`readScenarioList`、`readRecording` |
-| 変数の API の形                                            | `VariablesSummary`、`VariableSummary`、`ValuesMessage`、`OperationReport`、`WatchMessage`、`WriteAnswer`                                                                                                                        |
-| ダッシュボードのファイル（`dashboard(file)`）              | `DashboardResponse`、`DashboardFile`、`DashboardFileSection`、`DashboardFileItem`、`DashboardFileError`、`DashboardPanelModule`、`DashboardVariable`                                                                            |
-| シナリオ（`--scenario`、`scenarios(file)`、`recording()`） | `ScenarioStep`、`ScenarioStepStatus`、`ScenarioStatus`、`CheckScenario`、`ScenarioResult`、`SummaryScenario`、`ScenarioList`、`ScenarioFile`、`Recording`、`FEATURE_SCENARIO`、`FEATURE_SCENARIO_CONTROL`                       |
-| リクエストの形                                             | `CheckRequest`、`RunRequest`、`Speed`、`StopRequest`、`TimeCommand`                                                                                                                                                             |
-| 設定ファイルの一覧                                         | `ConfigList`、`ConfigFile`                                                                                                                                                                                                      |
-| エラーの形                                                 | `ServerProblem`                                                                                                                                                                                                                 |
-| 指摘                                                       | `Finding`、`Severity`                                                                                                                                                                                                           |
-| 自分で起動する participant（`manual`）                     | `FEATURE_MANUAL`                                                                                                                                                                                                                |
-| セッションのコピーの `SessionView.scenario`                | `ScenarioView`                                                                                                                                                                                                                  |
+| Types of the `gui/protocol` shapes                         | `SessionSummary`, `ServerMessage`, `LauncherEvent`, `CheckResult`, `RunResult`, `AppInfo` and others                                                                                                                            |
+| Constants and functions                                    | `PROTOCOL_VERSION`, `PHASES`, `severityRank`                                                                                                                                                                                    |
+| Parsers                                                    | `readServerMessage`, `readAppInfo`, `readConfigList`, `readCheckResponse`, `readSessionResponse`, `readTimeResponse`, `readWriteResponse`, `readVariablesSummary`, `readDashboardResponse`, `readScenarioList`, `readRecording` |
+| Shapes of the variable API                                 | `VariablesSummary`, `VariableSummary`, `ValuesMessage`, `OperationReport`, `WatchMessage`, `WriteAnswer`                                                                                                                        |
+| Dashboard files (`dashboard(file)`)                        | `DashboardResponse`, `DashboardFile`, `DashboardFileSection`, `DashboardFileItem`, `DashboardFileError`, `DashboardPanelModule`, `DashboardVariable`                                                                            |
+| Scenarios (`--scenario`, `scenarios(file)`, `recording()`) | `ScenarioStep`, `ScenarioStepStatus`, `ScenarioStatus`, `CheckScenario`, `ScenarioResult`, `SummaryScenario`, `ScenarioList`, `ScenarioFile`, `Recording`, `FEATURE_SCENARIO`, `FEATURE_SCENARIO_CONTROL`                       |
+| Request shapes                                             | `CheckRequest`, `RunRequest`, `Speed`, `StopRequest`, `TimeCommand`                                                                                                                                                             |
+| List of configuration files                                | `ConfigList`, `ConfigFile`                                                                                                                                                                                                      |
+| Error shape                                                | `ServerProblem`                                                                                                                                                                                                                 |
+| Findings                                                   | `Finding`, `Severity`                                                                                                                                                                                                           |
+| Participants you start yourself (`manual`)                 | `FEATURE_MANUAL`                                                                                                                                                                                                                |
+| `SessionView.scenario` of the session copy                 | `ScenarioView`                                                                                                                                                                                                                  |
 
-## 基本の使い方
+## Basic usage
 
 ```ts
 import { createClient, takeToken } from '@vehicle-sil/gui-client';
 
-// サーバーが表示した URL（http://127.0.0.1:<port>/#token=<token>）から開いた画面: URL の #token= を受け取って消す。
-// Node のツールでは、baseUrl とトークンを、その URL から自分で取り出して渡す（examples/gui_client）。
+// A screen opened from the URL the server printed (http://127.0.0.1:<port>/#token=<token>): take #token= from the URL and remove it.
+// A Node tool takes baseUrl and the token out of that URL itself and passes them (examples/gui_client).
 const client = createClient({
   baseUrl: new URL('/', location.href).href,
   token: takeToken(window),
 });
-await client.loadApp(); // ランチャーの features（時間のコマンドを持つか、など）
+await client.loadApp(); // the launcher's features (whether it has time commands, and so on)
 client.connect();
 const stop = client.session.session.subscribe((session) => {
   if (session?.result) console.log(session.result.result);
@@ -190,49 +192,49 @@ const stop = client.session.session.subscribe((session) => {
 await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, start_paused: false });
 ```
 
-### 状態を読む（`Readable`）
+### Read state (`Readable`)
 
-状態はどれも `Readable`（読み取り専用の値）です。
+Every state is a `Readable` (a read-only value).
 
-| 呼び出し        | すること                                           |
-| --------------- | -------------------------------------------------- |
-| `get()`         | いまの値を返す                                     |
-| `subscribe(fn)` | 後の変化を `fn` に通知する（いまの値では呼ばない） |
-| 返された関数    | 購読をやめる                                       |
+| Call                  | What it does                                                       |
+| --------------------- | ------------------------------------------------------------------ |
+| `get()`               | Returns the current value                                          |
+| `subscribe(fn)`       | Notifies `fn` of later changes (not called with the current value) |
+| The returned function | Ends the subscription                                              |
 
-- 通知は同期で、値を変えた処理の中で届きます。
-- 通知の途中で購読をやめても、その回の通知は届きます。
-- 購読の中で同じ値を変えると、新しい値が全員に届き、古い値は後から届きません。
-- フレームワークのラッパーは、`get()` で最初の値を取り、`subscribe()` で自分の状態に変換します（Angular は `readableSignal`）。
-- 購読者（`subscribe`、`onBatch`、`onMessages`、`onUnreadable` に渡した関数）が例外を投げても、ほかの購読者には届き、ライブラリの処理（拒否されたら切断する、作り直す、など）も進みます。投げたものは `onError`（既定は `console.error`）に渡ります。
-- セッションのコピーが揃ったか（接続していて、`hello` と再送を受け終えた）は `client.session.ready` です。機能ごとに持ちます。
+- Notifications are synchronous: they arrive inside the code that changed the value.
+- A subscriber that unsubscribes during a notification still receives that notification.
+- If a subscriber changes the same value, every subscriber receives the new value, and the old value does not arrive afterward.
+- A framework wrapper takes the first value with `get()` and converts later values into its own state with `subscribe()` (Angular uses `readableSignal`).
+- If a subscriber (a function passed to `subscribe`, `onBatch`, `onMessages` or `onUnreadable`) throws, the other subscribers are still notified and the library carries on (disconnecting when rejected, rebuilding and so on). The thrown value goes to `onError` (default `console.error`).
+- `client.session.ready` tells whether the session copy is complete (connected, and `hello` and the replay have arrived). Other features (values, for example) have their own ready state.
 
-### 拒否とタイムアウト
+### Rejections and timeouts
 
-- トークンを拒否されたら（サーバーを起動し直した、など）、`client.session.rejected` が真になり（WebSocket）、HTTP のリクエストは状態 401 の `HttpError` で拒否されます。
-- 拒否された操作は、Promise が `HttpError` で reject し、同じ理由が状態（`client.run.error`、`client.time.state` の `failure`）にも出ます。
-- レスポンスを待つのは `DEFAULT_TIMEOUT_MS` までです。過ぎたら `timedOut` が真の `HttpError`（状態 0）です。
-- 開始（`run.start()`）と照合（`check()`）は、照合の上限（`limits.check_timeout_s`）の 2 倍に `DEFAULT_TIMEOUT_MS` を加えた時間まで待ちます。サーバーが照合を 1 つずつ行い、順番待ちと照合にそれぞれ照合の上限までかけ、開始の中でも変わった設定ファイルを照合し直すためです。
-- タイムアウトは、拒否されたのではなく、レスポンスが来なかっただけです。開始なら、サーバーは実行を始めたかもしれず、始まったかはセッションのコピー（WebSocket）でわかります（`client.run.error` もそう言います）。
-- 転送（リダイレクト）には従いません。
+- If the token is rejected (for example, because the server was restarted), `client.session.rejected` becomes true (WebSocket), and HTTP requests are rejected with an `HttpError` of status 401.
+- When an operation is rejected, its Promise rejects with an `HttpError`, and the same reason appears in the state (`client.run.error`, `failure` in `client.time.state`).
+- A request waits for its response for up to `DEFAULT_TIMEOUT_MS`. After that it fails with an `HttpError` whose `timedOut` is true (status 0).
+- Start (`run.start()`) and check (`check()`) wait up to twice the check limit (`limits.check_timeout_s`) plus `DEFAULT_TIMEOUT_MS`. The server runs checks one at a time, and both the wait in the queue and the check itself can take up to the check limit; a start also checks the configuration file again if it changed.
+- A timeout is not a rejection: no response came. For a start, the server may have started the run; the session copy (WebSocket) shows whether it did, and `client.run.error` says so.
+- Redirects are not followed.
 
-### 読めない通知の扱い
+### Handling unreadable notifications
 
-読み取りは部分ごとです。
+The library parses each part separately.
 
-- 要約とイベントの一部が読めなくても、読める部分を使い、読めない部分の名前を `SessionView.unreadable` に入れます。
-- 知らない通知とイベントは、状態に反映せずに通します（`client.connection.onBatch` には、読む前のものがすべて届きます）。
-- JSON として読めない通知は、通知を出して `hello` から受け直します。
+- If part of a summary or an event cannot be read, the library uses the readable parts and adds the names of the unreadable parts to `SessionView.unreadable`.
+- Unknown notifications and events pass through without changing the state (`client.connection.onBatch` receives everything, before parsing).
+- A notification that is not valid JSON raises a notice, and the library receives everything again from `hello`.
 
-### Node から使う、通信を差し替える
+### Use from Node, or replace the transport
 
-- Node では、`Origin` をサーバー自身の origin にして送ります（`createClient` が `baseUrl` から作ります）。
-- ブラウザと Web Worker では、ブラウザが付けるので `origin` を渡しません（Worker の WebSocket はハンドシェイクのヘッダーを付けられません）。
-- HTTP の実装を変えるときは `http`（`HttpTransport`）を、WebSocket を変えるときは `socket`（`SocketFactory`）を渡します。
+- In Node, the library sends the server's own origin as `Origin` (`createClient` builds it from `baseUrl`).
+- In the browser and in Web Workers, do not pass `origin`: the browser sets it (a Worker's WebSocket cannot set handshake headers).
+- To replace the HTTP implementation, pass `http` (`HttpTransport`); to replace the WebSocket, pass `socket` (`SocketFactory`).
 
-ライブラリが肩代わりしないルール（ランチャーの `features` に合わせたリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/gui.md) の「画面を作るときのルール」にあります。
+For the rules the library does not enforce for you (request fields that match the launcher's `features`, whether a variable is writable, whether a value is stale), see "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen).
 
-## ECU の変数
+## ECU variables
 
 ```ts
 const watch = client.variables.watch([{ peer: 'Engine', name: 'engine.speed' }], {
@@ -249,118 +251,118 @@ try {
 watch.close();
 ```
 
-### 一覧と状態（`client.variables.state`）
+### List and state (`client.variables.state`)
 
-| `status`     | 意味                             |
-| ------------ | -------------------------------- |
-| `unknown`    | まだ聞いていない                 |
-| `off`        | この実行に変数はない             |
-| `connecting` | 接続している途中                 |
-| `ready`      | 読み書きできる                   |
-| `failed`     | 接続できなかった、拒否された     |
-| `ended`      | 実行が終わった（値は最後のもの） |
+| `status`     | Meaning                                  |
+| ------------ | ---------------------------------------- |
+| `unknown`    | Not known yet                            |
+| `off`        | This run has no variables                |
+| `connecting` | Connecting                               |
+| `ready`      | Variables can be read and written        |
+| `failed`     | Could not connect, or was refused        |
+| `ended`      | The run ended (values are the last ones) |
 
-- `off`、`connecting`、`failed` の理由は `reason`（サーバーの英語の文）です。
-- 実行を始める前に使えるかは、`client.app` の `variables`（`available`、`reason`）でわかります。
-- 変数の定義は `peers[].variables[]`（`type`、`role`、`writable`、`unit`、`min`、`max`、`step`、`description`、`enum`）です。
+- For `off`, `connecting` and `failed`, `reason` gives the reason, as text from the server (not localized).
+- Before you start a run, `variables` in `client.app` (`available`, `reason`) tells whether variables are available.
+- The variable definitions are `peers[].variables[]` (`type`, `role`, `writable`, `unit`, `min`, `max`, `step`, `description`, `enum`).
 
-### 値を読む（`watch`）
+### Read values (`watch`)
 
-`watch` は、変数（`'all'` は全部）の最後の値を受け取ります。使い終わったら必ず `close()` します。
+`watch` receives the last values of the given variables (`'all'` for every variable). Always call `close()` when you are done.
 
-**値**: `values`（`Readable`）は、`values[peer]?.[name]` が `VariableReading`（`value`、`sampleMs`、`simMs`、`paused`）です。値ごとに「いつのものか」を持ちます。
+**Values**: in `values` (a `Readable`), `values[peer]?.[name]` is a `VariableReading` (`value`, `sampleMs`, `simMs`, `paused`). Each value carries the time it belongs to.
 
-| `paused` | 値の意味                                                                          |
-| -------- | --------------------------------------------------------------------------------- |
-| 真       | 止まっている時刻 `simMs` の値（その時刻より前に始まったステップの値は入っている） |
-| 偽       | 動いている途中の最後の値                                                          |
+| `paused` | What the value is                                                                                         |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| True     | The value at the paused time `simMs` (it includes the values of every step that started before that time) |
+| False    | The last value while the simulation runs                                                                  |
 
-**購読**:
+**Subscriptions**:
 
-- 同じ変数を見る watch がいくつあっても、サーバーへの購読は変数ごとに 1 つです。変数は、頼まれた中でいちばん短い間隔の購読に入ります（間隔は 20、50、100、200、500 ms … の段に丸めます）。
-- `close()` すると、ほかに見ている watch がなければサーバーの購読もやめます。
-- 再接続したら、自動で購読し直します。
-- 実行が替わっても watch は続き、前の実行の値と履歴は捨てます。
-- 値を覚えるのは、だれかが見ている変数だけです。
+- However many watches look at a variable, the server has one subscription per variable. A variable joins the subscription with the shortest period requested (periods are rounded to one of 20, 50, 100, 200, 500 ms …).
+- `close()` also ends the server subscription if no other watch looks at the variable.
+- After a reconnection, the library subscribes again automatically.
+- A watch continues across runs; the values and history of the previous run are discarded.
+- Values are kept only for variables that someone is watching.
 
-**履歴**（`history` を頼んだとき）:
+**History** (when you ask for `history`):
 
-- 変数ごとに、その数までの点（`sampleMs`、`value`）を環状バッファーに持ちます。変数ごとの上限は `HISTORY_MAX` で、古いものから捨てます。
-- メモリーは点が届いてから確保します（頼んだだけでは確保しません）。
-- 全部の変数の履歴を合わせて `HISTORY_TOTAL_MAX` 点（約 34 MB）までです。そこに届くと、どの履歴もそれ以上は伸びず、そのときの大きさのまま古い点を捨てます（`history(ref)` が返す点が、頼んだ数より少なくなります）。
-- 同じステップの値は 1 点です。同じステップの値が変わって届いたら、その点を置き換えます。
-- 実行が替わると、履歴は空から始まります。
-- `watch.history(ref)` は、呼ぶたびに新しい配列を返します。
-- 通知は約 100 ms ごとにまとめて届くので（`BATCH_MS`）、`values` の通知はその頻度ですが、履歴には間の値も入ります。
+- For each variable, the library keeps up to that many points (`sampleMs`, `value`) in a ring buffer. The limit per variable is `HISTORY_MAX`; the oldest points are dropped first.
+- Memory is allocated as points arrive, not when you ask.
+- The history of all variables together holds up to `HISTORY_TOTAL_MAX` points (about 34 MB). Once that is reached, no history grows further: each keeps its current size and drops its oldest points (`history(ref)` returns fewer points than you asked for).
+- Values of the same step are one point. If a changed value arrives for the same step, it replaces that point.
+- When the run changes, the history starts empty.
+- `watch.history(ref)` returns a new array on every call.
+- Notifications arrive in batches about every 100 ms (`BATCH_MS`), so `values` notifies at that rate, but the history also holds the values in between.
 
-**上限を超えそうなとき**:
+**When a limit is near**:
 
-- 長い名前を多く挙げて、購読の 1 通がサーバーの上限（256 KiB）を超えそうなときは、その間隔の購読を「全部」に替えます（受け取った中から、見ている変数だけを使います）。
-- サーバーが watch を拒否したとき（上限の違うサーバー）は、`client.variables.watchProblem` に出ます。
+- If you list many long names and one subscription message would exceed the server's limit (256 KiB), the library switches the subscription for that period to "all" (and uses only the watched variables from what arrives).
+- If the server rejects a watch (a server with different limits), the problem appears in `client.variables.watchProblem`.
 
-### 値を書き込む（`write`）
+### Write values (`write`)
 
-`write(writes, options)` は、呼んだ時点の実行（`client.variables.state` の `session`）に向けて送ります（本文の `session`）。
+`write(writes, options)` sends the writes to the run that was current when you called it (`session` in `client.variables.state`, sent as `session` in the body).
 
-- サーバーは、その実行がもう動いていなければ拒否します（`session-changed`）。そのため、実行が替わる間に送った書き込みが、次の実行に書かれることはありません。
-- 実行がまだわからないときは、送らずに `refused`（`not-running`）で拒否します。
-- サーバーが型と範囲を確認し、ランチャーに渡します。
-- Promise は、反映されたら（`applied`）その操作（`OperationView`）で解決し、ほかは `WriteError` で reject します。
-- 同じ書き込みを自動で送り直すことはありません。
+- The server rejects the writes if that run is no longer running (`session-changed`). A write sent while one run ends and the next starts is therefore never written to the next run.
+- If the run is not known yet, the library does not send and rejects with `refused` (`not-running`).
+- The server checks type and range, then passes the writes to the launcher.
+- The Promise resolves with the operation (`OperationView`) once the writes are applied (`applied`); otherwise it rejects with a `WriteError`.
+- The library never resends a write automatically.
 
-`WriteError` の `kind` は次のとおりです。
+The `kind` of a `WriteError`:
 
-| `kind`      | 意味                                                     | 送り直してよいか                           |
-| ----------- | -------------------------------------------------------- | ------------------------------------------ |
-| `refused`   | サーバーが受け付けなかった（ランチャーには渡っていない） | 直してから、よい                           |
-| `failed`    | 受け付けたが、反映されなかった                           | 理由を直してから、よい（反映されていない） |
-| `no-answer` | **反映されたかどうかわからない**                         | **そのままは送り直さない**（下）           |
-| `closed`    | 結果の前に `close()` した                                | 同上                                       |
+| `kind`      | Meaning                                                             | Safe to resend?                                    |
+| ----------- | ------------------------------------------------------------------- | -------------------------------------------------- |
+| `refused`   | The server did not accept the write (it did not reach the launcher) | Yes, after you fix it                              |
+| `failed`    | Accepted, but not applied                                           | Yes, after you fix the reason (it was not applied) |
+| `no-answer` | **Unknown whether it was applied**                                  | **Do not resend as is** (see below)                |
+| `closed`    | `close()` was called before the result                              | Same as above                                      |
 
-- `refused` の `code` は、`unknown-variable`、`not-writable`、`invalid-field`、`not-running`、`session-changed`、`variables-not-ready`、`write-busy` などです。
-- `failed` の `operation` には、participant ごとの状態と理由（`late`、`rejected`、`invalid` など）が入ります。
-- `no-answer` になるのは、次のどれかのときです。
-  - `timeoutMs` の間に結果が来なかった（`operation` に、わかっている最後の状態）。
-  - HTTP のレスポンスがなかった。
-  - サーバーが途中で失敗した（500）。
-  - サーバーが Control Server のレスポンスを待ちきれなかった（`code` が `write-timeout`）か、途中で切断された（`write-failed`）。
-  - レスポンスの前に実行が替わった。
-  - 再接続している間に確定して、結果が失われた（下の「再接続」）。
-  - サーバーが未確定の操作を覚えきれずに、追うのをやめた。
+- The `code` of `refused` is `unknown-variable`, `not-writable`, `invalid-field`, `not-running`, `session-changed`, `variables-not-ready`, `write-busy` or similar.
+- The `operation` of `failed` holds the state and reason for each participant (`late`, `rejected`, `invalid` and others).
+- `no-answer` happens in any of these cases:
+  - No result came within `timeoutMs` (`operation` holds the last known state).
+  - There was no HTTP response.
+  - The server failed midway (500).
+  - The server gave up waiting for the Control Server's response (`code` is `write-timeout`) or was disconnected midway (`write-failed`).
+  - The run changed before the response.
+  - The operation completed during a reconnection and the result was lost ("Reconnection" below).
+  - The server could not keep track of all open operations and stopped following this one.
 
-**二重の書き込みを避ける**: `no-answer` の後は、送り直す前に確認します。
+**Avoid writing twice**: after `no-answer`, check before you resend.
 
-- `error.operation` があれば、その番号の操作を `client.variables.operations` で追います。`queued` なら、シミュレーションがそのステップに進めば反映されます（待つ時間が短かっただけです）。
-- 番号がなければ、`operations` に自分の書き込みらしい操作が増えていないかと、その変数の値（watch）を見ます。
-- 反映されていないとわかってから送り直します。
-- 値を足し込むような（同じ書き込みを 2 回すると結果が変わる）使い方では、特に守ります。同じ値を書くだけなら、2 回書いても結果は同じです。
+- If `error.operation` is set, follow the operation with that number in `client.variables.operations`. If it is `queued`, it is applied once the simulation reaches that step (the wait was only too short).
+- If there is no number, look in `operations` for a new operation that looks like your write, and look at the variable's value (watch).
+- Resend only once you know that the write was not applied.
+- This matters most for writes that add to a value (writing twice gives a different result). Writing the same value twice gives the same result.
 
-**再接続**: 結果を待つ間に接続が切断されても、再接続した後の要約（`hello`、`fetchSession()`）で続きがわかります。要約には、サーバーが覚えている未確定の操作の全部と、番号が `operations_from_seq` 以上の操作の全部が入っています。
+**Reconnection**: if the connection drops while you wait for a result, the summary after reconnecting (`hello`, `fetchSession()`) tells how it went on. The summary holds every open operation the server keeps, and every operation whose number is `operations_from_seq` or higher.
 
-| 自分の操作                                           | ライブラリの扱い                                            |
-| ---------------------------------------------------- | ----------------------------------------------------------- |
-| 一覧にある                                           | その状態を使う（未確定なら、そのまま待つ）                  |
-| 一覧になく、番号が `operations_from_seq` より小さい  | 切断されている間に確定して結果が失われたとして、`no-answer` |
-| 一覧になく、サーバーが未確定の操作を覚えきれなかった | 古い操作を `no-answer` にする                               |
+| Your operation                                                     | What the library does                                                       |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| In the list                                                        | Uses its state (if still open, keeps waiting)                               |
+| Not in the list, number below `operations_from_seq`                | Treats it as completed while disconnected with its result lost: `no-answer` |
+| Not in the list, and the server could not keep all open operations | Sets the old operations to `no-answer`                                      |
 
-- まだ反映されていない書き込み（止まっている間の書き込みなど）は、後からいくつ操作が続いても `no-answer` になりません。
-- サーバーが覚えきれなかったとは、未確定の操作が 256 件を超えたときです（要約の `operations_open_omitted`）。サーバーがもう追っていないので `no-answer` にし、エラーの文でそうとわかります。
+- A write that has not been applied yet (for example, a write while paused) never becomes `no-answer` however many operations follow it.
+- "The server could not keep all open operations" means more than 256 open operations (`operations_open_omitted` in the summary). The server no longer follows them, so the library reports `no-answer`, and the error message says why.
 
-**オプションと、関係する状態**:
+**Options and related state**:
 
-- `onAccepted`（`{session, seq}` を受け取る関数）は、サーバーが書き込みを受け取って操作の番号を返したときに 1 回呼ばれます。結果より前です。拒否されたとき、レスポンスがなかったときは呼ばれません。
-- `onAccepted` は、「受け付けた、反映を待っている」を見せる、次の書き込みを送ってよいと知る、のに使います。`bind` の書き込みは、これを使って、受け取られる前の次の値を送らずに覚えておき、受け取られたら最後の値だけを送ります。
-- `timeoutMs`（既定 `WRITE_TIMEOUT_MS`）は、HTTP のレスポンスが来てから数えます。`Infinity` は時間で切りません（実行が替わるか `close()` するまで待ちます）。2^31-1 ms（約 24.8 日）より長い値は、そこに丸めます。数でない値と 0 以下は既定の時間です。
-- 書き込みは、指定した仮想時間（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。止めて書くときは、`client.variables.operations` で `queued` を見てから進めます（`examples/gui_client/variables.mjs`）。
-- 最近の操作（ほかのクライアントの書き込みも）は `client.variables.operations` で読めます。
+- `onAccepted` (a function that receives `{session, seq}`) is called once, when the server has received the write and returned the operation number. This is before the result. It is not called when the write is rejected or no response comes.
+- Use `onAccepted` to show "accepted, waiting to be applied", and to know when you may send the next write. Writes through `bind` use it: a next value that comes before the server has received the previous write is kept instead of sent, and only the last value is sent once the server has it.
+- `timeoutMs` (default `WRITE_TIMEOUT_MS`) counts from the HTTP response. `Infinity` sets no time limit (the write waits until the run changes or `close()` is called). Values above 2^31-1 ms (about 24.8 days) are capped there. Non-numbers and values of 0 or less mean the default.
+- A write is applied in the step at the given virtual time (`atMs`; if omitted, the next step), so it does not complete while the simulation is paused. To write while paused, wait for `queued` in `client.variables.operations` before you advance (`examples/gui_client/variables.mjs`).
+- `client.variables.operations` lists recent operations, including writes from other clients.
 
-### 最初のステップの前に書く
+### Write before the first step
 
-止めて始めた実行（`start_paused`）は、変数の読み書きができるランチャーでは、最初のステップの前で待ちます。その間は `client.time.state` の `beforeStart` が真で、再開とステップ実行を押せます（書いた値は時刻 0 のステップで反映されます）。
+A run started paused (`start_paused`) waits before the first step if the launcher can read and write variables. Meanwhile `beforeStart` in `client.time.state` is true, and you can resume and step (written values are applied in the step at time 0).
 
-## コンポーネントを作る（`bind`）
+## Build widgets (`bind`)
 
-スライダー、スイッチ、ランプのように、変数 1 つを表示して書き込むコンポーネントは、`watch` と `write` を自分で組み合わせずに `client.variables.bind(ref, options)` を使います。値の状態、書けるかどうかと理由、書き込みの状態を、1 つの `Readable`（`state`）にまとめて出します。
+For a widget that shows and writes one variable, such as a slider, a switch or a lamp, use `client.variables.bind(ref, options)` instead of combining `watch` and `write` yourself. It puts the value condition, whether the variable can be written and why not, and the write status into one `Readable` (`state`).
 
 ```ts
 const throttle = client.variables.bind(
@@ -368,178 +370,178 @@ const throttle = client.variables.bind(
   { needsRange: true, needsValue: true },
 );
 throttle.state.subscribe(({ info, reading, pending, block, writeStatus, condition }) => {
-  slider.disabled = block !== null; // block: いま書けない理由。書けるなら null
-  slider.value = String(pending ?? reading?.value ?? info?.min ?? 0); // pending: 送って結果を待っている値
+  slider.disabled = block !== null; // block: why it cannot be written now; null if it can
+  slider.value = String(pending ?? reading?.value ?? info?.min ?? 0); // pending: the value sent and waiting for its result
   status.textContent = isWriteError(writeStatus) ? writeStatus.message : writeStatus.kind;
   stale.hidden = condition.kind === 'live';
 });
 slider.onchange = () => throttle.write(Number(slider.value));
-// 使い終わったら
+// when you are done
 throttle.close();
 ```
 
-使い終わったら必ず `close()` します（watch と購読を片づけます）。
+Always call `close()` when you are done (it cleans up the watch and the subscriptions).
 
-### `state` のフィールド（`BoundVariable`）
+### Fields of `state` (`BoundVariable`)
 
-| フィールド    | 中身                                                                            |
-| ------------- | ------------------------------------------------------------------------------- |
-| `info`        | 変数の定義（いまの実行になければ `undefined`）                                  |
-| `reading`     | 最後の値（`VariableReading`。まだないとき、`visible` が偽のときは `undefined`） |
-| `condition`   | 値の状態（下の「値の状態（`condition`）」）                                     |
-| `block`       | いま書けない理由（下の「書けない理由（`block`）」）                             |
-| `writeStatus` | 最後の書き込みの状態（下の「書き込みの状態（`writeStatus`、`pending`）」）      |
-| `pending`     | 送っていて、結果がまだの値（なければ `null`）                                   |
+| Field         | Contents                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `info`        | The variable definition (`undefined` if the current run does not have the variable)              |
+| `reading`     | The last value (`VariableReading`; `undefined` if there is none yet or while `visible` is false) |
+| `condition`   | The value condition ("Value condition (`condition`)" below)                                      |
+| `block`       | Why the variable cannot be written now ("Why a write is blocked (`block`)" below)                |
+| `writeStatus` | The status of the last write ("Write status (`writeStatus`, `pending`)" below)                   |
+| `pending`     | The value sent and still waiting for its result (`null` if none)                                 |
 
-- `subscribe` は変わったときだけ呼ばれます（最初の状態は `state.get()`）。
-- `get()` は、いつもいまの状態から作ります。そのため、ほかの `Readable`（`client.variables.state` など）の通知の途中で `get()` を呼ぶと、その場で、この `state` の購読者に新しい状態を通知することがあります。
+- `subscribe` is called only on changes (get the first state with `state.get()`).
+- `get()` always builds the state from the current values. So if you call `get()` during a notification of another `Readable` (such as `client.variables.state`), it may notify this `state`'s subscribers of a new state right there.
 
-### 値の状態（`condition`）
+### Value condition (`condition`)
 
-`condition.kind` で分けます。
+Switch on `condition.kind`.
 
-| `kind`        | 意味                                                                |
-| ------------- | ------------------------------------------------------------------- |
-| `unavailable` | 変数の機能が使えない（`status` に `client.variables.state` の状態） |
-| `missing`     | いまの実行にない変数                                                |
-| `waiting`     | いまの実行にあるが、値がまだ届いていない                            |
-| `live`        | 動いている途中の最後の値                                            |
-| `paused`      | 止まっている時刻の値                                                |
-| `stale`       | 古いかもしれない値（理由は `why`）                                  |
-| `ended`       | 終わった実行の、最後に読めた値                                      |
+| `kind`        | Meaning                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `unavailable` | The variable feature is not available (`status` holds the state of `client.variables.state`) |
+| `missing`     | The current run does not have the variable                                                   |
+| `waiting`     | The current run has the variable, but no value has arrived yet                               |
+| `live`        | The last value while the simulation runs                                                     |
+| `paused`      | The value at the paused time                                                                 |
+| `stale`       | A value that may be stale (the reason is in `why`)                                           |
+| `ended`       | The last value read in a run that ended                                                      |
 
-`unavailable` の `status` は、実行していない、この実行に変数はない、接続している途中、接続できない、のどれかです。`stale` の `why` は次のとおりです。
+The `status` of `unavailable` is one of: not running, this run has no variables, connecting, cannot connect. The values of `why` for `stale`:
 
-| `why`          | 意味                                     |
-| -------------- | ---------------------------------------- |
-| `connection`   | クライアントとサーバーの接続が切断された |
-| `reconnecting` | サーバーがランチャーに再接続している     |
-| `peer`         | ECU が切断された                         |
-| `reading`      | 値の読み取りが失敗し続けている           |
+| `why`          | Meaning                                                  |
+| -------------- | -------------------------------------------------------- |
+| `connection`   | The connection between the client and the server dropped |
+| `reconnecting` | The server is reconnecting to the launcher               |
+| `peer`         | The ECU is disconnected                                  |
+| `reading`      | Reading values keeps failing                             |
 
-### 書けない理由（`block`）
+### Why a write is blocked (`block`)
 
-書けるなら `null` です。複数に当てはまるときは、表で上にあるものになります。
+`null` if the variable can be written. If several reasons apply, `block` is the one highest in the table.
 
-| `block`             | 意味                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `read-only`         | 読むだけの変数（`role` が `output`）                                                                   |
-| `disconnected`      | クライアントとサーバーの接続が切断されている                                                           |
-| `ended`             | 実行が終わった                                                                                         |
-| `not-ready`         | 変数の機能が使えない（実行していない、接続している途中、接続できない）                                 |
-| `missing`           | いまの実行にない変数                                                                                   |
-| `peer-disconnected` | その ECU が Control Server と接続していない                                                            |
-| `parameter`         | `parameter` は、止めて始めた実行の最初のステップの前（`client.time.state` の `beforeStart`）だけ書ける |
-| `scenario`          | シナリオの実行中（見るだけ）                                                                           |
-| `no-range`          | `needsRange` を付けたのに、変数に範囲（`min` と `max`）がない                                          |
-| `no-value`          | `needsValue` を付けていて、値（読んだ値か送った値）がまだない                                          |
+| `block`             | Meaning                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `read-only`         | A read-only variable (`role` is `output`)                                                                              |
+| `disconnected`      | The connection between the client and the server is down                                                               |
+| `ended`             | The run ended                                                                                                          |
+| `not-ready`         | The variable feature is not available (not running, connecting, cannot connect)                                        |
+| `missing`           | The current run does not have the variable                                                                             |
+| `peer-disconnected` | The ECU is not connected to the Control Server                                                                         |
+| `parameter`         | A `parameter` can be written only before the first step of a run started paused (`beforeStart` in `client.time.state`) |
+| `scenario`          | A scenario is running (view only)                                                                                      |
+| `no-range`          | `needsRange` is set, but the variable has no range (`min` and `max`)                                                   |
+| `no-value`          | `needsValue` is set, and there is no value yet (neither read nor sent)                                                 |
 
-### 書き込みの状態（`writeStatus`、`pending`）
+### Write status (`writeStatus`, `pending`)
 
-`writeStatus` は、最後の書き込みの状態です。
+`writeStatus` is the status of the last write.
 
-| `writeStatus`                              | 意味                                                        |
-| ------------------------------------------ | ----------------------------------------------------------- |
-| `idle`                                     | 空（最後の書き込みがない）                                  |
-| `sending`                                  | 送った                                                      |
-| `queued`                                   | サーバーが受け取った（`seq` は操作の番号）                  |
-| `applied`                                  | 反映された（`atMs`）                                        |
-| `invalid`                                  | `reject(message)` に渡した文（送っていない）                |
-| `dropped`                                  | 覚えていた値を送らなかった（下の「`write(value)` の動き」） |
-| `refused`、`failed`、`no-answer`、`closed` | `WriteError` の `kind`（`message` と `code` を持つ）        |
+| `writeStatus`                              | Meaning                                                        |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| `idle`                                     | Empty (no last write)                                          |
+| `sending`                                  | Sent                                                           |
+| `queued`                                   | The server received it (`seq` is the operation number)         |
+| `applied`                                  | Applied (`atMs`)                                               |
+| `invalid`                                  | The text passed to `reject(message)` (not sent)                |
+| `dropped`                                  | A kept value was not sent ("How `write(value)` behaves" below) |
+| `refused`, `failed`, `no-answer`, `closed` | The `kind` of a `WriteError` (has `message` and `code`)        |
 
-- `isWriteError(writeStatus)` は、`message` を持つもの（うまくいかなかったもの）を見分けます。
-- `message` は英語です。画面の言葉にするときは `kind` から作ります。
-- `pending` があれば、読んだ値の代わりに表示します（押したスイッチが、結果を待つ間に元へ戻って見えません）。
+- `isWriteError(writeStatus)` picks out the statuses that have a `message` (the ones that did not succeed).
+- `message` is not localized. To show it in the screen's language, build the text from `kind`.
+- If `pending` is set, show it instead of the read value (so a switch you clicked does not appear to flip back while it waits for the result).
 
-### `write(value)` の動き
+### How `write(value)` behaves
 
-- 書けないとき（`block`）は何もしません。
-- Promise は返さず、結果は `writeStatus` に出ます。
-- 時間では切らずに操作の結果を待ちます（止まっている間の書き込みは、進めるまで `queued` のままです）。
-- サーバーが前の書き込みをまだ受け取っていない間（`sending`）の次の値は、送らずに最後の 1 つだけを覚えておき、受け取られたら送ります（スライダーやキーの連打で、書き込みが積み重なりません）。
-- 覚えた値を送るときは、実行が同じで、まだ書けるかを確認し直し、だめなら送らずに `dropped` にします。
-- 前の書き込みが、受け取られる前に拒否されたら、覚えた値も送りません。
-- 結果が来なかった書き込み（`no-answer`）を、自動で送り直すことはしません。
-- `reject(message)` は、送る前にコンポーネントが見つけたエラー（数でない文字、範囲の外）を `invalid` として出します。送っている書き込み、覚えている値、`pending` には触れません。
+- If the variable cannot be written (`block`), it does nothing.
+- It returns no Promise; the result appears in `writeStatus`.
+- It waits for the operation's result with no time limit (a write while paused stays `queued` until the simulation advances).
+- While the server has not yet received the previous write (`sending`), it keeps only the last of the next values instead of sending them, and sends it once the previous write is received (so a dragged slider or repeated keys do not pile up writes).
+- Before it sends a kept value, it checks again that the run is the same and the variable is still writable; if not, it does not send and sets `dropped`.
+- If the previous write is rejected before it is received, the kept value is not sent either.
+- A write that got no result (`no-answer`) is never resent automatically.
+- `reject(message)` reports an error that the widget found before sending (not a number, out of range) as `invalid`. It does not touch the write in flight, the kept value or `pending`.
 
-### 変数ごとに 1 つの状態
+### One state per variable
 
-- 同じ変数を何か所で `bind` しても、`writeStatus` と `pending` は同じものが見え、書き込みは重なりません。
-- `bind` を閉じて作り直しても残ります。
-- 実行ごとなので、実行が替わると空（`idle`、`null`）から始まり、前の実行の書き込みの結果は出ません。
+- However many places `bind` the same variable, they all see the same `writeStatus` and `pending`, and writes do not overlap.
+- The state survives closing a `bind` and creating it again.
+- The state belongs to the run: when the run changes, it starts empty (`idle`, `null`) and shows no results of writes from the previous run.
 
-### 見えている間だけ watch する
+### Watch only while visible
 
-`bind` は、作ったときから値を受け取ります（`watch` と同じく、サーバーへの購読は変数ごとに 1 つ）。コンポーネントが多い画面では、`{ visible: false }` で作り、見えたとき（IntersectionObserver など）に `setVisible(true)`、隠れたら `setVisible(false)` を呼びます。偽の間は、次のようになります。
+`bind` receives values from the moment you create it (as with `watch`, the server has one subscription per variable). On a screen with many widgets, create it with `{ visible: false }`, call `setVisible(true)` when it becomes visible (IntersectionObserver or similar) and `setVisible(false)` when it is hidden. While `visible` is false:
 
-| フィールド               | `visible` が偽の間                                                               |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `reading`                | `undefined`                                                                      |
-| `condition`              | `waiting`                                                                        |
-| `writeStatus`、`pending` | 変わらず出る                                                                     |
-| `block`                  | 変わらず出る（`needsValue` を付けた `bind` は、`pending` もなければ `no-value`） |
+| Field                    | While `visible` is false                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `reading`                | `undefined`                                                                                         |
+| `condition`              | `waiting`                                                                                           |
+| `writeStatus`, `pending` | Reported as usual                                                                                   |
+| `block`                  | Reported as usual (a `bind` with `needsValue` reports `no-value` unless there is a `pending` value) |
 
-### 履歴
+### History
 
-`{ history: 600 }` で作ると、`history()` が点（古い順）を返します。点が増えるたびに `state` が通知するので、そこで読み直します。
+If you create it with `{ history: 600 }`, `history()` returns the points, oldest first. `state` notifies every time a point is added; read the history again there.
 
-### 確認しないこと、`close()` の後
+### What is not checked, and after `close()`
 
-- `write(value)` は、値の型と範囲を確認せずに送ります。合わない値は、サーバーが拒否して `writeStatus` が `refused` になります。先に確認して文を出したいときは、コンポーネントで確認して `reject(message)` を呼びます。
-- `close()` の後の `write`、`reject`、`setVisible` は何もしません。
-- `close()` しても、すでに送った書き込みと覚えた値は取り消しません。覚えた値は、前の書き込みが受け取られたら送られます（状態は変数ごとに持つので、同じ変数を次に `bind` すると見えます）。
+- `write(value)` sends without checking the value's type and range. The server rejects a value that does not fit, and `writeStatus` becomes `refused`. To check first and show a message, check in the widget and call `reject(message)`.
+- After `close()`, `write`, `reject` and `setVisible` do nothing.
+- `close()` does not cancel writes already sent or the kept value. The kept value is sent once the previous write is received (the state belongs to the variable, so the next `bind` of the same variable sees it).
 
-## ライフサイクル
+## Lifecycle
 
-| 呼び出し                                       | すること                                                              |
-| ---------------------------------------------- | --------------------------------------------------------------------- |
-| `createClient()`                               | 作るだけで、接続しない                                                |
-| `connect()`                                    | WebSocket で接続する（トークンがないときは何もしない）                |
-| 接続している間の `connect()`                   | 何もしない（再接続を待っている間も）                                  |
-| `close()`                                      | 切断し、再接続しない（片づけるものは下）                              |
-| `close()` の後の `connect()`                   | また接続し、残っている watch を購読し直す                             |
-| `close()` の後の HTTP のリクエスト             | 使える（`loadApp()`、`run.start()` などは、接続していなくても送れる） |
-| 拒否された・バージョンが違った後の `connect()` | 何もしない（`session.rejected`、`session.incompatible` は戻らない）   |
+| Call                                                | What it does                                                                  |
+| --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `createClient()`                                    | Only creates the client; does not connect                                     |
+| `connect()`                                         | Connects over WebSocket (does nothing without a token)                        |
+| `connect()` while connected                         | Does nothing (also while waiting to reconnect)                                |
+| `close()`                                           | Disconnects and does not reconnect (what it cleans up is below)               |
+| `connect()` after `close()`                         | Connects again and subscribes the remaining watches again                     |
+| HTTP requests after `close()`                       | Work (`loadApp()`, `run.start()` and others can be sent without a connection) |
+| `connect()` after a rejection or a version mismatch | Does nothing (`session.rejected` and `session.incompatible` do not reset)     |
 
-- `close()` は、待っているタイマーを止め、時間のコマンドのレスポンスを待つのをやめ、結果を待っている書き込みを `WriteError`（`closed`）で reject します。まとめている途中の通知は捨てます。変数の watch は残ります。
-- `close()` の後に `connect()` すると、セッションのコピーは残っていて、持っている分の続きから受け直します。
-- 別のトークンやバージョンで接続するときは、クライアントを作り直します。
+- `close()` stops pending timers, stops waiting for responses to time commands, and rejects writes waiting for results with a `WriteError` (`closed`). Notifications in a batch being collected are discarded. Variable watches remain.
+- After `close()` and `connect()`, the session copy is still there, and the library receives again from where its copy ends.
+- To connect with another token or version, create a new client.
 
-## コーディングのルール
+## Coding rules
 
-- 自分のファイルのほかは import しない（`eslint.config.js` が止める。動的な `import()` も、テスト用のヘルパーのほかでは止める。`tsconfig.json` の `rootDir` で、`src/` の外も止まる）。
-- ブラウザにしかないもの（`window`、`document`、`localStorage` など）を使わない。必要なものは設定（`ClientOptions`）で受け取る。
-- 人に見せる文（`TimeFailure.message` など）は英語。画面の言葉にするのはラッパーの役目（`kind` などの機械が読むフィールドから作る）。
-- 公開 API を追加したら、`src/index.ts` と上の「公開 API」の表に追加し、[自分の画面を作る](../../docs/howto/gui-screen.md) を合わせる。
+- Import nothing outside this library's own files (`eslint.config.js` blocks it; it also blocks dynamic `import()` except in the test helpers; `rootDir` in `tsconfig.json` blocks anything outside `src/`).
+- Do not use anything that exists only in the browser (`window`, `document`, `localStorage` and so on). Take what you need through the options (`ClientOptions`).
+- Human-readable text (such as `TimeFailure.message`) is in English. Turning it into the screen's language is the wrapper's job (built from machine-readable fields such as `kind`).
+- When you add to the public API, add it to `src/index.ts` and to the "Public API" tables above, and update [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) to match.
 
-## テスト
+## Tests
 
-ツール（TypeScript、ESLint、Prettier、Vitest、esbuild）は `gui/web` の `node_modules` のものを使います。`gui/web` で次を実行します（`scripts/verify-web.py` も実行します）。
+The tools (TypeScript, ESLint, Prettier, Vitest, esbuild) are the ones in `node_modules` of `gui/web`. Run these in `gui/web` (`scripts/verify-web.py` runs them too):
 
-| コマンド               | 内容                                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `npm run test:client`  | 型の検査（`tsc -p ../client`）と単体テスト（Vitest。Node の上で、Angular も DOM もなしに動く） |
-| `npm run build:client` | 1 つの ESM のファイルにまとめる（esbuild。Angular のビルドのツールが持っているもの）           |
-| `npm run lint`         | `gui/web` と、この `eslint.config.js`                                                          |
-| `npm run format:check` | `gui/web` と、このディレクトリの書式（`gui/.prettierrc`）                                      |
+| Command                | What it does                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `npm run test:client`  | Type check (`tsc -p ../client`) and unit tests (Vitest; runs on Node, without Angular or a DOM) |
+| `npm run build:client` | Bundles into one ESM file (esbuild, the copy that comes with the Angular build tools)           |
+| `npm run lint`         | `gui/web`, and this directory with its `eslint.config.js`                                       |
+| `npm run format:check` | Formatting of `gui/web` and this directory (`gui/.prettierrc`)                                  |
 
-単体テストは、サーバーの通知を作らずに `gui/protocol/examples/` の例を流します（`testing/protocol-examples.ts`）。
+The unit tests feed the examples in `gui/protocol/examples/` instead of building server notifications by hand (`testing/protocol-examples.ts`).
 
-## 関連するドキュメント
+## See also
 
-| 知りたいこと                                                             | ドキュメント                                                           |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| 自分の画面を作り、GUI サーバーに配信させる手順                           | [自分の画面を作る](../../docs/howto/gui-screen.md)                     |
-| サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証） | [gui/protocol](../protocol/README.md)                                  |
-| ライブラリが肩代わりしないルール                                         | [docs/gui.md](../../docs/gui.md) の「画面を作るときのルール」          |
-| 自分の画面の出発点にするファイル                                         | 画面のテンプレート [examples/gui_starter](../../examples/gui_starter/) |
-| 画面を使わずに Node から使う例                                           | [examples/gui_client](../../examples/gui_client/)                      |
+| To find                                                                                        | Document                                                                                      |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| How to build your own screen and have the GUI server serve it                                  | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md)                   |
+| The server API (HTTP and WebSocket shapes, versioning and compatibility rules, authentication) | [gui/protocol](../protocol/README.md)                                                         |
+| The rules the library does not enforce for you                                                 | "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen) |
+| Files to start your own screen from                                                            | The screen template [examples/gui_starter](../../examples/gui_starter/)                       |
+| An example that uses the library from Node, without a screen                                   | [examples/gui_client](../../examples/gui_client/)                                             |
 
-`examples/gui_client` は、リポジトリにだけあります（ビルド済みのツールのアーカイブに入っているのは、`gui_starter/` と `client/` です）。
+`examples/gui_client` exists only in the repository (the prebuilt tools archive contains `gui_starter/` and `client/`).
 
-| ファイル               | 内容                                                                   |
-| ---------------------- | ---------------------------------------------------------------------- |
-| `run.mjs`              | ライブラリを使わずにサーバーの API を呼ぶ                              |
-| `run-with-library.mjs` | ライブラリを 1 つにまとめたファイルを、素の JavaScript（Node）から使う |
-| `variables.mjs`        | 同じくライブラリで、ECU の変数を読み書きする                           |
+| File                   | What it does                                               |
+| ---------------------- | ---------------------------------------------------------- |
+| `run.mjs`              | Calls the server API without the library                   |
+| `run-with-library.mjs` | Uses the bundled library file from plain JavaScript (Node) |
+| `variables.mjs`        | Also uses the library, to read and write ECU variables     |

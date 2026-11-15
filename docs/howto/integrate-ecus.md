@@ -1,98 +1,100 @@
-# 複数の ECU をつないで動かす
+# Integrate and run several ECUs
 
-何人かが別々に作った ECU の実行ファイルを、1 つの設定ファイルに並べて、1 つのシミュレーションとして動かす手順です。設定ファイルと ECU の不整合を `check` で見つけ、設定ファイルで直せないものは ECU を作った人に依頼し、`run` で実行して、ECU の間で通信できたことを確認します。ECU のソースコードは読みません。
+[日本語](../ja/howto/integrate-ecus.md)
 
-例は 2 つの ECU です。エンジンの ECU は回転数を J1939 で送信し、表示の ECU はそれを受信します。最初に受け取った表示の ECU は、同じバスをエンジンと違う名前で呼んでいます。この不整合を見つけて直すまでを、手順 1〜5 で進めます。例のファイルは [examples/integrate_ecus](../../examples/integrate_ecus) にあります。
+This guide shows how to list ECU executables built by different people in one configuration file and run them as one simulation. You find mismatches between the configuration file and the ECUs with `check`, ask the ECU authors to fix what the configuration file cannot, run the simulation with `run`, and verify that the ECUs communicate. You do not read the ECU source code.
 
-## 前提
+The example has 2 ECUs. The engine ECU sends the engine speed over J1939, and the dashboard ECU receives it. As first delivered, the dashboard ECU names the shared bus differently from the engine ECU. Steps 1–5 find and fix this mismatch. [examples/integrate_ecus](../../examples/integrate_ecus) contains the example files.
 
-| 必要なもの | 条件 |
+## Prerequisites
+
+| Requirement | Details |
 |---|---|
-| ビルド | [README](../../README.md) の「リポジトリからビルドする」のとおりに、リポジトリをビルドしてあります。 |
-| ECU の実行ファイル | `ecu_main()` で作ったものです（作り方は [最初の ECU を作る](first-ecu.md)）。 |
+| Build | You have built the repository as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| ECU executables | Built with `ecu_main()`. To build one, see [Create your first ECU](first-ecu.md). |
 
-コマンドは、すべて次のディレクトリで実行します。リポジトリのルートで、次の 2 行を実行してください。`linux-gcc-control` は README のプリセットで、ほかのプリセットでビルドしたときは、その名前に読み替えます。
+In the repository root, run these 2 lines, then run every later command in the directory they change to. `linux-gcc-control` is the preset from the README; if you built another preset, use its name instead.
 
 ```sh
-export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # vehicle_sil_launch のある場所
+export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # where vehicle_sil_launch is
 cd build/linux-gcc-control/examples/integrate_ecus
 ```
 
-このディレクトリには、ビルドのときに次のファイルが置かれます。
+The build puts these files in that directory:
 
-| ファイル | 内容 | 使う手順 |
+| File | Contents | Used in step |
 |---|---|---|
-| `simulation.yaml` | 最初に書く設定ファイルです。 | 2、3 |
-| `simulation.two-buses.yaml` | `networks` に、表示の ECU が使うネットワーク名を追加したものです。 | 3、5 |
-| `simulation.fixed.yaml` | 表示の ECU を、作り直したものに差し替えたものです。 | 4、5 |
-| `scenarios/engine_speed.yaml` | 表示の ECU が回転数を受信することを確認するシナリオです。 | 5 |
-| `../ecu_main/engine/vehicle_sil_engine_ecu` | エンジンの ECU です。 | 2〜5 |
-| `dashboard_v1/vehicle_sil_dashboard_v1_ecu` | 最初に受け取った表示の ECU です。 | 2、3 |
-| `../ecu_main/dashboard/vehicle_sil_dashboard_ecu` | 作り直した表示の ECU です。 | 4、5 |
+| `simulation.yaml` | The configuration file you write first | 2, 3 |
+| `simulation.two-buses.yaml` | `simulation.yaml` with the network name of the dashboard ECU added to `networks` | 3, 5 |
+| `simulation.fixed.yaml` | `simulation.yaml` with the dashboard ECU replaced by the rebuilt one | 4, 5 |
+| `scenarios/engine_speed.yaml` | A scenario that verifies that the dashboard ECU receives the engine speed | 5 |
+| `../ecu_main/engine/vehicle_sil_engine_ecu` | The engine ECU | 2–5 |
+| `dashboard_v1/vehicle_sil_dashboard_v1_ecu` | The dashboard ECU as first delivered | 2, 3 |
+| `../ecu_main/dashboard/vehicle_sil_dashboard_ecu` | The rebuilt dashboard ECU | 4, 5 |
 
-テンプレートとビルド済みのツールを使うときは、場所が次のように変わります。手順は同じで、自分が受け取った ECU で進めます。
+With the template and the prebuilt tools, the locations differ as shown below. The steps are the same; follow them with the ECUs you received.
 
-| | リポジトリをビルドしたとき（このガイド） | テンプレートとビルド済みのツール |
+| | Repository build (this guide) | Template and prebuilt tools |
 |---|---|---|
-| 実行するディレクトリ | `build/<プリセット>/examples/integrate_ecus` | 自分の `simulation.yaml` のあるディレクトリ |
-| `vehicle_sil_launch` | `build/<プリセット>/tools/launch/` | `get_tools.py` が表示する `export PATH=...` の行で `PATH` に追加します。 |
+| Working directory | `build/<preset>/examples/integrate_ecus` | The directory that contains your `simulation.yaml` |
+| `vehicle_sil_launch` | `build/<preset>/tools/launch/` | Add it to `PATH` with the `export PATH=...` line that `get_tools.py` prints. |
 
-## 全体の流れ
+## Overview
 
-| 手順 | すること | できるもの |
+| Step | What you do | What you get |
 |---|---|---|
-| 1 | ネットワーク名などを決めて、ECU を作る人に伝える | 名前の一覧 |
-| 2 | 実行ファイルを集めて、設定ファイルを書く | `simulation.yaml` |
-| 3 | `check` で照合して、指摘を読む | 指摘ごとの、直す場所 |
-| 4 | 設定ファイルで直せない不整合を、ECU を作った人に依頼する | 作り直した実行ファイルと、指摘のない `check` |
-| 5 | `run` で実行して、通信できたことを確認する | 終了コード 0 と、受信した値 |
+| 1 | Agree on network names and other names, and share them with the ECU authors | A list of names |
+| 2 | Collect the executables and write the configuration file | `simulation.yaml` |
+| 3 | Check the configuration with `check` and read the findings | Where to fix each finding |
+| 4 | Ask the ECU authors to fix the mismatches that the configuration file cannot fix | Rebuilt executables and a `check` with no findings |
+| 5 | Run the simulation with `run` and verify that the ECUs communicate | Exit code 0 and the received values |
 
-手順 1〜5 は順に進めます。その後の節は、必要になったときに読みます。
+Do steps 1–5 in order. Read the remaining sections when you need them.
 
-| したいこと | 使うもの | 読む節 |
+| Goal | Use | Section |
 |---|---|---|
-| まだ受け取っていない ECU を除いて動かす | `--disable` | [ECU を無効にして動かす](#ecu-を無効にして動かすenabled--disable) |
-| 途中で止める、止まらない実行に上限を付ける | Ctrl+C、`--timeout-ms` | [止める](#止める) |
-| スクリプトや CI から結果を読む | `--json`、`--events` | [スクリプトから使う](#スクリプトから使う--json--events) |
-| 実時間に合わせて動かす | `--speed` | [等速で動かす](#等速で動かす--speedと遅れの見方) |
-| 同じ ECU を 2 つ並べる | `command` の引数 | [同じ ECU を 2 つ載せる](#同じ-ecu-を-2-つ載せる) |
-| `ecu_main()` で作っていないツールを一緒に起動する | `describe: false` | [`ecu_main()` で作っていないツールを並べる](#ecu_main-で作っていないツールを並べる) |
+| Run without an ECU you have not received yet | `--disable` | [Run with an ECU disabled](#run-with-an-ecu-disabled-enabled---disable) |
+| Stop a run partway, or limit a run that does not end | Ctrl+C, `--timeout-ms` | [Stop the simulation](#stop-the-simulation) |
+| Read the result from a script or CI | `--json`, `--events` | [Use from scripts](#use-from-scripts---json---events) |
+| Run in sync with real time | `--speed` | [Run at real-time speed](#run-at-real-time-speed---speed-and-read-the-lateness) |
+| Run 2 instances of the same ECU | Arguments in `command` | [Run two instances of the same ECU](#run-two-instances-of-the-same-ecu) |
+| Start tools not built with `ecu_main()` together with the ECUs | `describe: false` | [Add tools not built with `ecu_main()`](#add-tools-not-built-with-ecu_main) |
 
-## 手順 1: 名前を決めて伝える
+## Step 1: Agree on names and share them
 
-ECU を作り始める前に、次の表のものを決めて、ECU を作る人の全員に伝えます。迷ったときの選び方は、[作り始める前に決めること](design-choices.md) にあります。どれも ECU のコードに書く値なので、実行ファイルを受け取った後で合わなければ、作り直しになります。
+Before anyone starts building ECUs, decide the items in the table below and share them with every ECU author. For how to choose when in doubt, see [Decisions to make before you start](design-choices.md). All of them are values in the ECU code: if they do not match after you receive the executables, the ECU must be rebuilt.
 
-| 決めるもの | ルール | 合わないときの指摘のコード |
+| Decision | Rule | Finding code if they do not match |
 |---|---|---|
-| ネットワーク名と種類 | 同じバスに接続する ECU は、全員が同じ名前と種類（`can`、`lin`、`ethernet`）を使います。 | `unknown-network`、`kind-mismatch`、`single-participant` |
-| J1939 のアドレス | 同じネットワークの中で重ならないようにします。 | `address-conflict`、`address-shared` |
-| J1939 の NAME | ECU ごとに違う値にします。 | `name-conflict` |
-| ステップ幅 | ECU を作る人が決めて、設定ファイルを書く人に伝えます。 | `step-mismatch` |
+| Network name and kind | All ECUs on the same bus use the same name and kind (`can`, `lin`, `ethernet`). | `unknown-network`, `kind-mismatch`, `single-participant` |
+| J1939 address | Each address is unique within a network. | `address-conflict`, `address-shared` |
+| J1939 NAME | Each ECU has a different value. | `name-conflict` |
+| Step size | The ECU author decides it and tells the integrator (the person who writes the configuration file). | `step-mismatch` |
 
-ネットワーク名は、設定ファイルでは変えられません。ECU は、コードの中で `ecu.j1939("J1939_CAN")` のように名前を指定してバスに接続します。このバージョンの設定ファイルには、ECU が使う名前を別の名前に対応させる書き方がありません。2 つの ECU の名前が違えば、どちらかを作り直すことになります。
+The configuration file cannot change a network name. An ECU connects to a bus by naming it in its code, as in `ecu.j1939("J1939_CAN")`. In this version, the configuration file has no way to map the name an ECU uses to a different name. If 2 ECUs use different names, one of them must be rebuilt.
 
-例では、次のように決めたとします。
+The example uses these decisions:
 
-| ECU | ネットワーク | J1939 のアドレス | ステップ幅 |
+| ECU | Network | J1939 address | Step size |
 |---|---|---|---|
-| エンジン | `J1939_CAN`（CAN） | 0x00 | 10 ms |
-| 表示 | `J1939_CAN`（CAN） | 0x28 | 5 ms |
+| Engine | `J1939_CAN` (CAN) | 0x00 | 10 ms |
+| Dashboard | `J1939_CAN` (CAN) | 0x28 | 5 ms |
 
-ECU を作る人には、名前のほかに次のことも依頼します。
+Besides the names, ask the ECU authors for the following:
 
-| 依頼すること | 守らないと起きること |
+| Ask the ECU author to | If they do not |
 |---|---|
-| `main()` を `ecu_main()` で作ります。 | `check` がその ECU を照合できません。 |
-| 決めた名前を使い、渡す前に `--describe` で確認します（手順 2）。 | 手順 3 の指摘になります。 |
-| 設定ファイルを書く人と同じバージョンの vehicle-sil でビルドします。 | `version-mismatch` の注記が出ます。変数を読み書きする形式のバージョンが違うと、警告 `control-link-version` が出て、その ECU の変数を読み書きできません。 |
-| ECU が自分で起動したプロセスは、ECU が終わるときに終了させます。 | 警告 `left-processes` が出ます。 |
-| 標準出力と標準エラーは UTF-8 で出力します。 | UTF-8 でないバイトは `?` と表示されます。 |
+| Build `main()` with `ecu_main()`. | `check` cannot check that ECU. |
+| Use the agreed names, and verify them with `--describe` before delivering the executable (step 2). | The check reports the findings of step 3. |
+| Build with the same vehicle-sil version as the integrator. | The check reports the note `version-mismatch`. If the format version for reading and writing variables differs, it reports the warning `control-link-version`, and you cannot read or write that ECU's variables. |
+| End the processes that the ECU started when the ECU exits. | `run` reports the warning `left-processes`. |
+| Write stdout and stderr in UTF-8. | Bytes that are not UTF-8 appear as `?`. |
 
-participant 名（シミュレーションの中での ECU の名前）は、設定ファイルに書くだけなので、ECU を作る人と合わせる必要はありません。`vehicle_sil_launch` が、設定ファイルの名前を `--name` で ECU に渡します。
+The participant name (the ECU's name in the simulation) appears only in the configuration file, so you do not need to agree on it with the ECU authors. `vehicle_sil_launch` passes the name from the configuration file to the ECU as `--name`.
 
-## 手順 2: 設定ファイルを書く
+## Step 2: Write the configuration file
 
-受け取った実行ファイルを 1 つのディレクトリの下に置き、同じ場所に `simulation.yaml` を書きます。例の `simulation.yaml` は次のとおりです。
+Put the executables you received under one directory and write `simulation.yaml` there. In the repository's example, the build has already put the ECUs and this `simulation.yaml` in the working directory, so read it instead of writing it. The example `simulation.yaml`:
 
 <!-- examples/integrate_ecus/simulation.yaml -->
 ```yaml
@@ -112,27 +114,27 @@ participants:
     step_ms: 5
 ```
 
-| 行 | 書くもの |
+| Line | What to write |
 |---|---|
-| 1 行目のコメント | エディターが補完と検査に使う JSON Schema の場所で、なくても動きます。 |
-| `vehicle_sil_simulation` | 設定ファイルの形式のバージョンで、`1` と書きます。 |
-| `stop_at_ms` | シミュレーションを止める仮想時刻で、省略すると Ctrl+C まで動きます。 |
-| `networks` | 手順 1 で決めたネットワーク名と種類を、1 つずつ書きます。 |
-| `participants[].name` | participant 名で、シミュレーションの中で重ならないようにします。 |
-| `participants[].command` | 実行ファイルのパスで、相対パスは設定ファイルのあるディレクトリを基準にします。 |
-| `participants[].step_ms` | 手順 1 で伝えてもらったステップ幅で、書くと ECU の値と照合し、省略もできます。 |
+| The comment on line 1 | The location of the JSON Schema that editors use for completion and checking. The file works without it. |
+| `vehicle_sil_simulation` | The format version of the configuration file. Write `1`. |
+| `stop_at_ms` | The virtual time at which the simulation stops. Without it, the simulation runs until Ctrl+C. |
+| `networks` | The network names and kinds agreed in step 1, one entry each. |
+| `participants[].name` | The participant name. It must be unique within the simulation. |
+| `participants[].command` | The path of the executable. A relative path is relative to the directory of the configuration file. |
+| `participants[].step_ms` | The step size the ECU author gave you in step 1. If you write it, the check compares it with the ECU's value. You can leave it out. |
 
-`command` に `--name` や `--registry-uri` は書きません。`vehicle_sil_launch` が追加します。Windows では、`.exe` を書かなくても実行ファイルが見つかります。キーの一覧と既定の値は、[simulation-config.md](../simulation-config.md) の「設定ファイル」にあります。
+Do not write `--name` or `--registry-uri` in `command`; `vehicle_sil_launch` adds them. On Windows, the executable is found even if you leave out `.exe`. For the keys and their defaults, see "The configuration file" in [simulation-config.md](../simulation-config.md#the-configuration-file).
 
-### ECU が使う名前を調べる
+### Find the names an ECU uses
 
-ECU がどのネットワーク名を使うかは、ソースコードを読まなくても、実行ファイルに `--describe` を付けて実行すればわかります。ECU は、自身の構成を JSON で標準出力に表示して終了します。
+You do not need the source code to find which network name an ECU uses: run the executable with `--describe`. The ECU prints its configuration as JSON to stdout and exits.
 
 ```sh
 dashboard_v1/vehicle_sil_dashboard_v1_ecu --describe
 ```
 
-次は、出力のうち、手順 1 で決めたものに対応する部分です。
+Here is the part of the output that corresponds to the decisions of step 1:
 
 <!-- integrate ECUs: vehicle_sil_dashboard_v1_ecu --describe, an excerpt -->
 ```json
@@ -154,25 +156,25 @@ dashboard_v1/vehicle_sil_dashboard_v1_ecu --describe
 }
 ```
 
-| キー | 意味 | この例の値 |
+| Key | Meaning | Value in this example |
 |---|---|---|
-| `networks[].name`、`kind` | ECU が使うネットワーク名と種類です。 | `VehicleCAN`、CAN |
-| `networks[].nodes[].address` | J1939 のアドレスです（10 進）。 | 40（0x28） |
-| `step_ns` | ステップ幅です（ナノ秒）。 | 5 ms |
+| `networks[].name`, `kind` | The network name and kind that the ECU uses | `VehicleCAN`, CAN |
+| `networks[].nodes[].address` | The J1939 address (decimal) | 40 (0x28) |
+| `step_ns` | The step size (nanoseconds) | 5 ms |
 
-ネットワーク名が `VehicleCAN` で、手順 1 で決めた `J1939_CAN` と違います。この不整合は ECU の作者に直してもらうもので、依頼の書き方は手順 4 にあります。次は、設定ファイルをそのままにして手順 3 に進み、`check` がこの不整合をどう報告するかを見ます。JSON のすべてのキーは、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」にあります。
+The network name is `VehicleCAN`, not `J1939_CAN` as agreed in step 1. The ECU author has to fix this mismatch; step 4 shows how to write the request. First, leave the configuration file as it is and go to step 3 to see how `check` reports the mismatch. For all JSON keys, see "JSON format" in [ecu-executable.md](../ecu-executable.md#json-format).
 
-## 手順 3: 照合して指摘を読む
+## Step 3: Check the configuration and read the findings
 
 ```sh
 vehicle_sil_launch check simulation.yaml
 ```
 
-`check` は、各 ECU を `--describe` で 1 つずつ起動して、設定ファイルと照合します。シミュレーションは実行しません。ECU のコンストラクターは動くので、信頼できない実行ファイルや設定ファイルは渡さないでください。
+`check` starts each ECU with `--describe`, one at a time, and checks the configuration file against it. It does not run the simulation. The ECU constructors do run, so do not pass executables or configuration files that you do not trust.
 
-### 確認
+### Verify the check output
 
-例では、指摘が 2 件出て、最後の行が `failed:` になります。終了コードは 1 です。
+In the example, the check reports 2 findings and the last line is `failed:`. The exit code is 1.
 
 <!-- integrate ECUs: vehicle_sil_launch check simulation.yaml -->
 ```text
@@ -191,35 +193,37 @@ warning: simulation.yaml:6: network 'J1939_CAN': only Engine is on it, so what i
 failed: 1 error, 1 warning, 0 notes
 ```
 
-出力は、上から次の 4 つの部分でできています。
+The output has 4 parts, from top to bottom:
 
-| 部分 | 内容 |
+| Part | Contents |
 |---|---|
-| participant の表 | 各 ECU が `--describe` で出力した、ステップ幅、ネットワーク名、J1939 のアドレスです（設定ファイルの値ではありません）。 |
-| network の表 | 設定ファイルの `networks` と、それぞれを使う participant です。 |
-| 指摘 | 1 行に 1 件で、`<重大度>: <ファイル>:<行>: <内容と直し方> [<コード>]` の形です。 |
-| 最後の行 | 結果（`passed` か `failed`）と、重大度ごとの件数です。 |
+| Participant table | The step size, network names and J1939 addresses that each ECU printed with `--describe` (not the values in the configuration file) |
+| Network table | The `networks` of the configuration file and the participants on each |
+| Findings | One per line, in the form `<severity>: <file>:<line>: <description and fix> [<code>]` |
+| Last line | The result (`passed` or `failed`) and the count for each severity |
 
-指摘の重大度は 3 つです。
+A finding has one of 3 severities:
 
-| 重大度 | `check` の結果 | `run` |
+| Severity | Result of `check` | `run` |
 |---|---|---|
-| `error` | 失敗です（終了コード 1）。 | 何も起動しません。 |
-| `warning` | 成功のままです（`--strict` を付けると失敗）。 | 実行します。 |
-| `note` | 成功のままです。 | 実行します。 |
+| `error` | Fails (exit code 1) | Starts nothing |
+| `warning` | Still passes (fails with `--strict`) | Runs |
+| `note` | Still passes | Runs |
 
-例の `error` の行は、表示の ECU が使う `VehicleCAN` が `networks` にないことを報告し、直し方を 2 つ示しています。
+The `error` line in the example reports that `VehicleCAN`, which the dashboard ECU uses, is not in `networks`. In this example, the configuration file cannot fix it. The dashboard ECU has to receive the engine speed, so both ECUs must be on the same bus, and only the ECU code can change the name that an ECU uses. Go to step 4.
 
-| `VehicleCAN` が | 直し方 | 直す場所 |
+The `error` line names 2 fixes, because it cannot know which bus `VehicleCAN` is meant to be:
+
+| If `VehicleCAN` is meant to be | Fix | Where to fix |
 |---|---|---|
-| `J1939_CAN` と同じバスのつもり | 2 つの ECU の名前をそろえます。 | ECU のコード（設定ファイルではできません） |
-| 別のバス | `networks` に `VehicleCAN` を追加します。 | 設定ファイル |
+| The same bus as `J1939_CAN` | Make the 2 ECUs use the same name. | The ECU code (the configuration file cannot do this) |
+| A separate bus | Add `VehicleCAN` to `networks`. | The configuration file |
 
-`networks` に追加すると `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。例では、エンジンの回転数を表示の ECU が受信するので、同じバスのつもりです。直すのは ECU のコードで、手順 4 に進みます。
+The second fix makes `check` pass, but the 2 ECUs end up on separate buses and do not communicate (see "[If you add the name to `networks`](#if-you-add-the-name-to-networks)" below).
 
-### `networks` に名前を追加した場合
+### If you add the name to `networks`
 
-`error` を消すだけなら、`networks` に `VehicleCAN` を追加すれば消えます。`simulation.two-buses.yaml` は、`simulation.yaml` の `networks` を次のように変えたものです。
+Adding `VehicleCAN` to `networks` is enough to clear the `error`. `simulation.two-buses.yaml` is `simulation.yaml` with `networks` changed as follows:
 
 <!-- examples/integrate_ecus/simulation.two-buses.yaml: networks -->
 ```yaml
@@ -234,7 +238,7 @@ networks:
 vehicle_sil_launch check simulation.two-buses.yaml
 ```
 
-結果は `passed:` で、終了コードは 0 です。ただし、network の表では 2 つの ECU が別々のバスに分かれていて、警告が 2 件出ます。
+The result is `passed:` and the exit code is 0. But the network table shows the 2 ECUs on separate buses, and the check reports 2 warnings.
 
 <!-- integrate ECUs: vehicle_sil_launch check simulation.two-buses.yaml -->
 ```text
@@ -254,53 +258,53 @@ warning: simulation.two-buses.yaml:9: network 'VehicleCAN': only Dashboard is on
 passed: 0 errors, 2 warnings, 0 notes
 ```
 
-`passed:` でも、警告は読んでください。この設定ファイルは `run` でも終了コード 0 で終わりますが、表示の ECU は回転数を受信できません（手順 5 で確認します）。警告を見逃さないようにするには、`--strict` を付けます。警告があると、結果が `failed: 0 errors, 2 warnings, 0 notes (--strict)` になり、終了コードが 1 になります。
+Read the warnings even when the result is `passed:`. With this configuration file, `run` also ends with exit code 0, but the dashboard ECU does not receive the engine speed (step 5 shows this). To make sure no warning goes unnoticed, add `--strict`. If there are warnings, the result becomes `failed: 0 errors, 2 warnings, 0 notes (--strict)` and the exit code 1.
 
-### うまくいかないとき
+### Troubleshoot findings
 
-指摘は、行の末尾のコードで調べます。よく出るコードと、直す場所は次のとおりです。全部のコードは、[simulation-check.md](../simulation-check.md) の「照合」の表にあります。
+Look up each finding by the code at the end of its line. The table lists the common codes and where to fix them. For all codes, see the table in "Checks" in [simulation-check.md](../simulation-check.md#checks).
 
-| 行の末尾のコード | 原因 | 直す場所 |
+| Code at the end of the line | Cause | Where to fix |
 |---|---|---|
-| `[unknown-key]`、`[missing-key]`、`[value]` | 設定ファイルのキーか値が間違っています。 | 設定ファイルを、指摘の文のとおりに直します。 |
-| `[executable]` | `command` のパスに実行ファイルがありません。 | 設定ファイルのパスを直すか、実行ファイルを置きます。 |
-| `[launcher-argument]` | `command` に、`--name` など `vehicle_sil_launch` が追加する引数を書いています。 | 設定ファイルの `command` から、その引数を削除します。 |
-| `[unknown-network]`、`[kind-mismatch]` | ECU が使うネットワークの名前か種類が、`networks` と違います。 | 手順 1 で決めた名前と違うのが設定ファイルなら設定ファイル、ECU なら手順 4 です。 |
-| `[single-participant]`、`[unused-network]` | ネットワークに ECU が 1 つしかないか、1 つもありません。 | ECU を無効にしたせいなら、そのままで構いません。名前の違いが原因なら手順 4 です。 |
-| `[step-mismatch]` | `step_ms` が、ECU のステップ幅と違います。 | 伝えてもらった値と違うのが設定ファイルなら設定ファイル、ECU なら手順 4 です。 |
-| `[address-conflict]`、`[address-shared]`、`[name-conflict]` | 同じネットワークで、J1939 のアドレスか NAME が重なっています。 | 手順 4 です。 |
-| `[describe-failed]`、`[describe-output]`、`[describe-timeout]` | ECU が `--describe` に正しく応答しません。 | 手順 4 です。`ecu_main()` で作っていないツールなら、`describe: false` を書きます。 |
-| `[describe-version]`、`[describe-unknown-value]` | ECU と `vehicle_sil_launch` で、vehicle-sil のバージョンが違います。 | 指摘の文にある古いほうを、新しくします。 |
-| `[version-mismatch]`、`[control-link-version]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
+| `[unknown-key]`, `[missing-key]`, `[value]` | A key or value in the configuration file is wrong. | Fix the configuration file as the finding says. |
+| `[executable]` | There is no executable at the path in `command`. | Correct the path in the configuration file, or put the executable there. |
+| `[launcher-argument]` | `command` contains an argument that `vehicle_sil_launch` adds, such as `--name`. | Remove that argument from `command` in the configuration file. |
+| `[unknown-network]`, `[kind-mismatch]` | The name or kind of a network that the ECU uses differs from `networks`. | If the configuration file differs from the names agreed in step 1, fix the configuration file. If the ECU differs, go to step 4. |
+| `[single-participant]`, `[unused-network]` | A network has only one ECU, or none. | If it comes from an ECU you disabled, ignore it. If different names cause it, go to step 4. |
+| `[step-mismatch]` | `step_ms` differs from the ECU's step size. | If the configuration file differs from the value you were given, fix the configuration file. If the ECU differs, go to step 4. |
+| `[address-conflict]`, `[address-shared]`, `[name-conflict]` | J1939 addresses or NAMEs overlap on the same network. | Go to step 4. |
+| `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
+| `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
+| `[version-mismatch]`, `[control-link-version]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
 
-## 手順 4: 設定ファイルでは直せない不整合を依頼する
+## Step 4: Ask ECU authors to fix what the configuration cannot
 
-次の値は ECU のビルドに入っていて、設定ファイルでは変えられません。合わないときは、ECU を作った人に、コードを変えてビルドし直してもらいます。
+The values below are built into the ECU, and the configuration file cannot change them. If they do not match, ask the ECU author to change the code and rebuild.
 
-| 不整合 | 依頼する相手 | 依頼する内容 |
+| Mismatch | Whom to ask | What to ask for |
 |---|---|---|
-| ネットワーク名が ECU の間で違う | 手順 1 で決めた名前と違う ECU を作った人 | `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前を、決めた名前に変えます。 |
-| ネットワークの種類が違う | 決めた種類と違う ECU を作った人 | 決めた種類のバスに接続するように変えます。 |
-| J1939 のアドレスか NAME が重なる | 手順 1 の一覧と違う ECU を作った人 | ノードのアドレスか NAME を、一覧の値に変えます。 |
-| ステップ幅が、伝えてもらった値と違う | その ECU を作った人 | どちらの値が正しいかを確認し、ECU が違うなら直します。 |
-| `--describe` が失敗する | その ECU を作った人 | 指摘に付いている標準エラーの末尾を渡して、原因を調べてもらいます。 |
+| The ECUs use different network names | The author of the ECU whose name differs from the one agreed in step 1 | Change the name passed to `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()` to the agreed name. |
+| A network kind differs | The author of the ECU whose kind differs from the agreed one | Connect to a bus of the agreed kind. |
+| J1939 addresses or NAMEs overlap | The author of the ECU that differs from the list of step 1 | Change the node's address or NAME to the value in the list. |
+| The step size differs from the value you were given | The author of that ECU | Confirm which value is correct, and fix the ECU if it is wrong. |
+| `--describe` fails | The author of that ECU | Investigate the cause from the end of stderr that the finding includes (send it with the request). |
 
-名前を事前に決めていなかったときは、どちらの ECU が正しいかを `check` からは判断できません。ここで名前を決めて全員に伝えてから、違う ECU を作った人に依頼します。
+If you did not agree on the names beforehand, `check` cannot tell which ECU is right. Agree on the names now and share them with everyone, then ask the author of the ECU that differs.
 
-依頼には、次の 4 つを書きます。
+A request contains these 4 items:
 
-| 書くこと | 例での内容 |
+| Item | In the example |
 |---|---|
-| `check` の指摘の行 | 手順 3 の `error:` の行を、そのまま貼ります。 |
-| いまの値と、変えた後の値 | ネットワーク名を `VehicleCAN` から `J1939_CAN` に変えます。 |
-| 渡す前に確認する方法 | `--describe` の `networks[].name` が `J1939_CAN` になっていることを見ます。 |
-| ビルドに使う vehicle-sil のバージョン | `vehicle_sil_launch version` が表示するバージョンです。 |
+| The finding line from `check` | Paste the `error:` line from step 3 as it is. |
+| The current value and the new value | Change the network name from `VehicleCAN` to `J1939_CAN`. |
+| How to verify before delivering | Check that `networks[].name` in the `--describe` output is `J1939_CAN`. |
+| The vehicle-sil version to build with | The version that `vehicle_sil_launch version` prints |
 
-例の依頼は、次のようになります。
+The example request:
 
-> 表示の ECU は、J1939 のネットワークに `VehicleCAN` という名前で接続しています。決めた名前は `J1939_CAN` で、エンジンの ECU はこの名前を使っています。名前が違うと 2 つの ECU は別のバスに分かれ、エンジンの回転数を受信できません。設定ファイルでは名前を変えられないので、コードの `ecu.j1939("VehicleCAN")` を `ecu.j1939("J1939_CAN")` に変えて、vehicle-sil 0.1.0 でビルドし直してください。渡す前に、`--describe` の `networks[].name` が `J1939_CAN` になっていることを確認してください。`check` の指摘は次のとおりです。（手順 3 の `error:` の行）
+> The dashboard ECU connects to the J1939 network under the name `VehicleCAN`. The agreed name is `J1939_CAN`, and the engine ECU uses it. With different names, the 2 ECUs end up on separate buses and the dashboard ECU cannot receive the engine speed. The configuration file cannot change the name. Could you change `ecu.j1939("VehicleCAN")` in the code to `ecu.j1939("J1939_CAN")` and rebuild with vehicle-sil 0.1.0? Before you deliver it, verify that `networks[].name` in the `--describe` output is `J1939_CAN`. Here is the `check` finding: (the `error:` line from step 3)
 
-作り直した実行ファイルを受け取ったら、置き換えて、もう一度 `check` を実行します。例では、作り直した表示の ECU が `../ecu_main/dashboard/` にあるので、`simulation.fixed.yaml` は `Dashboard` の `command` を次の行に変えてあります。
+When you receive the rebuilt executable, replace the old one and run `check` again. In the example, the rebuilt dashboard ECU is in `../ecu_main/dashboard/`, so `simulation.fixed.yaml` changes the `command` of `Dashboard` to this line:
 
 <!-- examples/integrate_ecus/simulation.fixed.yaml: the command of the Dashboard -->
 ```yaml
@@ -311,9 +315,9 @@ passed: 0 errors, 2 warnings, 0 notes
 vehicle_sil_launch check simulation.fixed.yaml
 ```
 
-### 確認
+### Verify the rebuilt ECU
 
-2 つの ECU が同じ `J1939_CAN` に並び、指摘がなくなります。終了コードは 0 です。
+Both ECUs are on `J1939_CAN` and there are no findings. The exit code is 0.
 
 <!-- integrate ECUs: vehicle_sil_launch check simulation.fixed.yaml -->
 ```text
@@ -329,19 +333,19 @@ J1939_CAN  can   Engine, Dashboard
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-作り直しを待つ間は、その ECU を無効にして、ほかの ECU だけで先に進められます（[ECU を無効にして動かす](#ecu-を無効にして動かすenabled--disable)）。
+While you wait for a rebuild, disable that ECU and continue with the others (see [Run with an ECU disabled](#run-with-an-ecu-disabled-enabled---disable)).
 
-## 手順 5: 実行して通信を確認する
+## Step 5: Run the simulation and verify communication
 
 ```sh
 vehicle_sil_launch run simulation.fixed.yaml
 ```
 
-`run` は、まず `check` と同じ照合をします。`error` がなければ、SIL Kit の registry とすべての ECU を起動し、`stop_at_ms` まで実行して、ECU を終了させます。
+`run` first does the same check as `check`. If there is no `error`, it starts the SIL Kit registry and all ECUs, runs until `stop_at_ms` and ends the ECUs.
 
-### 確認
+### Verify the run result
 
-標準出力の最後に、次の結果が表示されます。`ended` の列がすべて `exit code 0` で、最後の行が `passed:` なら、終了コードは 0 です。
+At the end of stdout, `run` prints the result below. If every entry in the `ended` column is `exit code 0` and the last line is `passed:`, the exit code is 0.
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, from the line "run:" -->
 ```text
@@ -354,7 +358,7 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-終了コード 0 からわかるのは、すべての ECU が起動し、`stop_at_ms` まで動いて、終了コード 0 で終わったことだけです。ECU がメッセージを受信できたかどうかは、わかりません。手順 3 の `simulation.two-buses.yaml` を実行すると、2 つの ECU が別のバスにいるのに、同じ表が表示されて、終了コード 0 で終わります。
+Exit code 0 tells you only that every ECU started, ran until `stop_at_ms` and exited with exit code 0. It does not tell you whether the ECUs received any messages. Run `simulation.two-buses.yaml` from step 3: the 2 ECUs are on separate buses, yet `run` prints the same table and ends with exit code 0.
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml
@@ -371,19 +375,19 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 2 warnings, 0 notes
 ```
 
-通信できたことは、次のどれかで確認します。
+Verify communication with one of these methods:
 
-| 方法 | 見るもの | 使える条件 |
+| Method | What to look at | Requires |
 |---|---|---|
-| ECU 自身の出力 | 標準エラーの `[<participant 名>]` で始まる行 | ECU が、受信した値を出力するように作ってあります。 |
-| `expect` のあるシナリオ | `run --scenario` の結果と終了コード | 受信した値を、ECU が変数として宣言しています。 |
-| GUI か Control API | 実行中の変数の値 | 受信した値を、ECU が変数として宣言しています。 |
+| The ECU's own output | Lines on stderr that start with `[<participant name>]` | The ECU prints the values it receives. |
+| A scenario with `expect` | The result and exit code of `run --scenario` | The ECU declares the received values as variables. |
+| The GUI or the Control API | Variable values during the run | The ECU declares the received values as variables. |
 
-受信した値を出力も宣言もしない ECU では、受信したことを外から確認できません。確認が必要なら、ECU を作った人に、受信した値を変数として宣言してもらいます（[最初の ECU を作る](first-ecu.md) の「J1939 で通信させる」）。
+If an ECU neither prints nor declares the values it receives, you cannot verify reception from outside. If you need to, ask the ECU author to declare the received values as variables (see "Add J1939 communication" in [Create your first ECU](first-ecu.md#add-j1939-communication)).
 
-### ECU の出力で確認する
+### Verify with the ECU output
 
-`run` は、ECU の標準出力と標準エラーを、行の先頭に `[<participant 名>] ` を付けて、標準エラーに表示します。例の表示の ECU は、500 ms ごとに、受信した回転数とメッセージの数を出力します。`simulation.fixed.yaml` では、次の 3 行が表示されます。
+`run` prints the stdout and stderr of each ECU to its own stderr, with `[<participant name>] ` at the start of each line. The example dashboard ECU prints the received engine speed and the message count every 500 ms. With `simulation.fixed.yaml`, these 3 lines appear:
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml, the lines of the Dashboard -->
 ```text
@@ -392,7 +396,7 @@ passed: 0 errors, 2 warnings, 0 notes
 [Dashboard] t=1000 ms engine speed 1200 rpm (10 messages)
 ```
 
-`simulation.two-buses.yaml` では、最後まで 0 件のままです。
+With `simulation.two-buses.yaml`, the count stays at 0 to the end:
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.two-buses.yaml, the lines of the Dashboard -->
 ```text
@@ -401,11 +405,11 @@ passed: 0 errors, 2 warnings, 0 notes
 [Dashboard] t=1000 ms engine speed 0 rpm (0 messages)
 ```
 
-`--log-dir logs` を付けると、ECU ごとの出力が `logs/<participant 名>.log` にも保存されます（先頭の `[<participant 名>] ` は付きません）。
+With `--log-dir logs`, `run` also saves the output of each ECU to `logs/<participant name>.log`, without the `[<participant name>] ` prefix.
 
-### シナリオで確認する
+### Verify with a scenario
 
-シナリオは、ECU の変数に値を設定し、変数の値を確認する手順を書いた YAML です。`expect` の手順が成り立たなければ、`run` が終了コード 1 で終わるので、CI でも通信を確認できます。例の `scenarios/engine_speed.yaml` は、エンジンのスロットルを 50 % にして、表示の ECU の回転数が 600 ms 以内に 1700 rpm 以上になることを確認します。上の `run` の 1200 rpm はスロットルの初期値 20 % のときの値で、50 % では 1800 rpm に上がります。
+A scenario is a YAML file of steps that set ECU variables and check their values. If an `expect` step fails, `run` ends with exit code 1, so you can verify communication in CI too. The example `scenarios/engine_speed.yaml` sets the engine throttle to 50 % and checks that the dashboard ECU's engine speed reaches 1700 rpm or more within 600 ms. The 1200 rpm in the `run` output above is the value at the initial throttle of 20 %; at 50 %, the speed rises to 1800 rpm.
 
 <!-- examples/integrate_ecus/scenarios/engine_speed.yaml -->
 ```yaml
@@ -424,7 +428,7 @@ steps:
 vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml
 ```
 
-2 つの手順が `ok` になり、終了コード 0 で終わります。
+Both scenario steps are `ok`, and the run ends with exit code 0. Here is the scenario's result, taken from the middle of the output:
 
 <!-- integrate ECUs: vehicle_sil_launch run simulation.fixed.yaml --scenario scenarios/engine_speed.yaml, the result of the scenario -->
 ```text
@@ -435,7 +439,7 @@ line  step                                                             result  a
 8     expect Dashboard.dashboard.engine_speed ge 1700 (within 600 ms)  ok      410 ms
 ```
 
-同じシナリオを `simulation.two-buses.yaml` で実行すると、`expect` が失敗して、終了コード 1 で終わります。
+With `simulation.two-buses.yaml`, the same scenario fails at the `expect` step and the run ends with exit code 1. Here is the same part of its output:
 
 ```sh
 vehicle_sil_launch run simulation.two-buses.yaml --scenario scenarios/engine_speed.yaml
@@ -458,35 +462,35 @@ error: scenarios/engine_speed.yaml:8: expect Dashboard.dashboard.engine_speed ge
 failed: 1 error, 2 warnings, 0 notes
 ```
 
-シナリオの書き方は、[シナリオでテストを書く](scenario-tests.md) にあります。
+For how to write scenarios, see [Write tests with scenarios](scenario-tests.md).
 
-### GUI か Control API で確認する
+### Verify with the GUI or the Control API
 
-実行中の変数の値は、ブラウザの GUI（[gui.md](../gui.md)）か、Control API の Python のクライアント（[信号を外から操作する](operate-signals.md) の「値を読む」）で読めます。例では、`Dashboard` の変数 `dashboard.engine_speed` が、`Engine` の変数 `engine.speed` に追従していれば、通信できています。
+You can read variable values during a run in the browser GUI ([gui.md](../gui.md)) or with the Python client of the Control API (see "Read values" in [Read and write signals from outside](operate-signals.md#read-values)). In the example, if `dashboard.engine_speed` of `Dashboard` follows `engine.speed` of `Engine`, the ECUs communicate.
 
-### うまくいかないとき
+### Troubleshoot the run
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `nothing was started: the check found errors` と表示される | 照合で `error` が出ています。 | 手順 3 に戻って、`error` を直します。 |
-| 終了コード 0 なのに、受信した値が 0 のまま | ECU が別のバスにいます。 | `check` の network の表と警告を読みます（手順 3）。 |
-| いつまでも終わらない | ステップの途中で止まった ECU がいて、仮想時間が進みません。 | Ctrl+C で止めます。CI では `--timeout-ms` で実時間の上限を付けます。 |
-| `[participant-failed]`、`[not-joined]`、`[did-not-end]` などの指摘が出る | 実行中に、ECU が失敗したか、参加しなかったか、終わりませんでした。 | 指摘の文にある participant の出力を読みます。 |
+| `nothing was started: the check found errors` | The check found an `error`. | Go back to step 3 and fix the `error`. |
+| Exit code 0, but the received value stays at 0 | The ECUs are on separate buses. | Read the network table and the warnings of `check` (step 3). |
+| The run never ends | An ECU is stuck in the middle of a simulation step, so virtual time does not advance. | Stop the run with Ctrl+C. In CI, set a wall-clock time limit with `--timeout-ms`. |
+| Findings such as `[participant-failed]`, `[not-joined]` or `[did-not-end]` | During the run, an ECU failed, did not join or did not end. | Read the output of the participant that the finding names. |
 
-実行中の指摘のコードは [simulation-run.md](../simulation-run.md) の「出力」に、中断する条件は同じ文書の「中断する条件とタイムアウト」にあります。
+For the finding codes of a run, see "Output" in [simulation-run.md](../simulation-run.md#output). For the conditions that abort a run, see "[Abort conditions and timeouts](../simulation-run.md#abort-conditions-and-timeouts)" in the same page.
 
-## ECU を無効にして動かす（`enabled`、`--disable`）
+## Run with an ECU disabled (`enabled`, `--disable`)
 
-まだ受け取っていない ECU や、原因を切り分けたい ECU を除いて、残りの ECU で照合と実行をします。`--disable` に participant 名を指定します。
+To check and run without an ECU that you have not received yet, or without one that you want to rule out while you look for a cause, pass its participant name to `--disable`.
 
 ```sh
 vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard
 vehicle_sil_launch run simulation.fixed.yaml --disable Dashboard
 ```
 
-### 確認
+### Verify the disabled ECU
 
-無効にした ECU は、表に `disabled` と表示され、`participant-disabled` の注記が出ます。
+The table shows the disabled ECU as `disabled`, and the check reports the note `participant-disabled`.
 
 <!-- integrate ECUs: vehicle_sil_launch check simulation.fixed.yaml --disable Dashboard -->
 ```text
@@ -505,42 +509,42 @@ note: simulation.fixed.yaml:13: participant 'Dashboard': disabled (enabled: fals
 passed: 0 errors, 1 warning, 1 note
 ```
 
-| 知っておくこと | 内容 |
+| Topic | Details |
 |---|---|
-| 無効にした ECU | 照合も起動もしないので、実行ファイルがまだなくても構いません。 |
-| 設定ファイルに書く | participant に `enabled: false` と書いても同じです。 |
-| 有効に戻す | `--enable <participant 名>` を付けます。コマンドラインの指定が、設定ファイルより優先されます。 |
-| 注記 `participant-disabled` | 一部を無効にした結果を、全部の結果と読み違えないためのものです。 |
-| `--strict` | 無効にしたために出る警告（上の `single-participant`）でも、失敗になります。 |
-| `required: false` | `ecu_main()` で作った ECU には書けません。除くときは、`enabled: false` か `--disable` を使います。 |
+| A disabled ECU | It is neither checked nor started, so its executable need not exist yet. |
+| In the configuration file | Writing `enabled: false` in the participant has the same effect. |
+| Enabling it again | Add `--enable <participant name>`. The command line takes precedence over the configuration file. |
+| The note `participant-disabled` | It keeps a result with some participants disabled from being mistaken for a full result. |
+| `--strict` | A warning caused by the disabled ECU (`single-participant` above) also makes the result fail. |
+| `required: false` | Not allowed for an ECU built with `ecu_main()`. To leave such an ECU out, use `enabled: false` or `--disable`. |
 
-ルールは、[simulation-config.md](../simulation-config.md) の「participant を無効にする」にあります。
+For the rules, see "Disabling a participant (`enabled`, `--disable`, `--enable`)" in [simulation-config.md](../simulation-config.md#disabling-a-participant-enabled---disable---enable).
 
-## 止める
+## Stop the simulation
 
-| 止め方 | 動作 | 終了コード |
+| Method | Behavior | Exit code |
 |---|---|---|
-| `stop_at_ms` を書く | その仮想時刻で止まります。 | 指摘に `error` がなければ 0 |
-| Ctrl+C | シミュレーションを止め、ECU を終了させてから、結果を表示します。 | 130 |
-| Ctrl+C をもう 1 回 | 待たずに強制終了します。 | 130 |
-| `--timeout-ms <ms>` | 開始から実時間で `<ms>` たっても終わらなければ、中断して `error` にします。 | 1 |
+| Write `stop_at_ms` | The simulation stops at that virtual time. | 0 if there is no `error` finding |
+| Ctrl+C | `vehicle_sil_launch` stops the simulation, ends the ECUs, then prints the result. | 130 |
+| Ctrl+C a second time | `vehicle_sil_launch` kills the ECUs without waiting. | 130 |
+| `--timeout-ms <ms>` | If the run has not ended `<ms>` of wall-clock time after the start, `vehicle_sil_launch` aborts it and reports an `error`. | 1 |
 
-プログラムから止めるときは、`run` に `--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じます（[simulation-events.md](../simulation-events.md) の「標準入力のコマンド」）。
+To stop the run from a program, start `run` with `--stdin-commands` and write `{"command":"stop"}` to stdin, or close stdin (see "Stdin commands (`run --stdin-commands`)" in [simulation-events.md](../simulation-events.md#stdin-commands-run---stdin-commands)).
 
-どの止め方でも、`vehicle_sil_launch` は、起動した ECU と、ECU が起動したプロセスを終了させてから終わります。シミュレーションが終わっても終了しない ECU は、強制終了して、`did-not-end` の `error` にします。順番と待つ時間は、[simulation-run.md](../simulation-run.md) の「止め方」「中断（Ctrl+C）」「participant を残さないこと」にあります。
+Whichever way the run stops, `vehicle_sil_launch` ends the ECUs it started, and the processes that the ECUs started, before it exits. If an ECU does not exit after the simulation ends, `vehicle_sil_launch` kills it and reports `did-not-end` as an `error`. For the order and the wait times, see "[Stopping a run](../simulation-run.md#stopping-a-run)", "[Interrupting (Ctrl+C)](../simulation-run.md#interrupting-ctrlc)" and "[Leaving no participant behind](../simulation-run.md#leaving-no-participant-behind)" in simulation-run.md.
 
-## スクリプトから使う（`--json`、`--events`）
+## Use from scripts (`--json`, `--events`)
 
-CI のスクリプトや自作のツールから使うときは、終了コードと、機械が読める出力を使います。
+From CI scripts or your own tools, use the exit code and the machine-readable output.
 
-| したいこと | コマンド | 出力 |
+| Goal | Command | Output |
 |---|---|---|
-| 成功か失敗かだけを知る | `check` か `run` の終了コード | 0 が成功、1 が失敗、130 が中断です。 |
-| 指摘をプログラムで読む | `vehicle_sil_launch check --json simulation.yaml` | 結果を 1 つの JSON で標準出力に書きます。 |
-| 実行の経過を読む | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | 1 行に 1 つの JSON で、起きたことを順に書きます。 |
-| 使える機能を調べる | `vehicle_sil_launch version --json` | `features` に、機能の名前が並びます。 |
+| Know only whether it passed or failed | The exit code of `check` or `run` | 0 is pass, 1 is fail and 130 is interrupted. |
+| Read the findings in a program | `vehicle_sil_launch check --json simulation.yaml` | Writes the result to stdout as one JSON document. |
+| Follow the progress of a run | `vehicle_sil_launch run --events --stdin-commands simulation.yaml` | Writes what happens, in order, as one JSON object per line. |
+| Find out which features are available | `vehicle_sil_launch version --json` | `features` lists the feature names. |
 
-`check --json` では、指摘が `findings` に入ります。次は、手順 3 の `simulation.yaml` の出力の一部です。
+With `check --json`, the findings are in `findings`. Here is part of the output for the `simulation.yaml` of step 3:
 
 <!-- integrate ECUs: vehicle_sil_launch check --json simulation.yaml, an excerpt -->
 ```json
@@ -567,103 +571,103 @@ CI のスクリプトや自作のツールから使うときは、終了コー�
 }
 ```
 
-| 知っておくこと | 内容 |
+| Topic | Details |
 |---|---|
-| `participants[].variables` | `check --json` の出力にあり、どの ECU にどの変数があるかを、実行の前に調べられます。 |
-| `--events` の最初と最後 | 最初の行が `hello`、最後の行が `result` で、`result` の内容は `run --json` と同じです。 |
-| `--json` と `--events` | 一緒には指定できません。 |
-| `--stdin-commands` | 呼び出したプログラムが終わると標準入力が閉じ、`vehicle_sil_launch` も止まります。 |
+| `participants[].variables` | Part of the `check --json` output. It shows which ECU has which variables before you run. |
+| First and last lines of `--events` | The first line is `hello` and the last is `result`. The content of `result` is the same as the output of `run --json`. |
+| `--json` and `--events` | You cannot use them together. |
+| `--stdin-commands` | When the calling program exits, stdin closes and `vehicle_sil_launch` stops too. |
 
-リファレンスは次のとおりです。
+The references:
 
-| 知りたいこと | 場所 |
+| To find | See |
 |---|---|
-| 終了コード | [simulation-config.md](../simulation-config.md) の「引数と終了コード」 |
-| `check --json` の形式 | [simulation-check.md](../simulation-check.md) の「出力」 |
-| イベントの種類と順序 | [simulation-events.md](../simulation-events.md) |
+| Exit codes | "Arguments and exit codes" in [simulation-config.md](../simulation-config.md#arguments-and-exit-codes) |
+| The `check --json` format | "Output" in [simulation-check.md](../simulation-check.md#output) |
+| Event types and their order | [simulation-events.md](../simulation-events.md) |
 
-Python からは、`Launch` クラスがこの形で `vehicle_sil_launch` を起動します（[control-api.md](../control-api.md) の「Python」）。
+From Python, the `Launch` class starts `vehicle_sil_launch` this way (see "Python" in [control-api.md](../control-api.md#python)).
 
-## 等速で動かす（`--speed`）と遅れの見方
+## Run at real-time speed (`--speed`) and read the lateness
 
-何も指定しないと、シミュレーションは PC が計算できる最速で進みます。実時間で動く機器と一緒に動かすときや、画面を見ながら操作するときは、`--speed` で速度を指定します。`1` が実時間と同じ速度です。
+By default, the simulation runs as fast as the computer can compute. To run together with devices that work in real time, or to operate the simulation while you watch a screen, set the speed with `--speed`. `1` is real-time speed.
 
 ```sh
 vehicle_sil_launch run simulation.fixed.yaml --speed 1
 ```
 
-### 確認
+### Verify the timing line
 
-速度を指定すると、結果に `time:` の行が追加されます。次は `--speed 4` の行です（`<` と `>` で囲んだ所は、実行ごとに違う値になります）。
+With a speed set, the result has an extra `time:` line. Here is the line for `--speed 4`; the parts between `<` and `>` differ from run to run:
 
 <!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
 ```text
 time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
 ```
 
-| 行の部分 | 意味 |
+| Part of the line | Meaning |
 |---|---|
-| `ran at <actual_speed> times real time` | 全体の実際の速度です（一時停止していた時間を除きます）。 |
-| `<late_steps> of 200 paced steps more than 10 ms late` | 速度を合わせたタイムステップのうち、許容（`late_tolerance_ms`、既定は 10 ms）を超えて遅れた数です。 |
-| `the latest by <max_late_ms> ms` | いちばん遅れたタイムステップの遅れです。 |
-| `<slipped_ms> ms behind in all` | 遅れのために後ろにずれた時間の合計です（シミュレーションは遅れを取り戻しません）。 |
+| `ran at <actual_speed> times real time` | The actual speed over the whole run, excluding time spent paused |
+| `<late_steps> of 200 paced steps more than 10 ms late` | The number of paced time steps that were later than the tolerance (`late_tolerance_ms`, default 10 ms) |
+| `the latest by <max_late_ms> ms` | The lateness of the latest time step |
+| `<slipped_ms> ms behind in all` | The total time the run slipped behind because of lateness (the simulation does not catch up) |
 
-### うまくいかないとき
+### Troubleshoot late steps
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 警告 `behind-real-time` が出る | 許容を超えて遅れたタイムステップが、1 つ以上あります。 | 速度を下げるか、ECU を 1 つずつ `--disable` で無効にして、遅い ECU を探します。 |
-| 警告 `coarse-time-step` が出る | `time_step_ms` を書いていて、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
+| Warning `behind-real-time` | At least one time step was later than the tolerance. | Lower the speed, or disable the ECUs one at a time with `--disable` to find the slow one. |
+| Warning `coarse-time-step` | `time_step_ms` is set, and an ECU's steps do not start on time-step boundaries. | Write the value from the finding in `time_step_ms`. |
 
-遅れの定義、許容の決め方、タイムステップと ECU のステップの関係は、[simulation-run.md](../simulation-run.md) の「速度を指定して動かす」にあります。
+For the definition of lateness, how to choose the tolerance, and how time steps relate to ECU steps, see "Running at a set speed (`speed`)" in [simulation-run.md](../simulation-run.md#running-at-a-set-speed-speed).
 
-## 同じ ECU を 2 つ載せる
+## Run two instances of the same ECU
 
-同じ実行ファイルを 2 つの participant として並べると、participant 名は `--name` で変わりますが、J1939 の NAME、アドレス、変数名は同じままです。同じネットワークにいれば、`check` が `name-conflict` を報告します。これも設定ファイルだけでは直せないので、ECU を作った人に、NAME とアドレスを引数で受け取れるようにしてもらいます。
+If you list the same executable as 2 participants, `--name` gives them different participant names, but the J1939 NAME, the address and the variable names stay the same. If both are on the same network, `check` reports `name-conflict`. The configuration file alone cannot fix this either, so ask the ECU author to make the NAME and address configurable through arguments.
 
-| すること | 担当 | 内容 |
+| Task | Who | Details |
 |---|---|---|
-| ECU に独自の引数を追加する | ECU を作った人 | `main()` で独自の引数を `argv` から取り出し、残りを `ecu_main()` に渡します（[ecu-executable.md](../ecu-executable.md) の「`ecu_main`」）。 |
-| 引数を設定ファイルに書く | 設定ファイルを書く人 | `command` の、実行ファイルの後ろに書きます。 |
+| Add ECU-specific arguments to the ECU | The ECU author | In `main()`, take the ECU-specific arguments out of `argv` and pass the rest to `ecu_main()` (see "`ecu_main`" in [ecu-executable.md](../ecu-executable.md#ecu_main)). |
+| Write the arguments in the configuration file | The integrator | Write them in `command`, after the executable. |
 
-設定ファイルは、たとえば次のようになります。`--address` と `--identity-number` は、ECU を作った人が決める引数の例です。例のエンジンの ECU には、この引数はありません。
+For example, the configuration file looks like this. `--address` and `--identity-number` are examples of arguments that the ECU author defines; the example engine ECU does not have them.
 
 ```yaml
   - name: Engine2
     command: [engine/vehicle_sil_engine_ecu, --address, "0x01", --identity-number, "2"]
 ```
 
-| 知っておくこと | 内容 |
+| Topic | Details |
 |---|---|
-| `check` での扱い | `check` も `run` も、`command` の引数を付けて ECU を起動するので、その引数で作ったノードのアドレスと NAME を照合します。 |
-| 使えない引数の名前 | `ecu_main()` の引数（[ecu-executable.md](../ecu-executable.md) の「引数」）と同じ名前は使えません。 |
-| 知らない引数 | `ecu_main()` は、知らない引数があると終了コード 4 で終わるので、独自の引数は必ず `main()` で取り出します。 |
-| `--help` | 独自の引数は `ecu_main()` の `--help` に表示されないので、ECU の説明に書いてもらいます。 |
+| How `check` handles them | Both `check` and `run` start the ECU with the arguments in `command`, so the check covers the address and NAME of the node that those arguments create. |
+| Names you cannot use | The names of the `ecu_main()` arguments (see "Arguments and exit codes" in [ecu-executable.md](../ecu-executable.md#arguments-and-exit-codes)) |
+| Unknown arguments | `ecu_main()` exits with exit code 4 when it sees an argument it does not know, so always take the ECU-specific arguments out in `main()`. |
+| `--help` | The `--help` of `ecu_main()` does not list ECU-specific arguments, so ask the ECU author to describe them in the ECU's documentation. |
 
-## `ecu_main()` で作っていないツールを並べる
+## Add tools not built with `ecu_main()`
 
-ログを取るツールや自作のテスト用のプログラムなど、`ecu_main()` で作っていない実行ファイルは、`describe: false` を書いて並べます。`check` はその実行ファイルを照合せず、`not-checked` の注記を出します。
+To list executables not built with `ecu_main()`, such as logging tools or your own test programs, write `describe: false` for them. `check` does not check such an executable and reports the note `not-checked`.
 
-| 書くもの | 内容 |
+| What to write | Meaning |
 |---|---|
-| `describe: false` | `--describe` で起動しません。 |
-| `command` の `{registry_uri}`、`{name}` | `run` が、registry の URI と participant 名に置き換えます。 |
-| `required: false` | シミュレーションに参加しないツールに書きます。`run` は、そのツールの参加を待ちません。 |
-| `manual: true` | `run` は起動せず、コマンドを表示します。自分で起動します。 |
+| `describe: false` | `check` and `run` do not start it with `--describe`. |
+| `{registry_uri}`, `{name}` in `command` | `run` replaces them with the registry URI and the participant name. |
+| `required: false` | For a tool that does not join the simulation. `run` does not wait for it to join. |
+| `manual: true` | `run` does not start the tool but prints its command. You start it yourself. |
 
 > [!WARNING]
-> SIL Kit の autonomous のライフサイクルで仮想時間に参加するツール（既定の設定の `Peer` など）が、ECU より先に仮想時間を進めると、ECU が始まった時点で、SIL Kit がシミュレーション全体を中断します。こういうツールは、coordinated にして `required: true` にするか、`manual: true` にして、シミュレーションが始まった後に起動します。
+> If a tool that joins virtual time with the SIL Kit autonomous lifecycle (such as `Peer` with its default settings) advances virtual time before the ECUs do, SIL Kit aborts the whole simulation when the ECUs start. Make such a tool coordinated and set `required: true`, or set `manual: true` and start it after the simulation has started.
 
-ルールは、[simulation-config.md](../simulation-config.md) の「ほかの実行ファイル（`describe: false`）」と「participant を自分で起動する」にあります。
+For the rules, see "[Other executables (`describe: false`)](../simulation-config.md#other-executables-describe-false)" and "[Starting a participant yourself (`manual`, `--manual`)](../simulation-config.md#starting-a-participant-yourself-manual---manual)" in simulation-config.md.
 
-## 補足
+## Notes
 
-- 変数名は ECU ごとに独立なので、ECU の間で合わせる必要はありません。`ecu.` と `peer.` で始まる名前は使えません。`j1939.<ネットワーク名>.` で始まる名前は、監視の出力と重なることがあるので避けます。重なると、ECU は起動のときに終了コード 3 で終わります。例では、ECU の名前を先頭に付けています（`engine.throttle`、`dashboard.engine_speed`）。
-- J1939 のアドレス 254 は、空いているアドレスを ECU が自分で選ぶ指定で、`check` は重なりとみなしません。アドレスが重なったときに `error` になるか `warning` になるかの条件は、[simulation-check.md](../simulation-check.md) の「照合」にあります。
-- 例の Manufacturer Code の 0x7F0 は、例のための仮の値です。
+- Variable names are independent for each ECU, so the ECUs need not agree on them. Names that start with `ecu.` or `peer.` are not allowed. Avoid names that start with `j1939.<network name>.`: they can collide with the monitoring output, and on a collision the ECU exits with exit code 3 at startup. The example puts the ECU's name first (`engine.throttle`, `dashboard.engine_speed`).
+- J1939 address 254 tells the ECU to pick a free address itself; `check` does not treat it as a conflict. For when an address conflict is an `error` and when it is a `warning`, see "Checks" in [simulation-check.md](../simulation-check.md#checks).
+- The Manufacturer Code 0x7F0 in the examples is a placeholder.
 
-## 次に読むもの
+## What to read next
 
-- 値の設定と確認を、自動のテストにする → [シナリオでテストを書く](scenario-tests.md)
-- 実行中に変数を読み書きする、時間を止めて進める → [信号を外から操作する](operate-signals.md)
-- ほかの PC で動く ECU を参加させる → [複数の PC で動かす](multi-pc.md)
+- Turn value settings and checks into automated tests: [Write tests with scenarios](scenario-tests.md)
+- Read and write variables during a run, and pause and step time: [Read and write signals from outside](operate-signals.md)
+- Add ECUs that run on other computers: [Run on several computers](multi-pc.md)

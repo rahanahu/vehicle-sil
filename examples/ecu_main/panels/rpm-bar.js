@@ -1,4 +1,4 @@
-// A panel of your own for the browser GUI's dashboard (docs/gui.md, "カスタムパネル"): a custom
+// A panel of your own for the browser GUI's dashboard ("Custom panels" in docs/gui.md): a custom
 // element that shows one number as a bar. simulation.dashboard.yaml loads this module and places
 // the element. The GUI sets three properties before it puts the element on the page:
 //   client     the GUI client library's client (gui/client/README.md)

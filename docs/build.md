@@ -1,104 +1,106 @@
-# ビルドと取り込み
+# Building and integrating vehicle-sil
 
-vehicle-sil 自体のビルド方法と、自分の CMake プロジェクトに vehicle-sil を取り込む方法をまとめたドキュメントです。
+[日本語](ja/build.md)
 
-| したいこと | 読む節 |
+This page explains how to build vehicle-sil itself and how to include vehicle-sil in your own CMake project.
+
+| Goal | Section |
 |---|---|
-| リポジトリをビルドして、テストを実行する | [必要なもの](#必要なもの)、[vehicle-sil 自体をビルドする](#vehicle-sil-自体をビルドする) |
-| ビルドせずにツールを使う | [ビルド済みのツール](#ビルド済みのツール) |
-| 自分の CMake プロジェクトから使う | [外部プロジェクトから使う（FetchContent）](#外部プロジェクトから使うfetchcontent) |
-| ECU を、ほかのファイルなしで動く 1 つの実行ファイルにして配布する | [1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）](#1-つの実行ファイルにするvehicle_sil_static) |
+| Build the repository and run the tests | [Requirements](#requirements), [Build vehicle-sil itself](#build-vehicle-sil-itself) |
+| Use the tools without building them | [Prebuilt tools](#prebuilt-tools) |
+| Use vehicle-sil from your own CMake project | [Use from another project (FetchContent)](#use-from-another-project-fetchcontent) |
+| Ship an ECU as a single executable that needs no other files | [Build a single executable (`VEHICLE_SIL_STATIC`)](#build-a-single-executable-vehicle_sil_static) |
 
-## 必要なもの
+## Requirements
 
-| 必要なもの | 用途 | Linux | Windows |
+| Requirement | Used for | Linux | Windows |
 |---|---|---|---|
-| コンパイラ | すべてのビルド | C++20 に対応した GCC（標準）か Clang | MSYS2 UCRT64 の MinGW-w64 GCC |
-| CMake 3.21 以上、Ninja | すべてのビルド | ディストリビューションのパッケージ | MSYS2 のパッケージ |
-| Git | クローンと、SIL Kit へのパッチの適用 | ディストリビューションのパッケージ | MSYS2 のパッケージ |
-| Python 3.11 以上と PyYAML | テストとサンプルのビルド、型付きメッセージの生成 | [uv](https://docs.astral.sh/uv/) でのインストールを勧めます。 | MSYS2 のパッケージ |
-| Python 3.11 以上と grpcio、grpcio-tools、protobuf | Control API の Python クライアント | uv でのインストールを勧めます。 | MSYS2 のパッケージ |
+| Compiler | Every build | GCC (default) or Clang with C++20 support | MinGW-w64 GCC of MSYS2 UCRT64 |
+| CMake 3.21 or later, Ninja | Every build | Distribution packages | MSYS2 packages |
+| Git | Cloning, and applying the patches to SIL Kit | Distribution package | MSYS2 package |
+| Python 3.11 or later with PyYAML | Building the tests and examples, generating typed messages | Install with [uv](https://docs.astral.sh/uv/) (recommended) | MSYS2 packages |
+| Python 3.11 or later with grpcio, grpcio-tools and protobuf | The Python client of the Control API | Install with uv (recommended) | MSYS2 packages |
 
-Control Server をビルドし、gRPC を FetchContent で取り込むときは、CMake 3.28 以上が必要です（[dependencies.md](dependencies.md) の「gRPC と Protocol Buffers」）。Visual Studio と MSVC は不要です。
+To build the Control Server and pull in gRPC with FetchContent, you need CMake 3.28 or later (see "gRPC and Protocol Buffers (Control Server, optional)" in [dependencies.md](dependencies.md#grpc-and-protocol-buffers-control-server-optional)). You do not need Visual Studio or MSVC.
 
-必要なものがそろっているかは、クローンした後に `scripts/doctor.py` で確認できます。読むだけのスクリプトで、足りないものにはインストールの方法を表示します。
+After you clone, run `scripts/doctor.py` to see whether everything is in place. The script changes nothing; for anything missing, it prints how to install it.
 
-### Python（uv）
+### Python (uv)
 
-Python のバージョンと依存パッケージは、リポジトリ直下の `pyproject.toml`、`.python-version`、`uv.lock` で決めています。[uv](https://docs.astral.sh/uv/) があれば、次のコマンドで、開発用の Python と依存パッケージのすべてが `.venv` に入ります。`.python-version` の Python が PC になければ、uv がダウンロードします。
+`pyproject.toml`, `.python-version` and `uv.lock` at the repository root pin the Python version and the Python packages. With [uv](https://docs.astral.sh/uv/), the commands below install the development Python and all packages into `.venv`. If the computer does not have the Python version in `.python-version`, uv downloads it.
 
 ```sh
-uv sync                        # すべて（既定の dev グループ）
-uv sync --only-group codegen   # 型付きメッセージの生成だけ（PyYAML）
-uv sync --only-group control   # Control API のクライアントだけ（grpcio、grpcio-tools、protobuf）
+uv sync                        # everything (the default dev group)
+uv sync --only-group codegen   # typed message generation only (PyYAML)
+uv sync --only-group control   # Control API client only (grpcio, grpcio-tools, protobuf)
 ```
 
-`--only-group` は、ほかのグループのパッケージを `.venv` から削除します。たとえば `uv sync --only-group control` の後は、型付きメッセージの生成に `.venv` を使えません。迷ったら `uv sync` にします。
+`--only-group` removes the packages of the other groups from `.venv`. For example, after `uv sync --only-group control`, you cannot use `.venv` to generate typed messages. If in doubt, run `uv sync`.
 
-CMake が使う Python は、ビルドのしかたで決まります（[dependencies.md](dependencies.md) の「Python の探し方」）。
+Which Python CMake uses depends on how you build (see "How Python is found" in [dependencies.md](dependencies.md#how-python-is-found)).
 
-| ビルド | CMake が使う Python |
+| Build | Python that CMake uses |
 |---|---|
-| Linux で、vehicle-sil を最上位のプロジェクトとしてビルドする（`.venv` に必要なパッケージがある） | `.venv` の Python を先に使います（環境の有効化も Python の指定も不要です）。 |
-| 同じビルドで、`.venv` がないか、必要なパッケージがない | `find_package(Python3)` で探します。 |
-| FetchContent などで取り込んだ利用側のビルド | vehicle-sil の `.venv` を使いません。 |
-| Windows のビルド | vehicle-sil の `.venv` を使いません。 |
+| On Linux, with vehicle-sil as the top-level project (`.venv` has the required packages) | The Python in `.venv`, first. You do not need to activate the environment or name the Python. |
+| The same build, without `.venv` or without the required packages | The one that `find_package(Python3)` finds. |
+| A consumer's build that includes vehicle-sil with FetchContent or similar | Not the `.venv` of vehicle-sil. |
+| A Windows build | Not the `.venv` of vehicle-sil. |
 
-依存パッケージを変えたら、`uv lock` で `uv.lock` を更新し、`pyproject.toml` と `uv.lock` の両方をコミットします。`uv sync --locked` は、`uv.lock` が `pyproject.toml` と合わないと失敗します。
+When you change the Python packages, update `uv.lock` with `uv lock` and commit both `pyproject.toml` and `uv.lock`. `uv sync --locked` fails if `uv.lock` does not match `pyproject.toml`.
 
-対応する最も古いバージョン（3.11）と `.python-version` のバージョンで Python のコードを確認するには、`scripts/verify-python.py` を使います（C++ のビルドは不要です）。このスクリプトは、`pyproject.toml` に書いた依存の下限そのものでも 3.11 で確認します。そのため、下限は、テストを実行したバージョンになります。
+To check the Python code with the oldest supported version (3.11) and with the version in `.python-version`, run `scripts/verify-python.py` (no C++ build needed). On 3.11, it also runs with exactly the lower bounds of the packages in `pyproject.toml`, so the lower bounds are versions that the tests have run on.
 
-uv を使わない場合は、`pyproject.toml` の `[dependency-groups]` にあるパッケージを pip でインストールしても構いません。Windows（MSYS2 UCRT64）では、uv を使わずに、下の pacman のパッケージの Python のままで構いません。
+Without uv, you can install the packages listed in `[dependency-groups]` of `pyproject.toml` with pip. On Windows (MSYS2 UCRT64), you can skip uv and keep the Python from the pacman packages below.
 
-## vehicle-sil 自体をビルドする
+## Build vehicle-sil itself
 
-SIL Kit のパッチ（`patches/sil-kit/`）は、クローンした時点では適用されていません。`cmake --preset …` の configure のときに、ビルドのディレクトリの中のコピーに適用します（`external/sil-kit` は上流のままです）。使うコミット、適用したパッチ、コピーの場所は、configure の出力の `vehicle-sil: sil-kit (…) + … patch(es) … -> …` の行でわかります。
+A fresh clone does not have the SIL Kit patches (`patches/sil-kit/`) applied. `cmake --preset …` applies them during the configure step to a copy inside the build directory; `external/sil-kit` stays as upstream has it. The line `vehicle-sil: sil-kit (…) + … patch(es) … -> …` in the configure output shows the commit used, the patches applied and the location of the copy.
 
 ### Linux
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
-scripts/doctor.py                      # 必要なものがそろっているかを 1 行ずつ表示する
-uv sync                                # ビルドが使う Python のパッケージをインストールする
+scripts/doctor.py                      # prints one line per requirement: is it in place?
+uv sync                                # installs the Python packages that the build uses
 cmake --preset linux-gcc-debug
 cmake --build --preset linux-gcc-debug
 ctest --preset linux-gcc-debug
 ```
 
-3 つのコマンドの `linux-gcc-debug` は、次のプリセットに替えられます。README の「[リポジトリからビルドする](../README.md#リポジトリからビルドする)」は `linux-gcc-control` を使っています。
+In the 3 commands that name `linux-gcc-debug`, you can replace it with any preset below. "[Build from the repository](../README.md#build-from-the-repository)" in the README uses `linux-gcc-control`.
 
-| プリセット | 内容 | 追加で必要なもの |
+| Preset | Contents | Additional requirements |
 |---|---|---|
-| `linux-gcc-debug`、`linux-gcc-release` | GCC | なし |
-| `linux-clang-debug` | Clang | なし |
-| `linux-clang-asan`、`linux-clang-tsan` | Clang と、AddressSanitizer + UBSan または ThreadSanitizer | なし |
-| `linux-gcc-asan`、`linux-gcc-tsan` | GCC とサニタイザー | `libasan`、`libubsan`、`libtsan` のパッケージ |
-| `linux-gcc-static` | Release で `VEHICLE_SIL_STATIC=ON`（下の「1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）」） | 静的な libstdc++（Fedora は `libstdc++-static`） |
-| `linux-gcc-control` | GCC の Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` | gRPC が PC になければ、CMake 3.28 以上と、最初の configure のときの Git とネットワーク |
+| `linux-gcc-debug`, `linux-gcc-release` | GCC | None |
+| `linux-clang-debug` | Clang | None |
+| `linux-clang-asan`, `linux-clang-tsan` | Clang with AddressSanitizer + UBSan, or with ThreadSanitizer | None |
+| `linux-gcc-asan`, `linux-gcc-tsan` | GCC with sanitizers | The packages `libasan`, `libubsan` and `libtsan` |
+| `linux-gcc-static` | Release with `VEHICLE_SIL_STATIC=ON` ("Build a single executable (`VEHICLE_SIL_STATIC`)" below) | A static libstdc++ (`libstdc++-static` on Fedora) |
+| `linux-gcc-control` | GCC Debug with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` | If the computer has no gRPC: CMake 3.28 or later, and Git and a network connection for the first configure |
 
-`linux-gcc-control` は、Control Server とそのテストもビルドします（[control-api.md](control-api.md) の「ビルド」）。gRPC が見つからなければ、固定したバージョンを FetchContent で取り込んでビルドします。Python のクライアントのテストは、grpcio と grpcio-tools のある Python（`uv sync`）があるときだけ登録します。
+`linux-gcc-control` also builds the Control Server and its tests (see "Build" in [control-api.md](control-api.md#build)). If CMake does not find gRPC, it pulls in a pinned version with FetchContent and builds it. The tests of the Python client are registered only if a Python with grpcio and grpcio-tools is available (`uv sync`).
 
-`linux-gcc-static`、`windows-mingw-static`、`linux-gcc-control` は、`scripts/verify.py --linux` に入っていません。名前を指定して実行します。
+`scripts/verify.py --linux` does not include `linux-gcc-static`, `windows-mingw-static` or `linux-gcc-control`. Run them by name.
 
-ThreadSanitizer のプリセットのテストは、誤検出とわかっている報告だけを `cmake/tsan-suppressions.txt` で抑えます（1 件ごとに理由を書いています）。
+The tests of the ThreadSanitizer presets suppress only reports known to be false positives. The suppressions are in `cmake/tsan-suppressions.txt`, each with its reason.
 
-`-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
+`-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` turns warnings in vehicle-sil's own targets into errors.
 
-コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](../AGENTS.md) の「検証とスクリプト」）。
+Before you commit, you can check with `scripts/verify.py --linux` (see "Verification and scripts" in [AGENTS.md](../AGENTS.md#verification-and-scripts)).
 
-### Windows（MSYS2 UCRT64）
+### Windows (MSYS2 UCRT64)
 
-MSYS2 の GCC（MinGW-w64、UCRT 版）でビルドします。作業は MSYS2 の「UCRT64」シェルで行います。UCRT64 シェルは、この GCC や CMake が `PATH` に入った bash です。
+Build with the GCC of MSYS2 (MinGW-w64, UCRT variant). Work in the MSYS2 "UCRT64" shell: a bash with this GCC, CMake and the other tools in `PATH`.
 
-まず、PowerShell かコマンドプロンプトで、MSYS2 をインストールして UCRT64 シェルに入ります。
+First, in PowerShell or the Command Prompt, install MSYS2 and open the UCRT64 shell:
 
 ```powershell
 winget install MSYS2.MSYS2
 C:\msys64\msys2_shell.cmd -ucrt64 -defterm -here -no-start
 ```
 
-2 行目は、今のターミナルのまま、今のディレクトリで UCRT64 シェルに入ります（スタートメニューの「MSYS2 UCRT64」でも同じシェルが開きます）。`echo $MSYSTEM` が `UCRT64` を表示すれば、正しいシェルです。これ以降のコマンドは、このシェルで実行します。
+The second line opens the UCRT64 shell in the current terminal and the current directory. The "MSYS2 UCRT64" entry in the Start menu opens the same shell. If `echo $MSYSTEM` prints `UCRT64`, you are in the right shell. Run all later commands in this shell.
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
@@ -110,58 +112,58 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-プリセットは `windows-mingw-debug`、`windows-mingw-release`、`windows-mingw-static`（Release で `VEHICLE_SIL_STATIC=ON`）の 3 つです。
+There are 3 presets: `windows-mingw-debug`, `windows-mingw-release` and `windows-mingw-static` (Release with `VEHICLE_SIL_STATIC=ON`).
 
-実行ファイルが読み込む DLL は、次の場所にあります。
+Where the executables find the DLLs they load:
 
-| DLL | 場所 |
+| DLL | Location |
 |---|---|
-| `SilKit.dll` | ビルド後に、各実行ファイルの隣へ自動でコピーされます。 |
-| MinGW のランタイム DLL（`libstdc++-6.dll` など） | UCRT64 シェルの `PATH` から読み込まれます。 |
+| `SilKit.dll` | Copied next to each executable automatically after the build. |
+| MinGW runtime DLLs (`libstdc++-6.dll` and others) | Loaded from the `PATH` of the UCRT64 shell. |
 
-UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\msys64\ucrt64\bin` を `PATH` に追加します。ほかの MinGW の `bin` より前に置きます。DLL の読み込みに失敗すると、実行ファイルは何も表示せずに終了します。
+To run the executables outside the UCRT64 shell (in PowerShell, for example), add `C:\msys64\ucrt64\bin` to `PATH`, before the `bin` directory of any other MinGW. If a DLL fails to load, the executable exits without printing anything.
 
-| 終了コード | 原因 |
+| Exit code | Cause |
 |---|---|
-| `0xC0000135` | DLL が見つかりません。 |
-| `0xC0000139` | 別のバージョンの GCC の DLL を先に読み込みました。 |
+| `0xC0000135` | A DLL was not found. |
+| `0xC0000139` | A DLL from a different GCC version was loaded first. |
 
-## ビルド済みのツール
+## Prebuilt tools
 
-リリースのページで、ビルド済みのツールを OS ごとのアーカイブで配布します。
+The releases page provides the prebuilt tools as one archive per OS.
 
-| アーカイブ | ビルドした環境 | 実行に必要なもの |
+| Archive | Built on | Needed to run |
 |---|---|---|
-| `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz` | Ubuntu 22.04（x86_64） | glibc 2.35 以上（Ubuntu 22.04 と同じか新しい glibc）だけで、ほかの共有ライブラリは不要です。 |
-| `vehicle-sil-tools-<バージョン>-windows-x86_64.zip` | MSYS2 UCRT64 の MinGW | DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ のランタイムを静的にリンク）。 |
+| `vehicle-sil-tools-<version>-linux-x86_64.tar.gz` | Ubuntu 22.04 (x86_64) | Only glibc 2.35 or later (the glibc of Ubuntu 22.04 or newer). No other shared libraries. |
+| `vehicle-sil-tools-<version>-windows-x86_64.zip` | MinGW of MSYS2 UCRT64 | Single executables with no bundled DLLs (SIL Kit, gRPC and the C++ runtime are linked statically). |
 
-アーカイブには次のものが入っています。詳しい内容はアーカイブの `README.md` に、同梱しているものとそのライセンスは [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) にあります。
+The archive contains the items below. The `README.md` in the archive describes the contents in detail, and [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) lists the bundled components and their licenses.
 
-| 入っているもの | 補足 |
+| Item | Notes |
 |---|---|
-| `vehicle_sil_launch` | Control Server つきです。 |
-| GUI サーバーと画面 | — |
-| Control API の Python クライアント | gRPC のスタブつきです。 |
-| GUI のクライアントのライブラリ | 1 つの ES モジュールと、型つきの npm のパッケージです。 |
-| 自分の画面のテンプレート（`gui_starter/`） | `vehicle-sil-gui --web gui_starter simulation.yaml` で使います。 |
-| ダッシュボードの JSON Schema | — |
-| ライセンスの表示 | — |
+| `vehicle_sil_launch` | With the Control Server. |
+| GUI server and screens | — |
+| Python client of the Control API | With the gRPC stubs. |
+| GUI client library | A single ES module, and an npm package with types. |
+| Template for your own screen (`gui_starter/`) | Use it with `vehicle-sil-gui --web gui_starter simulation.yaml`. |
+| JSON Schema of the dashboard | — |
+| License notices | — |
 
-ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<バージョン>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
+To build your own screen for the browser GUI, install `vehicle-sil-gui-client-<version>.tgz` from the releases page with `npm install <its URL or the file>`. You can then use the client library as `@vehicle-sil/gui-client` (see "Build your own screen" in [gui.md](gui.md#build-your-own-screen)). The same file is also in `client/` of the tools archive.
 
-アーカイブは `scripts/package.py` が作ります。
+`scripts/package.py` creates the archives.
 
-| サブコマンド | すること |
+| Subcommand | What it does |
 |---|---|
-| `tools` | ツールのアーカイブを作ります。 |
-| `verify` | アーカイブを、利用者の手順で確認します。 |
-| `template` | テンプレートのアーカイブを作ります。 |
+| `tools` | Creates the tools archive. |
+| `verify` | Checks an archive by following the steps a user takes. |
+| `template` | Creates the template archive. |
 
-引数は `scripts/package.py --help` で表示します。タグ `v<バージョン>` を push すると、GitHub Actions が両方の OS でアーカイブを作って確認し、リリースの下書きに添付します。
+`scripts/package.py --help` prints the arguments. When you push a tag `v<version>`, GitHub Actions creates and checks the archives on both OSes and attaches them to a draft release.
 
-## 外部プロジェクトから使う（FetchContent）
+## Use from another project (FetchContent)
 
-自分の CMake プロジェクトの `CMakeLists.txt` に、次のように書きます。
+Write this in the `CMakeLists.txt` of your CMake project:
 
 ```cmake
 cmake_minimum_required(VERSION 3.21)
@@ -172,25 +174,25 @@ include(FetchContent)
 FetchContent_Declare(
   vehicle_sil
   GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
-  GIT_TAG <固定するコミットハッシュ>)
+  GIT_TAG <commit hash to pin>)
 
 FetchContent_MakeAvailable(vehicle_sil)
 
 add_executable(example main.cpp)
-target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939_periodic_sender)   # core だけなら vehicle_sil::core
-vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
+target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939_periodic_sender)   # vehicle_sil::core if you need only core
+vehicle_sil_copy_runtime_dlls(example)   # Windows: copies SilKit.dll (does nothing on other OSes)
 ```
 
-新しく始めるときは、これを書いてあるテンプレート [template/](../template) をコピーするのが早道です（README の「[クイックスタート](../README.md#クイックスタート)」）。完全な例は [examples/fetchcontent_consumer](../examples/fetchcontent_consumer) にあります。
+To start a new project, the quickest way is to copy the template [template/](../template), which already contains this (see "[Quick start](../README.md#quick-start)" in the README). [examples/fetchcontent_consumer](../examples/fetchcontent_consumer) is a complete example.
 
-| 項目 | 取り込んだときの動作 |
+| Item | Behavior when you include vehicle-sil |
 |---|---|
-| SIL Kit | vehicle-sil のサブモジュールとして自動で取得、設定されるので、利用側で個別に設定する必要はありません。 |
-| SIL Kit へのパッチ | ビルドツリーにコピーしたソースに `patches/sil-kit/` のパッチを適用したものを使います（[dependencies.md](dependencies.md)）。 |
-| Git | パッチの適用に使います。 |
-| リンクしないライブラリ | ビルドされません。 |
+| SIL Kit | Fetched and configured automatically as a submodule of vehicle-sil. You do not set it up separately. |
+| Patches to SIL Kit | The build uses a copy of the SIL Kit sources in the build tree, with the patches of `patches/sil-kit/` applied ([dependencies.md](dependencies.md)). |
+| Git | Used to apply the patches. |
+| Libraries you do not link | Not built. |
 
-最小の `main.cpp` は次のとおりです。
+A minimal `main.cpp`:
 
 ```cpp
 #include <vehicle_sil/j1939/periodic_sender.hpp>
@@ -204,13 +206,13 @@ vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーす�
 namespace j1939 = vehicle_sil::j1939;
 using namespace std::chrono_literals;
 
-// ECU は Ecu& を受け取るクラスにする。モデルの状態（ここでは rpm_）も ECU のクラスが持つ
+// An ECU is a class that takes Ecu&. The ECU class also holds the model state (here rpm_)
 class Engine {
 public:
     explicit Engine(vehicle_sil::Ecu& ecu) {
         auto& node = ecu.j1939("J1939_CAN1").add_node(
-            {.address = 0x00, .name = j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});   // Address Claim はスタックが行う
-        node.attach<j1939::PeriodicSender>(j1939::Pgn{0xFF10}, 100ms,   // アドレスを得てから 100 ms ごとに送信する
+            {.address = 0x00, .name = j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});   // the stack does the Address Claim
+        node.attach<j1939::PeriodicSender>(j1939::Pgn{0xFF10}, 100ms,   // sends every 100 ms once it has an address
                                            [this](std::span<std::uint8_t> out) -> std::size_t {
                                                out[0] = static_cast<std::uint8_t>(rpm_ & 0xFF);
                                                out[1] = static_cast<std::uint8_t>(rpm_ >> 8);
@@ -223,60 +225,60 @@ private:
 };
 
 int main() {
-    vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});   // SIL Kit の仮想時間。registry はプロセス内に立つ
+    vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});   // SIL Kit virtual time; the registry runs in this process
     sim.add<Engine>("Engine", 10ms);
     sim.run_for(3s);
 }
 ```
 
-受信、Request と応答、受信の監視、テストの書き方は [j1939-guide.md](j1939-guide.md) にあります。
+For receiving, Request and response, reception monitoring and writing tests, see [j1939-guide.md](j1939-guide.md).
 
-信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします。Python 3.11 以上と PyYAML が必要です（[j1939-codec.md](j1939-codec.md)）。
+To define signals in YAML and turn them into typed messages, call `vehicle_sil_add_j1939_codec(<target> <definition.yaml>)` and link `<target>`. This needs Python 3.11 or later with PyYAML ([j1939-codec.md](j1939-codec.md)).
 
-### 1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）
+### Build a single executable (`VEHICLE_SIL_STATIC`)
 
-ECU の実行ファイルを、ほかのファイルなしで配布したいときは、`-DVEHICLE_SIL_STATIC=ON` を付けて configure します（既定は OFF）。SIL Kit を静的ライブラリとしてビルドし、SIL Kit をリンクする実行ファイルに、C++ のランタイムも静的にリンクします。
+To ship an ECU executable without any other files, configure with `-DVEHICLE_SIL_STATIC=ON` (the default is OFF). SIL Kit is then built as a static library, and the executables that link SIL Kit also link the C++ runtime statically.
 
-| ビルドするもの | 指定のしかた |
+| What you build | How to set it |
 |---|---|
-| vehicle-sil 自体 | `cmake --preset linux-gcc-static`（Windows は `windows-mingw-static`） |
-| FetchContent で取り込む自分のプロジェクト | configure に `-DVEHICLE_SIL_STATIC=ON` を渡すか、`FetchContent_MakeAvailable` の前に `set(VEHICLE_SIL_STATIC ON)` を書きます。 |
-| テンプレートのプロジェクト | `cmake --preset linux -DVEHICLE_SIL_STATIC=ON` |
+| vehicle-sil itself | `cmake --preset linux-gcc-static` (`windows-mingw-static` on Windows) |
+| Your project that includes vehicle-sil with FetchContent | Pass `-DVEHICLE_SIL_STATIC=ON` to the configure step, or write `set(VEHICLE_SIL_STATIC ON)` before `FetchContent_MakeAvailable`. |
+| The template project | `cmake --preset linux -DVEHICLE_SIL_STATIC=ON` |
 
-| OS | 不要になるファイル | ビルドに追加で必要なもの |
+| OS | Files no longer needed | Additional build requirement |
 |---|---|---|
-| Linux | `libSilKit.so`、`libstdc++`、`libgcc_s` | 静的な libstdc++（Fedora は `libstdc++-static`。Debian と Ubuntu は `libstdc++-<バージョン>-dev` に入っています） |
-| Windows（MinGW） | `SilKit.dll`、`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll` | なし（`-static` でリンクします） |
+| Linux | `libSilKit.so`, `libstdc++`, `libgcc_s` | A static libstdc++ (`libstdc++-static` on Fedora; on Debian and Ubuntu it is in `libstdc++-<version>-dev`) |
+| Windows (MinGW) | `SilKit.dll`, `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libwinpthread-1.dll` | None (linked with `-static`) |
 
-Linux の glibc は共有ライブラリのままです。glibc を静的にリンクしたプログラムは、名前の解決などのモジュールを読み込めず、かえって動く環境が限られるためです。
+On Linux, glibc stays a shared library. A program with glibc linked statically cannot load modules such as those for name resolution, which narrows the environments it runs in instead of widening them.
 
-Windows では、コピーする DLL がなくなるので、`vehicle_sil_copy_runtime_dlls()` は何もしません。
+On Windows there are no DLLs left to copy, so `vehicle_sil_copy_runtime_dlls()` does nothing.
 
-実行ファイルは、SIL Kit の分だけ大きくなります。
+The executable grows by the size of SIL Kit.
 
-#### 配布するときに添えるライセンスの表示
+#### License notices to ship with the executable
 
-`VEHICLE_SIL_STATIC=ON` でリンクした実行ファイルには、SIL Kit、SIL Kit がコンパイルして取り込むコード、C++ のランタイムが入っています。配布するときは、次のライセンスの表示を実行ファイルに添えます。
+An executable linked with `VEHICLE_SIL_STATIC=ON` contains SIL Kit, the code that SIL Kit compiles in, and the C++ runtime. When you distribute it, ship these license notices with it:
 
-| 入っているもの | 添えるもの | 補足 |
+| Contained | What to ship | Notes |
 |---|---|---|
-| vehicle-sil | `LICENSE`（MIT） | vehicle-sil のライブラリは静的ライブラリなので、`VEHICLE_SIL_STATIC` を付けない ECU の実行ファイルにも添えます。 |
+| vehicle-sil | `LICENSE` (MIT) | The vehicle-sil libraries are static libraries, so ship this with ECU executables built without `VEHICLE_SIL_STATIC` too. |
 | SIL Kit | `external/sil-kit/LICENSE` | — |
-| SIL Kit がコンパイルして取り込むコード | `external/sil-kit/ThirdParty/LICENSES.rst`、`external/sil-kit/ThirdParty/` の下にある fmt、spdlog、asio のライセンスのファイル、`external/sil-kit/ThirdParty/rapidyaml/rapidyaml.hpp` の中の表示 | — |
-| libstdc++、libgcc（Linux、Windows） | なし | GCC Runtime Library Exception は、GCC でコンパイルしたプログラムに表示を求めません。 |
-| winpthreads、mingw-w64 の C ランタイム（Windows の MinGW） | MSYS2 が `/ucrt64/share/licenses/winpthreads/` と `/ucrt64/share/licenses/crt/` にインストールするファイル | C ランタイムとスタートアップコードは、`VEHICLE_SIL_STATIC` を付けなくても、MinGW のすべての実行ファイルに入っています。 |
+| Code that SIL Kit compiles in | `external/sil-kit/ThirdParty/LICENSES.rst`, the license files of fmt, spdlog and asio under `external/sil-kit/ThirdParty/`, and the notice inside `external/sil-kit/ThirdParty/rapidyaml/rapidyaml.hpp` | — |
+| libstdc++, libgcc (Linux, Windows) | Nothing | The GCC Runtime Library Exception requires no notice for programs compiled with GCC. |
+| winpthreads, mingw-w64 C runtime (MinGW on Windows) | The files that MSYS2 installs in `/ucrt64/share/licenses/winpthreads/` and `/ucrt64/share/licenses/crt/` | The C runtime and the startup code are in every MinGW executable, with or without `VEHICLE_SIL_STATIC`. |
 
-ビルド済みのツールのアーカイブに、同じファイルが入っています。そのままコピーして添えられます。
+The prebuilt tools archive contains the same files. You can ship them as they are.
 
-| アーカイブの中のディレクトリ | 入っているもの |
+| Directory in the archive | Contents |
 |---|---|
-| `licenses/sil-kit/` | 上の表の SIL Kit の 2 行のファイル一式です（`rapidyaml.hpp` の中の表示は、`rapidyaml-notices.txt` に抜き出してあります）。 |
-| `licenses/msys2/`（Windows のアーカイブ） | MSYS2 がインストールする winpthreads と C ランタイムのライセンスのファイルです。 |
+| `licenses/sil-kit/` | All files of the 2 SIL Kit rows in the table above. The notice inside `rapidyaml.hpp` is extracted into `rapidyaml-notices.txt`. |
+| `licenses/msys2/` (Windows archive) | The license files of winpthreads and the C runtime that MSYS2 installs. |
 
-## 関連するドキュメント
+## See also
 
-- 最初に試すコマンド → README の「[クイックスタート](../README.md#クイックスタート)」
-- 検証のスクリプト → [AGENTS.md](../AGENTS.md)
-- テストのラベルと実行方法 → [code-map.md](code-map.md)
-- ECU の書き方 → [j1939-guide.md](j1939-guide.md)
-- SIL Kit の固定、パッチ、gRPC、Python の探し方 → [dependencies.md](dependencies.md)
+- Commands to try first: "[Quick start](../README.md#quick-start)" in the README
+- Verification scripts: [AGENTS.md](../AGENTS.md)
+- Test labels and how to run tests: [code-map.md](code-map.md)
+- Writing ECUs: [j1939-guide.md](j1939-guide.md)
+- SIL Kit pinning, patches, gRPC, how Python is found: [dependencies.md](dependencies.md)

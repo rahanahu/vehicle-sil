@@ -1,46 +1,48 @@
-# 複数の PC で動かす
+# Run on several computers
 
-1 つのシミュレーションを 2 台の PC に分けて動かす手順です。1 台で `vehicle_sil_launch`（以下、ランチャー）を動かし、もう 1 台で起動した ECU をそのシミュレーションに参加させます。後半で、ほかの PC から Control API と GUI を使う方法も説明します。
+[日本語](../ja/howto/multi-pc.md)
+
+This guide splits one simulation across 2 computers. One computer runs `vehicle_sil_launch` (the launcher), and an ECU started on the other computer joins that simulation. The later sections show how to use the Control API and the GUI from another computer.
 
 > [!WARNING]
-> **SIL Kit には認証がありません。** registry（参加するプロセスどうしを引き合わせる SIL Kit のサーバー）に接続できる人は、誰でもシミュレーションに参加でき、ECU の変数にも書き込めます。閉じたネットワークで使います。
+> **SIL Kit has no authentication.** Anyone who can connect to the registry (the SIL Kit server that introduces the joining processes to each other) can join the simulation and write ECU variables. Use it on a closed network.
 
-## 前提
+## Prerequisites
 
-| 必要なもの | 条件 |
+| Requirement | Details |
 |---|---|
-| PC | 同じ閉じたネットワークにある 2 台です。 |
-| ビルド | 2 台とも、[README](../../README.md#リポジトリからビルドする) の「リポジトリからビルドする」のとおりにビルドしてあります。 |
-| ランチャーを動かす PC のアドレス | この文書では `192.0.2.10` と書きます。自分の PC のアドレスに読み替えます。 |
+| Computers | 2, on the same closed network |
+| Build | Both computers have a build made as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| Address of the launcher computer | This guide uses `192.0.2.10`. Use the address of your own computer instead. |
 
-2 台とも、リポジトリのルートで次の 2 行を実行し、これ以降のコマンドをそのディレクトリ（`simulation.yaml` のある所）で実行します。
+On both computers, run these 2 lines in the repository root. Run all later commands in the directory they change to (the one that contains `simulation.yaml`).
 
 ```sh
 export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"
 cd build/linux-gcc-control/examples/ecu_main
 ```
 
-コマンドは Linux のものです。Windows で変わる所は「Windows で変わること」の表にあります。テンプレートのプロジェクトで試すときは、次の表のように読み替えます。
+The commands are for Linux. The table in "[Differences on Windows](#differences-on-windows)" lists what differs on Windows. To try this with the template project, use these replacements:
 
-| もの | この文書（リポジトリのビルド） | テンプレートのプロジェクト |
+| What | This guide (repository build) | Template project |
 |---|---|---|
-| 実行するディレクトリ | `build/linux-gcc-control/examples/ecu_main` | プロジェクトのディレクトリ |
-| `vehicle_sil_launch` のある所 | `build/linux-gcc-control/tools/launch` | `tools/vehicle-sil-tools-<バージョン>-linux-x86_64/bin` |
-| ECU の実行ファイル | `engine/vehicle_sil_engine_ecu`、`dashboard/vehicle_sil_dashboard_ecu` | `bin/engine_ecu`、`bin/dashboard_ecu` |
-| 設定ファイル | `simulation.two-pcs.yaml` | `simulation.yaml` をコピーし、手順 1 の表の 2 つのキーを追加したもの |
-| GUI サーバーの起動 | リポジトリのルートで `scripts/run-gui.py` | `vehicle-sil-gui simulation.yaml` |
+| Working directory | `build/linux-gcc-control/examples/ecu_main` | The project directory |
+| Location of `vehicle_sil_launch` | `build/linux-gcc-control/tools/launch` | `tools/vehicle-sil-tools-<version>-linux-x86_64/bin` |
+| ECU executables | `engine/vehicle_sil_engine_ecu`, `dashboard/vehicle_sil_dashboard_ecu` | `bin/engine_ecu`, `bin/dashboard_ecu` |
+| Configuration file | `simulation.two-pcs.yaml` | A copy of `simulation.yaml` with the 2 keys from the table in step 1 added |
+| Starting the GUI server | `scripts/run-gui.py` in the repository root | `vehicle-sil-gui simulation.yaml` |
 
-## 配置
+## Where things run
 
-この文書の例では、エンジンの ECU（`Engine`）をランチャーと同じ PC で、表示の ECU（`Dashboard`）をもう 1 台の PC で動かします。図の線は、TCP で接続することを表します。
+In this guide's example, the engine ECU (`Engine`) runs on the same computer as the launcher, and the dashboard ECU (`Dashboard`) runs on the other computer. Each line in the diagram is a TCP connection.
 
 ```mermaid
 flowchart LR
-    subgraph A["ランチャーを動かす PC"]
+    subgraph A["Launcher computer"]
         launch["vehicle_sil_launch"]
         engine["Engine"]
     end
-    subgraph B["参加する PC"]
+    subgraph B["Joining computer"]
         dash["Dashboard"]
     end
     engine --- launch
@@ -48,33 +50,33 @@ flowchart LR
     dash --- engine
 ```
 
-| 図の箱 | 動かす方法 | 接続する相手 |
+| Box | How it starts | Connects to |
 |---|---|---|
-| `vehicle_sil_launch` | 手順 2 の `run` で起動します。 | registry を自分の中で動かし、ほかの 2 つからの接続を待ち受けます。 |
-| `Engine` | ランチャーが起動します。 | 同じ PC の registry に接続します。 |
-| `Dashboard` | 参加する PC で、手順 3 のコマンドで起動します。 | `--registry-uri` で指定した registry に接続し、続けて `Engine` にも接続します。 |
+| `vehicle_sil_launch` | `run` in step 2 | It runs the registry itself and listens for connections from the other 2. |
+| `Engine` | The launcher starts it. | The registry on the same computer |
+| `Dashboard` | The command in step 3, on the joining computer | The registry given with `--registry-uri`, then `Engine` as well |
 
-## 全体の流れ
+## Overview
 
-| 手順 | PC | すること | できるもの |
+| Step | Computer | What you do | What you get |
 |---|---|---|---|
-| 1 | ランチャーを動かす PC | 設定ファイルを照合する | ネットワークで待ち受けることを通知する `check` の出力 |
-| 2 | ランチャーを動かす PC | `run` を起動する | ほかの PC から参加するための URI |
-| 3 | 参加する PC | ほかの PC から参加する | 2 台にまたがって進むシミュレーション |
-| 4 | ランチャーを動かす PC | 結果を確認する | 2 つの ECU がどう終わったかを示す表 |
+| 1 | Launcher computer | Check the configuration file | `check` output that reports that the simulation listens on the network |
+| 2 | Launcher computer | Start `run` | The URI for joining from other computers |
+| 3 | Joining computer | Join from the other computer | A simulation that runs across 2 computers |
+| 4 | Launcher computer | Read the result | A table that shows how the 2 ECUs ended |
 
-手順 1〜4 は順に進めます。その後の節は、必要になったときに読みます。
+Do steps 1–4 in order. "Step 1" to "Step 4" are the parts of this guide; anywhere else, a "step" is a simulation step. Read the remaining sections when you need them.
 
-| したいこと | 読む節 |
+| Goal | Section |
 |---|---|
-| 参加する ECU が待ち受けるポートを決める | 決まったポートで待ち受ける |
-| Windows で動かす | Windows で変わること |
-| ほかの PC の Python から値を読み書きする | ほかの PC から Control API を使う |
-| ほかの PC のブラウザで画面を開く | ほかの PC のブラウザで GUI を開く |
+| Choose the port that the joining ECU listens on | [Listen on a fixed port](#listen-on-a-fixed-port) |
+| Run on Windows | [Differences on Windows](#differences-on-windows) |
+| Read and write values from Python on another computer | [Use the Control API from another computer](#use-the-control-api-from-another-computer) |
+| Open the screens in a browser on another computer | [Open the GUI in a browser on another computer](#open-the-gui-in-a-browser-on-another-computer) |
 
-## 手順 1: 設定ファイルを照合する
+## Step 1: Check the configuration file
 
-ランチャーを動かす PC で作業します。使う設定ファイルは `simulation.two-pcs.yaml` で、ビルドしたディレクトリにあります。先頭のコメントを除いた内容は、次のとおりです。
+Work on the launcher computer. The configuration file is `simulation.two-pcs.yaml`, in the build directory. Without the comments at the top, it reads:
 
 <!-- examples/ecu_main/simulation.two-pcs.yaml -->
 ```yaml
@@ -94,26 +96,26 @@ participants:
     manual: true
 ```
 
-1 台で動かす `simulation.yaml` との違いは、次の 2 つのキーです。
+It differs from `simulation.yaml`, which runs on one computer, in 2 keys:
 
-| キー | 意味 |
+| Key | Meaning |
 |---|---|
-| `registry_uri: silkit://0.0.0.0:8500` | registry が、この PC のすべてのアドレスのポート 8500 で待ち受けます。 |
-| `manual: true` | `run` はその ECU を起動せず、参加するまで待ちます。 |
+| `registry_uri: silkit://0.0.0.0:8500` | The registry listens on port 8500 on every address of this computer. |
+| `manual: true` | `run` does not start that ECU and waits until it joins. |
 
-`registry_uri` には、`silkit://192.0.2.10:8500` のように、この PC のアドレスを 1 つ書いてもかまいません。`manual: true` は、設定ファイルに書く代わりに、`run --manual Dashboard` でも指定できます。
+You can also write a single address of this computer in `registry_uri`, as in `silkit://192.0.2.10:8500`. Instead of writing `manual: true` in the configuration file, you can pass `run --manual Dashboard`.
 
-`Dashboard` の実行ファイルは、ランチャーを動かす PC にも置いておきます。`check` と `run` が、その実行ファイルを `--describe` を付けて実行し、設定ファイルと照合するためです。
+Put the `Dashboard` executable on the launcher computer too: `check` and `run` run it with `--describe` to check the configuration file against it.
 
-設定ファイルを照合します。
+Check the configuration file:
 
 ```sh
 vehicle_sil_launch check simulation.two-pcs.yaml
 ```
 
-### 確認
+### Verify the check
 
-最後の行が `passed:` で、`note:` が 2 行あれば成功です。終了コードは 0 です。
+The last line is `passed:` and there are 2 `note:` lines. The exit code is 0.
 
 <!-- multi-pc guide: check simulation.two-pcs.yaml -->
 ```text
@@ -132,28 +134,28 @@ note: simulation.two-pcs.yaml:18: participant 'Dashboard': you start it yourself
 passed: 0 errors, 0 warnings, 2 notes
 ```
 
-`note:` の行の末尾の `[...]` は、その注記のコードです。
+The `[...]` at the end of each `note:` line is the finding code:
 
-| コード | 通知していること |
+| Code | What it tells you |
 |---|---|
-| `registry-on-network` | registry と ECU がネットワークで待ち受けることと、SIL Kit に認証がないことです。 |
-| `participant-manual` | `Dashboard` を `run` が起動せず、参加するまで時間の制限なく待つことです。 |
+| `registry-on-network` | The registry and the ECUs listen on the network, and SIL Kit has no authentication. |
+| `participant-manual` | `run` does not start `Dashboard`, and waits for it to join without a time limit. |
 
-どちらの注記にもある環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` は、`Dashboard` をランチャーと同じ PC で起動するときに設定するものです。ほかの PC で起動するこの手順では、設定しません。
+Both notes mention the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1`. You set it only when you start `Dashboard` on the same computer as the launcher. In this guide, `Dashboard` starts on the other computer, so do not set it.
 
-## 手順 2: `run` を起動する
+## Step 2: Start `run`
 
-ランチャーを動かす PC で、次のコマンドを実行します。
+On the launcher computer, run:
 
 ```sh
 vehicle_sil_launch run simulation.two-pcs.yaml
 ```
 
-Windows では、ファイアウォールの許可が必要です（「Windows で変わること」）。
+On Windows, the firewall must allow the launcher (see "[Differences on Windows](#differences-on-windows)").
 
-### 確認
+### Verify that `run` waits
 
-標準エラーに次の行を表示し、`waiting for Dashboard to join` の行で待ちます。`/home/you/vehicle-sil/.../ecu_main` と書いた所には、実行したディレクトリの絶対パスが表示されます。
+`run` prints these lines to stderr and waits after the line `waiting for Dashboard to join`. Where this example shows `/home/you/vehicle-sil/.../ecu_main`, you see the absolute path of the directory you ran in.
 
 ```text
 [vehicle_sil_launch] registry at silkit://127.0.0.1:8500
@@ -164,46 +166,46 @@ Windows では、ファイアウォールの許可が必要です（「Windows �
 [vehicle_sil_launch] waiting for Dashboard to join (manual): start it with the command above; Ctrl+C stops the run
 ```
 
-| 行 | 読み取ること |
+| Line | What it tells you |
 |---|---|
-| `from other computers, join at silkit://192.0.2.10:8500` | ほかの PC から参加するときの URI です。手順 3 で `--registry-uri` に指定します。 |
-| `not starting Dashboard: ...` と次の行 | この PC で `Dashboard` を起動するときのコマンドです。ほかの PC で起動するときは、`--registry-uri` を上の URI に変えます。 |
-| `waiting for Dashboard to join (manual)` | `Dashboard` が参加するのを待っています。 |
+| `from other computers, join at silkit://192.0.2.10:8500` | The URI for joining from another computer. In step 3, you pass it to `--registry-uri`. |
+| `not starting Dashboard: ...` and the next line | The command that starts `Dashboard` on this computer. To start it on another computer, change `--registry-uri` to the URI above. |
+| `waiting for Dashboard to join (manual)` | The launcher is waiting for `Dashboard` to join. |
 
-`registry_uri` が `0.0.0.0` のとき、ランチャーは `join at` の後に、この PC の動いているネットワークの IPv4 アドレスを並べます。アドレスが 2 つ以上あるときの選び方は、次のとおりです。
+When `registry_uri` is `0.0.0.0`, the launcher lists the IPv4 addresses of this computer's active networks after `join at`. If it lists 2 or more, choose as follows:
 
-| 表示 | 選び方 |
+| Address | How to choose |
 |---|---|
-| 先頭のアドレス | 既定の経路のあるネットワークのアドレスで、ふつうは相手と同じ LAN のものです。ほかにもアドレスがあれば、ランチャーは先頭がそれだと書き添えます。 |
-| `172.x.x.x` などのアドレス | WSL、Docker、仮想マシンの仮想のネットワークのアドレスは、ほかの PC から接続できないことが多いので、相手と同じ LAN のアドレスを選びます。 |
+| The first address | It is the address on the network with the default route, usually on the same LAN as the other computer. If there are other addresses, the launcher adds a note that the first one is this address. |
+| An address such as `172.x.x.x` | Addresses on the virtual networks of WSL, Docker and virtual machines are often unreachable from other computers. Choose the address on the same LAN as the other computer. |
 
-### うまくいかないとき
+### Troubleshoot starting `run`
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `the registry cannot listen at silkit://...: ...` と表示して、終了コード 3 で終わる | そのポートを、別のプログラムか別の `run` が使っています。 | `registry_uri` のポートを変えるか、別の `run` を終了させます。 |
+| `the registry cannot listen at silkit://...: ...`, and the exit code is 3 | Another program or another `run` uses that port. | Change the port in `registry_uri`, or end the other `run`. |
 
-## 手順 3: ほかの PC から参加する
+## Step 3: Join from the other computer
 
-参加する PC で作業します。ランチャーが `waiting for Dashboard to join` を表示した後に、次のコマンドで `Dashboard` を起動します。
+Work on the joining computer. After the launcher prints `waiting for Dashboard to join`, start `Dashboard` with this command:
 
 ```sh
 dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192.0.2.10:8500 --start-timeout-ms 1000000000000
 ```
 
-| 引数 | 意味 |
+| Argument | Meaning |
 |---|---|
-| `--name Dashboard` | 設定ファイルの `name` と、大文字と小文字も含めて同じにします。 |
-| `--registry-uri silkit://192.0.2.10:8500` | 手順 2 で `join at` の後に表示された URI です。 |
-| `--start-timeout-ms 1000000000000` | シミュレーションの開始を待つ時間の上限です。ランチャーが表示するコマンドと同じ値で、実質的に制限なく待ちます。 |
+| `--name Dashboard` | Must match `name` in the configuration file exactly, including case. |
+| `--registry-uri silkit://192.0.2.10:8500` | The URI that the launcher printed after `join at` in step 2. |
+| `--start-timeout-ms 1000000000000` | The time limit for waiting for the simulation to start. It is the value from the command that the launcher prints, and in effect means no limit. |
 
-環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK` は設定しません。ループバックでないアドレスの registry に接続する ECU は、設定しなくても、すべてのアドレスで待ち受けます。
+Do not set the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK`. An ECU that connects to a registry at a non-loopback address listens on all addresses without it.
 
-参加する PC のファイアウォールの許可は、確認している構成では、Windows の仮想マシンでも不要でした。ECU のほうから、ランチャーを動かす PC に接続するためです。
+In the tested setups, the joining computer needed no firewall rule, even when it was a Windows virtual machine, because the ECU connects out to the launcher computer.
 
-### 確認
+### Verify the join
 
-必須の ECU がそろうと、シミュレーションが始まります。`Dashboard` は標準出力に次の 3 行を表示し、シミュレーションが終わると、終了コード 0 で自分から終わります。
+When all required ECUs have joined, the simulation starts. `Dashboard` prints these 3 lines to stdout. When the simulation ends, `Dashboard` exits on its own with exit code 0.
 
 ```text
 t=0 ms engine speed 0 rpm (0 messages)
@@ -211,24 +213,24 @@ t=500 ms engine speed 1200 rpm (5 messages)
 t=1000 ms engine speed 1200 rpm (10 messages)
 ```
 
-`engine speed 1200 rpm` は、もう 1 台の PC の `Engine` が CAN で送信した回転数を、`Dashboard` が受信したことを表します。
+`engine speed 1200 rpm` shows that `Dashboard` receives the engine speed that `Engine` on the other computer sends over CAN.
 
-### うまくいかないとき
+### Troubleshoot joining
 
-どの行も、参加する PC の `Dashboard` が終了コード 3 で終わるか、ランチャーが標準エラーに表示する症状です。
+In each row, either `Dashboard` on the joining computer exits with exit code 3, or the launcher prints the symptom to stderr.
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| ECU がすぐに終わり、`cannot join the simulation at ...: ... Failed to connect to SIL Kit Registry` と表示する | ランチャーがまだ動いていないか、アドレスかポートが違います。 | ランチャーを先に起動し、`join at` の後の URI を指定します。 |
-| ECU が約 5 秒後に終わり、`Timeout during connection handshake ...` と表示する | ランチャーを動かす PC のファイアウォールが、接続を止めています。 | 「Windows で変わること」の `netsh` の 1 行を実行します。 |
-| ECU が約 5 秒後に終わり、`... already exists ... (the registry refused the name "<名前>" for 5000 ms: ...)` と表示する | 同じ名前の participant が、すでに参加しています。 | `--name` を確認します。 |
-| ランチャーが `participant 'x' joined the simulation, but this run has no participant of that name (...)` と表示する | `--name` が、設定ファイルの名前と違います。 | その ECU を Ctrl+C で止め、設定ファイルの名前で起動し直します。 |
+| The ECU exits immediately and prints `cannot join the simulation at ...: ... Failed to connect to SIL Kit Registry` | The launcher is not running yet, or the address or port is wrong. | Start the launcher first, and pass the URI printed after `join at`. |
+| The ECU exits after about 5 s and prints `Timeout during connection handshake ...` | The firewall of the launcher computer blocks the connection. | Run the `netsh` line from "[Differences on Windows](#differences-on-windows)". |
+| The ECU exits after about 5 s and prints `... already exists ... (the registry refused the name "<name>" for 5000 ms: ...)` | A participant with the same name has already joined. | Check `--name`. |
+| The launcher prints `participant 'x' joined the simulation, but this run has no participant of that name (...)` | `--name` differs from the name in the configuration file. | Stop that ECU with Ctrl+C and start it again with the name from the configuration file. |
 
-2 行目の `Timeout during connection handshake` は SIL Kit のメッセージで、同じ名前の participant を疑う文が続きます。ポートを転送した構成で、ファイアウォールが接続を止めたときに表示されました。3 行目は、同じ名前ですぐに起動し直しただけのときにも表示されます。その場合は、5 秒の間に参加できます。4 行目の、名前を間違えた ECU は、シミュレーションが始まらないまま待ち続けます。
+`Timeout during connection handshake` in the second row is a SIL Kit message, and the sentence after it suggests a participant with the same name as the cause. It appeared in a setup with port forwarding, when the firewall blocked the connection. The message in the third row also appears when you only restart an ECU immediately under the same name. While the registry refuses the name, the ECU retries joining for up to 5 s (or for `--start-timeout-ms`, if that is shorter). If the registry sees the end of the earlier participant within that time, the ECU joins. An ECU with a wrong name, as in the fourth row, keeps waiting, and the simulation does not start.
 
-## 手順 4: 結果を確認する
+## Step 4: Read the result
 
-シミュレーションは、仮想時間の 1000 ms で終わります。ランチャーは、標準出力の最後に次の結果を表示し、終了コード 0 で終わります。
+The simulation ends at virtual time 1000 ms. The launcher prints this result at the end of stdout and exits with exit code 0.
 
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
@@ -240,25 +242,25 @@ Dashboard    yes       started by you (manual)
 passed: 0 errors, 0 warnings, 2 notes
 ```
 
-`Dashboard` の `started by you (manual)` は、自分で起動した ECU がシミュレーションに参加したことを表します。どう終わったかはランチャーにはわからないので、終了コードは参加する PC の側で確認します。
+`started by you (manual)` for `Dashboard` means that the ECU you started yourself joined the simulation. The launcher cannot know how that ECU ended, so check its exit code on the joining computer.
 
-途中で止めるときは、1 台のときと同じで、ランチャーを Ctrl+C で止めるか、`stop` のコマンドを送ります。参加した ECU も、シミュレーションが終われば自分から終わります。
+To stop the run early, do as you would on one computer: stop the launcher with Ctrl+C, or send the `stop` command. The joined ECU also exits on its own when the simulation ends.
 
-### うまくいかないとき
+### Troubleshoot the result
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| ランチャーが終わった後も、参加した ECU が残る | ランチャーが強制終了（クラッシュ、電源断、SIGKILL）されると、ECU は待ち続けます。 | ECU を Ctrl+C で止めます。 |
-| ランチャーが `virtual time has not advanced for 10 s ...` と表示する | ネットワークが切れたか、デバッガーで止めているか、ECU がステップの中で固まっています。 | ネットワークが戻れば、止まった所から続きます（`virtual time advances again`）。 |
-| 参加のたびに 5 秒ほどかかる | ランチャーを動かす PC の ECU に、相手から直接接続できません（ファイアウォールの許可がランチャーだけ、または NAT）。 | そのままにするか、その PC の ECU の実行ファイルもファイアウォールで許可します。 |
+| The joined ECU keeps running after the launcher has ended | The launcher was killed (crash, power loss, SIGKILL), so the ECU keeps waiting. | Stop the ECU with Ctrl+C. |
+| The launcher prints `virtual time has not advanced for 10 s ...` | The network is down, a debugger has stopped a process, or an ECU hangs inside a step. | Restore the network, let the process in the debugger continue, or find the ECU that hangs in its step. The run then continues from where it stopped (`virtual time advances again`). |
+| Each join takes about 5 s | The other computer cannot connect directly to the ECUs on the launcher computer (the firewall allows only the launcher, or there is NAT). | Leave it as it is, or also allow the ECU executables on the launcher computer through the firewall. |
 
-SIL Kit は、切れた接続に長い間気づきません。Linux では十数分かかります。仮想時間が止まったまま待たないなら、ランチャーを Ctrl+C で止めます。人が見ていない実行には、`run` に `--timeout-ms` を付けます。
+SIL Kit takes a long time to notice a broken connection; on Linux, more than 10 minutes. If you do not want to wait with virtual time stopped, stop the launcher with Ctrl+C. For unattended runs, add `--timeout-ms` to `run`.
 
-## 決まったポートで待ち受ける
+## Listen on a fixed port
 
-ファイアウォールやポートの転送のために、参加する ECU が待ち受けるポートを決めたいときは、SIL Kit の設定ファイルを `--silkit-config` で渡します。接続を試す回数も、同じファイルで増やせます。
+To choose the port that the joining ECU listens on, for example for a firewall or port forwarding, pass a SIL Kit participant configuration file with `--silkit-config`. The same file can also raise the number of connection attempts.
 
-`dashboard.silkit.yaml` に次の内容を書きます。
+Save this as `dashboard.silkit.yaml`:
 
 ```yaml
 Middleware:
@@ -266,58 +268,58 @@ Middleware:
   ConnectAttempts: 5
 ```
 
-手順 3 のコマンドに、`--silkit-config` を追加して起動します。
+Start the ECU with the command from step 3 plus `--silkit-config`:
 
 ```sh
 dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192.0.2.10:8500 --start-timeout-ms 1000000000000 --silkit-config dashboard.silkit.yaml
 ```
 
-確認することは手順 3 と同じです。ファイルに書いていない設定は、既定のままです。ルールは [ecu-executable.md](../ecu-executable.md) の「SIL Kit の設定ファイルを渡す」にあります。
+Verify the result as in step 3. Settings that are not in the file keep their defaults. For the rules, see "Passing a SIL Kit configuration file (`--silkit-config`)" in [ecu-executable.md](../ecu-executable.md#passing-a-sil-kit-configuration-file---silkit-config).
 
-## Windows で変わること
+## Differences on Windows
 
-手順は同じです。変わるのは次の所です。
+The steps are the same. These things differ:
 
-| もの | Linux | Windows |
+| What | Linux | Windows |
 |---|---|---|
-| ビルドとシェル | README の「リポジトリからビルドする」 | [build.md](../build.md) の「Windows（MSYS2 UCRT64）」 |
-| 実行ファイルの名前 | `vehicle_sil_launch`、`vehicle_sil_dashboard_ecu` | 末尾に `.exe` が付きます。 |
-| ランチャーを動かす PC のファイアウォール | firewalld などでは確認していません。 | `vehicle_sil_launch.exe` を 1 回許可します。 |
-| `openssl` | あります。 | MSYS2 と Git for Windows にあります。 |
-| Python の起動 | `python3` | `python` |
-| GUI サーバーを動かす PC の SSH のサーバー | 必要です。 | OpenSSH Server の機能を使います。 |
+| Build and shell | "[Build from the repository](../../README.md#build-from-the-repository)" in the README | "Windows (MSYS2 UCRT64)" in [build.md](../build.md#windows-msys2-ucrt64) |
+| Executable names | `vehicle_sil_launch`, `vehicle_sil_dashboard_ecu` | The names end in `.exe`. |
+| Firewall on the launcher computer | Not tested with firewalld or similar firewalls | Allow `vehicle_sil_launch.exe` once. |
+| `openssl` | Available | Included in MSYS2 and Git for Windows |
+| Starting Python | `python3` | `python` |
+| SSH server on the GUI server computer | Required | Use the OpenSSH Server feature. |
 
-### ファイアウォールの許可
+### Firewall rules
 
-Windows でランチャーを動かすときは、ファイアウォールに `vehicle_sil_launch.exe` を 1 回許可します。確認の画面が表示されたら、許可します。表示されないとき、または許可しなかったときは、管理者のコマンドプロンプトで次の 1 行を実行します。パスは自分のものに変えます。
+To run the launcher on Windows, allow `vehicle_sil_launch.exe` in the firewall once. If Windows asks, allow it. If it does not ask, or you did not allow it, run this line in a Command Prompt as administrator. Replace the path with your own.
 
 ```bat
 netsh advfirewall firewall add rule name="vehicle-sil launch" dir=in action=allow program="C:\vehicle-sil\bin\vehicle_sil_launch.exe" enable=yes
 ```
 
-| 状態 | 起きること |
+| Situation | What happens |
 |---|---|
-| `vehicle_sil_launch.exe` の許可がない | 参加する ECU が、約 5 秒で失敗します（手順 3 の表の 2 行目）。 |
-| ランチャーが起動する ECU（`Engine` など）の許可がない | 動きますが、参加のたびに 5 秒ほど余計にかかります。 |
+| `vehicle_sil_launch.exe` is not allowed | The joining ECU fails after about 5 s (the second row of the table in step 3). |
+| The ECUs that the launcher starts (such as `Engine`) are not allowed | The simulation runs, but each join takes about 5 s longer. |
 
-ランチャーが起動する ECU の許可は、必須ではありません。許可がないと、参加する ECU からの直接の接続は約 5 秒で打ち切られ、ランチャーを動かす PC の側から相手に接続し直します。ランチャーを動かす PC が NAT の内側にあり、相手から接続できるのが転送したポートだけのときも、同じです。
+Allowing the ECUs that the launcher starts is optional. Without it, a direct connection from the joining ECU gives up after about 5 s, and the launcher computer connects to the other computer instead. The same happens when the launcher computer is behind NAT and the other computer can reach only the forwarded port.
 
-## ほかの PC から Control API を使う
+## Use the Control API from another computer
 
-ランチャーの Control Server を、ほかの PC から接続できるアドレスで開きます。そのアドレスでは、TLS と認証情報が必要です。ルールは [control-api.md](../control-api.md) の「認証」にあります。
+Make the launcher's Control Server listen on an address that other computers can reach. On such an address, the Control Server requires TLS and credentials. For the rules, see "Authentication" in [control-api.md](../control-api.md#authentication).
 
-次の 1 と 2 はランチャーを動かす PC で、3 はクライアントの PC で作業します。
+Do items 1 and 2 below on the launcher computer, and item 3 on the client computer.
 
-1. 証明書を作ります。`subjectAltName` には、クライアントが接続するアドレスを書きます。
+1. Create a certificate. In `subjectAltName`, write the address that clients connect to.
 
    ```sh
    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 -subj "/CN=vehicle-sil" \
      -addext "subjectAltName=IP:192.0.2.10" -keyout server.key -out server.crt
    ```
 
-   `server.key`（鍵）と `server.crt`（証明書）ができます。
+   This creates `server.key` (the key) and `server.crt` (the certificate).
 
-2. 認証情報のファイル `credentials.txt` を作り、`run` に渡します。ファイルは 1 行に 1 つで、`<role> <name> <token>` の形です。`role` は `viewer`、`operator`、`admin` のどれかで、トークンは 16 文字以上の秘密の文字列です。次の 1 行は、乱数のトークンで `admin` の行を作ります。
+2. Create the credentials file `credentials.txt` and pass it to `run`. The file has one entry per line, in the form `<role> <name> <token>`. `role` is `viewer`, `operator` or `admin`, and the token is a secret string of at least 16 characters. This line creates an `admin` entry with a random token:
 
    ```sh
    python3 -c "import secrets; print('admin', 'lead', secrets.token_hex(16))" > credentials.txt
@@ -327,9 +329,9 @@ netsh advfirewall firewall add rule name="vehicle-sil launch" dir=in action=allo
    vehicle_sil_launch run simulation.live.yaml --control 0.0.0.0:8510 --control-tls-cert server.crt --control-tls-key server.key --control-credentials credentials.txt
    ```
 
-   `simulation.live.yaml` は、同じ 2 つの ECU を、止めるまで動かし続ける設定ファイルです。ランチャーは、標準エラーに `[vehicle_sil_launch] control server at 0.0.0.0:8510` と表示します。`0.0.0.0` は、この PC のアドレスに読み替えます。
+   `simulation.live.yaml` is a configuration file that runs the same 2 ECUs until you stop them. The launcher prints `[vehicle_sil_launch] control server at 0.0.0.0:8510` to stderr. Read `0.0.0.0` as the address of this computer.
 
-3. クライアントの PC に、`server.crt` とトークンを渡します。鍵（`server.key`）は渡しません。トークンは `credentials.txt` の 3 つ目の語で、クライアントの PC では `token.txt` に保存します。`list_peers.py` に次の内容を書きます。
+3. Copy `server.crt` and the token to the client computer. Do not copy the key (`server.key`). The token is the third word in `credentials.txt`; on the client computer, save it in `token.txt`. Write this into `list_peers.py`:
 
    ```python
    from vehicle_sil_control import Control
@@ -339,85 +341,85 @@ netsh advfirewall firewall add rule name="vehicle-sil launch" dir=in action=allo
        print(sorted(p.participant for p in c.peers()))
    ```
 
-   [control-api.md](../control-api.md) の「Python」のコマンドでクライアントを準備したシェルで、実行します。
+   Run it in a shell in which you have set up the client as described in "Python" in [control-api.md](../control-api.md#python):
 
    ```sh
    python list_peers.py
    ```
 
-### 確認
+### Verify the remote Control API
 
-設定ファイルの participant の名前を表示すれば、接続できています。
+If the script prints the participant names from the configuration file, the connection works.
 
 ```text
 ['Dashboard', 'Engine']
 ```
 
-### うまくいかないとき
+### Troubleshoot the remote Control API
 
-| クライアントのエラー | 原因 |
+| Client error | Cause |
 |---|---|
-| `Hostname Verification Check failed` | 証明書の `subjectAltName` に、接続したアドレスがありません。 |
-| `CERTIFICATE_VERIFY_FAILED` | クライアントに渡した証明書が、サーバーのものと違います。 |
-| `Connection refused` | ポートが違うか、ランチャーが動いていません。 |
-| `UNAUTHENTICATED: a valid token is required` | トークンが、`credentials.txt` のものと違います。 |
+| `Hostname Verification Check failed` | The `subjectAltName` of the certificate does not contain the address you connected to. |
+| `CERTIFICATE_VERIFY_FAILED` | The certificate you gave the client is not the server's certificate. |
+| `Connection refused` | The port is wrong, or the launcher is not running. |
+| `UNAUTHENTICATED: a valid token is required` | The token differs from the one in `credentials.txt`. |
 
-## ほかの PC のブラウザで GUI を開く
+## Open the GUI in a browser on another computer
 
-GUI サーバーは、127.0.0.1 だけで待ち受けます。当面は、SSH のポート転送を使って開きます。GUI サーバーを動かす PC に、SSH のサーバーが必要です。
+The GUI server listens only on 127.0.0.1. Open it from another computer through SSH port forwarding. The computer that runs the GUI server needs an SSH server.
 
-1. GUI サーバーを動かす PC で、ポートを決めて起動します。リポジトリのルートで、次のコマンドを実行します。
+1. On the GUI server computer, start the server on a port you choose. In the repository root, run:
 
    ```sh
    scripts/run-gui.py --port 8765 --no-browser
    ```
 
-   テンプレートのプロジェクトでは、`vehicle-sil-gui --port 8765 --no-browser simulation.yaml` です。表示された URL を、ブラウザを開く PC に伝えます。
+   In the template project, the command is `vehicle-sil-gui --port 8765 --no-browser simulation.yaml`. Copy the printed URL to the computer that runs the browser.
 
    ```text
    http://127.0.0.1:8765/#token=...
    vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
    ```
 
-2. ブラウザを開く PC で、**同じポート番号**で転送します。
+2. On the computer that runs the browser, forward **the same port number**:
 
    ```sh
-   ssh -L 8765:127.0.0.1:8765 <ユーザー>@<GUI サーバーを動かす PC>
+   ssh -L 8765:127.0.0.1:8765 <user>@<GUI server computer>
    ```
 
-3. その PC のブラウザで、伝えられた URL を開きます。
+3. In the browser on that computer, open the URL from item 1.
 
-### うまくいかないとき
+### Troubleshoot the remote GUI
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| ブラウザに 403 が表示される | GUI サーバーは、`Host` が `127.0.0.1:<自分のポート>` のリクエストだけを受け付けます。 | GUI サーバーと同じポート番号で転送します。 |
+| The browser shows 403 | The GUI server accepts only requests whose `Host` is `127.0.0.1:<its port>`. | Forward the same port number that the GUI server uses. |
 
-GUI サーバーが待ち受けるアドレスと受け付けるリクエストのルールは、[gui.md](../gui.md) にあります。
+For the addresses that the GUI server listens on and the rules for the requests it accepts, see [gui.md](../gui.md).
 
-## 速度
+## Speed
 
-ステップごとに、PC の間を往復する時間がかかります。
+Every step costs a round trip between the computers.
 
-| 実行 | 影響 |
+| Run | Effect |
 |---|---|
-| 最速で動かす（`speed` を書かない） | 1 台で動かすより遅くなります。 |
-| 速度を指定する（`speed: 1` など） | 往復の時間が、1 ステップに使える実時間より十分短ければ、影響しません。 |
+| As fast as possible (no `speed`) | Slower than on one computer |
+| At a set speed (`speed: 1` and others) | No effect, as long as the round trip takes much less than the real time available for one step |
 
-遅れは、結果の `time:` の行に表示されます。
+The `time:` line of the result shows any lateness.
 
-## 確認している構成
+## Tested setups
 
-| 構成 | 確認 |
+| Setup | Status |
 |---|---|
-| Linux 2 台 | ネットワーク名前空間で作った 2 台で、自動のテスト `multi_host.two_hosts` が確認しています。 |
-| Linux と Windows | Windows は仮想マシンで、NAT の内側にあり、片方向にしか接続できない構成です。どちらの側でランチャーを動かす場合も確認しています。 |
-| SSH での GUI の転送 | 転送の形は確認しています。ssh そのものでは確認していません。 |
-| 本物の 2 台の PC の LAN、Windows 同士、VPN、拠点をまたぐネットワーク、3 台以上 | 確認していません。 |
-| Linux のファイアウォール（firewalld など） | 確認していません。 |
+| 2 Linux computers | 2 hosts made with network namespaces. The automated test `multi_host.two_hosts` covers this setup. |
+| Linux and Windows | Windows runs in a virtual machine behind NAT, so connections work in one direction only. Tested with the launcher on either side. |
+| GUI forwarding over SSH | The forwarding setup is tested; ssh itself is not. |
+| A LAN with 2 physical computers, Windows to Windows, VPN, networks across sites, 3 or more computers | Not tested |
+| Linux firewalls (firewalld and others) | Not tested |
 
-## 次に読むもの
+## What to read next
 
-- `manual` の ECU の待ち方と止め方のルールを調べる → [simulation-config.md](../simulation-config.md) の「participant を自分で起動する」
-- どのアドレスで待ち受けるかのルールと、`VEHICLE_SIL_LISTEN_ON_NETWORK` を調べる → [simulation-run.md](../simulation-run.md) の「待ち受けるアドレス」
-- 設定ファイル、`check`、`run` の使い方に戻る → [複数の ECU をつないで動かす](integrate-ecus.md)
+- Rules for how `manual` ECUs wait and stop: "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](../simulation-config.md#starting-a-participant-yourself-manual---manual)
+- Rules for which addresses are listened on, and `VEHICLE_SIL_LISTEN_ON_NETWORK`: "Listen addresses" in [simulation-run.md](../simulation-run.md#listen-addresses)
+- Back to the configuration file, `check` and `run`: [Integrate and run several ECUs](integrate-ecus.md)

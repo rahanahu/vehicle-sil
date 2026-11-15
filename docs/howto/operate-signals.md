@@ -1,67 +1,69 @@
-# 信号を外から操作する
+# Read and write signals from outside
 
-動いているシミュレーションの ECU の変数を、Python やコマンドから読み書きし、仮想時間を一時停止して少しずつ進める手順です。`vehicle_sil_launch run` に `--control` を付けると起動する Control Server に、gRPC で接続します。
+[日本語](../ja/howto/operate-signals.md)
 
-## 方法を選ぶ
+In this guide you read and write the variables of the ECUs in a running simulation from Python or from the command line, and you pause virtual time and advance it in small steps. You connect over gRPC to the Control Server that `vehicle_sil_launch run` starts when you add `--control`.
 
-変数を外から読み書きする方法は 4 つあります。このガイドが扱うのは、2 行目と 3 行目です。
+## Choose a method
 
-| したいこと | 使うもの | 起動の仕方 | 読むもの |
+There are 4 ways to read and write variables from outside the simulation. This guide covers the second and the third.
+
+| Goal | Use | How to start | See |
 |---|---|---|---|
-| 決まった手順で値を設定して確認し、終了コードで合否を出す | シナリオ（YAML） | `vehicle_sil_launch run simulation.yaml --scenario <シナリオ>` | [シナリオでテストを書く](scenario-tests.md) |
-| 値を見て、次に書き込む値をプログラムで決める | Python のクライアント（`vehicle_sil_control`） | スクリプトの中の `Launch(...)` が `vehicle_sil_launch run --control` を起動する | このガイドの「最初のスクリプトを実行する」から |
-| Python を書かずに、1 つずつ読む、書き込む、進める | CLI（`python -m vehicle_sil_control`） | 自分で `vehicle_sil_launch run --control 8510 simulation.yaml` を起動する | このガイドの「コマンドで 1 つずつ操作する」 |
-| ブラウザで値を見ながら、スライダーやスイッチで書き込む | GUI（`vehicle-sil-gui`） | `scripts/run-gui.py`（ビルド済みのツールでは `vehicle-sil-gui simulation.live.yaml`） | [gui.md](../gui.md) の「ECU の変数」 |
+| Set values in a fixed sequence, check them and get the result as an exit code | Scenario (YAML) | `vehicle_sil_launch run simulation.yaml --scenario <scenario>` | [Write tests with scenarios](scenario-tests.md) |
+| Look at values and decide in a program what to write next | Python client (`vehicle_sil_control`) | `Launch(...)` in the script starts `vehicle_sil_launch run --control` | This guide, from "[Run the first script](#run-the-first-script)" on |
+| Read, write and advance one command at a time, without writing Python | CLI (`python -m vehicle_sil_control`) | You start `vehicle_sil_launch run --control 8510 simulation.yaml` yourself | "[Run commands one at a time](#run-commands-one-at-a-time)" in this guide |
+| Watch values in a browser and write them with sliders and switches | GUI (`vehicle-sil-gui`) | `scripts/run-gui.py` (with the prebuilt tools, `vehicle-sil-gui simulation.live.yaml`) | "ECU variables" in [gui.md](../gui.md#ecu-variables) |
 
-シナリオは、同じ設定ファイルと同じシナリオなら、結果がいつも同じです。Python と CLI からの操作は、書き込みを受信した順や指定した時刻によって、結果が変わることがあります。操作した結果をテストとして残すときは、同じ手順をシナリオに書きます。
+A scenario always gives the same result with the same configuration file and the same scenario. With Python and the CLI, the result can depend on the order in which the writes arrive and on the times you give. To keep what you did as a test, write the same steps in a scenario.
 
-仮想時間の一時停止と再開だけなら、`vehicle_sil_launch run` の標準入力からもできます（「標準入力から時間を操作する」）。
+If you only need to pause and resume virtual time, you can also use the stdin of `vehicle_sil_launch run` (see "[Control time from stdin](#control-time-from-stdin)").
 
-## 前提
+## Prerequisites
 
-| 必要なもの | 条件 |
+| Requirement | Details |
 |---|---|
-| vehicle-sil のビルド | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」のとおりに、プリセット `linux-gcc-control` でビルドしてあること。 |
-| [uv](https://docs.astral.sh/uv/) | Python のクライアントと CLI の実行に使います。 |
+| vehicle-sil build | You have built with the `linux-gcc-control` preset, as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| [uv](https://docs.astral.sh/uv/) | Runs the Python client and the CLI. |
 
-コマンドは、すべてリポジトリのルート（`README.md` のある所）で実行します。このガイドに出てくるパスは、次の 3 つです。
+Run every command in the root of the repository (the directory that contains `README.md`). The guide uses these 3 paths:
 
-| もの | パス |
+| Item | Path |
 |---|---|
 | `vehicle_sil_launch` | `build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| 設定ファイル | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` |
-| Python のクライアント | `python/`（パッケージ `vehicle_sil_control`） |
+| Configuration file | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` |
+| Python client | `python/` (package `vehicle_sil_control`) |
 
-テンプレートのプロジェクトとビルド済みのツールを使うときは、次のように読み替えます。表の `$T` は、ツールのディレクトリ `tools/vehicle-sil-tools-<バージョン>-linux-x86_64` です。テンプレートの 2 つの ECU は、このガイドの例と同じ変数を持っています。
+With the template project and the prebuilt tools, use the right-hand column of the table below instead. `$T` in the table is the tools directory, `tools/vehicle-sil-tools-<version>-linux-x86_64`. The 2 ECUs of the template have the same variables as the example in this guide.
 
-| もの | リポジトリでビルドしたとき | テンプレートのプロジェクトのとき |
+| Item | Built from the repository | Template project |
 |---|---|---|
-| 実行するディレクトリ | リポジトリのルート | プロジェクトのディレクトリ（`simulation.yaml` のある所） |
+| Directory to run in | The root of the repository | The project directory (the one that contains `simulation.yaml`) |
 | `vehicle_sil_launch` | `build/linux-gcc-control/tools/launch/vehicle_sil_launch` | `$T/bin/vehicle_sil_launch` |
-| 設定ファイル | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` | `simulation.yaml` |
-| 準備 | 下の「準備」の 3 行 | 不要です。 |
-| Python の実行 | `uv run python <引数>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements.txt python <引数>` |
-| 例のスクリプト | `examples/launch_control/` | 入っていません。「最初のスクリプトを実行する」の全文をファイルに保存します。 |
+| Configuration file | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` | `simulation.yaml` |
+| Setup | The 3 lines in "Setup" below | Not needed. |
+| Running Python | `uv run python <arguments>` | `PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements.txt python <arguments>` |
+| Example scripts | `examples/launch_control/` | Not included. Save the full text in "Run the first script" to a file. |
 
-## 準備
+## Setup
 
-Python のパッケージをインストールし、gRPC のスタブを生成します。
+Install the Python packages and generate the gRPC stubs.
 
 ```sh
-uv sync                                          # .venv に grpcio などをインストールする（README の手順で実行済みなら、何も変わらない）
-export PYTHONPATH="$PWD/python"                  # クライアントのパッケージの場所。シェルを開くたびに実行する
-uv run python -m vehicle_sil_control.generate    # スタブを python/vehicle_sil_control/_generated に生成する（最初の 1 回）
+uv sync                                          # installs grpcio and others into .venv (changes nothing if you already ran it as the README says)
+export PYTHONPATH="$PWD/python"                  # where the client package is; run this in every new shell
+uv run python -m vehicle_sil_control.generate    # generates the stubs in python/vehicle_sil_control/_generated (the first time only)
 ```
 
-### 確認
+### Verify the setup
 
-`generate` は、生成先を 1 行で表示します。
+`generate` prints one line with the directory it wrote the stubs to:
 
 ```text
-generated into <リポジトリのルート>/python/vehicle_sil_control/_generated
+generated into <repository root>/python/vehicle_sil_control/_generated
 ```
 
-`vehicle_sil_launch` が Control Server を持っていることは、次のコマンドで確認できます。`control-server` と表示されれば、持っています。
+To confirm that `vehicle_sil_launch` has the Control Server, run the command below. If it prints `control-server`, the Control Server is built in.
 
 ```sh
 build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep control-server
@@ -71,31 +73,31 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep co
     "control-server",
 ```
 
-### うまくいかないとき
+### Troubleshoot the setup
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `grep` が何も表示しない | Control Server なしでビルドした `vehicle_sil_launch` です。 | プリセット `linux-gcc-control` でビルドします（ほかのプリセットでは、configure に `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` を付けます）。 |
-| `No module named vehicle_sil_control` | `PYTHONPATH` を設定していません。 | `export PYTHONPATH="$PWD/python"` を、リポジトリのルートで実行します。 |
-| `No module named 'grpc_tools'` | `.venv` にパッケージがありません。 | `uv sync` を実行します。 |
+| `grep` prints nothing | This `vehicle_sil_launch` was built without the Control Server. | Build with the `linux-gcc-control` preset (with another preset, add `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` to the configure step). |
+| `No module named vehicle_sil_control` | `PYTHONPATH` is not set. | Run `export PYTHONPATH="$PWD/python"` in the root of the repository. |
+| `No module named 'grpc_tools'` | The packages are not in `.venv`. | Run `uv sync`. |
 
-## 例の変数
+## The example variables
 
-例の設定ファイルは、エンジンの ECU（participant 名 `Engine`）と表示の ECU（`Dashboard`）を動かします。このガイドで読み書きする変数は、次の 3 つです。
+The example configuration file runs the engine ECU (participant name `Engine`) and the dashboard ECU (`Dashboard`). The guide reads and writes these 3 variables:
 
-| participant | 変数 | 入出力 | 型と単位 | 内容 |
+| Participant | Variable | Input or output | Type and unit | Description |
 |---|---|---|---|---|
-| `Engine` | `engine.throttle` | 入力（外から書き込める） | 実数、%、0〜100 | スロットルです。書き込まなければ 20 です。 |
-| `Engine` | `engine.speed` | 出力（読むだけ） | 整数、rpm | 回転数です。0 から始まり、10 ms のステップごとに 50 rpm ずつ、800 + 20 × スロットル（rpm）に近づきます。 |
-| `Dashboard` | `dashboard.engine_speed` | 出力（読むだけ） | 整数、rpm | `Engine` が 100 ms ごとに J1939 で送信した回転数を、受信した値です。 |
+| `Engine` | `engine.throttle` | Input (writable from outside) | real, %, 0–100 | The throttle. If you do not write it, it is 20. |
+| `Engine` | `engine.speed` | Output (read only) | integer, rpm | The engine speed. It starts at 0 and, in each 10 ms ECU step, moves 50 rpm toward 800 + 20 × throttle (rpm). |
+| `Dashboard` | `dashboard.engine_speed` | Output (read only) | integer, rpm | The engine speed that `Engine` sends over J1939 every 100 ms, as the dashboard ECU received it. |
 
-スロットルが 20 % なら回転数は 1200 rpm、50 % なら 1800 rpm、0 % なら 800 rpm で一定になります。
+With the throttle at 20 %, the engine speed settles at 1200 rpm; at 50 %, at 1800 rpm; at 0 %, at 800 rpm.
 
-自分の ECU の変数の名前、型、範囲は、「コマンドで 1 つずつ操作する」の `show` か、ECU の実行ファイルの `--describe`（`variables` の配列）で調べます。ECU のコードに追加するものはありません。`ecu_main()` で作った ECU が `ecu.input()` と `ecu.output()` で宣言した変数は、そのまま外から読み書きできます。
+To find the names, types and ranges of your own ECU's variables, use `show` (see "Run commands one at a time") or the `--describe` option of the ECU executable (the `variables` array). You do not add anything to the ECU code: any variable that an ECU built with `ecu_main()` declares with `ecu.input()` or `ecu.output()` can be read and written from outside as it is.
 
-## 最初のスクリプトを実行する
+## Run the first script
 
-シミュレーションを時刻 0 で一時停止した状態で起動し、スロットルに 50 % を書き込み、500 ms 進めてから、回転数を読みます。次が [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py) の全文です（1 行目の `# SPDX-License-Identifier: MIT` だけ省いています）。
+This script starts the simulation paused at time 0, writes 50 % to the throttle, advances 500 ms, then reads the engine speed. Here is the full text of [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py), except line 1 (`# SPDX-License-Identifier: MIT`).
 
 <!-- examples/launch_control/write_and_read.py -->
 ```python
@@ -125,75 +127,77 @@ uv run python examples/launch_control/write_and_read.py \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
-### 確認
+### Verify the first script
 
 <!-- examples/launch_control/write_and_read.py: the output -->
 ```text
 at 500 ms: engine.throttle = 50.0, engine.speed = 1800
 ```
 
-回転数は 0 から 10 ms ごとに 50 rpm ずつ上がり、スロットル 50 % のときの 1800 rpm で一定になっています。`50.0` を `0.0` に変えると `engine.speed = 800` になり、`c.write()` と `c.wait()` の 2 行を消すと `engine.throttle = 20.0, engine.speed = 1200` になります。
+The engine speed rises from 0 by 50 rpm every 10 ms and settles at 1800 rpm, the value for 50 % throttle. If you change `50.0` to `0.0`, the script prints `engine.speed = 800`. If you delete the 2 lines with `c.write()` and `c.wait()`, it prints `engine.throttle = 20.0, engine.speed = 1200`.
 
-スクリプトの各行がすることは、次のとおりです。
+What each line of the script does:
 
-| 行 | すること |
+| Line | What it does |
 |---|---|
-| `Launch(..., start_paused=True)` | `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` を子プロセスとして起動します。 |
-| `launch.address` | `vehicle_sil_launch` が通知した Control Server のアドレスです。 |
-| `Control(launch.address)` | Control Server に gRPC で接続し、`with` を抜けると接続を閉じます。 |
-| `c.sim.wait_paused()` | シミュレーションが一時停止するまで待ち、時間の状態を返します。 |
-| `c.write({"Engine": {"engine.throttle": 50.0}})` | participant 名と変数の名前を指定して書き込み、操作の番号を返します。 |
-| `c.wait(seq, until="queued")` | ECU が書き込みを受信するまで待ちます。 |
-| `c.sim.step(ms(500))` | 仮想時間を 500 ms 進めて、また一時停止します。 |
-| `c.values("Engine").values` | ECU が最後に送信した値を、変数の名前をキーとする dict で返します。 |
+| `Launch(..., start_paused=True)` | Starts `vehicle_sil_launch run --events --stdin-commands --control 0 --start-paused` as a child process (`--control 0` picks a free port). |
+| `launch.address` | The address of the Control Server, as `vehicle_sil_launch` reported it. |
+| `Control(launch.address)` | Connects to the Control Server over gRPC, and closes the connection when the `with` block ends. |
+| `c.sim.wait_paused()` | Waits until the simulation is paused, and returns the time state. |
+| `c.write({"Engine": {"engine.throttle": 50.0}})` | Writes a value, naming the participant and the variable, and returns the operation's sequence number. |
+| `c.wait(seq, until="queued")` | Waits until the ECU has received the write. |
+| `c.sim.step(ms(500))` | Advances virtual time by 500 ms, then pauses again. |
+| `c.values("Engine").values` | Returns the values that the ECU sent last, as a dict keyed by variable name. |
 
-外側の `with` を抜けると、シミュレーションを停止して終わります。
+When the script leaves the outer `with` block, it stops the simulation and ends.
 
-### うまくいかないとき
+### Troubleshoot the first script
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: No module named 'vehicle_sil_control'` | `PYTHONPATH` を設定していません。 | 「準備」の `export` の行を実行します。 |
-| `ImportError: the Control API stubs are missing in ...` | スタブを生成していません。 | 「準備」の `generate` の行を実行します。 |
-| `LaunchError: ... --control needs a vehicle_sil_launch built with the control server` | Control Server なしでビルドした `vehicle_sil_launch` を指定しています。 | `build/linux-gcc-control/` の下のものを指定します。 |
-| `LaunchError: ... the executable engine/vehicle_sil_engine_ecu does not exist` | `examples/ecu_main/simulation.yaml`（ソースの側）を指定しています。 | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` を指定します。 |
-| `AttributeError: 'NoneType' object has no attribute 'values'` | ステップを 1 回も進めていない間は値がなく、`c.values()` が `None` を返します。 | `c.sim.step()` で進めてから読みます。 |
+| `ModuleNotFoundError: No module named 'vehicle_sil_control'` | `PYTHONPATH` is not set. | Run the `export` line in "Setup". |
+| `ImportError: the Control API stubs are missing in ...` | The stubs have not been generated. | Run the `generate` line in "Setup". |
+| `LaunchError: ... --control needs a vehicle_sil_launch built with the control server` | You passed a `vehicle_sil_launch` that was built without the Control Server. | Pass the one under `build/linux-gcc-control/`. |
+| `LaunchError: ... the executable engine/vehicle_sil_engine_ecu does not exist` | You passed `examples/ecu_main/simulation.yaml` (the one in the source tree). | Pass `build/linux-gcc-control/examples/ecu_main/simulation.yaml`. |
+| `AttributeError: 'NoneType' object has no attribute 'values'` | There are no values until the simulation has advanced at least one step, so `c.values()` returns `None`. | Advance with `c.sim.step()` before you read. |
 
-## コマンドで 1 つずつ操作する
+## Run commands one at a time
 
-Python を書かずに、端末から 1 つずつ操作します。端末を 2 つ使い、どちらもリポジトリのルートで実行します。
+Control the simulation from a terminal one command at a time, without writing Python. Use 2 terminals, both in the root of the repository.
 
-端末 1 で、Control Server をポート 8510 で開き、時刻 0 で一時停止した状態でシミュレーションを起動します。
+In terminal 1, start the simulation paused at time 0, with the Control Server on port 8510:
 
 ```sh
 build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --control 8510 \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
-次の 2 行が表示されれば、接続できます。2 行の間には、registry と ECU の起動の行が表示されます。
+When these 2 lines appear, you can connect. Lines about starting the registry and the ECUs appear between them.
 
 ```text
 [vehicle_sil_launch] control server at 127.0.0.1:8510
 [vehicle_sil_launch] standing still before the first step until a resume, step or run_until command (--start-paused with a control server)
 ```
 
-端末が 1 つのとき（スクリプトや CI）は、端末 1 のコマンドの末尾に `> launch.log 2>&1 &` を付けてバックグラウンドで起動し、`launch.log` に上の 2 行が出てから、同じ端末で端末 2 のコマンドを実行します。途中でやめるときは、CLI の `stop` か `kill <PID>`（SIGTERM）で、シミュレーションと ECU が止まります（結果は `interrupted`、終了コード 130）。
+With only one terminal (in a script or in CI), add `> launch.log 2>&1 &` to the end of the terminal 1 command to start it in the background. When the 2 lines above appear in `launch.log`, run the terminal 2 commands in the same terminal. To stop partway, use the CLI command `stop` or `kill <PID>` (SIGTERM). The simulation and the ECUs stop (result `interrupted`, exit code 130).
 
-端末 2 で、`export PYTHONPATH="$PWD/python"` を実行してから、次のコマンドを順に実行します。CLI は、指定しなければ `127.0.0.1:8510` に接続します。時刻 0 で一時停止したまま 50 秒が過ぎると、端末 1 のシミュレーションはエラーで終わるので、それまでに `step` まで実行します。`step` の後は、一時停止したまま待てます。
+In terminal 2, run `export PYTHONPATH="$PWD/python"`, then run the commands below in order. Unless you give another address, the CLI connects to `127.0.0.1:8510`.
 
-| すること | コマンド |
+Take your time: terminal 1 stays paused at time 0 until you run `step` or `resume`, and after each `step` it pauses again until the next command.
+
+| What you do | Command |
 |---|---|
-| participant の一覧を表示する | `uv run python -m vehicle_sil_control peers` |
-| 時刻を表示する | `uv run python -m vehicle_sil_control time` |
-| 書き込む | `uv run python -m vehicle_sil_control set Engine engine.throttle=50` |
-| 500 ms 進めて一時停止する | `uv run python -m vehicle_sil_control step 500` |
-| 変数と値を表示する | `uv run python -m vehicle_sil_control show Engine` |
-| 範囲の外の値を書き込んで、結果を見る | `uv run python -m vehicle_sil_control set Engine engine.throttle=150 --wait done` |
-| 再開する | `uv run python -m vehicle_sil_control resume` |
+| List the participants | `uv run python -m vehicle_sil_control peers` |
+| Show the time | `uv run python -m vehicle_sil_control time` |
+| Write a value | `uv run python -m vehicle_sil_control set Engine engine.throttle=50` |
+| Advance 500 ms and pause | `uv run python -m vehicle_sil_control step 500` |
+| Show the variables and their values | `uv run python -m vehicle_sil_control show Engine` |
+| Write a value out of range and see the result | `uv run python -m vehicle_sil_control set Engine engine.throttle=150 --wait done` |
+| Resume | `uv run python -m vehicle_sil_control resume` |
 
-### 確認
+### Verify the commands
 
-それぞれのコマンドの出力です。`seq` の後の番号は、実行ごとに変わります。
+The output of each command follows. The number after `seq` changes with every run.
 
 <!-- vehicle_sil_control peers -->
 ```text
@@ -217,7 +221,7 @@ seq 1794666759502163 Engine: queued
 paused at 500 ms, speed max
 ```
 
-`show Engine` の最初の 3 行です。列は、名前、値、単位、入出力と型と範囲です。続きの行は、vehicle-sil が自動で追加する変数（`peer.`、`j1939.` で始まる名前）です。
+Here are the first 3 lines of `show Engine`. The columns are name, value, unit, and then input or output with type and range. The lines that follow are the variables that vehicle-sil adds automatically (names that start with `peer.` and `j1939.`). If you run `show` before the first `step`, the value column is empty, because the ECUs have not run a simulation step yet.
 
 <!-- vehicle_sil_control show Engine: the first lines -->
 ```text
@@ -226,7 +230,7 @@ engine.throttle  50.0  %      input real [0..100]
 engine.speed     1800  rpm    output integer
 ```
 
-範囲の外の値を書き込むと、エラーにはならず、結果が `invalid` になります。
+A value out of range does not cause an error. The result is `invalid`.
 
 <!-- vehicle_sil_control set Engine engine.throttle=150 --wait done -->
 ```text
@@ -239,41 +243,42 @@ seq 1794666759502164 Engine: invalid (engine.throttle: 150 is out of range)
 running at 500 ms, speed max
 ```
 
-`resume` の後、端末 1 のシミュレーションは設定ファイルの `stop_at_ms`（1000 ms）まで進み、結果の表を表示して、終了コード 0 で終わります。
+After `resume`, the simulation in terminal 1 runs to `stop_at_ms` (1000 ms) of the configuration file, prints the result table and exits with code 0.
 
-CLI のほかのコマンドは、次のとおりです。
+Other CLI commands:
 
-| すること | コマンド（`uv run python -m vehicle_sil_control` の後） |
+| What you do | Command (after `uv run python -m vehicle_sil_control`) |
 |---|---|
-| 時刻を指定して書き込む | `set Engine engine.throttle=50 --at-ms 600` |
-| 一時停止する | `pause`（`--wait` を付けると、一時停止するまで待つ） |
-| 指定した時刻まで進めて一時停止する | `run-until 700` |
-| 速度を変える | `speed 1`（実時間と同じ速度）、`speed max`（最速） |
-| 値が変わるたびに表示する | `watch --peer Engine --count 10` |
-| シミュレーションを停止する | `stop` |
-| 別のアドレスの Control Server に接続する | `--server <アドレス>` をコマンド名の前に付けるか、環境変数 `VEHICLE_SIL_CONTROL_SERVER` に設定する |
+| Write at a given time | `set Engine engine.throttle=50 --at-ms 600` |
+| Pause | `pause` (with `--wait`, waits until the simulation is paused) |
+| Advance to a given time and pause | `run-until 700` |
+| Change the speed | `speed 1` (real-time speed), `speed max` (as fast as possible) |
+| Print values each time they change | `watch --peer Engine --count 10` |
+| Stop the simulation | `stop` |
+| Connect to a Control Server at another address | Put `--server <address>` before the command name, or set the address in the environment variable `VEHICLE_SIL_CONTROL_SERVER` |
 
-`--control 0` で起動すると、空いているポートが選ばれます。そのときは、端末 1 の `control server at` の行のアドレスを `--server` に渡します。
+With `--control 0`, the launcher picks a free port. In that case, pass the address on the `control server at` line of terminal 1 to `--server`.
 
-### うまくいかないとき
+### Troubleshoot the commands
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 端末 1 が `--control needs a vehicle_sil_launch built with the control server` と表示して、終了コード 4 で終わる | Control Server なしでビルドした `vehicle_sil_launch` です。 | `build/linux-gcc-control/` の下のものを使います。 |
-| 端末 1 が、何も起動せずに終了コード 3 で終わる | ポート 8510 を、ほかのプロセスが使っています。 | `--control 0` で起動し、表示されたアドレスを CLI の `--server` に渡します。 |
-| 端末 1 が `the simulation did not start: ... did not reach Running within 50000 ms` と表示して、終了コード 1 で終わる | 時刻 0 で一時停止したまま、50 秒が過ぎました。 | 端末 1 を起動し直し、50 秒以内に最初の `step` か `resume` を実行します。 |
-| 端末 2 に `error: UNAVAILABLE: ... Connection refused` | 端末 1 のシミュレーションが終わっているか、ポートが違います。 | 端末 1 を起動し直し、`control server at` の行のアドレスを確認します。 |
-| `step` が `FAILED_PRECONDITION` のエラーになる | 一時停止していません。 | 先に `pause --wait` を実行します。 |
-| `watch --count` が終わらない | 一時停止している間は、新しい値が送信されません。 | `resume` か `step` で進めるか、Ctrl+C で止めます。 |
+| Terminal 1 prints `--control needs a vehicle_sil_launch built with the control server` and exits with code 4 | This `vehicle_sil_launch` was built without the Control Server. | Use the one under `build/linux-gcc-control/`. |
+| Terminal 1 starts nothing and exits with code 3 | Another process uses port 8510. | Start with `--control 0`, and pass the printed address to the `--server` option of the CLI. |
+| Terminal 2 shows `error: UNAVAILABLE: ... Connection refused` | The simulation in terminal 1 has ended, or the port is wrong. | Run the command in terminal 1 again, and check the address on the `control server at` line. |
+| `step` fails with `FAILED_PRECONDITION` | The simulation is not paused. | Run `pause --wait` first. |
+| `watch --count` does not end | While the simulation is paused, no new values are sent. | Advance with `resume` or `step`, or stop it with Ctrl+C. |
 
-## Python の例を実行する
+## Run the Python examples
 
-ここから後の節は、Python のクライアントの呼び出しを、することごとに説明します。コードは、[examples/launch_control](../../examples/launch_control) の 2 つの例から抜き出したものです。どちらの例も、結果を自分で確認し、期待どおりなら終了コード 0、違えば 1 で終わります。
+The sections from here on explain the calls of the Python client, one task per section. The code is taken from the 2 examples in [examples/launch_control](../../examples/launch_control). Both examples check their own results and exit with code 0 if everything is as expected, 1 if not.
 
-| 例 | すること |
+| Example | What it does |
 |---|---|
-| [write_before_start.py](../../examples/launch_control/write_before_start.py) | 最初のステップの前に書き込み、500 ms 進めて、書き込みの結果と値を確認し、最後まで実行します。 |
-| [pause_and_step.py](../../examples/launch_control/pause_and_step.py) | 実時間の 4 分の 1 の速度で動かし、回転数が 1000 rpm に達したら一時停止し、時刻を指定して書き込み、100 ms 進めて確認します。 |
+| [write_before_start.py](../../examples/launch_control/write_before_start.py) | Writes before the first step, advances 500 ms, checks the result of the write and the values, then runs to the end. |
+| [pause_and_step.py](../../examples/launch_control/pause_and_step.py) | Runs at a quarter of real-time speed, pauses when the engine speed reaches 1000 rpm, writes at a given time, advances 100 ms and checks the result. |
+
+Unlike the first script, these examples take the launcher with `--launch`:
 
 ```sh
 uv run python examples/launch_control/write_before_start.py \
@@ -284,9 +289,9 @@ uv run python examples/launch_control/pause_and_step.py \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
-### 確認
+### Verify the Python examples
 
-`write_before_start.py` の出力です。ポートの番号は、実行ごとに変わります。
+`write_before_start.py` prints the following. The port number changes with every run.
 
 <!-- examples/launch_control/write_before_start.py: the output -->
 ```text
@@ -302,7 +307,7 @@ ok   the run passed (passed, reached_stop_at)
 all as expected
 ```
 
-`pause_and_step.py` の出力です。実時間に合わせて動かしている途中で一時停止するので、時刻と回転数は、実行によって変わることがあります。
+`pause_and_step.py` prints the following. It pauses a run that follows real time, so the times and the engine speeds can differ from run to run.
 
 <!-- examples/launch_control/pause_and_step.py: the output -->
 ```text
@@ -318,18 +323,18 @@ ok   the run passed (passed, reached_stop_at)
 all as expected
 ```
 
-抜き出したコードに出てくる `expect(条件, 文)` は、例の中で定義した関数です。条件が真なら `ok` と文を、偽なら `FAIL` と文を表示します。`c` は `Control`、`launch` は `Launch` のオブジェクトです。時刻は、どの呼び出しでも仮想時間のナノ秒で、`ms(500)` や `s(1)` で作ります。
+In the excerpts below, `expect(condition, text)` is a function that the examples define. If the condition is true, it prints `ok` and the text; if not, `FAIL` and the text. `c` is the `Control` object and `launch` the `Launch` object. Every call takes times in nanoseconds of virtual time; make them with `ms(500)` or `s(1)`.
 
-## 値を読む
+## Read values
 
-| 呼び出し | 返すもの | 使うとき |
+| Call | Returns | Use it to |
 |---|---|---|
-| `c.values("Engine")` | その ECU が最後に送信した値（`.values` が dict、`.time` がその値の時刻） | 1 つの ECU の今の値を読むとき。 |
-| `c.snapshot(["Engine", "Dashboard"])` | 時刻と、複数の ECU の値（1 回の呼び出しで Server が読んだもの） | 時刻と値を、同じ瞬間のものとして読むとき。 |
-| `c.watch(peers=["Engine"])` | 値などの更新を、受信した順に返すイテレーター | 値が変わるのを待つとき（「値の変化を待つ」）。 |
-| `c.peers()` | participant と、その変数の名前、型、範囲の一覧 | 変数の名前を調べるとき。 |
+| `c.values("Engine")` | The values that the ECU sent last (`.values` is a dict, `.time` the time of those values) | Read the current values of one ECU |
+| `c.snapshot(["Engine", "Dashboard"])` | The time and the values of several ECUs, read by the Control Server in one call | Read the time and the values as of the same instant |
+| `c.watch(peers=["Engine"])` | An iterator that returns updates, such as values, in the order they are received | Wait for a value to change (see "[Wait for a value to change](#wait-for-a-value-to-change)") |
+| `c.peers()` | The participants, with the names, types and ranges of their variables | Look up variable names |
 
-`pause_and_step.py` は、一時停止してから、時刻と値を `snapshot()` で読みます。
+`pause_and_step.py` pauses, then reads the time and the values with `snapshot()`.
 
 <!-- examples/launch_control/pause_and_step.py: an excerpt -->
 ```python
@@ -339,29 +344,29 @@ expect(snap.consistent and snap.time.now == stands.now,
        f"the snapshot is of {snap.time.now / 1e6:g} ms (consistent: {snap.consistent})")
 ```
 
-出力の `ok   the snapshot is of 290 ms (consistent: True)` が、この確認の結果です。
+The output line `ok   the snapshot is of 290 ms (consistent: True)` is the result of this check.
 
-読むときのルールは、次の 4 つです。
+4 rules apply when you read:
 
-- ECU は 10 ms（`sample_period` の既定）ごとに値を送信するので、それより細かい変化は読めません。
-- `c.sim.time()` と `c.values()` を別々に呼ぶと、その間にシミュレーションが進むことがあるので、時刻と値をそろえて読むときは `snapshot()` を使います。
-- 一時停止するのを待ってから `snapshot()` を呼び、`consistent` が真なら、値は一時停止している時刻のものです。
-- dict には、自分で宣言した変数のほかに、vehicle-sil が自動で追加する変数（`ecu.connected`、`peer.`、`j1939.` で始まる名前）も入っています。
+- An ECU sends its values every 10 ms (the default `sample_period`), so you cannot see changes faster than that.
+- If you call `c.sim.time()` and `c.values()` separately, the simulation can advance between the calls. To read a time and values that belong together, use `snapshot()`.
+- If you call `snapshot()` after the simulation has paused and `consistent` is true, the values are those at the time at which the simulation is paused.
+- Besides the variables you declared, the dict contains the variables that vehicle-sil adds automatically (`ecu.connected`, and names that start with `peer.` and `j1939.`).
 
-`snapshot()` が保証することと制限は、[control-api.md](../control-api.md) の「時刻と値をまとめて読む（`snapshot()`）」にあります。
+For what `snapshot()` guarantees and its limits, see "Read time and values together (`snapshot()`)" in [control-api.md](../control-api.md#read-time-and-values-together-snapshot).
 
-## 値を書き込む
+## Write values
 
-`c.write()` には、participant ごとに、変数の名前と値を渡します。1 回の呼び出しで、複数の participant に書き込めます。戻り値は操作の番号で、結果を待つときに使います（「書き込みの結果を待つ」）。
+Pass `c.write()` the variable names and values for each participant. One call can write to several participants. It returns the operation's sequence number, which you use to wait for the result (see "[Wait for the result of a write](#wait-for-the-result-of-a-write)").
 
-値が反映されるステップは、いつ書き込むかで決まります。
+The time at which you write decides the ECU step in which the value is applied:
 
-| 書き込むとき | 書き方 | 反映されるステップ |
+| When you write | How | Step in which the value is applied |
 |---|---|---|
-| 最初のステップの前（`start_paused=True` で起動して、一時停止している間） | `c.write({...})` | 時刻 0 のステップです。 |
-| 動いている途中 | 先に一時停止し、`at` に一時停止している時刻より後の時刻を指定して `c.write({...}, at=...)` | その ECU の、`at` 以後に始まる最初のステップです。 |
+| Before the first step (started with `start_paused=True`, while paused) | `c.write({...})` | The step at time 0. |
+| While the simulation runs | Pause first, then call `c.write({...}, at=...)` with an `at` later than the time at which the simulation is paused | The first step of that ECU that starts at or after `at`. |
 
-最初のステップの前に書き込むコードは、「最初のスクリプトを実行する」のとおりです。動いている途中で書き込むコードは、`pause_and_step.py` の次の部分です。`paused_at` は、一時停止している時刻です。
+The code that writes before the first step is in "Run the first script". The code that writes while the simulation runs is this part of `pause_and_step.py`. `paused_at` is the time at which the simulation is paused.
 
 <!-- examples/launch_control/pause_and_step.py: an excerpt -->
 ```python
@@ -372,28 +377,28 @@ c.sim.step(ms(100))
 stands = c.sim.wait_paused()
 ```
 
-190 ms で一時停止したので、`at` は 191 ms です。エンジンのステップは 10 ms ごとなので、値は 200 ms のステップで反映されます。出力の `ok   the throttle took effect in the engine's step at 200 ms` が、その確認の結果です。
+The simulation paused at 190 ms, so `at` is 191 ms. The engine ECU steps every 10 ms, so the value is applied in the step at 200 ms. The output line `ok   the throttle took effect in the engine's step at 200 ms` is the result of that check.
 
-書き込むときのルールは、次の 5 つです。
+5 rules apply when you write:
 
-- どちらの場合も、`c.wait(seq, until="queued")` で ECU が受信したのを待ってから、時間を進めます。
-- 動いている途中で、`at` を指定しないか、一時停止している時刻を指定すると、結果が `late` になるか、反映されるステップが実行ごとに変わることがあります。
-- 範囲の外の値と、出力の変数への書き込みは、例外にならず、結果が `invalid` になります。
-- Parameter に書き込めるのは、最初のステップの前だけです。
-- 同じ変数に、複数のクライアントが同じ時刻を指定して書き込むと、残る値は Server が受信した順で決まります。
+- In both cases, wait with `c.wait(seq, until="queued")` until the ECU has received the write, then advance time.
+- While the simulation runs, if you give no `at`, or give the time at which the simulation is paused, the result can be `late`, or the step in which the value is applied can differ from run to run.
+- A value out of range and a write to an output variable do not raise an exception. The result is `invalid`.
+- A parameter (a variable that `show` lists as `parameter` instead of `input`) can be written only before the first simulation step.
+- If several clients write the same variable with the same time, the value that remains depends on the order in which the Control Server received the writes.
 
-ECU をバスから切断するのも、変数への書き込みです。どの ECU にもある `ecu.connected` に `False` を書き込みます。J1939 でどう見えるかは、[j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」にあります。
+Disconnecting an ECU from the bus is also a write to a variable: write `False` to `ecu.connected`, which every ECU has. For how this looks on J1939, see "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected).
 
-反映される時刻のルールの全体は、[control-api.md](../control-api.md) の「始まる前に書く（`--start-paused`）」と「Python」にあります。
+For all the rules on when a write is applied, see "Write before the start (`--start-paused`)" and "Python" in [control-api.md](../control-api.md).
 
-## 書き込みの結果を待つ
+## Wait for the result of a write
 
-| 呼び出し | 待つもの |
+| Call | Waits until |
 |---|---|
-| `c.wait(seq, until="queued")` | 宛先のすべての ECU が、書き込みを受信するまで。 |
-| `c.wait(seq)` | 宛先のすべての ECU で、結果が決まるまで。 |
+| `c.wait(seq, until="queued")` | Every destination ECU has received the write. |
+| `c.wait(seq)` | The result is decided in every destination ECU. |
 
-どちらも操作の結果を返し、`.target("Engine")` で宛先ごとの結果を読みます。`write_before_start.py` は、500 ms 進めた後で、結果を確認します。
+Both return the result of the operation. Read the result for each destination with `.target("Engine")`. `write_before_start.py` checks the result after it has advanced 500 ms.
 
 <!-- examples/launch_control/write_before_start.py: an excerpt -->
 ```python
@@ -403,30 +408,30 @@ expect(done.target("Engine").status == "applied" and done.target("Engine").appli
        f"{done.target('Engine').applied_at})")
 ```
 
-出力の `ok   the throttle took effect in the step at 0 (applied at 0)` が、この確認の結果です。
+The output line `ok   the throttle took effect in the step at 0 (applied at 0)` is the result of this check.
 
-`status` の主な値は、次の 6 つです。
+The 6 main values of `status`:
 
-| `status` | 意味 |
+| `status` | Meaning |
 |---|---|
-| `queued` | ECU が受信しました。 |
-| `applied` | 反映されました（`applied_at` が、反映されたステップの時刻です）。 |
-| `late` | 指定した時刻のステップに間に合いませんでした。 |
-| `invalid` | 名前、型、範囲、書き込めるかの検査で拒否されました（接続していない宛先への書き込みも、この値です）。 |
-| `rejected` | ECU の setter が拒否しました。 |
-| `unknown` | 反映されたかどうかが、わかりません。 |
+| `queued` | The ECU has received the write. |
+| `applied` | The write was applied (`applied_at` is the time of the step in which it was applied). |
+| `late` | The write missed the step at the time you gave. |
+| `invalid` | The checks of name, type, range and writability rejected the write. A write to a destination that is not connected also gets this value. |
+| `rejected` | The ECU's setter rejected the write. |
+| `unknown` | It is not known whether the write was applied. |
 
-待つときのルールは、次の 3 つです。
+3 rules apply when you wait:
 
-- 拒否された書き込みは例外になりません。`status` を確認します。例外（`ControlError`）になるのは、呼び出しそのものが失敗したときです。
-- ECU が受信した書き込みでは、`c.wait(seq)` は、値が反映される時刻まで時間が進まないと戻りません。一時停止している間に呼ぶと、タイムアウト（既定 30 秒）で `ControlError` になります。
-- `write()` は、自動では送信し直しません。レスポンスを受信する前に接続が切れた書き込みは、受け付けられているかもしれません。
+- A rejected write does not raise an exception, so check `status`. An exception (`ControlError`) is raised only when the call itself fails.
+- For a write that the ECU has received, `c.wait(seq)` does not return until time advances to when the value is applied. If you call it while the simulation is paused, it raises `ControlError` when it times out (after 30 seconds by default).
+- `write()` does not retry on its own. A write whose connection broke before the response arrived may still have been accepted.
 
-`status` の値ごとの定義は、[internals/control.md](../internals/control.md) の「Control Agent」と「Control Server の中核」にあります。
+For the definition of each `status` value, see "Control Agent (`vehicle_sil::control`)" and "Control Server core (`vehicle_sil::control::Hub`)" in [internals/control.md](../internals/control.md).
 
-## 値の変化を待つ
+## Wait for a value to change
 
-`c.watch()` は、値などの更新を、受信した順に返します。`pause_and_step.py` は、動いているシミュレーションの回転数を見て、1000 rpm に達したら一時停止します。
+`c.watch()` returns updates, such as values, in the order they are received. `pause_and_step.py` watches the engine speed of the running simulation and pauses when it reaches 1000 rpm.
 
 <!-- examples/launch_control/pause_and_step.py: an excerpt -->
 ```python
@@ -442,32 +447,32 @@ stands = c.sim.wait_paused()
 paused_at = stands.now
 ```
 
-出力の最初の 2 行（`engine.speed 1000 rpm at 190 ms` と `ok   it stands still at 190 ms`）が、ここで表示されます。`Values` は、`from vehicle_sil_control import Values` で import します。
+This code prints the first 2 lines of the output (`engine.speed 1000 rpm at 190 ms` and `ok   it stands still at 190 ms`). Import `Values` with `from vehicle_sil_control import Values`.
 
-- `watch()` が返すのは、participant の情報、値、イベント、操作の結果です。
-- 値は `Values` のオブジェクトで、`.values` が dict、`.time` がその値の時刻です。
-- 受信するのは最新の値で、すべての値の記録ではありません。
-- シミュレーションが終わると、`for` も終わります。
-- 最速（既定）で動かすと、一時停止する前にシミュレーションが終わることがあります。途中で一時停止するときは、速度を下げる（例は `Launch(..., arguments=["--speed", "0.25"])`）か、時刻 0 で一時停止した状態で起動して `c.sim.run_until()` で進めます。
+- `watch()` returns participant information, values, events and operation results.
+- Values come as `Values` objects: `.values` is a dict, `.time` the time of those values.
+- You receive the latest values, not a record of every value.
+- When the simulation ends, the `for` loop ends too.
+- At the fastest speed (the default), the simulation can end before you pause it. To pause partway, lower the speed (in the example, `Launch(..., arguments=["--speed", "0.25"])`), or start paused at time 0 and advance with `c.sim.run_until()`.
 
-`watch()` の引数と、返すものの一覧は、[control-api.md](../control-api.md) の「Python」にあります。
+For the arguments of `watch()` and a list of what it returns, see "Python" in [control-api.md](../control-api.md#python).
 
-## 時間を止めて進める
+## Pause and step time
 
-時間の操作は `c.sim` にあります。
+The time operations are in `c.sim`.
 
-| すること | Python | CLI |
+| What you do | Python | CLI |
 |---|---|---|
-| 今の時間の状態を読む | `c.sim.time()` | `time` |
-| 一時停止する | `c.sim.pause()` | `pause` |
-| 再開する | `c.sim.resume()` | `resume` |
-| 指定した長さだけ進めて、一時停止する | `c.sim.step(ms(100))` | `step 100` |
-| 指定した時刻まで進めて、一時停止する | `c.sim.run_until(ms(700))` | `run-until 700` |
-| 一時停止するまで待つ | `c.sim.wait_paused()` | `pause --wait` |
-| 速度を変える | `c.sim.set_speed(1.0)`、最速は `c.sim.set_speed(None)` | `speed 1`、`speed max` |
-| シミュレーションを停止する | `c.sim.stop()` | `stop` |
+| Read the current time state | `c.sim.time()` | `time` |
+| Pause | `c.sim.pause()` | `pause` |
+| Resume | `c.sim.resume()` | `resume` |
+| Advance by a given amount and pause | `c.sim.step(ms(100))` | `step 100` |
+| Advance to a given time and pause | `c.sim.run_until(ms(700))` | `run-until 700` |
+| Wait until the simulation is paused | `c.sim.wait_paused()` | `pause --wait` |
+| Change the speed | `c.sim.set_speed(1.0)`; as fast as possible, `c.sim.set_speed(None)` | `speed 1`, `speed max` |
+| Stop the simulation | `c.sim.stop()` | `stop` |
 
-どの呼び出しも、時間の状態（`now` が時刻、`paused` が一時停止しているか、`speed` が速度）を返します。`pause_and_step.py` は、確認が終わった後、速度を最速に変えて再開し、最後まで実行します。
+Every call returns the time state: `now` is the time, `paused` whether the simulation is paused and `speed` the speed. After its checks, `pause_and_step.py` sets the speed to as fast as possible, resumes and runs to the end.
 
 <!-- examples/launch_control/pause_and_step.py: an excerpt -->
 ```python
@@ -476,20 +481,20 @@ expect(speed.speed is None and speed.paused, "the speed is max, and it still sta
 c.sim.resume()
 ```
 
-時間を操作するときのルールは、次の 6 つです。
+6 rules apply when you control time:
 
-- `step()` と `run_until()` の後は、`c.sim.wait_paused()` で一時停止するのを待ってから、値を読みます。
-- `step()` が使えるのは、一時停止している間だけです。
-- `pause()` で一時停止する時刻と、`step()` で進む長さは、`vehicle_sil_launch` のタイムステップ（既定 10 ms）の倍数に切り上げられます。そのため、一時停止した時刻は、`wait_paused()` が返す `now` で読みます。
-- 一時停止している間に速度を変えても、一時停止したままです。
-- 今はできない操作は `ControlError`（`code` が `FAILED_PRECONDITION`）に、引数のエラーは `INVALID_ARGUMENT` になります。
-- 一時停止するのは、仮想時間で動く ECU だけです。
+- After `step()` and `run_until()`, wait with `c.sim.wait_paused()` until the simulation is paused, then read values.
+- `step()` works only while the simulation is paused.
+- The time at which `pause()` pauses and the length that `step()` advances are rounded up to a multiple of the time step of `vehicle_sil_launch` (10 ms by default). Because of this, read the time at which the simulation paused from the `now` that `wait_paused()` returns.
+- If you change the speed while the simulation is paused, it stays paused.
+- An operation that is not possible at the moment raises `ControlError` (with `code` `FAILED_PRECONDITION`); an argument error gives `INVALID_ARGUMENT`.
+- Only ECUs that run in virtual time pause.
 
-`--speed` を指定したときの速度と遅れの見方は、[複数の ECU をつないで動かす](integrate-ecus.md) の「等速で動かす（`--speed`）と遅れの見方」にあります。
+For the speed and how to read the lateness when you give `--speed`, see "Run at real-time speed (`--speed`) and read the lateness" in [Integrate and run several ECUs](integrate-ecus.md#run-at-real-time-speed---speed-and-read-the-lateness).
 
-## 終了を待つ
+## Wait for the run to end
 
-`launch.wait()` は、`vehicle_sil_launch` が終わるのを待ち、`run --json` と同じ結果を dict で返します。`write_before_start.py` は、再開してから、結果を確認します。
+`launch.wait()` waits until `vehicle_sil_launch` ends, and returns the same result as `run --json`, as a dict. `write_before_start.py` resumes, then checks the result.
 
 <!-- examples/launch_control/write_before_start.py: an excerpt -->
 ```python
@@ -497,23 +502,23 @@ expect(result["result"] == "passed" and result["simulation"] == "reached_stop_at
        f"the run passed ({result['result']}, {result['simulation']})")
 ```
 
-- 途中で停止するときは、`launch.stop()` を呼びます。
-- `with Launch(...)` を抜けるときも、動いていれば停止します。
-- 実行が終わると、`vehicle_sil_launch` は Control Server を閉じ、待っている呼び出し（`watch()`、`wait()`、`wait_paused()`）は、そこで終わります。
-- `run` のほかの引数（`--speed`、`--disable` など）は、`Launch(..., arguments=[...])` で渡します。
+- To stop partway, call `launch.stop()`.
+- Leaving `with Launch(...)` also stops the run if it is still running.
+- When the run ends, `vehicle_sil_launch` closes the Control Server, and calls that are waiting (`watch()`, `wait()`, `wait_paused()`) end there.
+- Pass other options of `run` (`--speed`, `--disable` and others) with `Launch(..., arguments=[...])`.
 
-結果の dict の読み方は、[simulation-run.md](../simulation-run.md) の「JSON（`run --json`）」にあります。
+For how to read the result dict, see "JSON (`run --json`)" in [simulation-run.md](../simulation-run.md#json-run---json).
 
-## 標準入力から時間を操作する
+## Control time from stdin
 
-仮想時間の操作だけなら、Control Server も Python も使わずに、`vehicle_sil_launch run` の標準入力からできます。変数の読み書きはできません。`--stdin-commands` を付けて起動し、1 行に 1 つの JSON を入力します。
+To control only virtual time, you can use the stdin of `vehicle_sil_launch run`, with neither the Control Server nor Python. You cannot read or write variables this way. Start the launcher with `--stdin-commands` and type one JSON object per line.
 
 ```sh
 build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --stdin-commands \
     build/linux-gcc-control/examples/ecu_main/simulation.yaml
 ```
 
-`[vehicle_sil_launch] simulation running` の行が表示された後、時刻 0 で一時停止します。次の 2 行を、1 行ずつ入力します。
+After the line `[vehicle_sil_launch] simulation running` appears, the simulation pauses at time 0. Type the 2 lines below, one at a time.
 
 <!-- standard input of run --start-paused --stdin-commands: the input -->
 ```json
@@ -521,9 +526,9 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --std
 {"command":"resume"}
 ```
 
-### 確認
+### Verify the time commands
 
-表示の ECU が、500 ms ごとに 1 行を表示します。1 行目の入力の後に `t=500 ms` の行が、2 行目の入力の後に `t=1000 ms` の行と結果の表が表示され、終了コード 0 で終わります。
+The dashboard ECU prints one line every 500 ms. After the first input line, the `t=500 ms` line appears. After the second, the `t=1000 ms` line and the result table appear, and the launcher exits with code 0.
 
 <!-- standard input of run --start-paused --stdin-commands: the lines of the Dashboard -->
 ```text
@@ -532,31 +537,31 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --std
 [Dashboard] t=1000 ms engine speed 1200 rpm (10 messages)
 ```
 
-入力できる行は、次の 5 つです。
+You can type these 5 lines:
 
-| 行 | すること |
+| Line | What it does |
 |---|---|
-| `{"command":"pause"}` | 一時停止します。 |
-| `{"command":"resume"}` | 再開します。 |
-| `{"command":"step","ms":500}` | 一時停止している間だけ使えて、500 ms 進めて、また一時停止します。 |
-| `{"command":"speed","value":1}` | 速度を変えます（`"max"` で最速）。 |
-| `{"command":"stop"}` | シミュレーションを停止します（結果は `interrupted`、終了コード 130）。 |
+| `{"command":"pause"}` | Pauses. |
+| `{"command":"resume"}` | Resumes. |
+| `{"command":"step","ms":500}` | Advances 500 ms and pauses again. Works only while the simulation is paused. |
+| `{"command":"speed","value":1}` | Changes the speed (`"max"` for as fast as possible). |
+| `{"command":"stop"}` | Stops the simulation (result `interrupted`, exit code 130). |
 
-- 標準入力を閉じる（端末では Ctrl+D）と、`stop` と同じです。
-- JSON として読めない行は無視され、理由が標準エラーに 1 行表示されます。
-- `--control` と一緒に使うと、標準入力と Control Server のどちらからも時間を操作できます。
+- Closing stdin (Ctrl+D in a terminal) is the same as `stop`.
+- A line that is not valid JSON is ignored, and the reason is printed on one line of stderr.
+- With `--control` as well, you can control time from both stdin and the Control Server.
 
-行の形式の全体と、受け付けない場合は、[simulation-events.md](../simulation-events.md) の「標準入力のコマンド（`run --stdin-commands`）」にあります。標準入力と Control Server の両方から操作したときの順序は、[control-api.md](../control-api.md) の「標準入力とクライアントのコマンド」にあります。
+For the full line format and the cases where a command is not accepted, see "Stdin commands (`run --stdin-commands`)" in [simulation-events.md](../simulation-events.md#stdin-commands-run---stdin-commands). For the order of commands that come from both stdin and the Control Server, see "Stdin commands and client commands" in [control-api.md](../control-api.md#stdin-commands-and-client-commands).
 
-## 別の PC から接続する
+## Connect from another computer
 
-ここまでの手順は、`vehicle_sil_launch` と同じ PC から接続します。別の PC から接続するには、TLS の証明書とトークンが必要です。手順は、[複数の PC で動かす](multi-pc.md) の「ほかの PC から Control API を使う」にあります。
+The steps so far connect from the computer that runs `vehicle_sil_launch`. To connect from another computer, you need a TLS certificate and a token. For the steps, see "Use the Control API from another computer" in [Run on several computers](multi-pc.md#use-the-control-api-from-another-computer).
 
-## J1939 の信号を変数として読む
+## Read J1939 signals as variables
 
-Control API が扱うのは、ECU が宣言した変数と時間だけで、J1939 のフレームは扱いません。受信した信号を外から読むには、ECU が、受信した値を出力の変数にします。外から決める値は、入力の変数にして、ECU が送信する値に使います。
+The Control API handles only time and the variables that ECUs declare. It does not handle J1939 frames. To make a received signal readable from outside, the ECU copies the received value into an output variable. A value that is set from outside goes into an input variable, and the ECU uses it in what it sends.
 
-例では、表示の ECU が、受信した回転数を出力の変数 `dashboard.engine_speed` にしています。次は、[examples/ecu_main/dashboard/main.cpp](../../examples/ecu_main/dashboard/main.cpp) の `Dashboard` のコンストラクターの一部です。
+In the example, the dashboard ECU puts the engine speed it receives in the output variable `dashboard.engine_speed`. Here is part of the constructor of `Dashboard` in [examples/ecu_main/dashboard/main.cpp](../../examples/ecu_main/dashboard/main.cpp):
 
 <!-- examples/ecu_main/dashboard/main.cpp: an excerpt -->
 ```cpp
@@ -568,18 +573,18 @@ node.on_message(ecu_main_example::kEngineSpeed, [this](const j1939::Message& m) 
 ecu.output("dashboard.engine_speed", &rpm_, {.unit = "rpm", .description = "the speed shown"});
 ```
 
-変数を追加するのは、ECU のコードを書く人の作業です。必要な信号があれば、その ECU を書いた人に伝えます。変数の宣言の仕方は、[j1939-guide.md](../j1939-guide.md) の「外部から信号を読み書きする（UI、テスト）」と [control-api.md](../control-api.md) の「ECU の変数」にあります。
+Adding variables is the ECU author's work. If you need a signal, ask the author of that ECU. For how to declare variables, see "Read and write signals from outside (UI, tests)" in [j1939-guide.md](../j1939-guide.md#read-and-write-signals-from-outside-ui-tests) and "ECU variables" in [control-api.md](../control-api.md#ecu-variables).
 
-## 補足
+## Notes
 
-- シナリオの実行（`--scenario`）にも `--control` で接続できますが、その間にできるのは、読む、待つ、停止するだけです。外から値を書き込むと、シナリオが同じ結果にならなくなるためです。詳細は [scenario.md](../scenario.md) の「実行中に変数を見る（`--control`）」にあります。
-- GUI も、内部で `vehicle_sil_launch` の Control Server を使うので、反映される時刻と書き込みの結果のルールは Python と同じです。
-- `--timeout-ms` は、一時停止している時間も数えます。
-- 時間の状態を `c.watch(time=True)` で受信すると、間引かれるので、短い一時停止は現れないことがあります。一時停止を待つには、`c.sim.wait_paused()` を使います。
-- 自分で起動した `vehicle_sil_launch` のアドレスをプログラムで読むときは、`run --events` のイベント `control_server` の `address` を使います。
+- You can also connect with `--control` to a scenario run (`--scenario`), but only to read, wait and stop. Writes from outside would stop the scenario from giving the same result every time. For details, see "Watching variables during a run (`--control`)" in [scenario.md](../scenario.md#watching-variables-during-a-run---control).
+- The GUI also uses the Control Server of `vehicle_sil_launch` internally, so the rules for when a write is applied and for the result of a write are the same as in Python.
+- `--timeout-ms` also counts the time during which the simulation is paused.
+- If you receive the time state with `c.watch(time=True)`, the updates are thinned out, so a short pause may not appear. To wait for a pause, use `c.sim.wait_paused()`.
+- To read from a program the address of a `vehicle_sil_launch` that you started yourself, use the `address` of the `control_server` event of `run --events`.
 
-## 次に読むもの
+## What to read next
 
-- 呼び出しの引数、反映される時刻、`snapshot()` のルールを確認する → [control-api.md](../control-api.md)
-- 同じ手順を、終了コードで合否の出るテストにする → [シナリオでテストを書く](scenario-tests.md)
-- `run --events` のイベントと `run --json` の結果を、プログラムから読む → [simulation-events.md](../simulation-events.md)
+- Look up the arguments of the calls, when writes are applied and the rules of `snapshot()`: [control-api.md](../control-api.md)
+- Turn the same steps into a test whose exit code gives the result: [Write tests with scenarios](scenario-tests.md)
+- Read the events of `run --events` and the result of `run --json` from a program: [simulation-events.md](../simulation-events.md)

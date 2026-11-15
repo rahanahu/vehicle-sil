@@ -1,432 +1,426 @@
-# ブラウザの GUI（`vehicle-sil-gui`）
+# Browser GUI (`vehicle-sil-gui`)
 
-`vehicle-sil-gui` は、ブラウザからシミュレーションを開始し、ECU の変数をスライダーやグラフで読み書きするツールです。このドキュメントには、GUI の使い方の手順と、引数、セキュリティ、画面の機能のリファレンスがあります。
+[日本語](ja/gui.md)
 
-| したいこと | 読む所 |
+`vehicle-sil-gui` is a tool that starts a simulation from the browser and reads and writes ECU variables with sliders, charts and other widgets. This page has a guide to using the GUI, and a reference for its arguments, its security and the features of its screens.
+
+| Goal | Section |
 |---|---|
-| ブラウザで値を見て操作する | 「[GUI を使う](#gui-を使う)」 |
-| 自分の画面を作って GUI サーバーに配信させる | ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) |
-| 引数、終了コード、止まり方を調べる | 「[起動の引数と終了コード](#起動の引数と終了コード)」「[停止と終了](#停止と終了)」 |
-| 何を守り、何を守らないかを確認する | 「[セキュリティ](#セキュリティ)」 |
-| 「変数」の画面の並べ方をファイルに書く | 「[ダッシュボードのファイル](#ダッシュボードのファイル)」 |
-| 自分の画面に適用されるルールを調べる | 「[自分の画面のリファレンス](#自分の画面のリファレンス)」 |
-| GUI 自体を開発する | 「[開発](#開発)」 |
+| Watch and change values in the browser | "[Use the GUI](#use-the-gui)" |
+| Build your own screen and have the GUI server serve it | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| Look up the arguments, the exit codes and how the GUI stops | "[Arguments and exit codes](#arguments-and-exit-codes)", "[Stopping and exiting](#stopping-and-exiting)" |
+| See what the GUI protects against, and what it does not | "[Security](#security)" |
+| Describe the layout of the Variables screen in a file | "[Dashboard files](#dashboard-files)" |
+| Look up the rules that apply to your own screen | "[Reference for your own screen](#reference-for-your-own-screen)" |
+| Develop the GUI itself | "[Development](#development)" |
 
-## 構成
+## Structure
 
-GUI サーバー（Python）が同じ PC で `vehicle_sil_launch` を起動し、その経過と ECU の変数を、HTTP と WebSocket で画面に中継します。シミュレーションを動かすのはランチャーで、GUI はそれを表示するだけです。テストや AI エージェントから使う正式なインターフェースは、`vehicle_sil_launch` と Control API のままです。
+The GUI server (Python) starts `vehicle_sil_launch` on the same computer and relays its progress and the ECU variables to the screen over HTTP and WebSocket. The launcher runs the simulation; the GUI only shows it. For tests and AI agents, the official interfaces remain `vehicle_sil_launch` and the Control API.
 
 ```mermaid
 flowchart LR
-  yours["自分の画面"] --> lib["クライアントのライブラリ"]
-  sample["サンプルの画面"] --> lib
-  lib --> server["GUI サーバー"]
-  tool["画面のないツール"] --> server
+  yours["Your own screen"] --> lib["Client library"]
+  sample["Sample screens"] --> lib
+  lib --> server["GUI server"]
+  tool["Tool without a screen"] --> server
   server --> launcher["vehicle_sil_launch"]
   launcher --> ecu["ECU"]
 ```
 
-矢印は「呼び出す」向きです。GUI は、自分の画面を作るための SDK でもあり、次の 4 つからできています。
+Arrows point in the direction of the calls. The GUI is also an SDK for building your own screens. It has 4 parts:
 
-| 部分 | 場所 | 役目 |
+| Part | Location | Role |
 |---|---|---|
-| GUI サーバー | `gui/server`（コマンドは `vehicle-sil-gui`） | ランチャーを起動し、API を提供し、画面の静的なファイルを配信します。 |
-| サーバーの API | [gui/protocol](../gui/protocol/README.md) | HTTP と WebSocket の形、バージョンと互換性のルール、認証を定めていて、どの言語からでも使えます。 |
-| クライアントのライブラリ | [gui/client](../gui/client/README.md)（`@vehicle-sil/gui-client`） | 接続、実行と時間の操作、ECU の変数を扱う TypeScript のライブラリで、フレームワークに依存しません。 |
-| サンプルの画面 | `gui/web`（Angular） | 上の 3 つだけで作ったリファレンス実装で、`--web` を指定しなければ GUI サーバーはこれを配信します。 |
+| GUI server | `gui/server` (the command is `vehicle-sil-gui`) | Starts the launcher, provides the API, and serves the screens' static files. |
+| Server API | [gui/protocol](../gui/protocol/README.md) | Defines the HTTP and WebSocket shapes, the versioning and compatibility rules, and authentication. Usable from any language. |
+| Client library | [gui/client](../gui/client/README.md) (`@vehicle-sil/gui-client`) | A TypeScript library for the connection, run and time control, and ECU variables. It does not depend on any framework. |
+| Sample screens | `gui/web` (Angular) | A reference implementation built only on the 3 parts above. The GUI server serves it unless you give `--web`. |
 
-ライブラリと GUI サーバーの間は HTTP と WebSocket（[gui/protocol](../gui/protocol/README.md) が仕様）、GUI サーバーとランチャーの間は、ランチャーの標準入出力と Control Server（gRPC）です。
+The library talks to the GUI server over HTTP and WebSocket ([gui/protocol](../gui/protocol/README.md) is the specification). The GUI server talks to the launcher through the launcher's stdin and stdout and through the Control Server (gRPC).
 
-## GUI を使う
+## Use the GUI
 
-サンプルの画面で、シミュレーションを開始し、変数を読み書きし、時間を止めて進め、シナリオを実行する手順です。
+This guide uses the sample screens to start a simulation, read and write variables, pause and step time, and run a scenario.
 
-### 前提
+### Prerequisites
 
-| 必要なもの | 条件 |
+| Requirement | Details |
 |---|---|
-| テンプレートのプロジェクト | [最初の ECU を作る](howto/first-ecu.md) の手順 1 まで済ませて、ECU をビルドし、ツールの `bin` を `PATH` に追加しておきます。 |
-| Python | 3.11 以上が必要で、[uv](https://docs.astral.sh/uv/) があれば、Python とパッケージは uv がインストールします。 |
-| ブラウザ | GUI サーバーと同じ PC のブラウザを使います。 |
+| Template project | Complete step 1 of [Create your first ECU](howto/first-ecu.md): build the ECUs and add the tools' `bin` to `PATH`. |
+| Python | 3.11 or later. If you have [uv](https://docs.astral.sh/uv/), uv installs Python and the packages. |
+| Browser | A browser on the same computer as the GUI server. |
 
-コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。リポジトリをビルドして使う場合は、次のように読み替えます。
+Run the commands in the template project's directory (the one that contains `simulation.yaml`). If you work from a build of the repository instead, use the right column:
 
-| | テンプレートのプロジェクト | リポジトリ（README の「[クイックスタート](../README.md#クイックスタート)」の後） |
+| | Template project | Repository (after "[Quick start](../README.md#quick-start)" in the README) |
 |---|---|---|
-| 実行するディレクトリ | `simulation.yaml` のある所 | リポジトリのルート |
-| 起動するコマンド | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
-| 使われる設定ファイル | `simulation.live.yaml` | `build/<preset>/examples/ecu_main/simulation.live.yaml` |
+| Directory to run in | The one that contains `simulation.yaml` | The root of the repository |
+| Command to start | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
+| Configuration file used | `simulation.live.yaml` | `build/<preset>/examples/ecu_main/simulation.live.yaml` |
 
-`simulation.live.yaml` は、`simulation.yaml` と同じ 2 つの ECU を、`stop_at_ms` なし、`speed: 1` で動かす設定ファイルです。停止するまで動くので、画面で値を見ながら操作できます。
+`simulation.live.yaml` is a configuration file that runs the same 2 ECUs as `simulation.yaml`, without `stop_at_ms` and with `speed: 1`. It runs until you stop it, so you can watch values on the screen while you change them.
 
-### 全体の流れ
+### Overview
 
-| 手順 | すること | 見えるもの |
+| Step | What you do | What you see |
 |---|---|---|
-| 1 | GUI サーバーを起動する | ブラウザの「実行」の画面と、照合の結果 |
-| 2 | シミュレーションを開始する | 状態「実行中」と、ECU のログ |
-| 3 | 変数を見て、書き込む | 「変数」の画面のスライダーとグラフ |
-| 4 | 時間を止めて、1 ステップずつ進める | 止まった仮想時間と、進めた量 |
-| 5 | 停止して、終了する | 結果「中断」 |
-| 6 | シナリオを実行する | 手順ごとの合否の表 |
+| 1 | Start the GUI server | The Run screen in the browser, and the check result |
+| 2 | Start the simulation | The state **Running** and the ECU log |
+| 3 | Watch and write variables | Sliders and charts on the Variables screen |
+| 4 | Pause time and advance one step at a time | Virtual time stopping, and how far a step advances it |
+| 5 | Stop the run and exit | The result **Interrupted** |
+| 6 | Run a scenario | A table with the result of each scenario step |
 
-画面の表示には、このドキュメントと違う言葉がいくつかあります。「」の中は、画面の表示のままです。
+"Step 1" to "Step 6" are the parts of this guide; anywhere else on this page, a "step" is a simulation step. The screen uses the same terms as this page, and text in bold is exactly what the screen shows.
 
-| 画面の表示 | このドキュメントの言葉 |
-|---|---|
-| 構成ファイル | 設定ファイル |
-| 所見、誤り | 指摘、エラー |
-| 時刻、仮想時刻 | 時間、仮想時間 |
-| ステップ送り | ステップ実行 |
-| 刻み | ステップ（遅れを数える単位）、ステップ幅 |
-
-### 手順 1: GUI サーバーを起動する
+### Step 1: Start the GUI server
 
 ```sh
 vehicle-sil-gui simulation.live.yaml
 ```
 
-#### 確認
+#### Verify the GUI server
 
-端末に URL が 1 行表示され、ブラウザが開きます。
+The terminal prints one URL line, and the browser opens.
 
 ```text
-http://127.0.0.1:34457/#token=<起動のたびに変わるトークン>
+http://127.0.0.1:34457/#token=<token that changes on every start>
 vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ```
 
-ブラウザには「実行」の画面が開き、「構成ファイル」に `simulation.live.yaml` が選ばれています。GUI は選んだ設定ファイルをすぐに照合するので、「照合」のカードに「✓照合: 通った（誤り 0、警告 0、注記 0）」と、participant の `Engine` と `Dashboard` が表示されます。
+The browser shows the Run screen, with `simulation.live.yaml` selected under **Configuration file**. The GUI checks the selected configuration file at once, so the **Check** card shows **✓ Check: Passed (errors: 0, warnings: 0, notes: 0)** and the participants `Engine` and `Dashboard`.
 
-#### うまくいかないとき
+#### Troubleshoot the GUI server
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle-sil-gui` が見つからない | ツールの `bin` が `PATH` にありません。 | `get_tools.py` が表示した `export PATH=...` の行を実行します。 |
-| ブラウザが開かない | ブラウザを起動できない環境か、ブラウザが一時ファイルを開けません。 | 表示された URL を、`#token=` の後ろまで含めてブラウザに貼ります。 |
-| 終了コード 2 で終わる | 引数のエラーか、ランチャー、Python のパッケージ、ポートを使えません。 | 表示されたメッセージに従います（「[起動の引数と終了コード](#起動の引数と終了コード)」）。 |
-| ほかの PC のブラウザから開けない | GUI サーバーは 127.0.0.1 だけで待ち受けます。 | SSH のポート転送を使います（[複数の PC で動かす](howto/multi-pc.md)）。 |
+| `vehicle-sil-gui` is not found | The tools' `bin` is not on `PATH`. | Run the `export PATH=...` line that `get_tools.py` printed. |
+| The browser does not open | The environment cannot start a browser, or the browser cannot open a temporary file. | Paste the printed URL into the browser, including everything after `#token=`. |
+| `vehicle-sil-gui` exits with exit code 2 | An argument is wrong, or the launcher, the Python packages or the port cannot be used. | Follow the printed message (see "[Arguments and exit codes](#arguments-and-exit-codes)"). |
+| A browser on another computer cannot open it | The GUI server listens on 127.0.0.1 only. | Use SSH port forwarding (see [Run on several computers](howto/multi-pc.md)). |
 
-### 手順 2: シミュレーションを開始する
+### Step 2: Start the simulation
 
-「実行」の画面の上にある「開始」を押します。
+Click **Start** at the top of the Run screen.
 
-#### 確認
+#### Verify the start
 
-| 見る所 | 表示 |
+| Where to look | What it shows |
 |---|---|
-| 上の状態の帯 | 「●実行中」になり、段階が「照合」「起動」「参加を待つ」「実行」の順に進みます。 |
-| 「participant の状態」 | `Engine` と `Dashboard` が「● 参加した」「変数: つながった（18 個）」になります。 |
-| 「ログ」 | `Dashboard` の行（`t=500 ms engine speed 1200 rpm (5 messages)` など）が増えていきます。 |
+| The status bar at the top | **● Running**, with the phases going through **Check**, **Start**, **Join** and **Run** in that order. |
+| **Participant status** | `Engine` and `Dashboard` show **● Joined** and **Variables: connected (18)**. |
+| **Log** | Lines from `Dashboard` (such as `t=500 ms engine speed 1200 rpm (5 messages)`) keep coming. |
 
-#### うまくいかないとき
+#### Troubleshoot the start
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 「開始」を押せない | 照合にエラーがあります。 | 「所見」の文を読んで設定ファイルか ECU を直し、「照合し直す」を押します（[simulation-check.md](simulation-check.md)）。 |
-| 1 秒ほどで終わる | `simulation.yaml`（`stop_at_ms: 1000`）を選んでいます。 | 「構成ファイル」で `simulation.live.yaml` を選びます。 |
-| 「変数: つながった」にならない | ランチャーか ECU が、変数の読み書きに対応していません。 | 「[必要なもの](#必要なもの)」の「ECU の変数の読み書き」を確認します。 |
+| **Start** cannot be clicked | The check has errors. | Read the text under **Findings**, fix the configuration file or the ECU, and click **Check again** (see [simulation-check.md](simulation-check.md)). |
+| The run ends after about 1 second | `simulation.yaml` (`stop_at_ms: 1000`) is selected. | Select `simulation.live.yaml` under **Configuration file**. |
+| **Variables: connected** does not appear | The launcher or the ECU does not support reading and writing variables. | Check "Reading and writing ECU variables" in "[Requirements](#requirements)". |
 
-### 手順 3: 変数を見て、書き込む
+### Step 3: Watch and write variables
 
-ナビゲーションの「変数」を開きます。テンプレートにはダッシュボードのファイル（`simulation.live.dashboard.yaml`）があるので、`Engine` のスロットル（`Engine.engine.throttle`）がスライダー、回転数（`Engine.engine.speed`）がグラフで並びます。「Throttle」のスライダーを 20 % から 40 % に動かします。
+Open **Variables** in the navigation. The template has a dashboard file (`simulation.live.dashboard.yaml`), so the screen shows the throttle of `Engine` (`Engine.engine.throttle`) as a slider and the engine speed (`Engine.engine.speed`) as a chart. Move the **Throttle** slider from 20 % to 40 %.
 
-#### 確認
+#### Verify the variables
 
-スライダーの下に「✓ 6.600 s のステップで反映しました」のように反映された仮想時間が表示され、「Engine speed」が 1200 rpm から 1600 rpm に上がります。値の下の「8.870 s の値」は、その値を読んだステップの仮想時間です。
+Below the slider, the screen shows the virtual time at which the write was applied, such as **✓ Applied in the step at 6.600 s**, and **Engine speed** rises from 1200 rpm to 1600 rpm. **Value at 8.870 s** below a value is the virtual time of the step in which that value was read.
 
-![ブラウザの GUI の「変数」の画面。スロットルを 20 % から 60 % に動かした後で、回転数のグラフが 1200 rpm から 2000 rpm に上がっている](images/gui-variables.png)
+![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed chart rises from 1200 rpm to 2000 rpm](images/gui-variables.png)
 
-#### うまくいかないとき
+#### Troubleshoot the variables
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 変数の代わりに理由が表示される | 実行がないか、変数を読み書きできない構成です。 | 手順 2 で実行を開始し、それでも表示されるなら「[必要なもの](#必要なもの)」を確認します。 |
-| スライダーやスイッチを操作できない | 出力の変数、終わった実行、切断された ECU などには書き込めません。 | コンポーネントに表示された理由を読みます（「[コンポーネントに共通の動作](#コンポーネントに共通の動作)」）。 |
-| 探している変数が見当たらない | ダッシュボードのファイルに書いていない変数や、監視用の変数は、後ろや畳んだセクションに並びます。 | 上の「名前で絞り込む」に、変数の名前の一部を入力します。 |
+| A reason appears instead of the variables | There is no run, or the setup cannot read and write variables. | Start a run as in step 2. If the reason still appears, check "[Requirements](#requirements)". |
+| A slider or switch cannot be used | The variable cannot be written: it is an output, the run has ended, the ECU is disconnected, or similar. | Read the reason shown in the widget (see "[Behavior common to all widgets](#behavior-common-to-all-widgets)"). |
+| The variable you look for is missing | Variables that are not in the dashboard file, and monitoring variables, appear at the end or in collapsed sections. | Enter part of the variable's name in **Filter by name** at the top. |
 
-### 手順 4: 時間を止めて、1 ステップずつ進める
+### Step 4: Pause time and advance one step at a time
 
-1. 「実行」の画面に戻り、状態の帯の「‖一時停止」を押します。
-2. 「時刻」のカードの「ステップ送りの量（ms）」に `100` を入力し、「ステップ送り」を押します。
-3. 「▶再開」を押します。
+1. Go back to the Run screen and click **‖ Pause** in the status bar.
+2. In the **Time** card, enter `100` in **Step by (ms)** and click **Step**.
+3. Click **▶ Resume**.
 
-#### 確認
+#### Verify pausing and stepping
 
-| 操作の後 | 表示 |
+| After | What it shows |
 |---|---|
-| 一時停止 | 状態の帯と「時刻」のカードの状態が「一時停止中」になり、「仮想時刻」が止まります。 |
-| ステップ実行 | 「仮想時刻」が 100 ms 進み（例: 10.175 s から 10.275 s）、「前のステップ送りで進む量: 100 ms（ランチャーが刻みの倍数に切り上げます）。」と表示されます。 |
-| 再開 | 状態が「実行中」に戻り、「仮想時刻」が進みます。 |
+| Pause | The state in the status bar and in the **Time** card becomes **Paused**, and **Virtual time** stops advancing. |
+| Step | **Virtual time** advances by 100 ms (for example, from 10.175 s to 10.275 s), and the card shows "The last step advanced 100 ms (the launcher rounds a step up to whole time steps)." |
+| Resume | The state returns to **Running**, and **Virtual time** advances. |
 
-止まっている間も「変数」の画面で書き込めます。書き込みは次のステップで反映されるので、ステップ実行か再開をするまでは「受け付けた」のままです。最初のステップの前に値を設定したいときは、開始の前に「止めた状態で始める」を選びます（「[時間の操作](#時間の操作)」）。
+You can write on the Variables screen while paused. A write is applied in the next step, so until you step or resume, the widget shows **Accepted. Waiting for the ECU to apply it in a step**. To set a value before the first step, select **Start paused** before you start (see "[Time control](#time-control)").
 
-### 手順 5: 停止して、終了する
+### Step 5: Stop the run and exit
 
-「停止」を押してシミュレーションを止め、端末で Ctrl+C を押して GUI サーバーを終了します。
+Click **Stop** to stop the simulation, then press Ctrl+C in the terminal to exit the GUI server.
 
-#### 確認
+#### Verify the stop
 
-「結果」のカードに「■ 中断」「終わり方: 止めた」と表示されます。自分で止めた実行は、失敗ではなく「中断」です。Ctrl+C の後、`vehicle-sil-gui` は終了コード 0 で終わります。実行中に Ctrl+C を押したときは、シミュレーションを先に止めてから終わります（「[停止と終了](#停止と終了)」）。
+The **Result** card shows **■ Interrupted** and **How it ended: Stopped**. A run that you stop is not a failure; its result is **Interrupted**. After Ctrl+C, `vehicle-sil-gui` exits with exit code 0. If you press Ctrl+C during a run, the GUI server stops the simulation first, then exits (see "[Stopping and exiting](#stopping-and-exiting)").
 
-### 手順 6: シナリオを実行する
+### Step 6: Run a scenario
 
-シナリオ（[scenario.md](scenario.md)）は、変数に決まった手順で値を設定し、結果を確認するファイルです。設定ファイルの隣の `scenarios/` に置いたものを、画面から選べます。
+A scenario ([scenario.md](scenario.md)) is a file that sets variables in a fixed sequence of steps and checks the results. The screen lists the scenarios in `scenarios/` next to the configuration file.
 
-1. `vehicle-sil-gui simulation.yaml` で起動します（起動したままなら、「構成ファイル」で `simulation.yaml` を選びます）。
-2. 「シナリオ」で `throttle_step.yaml` を選びます。
-3. 「開始」を押します。
+1. Start the GUI with `vehicle-sil-gui simulation.yaml` (if it is still running, select `simulation.yaml` under **Configuration file**).
+2. Select `throttle_step.yaml` under **Scenario**.
+3. Click **Start**.
 
-#### 確認
+#### Verify the scenario run
 
-| 見る所 | 表示 |
+| Where to look | What it shows |
 |---|---|
-| 「照合」のカード（開始の前） | 「シナリオ scenarios/throttle_step.yaml も照合しました（6 手順）。」 |
-| 「結果」のカード | 「✓ 成功」「終わり方: シナリオが終わった」 |
-| 「シナリオ」のカード | 「✓ シナリオは通りました」と、手順ごとの行、状態、仮想時間の表（`set Engine.engine.throttle = 50` が「✓ 通った」「0 ms」など） |
+| The **Check** card (before the start) | "The scenario scenarios/throttle_step.yaml was checked too (steps: 6)." |
+| The **Result** card | **✓ Passed** and **How it ended: The scenario ended** |
+| The **Scenario** card | **✓ The scenario passed**, and a table of the scenario steps with their line, state and virtual time (for example, `set Engine.engine.throttle = 50` with **✓ Passed** and **0 ms**) |
 
-シナリオの実行中は、変数に書き込めません。細かいルールは「[シナリオ](#シナリオ)」にあります。
+While a scenario runs, you cannot write variables. For the detailed rules, see "[Scenarios](#scenarios)".
 
-### 次に読むもの
+### What to read next
 
-- 「変数」の画面の並べ方を決める → 「[ダッシュボードのファイル](#ダッシュボードのファイル)」
-- GUI での操作を、シナリオのファイルとして保存する → 「[操作をシナリオとして保存する](#操作をシナリオとして保存する)」
-- 自分の画面を作る → [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md)
+- Decide the layout of the Variables screen → "[Dashboard files](#dashboard-files)"
+- Save what you did in the GUI as a scenario file → "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"
+- Build your own screen → [Build your own screen for the browser GUI](howto/gui-screen.md)
 
-## 自分の画面を作る
+## Build your own screen
 
-自分の画面は、クライアントのライブラリを使って好きなフレームワークで作り、ビルドした静的なファイルを `--web` で GUI サーバーに配信させます。画面は GUI サーバーと同じ origin から開くので、サーバーのセキュリティの検査（トークン、`Host`、`Origin`、CSP）がそのまま適用されます。
+Build your own screen with the client library in any framework you like, and have the GUI server serve the built static files with `--web`. The screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it unchanged.
 
-手順は、ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) にあります。作り方ごとの出発点は次のとおりです。
+The guide [Build your own screen for the browser GUI](howto/gui-screen.md) has the steps. Where to start, depending on how you build:
 
-| 作り方 | 使うもの | 出発点 |
+| How you build | What you use | Where to start |
 |---|---|---|
-| ビルドなしの素の JavaScript | ライブラリを 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | 画面のテンプレート（`gui_starter`）をコピーします（上のガイド）。 |
-| TypeScript と好きなフレームワーク（React、Vue、Svelte など） | ライブラリのパッケージ（`.tgz`） | [examples/gui_starter/README.md](../examples/gui_starter/README.md) の「TypeScript とフレームワークで作る」 |
-| Angular | 上のパッケージと、サンプルの画面のコンポーネントとラッパー | 「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」 |
-| 画面のないツール（テストの駆動、記録） | ライブラリか、サーバーの API | 「[画面のないツールから使う](#画面のないツールから使う)」 |
+| Plain JavaScript, no build step | The library bundled into one file (`vehicle-sil-gui-client.mjs`) | Copy the screen template (`gui_starter`); see the guide above. |
+| TypeScript and any framework (React, Vue, Svelte and others) | The library package (`.tgz`) | "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#build-with-typescript-and-a-framework) |
+| Angular | The package above, and the widgets and wrappers of the sample screens | "[Copy the sample widgets](#copy-the-sample-widgets)" |
+| A tool without a screen (driving tests, recording) | The library, or the server API | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
 
-配信されるファイル、CSP、トークン、開発サーバー、ライブラリが代行しないルールは、「[自分の画面のリファレンス](#自分の画面のリファレンス)」にあります。
+For the files that are served, CSP, the token, development servers and the rules that the library does not enforce for you, see "[Reference for your own screen](#reference-for-your-own-screen)".
 
-## 必要なもの
+## Requirements
 
-| 機能 | 必要なもの |
+| Feature | Requirement |
 |---|---|
-| GUI サーバーの起動 | Python 3.11 以上と [uv](https://docs.astral.sh/uv/) |
-| シミュレーションの照合と実行 | `version --json` の `features` に `events` と `stdin-commands` がある `vehicle_sil_launch`（`run --events`、`run --stdin-commands`。[simulation-events.md](simulation-events.md) の「プログラムから使う」） |
-| 時間の操作 | `features` の `speed`、`start-paused`、`time-commands`（ないランチャーでは、その操作を表示しません） |
-| ECU の変数の読み書き | Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python の gRPC（`grpcio`、`protobuf`。`uv sync` がインストールします） |
-| 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
-| 画面 | サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`） |
+| Starting the GUI server | Python 3.11 or later and [uv](https://docs.astral.sh/uv/) |
+| Checking and running a simulation | A `vehicle_sil_launch` whose `features` in `version --json` include `events` and `stdin-commands` (`run --events`, `run --stdin-commands`; see [simulation-events.md](simulation-events.md)) |
+| Time control | `speed`, `start-paused` and `time-commands` in `features` (with a launcher that lacks them, the screen does not show those controls) |
+| Reading and writing ECU variables | A launcher with a Control Server (`control-server` in `features`; built with `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see [control-api.md](control-api.md)), and Python gRPC for the GUI server (`grpcio`, `protobuf`; `uv sync` installs them) |
+| A simulation to run | A configuration file and the ECU executables it lists (the launcher starts them for check and run) |
+| Screens | A build of the sample screens (the output of `npm run build` in `gui/web`) or a build of your own screen (`--web`) |
 
-- ビルド済みのツール（README の「[クイックスタート](../README.md#クイックスタート)」）には、Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。必要なのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv がインストールします。
-- 変数の読み書きに必要なもののどちらかがなくても、ほかの機能はそのまま使えます。変数だけが「使えない」になり、理由を表示します。
-- 画面を使うだけなら Node.js は不要です。画面のビルドには必要です（[gui/web/README.md](../gui/web/README.md)）。
+- The prebuilt tools (see "[Quick start](../README.md#quick-start)" in the README) contain everything except Python: a launcher with a Control Server, the GUI server, the built screens and the gRPC stubs. You need only Python 3.11 or later; if you have uv, uv installs Python and the packages too.
+- If either requirement for reading and writing variables is missing, everything else still works. Only the variables show **Not available**, with the reason.
+- Using the screens needs no Node.js. Building them does (see [gui/web/README.md](../gui/web/README.md)).
 
-## 起動の引数と終了コード
+## Arguments and exit codes
 
 ```sh
-vehicle-sil-gui [引数] [<設定ファイル>]
+vehicle-sil-gui [options] [<configuration file>]
 ```
 
-| 引数 | 意味 |
+| Argument | Meaning |
 |---|---|
-| `<設定ファイル>` | 最初に選んでおくファイル（`--root` の下） |
-| `--root <dir>` | 画面で選べるファイルの範囲。既定は、渡した設定ファイルのディレクトリ、なければカレントディレクトリ |
-| `--port <n>` | 待ち受けるポート（127.0.0.1）。既定の 0 は空いているポート。80 は使えない（ブラウザが `Host` からポートを省くため） |
-| `--no-browser` | ブラウザを開かない |
-| `--launcher <path>` | `vehicle_sil_launch` のパス（`.py` で終わるパスは、この Python で実行する） |
-| `--web <dir>` | 自分の画面を配信する: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（「[`--web` で配信するファイル](#--web-で配信するファイル)」） |
-| `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からのリクエストも受け付ける（「[開発サーバーを使う](#開発サーバーを使う)」） |
-| `--json` | URL の代わりに `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` を 1 行で表示する（ツールから起動するとき） |
-| `--stop-timeout <秒>` | 終了するとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
-| `--check-timeout <秒>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
-| `--silent-after <秒>` | 実行中のランチャーがこの時間より長く何も出力しなければ（ハートビートも来なければ）、画面に通知する（既定 5。1 以上） |
-| `--no-variables` | ランチャーの Control Server を起動しない（ECU の変数を読み書きしない） |
+| `<configuration file>` | The file selected when the screen opens (a file under `--root`) |
+| `--root <dir>` | The directory whose files the screen can choose from. Default: the directory of the given configuration file, otherwise the current directory |
+| `--port <n>` | The port to listen on (127.0.0.1). The default 0 picks a free port. 80 cannot be used (browsers drop the port from `Host`) |
+| `--no-browser` | Do not open the browser |
+| `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
+| `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
+| `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
+| `--json` | Print `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
+| `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop (default 10). After that, the launcher is stopped |
+| `--check-timeout <seconds>` | The time limit of a check (including `--describe` of each ECU) (default 120). After that, the check is stopped |
+| `--silent-after <seconds>` | If the running launcher prints nothing (not even a heartbeat) for longer than this, notify the screen (default 5; 1 or more) |
+| `--no-variables` | Do not start the launcher's Control Server (no reading or writing of ECU variables) |
 
-| 終了コード | 意味 |
+| Exit code | Meaning |
 |---|---|
-| 0 | 止めた（Ctrl+C、SIGTERM） |
-| 1 | 動いている間の失敗 |
-| 2 | 引数のエラーか、ランチャーやポートを使えない |
+| 0 | Stopped (Ctrl+C, SIGTERM) |
+| 1 | Failure while running |
+| 2 | Argument error, or the launcher or the port cannot be used |
 
-### 起動したときの動作
+### What happens at startup
 
-- `http://127.0.0.1:<port>/#token=<...>` を 1 行表示して、ブラウザで開きます。
-- ブラウザには URL を直接渡さず、自分だけが読める一時ファイル（URL へ移るだけのページ。30 秒後かサーバーの終了時に消します）を開かせます。
-- ブラウザがそのファイルを開けない（一時ディレクトリを読めないブラウザなど）ときや、ブラウザが開かないときは、表示した URL をブラウザに貼ります。
-- Ctrl+C でサーバーを止めます。実行中のシミュレーションは、先に止めます。
-- 画面で設定ファイルを選ぶと、ランチャーが各 ECU の `--describe` で照合し、participant ごとの `--describe` の出力（ステップ幅、ネットワーク、変数の数）を表示します。
-- 設定ファイルの中の実行ファイルの相対パスは、設定ファイルのあるディレクトリが基準です（ランチャーのルール）。
-- `--web` を指定せずに起動して、サンプルの画面のビルド（`gui/web` の `npm run build`）がないときは、ビルドの手順を書いたページを表示します。
+- The GUI server prints `http://127.0.0.1:<port>/#token=<...>` on one line and opens it in the browser.
+- It does not pass the URL to the browser directly. It has the browser open a temporary file that only you can read (a page that only redirects to the URL; deleted after 30 seconds or when the server exits).
+- If the browser cannot open that file (a browser that cannot read the temporary directory, for example), or no browser opens, paste the printed URL into a browser.
+- Ctrl+C stops the server. A running simulation is stopped first.
+- When you select a configuration file on the screen, the launcher checks it, running each ECU with `--describe`, and the screen shows the `--describe` output of each participant (step size, networks, number of variables).
+- Relative executable paths in the configuration file are relative to the directory that contains the configuration file (the launcher's rule).
+- If you start without `--web` and there is no build of the sample screens (`npm run build` in `gui/web`), the server shows a page with the build instructions.
 
-### ランチャーの探し方
+### How the launcher is found
 
-ランチャーは `--launcher <path>`、環境変数 `VEHICLE_SIL_LAUNCH`、`PATH` の順に探します。
+The GUI server looks for the launcher in `--launcher <path>`, the environment variable `VEHICLE_SIL_LAUNCH`, and `PATH`, in that order.
 
-| 場合 | 動作 |
+| Situation | What happens |
 |---|---|
-| `PATH` で見つけたランチャーがカレントディレクトリにある | 使わずに、終了コード 2 で終わります。 |
-| ランチャーに `features` の `events` か `stdin-commands` がない | 何が足りないかを表示して、終了コード 2 で終わります。 |
+| The launcher found on `PATH` is in the current directory | The server does not use it and exits with exit code 2. |
+| The launcher lacks `events` or `stdin-commands` in `features` | The server prints what is missing and exits with exit code 2. |
 
-カレントディレクトリのランチャーを使わないのは、Windows がカレントディレクトリを `PATH` より先に探すためです。人から受け取ったフォルダで起動すると、そこにあるプログラムが動いてしまいます。そのランチャーを使うときは `--launcher` で指定します。
+The server refuses a launcher in the current directory because Windows searches the current directory before `PATH`: starting the GUI in a folder you received from someone would run whatever program is in it. To use that launcher, name it with `--launcher`.
 
-### ビルド済みのツールの起動スクリプト
+### Start script in the prebuilt tools
 
-ビルド済みのツールでは、その `bin` を `PATH` に追加して、設定ファイルのあるディレクトリで `vehicle-sil-gui simulation.yaml` のように起動します。`bin/vehicle-sil-gui`（Windows のコマンドプロンプトでは `bin\vehicle-sil-gui.cmd`）は、次のことをします。
+With the prebuilt tools, add their `bin` to `PATH` and start the GUI in the directory of the configuration file, as in `vehicle-sil-gui simulation.yaml`. `bin/vehicle-sil-gui` (`bin\vehicle-sil-gui.cmd` in the Windows command prompt) does the following:
 
-| すること | 内容 |
+| What it does | Details |
 |---|---|
-| ランチャーを渡す | ツールの `vehicle_sil_launch` を、環境変数 `VEHICLE_SIL_LAUNCH` で GUI サーバーに渡します。 |
-| gRPC のスタブを渡す | ツールのスタブを、環境変数 `VEHICLE_SIL_CONTROL_STUBS` で渡します。 |
-| パッケージをインストールして起動する | `uv run` で `python/requirements.txt` のパッケージ（バージョンとハッシュを固定）をインストールして起動します（2 回目からは uv のキャッシュを使います）。 |
-| Python を選ぶ | 固定したパッケージの wheel があるバージョン（3.11 から、テストしている `.python-version` のバージョンまで）を uv が選び、なければダウンロードします。 |
+| Passes the launcher | Passes the tools' `vehicle_sil_launch` to the GUI server in the environment variable `VEHICLE_SIL_LAUNCH`. |
+| Passes the gRPC stubs | Passes the tools' stubs in the environment variable `VEHICLE_SIL_CONTROL_STUBS`. |
+| Installs the packages and starts | With `uv run`, installs the packages in `python/requirements.txt` (versions and hashes pinned) and starts the server (from the second start on, uv installs them from its cache). |
+| Chooses Python | uv chooses a version for which the pinned packages have wheels (from 3.11 up to the tested version in `.python-version`), and downloads it if needed. |
 
-- パッケージをソースからビルドはしません。
-- uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <ツール>/python/requirements.txt` でインストールし、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そのことを表示して終了コード 2 で終わります。
-- GUI サーバーの Python は、カレントディレクトリのモジュールを読み込みません（`python -P`）。
+- Packages are never built from source.
+- Without uv, install the packages into a virtual environment of Python 3.11 or later with `python -m pip install --require-hashes -r <tools>/python/requirements.txt`, and name that Python in the environment variable `VEHICLE_SIL_PYTHON`. If something is missing, the script says so and exits with exit code 2.
+- The GUI server's Python does not load modules from the current directory (`python -P`).
 
-### リポジトリから起動する
+### Start from the repository
 
-リポジトリのルートで `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が設定ファイルを実行ファイルの隣にコピーします）です。`stop_at_ms`（例では 1000 ms）で終わると、結果を表示します。
+Run `uv sync` at the root of the repository, then start the GUI and name the launcher you built with `--launcher`. The command below uses the ECU example from the build (`build/<preset>/examples/ecu_main/`; CMake copies the configuration file next to the executables). When it reaches `stop_at_ms` (1000 ms in the example), the screen shows the result.
 
 ```sh
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
   build/<preset>/examples/ecu_main/simulation.yaml
 ```
 
-`scripts/run-gui.py` は、この起動を 1 つのコマンドにしたものです。`build/` の下から Control Server を持つランチャーを探し、その隣の例の `simulation.live.yaml` で GUI サーバーを起動します。ビルドはしません。
+`scripts/run-gui.py` does this in one command. It looks under `build/` for a launcher with a Control Server and starts the GUI server with the example's `simulation.live.yaml` next to it. It does not build anything.
 
 ```sh
 scripts/run-gui.py
 ```
 
-| 場合 | `scripts/run-gui.py` の動作 |
+| Situation | What `scripts/run-gui.py` does |
 |---|---|
-| ランチャー、例、画面のビルド、uv のどれかがない | それを作るコマンドを表示して、終了コード 1 で終わります。 |
-| `--launcher` や設定ファイルに渡したファイルがない | 引数のエラー（終了コード 2）です。 |
-| `build/` の外のランチャー（展開したツールのものなど）を `--launcher` で渡す | 隣に例がないので、設定ファイルも渡します。 |
-| `--dry-run` を付ける | 探した結果と、起動するコマンドだけを表示します。 |
+| The launcher, the example, the screen build or uv is missing | Prints the command that makes it and exits with exit code 1. |
+| A file given with `--launcher` or as the configuration file does not exist | Argument error (exit code 2). |
+| `--launcher` names a launcher outside `build/` (one from extracted tools, for example) | There is no example next to it, so give the configuration file too. |
+| With `--dry-run` | Prints only what it found and the command it would run. |
 
-- 表示するコマンドは、リポジトリのルートで実行する形です。ほかのディレクトリから呼んだときは、実行する場所を最初の行で示します。
-- Windows では、Ctrl+C で全部が止まります。このスクリプトのプロセスだけを終了させると（ツールからの終了、タスクの終了）、GUI サーバーと実行中のシミュレーションが残ります。ツールから止めるときは、プロセスツリーごと止めます（`taskkill /T /PID <pid>`）。
+- The printed commands are meant to be run at the root of the repository. When you call the script from another directory, the first line says where to run them.
+- On Windows, Ctrl+C stops everything. If only this script's process ends (a tool ends it, or you use End task), the GUI server and the running simulation keep running. To stop it from a tool, stop the whole process tree (`taskkill /T /PID <pid>`).
 
-## 停止と終了
+## Stopping and exiting
 
-| 操作 | 起きること |
+| Action | What happens |
 |---|---|
-| 画面の「停止」 | ランチャーの標準入力に `stop` を送り、順に止めます。 |
-| 画面の「待たずに止める」 | もう一度 `stop` を送り、ランチャーは participant の終了を待たずに止めます。 |
-| サーバーの終了（Ctrl+C、SIGTERM、端末を閉じた） | 照合をすぐ止め、ランチャーの標準入力を閉じて順に止めさせます。 |
-| 2 回目の Ctrl+C | 待ちを省きます。 |
-| サーバーの強制終了 | ランチャーは標準入力の終わりを受け取って、自分で止まります。 |
+| **Stop** on the screen | Sends `stop` to the launcher's stdin; the launcher stops in order. |
+| **Stop without waiting** on the screen | Sends `stop` once more; the launcher stops without waiting for the participants to exit. |
+| The server exits (Ctrl+C, SIGTERM, terminal closed) | Stops a check at once, and closes the launcher's stdin so that the launcher stops in order. |
+| A second Ctrl+C | Skips the waits. |
+| The server is killed | The launcher sees the end of stdin and stops by itself. |
 
-- 標準入力を読まないランチャーは、「停止」でも「待たずに止める」でも止まりません。そのときはサーバーを止めます。
-- サーバーの終了では、`--stop-timeout` の間に止まらなければ、ランチャーのプロセスグループに SIGTERM（Windows は Ctrl+Break）を送り、5 秒後にグループを強制終了します（Windows は `taskkill /T /F`）。終わるまでの時間は、長くても `--stop-timeout` に 20 秒を加えた程度です。
-- サーバーが止められるのは、ランチャーと、ランチャーと同じプロセスグループにいるものまでです。participant の後始末はランチャーの役目です（ランチャーは participant を別のプロセスグループで起動します）。
-- ランチャーが終わっても、ランチャーが起動したプロセスが出力を開いたままのときは、2 秒待ってから実行を終わりにし、画面に通知します。そのプロセスは残っているかもしれません。
+- A launcher that does not read stdin stops neither with **Stop** nor with **Stop without waiting**. In that case, stop the server.
+- When the server exits and the launcher has not stopped within `--stop-timeout`, the server sends SIGTERM (on Windows, Ctrl+Break) to the launcher's process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). Exiting takes at most about `--stop-timeout` plus 20 seconds.
+- The server can stop only the launcher and what is in the launcher's process group. Cleaning up the participants is the launcher's job (the launcher starts the participants in a process group of their own).
+- If the launcher has exited but a process it started still holds its output open, the server waits 2 seconds, then ends the run and notifies the screen. That process may still be running.
 
-## セキュリティ
+## Security
 
-GUI サーバーはプロセスを起動できます（設定ファイルに書いたコマンドを、ランチャーが起動します）。そのため、自分の PC の上で自分だけが使う前提で、次のように守っています。
+The GUI server can start processes (the launcher starts the commands in the configuration file). It is therefore built on the assumption that only you use it, on your own computer, and protects itself as follows.
 
-- **待ち受けるアドレス**: 127.0.0.1 だけで待ち受けます。ほかの PC からは開けません（SSH のポート転送で見る手順は [howto/multi-pc.md](howto/multi-pc.md)。転送は同じポート番号で）。`Host` は `127.0.0.1:<port>` だけを受け付けます（`localhost` は、ブラウザが先に `::1` へ接続することがあり、そこで別のプログラムが待ち受けられるので受け付けません）。
-- **トークン**: 起動のたびに新しいトークンを作ります。トークンは表示した URL の `#token=` の後ろにだけあり、画面はそれを読んだら URL から消します。API と WebSocket はトークンがないと応答しません。URL を人に渡さないでください。
-- **ほかのウェブページ**: ほかのウェブページからのリクエストを拒否します（`Host` と `Origin` の検査。CORS は許可しません）。
-- **設定ファイル**: 画面から使えるのは `--root` の下の設定ファイルだけです。外へ出るパスや、root の外へのシンボリックリンクは、検査の時点で拒否します（検査の後に root の中でリンクを差し替えることは防げませんが、root に書ける人は設定ファイルをそのまま置けます）。ランチャーに渡す引数はサーバーが決まった形で組み立て、任意のコマンドは受け取りません。
-- **ECU の変数**: ランチャーの Control Server（127.0.0.1 の空いているポート）から読み書きします。
-  - 実行のたびに新しいトークンを作り、自分だけが読めるファイル（一時ディレクトリの `vehicle-sil-gui-control-*.txt`。POSIX では権限 0600）でランチャーに渡します。
-  - ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終了時にも消します。
-  - このトークンは、ランチャーの引数、イベント、画面への通知、エラーの文のどこにも出しません。同じ PC のほかのプロセスは、このトークンなしでは Control Server を使えません。
-  - GUI サーバーが接続するのは、ランチャーが通知した `127.0.0.1:<port>` だけです。
-  - 画面からの書き込みは、ほかの API と同じ検査（トークン、`Host`、`Origin`）を通り、変数の一覧にある書き込める変数へ、型と範囲の合う値だけを渡します。
-- **シナリオ**: シナリオ（設定ファイルの隣の `scenarios` の `.yaml` / `.yml`）は、その一覧にあるものだけをランチャーに渡します。`..`、絶対パス、NUL、長すぎる名前、`.` で始まる名前、シンボリックリンク（ファイルも、`scenarios` とその上のディレクトリも）は一覧に入らず、指定しても拒否します。保存するシナリオの YAML は、サーバーが文字列として返すだけで、ファイルを書きません。
-- **ダッシュボードのファイルとカスタムパネル**: ダッシュボードのファイル（設定ファイルの隣の `.dashboard.yaml`）とカスタムパネル（`panels/` の `.js` / `.mjs`）は、設定ファイルと同じく root の中のものだけを読み、配信します。ダッシュボードのファイルは YAML の安全な読み方で、大きさと入れ子と値の数に上限を設け、別名（`*name`）を使わせません。パネルは同じ origin から配信するので、CSP（`script-src 'self'`）は緩めません。パネルのモジュールの URL には、トークンの代わりに起動ごとの別の乱数が入ります（「[カスタムパネル](#カスタムパネル)」）。
-- **画面のファイル**: 画面は、起動した人が指定したディレクトリ（`--web`。なければサンプルの画面）の中のファイルだけを配信します（「[`--web` で配信するファイル](#--web-で配信するファイル)」）。その画面は、同じ origin で、トークンを持って動き、GUI でできることを全部できます。`--web` には、自分が信頼する画面だけを渡します（root と同じく、人からもらったものは先に読みます）。
-- **同時の実行**: 実行は、サーバー 1 つにつき一度に 1 つです。同時に開始を頼まれても、開始するのは 1 つだけです。サーバーを 2 つ起動すれば、実行も 2 つ動きます。
+- **Listen address**: it listens on 127.0.0.1 only. Other computers cannot open it (to view it through SSH port forwarding, see [howto/multi-pc.md](howto/multi-pc.md); forward to the same port number). It accepts `Host` only as `127.0.0.1:<port>` (not `localhost`: a browser may connect to `::1` first, and another program can listen there).
+- **Token**: the server creates a new token on every start. The token is only in the printed URL, after `#token=`, and the screen removes it from the URL once it has read it. The API and WebSocket do not answer without the token. Do not give the URL to anyone.
+- **Other web pages**: the server rejects requests from other web pages (`Host` and `Origin` checks; CORS is not allowed).
+- **Configuration files**: the screen can use only configuration files under `--root`. Paths that lead outside it, and symbolic links that point out of the root, are rejected when checked (this cannot stop someone from swapping a link inside the root after the check, but anyone who can write to the root can put a configuration file there directly). The server builds the launcher's arguments in a fixed form and accepts no arbitrary command.
+- **ECU variables**: the server reads and writes them through the launcher's Control Server (a free port on 127.0.0.1).
+  - For each run, the server creates a new token and passes it to the launcher in a file that only you can read (`vehicle-sil-gui-control-*.txt` in the temporary directory; mode 0600 on POSIX).
+  - The file is deleted after the launcher has read it (when the Control Server starts listening), and again when the run ends.
+  - This token appears nowhere in the launcher's arguments, in events, in notifications to the screen or in error messages. Other processes on the same computer cannot use the Control Server without it.
+  - The GUI server connects only to the `127.0.0.1:<port>` that the launcher reported.
+  - Writes from the screen pass the same checks as the rest of the API (token, `Host`, `Origin`), and only values whose type and range fit reach writable variables in the variable list.
+- **Scenarios**: the server passes to the launcher only scenarios in its list (`.yaml` / `.yml` in `scenarios` next to the configuration file). `..`, absolute paths, NUL, names that are too long, names that start with `.`, and symbolic links (files, and `scenarios` and the directories above it) are not listed and are rejected if requested. For a scenario to save, the server only returns the YAML as a string; it writes no file.
+- **Dashboard files and custom panels**: the server reads and serves dashboard files (`.dashboard.yaml` next to the configuration file) and custom panels (`.js` / `.mjs` in `panels/`) only from inside the root, as for configuration files. Dashboard files are read with YAML's safe loader, with limits on size, nesting and number of values, and aliases (`*name`) are not allowed. Panels are served from the same origin, so the CSP (`script-src 'self'`) is not relaxed. Panel module URLs carry a random value created at each start instead of the token (see "[Custom panels](#custom-panels)").
+- **Screen files**: the server serves only the files in the directory the person who started it named (`--web`; otherwise the sample screens) (see "[Files served with `--web`](#files-served-with---web)"). That screen runs on the same origin with the token and can do everything the GUI can. Give `--web` only screens you trust (as with the root, read what you received from others first).
+- **Concurrent runs**: one server runs one run at a time. If several starts are requested at the same time, only one starts. Two servers can run two runs.
 
-守れないもの:
+What it cannot protect against:
 
-- **同じ PC のほかの利用者**。トークンは、表示した URL（端末、`--json` の出力、それを読んだツールのログ）を見られる人には見えます。トークンを持つ人は、ブラウザを使わずに `Host` と `Origin` を自由に書けるので、API を全部使えます。ブラウザのコマンドラインにはトークンを載せません（ほかの利用者はプロセスの引数を読めることがあるため）が、端末の表示は守りません。トークンを持たない人でも、WebSocket の接続を開き続ければ、画面が接続するのを妨げられます（認証前の接続は 16 本までで、あふれると古いものから閉じるので、画面は何度か試せば接続できますが、妨げる側が開く速度には勝てません）。
-- **root の中身**。root の中のものは、画面で開いただけで動きます。実行の画面は、選んだ設定ファイルをすぐに照合し、照合は各 ECU の実行ファイルを `--describe` で起動します。変数の画面は、ダッシュボードのファイルの `panels:` のモジュールを読み込み、パネルは画面の中でトークンを持って動きます（実行を開始できるので、root の中の設定ファイルに書いたコマンドを動かせます）。root に書ける人は、GUI を使う人の権限でコマンドを動かせます。信頼できないリポジトリやディレクトリを root にしないでください（人からもらったものは、先に設定ファイル、`*.dashboard.yaml` の `panels:`、`panels/` の中身を読みます）。ほかの人が書ける場所（共有のディレクトリ、`/tmp` の下など）も root にしないでください。
-- **ブラウザの拡張機能**。拡張機能は画面とその `sessionStorage`（トークンを持つ）を読めます。
-- 同じ利用者の権限で動くプログラムは、もともと何でもできるので、対象にしていません。
+- **Other users of the same computer.** Anyone who can see the printed URL (the terminal, the `--json` output, logs of tools that read it) can see the token. Anyone with the token can set `Host` and `Origin` freely outside a browser, and so can use the whole API. The server does not put the token on the browser's command line (other users can sometimes read process arguments), but it does not protect what the terminal shows. Even without the token, someone who keeps WebSocket connections open can keep the screen from connecting (up to 16 unauthenticated connections are allowed and the oldest is closed when they overflow, so the screen gets through after a few tries, but it cannot outpace the rate at which the other side opens connections).
+- **The contents of the root.** What is in the root runs as soon as you open it on the screen. The Run screen checks the selected configuration file at once, and the check starts each ECU executable with `--describe`. The Variables screen loads the modules in `panels:` of the dashboard file, and panels run inside the screen with the token (they can start a run, and so run the commands in the configuration files in the root). Anyone who can write to the root can run commands with the rights of the person using the GUI. Do not make an untrusted repository or directory the root (for something you received from others, first read the configuration files, `panels:` of `*.dashboard.yaml`, and the contents of `panels/`). Do not make a place that others can write to (a shared directory, somewhere under `/tmp` and so on) the root either.
+- **Browser extensions.** Extensions can read the screen and its `sessionStorage` (which holds the token).
+- Programs that run with the same user's rights can do anything anyway, so they are out of scope.
 
-## 時間の操作
+## Time control
 
-時間を進めるのはランチャーで、GUI はコマンドを渡して、その結果を表示するだけです。コマンドの意味と遅れの数え方は、ランチャーのルールのとおりです（[simulation-run.md](simulation-run.md) の「速度を指定して動かす」と、[simulation-events.md](simulation-events.md) の「標準入力のコマンド」）。
+The launcher advances time; the GUI only passes commands and shows the results. What the commands mean and how lateness is counted follow the launcher's rules (see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed) and "Stdin commands (`run --stdin-commands`)" in [simulation-events.md](simulation-events.md#stdin-commands-run---stdin-commands)).
 
-| 場面 | 画面の場所 | できること |
+| When | Where on the screen | What you can do |
 |---|---|---|
-| 開始の前 | 「構成ファイル」のカード | 速度（構成のとおり、最速、等速、倍率）と「止めた状態で始める」を選びます。 |
-| 実行中 | 状態の帯 | 「一時停止」と「再開」を押します。 |
-| 実行中 | 「時刻」のカード | 仮想時間、いまの速度、実際の速度、一時停止しているかを見て、ステップ実行（ミリ秒を入力）と速度の変更をします。 |
-| 終了の後 | 「結果」のカード | 時間の進み方（速度、仮想時間、かかった実時間、実際の速度、一時停止していた時間、速度を合わせたときの遅れ）を見ます。 |
+| Before the start | The **Configuration file** card | Choose the speed (**As configured**, **Fastest**, **Real time**, **Factor**) and **Start paused**. |
+| During the run | The status bar | Click **Pause** and **Resume**. |
+| During the run | The **Time** card | See the virtual time, the current speed, the actual speed and whether the run is paused; step (enter milliseconds) and change the speed. |
+| After the end | The **Result** card | See how time went (speed, virtual time, real time taken, actual speed, time paused, lateness when the speed was paced). |
 
-- ランチャーの `features` に `speed`、`start-paused`、`time-commands` がなければ、それぞれの操作を表示しません（`speed` だけのランチャーでは、「時刻」のカードは見るだけです）。時間のコマンドを受け付けるかは、実行中のランチャー（開始したときの `version --json`）で決めます。
-- 途中から開いた画面や、別のタブも、同じ時間の状態を表示します（サーバーの要約に、最後の `time` と `command` のイベントがあるため）。
-- 指摘 `behind-real-time` と `coarse-time-step` は、ほかの指摘と同じく結果の指摘に表示されます。
+- If the launcher's `features` lack `speed`, `start-paused` or `time-commands`, the screen does not show the matching control (with a launcher that has only `speed`, the **Time** card is view-only). Whether time commands are accepted is decided by the launcher of the running run (its `version --json` at the start).
+- A screen opened during a run, and other tabs, show the same time state (the server's summary holds the last `time` and `command` events).
+- The findings `behind-real-time` and `coarse-time-step` appear among the result's findings, like any other finding.
 
-### 止めた状態で始める
+### Start paused
 
-- 止めた状態で始めると、全員がそろったところで仮想時間 0 に止まり、再開かステップ実行を待ちます。
-- 速度は前の実行のものが選ばれていますが、「止めた状態で始める」は前の実行から引き継ぎません（気づかずに止まったまま始まらないように）。
-- 変数を読み書きできる実行（ランチャーが Control Server を持つ）では、最初のステップの前（時刻 0 のステップが走る前）で止まります（ランチャーのルール。[control-api.md](control-api.md) の「始まる前に書く」）。この間に書き込んだ変数は、時刻 0 のステップで反映されます。
-- ランチャーは、最初のステップの前で止まっている間は `time` のイベントを出力しませんが、再開とステップ実行を受け付けます（ライブラリの `client.time.state` の `beforeStart`）。
-- `--no-variables` で起動したときと、Control Server を持たないランチャーでは、時刻 0 のステップの後に止まります。
+- A run started paused stops at virtual time 0 once all participants have joined, and waits for resume or step.
+- The speed of the previous run stays selected, but **Start paused** is not carried over from the previous run (so a run never starts paused without you noticing).
+- In a run that can read and write variables (the launcher has a Control Server), the run holds before the first step, that is, before the step at time 0 runs. This is a launcher rule; see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused). Variables written meanwhile are applied in the step at time 0.
+- While held before the first step, the launcher writes no `time` events, but it accepts resume and step (`beforeStart` in the library's `client.time.state`).
+- When started with `--no-variables`, and with a launcher without a Control Server, the run holds after the step at time 0.
 
-### 一時停止、再開、ステップ実行
+### Pause, resume and step
 
-- 「一時停止」と「再開」は別のボタンで、開始してから結果が出るまで、いつも「開始」と「停止」の後の同じ場所にあります。「開始」と「停止」の位置は動かず、停止を頼んだ後も、押せないまま残ります。
-- 使えない方のボタンは押せません（押している最中に、同じ場所のボタンの意味が入れ替わりません）。
-- とても狭いウィンドウでは、ボタンは記号（‖ と ▶）だけになります（名前はスクリーンリーダーに残ります）。
-- ステップ実行は一時停止している間だけできます。ステップ実行の途中も、ランチャーと同じく一時停止の扱いで、再開とステップ実行ができます。
-- ステップ実行では、ランチャーがステップ幅の倍数に切り上げた、実際に進む量を表示します。
-- 送ったコマンドにランチャーが応答する（`command` のイベントが届く）までは、次のコマンドを送りません（ダブルクリックで 2 回進まないように）。
-- 5 秒たっても応答がなければ（入力を読まないランチャー）、待つのをやめて操作を押せるように戻し、応答がないことを表示します（帯のボタンの説明も同じ理由を指します）。
-- シミュレーションが終了に入ったら（段階が「停止中」）、時間の操作はできません。
-- ランチャーが受け付けなかったコマンドは、その理由を表示します。
+- **Pause** and **Resume** are separate buttons. From the start until the result, they are always in the same place, after **Start** and **Stop**. **Start** and **Stop** do not move, and after a stop is requested they stay in place, disabled.
+- The button that cannot be used is disabled (a button in one position never changes its meaning while you press it).
+- In a very narrow window, the buttons show only their symbols (‖ and ▶) (screen readers still get the names).
+- Stepping works only while paused. During a step, the run counts as paused, as in the launcher, so you can resume or step.
+- For a step, the screen shows the amount the run actually advances, rounded up by the launcher to a multiple of the time step.
+- Until the launcher answers a command (a `command` event arrives), the screen sends no next command (so a double click does not step twice).
+- If no answer comes within 5 seconds (a launcher that does not read its input), the screen stops waiting, enables the controls again and says that no answer came (the bar's button descriptions give the same reason).
+- Once the simulation has begun to end (phase **Stop**), time control is not available.
+- When the launcher does not accept a command, the screen shows the reason.
 
-### 遅れの表示
+### Lateness display
 
-速度を数値で指定して動かしている間（最速ではない間）、遅れたステップの数、最大の遅れ、ずれの合計、いまの遅れを表示します。
+While the run is paced at a numeric speed (not as fast as possible), the screen shows the number of late steps, the maximum lateness, the total slip and the current lateness.
 
-- 許容（`late_tolerance_ms`）を超えて遅れたステップがあるときだけ、色だけでなく文で通知します（状態の帯と「時刻」のカード。途中で最速に変えても残ります）。
-- いまの遅れ（`late_ms`）は、数値として表示するだけで、文の条件にしません。ステップの同期のたびに、許容の範囲内の小さな値が出たり消えたりするためです（許容を超えて止まっているステップは、ランチャーが遅れたステップにその場で数えます）。
-- スクリーンリーダーが読み上げるのは状態の帯の 1 か所だけで、遅れが「ある」になったときに 1 回です（数が変わるたびには読み上げません）。
+- Only when a step was later than the tolerance (`late_tolerance_ms`) does the screen say so in text, not only in color (in the status bar and the **Time** card; this stays even if you switch to **Fastest** later).
+- The current lateness (`late_ms`) is shown only as a number and does not trigger the text. Small values within the tolerance come and go with every step synchronization (a step that stalls beyond the tolerance is counted as late by the launcher right away).
+- Screen readers announce lateness in one place only, the status bar, and only once, when lateness appears (not every time the count changes).
 
-### 時間の操作の API
+### Time control API
 
-| リクエスト | すること |
+| Request | What it does |
 |---|---|
-| `POST api/run` の `speed`、`start_paused` | ランチャーの `--speed`、`--start-paused` |
-| `POST api/time` `{"command": "pause"}`、`{"command": "resume"}` | 一時停止、再開 |
-| `POST api/time` `{"command": "step", "ms": <ms>}` | ステップ実行（一時停止している間だけ。ランチャーがステップ幅の倍数に切り上げる） |
-| `POST api/time` `{"command": "speed", "value": <数か "max">}` | 速度の変更（一時停止はそのまま） |
+| `speed` and `start_paused` of `POST api/run` | The launcher's `--speed` and `--start-paused` |
+| `POST api/time` `{"command": "pause"}`, `{"command": "resume"}` | Pause, resume |
+| `POST api/time` `{"command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step) |
+| `POST api/time` `{"command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause) |
 
-`api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーはコマンドをランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの応答は待ちません（止まっているランチャーでリクエストが固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` のイベントで届きます。形とエラーの `code` は [gui/protocol/README.md](../gui/protocol/README.md) にあります。
+`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). Whether the command was accepted arrives in the launcher's `command` event. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
 
-## シナリオ
+## Scenarios
 
-シナリオ（[scenario.md](scenario.md)。ECU の変数に決まった手順で値を設定し、結果を確認するファイル）を、画面から選んで実行します。ランチャーの `features` に `scenario` があるときだけ、「構成ファイル」のカードに「シナリオ」のフィールドが表示されます。
+Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU variables in a fixed sequence of steps and checks the results) from the screen. The **Configuration file** card shows the **Scenario** field only when the launcher's `features` have `scenario`.
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 置き場所 | 設定ファイルの隣の `scenarios`（`simulation.yaml` なら同じディレクトリの `scenarios/`）の `.yaml` と `.yml` が一覧に出ます。 |
-| 照合 | シナリオを選ぶと、照合もシナリオつき（`check --scenario`）になり、シナリオのエラーは、シナリオのファイルと行の付いた指摘として表示されます。 |
-| 実行 | シナリオを選んで開始すると、ランチャーがシナリオを時刻 0 から最後まで進め、終わったところでシミュレーションを止めます。 |
-| 結果 | 「シナリオ」のカードに、全体の合否と、手順の表（行、手順、状態、確定した仮想時間、失敗の理由）が表示され、「結果」のカードの「終わり方」は「シナリオが終わった」になります。 |
-| 変数 | シナリオの実行中は、変数に書き込めません（シナリオの結果を変えないため。サーバーも `scenario-running` で拒否します）。 |
+| Location | The list shows the `.yaml` and `.yml` files in `scenarios` next to the configuration file (for `simulation.yaml`, `scenarios/` in the same directory). |
+| Check | When you select a scenario, the check also covers it (`check --scenario`). Scenario errors appear as findings with the scenario file and line. |
+| Run | When you start with a scenario selected, the launcher runs the scenario from time 0 to its end, then stops the simulation. |
+| Result | The **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
+| Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). |
 
-- ほかの場所のシナリオのファイルは選べません（「[セキュリティ](#セキュリティ)」）。
-- 手順の表は、ランチャーのイベント `scenario_step` で進み、結果が出たら、実行されなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を表示します。
-- シナリオは止めた状態では開始できません（「止めた状態で始める」は押せなくなります）。
-- 一時停止、ステップ実行、速度の変更、停止は、シナリオのない実行と同じです（シナリオの結果は変わりません）。GUI はこれらをランチャーの標準入力のコマンドで送るので、Control Server がシナリオの実行中に拒否する時間の呼び出しとは別です。
-- ランチャーの `features` に `scenario-control` があれば、「変数」の画面で値を見られます（書き込むコンポーネントは押せず、「シナリオの実行中は書けません」と表示されます）。ないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と表示します。
-- サーバーの API は `GET api/scenarios?file=<設定ファイル>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../gui/protocol/README.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションのコピーの `scenario` です。
+- Scenario files elsewhere cannot be selected (see "[Security](#security)").
+- The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
+- A scenario cannot start paused (**Start paused** is disabled).
+- Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin, so they are separate from the time calls that the Control Server refuses while a scenario runs.
+- If the launcher's `features` have `scenario-control`, the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without it, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
+- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
 
-### 操作をシナリオとして保存する
+### Save your actions as a scenario
 
-シナリオのない、変数を読み書きできる実行では、「操作をシナリオに」のカードに、この実行で反映された書き込みの数が表示されます。「この実行の操作をシナリオとして保存」を押すと、シナリオの YAML をブラウザで保存します（ファイル名は `<設定ファイルの名前>-run<実行の番号>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を開始するまで保存できます。
+In a run without a scenario that can read and write variables, the **Save as a scenario** card shows how many writes were applied in this run. Click **Save this run's writes as a scenario** to save the scenario YAML through the browser (file name `<configuration file name>-run<run number>.yaml`; the browser decides where). You can save after the run has ended too, until the next run starts.
 
 ```yaml
 # Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
@@ -449,217 +443,217 @@ steps:
       Engine.engine.throttle: 12.5
 ```
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 入るもの | この実行で GUI サーバーを通したすべての書き込みのうち、反映されたものです。 |
-| 入らないもの | 一時停止とステップ実行、反映されなかった書き込み、確認する手順（`expect`、`wait_until`）、GUI サーバーを通さずに Control Server に直接書き込んだものです。 |
-| 手順の形 | 反映したステップの仮想時間（`at_ms`）ごとの `set` だけで、`ramp` にまとめることもしません。 |
-| 上限 | 1 回の実行で記録するのは 2000 個の値までです。 |
+| Included | Every write that went through the GUI server in this run and was applied. |
+| Not included | Pauses and steps, writes that were not applied, checking steps (`expect`, `wait_until`), and writes made directly to the Control Server, not through the GUI server. |
+| Form of the steps | Only a `set` per virtual time of the step it was applied in (`at_ms`); writes are not merged into a `ramp`. |
+| Limit | Up to 2000 values are recorded per run. |
 
-- 同じ GUI サーバーを開いているほかの画面（ほかの人）の書き込みも、`api/write` を使うツール（リポジトリの `examples/gui_client/variables.mjs` など）の書き込みも入ります。画面や人ごとには分けません。
-- ランチャーは、シナリオの最後の手順が終わったところでシミュレーションを止めます。そのため、保存したファイルを実行すると、最後の `set` の時刻で止まります（記録した実行がもっと長く動いていても）。その後も動かしたいときは、ファイルの先頭のコメントの例のように、最後に `expect` と `hold_for_ms` の手順を追加します（コメントには、記録した実行が進んだ時刻も書いてあります）。
-- 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で実行できます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
-- 確認する手順は、エディターで追加します。
-- 名前に `.` がある participant の変数は、シナリオで指定できない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに表示されます。
-- サーバーの API は `GET api/recording`（[gui/protocol/README.md](../gui/protocol/README.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
+- Writes from other screens (other people) that have the same GUI server open, and writes from tools that use `api/write` (such as `examples/gui_client/variables.mjs` in the repository), are included too. They are not separated by screen or by person.
+- The launcher stops the simulation when the scenario's last step is done. So a saved file, when run, stops at the time of the last `set` (even if the recorded run went on longer). To keep it running after that, add an `expect` step with `hold_for_ms` at the end, as in the example in the comments at the top of the file (the comments also give the time the recorded run reached).
+- Put the saved file in `scenarios/`, and it passes the check as is and can be run from **Scenario** (ECUs have different step times, so the same writes may become separate steps per ECU).
+- Add checking steps in an editor.
+- Variables of a participant whose name contains `.` cannot be addressed in a scenario (everything up to the first `.` is the participant name), so they are left out. The card shows how many were left out, and the comments at the top of the file say why.
+- The server API is `GET api/recording` (see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
 
-## ECU の変数
+## ECU variables
 
-ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数」）を、GUI サーバーを通して読み書きします。値を持っているのはランチャーの Control Server で、GUI サーバーは中継するだけです。画面と GUI サーバーの間は、値の購読（watch）と値の通知が WebSocket、書き込みが HTTP です。GUI サーバーとランチャーの間は、実行ごとのトークンを使う gRPC です。
+The GUI reads and writes the variables that ECUs declare (see "ECU variables" in [control-api.md](control-api.md#ecu-variables)) through the GUI server. The launcher's Control Server holds the values; the GUI server only relays them. Between the screen and the GUI server, value subscriptions (watch) and value notifications go over WebSocket, and writes over HTTP. Between the GUI server and the launcher, gRPC with a per-run token is used.
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 開始 | ランチャーが Control Server を持てば、GUI サーバーは実行を `--control 0 --control-credentials <file>` 付きで開始し、ランチャーのイベント `control_server` が通知したアドレスへ接続します。 |
-| 状態 | 変数の機能の状態（`off`、`connecting`、`ready`、`failed`、`ended`）と理由は、要約の `variables` と `variables` の通知で届きます。 |
-| 一覧 | participant ごとの変数（名前、型、役割、単位、範囲、刻み幅、説明、列挙の項目、書き込めるか）です。 |
-| 値 | 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が届きます。 |
-| 書き込み | `POST api/write` に、書き込み先の実行の id（`session`）を付けて送ります。 |
-| 終了の後 | 状態は `ended` になり、最後に読めた値が残ります（次の実行を開始するまで）。 |
+| Start | If the launcher has a Control Server, the GUI server starts the run with `--control 0 --control-credentials <file>` and connects to the address that the launcher's `control_server` event reports. |
+| State | The state of the variable feature (`off`, `connecting`, `ready`, `failed`, `ended`) and its reason arrive in `variables` of the summary and in the `variables` notification. |
+| List | The variables of each participant (name, type, role, unit, range, value increment, description, enum items, whether writable). |
+| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more). |
+| Writes | Sent to `POST api/write` with the id of the target run (`session`). |
+| After the end | The state becomes `ended`, and the last values read remain (until the next run starts). |
 
-- **接続できないとき**: 接続できなくても、切断されても、実行はそのまま続きます。変数だけが `connecting` か `failed` になり、切断されたときは自動で再接続します。
-- **値の読み方**: GUI サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます（シミュレーションが速くても、読む量は増えません）。値は最後の 1 組だけを持ち、履歴は持ちません（履歴は画面の側。ライブラリがリングバッファーで持ちます）。受信の遅い画面には、読めるようになったときの最後の値を送ります（古い値をためません）。
-- **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。`sim_ms` より後のステップの値は入っていません。
-  - GUI サーバーは、時刻と値をランチャーの Control Server から 1 回の呼び出し（`GetSnapshot`。[control-api.md](control-api.md) の「時刻と値をまとめて読む」）で読み、そのレスポンスの印（`consistent`）が真のときだけ、真にします（止まったという通知だけでは真にしません）。
-  - ちょうど `sim_ms` に始まるステップの値は、止まっている間に後から届くことがあり、そのときは同じ時刻の通知がもう 1 回届きます。
-  - 動いている間は偽です。前提と制限は、[gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」に書いてあります。
-  - `GetSnapshot` を持たない古いランチャーでは、変数の機能は `failed`（理由つき）になります。
-- **書き込みの検査**: サーバーは、`session` が実行中の実行のものでなければ拒否します（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書き込まないため）。シナリオを実行している実行にも書き込めません（`scenario-running`）。サーバーが、変数の一覧と照合して型と範囲を確認してから、ランチャーに渡します。
-- **書き込みの結果**: 結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が拒否した（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
+- **If the connection fails**: whether the server cannot connect or the connection drops, the run continues. Only the variables become `connecting` or `failed`; after a disconnection, the server reconnects automatically.
+- **How values are read**: the GUI server reads from the launcher only the values of watched participants, at the requested rate (a fast simulation does not increase the amount read). It keeps only the last set of values and no history (history is on the screen's side; the library keeps it in a ring buffer). A screen that receives slowly gets the last values at the moment it can receive (stale values are not queued).
+- **Values at the paused time**: when `paused` of a `values` notification is true, the notification holds the values of every step that started before `sim_ms`, and none of a step after `sim_ms`.
+  - The GUI server reads time and values from the launcher's Control Server in one call (`GetSnapshot`; see "Read time and values together (`snapshot()`)" in [control-api.md](control-api.md#read-time-and-values-together-snapshot)), and sets `paused` to true only when the flag in that response (`consistent`) is true (a notification that the run paused is not enough).
+  - The values of a step that starts exactly at `sim_ms` may arrive later while paused; in that case, another notification for the same time arrives.
+  - While the run runs, `paused` is false. For the assumptions and limits, see "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables).
+  - With an older launcher that has no `GetSnapshot`, the variable feature is `failed` (with a reason).
+- **Checks on writes**: the server rejects a write whose `session` does not belong to the running run (`session-changed`; so a write sent while one run ends and the next starts is not written to the next run). A run that is running a scenario cannot be written either (`scenario-running`). The server checks type and range against the variable list before passing the write to the launcher.
+- **Results of writes**: results (operations) reach every screen as queued (`queued`), applied (`applied`, with the time of the step), too late (`late`), refused by the ECU (`rejected`, `invalid`) and so on. Results are never dropped. An operation with no result by the end of the run is completed as `unknown`.
 
-| 調べたいこと | 読む所 |
+| To find | See |
 |---|---|
-| 通知とリクエストの形、上限 | [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」 |
-| ライブラリの API（コンポーネントを作る `bind` も） | [gui/client/README.md](../gui/client/README.md) の「ECU の変数」 |
-| 動く例 | リポジトリの `examples/gui_client/variables.mjs` |
-| Angular のラッパー | `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`） |
+| Shapes of notifications and requests, limits | "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables) |
+| The library API (including `bind` for building widgets) | "ECU variables" in [gui/client/README.md](../gui/client/README.md#ecu-variables) |
+| A working example | `examples/gui_client/variables.mjs` in the repository |
+| The Angular wrapper | `EcuVariables` (`gui/web/src/app/core/session/ecu-variables.ts`) |
 
-`EcuVariables` が持つのは、`session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、コンポーネントが破棄されると自動で終了する `watch()`、自動で終了する `open()`、`write()` です。
+`EcuVariables` provides `session`, `status`, `reason`, `peers`, `operations`, `find(ref)`, `peerConnected(peer)`, `watch()` that ends automatically when its component is destroyed, `open()` that also ends automatically, and `write()`.
 
-## サンプルの画面
+## The sample screens
 
-`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular のラッパー（`gui/web/src/app/core/session/`。ライブラリの `Readable` を signal にするだけの薄い層）だけで作っていて、`--web` を指定せずに起動すると、GUI サーバーがこれを配信します。そのまま使うことも、コンポーネントをコピーして自分の Angular の画面で使うこともできます（「[サンプルのコンポーネントをコピーして使う](#サンプルのコンポーネントをコピーして使う)」）。画面の開発のルールは [gui/web/README.md](../gui/web/README.md) にあります。
+An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that only turns the library's `Readable` into signals). When started without `--web`, the GUI server serves it. You can use it as it is, or copy its widgets into an Angular screen of your own (see "[Copy the sample widgets](#copy-the-sample-widgets)"). For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
 
-「変数の画面とコンポーネント」「ダッシュボードのファイル」「カスタムパネル」は、サンプルの画面の機能です。自分の画面には自動では付きません。
+"The Variables screen and widgets", "Dashboard files" and "Custom panels" are features of the sample screens. Your own screen does not get them automatically.
 
-### 機能の一覧
+### Features
 
-| 機能 | 内容 |
+| Feature | Details |
 |---|---|
-| 設定ファイルを選ぶ | 起動のときに渡したファイルか、`--root` の下の `.yaml` / `.yml` を一覧から選びます。 |
-| 照合の結果を見る | 指摘と participant の表を見て、participant を無効にして（`--disable`）照合し直せます。 |
-| participant を自分で起動する | `--manual` に当たる機能で、デバッガーから ECU を動かすときなどに使います（下の「participant を自分で起動する」）。 |
-| 実行を開始する、止める | 順に止めるか、待たずに止めるかを選べます。 |
-| 実行の経過を見る | 段階、participant ごとの状態と終了コード、ログ、指摘、結果を見ます。 |
-| 時間を操作する | 速度を決めて開始する、止めた状態で始める、一時停止、再開、ステップ実行、速度の変更ができ、仮想時間、いまの速度、実際の速度、実時間への遅れを見られます（「[時間の操作](#時間の操作)」）。 |
-| Control Server との接続を見る | participant ごとに、変数を読み書きする接続の状態（ランチャーの `control-links`）を見ます。 |
-| ECU の変数を見る、書き込む | 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合ったコンポーネントで並び、名前で絞り込めます（「[変数の画面とコンポーネント](#変数の画面とコンポーネント)」）。 |
-| 変数の並べ方をファイルに書く | 設定ファイルの隣の `<名前>.dashboard.yaml` に書くと、「変数」の画面がそのとおりに並べます（「[ダッシュボードのファイル](#ダッシュボードのファイル)」）。 |
-| 自分で書いたコンポーネントを置く | custom element を、ダッシュボードに置けます（「[カスタムパネル](#カスタムパネル)」）。 |
-| シナリオを選んで実行する | 設定ファイルの隣の `scenarios` の `.yaml` から選ぶと、照合でシナリオも確認し、実行では手順の表が進み、終わると合否を表示します（「[シナリオ](#シナリオ)」）。 |
-| 操作をシナリオとして保存する | GUI で書き込んで反映された値を、シナリオの YAML としてブラウザで保存します（「[操作をシナリオとして保存する](#操作をシナリオとして保存する)」）。 |
-| 画面を開き直す、別のタブで開く | 同じ実行の状態を見られます。 |
-| 言語を切り替える | 画面の言葉は日本語と英語で、ブラウザの言語で決まり、ツールバーの言語のメニューで変えられます（選んだ言語はブラウザに残ります）。 |
+| Select a configuration file | Select the file given at startup, or a `.yaml` / `.yml` under `--root`, from a list. |
+| See the check result | See the findings and the participant table, and check again with participants disabled (`--disable`). |
+| Start a participant yourself | The equivalent of `--manual`, for running an ECU from a debugger and similar (see "Starting a participant yourself" below). |
+| Start and stop a run | Choose to stop in order or to stop without waiting. |
+| Follow the run | See the phase, the state and exit code of each participant, the log, the findings and the result. |
+| Control time | Start at a chosen speed, start paused, pause, resume, step and change the speed, and see the virtual time, the current speed, the actual speed and the lateness behind real time (see "[Time control](#time-control)"). |
+| See the connection to the Control Server | See, for each participant, the state of the connection that reads and writes variables (the launcher's `control-links`). |
+| See and write ECU variables | The Variables screen lists the variables of the current run by ECU, each with a widget that fits its type, and can filter them by name (see "[The Variables screen and widgets](#the-variables-screen-and-widgets)"). |
+| Describe the layout of the variables in a file | Write `<name>.dashboard.yaml` next to the configuration file, and the Variables screen lays them out as written (see "[Dashboard files](#dashboard-files)"). |
+| Place widgets you wrote yourself | Place custom elements on the dashboard (see "[Custom panels](#custom-panels)"). |
+| Select and run a scenario | Select a `.yaml` from `scenarios` next to the configuration file: the check also covers the scenario, the run advances the step table, and the screen shows the result at the end (see "[Scenarios](#scenarios)"). |
+| Save your actions as a scenario | Save the values you wrote in the GUI that were applied as scenario YAML through the browser (see "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"). |
+| Reopen the screen, open it in another tab | See the state of the same run. |
+| Switch the language | The screen is in English or Japanese. It follows the browser's language (English if the browser prefers neither), and the language menu in the toolbar changes it (the browser remembers the choice). |
 
-ECU の変数の読み書きは、サーバーの API とクライアントのライブラリでも同じことができます。ランチャーと ECU が出力する文（指摘、ログ）は、どちらの言語でも英語のまま表示します。
+The server API and the client library can read and write ECU variables in the same way. Text that the launcher and the ECUs print (findings, logs) appears as they print it, whatever the screen language.
 
-### 実行の画面の表示
+### The Run screen
 
-- **指摘**: code ごとのルールを持たず、重大度（エラー、警告、注記。知らない重大度はエラー）の順に、code と文をそのまま表示します（ランチャーに新しい指摘が増えても、そのまま表示されます）。
-- **participant の失敗**: ランチャーが participant を失敗と判定したら（`failed`）、プロセスが終わる前でもすぐに失敗として表示します。
-- **中断**: 自分で止めた実行は「中断」として、失敗の色にせずに表示します。
-- **Control Server との接続**: 状態は、つながった、hello が来なかった、形式のバージョンが違う、変数はあるが API を提供していない、なし、のどれかです。読み書きできない状態は、色だけでなく ⚠ と文で表示します。
-- **ランチャーが黙ったとき**: ランチャーが 1 秒ごとのハートビートも出力しなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に表示します。
-- **落ちたログの行**: ランチャーが、読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に、落ちた行の数として表示します。
-- **ランチャーの異常終了**: ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を表示します。終了を通知してこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
-- **ログの量**: ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
+- **Findings**: the screen has no rules per code. It shows each finding's code and text as they are, ordered by severity (error, warning, note; an unknown severity counts as an error) (findings that the launcher adds later appear as they are too).
+- **Participant failure**: when the launcher reports a participant as failed (`failed`), the screen shows the failure at once, even before the process ends.
+- **Interrupted**: a run that you stopped shows as **Interrupted**, not in the failure color.
+- **Connection to the Control Server**: the state is one of: connected, no hello received, different format version, variables declared but the API not exposed, none. States that cannot read or write show ⚠ and text, not only color.
+- **When the launcher falls silent**: if the launcher stops writing even its heartbeat every second (for 5 seconds by default; `--silent-after`), the status bar says it may be stuck.
+- **Dropped log lines**: log lines that the launcher could not write because its reader was slow (`log_dropped`) appear at their position as the number of lines dropped.
+- **Abnormal launcher exit**: if the launcher exits without a result, the screen shows the abnormal exit, the exit code and the lines the launcher wrote to stderr (the first 20 and the last 30). Participants that did not report their end show **Unknown** (the launcher ended first, so the screen cannot know what happened to them).
+- **Amount of log**: the log shows the last 2000 lines (up to 1 MiB) of each participant. For older lines, only the number of dropped lines is shown.
 
-### participant を自分で起動する
+### Starting a participant yourself
 
-ランチャーの `features` に `manual-participants` があるときだけ使えます。ルールは [simulation-config.md](simulation-config.md) の「participant を自分で起動する」にあります。
+Available only when the launcher's `features` have `manual-participants`. For the rules, see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual).
 
-| 手順 | すること | 画面の表示 |
+| Step | What you do | What the screen shows |
 |---|---|---|
-| 1 | 照合の表で「自分で起動する」にして開始する | ランチャーはその participant を起動せず、「participant の状態」に、起動するコマンドとそのディレクトリを表示します。 |
-| 2 | 表示されたコマンドを実行する | 「参加した（自分で起動）」になります。 |
+| 1 | Select **Start it yourself** in the check table, then start | The launcher does not start that participant. **Participant status** shows the command to start it and its directory. |
+| 2 | Run the command shown | **Joined (started by you)**. |
 
-- コマンドは選択してコピーでき、コピーのボタンもあります。シミュレーションは、participant が参加するまで待ちます。
-- registry がループバックのアドレスでない設定では、設定する環境変数（`VEHICLE_SIL_LISTEN_ON_NETWORK` と値 `1`）も、名前と値を分けてコマンドの上に表示します。設定の書き方はシェルや IDE によって違うので、変数ごとのボタンで `名前=値` をコピーし、それぞれの書き方で設定します（コマンドのボタンは変数をコピーしません）。
-- 設定ファイルに `manual: true` と書いた participant は、最初から「自分で起動する」になっています（画面からは戻せません）。
-- 参加しないまま止めると、シミュレーションは始まらず「参加しなかった」と表示します。
-- ランチャーは自分で起動した participant を終了させません。終わった後も残っているとランチャーが通知したら、そのことを表示します。
+- You can select and copy the command; there is also a copy button. The simulation waits until the participant joins.
+- If the registry is not on a loopback address, the environment variables to set (`VEHICLE_SIL_LISTEN_ON_NETWORK` with the value `1`) also appear above the command, with name and value shown separately. How to set them depends on the shell or IDE, so copy `name=value` with each variable's button and set it the way your tool does (the command's button does not copy the variables).
+- A participant with `manual: true` in the configuration file starts out as **Start it yourself** (the screen cannot change that back).
+- If you stop before it joins, the simulation does not start, and the screen shows **Did not join (start it yourself)**.
+- The launcher does not end participants that you started yourself. If the launcher reports that one remains after the end, the screen shows that.
 
-### 変数の画面とコンポーネント
+### The Variables screen and widgets
 
-ナビゲーションの「変数」は、いまの実行の変数をコンポーネントで並べる画面です。
+The **Variables** screen (in the navigation) lays out the variables of the current run as widgets.
 
-| 場合 | 並べ方 |
+| Situation | Layout |
 |---|---|
-| 設定ファイルの隣にダッシュボードのファイルがある | そのファイルのとおりに並べます（「[ダッシュボードのファイル](#ダッシュボードのファイル)」）。 |
-| ダッシュボードのファイルがない | 変数を ECU ごとにまとめ、変数ごとに既定のコンポーネントを並べます（自動のダッシュボード）。 |
-| 実行がない、変数を読み書きできない | 理由を表示します（Control Server のないランチャー、gRPC のない GUI サーバー、接続できない）。 |
+| A dashboard file exists next to the configuration file | As the file says (see "[Dashboard files](#dashboard-files)"). |
+| No dashboard file | Variables grouped by ECU, each with its default widget (the automatic dashboard). |
+| No run, or variables cannot be read and written | The screen shows the reason (a launcher without a Control Server, a GUI server without gRPC, cannot connect). |
 
-- 設定ファイルは、いまの実行か最後の実行のものです。実行がなければ、起動のときに渡したものです。
-- 上のフィールドで名前を絞り込めます（空白で区切った語のすべてが、ECU の名前か変数の名前に含まれているもの）。
-- 止めた状態で始めた実行が最初のステップの前で待っている間も、コンポーネントから書き込めます（パラメーターを含む。時刻 0 のステップで反映されます。再開は「実行」の画面で行います）。
+- The configuration file is the one of the current run or the last run. Without a run, it is the one given at startup.
+- The field at the top filters by name (it shows the variables for which every space-separated word is contained in the ECU name or the variable name).
+- While a run started paused waits before the first step, you can still write from widgets (parameters included; applied in the step at time 0; resume on the Run screen).
 
-#### 監視用の変数
+#### Monitoring variables
 
-ECU が宣言したのではない変数は、ECU ごとに、アプリの変数の後の畳んだセクション（「<ECU> の監視」）にまとめます。対象は、vehicle-sil が付ける変数と、ECU の実行ファイルが自分で追加する監視用の変数（`peer.steps` などの `peer.` と、J1939 の統計の `j1939.<ネットワーク>.`。[internals/control.md](internals/control.md) の「Control Agent」の「Peer の監視」）です。
+Variables that the ECU did not declare are grouped, per ECU, in a collapsed section after the application's variables (**<ECU> monitoring**). These are the variables vehicle-sil adds, and the monitoring variables that the ECU executable adds itself (`peer.` ones such as `peer.steps`, and `j1939.<network>.` for J1939 statistics; see "Peer monitoring" under "Control Agent" in [internals/control.md](internals/control.md#peer-monitoring)).
 
-- 畳んでいる間はコンポーネントを作らず、値も受信しません。
-- 名前の絞り込みは畳んだセクションの中も探し、一致したコンポーネントを開いて表示します。
-- 判定は `dashboard-spec.ts` の `isMonitoring` の 1 か所で行います。実行の照合の結果（`check --json` の `participants[].variables[].builtin`）にある変数はそれで決めます。ない変数（実行中に追加される監視用の変数）と、`builtin` を出力しない古いランチャーでは、名前の接頭辞（`ecu.`、`peer.`、`j1939.`）で分けます。
+- While collapsed, the section creates no widgets and receives no values.
+- The name filter also searches collapsed sections, and opens them to show matching widgets.
+- One place decides what counts as monitoring: `isMonitoring` in `dashboard-spec.ts`. For variables in the run's check result (`participants[].variables[].builtin` of `check --json`), that decides. For variables not there (monitoring variables added during the run), and with older launchers that do not write `builtin`, the name prefix decides (`ecu.`, `peer.`, `j1939.`).
 
-#### バスへの接続（`ecu.connected`）
+#### Bus connection (`ecu.connected`)
 
-どの ECU にもある入力 `ecu.connected` は、ECU の見出しの「バスにつなぐ」のスイッチになります（スクリーンリーダーが読む名前は「<ECU> をバスにつなぐ」）。false の間、ECU はすべてのバスから切断され、ステップは動き続けます（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。
+The input `ecu.connected`, which every ECU has, becomes the **Connect to the bus** switch in the ECU's heading (the name screen readers read is **Connect <ECU> to the bus**). While it is false, the ECU is disconnected from all its buses and its steps keep running (see "Disconnecting from the bus (`ecu.connected`)" under "The `Ecu` class" in [internals/execution.md](internals/execution.md#disconnecting-from-the-bus-ecuconnected)).
 
-- 切断されている間は、そのセクションの横に線を引き、スイッチの横に記号（⚠）と文で通知します。
-- ダッシュボードのファイルでは、`auto:` で並べたセクションの見出しに付きます（1 つのセクションに 1 つ。2 つ目の ECU の分はスイッチのコンポーネントとして並びます）。
-- `variable: Engine.ecu.connected` と書けば、ほかの変数と同じくスイッチのコンポーネントとして置けます。
+- While disconnected, a line runs beside the section, and a symbol (⚠) and text appear beside the switch.
+- In a dashboard file, the switch goes in the heading of a section laid out with `auto:` (one per section; the switch of a second ECU in it appears as a switch widget).
+- With `variable: Engine.ecu.connected`, you can place it as a switch widget like any other variable.
 
-#### コンポーネントの種類
+#### Widget kinds
 
-| コンポーネント | 種類（`WidgetKind`） | 内容 |
+| Widget | Kind (`WidgetKind`) | Details |
 |---|---|---|
-| 値の表示 | `value` | 最後の値と単位。列挙は項目の名前、bool はオン・オフ |
-| 数値の入力 | `number` | 書き込める数。入力して Enter か「書く」で書き込む。整数と範囲は送る前に確認し、合わなければ送らずに理由を表示する |
-| スライダー | `slider` | 範囲（`min` と `max`）が決まっている書き込める数。動かしている間は書き込まず、離したとき（キーボードではキーを押すたび）に書き込む。範囲のない変数と、値がまだない間（最初のステップの前など）は動かせない |
-| スイッチ | `switch` | 書き込める bool。押すとすぐに書き込む |
-| ランプ | `lamp` | 読み取り専用の bool。点いているかを、色のほかに塗りつぶしと文字（オン・オフ）で表示する |
-| 選択肢 | `select` | 書き込める列挙。一覧を開いて項目を選んだときだけ書き込む（閉じたまま矢印キーや文字を押しても書き込まない） |
-| グラフ | `graph` | 数の時間の変化（横軸は値を読んだステップの仮想時間）。最後の値と単位も表示する。履歴はクライアントのライブラリが持ち、見えている間の最後の 600 点を描く |
+| Value display | `value` | The last value and its unit. Enums show the item name; bools show **On** or **Off** |
+| Number input | `number` | A writable number. Enter a value and press Enter or click **Write**. Integers and ranges are checked before sending; if the value does not fit, it is not sent and the reason appears |
+| Slider | `slider` | A writable number with a set range (`min` and `max`). It does not write while you drag; it writes when you release it (with the keyboard, on each key press). It cannot be moved for a variable without a range, or while there is no value yet (before the first step, for example) |
+| Switch | `switch` | A writable bool. Writes as soon as you click it |
+| Lamp | `lamp` | A read-only bool. Shows whether it is lit by fill and text (**On**, **Off**) as well as color |
+| Choice | `select` | A writable enum. Writes only when you open the list and select an item (arrow keys or typing on the closed list do not write) |
+| Chart | `graph` | A number over time (the horizontal axis is the virtual time of the step in which the value was read). Also shows the last value and its unit. The client library keeps the history; the chart draws the last 600 points while visible |
 
-#### 既定のコンポーネント
+#### Default widgets
 
-変数の型、範囲、列挙の項目、書き込めるか（`writable`。`role` が `input` か `parameter`）から、1 つの関数（`gui/web/src/app/widgets/dashboard-spec.ts` の `defaultWidget`）が決めます。
+One function (`defaultWidget` in `gui/web/src/app/widgets/dashboard-spec.ts`) picks the widget from the variable's type, range, enum items, and whether it is writable (`writable`: `role` is `input` or `parameter`).
 
-| 型 | 書き込める | 読み取り専用 |
+| Type | Writable | Read-only |
 |---|---|---|
-| `bool` | スイッチ | ランプ |
-| `enum`（項目がある） | 選択肢 | 値の表示（項目の名前） |
-| `integer`、`real`（`min` と `max` があり、`min` < `max`） | スライダー | グラフ |
-| `integer`、`real`（範囲がない、片方だけ） | 数値の入力 | グラフ |
-| 知らない型、項目のない `enum` | 値の表示 | 値の表示 |
+| `bool` | Switch | Lamp |
+| `enum` (with items) | Choice | Value display (item name) |
+| `integer`, `real` (with `min` and `max`, and `min` < `max`) | Slider | Chart |
+| `integer`, `real` (no range, or only one end) | Number input | Chart |
+| Unknown type, `enum` without items | Value display | Value display |
 
-`parameter` は書き込めるコンポーネントになりますが、書き込めるのは最初のステップの前だけで、その後はコンポーネントが理由を表示して操作を止めます。
+A `parameter` gets a writing widget, but it can be written only before the first step; after that, the widget shows the reason and stops accepting input.
 
-#### コンポーネントに共通の動作
+#### Behavior common to all widgets
 
-**値の状態**: 値の下に、いつの値かを文で表示します（色だけに頼らず、記号も添えます）。
+**Value condition**: below the value, text says which time the value belongs to (with a symbol, not only color).
 
-| 状態 | 表示 |
+| Condition | What it shows |
 |---|---|
-| 動いている | 値を読んだステップの時刻 |
-| 止まっている | 「止まっている時刻 … s の値」（ライブラリの `paused` が真の値） |
-| まだ届いていない | 「値はまだありません」 |
-| いまの実行にない変数 | 「この実行にない変数です」 |
-| 画面とサーバーの接続が切断された、ランチャーに再接続している、ECU が切断された、値の読み取りが失敗し続けている | 値を残して「古い値」と理由 |
-| 実行が終わった | 「終わった実行の最後の値」 |
+| Running | The time of the step in which the value was read |
+| Paused | **Value at … s (paused)** (a value whose `paused` is true in the library) |
+| No value yet | **No value yet** |
+| A variable the current run does not have | **Not a variable of this run** |
+| The connection between the screen and the server dropped, the server is reconnecting to the launcher, the ECU is disconnected, or reading values keeps failing | The value stays, marked **Stale value** with the reason |
+| The run ended | **Last value of the ended run** |
 
-値の読み取りが失敗し続けている（Control Server が期限までに応答しないなど）とき、サーバーの変数の状態は `ready` のままで、`reason` に理由があります。このときは、「変数」の画面の上にもその理由（サーバーの英語の文）を表示します。
+When reading values keeps failing (the Control Server does not answer before its deadline, for example), the server's variable state stays `ready` and `reason` holds the reason. The Variables screen then also shows that reason at the top, as the server words it (not localized).
 
-**書き込みの状態**: 次の順に表示します。
+**Write status**: shown in this order.
 
-| 状態 | 意味 |
+| Status | Meaning |
 |---|---|
-| 送った | サーバーのレスポンスを待っています。 |
-| 受け付けた | ECU のステップで反映されるのを待っています（止まっている間はここで待ちます）。 |
-| 反映した | そのステップの時刻を表示します。 |
-| 失敗した | ライブラリの `WriteError` の `kind` ごとに、サーバーが拒否した、反映されなかった、応答がなかった（反映されたかわからない）、接続を閉じた、をスクリーンリーダー向けの `alert` で通知し、表示を読んだ値に戻します。 |
+| Sent | Waiting for the server's response. |
+| Accepted | Waiting for the ECU to apply it in a step (while paused, it waits here). |
+| Applied | Shows the time of that step. |
+| Failed | Depending on the `kind` of the library's `WriteError` (the server refused it, it was not applied, no answer came (unknown whether it was applied), the connection was closed), the widget announces it through an `alert` for screen readers and shows the read value again. |
 
-**応答がなかった書き込みは、自動で送り直しません**（二重に書き込まないため。値を確認してから書き込み直します）。
+**A write that got no answer is not resent automatically** (to avoid writing twice; check the value, then write again).
 
-**書き込めないとき**: 次の場合は、操作を押せなくして理由を表示します: 読み取り専用の変数、実行がない、変数の機能が使えない、実行が終わった、画面とサーバーの接続が切断された、ECU が接続していない、最初のステップの後のパラメーター。
+**When writing is not possible**: in these cases, the controls are disabled and the reason is shown: a read-only variable, no run, the variable feature unavailable, the run ended, the connection between the screen and the server dropped, the ECU not connected, a parameter after the first step.
 
-**書き込みをためない**:
+**Writes do not pile up**:
 
-- 前の書き込みをサーバーがまだ受け取っていない間に次の値が来たら（スライダーやキーの連打）、送らずに覚えておき、受け取ったら最後の値だけを送ります。
-- 送る前に、同じ実行で、まだ書き込めるかを確認し直し、書き込めなくなっていれば送らずにそのことを表示します。
-- 状態の表示は、最後の操作（最後に送った書き込み、または送る前に拒否した入力）のものです。
-- 送る前に拒否した入力（数でない文字、範囲の外）は、送っている書き込みと結果を待っている書き込みに影響しません。
-- 「送った値」の表示は、最後に送った書き込みが確定したときに、状態の表示が何であっても消えます。
+- If the next value comes while the server has not yet received the previous write (a dragged slider or repeated keys), it is kept instead of sent; once the previous write is received, only the last value is sent.
+- Before sending, the widget checks again that the run is the same and the variable is still writable; if not, it does not send and says so.
+- The status shown is that of the last action (the last write sent, or an input refused before sending).
+- An input refused before sending (not a number, out of range) does not affect the write being sent or the writes waiting for results.
+- The display of the sent value disappears when the last write sent completes, whatever the status display shows.
 
-**書き込みは変数ごとに 1 つ、実行ごと**:
+**One write state per variable, per run**:
 
-- 書き込みの状態はコンポーネントでなく変数ごとに持つので、同じ変数を 2 つのコンポーネントに置いても重ねて送らず、絞り込みでコンポーネントが作り直されても、送っている途中・失敗の通知は残ります。
-- 実行が替わると、前の実行の状態と「送った値」は消えます。
-- 書き込みは、そのときの実行に向けて送り（`api/write` の `session`）、サーバーに着く前に実行が替わっていれば、次の実行には書き込まれません。
+- The write state belongs to the variable, not the widget. Placing the same variable in 2 widgets does not send twice, and in-flight and failure notices survive when filtering recreates the widgets.
+- When the run changes, the previous run's state and sent value disappear.
+- A write is sent to the run current at that moment (`session` of `api/write`). If the run changes before the write reaches the server, it is not written to the next run.
 
-**負荷を抑える**: コンポーネントは、画面に見えている間（と、その少し外）だけ値を watch します。数百の変数を並べても、値を受信するのは見えているコンポーネントの分だけです。
+**Keeping the load down**: widgets watch values only while they are visible on the screen (and a little beyond). Even with hundreds of variables laid out, only the visible widgets receive values.
 
-**操作**: キーボードで全部を操作できます。スクリーンリーダーでは、コンポーネントが変数の名前のグループになり、操作の名前も変数の名前です（スライダーは単位つきの値を読みます）。速く変わる値に `aria-live` を付けません。コンポーネントは自分の幅で並び、360 px のウィンドウから全画面まで崩れません。
+**Operation**: everything can be operated with the keyboard. For screen readers, a widget is a group named after the variable, and its controls are also named after the variable (a slider reads its value with the unit). Values that change quickly do not get `aria-live`. Widgets are laid out at their own width and work at any window width from 360 px up to full screen.
 
-#### ダッシュボードのデータ
+#### Dashboard data
 
-画面は、「どの変数をどのコンポーネントでどこに置くか」を 1 つのプレーンなオブジェクト（`DashboardSpec`）で受け取って描きます（`DashboardView`）。
+The screen receives "which variable, with which widget, where" as one plain object (`DashboardSpec`) and draws it (`DashboardView`).
 
-| 作る関数 | 元にするもの |
+| Function that builds it | From |
 |---|---|
-| `autoDashboard` | 変数の一覧（自動のダッシュボード） |
-| `fileDashboard` | サーバーが確認したダッシュボードのファイルの形と、変数の一覧 |
+| `autoDashboard` | The variable list (the automatic dashboard) |
+| `fileDashboard` | The dashboard file shape checked by the server, and the variable list |
 
-セクションには、コンポーネントのほかにカスタムパネル（`{ panel, label, options, variables }`）も置けます。`title` は画面の上に表示する題、`modules` はパネルを定義するモジュールの URL です。
+Besides widgets, a section can hold custom panels (`{ panel, label, options, variables }`). `title` is the title shown at the top of the screen; `modules` are the URLs of the modules that define the panels.
 
 ```ts
 const spec: DashboardSpec = {
@@ -671,338 +665,338 @@ const spec: DashboardSpec = {
         { peer: 'Engine', name: 'engine.speed', widget: 'graph', label: 'Engine speed' },
       ],
     },
-    { title: 'Engine の監視', collapsed: true, items: [{ peer: 'Engine', name: 'peer.steps', widget: 'graph' }] },
+    { title: 'Engine monitoring', collapsed: true, items: [{ peer: 'Engine', name: 'peer.steps', widget: 'graph' }] },
   ],
 };
 ```
 
-置き場所は、セクション（`sections`）の順と、セクションの中のコンポーネント（`items`）の順で決まります。並べ方（列の数）は画面の幅に合わせて決まります。`label` を省くと変数の名前を表示します。`collapsed: true` のセクションは畳んだ状態で始まります。
+Placement follows the order of the sections (`sections`) and of the widgets in each section (`items`). The arrangement (number of columns) follows the screen width. Without `label`, the widget shows the variable name. A section with `collapsed: true` starts collapsed.
 
-コンポーネントごとの設定は `options`（プレーンなオブジェクト）に書きます。受け付けるフィールドはコンポーネントごとに決まっています（`WIDGET_OPTIONS`）。
+Settings per widget go in `options` (a plain object). Each widget accepts its own fields (`WIDGET_OPTIONS`).
 
-| コンポーネント | 設定 |
+| Widget | Settings |
 |---|---|
-| スライダー | `step`: 刻み幅（正の数。省くと宣言の刻み幅、なければ整数は 1、実数は範囲の 1/100） |
-| グラフ | `points`: 記録して描く点の数（2 以上の整数。既定 600） |
+| Slider | `step`: the increment (a positive number; if omitted, the declared increment, otherwise 1 for integers and 1/100 of the range for reals) |
+| Chart | `points`: the number of points recorded and drawn (an integer of 2 or more; default 600) |
 
-描く前に、コンポーネントの種類が変数に合うかを確認します（`checkItem`、まとめては `checkDashboard`）。合わなければ、その場所に理由と直し方を表示し、ほかのコンポーネントは描きます。
+Before drawing, the screen checks that the widget kind fits the variable (`checkItem`; all at once, `checkDashboard`). If it does not fit, the screen shows the reason and the fix in that place and draws the other widgets.
 
-| コンポーネント | 使える変数 |
+| Widget | Variables it can show |
 |---|---|
-| 値の表示 | どれでも |
-| ランプ | `bool` |
-| グラフ | `integer`、`real`、`bool` |
-| スイッチ | 書き込める `bool` |
-| 選択肢 | 書き込める `enum`（項目がある） |
-| スライダー | 書き込める `integer`、`real`（範囲がある） |
-| 数値の入力 | 書き込める `integer`、`real` |
+| Value display | Any |
+| Lamp | `bool` |
+| Chart | `integer`, `real`, `bool` |
+| Switch | Writable `bool` |
+| Choice | Writable `enum` (with items) |
+| Slider | Writable `integer`, `real` (with a range) |
+| Number input | Writable `integer`, `real` |
 
-知らないコンポーネントの種類、コンポーネントが知らない設定、値の合わない設定も、その場所に表示します。いまの実行にない変数は、確認せずにコンポーネントが「この実行にない変数です」と表示します。
+Unknown widget kinds, settings a widget does not know, and settings with values that do not fit also show in their place. For a variable the current run does not have, the widget shows **Not a variable of this run** without checking.
 
-#### コンポーネントを追加する
+#### Add a widget
 
-コンポーネントは `gui/web/src/app/widgets/` にあり、どれもライブラリの公開 API と Angular のラッパーだけを使います。値の状態、書き込めるかどうか、書き込みの管理（上の「コンポーネントに共通の動作」のうち、見た目でないもの）は、ライブラリの `client.variables.bind` にあります。`bindVariable`（`variable-binding.ts`）は、それを signal に変換し、コンポーネントが見えているか（IntersectionObserver）を伝え、値を画面の言葉にするだけです。自分のコンポーネントも同じ方法で作れます。
+The widgets are in `gui/web/src/app/widgets/`, and all of them use only the library's public API and the Angular wrapper. The value condition, whether the variable can be written, and write handling (the non-visual parts of "Behavior common to all widgets" above) are in the library's `client.variables.bind`. `bindVariable` (`variable-binding.ts`) only turns that into signals, tells it whether the widget is visible (IntersectionObserver), and turns values into screen text. You can build your own widgets the same way.
 
-1. コンポーネントを作り（`ChangeDetectionStrategy.OnPush`）、input の `ref`（`VariableRef`）、`label`、`options`（設定）を持たせる。
-2. field の初期化で `bindVariable(this.ref)` を呼ぶ（`variable-binding.ts`）。
-3. テンプレートを `<app-variable-frame [variable]="variable" [label]="label()" [writable]="true">` で囲む（`variable-frame.ts`。名前、役割、値の状態、書き込みの状態、書き込めない理由を表示する）。操作には `[attr.aria-labelledby]="variable.id + '-name'"` を付ける。
-4. `dashboard-spec.ts` の `WidgetKind` と `widgets.ts` の `WIDGETS` に追加する（ダッシュボードのデータから使えるように）。既定にするなら `defaultWidget` と上の表も変える。
+1. Create the component (`ChangeDetectionStrategy.OnPush`) with the inputs `ref` (`VariableRef`), `label` and `options` (settings).
+2. Call `bindVariable(this.ref)` in a field initializer (`variable-binding.ts`).
+3. Wrap the template in `<app-variable-frame [variable]="variable" [label]="label()" [writable]="true">` (`variable-frame.ts`; shows the name, role, value condition, write status, and why it cannot be written). Give the controls `[attr.aria-labelledby]="variable.id + '-name'"`.
+4. Add it to `WidgetKind` in `dashboard-spec.ts` and to `WIDGETS` in `widgets.ts` (so dashboard data can use it). To make it a default, also change `defaultWidget` and the table above.
 
-`bindVariable` が返す `VariableBinding` は、次のものを signal で持ちます（中身は、ライブラリの `BoundVariable` のフィールド）。
+The `VariableBinding` that `bindVariable` returns holds the following as signals (their contents are the fields of the library's `BoundVariable`).
 
-| signal | 内容 |
+| Signal | Contents |
 |---|---|
-| `info` | 変数の定義 |
-| `reading` | 最後の値 |
-| `condition` | 値の状態 |
-| `block` | 書き込めない理由 |
-| `write(value)`、`writeStatus`、`pending` | 書き込みと、その状態 |
+| `info` | The variable definition |
+| `reading` | The last value |
+| `condition` | The value condition |
+| `block` | Why it cannot be written |
+| `write(value)`, `writeStatus`, `pending` | Writing, and its status |
 
-- 値は、コンポーネントが見えている間だけ watch されます。
-- 履歴が必要なときは `bindVariable(this.ref, { history: 600 })` とします。
-- `bindVariable` は 1 つのコンポーネントで何度呼んでもかまいません（2 つの変数を描くコンポーネントなど）。
-- 範囲が必要なコンポーネントは `bindVariable(this.ref, { needsRange: true })`、値から動かすコンポーネントは `needsValue: true` とします。条件に合わない間は `block` が理由（`no-range`、`no-value`）になります。
-- 値の表示（`value-widget.ts`）がいちばん小さい見本、書き込むコンポーネントはスイッチ（`switch-widget.ts`）が見本です。
+- Values are watched only while the widget is visible.
+- For a history, use `bindVariable(this.ref, { history: 600 })`.
+- One component may call `bindVariable` any number of times (a widget that draws 2 variables, for example).
+- A widget that needs a range uses `bindVariable(this.ref, { needsRange: true })`; one that moves from the current value uses `needsValue: true`. While the condition is not met, `block` holds the reason (`no-range`, `no-value`).
+- The value display (`value-widget.ts`) is the smallest model; for a writing widget, the switch (`switch-widget.ts`) is the model.
 
-### 時間の操作のラッパー
+### Time control wrapper
 
-時間の状態とコマンドは、アプリ全体で 1 つのサービスにあります（中身はクライアントのライブラリの `TimeControl`）。コンポーネントはここの signal を読むだけにして、状態を自分で持ちません（どのコンポーネントも同じ状態を見ます）。
+The time state and commands live in one service for the whole app (built on the client library's `TimeControl`). Components only read its signals and keep no time state of their own (every component sees the same state).
 
-`ServerInfo`（`gui/web/src/app/core/session/server-info.ts`）:
+`ServerInfo` (`gui/web/src/app/core/session/server-info.ts`):
 
-| メンバー | 内容 |
+| Member | Contents |
 |---|---|
-| `app` | `GET api/app` のレスポンス |
-| `features` | ランチャーができること |
-| `has(name)` | その機能があるか |
-| `limits` | 速度の範囲、ステップ実行の上限 |
+| `app` | The response of `GET api/app` |
+| `features` | What the launcher can do |
+| `has(name)` | Whether it has that feature |
+| `limits` | The speed range and the step limit |
 
-`SimulationTime`（`gui/web/src/app/core/session/simulation-time.ts`）:
+`SimulationTime` (`gui/web/src/app/core/session/simulation-time.ts`):
 
-| signal | 内容 |
+| Signal | Contents |
 |---|---|
-| `supported` | ランチャーが時間のコマンドを持つか |
-| `time` | 最後の `time` のイベント（まだなければ `null`） |
-| `simMs`、`speed`、`paused`、`actualSpeed` | `time` の各フィールド（古いランチャーが出力しないフィールドは `null`） |
-| `paced` | 速度が数値か（遅れを数えているか） |
-| `lateness`、`behind` | 遅れの数と、実時間に遅れたか（許容を超えて遅れたステップがある） |
-| `lastCommand` | 最後の `command` のイベント（`name`、`accepted`、`message`、`ms`） |
-| `controllable` | 時間のコマンドが意味を持つか |
-| `beforeStart` | 最初のステップの前で、再開かステップ実行を待っているか |
-| `canPause`、`canResume`、`canStep` | いま押してよいか |
-| `stepping` | ステップ実行の途中か（ランチャーは一時停止の扱い） |
-| `sending` | 送って、ランチャーの応答（`command` のイベント）をまだ見ていないコマンド |
-| `error`、`errorFromServer` | 最後のコマンドが失敗した理由と、それがサーバーの文か |
+| `supported` | Whether the launcher has time commands |
+| `time` | The last `time` event (`null` if none yet) |
+| `simMs`, `speed`, `paused`, `actualSpeed` | The fields of `time` (`null` for fields that older launchers do not write) |
+| `paced` | Whether the speed is numeric (whether lateness is counted) |
+| `lateness`, `behind` | The lateness figures, and whether the run fell behind real time (a step was later than the tolerance) |
+| `lastCommand` | The last `command` event (`name`, `accepted`, `message`, `ms`) |
+| `controllable` | Whether time commands mean anything now |
+| `beforeStart` | Whether the run is held before the first step, waiting for resume or step |
+| `canPause`, `canResume`, `canStep` | Whether the control may be used now |
+| `stepping` | Whether a step is in progress (the launcher counts it as paused) |
+| `sending` | A command that was sent and whose answer (`command` event) has not been seen yet |
+| `error`, `errorFromServer` | Why the last command failed, and whether that text came from the server |
 
-- `time` のフィールドは `simMs`、`speed`、`paused`、`actualSpeed`、`lateSteps`、`maxLateMs`、`slippedMs`、`lateMs` です。
-- `controllable` が真になるのは、ランチャーが対応し、段階が running で、`time` のイベントが来ていて、結果がまだで、停止を頼んでいないときです（サーバーと同じ条件）。`beforeStart` の間も真です。
-- `beforeStart` が真になるのは、止めた状態で始めた実行で、ランチャーが変数を読み書きする API を持つときです。このとき `time` はまだ `null` で、`canResume` と `canStep` が真になります。
-- `canPause`、`canResume`、`canStep` は、`controllable` で、さらに前のコマンドの応答を待っていないときに真になります。一時停止しているか、ステップ実行の途中かで分かれます。
-- `sending` は、応答が届く、ランチャーが終わる、実行が替わる、サーバーが拒否する、再接続した要約に応答がある、のどれかで解除されます。5 秒（`ANSWER_TIMEOUT_MS`）たっても応答がなければ、待つのをやめます。
-- `error` は、サーバーが拒否した文なら英語のまま、応答がなかったときは画面の文です。
+- The fields of `time` are `simMs`, `speed`, `paused`, `actualSpeed`, `lateSteps`, `maxLateMs`, `slippedMs` and `lateMs`.
+- `controllable` is true when the launcher supports time commands, the phase is running, a `time` event has arrived, there is no result yet, and no stop has been requested (the same conditions as the server's). It is also true during `beforeStart`.
+- `beforeStart` is true in a run started paused when the launcher has the API for reading and writing variables. Then `time` is still `null`, and `canResume` and `canStep` are true.
+- `canPause`, `canResume` and `canStep` are true when `controllable` is true and no answer to an earlier command is pending. Which of them is true depends on whether the run is paused or a step is in progress.
+- `sending` clears when the answer arrives, the launcher exits, the run changes, the server rejects the command, or the summary after a reconnection holds the answer. If no answer comes within 5 seconds (`ANSWER_TIMEOUT_MS`), it stops waiting.
+- `error` is the server's text, not localized, when the server rejected the command, and the screen's own text when no answer came.
 
-コマンドは `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`（どれも `send(command)` を通る）です。前のコマンドの応答を待っている間と、実行がないときは送らず、`{sent: false, reason: 'waiting' | 'no-session'}` を返します（送ったら `{sent: true}`）。押せるかは、送る前に `canPause` などで確認します。
+The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)` (all go through `send(command)`). While an answer to an earlier command is pending, and when there is no run, they do not send and return `{sent: false, reason: 'waiting' | 'no-session'}` (`{sent: true}` when sent). Check whether a control may be used with `canPause` and the others before sending.
 
-状態の帯に操作を追加するときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（「開始」と「停止」の後、「待たずに止める」の前に並びます。「開始」と「停止」の位置は動きません）。
+To add a control to the status bar, place an element with the attribute `runStatusActions` inside `<app-run-status>` (it appears after **Start** and **Stop** and before **Stop without waiting**; **Start** and **Stop** do not move).
 
-### サンプルのコンポーネントをコピーして使う
+### Copy the sample widgets
 
-Angular で自分の画面を作るときは、サンプルのコンポーネント（スイッチ、スライダー、グラフなど）と、それが依存するラッパーを、自分のプロジェクトへコピーして使えます。コンポーネントとラッパーは、画面（`run/`、`variables/`）とアプリのシェル（`app.ts`、ルーティング、ナビゲーション）に依存しません（`gui/web/eslint.config.js` が import の向きを制限します）。
+To build your own screen in Angular, you can copy the sample widgets (switch, slider, chart and others) and the wrappers they depend on into your project. The widgets and wrappers do not depend on the screens (`run/`, `variables/`) or the app shell (`app.ts`, routing, navigation) (`gui/web/eslint.config.js` restricts the direction of imports).
 
-| コピーするもの | 内容 |
+| What to copy | Contents |
 |---|---|
-| `gui/web/src/app/widgets/` | コンポーネントと、その土台、ダッシュボード、カスタムパネルの置き場所 |
-| `gui/web/src/app/core/session/` | ライブラリの `Readable` を signal にするラッパーと、クライアントを作るところ（`gui-client.ts`） |
-| `gui/web/src/app/core/auth/` | トークン（`AuthToken`。中身は `takeToken`）と、API にトークンを付ける interceptor |
-| `gui/web/src/app/core/format/measure-pipe.ts` | 数と単位の書式 |
+| `gui/web/src/app/widgets/` | The widgets, their building blocks, the dashboard, and the host for custom panels |
+| `gui/web/src/app/core/session/` | The wrappers that turn the library's `Readable` into signals, and the place that creates the client (`gui-client.ts`) |
+| `gui/web/src/app/core/auth/` | The token (`AuthToken`, built on `takeToken`) and the interceptor that adds the token to API requests |
+| `gui/web/src/app/core/format/measure-pipe.ts` | Formatting of numbers with units |
 
-- `widgets/` の土台は `variable-binding.ts`（ライブラリの `client.variables.bind` を signal に変換する）と `variable-frame.ts`、ダッシュボードはデータと描くコンポーネント（`dashboard-spec.ts`、`dashboard-view.ts`）、カスタムパネルの置き場所は `panel-host.ts` です。
-- `core/session/` のラッパーは `ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables` です。
-- `*.spec.ts` はコピーしません（テスト用のヘルパー `@vehicle-sil/gui-client/testing` は、パッケージに入っていません）。
-- 空の Angular のプロジェクトへ実際にコピーしてビルドすることは、テストでは確認していません。
+- The building blocks in `widgets/` are `variable-binding.ts` (turns the library's `client.variables.bind` into signals) and `variable-frame.ts`; the dashboard is the data and the component that draws it (`dashboard-spec.ts`, `dashboard-view.ts`); the host for custom panels is `panel-host.ts`.
+- The wrappers in `core/session/` are `ServerConnection`, `ServerInfo`, `SimulationTime`, `RunCommands` and `EcuVariables`.
+- Do not copy `*.spec.ts` (the test helpers `@vehicle-sil/gui-client/testing` are not in the package).
+- No test copies them into an empty Angular project and builds it.
 
-依存しているもの:
+Dependencies:
 
-| 依存 | 内容 |
+| Dependency | Details |
 |---|---|
-| `@vehicle-sil/gui-client` | 「[ライブラリを入手する](#ライブラリを入手する)」のパッケージ |
-| Angular | `@angular/core`、`@angular/common`、`@angular/common/http`（サンプルと同じバージョン。signal と新しい制御構文を使い、zone.js なしで動きます） |
-| RxJS | HTTP と接続のラッパーの中だけで使います。 |
-| Angular Material | `button`、`form-field`、`input`、`select`、`slider`、`slide-toggle` と、そのテーマ（Material 3 の `mat.theme`。コンポーネントは CSS の変数 `--mat-sys-*` を読みます） |
-| 間隔の CSS の変数 | `--app-space-1` から `--app-space-4`（`gui/web/src/styles.css` の `:root`。コピー先の全体のスタイルに置きます） |
-| `@angular/localize` | コンポーネントの文は、`$localize` とテンプレートの `i18n` の印が付いた日本語です。 |
+| `@vehicle-sil/gui-client` | The package in "[Get the library](#get-the-library)" |
+| Angular | `@angular/core`, `@angular/common`, `@angular/common/http` (the same version as the sample; they use signals and the new control flow, and run without zone.js) |
+| RxJS | Used only inside the HTTP and connection wrappers. |
+| Angular Material | `button`, `form-field`, `input`, `select`, `slider`, `slide-toggle` and their theme (Material 3 `mat.theme`; the widgets read the CSS variables `--mat-sys-*`) |
+| CSS variables for spacing | `--app-space-1` to `--app-space-4` (`:root` in `gui/web/src/styles.css`; put them in the global styles of your project) |
+| `@angular/localize` | The widgets' text is Japanese marked with `$localize` and template `i18n` markers. |
 
-翻訳しないなら、`@angular/localize/init` を polyfills に入れるだけで、日本語のまま表示されます。翻訳を入れるときは、サンプルの `src/locale/` と `core/i18n/` の読み込み方を参考にします。
+If you do not translate, adding `@angular/localize/init` to the polyfills is enough, and the text shows in Japanese. To add translations, follow how the sample loads them in `src/locale/` and `core/i18n/`.
 
-コピー先で必要な設定:
+Setup needed in your project:
 
-- `provideHttpClient(withInterceptors([authInterceptor]))`（API にトークンを付ける）と、ルーティングが URL を書き換える前にトークンを読む `provideAppInitializer(() => void inject(AuthToken))`（サンプルの `app.config.ts` と同じ）。
-- クライアントは `GUI_CLIENT`（`gui-client.ts`）が、ページの `document.baseURI` と `AuthToken` から 1 つ作ります（`index.html` に `<base href="/">` を置きます。サンプルと同じ）。ほかの所で作ったクライアントを使うときは、`GUI_CLIENT` を `useValue` で差し替えます。
-- コンポーネントは `<app-dashboard-view [spec]="spec" />` で並べます。`spec` は、変数の一覧から作る `autoDashboard(...)` か、自分で書く `DashboardSpec`（「[ダッシュボードのデータ](#ダッシュボードのデータ)」）です。1 つずつ置くときは、個々のコンポーネント（`<app-slider-widget [ref]="..." />` など。`WIDGETS` の表）を使います。
+- `provideHttpClient(withInterceptors([authInterceptor]))` (adds the token to API requests), and `provideAppInitializer(() => void inject(AuthToken))`, which reads the token before routing rewrites the URL (the same as the sample's `app.config.ts`).
+- `GUI_CLIENT` (`gui-client.ts`) creates one client from the page's `document.baseURI` and `AuthToken` (put `<base href="/">` in `index.html`, as the sample does). To use a client created elsewhere, replace `GUI_CLIENT` with `useValue`.
+- Lay out widgets with `<app-dashboard-view [spec]="spec" />`. `spec` is `autoDashboard(...)`, built from the variable list, or a `DashboardSpec` you write (see "[Dashboard data](#dashboard-data)"). To place widgets one by one, use the individual components (`<app-slider-widget [ref]="..." />` and others; see the `WIDGETS` table).
 
-### ダッシュボードのファイル
+### Dashboard files
 
-サンプルの画面の機能です（自分の画面には自動では付きません。ファイルの中身は `client.dashboard(file)` で読めるので、自分の画面で使うこともできます）。
+A feature of the sample screens (your own screen does not get it automatically; it can read the file's contents with `client.dashboard(file)` and use them).
 
-設定ファイルの隣に `<設定ファイルの名前（拡張子なし）>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../examples/ecu_main/simulation.dashboard.yaml) です。
+Put `<configuration file name without extension>.dashboard.yaml` (for `simulation.yaml`, `simulation.dashboard.yaml`) next to the configuration file, and the Variables screen lays out the variables as it says. Write it by hand or have an AI write it. For an example, see [examples/ecu_main/simulation.dashboard.yaml](../examples/ecu_main/simulation.dashboard.yaml).
 
 ```yaml
 vehicle_sil_dashboard: 1
-title: Engine and dashboard            # 任意: 画面の上に表示する題
-panels: [panels/rpm-bar.js]            # 任意: カスタムパネルのモジュール
+title: Engine and dashboard            # optional: the title at the top of the screen
+panels: [panels/rpm-bar.js]            # optional: custom panel modules
 sections:
   - title: Engine
     items:
-      - variable: Engine.engine.throttle # <participant>.<変数名>
-        widget: slider                   # 任意: 省くと既定のコンポーネント
-        label: Throttle                  # 任意: 省くと変数の名前
-        options: { step: 5 }             # 任意: コンポーネントごとの設定
-      - panel: rpm-bar                   # カスタムパネル（custom element の名前）
+      - variable: Engine.engine.throttle # <participant>.<variable name>
+        widget: slider                   # optional: the default widget if omitted
+        label: Throttle                  # optional: the variable name if omitted
+        options: { step: 5 }             # optional: settings of the widget
+      - panel: rpm-bar                   # custom panel (the custom element's name)
         variables: [Engine.engine.speed]
         options: { max: 4000 }
-      - auto: Engine                     # Engine の残りの変数
+      - auto: Engine                     # the remaining variables of Engine
   - title: Dashboard
-    collapsed: true                      # 任意: 畳んだ状態で始める
+    collapsed: true                      # optional: start collapsed
     items:
       - auto: Dashboard
 ```
 
-| キー | 内容 |
+| Key | Details |
 |---|---|
-| `vehicle_sil_dashboard` | 形式のバージョン。いまは `1` |
-| `title` | 画面の上に表示する題（任意） |
-| `panels` | カスタムパネルを定義するモジュール。ファイルの隣の `panels/` の中の `.js` / `.mjs`（任意。16 個まで） |
-| `sections` | セクションの並び。セクションは `title`、`items`、`collapsed`（任意） |
-| `items` の `variable` | 変数をコンポーネントで表示する。値は `<participant>.<変数名>` |
-| `items` の `panel` | カスタムパネルを置く（「[カスタムパネル](#カスタムパネル)」） |
-| `items` の `auto` | その participant の変数のうち、ファイルのほかの所に書いていないものを、その場所に既定のコンポーネントで並べる |
+| `vehicle_sil_dashboard` | The format version. Currently `1` |
+| `title` | The title shown at the top of the screen (optional) |
+| `panels` | Modules that define custom panels: `.js` / `.mjs` in `panels/` next to the file (optional; up to 16) |
+| `sections` | The list of sections. A section has `title`, `items` and `collapsed` (optional) |
+| `variable` of `items` | Shows a variable in a widget. The value is `<participant>.<variable name>` |
+| `panel` of `items` | Places a custom panel (see "[Custom panels](#custom-panels)") |
+| `auto` of `items` | Lays out, in that place and with default widgets, the variables of that participant that are not written elsewhere in the file |
 
-項目は `variable`、`panel`、`auto` のどれか 1 つを持ちます。知らないキー、型の違う値、同じキーの 2 回目はエラーです。
+Each item has exactly one of `variable`, `panel` and `auto`. Unknown keys, values of the wrong type, and a second occurrence of the same key are errors.
 
-| 項目 | 一緒に書けるキー |
+| Item | Keys allowed with it |
 |---|---|
-| `variable` | `widget`（「[コンポーネントの種類](#コンポーネントの種類)」の種類。省くと既定のコンポーネント）、`label`、`options`（「[ダッシュボードのデータ](#ダッシュボードのデータ)」の設定） |
-| `panel` | `label`、`variables`（`<participant>.<変数名>` の並び）、`options`（パネルが決める） |
-| `auto` | なし |
+| `variable` | `widget` (a kind from "[Widget kinds](#widget-kinds)"; the default widget if omitted), `label`, `options` (the settings in "[Dashboard data](#dashboard-data)") |
+| `panel` | `label`, `variables` (a list of `<participant>.<variable name>`), `options` (defined by the panel) |
+| `auto` | None |
 
-- `<participant>.<変数名>` は、最初の `.` までが participant の名前です（シナリオと同じ書き方）。
-- `auto` の「ファイルのほかの所」は、`variable` とパネルの `variables` です。全部の変数を書かなくて済むようにするためのキーです。監視用の変数は、そのセクションの後の畳んだセクションにします。いまの実行にない participant なら、その場所に理由を表示します。
-- **エラー**: GUI サーバーが読むときに、YAML のエラーと形のエラーを、ファイルの行と桁、データの中の場所、直し方とともに返します。画面はエラーの一覧を表示して、変数を自動で並べます。
-- **変数との照合**: 変数があるか、コンポーネントが変数に合うかは、画面がいまの変数の一覧で確認し、合わないコンポーネントの場所に理由を表示します（ほかは描きます）。いまの実行にない変数は「この実行にない変数です」と表示します。実行を開始する前でも、ファイルのとおりに並んだコンポーネントを見られます。
-- **読み直す**: 画面は、実行が替わるたびにファイルを読み直します。直した後すぐに見るには、画面の「読み直す」を押します。パネルのモジュールを直したときは、ページを読み込み直します（ブラウザは一度定義した custom element を差し替えられないため）。
-- **エディターの補完**: JSON Schema は [gui/protocol/dashboard.schema.json](../gui/protocol/dashboard.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと補完と検査が効きます。
-- **上限**: 256 KiB、入れ子 16 段、値 50000 個、セクション 200 個、項目は全部で 2000 個（多いときは `auto` を使います）、1 つの値は 1024 文字。YAML の別名（`&name` と `*name`）とタグ（`!!python/...` など）、2 つ目の文書（`---`）は使えません。
-- **保存**: 画面で並べ替えて保存することはできません（ファイルを書き換えます）。
-- サーバーの API は `GET api/dashboard?file=<設定ファイル>`（[gui/protocol/README.md](../gui/protocol/README.md) の「ダッシュボードのファイル」）、ライブラリでは `client.dashboard(file)` です。
+- In `<participant>.<variable name>`, everything up to the first `.` is the participant name (the same notation as in scenarios).
+- "Elsewhere in the file" for `auto` means `variable` items and the `variables` of panels. The key saves you from listing every variable. Monitoring variables go in a collapsed section after that section. For a participant the current run does not have, the reason appears in that place.
+- **Errors**: when the GUI server reads the file, it returns YAML errors and shape errors with the file's line and column, the location in the data, and how to fix them. The screen shows the list of errors and lays out the variables automatically.
+- **Checking against the variables**: the screen checks whether each variable exists and whether its widget fits, against the current variable list, and shows the reason in the place of a widget that does not fit (the rest is drawn). A variable the current run does not have shows **Not a variable of this run**. Even before a run starts, you can see the widgets laid out as the file says.
+- **Reloading**: the screen reads the file again whenever the run changes. To see a change at once, click **Reload** on the screen. After changing a panel module, reload the page (a browser cannot replace a custom element once it is defined).
+- **Editor completion**: the JSON Schema is [gui/protocol/dashboard.schema.json](../gui/protocol/dashboard.schema.json). In an editor that uses the YAML language server, write `# yaml-language-server: $schema=<path to that file>` at the top of the file to get completion and validation.
+- **Limits**: 256 KiB, 16 levels of nesting, 50000 values, 200 sections, 2000 items in total (use `auto` when you have more), 1024 characters per value. YAML aliases (`&name` and `*name`), tags (`!!python/...` and others) and a second document (`---`) are not allowed.
+- **Saving**: you cannot rearrange widgets on the screen and save the layout (edit the file instead).
+- The server API is `GET api/dashboard?file=<configuration file>` (see "Dashboard files" in [gui/protocol/README.md](../gui/protocol/README.md#dashboard-files)); in the library, `client.dashboard(file)`.
 
-### カスタムパネル
+### Custom panels
 
-サンプルの画面の機能です（ダッシュボードのファイルから使います）。
+A feature of the sample screens (used from dashboard files).
 
-自分で書いた画面のコンポーネントを、ダッシュボードに置けます。パネルは custom element を定義する ES モジュールで、設定ファイルの隣の `panels/` に置き、ダッシュボードのファイルの `panels:` に書きます（書いたものだけを読み込みます）。例は [examples/ecu_main/panels/rpm-bar.js](../examples/ecu_main/panels/rpm-bar.js)（素の JavaScript。回転数を棒で表示する）です。
+You can place widgets that you wrote yourself on the dashboard. A panel is an ES module that defines a custom element. Put it in `panels/` next to the configuration file and list it under `panels:` in the dashboard file (only listed modules are loaded). For an example, see [examples/ecu_main/panels/rpm-bar.js](../examples/ecu_main/panels/rpm-bar.js) (plain JavaScript; shows the engine speed as a bar).
 
-画面は、`panels:` のモジュールを全部読み込み終えてから、`panel:` の名前の要素を作り、次のプロパティを渡してから、ページに挿入します（`connectedCallback` で使えます）。
+The screen loads all the modules in `panels:`, then creates an element with the name in `panel:`, sets the following properties, and inserts it into the page (they are usable in `connectedCallback`).
 
-| プロパティ | 内容 |
+| Property | Contents |
 |---|---|
-| `client` | クライアントのライブラリの `GuiClient`（[gui/client/README.md](../gui/client/README.md)） |
-| `options` | 項目の `options`（プレーンなオブジェクト） |
-| `variables` | 項目の `variables`（`[{peer, name}]`） |
+| `client` | The client library's `GuiClient` ([gui/client/README.md](../gui/client/README.md)) |
+| `options` | The item's `options` (a plain object) |
+| `variables` | The item's `variables` (`[{peer, name}]`) |
 
-- `client` は、パネルが自分で import しなくても使えます。値は `client.variables.watch(...)`、書き込みは `client.variables.write(...)` を使います。
-- 要素がページから外れたら（画面を移動した、セクションを畳んだ、絞り込みで隠れた）、`disconnectedCallback` で watch を `close()` します。
-- モジュールを読み込めない、`panel:` の名前の要素が定義されていない、要素を作れないときは、その場所に理由を表示します（ほかのコンポーネントは描きます）。
-- 別の設定ファイルの同じ名前のパネルを前に読み込んでいると、このファイルのモジュールは定義に失敗し、前の定義で描きます。そのときも、その場所に通知を表示します（ページを読み込み直すと、このファイルのモジュールで描きます）。
-- パネルの中で起きたエラーは、ブラウザの開発者ツールのコンソールに表示されます。
-- モジュールは 1 MiB までです。ほかのモジュールを相対パスで import できます。
-- GUI サーバーが配信するのは、root の下の `panels` という名前のディレクトリ（どの場所のものでも。`panels` やその上のディレクトリがシンボリックリンクのものは除く）の中の `.js` / `.mjs` です。
+- The panel can use `client` without importing anything itself. Read values with `client.variables.watch(...)` and write with `client.variables.write(...)`.
+- When the element leaves the page (the screen changed, the section was collapsed, the filter hid it), `close()` the watch in `disconnectedCallback`.
+- If a module cannot be loaded, no element named in `panel:` is defined, or the element cannot be created, the reason appears in that place (the other widgets are drawn).
+- If a panel of the same name from another configuration file was loaded earlier, this file's module fails to define it, and the earlier definition is used. A notice appears in that place in that case too (reload the page to draw it with this file's modules).
+- Errors inside a panel appear in the console of the browser's developer tools.
+- A module can be up to 1 MiB. It can import other modules with relative paths.
+- The GUI server serves only `.js` / `.mjs` in directories named `panels` under the root (in any location, except where `panels` or a directory above it is a symbolic link).
 
-**信頼**: パネルは、自分の PC に置いたコードとして信頼します。
+**Trust**: a panel gets the same trust as any code that you put on your own computer.
 
-- パネルは画面と同じページの中で、トークンを持ったクライアントで動き、GUI でできることを全部できます: 実行を開始する（root の中の設定ファイルに書いたコマンドを動かす）、止める、時間を操作する、変数に書き込む。
-- 変数の画面を開いただけで読み込むので、信頼できないリポジトリを root にしないでください（「[セキュリティ](#セキュリティ)」）。
-- 読み込んだモジュールの名前は、変数の画面の「ダッシュボードのファイル … のとおりに並べています」の行に表示されます。
-- GUI サーバーは、`--root` の下の `panels` という名前のディレクトリの中の `.js` / `.mjs` しか配信しません（`..`、`panels` の外を指すリンク、リンクの `panels`、`.` で始まる名前、ほかの拡張子は配信しません）。
-- パネルを同じ origin から配信するので、CSP（`script-src 'self'`）はそのままで、インラインのスクリプトと `eval` は使えません。
+- A panel runs in the same page as the screen, with a client that holds the token, and can do everything the GUI can: start a run (run the commands in configuration files in the root), stop it, control time, write variables.
+- Opening the Variables screen is enough to load panels, so do not make an untrusted repository the root (see "[Security](#security)").
+- The names of the loaded modules appear in the line "Laid out from the dashboard file …" on the Variables screen.
+- The GUI server serves only `.js` / `.mjs` in directories named `panels` under `--root` (it does not serve `..`, links that point out of `panels`, a `panels` that is a link, names that start with `.`, or other extensions).
+- Panels are served from the same origin, so the CSP (`script-src 'self'`) stays as it is, and inline scripts and `eval` cannot be used.
 
-**配信の方法**: ブラウザはモジュールの import に `Authorization` のヘッダーを付けられないので、モジュールの URL（`panels/<key>/...`）に、起動ごとの乱数 `<key>` を入れます。`<key>` はトークンとは別の値で、トークンのある `api/dashboard` のレスポンスにだけ入っています。知った人が読めるのは、パネルのモジュールだけです（API は使えません）。
+**How panels are served**: a browser cannot add an `Authorization` header to a module import, so the module URL (`panels/<key>/...`) carries `<key>`, a random value created at each start. `<key>` is a different value from the token and appears only in the response of `api/dashboard`, which needs the token. Someone who learns it can read panel modules only (not use the API).
 
-## 自分の画面のリファレンス
+## Reference for your own screen
 
-`--web` で配信する自分の画面に適用されるルールです。作る手順は、ガイド [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) にあります。
+The rules that apply to your own screen served with `--web`. For the steps to build one, see the guide [Build your own screen for the browser GUI](howto/gui-screen.md).
 
-| 調べたいこと | 節 |
+| To find | See |
 |---|---|
-| ライブラリのファイルやパッケージの入手 | 「[ライブラリを入手する](#ライブラリを入手する)」 |
-| 配信されるファイルと、されないファイル | 「[`--web` で配信するファイル](#--web-で配信するファイル)」 |
-| 画面で使えないもの（インラインのスクリプト、CDN など） | 「[CSP による制限](#csp-による制限)」 |
-| トークンの扱い | 「[トークンの受け取り](#トークンの受け取り)」 |
-| Vite などの開発サーバーとの併用 | 「[開発サーバーを使う](#開発サーバーを使う)」 |
-| スライダーやランプの作り方 | 「[変数のコンポーネントを作る](#変数のコンポーネントを作る)」 |
-| ライブラリが代行しないルール | 「[画面を作るときのルール](#画面を作るときのルール)」 |
-| 画面なしで API を使う方法 | 「[画面のないツールから使う](#画面のないツールから使う)」 |
+| Getting the library file or package | "[Get the library](#get-the-library)" |
+| Which files are served and which are not | "[Files served with `--web`](#files-served-with---web)" |
+| What a screen cannot use (inline scripts, CDNs and others) | "[CSP restrictions](#csp-restrictions)" |
+| Handling the token | "[Receiving the token](#receiving-the-token)" |
+| Working with a development server such as Vite | "[Use a development server](#use-a-development-server)" |
+| Building sliders and lamps | "[Build a variable widget](#build-a-variable-widget)" |
+| Rules that the library does not enforce for you | "[Rules for building a screen](#rules-for-building-a-screen)" |
+| Using the API without a screen | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
 
-### ライブラリを入手する
+### Get the library
 
-| 形 | ビルド済みのツールでの場所 | リポジトリで作るコマンド（`gui/web` で実行） |
+| Form | Location in the prebuilt tools | Command to build it in the repository (run in `gui/web`) |
 |---|---|---|
-| 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | `client/` と `gui_starter/` | `npm run build:client`（`build/gui-client/vehicle-sil-gui-client.mjs` ができます） |
-| npm のパッケージ（`vehicle-sil-gui-client-<バージョン>.tgz`） | `client/`（リリースのページにも同じファイルがあります） | `npm run pack:client`（`build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` ができます） |
+| Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` and `gui_starter/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
+| npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page has the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
 
-- **1 つにまとめたファイル**: 画面のディレクトリに置いて、相対パスで import します（ブラウザでも Node 22 以上でも読み込めます）。
-- **パッケージ**: 自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（`npm install <その URL>` でもインストールできます）。npm のレジストリには公開していません。
-  - 中身は、1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。バージョンは GUI サーバーと同じです。
-  - 型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。
-  - `npm run pack:client` は、作ったパッケージをインストールした形で Node から import し、画面のテンプレートの README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。
-  - `--out <dir>` で置き場所を、`--version <バージョン>` でバージョンを変えられます（`node gui/client/pack.mjs --help`）。
-- 公開している API は [gui/client/README.md](../gui/client/README.md) の「公開 API」の一覧です。
+- **Bundled file**: put it in your screen's directory and import it with a relative path (it loads in the browser and in Node 22 or later).
+- **Package**: run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client` (`npm install <its URL>` also works). It is not published to the npm registry.
+  - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
+  - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
+  - Before it finishes, `npm run pack:client` installs the package it built, imports it from Node, and type-checks the TypeScript example in the screen template's README with both `nodenext` and `bundler` module resolution.
+  - `--out <dir>` changes the output location and `--version <version>` the version (`node gui/client/pack.mjs --help`).
+- The public API is the list in "Public API" in [gui/client/README.md](../gui/client/README.md#public-api).
 
-### `--web` で配信するファイル
+### Files served with `--web`
 
-`--web` に渡すのは、画面のビルドの出力のディレクトリ（`dist/` など）です。`--web` を指定しなければ、サンプルの画面を配信します。
+`--web` takes the build output directory of your screen (`dist/` or similar). Without `--web`, the server serves the sample screens.
 
-| 渡したディレクトリ | 動作 |
+| Directory given | What happens |
 |---|---|
-| `index.html`（シンボリックリンクでないファイル）がない | 何を渡すかを表示して、終了コード 2 で終わります。 |
-| `package.json` か `node_modules` がある（ビルドの出力でなく、プロジェクトそのもの） | 同じく、終了コード 2 で終わります。 |
+| Has no `index.html` (a file that is not a symbolic link) | The server says what to pass and exits with exit code 2. |
+| Has `package.json` or `node_modules` (the project itself, not its build output) | The same: exit code 2. |
 
-**信頼**: 画面のファイルは、トークンなしで読めます（ブラウザはページとスクリプトの読み込みにトークンを付けられないため）。同じ PC のほかのプロセスも読めるので、秘密をビルドの出力に入れないでください。ほかの人が書ける場所（共有のディレクトリ、`/tmp` の下など）を `--web` にしないでください（そこに置かれたスクリプトは、画面としてトークンを持って動きます）。
+**Trust**: screen files can be read without the token (a browser cannot add the token when it loads pages and scripts). Other processes on the same computer can read them too, so do not put secrets in the build output. Do not give `--web` a place that others can write to (a shared directory, somewhere under `/tmp` and so on): a script placed there runs as your screen, with the token.
 
-**配信するファイル**: 配信するのは、そのディレクトリの中のファイルだけで、種類は拡張子で決めます。
+**Files served**: only files inside that directory are served, and their type is decided by the extension.
 
-| 対象 | 動作 |
+| What | What happens |
 |---|---|
-| 拡張子が `.html`、`.js`、`.mjs`、`.css`、`.json`、`.map`、`.webmanifest`、`.txt`、`.svg`、`.ico`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.woff`、`.woff2`、`.ttf`、`.otf` のファイル | 配信します。 |
-| ほかの拡張子、`..` と絶対パス、`.` で始まる名前（隠しファイルと隠しディレクトリの中） | 配信せずに 404 を返します。 |
-| シンボリックリンク（ディレクトリの中を指すものも）とジャンクション、同じファイルの別の名前（Windows の短い名前など） | 配信せずに 404 を返します。 |
-| 64 MiB を超えるファイル | そのことを書いた 404 を返し、標準エラーにも 1 行出力します（ビルドで分割するか、ソースマップを外します）。 |
-| 隣の圧縮したファイル（`.gz`、`.br`） | 使いません。 |
+| Files with the extension `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.webmanifest`, `.txt`, `.svg`, `.ico`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.woff`, `.woff2`, `.ttf` or `.otf` | Served. |
+| Other extensions, `..` and absolute paths, names that start with `.` (hidden files, and anything in hidden directories) | Not served: 404. |
+| Symbolic links (also those pointing inside the directory) and junctions, other names of the same file (Windows short names and others) | Not served: 404. |
+| Files larger than 64 MiB | A 404 that says so, plus one line on stderr (split the file in the build, or leave out source maps). |
+| Compressed files next to them (`.gz`, `.br`) | Not used. |
 
-ファイルは開いてから、確認したものと同じかを確認し直します（確認した後にリンクへ差し替えられても読みません）。
+After opening a file, the server checks again that it is the same file it checked (a file swapped for a link after the check is not read).
 
-**拡張子のないパス**: `/settings/foo` のようなパスは、画面のルーティング用です（1 つのページで動く画面のため）。
+**Paths without an extension**: paths such as `/settings/foo` are for the screen's routing (a single-page screen).
 
-| リクエスト | レスポンス |
+| Request | Response |
 |---|---|
-| ブラウザがページを読み込むとき（アドレスの入力、リンク、再読み込み） | `index.html` を返します。 |
-| ページの読み込みでないリクエスト（`fetch` など） | 404 です（API の URL を画面のパスの下に作ってしまったとき、JSON の代わりにページが返らないように）。 |
-| 拡張子のあるパスで、ファイルがない | 404 です。 |
+| The browser loads a page (address entered, link, reload) | `index.html`. |
+| A request that is not a page load (`fetch` and others) | 404 (so that an API URL built under a screen path by mistake does not return a page instead of JSON). |
+| A path with an extension, and no such file | 404. |
 
-- ページの読み込みかどうかは、`Sec-Fetch-Mode: navigate`、それを送らないブラウザでは `Accept` に `text/html` があるかで判定します。
-- 拡張子のないファイルは、あっても配信しません。
-- ルートの直下の `api/`、`ws`、`panels/` はサーバーの API なので、画面のパスに使えません。
+- Whether a request is a page load is decided by `Sec-Fetch-Mode: navigate`, or, for browsers that do not send it, by `text/html` in `Accept`.
+- Files without an extension are not served, even if they exist.
+- `api/`, `ws` and `panels/` directly under the root are the server API, so screen paths cannot use them.
 
-**キャッシュと Service Worker**: 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確認するので、ビルドし直したらページを読み込み直せば新しいものが表示されます）。Service Worker は登録できません（`Service-Worker: script` の付いたリクエストは 404）。登録した Service Worker は、後で同じポートで起動したサーバーでも古い画面を表示し、その画面が新しいトークンを受け取ってしまうためです。
+**Cache and Service Workers**: screen files get `Cache-Control: no-cache` (the browser revalidates every time, so after a rebuild, reloading the page shows the new files). Service Workers cannot be registered (requests with `Service-Worker: script` get 404). A registered Service Worker would keep showing an old screen even from a server started later on the same port, and that screen would receive the new token.
 
-**`baseUrl`**: クライアントの `baseUrl` は、サーバーのルートにします（`createClient({ baseUrl: new URL('/', location.href).href, ... })`）。`document.baseURI` は、`<base href="/">` のないページでは、そのときの画面のパス（`/settings/foo` など）になり、API の URL が `/settings/api/app` になってしまいます（サンプルの画面は `<base href="/">` を持つので、`document.baseURI` を使っています）。
+**`baseUrl`**: set the client's `baseUrl` to the server root (`createClient({ baseUrl: new URL('/', location.href).href, ... })`). On a page without `<base href="/">`, `document.baseURI` is the current screen path (such as `/settings/foo`), and the API URL would become `/settings/api/app` (the sample screens have `<base href="/">`, so they use `document.baseURI`).
 
-### CSP による制限
+### CSP restrictions
 
-自分の画面にも、サンプルの画面と同じセキュリティの検査が適用されます（「[セキュリティ](#セキュリティ)」）。API と WebSocket はトークンがないと応答せず、`Host` と `Origin` を検査し、ほかの origin からのリクエスト（CORS）には応答しません。画面のファイルには、次の CSP が付きます。
+Your own screen gets the same security checks as the sample screens (see "[Security](#security)"). The API and WebSocket do not answer without the token, `Host` and `Origin` are checked, and requests from other origins (CORS) get no answer. Screen files carry this CSP:
 
 ```text
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
 ```
 
-| 対象 | 使えるもの | 使えないもの |
+| What | Allowed | Not allowed |
 |---|---|---|
-| スクリプト | ファイルから読み込むもの | インラインの `<script>`、`onclick="..."` などの属性、`eval` と `new Function` |
-| ほかの場所（CDN など） | なし | スクリプト、スタイル、フォント、画像の読み込みと、接続 |
-| スタイル | ファイル、`<style>`、`style` の属性 | なし |
-| 画像 | 同じ origin と `data:` の URL | `blob:` の URL |
-| フォント | 同じ origin | `data:` のフォント |
-| そのほか | なし | WebAssembly、`blob:` の URL の Worker、フォームの送信、frame、Service Worker |
+| Scripts | Loaded from files | Inline `<script>`, attributes such as `onclick="..."`, `eval` and `new Function` |
+| Other locations (CDNs and others) | None | Loading scripts, styles, fonts and images, and connecting |
+| Styles | Files, `<style>`, the `style` attribute | None |
+| Images | Same origin and `data:` URLs | `blob:` URLs |
+| Fonts | Same origin | `data:` fonts |
+| Other | None | WebAssembly, Workers from `blob:` URLs, form submission, frames, Service Workers |
 
-- テンプレートを実行時に組み立てる作り方（Vue のテンプレートを実行時にコンパイルするビルドなど）は使えないので、ビルドの時点でコンパイルします。
-- CDN から読み込んでいたものは、npm でインストールしてビルドに含めます。
-- ビルドがフォントを CSS に埋め込むときは、ファイルに出力する設定にします。
-- 画面を frame に入れることはできません（ほかのページの中にも、自分の画面の `<iframe>` の中にも。どのレスポンスにも `X-Frame-Options: DENY` と `frame-ancestors 'none'` が付きます）。
-- CSP を変える方法はありません。この範囲で動かない画面は、何が必要かを issue に書いてください。
+- Approaches that build templates at runtime (Vue builds that compile templates at runtime, for example) do not work; compile at build time.
+- Install with npm what you used to load from a CDN, and include it in the build.
+- If your build embeds fonts into CSS, configure it to write them to files.
+- The screen cannot be put in a frame (neither inside another page nor in an `<iframe>` of your own screen; every response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`).
+- There is no way to change the CSP. If your screen cannot work within these limits, open an issue that says what you need.
 
-### トークンの受け取り
+### Receiving the token
 
-| 段階 | 起きること |
+| Stage | What happens |
 |---|---|
-| サーバーの起動 | 起動のたびに作るトークンを、表示する URL（`http://127.0.0.1:<port>/#token=<トークン>`）の `#` の後ろに付けます。 |
-| 画面の最初の処理 | `takeToken(window)` を呼ぶと、URL の `#token=` を読み、すぐに URL から消し、タブの sessionStorage（キーは `TOKEN_STORAGE_KEY`）に置いて返します。 |
-| 再読み込み | `takeToken(window)` は、sessionStorage のトークンを返します。 |
-| クライアントの作成 | トークンを `createClient({ token })` に渡せば、ライブラリが API には `Authorization: Bearer`、WebSocket には最初のメッセージで送ります。 |
-| トークンの拒否（サーバーを起動し直した、など） | `client.session.rejected` が真になり（WebSocket）、HTTP のリクエストは状態 401 の `HttpError` で拒否されます。 |
+| Server start | The token, created on every start, is appended after `#` in the printed URL (`http://127.0.0.1:<port>/#token=<token>`). |
+| The screen's first code | `takeToken(window)` reads `#token=` from the URL, removes it from the URL at once, stores it in the tab's sessionStorage (key `TOKEN_STORAGE_KEY`), and returns it. |
+| Reload | `takeToken(window)` returns the token from sessionStorage. |
+| Creating the client | Pass the token to `createClient({ token })`; the library sends it as `Authorization: Bearer` for the API and in the first message for the WebSocket. |
+| Token rejected (the server was restarted, for example) | `client.session.rejected` becomes true (WebSocket), and HTTP requests are rejected with an `HttpError` of status 401. |
 
-- URL の `#` の後ろはサーバーに送られず、アクセスのログにも残りません。
-- URL から消すのは `history.replaceState` で、タブの「戻る」「進む」の履歴からも消えます。ブラウザの閲覧履歴には、開いた URL が残ることがあります。
-- URL にも sessionStorage にもなければ `takeToken` は `null` を返すので、「サーバーが表示した URL から開く」と表示します。
-- 画面のルーティング（router）が URL を書き換えると `#token=` が消えるので、ルーティングを開始する前に呼びます。
-- トークンを URL の query、ログ、画面の表示に出さないでください。
-- トークンを拒否されたら、サーバーが新しく表示した URL から開き直します。
+- The part of a URL after `#` is not sent to the server and does not appear in access logs.
+- `history.replaceState` removes it from the URL, and it also disappears from the tab's back and forward history. The browser's browsing history may still keep the URL you opened.
+- If neither the URL nor sessionStorage has a token, `takeToken` returns `null`, so the screen tells the user to open the URL the server printed.
+- When the screen's router rewrites the URL, `#token=` is lost, so call `takeToken` before routing starts.
+- Do not put the token in a URL query, in logs or on the screen.
+- If the token is rejected, open the screen again from the new URL the server printed.
 
-### 開発サーバーを使う
+### Use a development server
 
-画面を作っている間は、自分の開発サーバー（Vite など。保存すると画面が更新される）で画面を配信し、API（`api/` と `ws`）だけを GUI サーバーへ転送します。GUI サーバーは `--dev-origin` で、開発サーバーからのリクエスト（開発サーバーの `Host` と `Origin`）も受け付けます。開発サーバーは `127.0.0.1` で待ち受けさせます（`--dev-origin` は `http://127.0.0.1:<port>` の形だけです）。
+While you build a screen, serve it from your own development server (Vite or similar, which updates the screen when you save) and forward only the API (`api/` and `ws`) to the GUI server. With `--dev-origin`, the GUI server also accepts requests from the development server (the development server's `Host` and `Origin`). Make the development server listen on `127.0.0.1` (`--dev-origin` accepts only the form `http://127.0.0.1:<port>`).
 
 ```js
 // vite.config.js
-const gui = 'http://127.0.0.1:8765'; // GUI サーバーの --port
+const gui = 'http://127.0.0.1:8765'; // --port of the GUI server
 export default {
   server: {
     host: '127.0.0.1',
@@ -1020,241 +1014,241 @@ export default {
 uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation.yaml
 ```
 
-上のコマンドは、リポジトリで実行する形です。ビルド済みのツールでは、`uv run` を付けずに `vehicle-sil-gui --port 8765 ...` とします。
+The command above is the form for the repository. With the prebuilt tools, leave out `uv run`: `vehicle-sil-gui --port 8765 ...`.
 
-- GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#token=...`）を標準エラーに出力し（`--json` では `dev_url`）、ブラウザでそれを開きます。
-- 開発サーバーのポートで、開発サーバーより先に別のプログラム（同じ PC のほかの利用者のものも）が待ち受けていると、そのページがトークンを受け取ります。開発サーバーが `strictPort` で待ち受けを始めてから GUI サーバーを起動し、開いたページが自分の開発サーバーのものかを確認します。
-- 開発サーバーが配信するページには GUI サーバーの CSP が付かないので、仕上げはビルドして `--web` で確認します。
-- サンプルの画面の開発（`ng serve`）も同じ形です（`gui/web/proxy.conf.mjs`）。
+- The GUI server prints the URL through the development server (`http://127.0.0.1:5173/#token=...`) to stderr (`dev_url` with `--json`) and opens it in the browser.
+- If another program (including one of another user on the same computer) listens on the development server's port before the development server does, that page receives the token. Start the GUI server only after the development server has started listening with `strictPort`, and check that the page that opened is your own development server's.
+- Pages served by the development server do not get the GUI server's CSP, so for the final check, build the screen and try it with `--web`.
+- Developing the sample screens (`ng serve`) works the same way (`gui/web/proxy.conf.mjs`).
 
-### 変数のコンポーネントを作る
+### Build a variable widget
 
-スライダー、スイッチ、ランプのように、変数 1 つを表示して書き込むコンポーネントのロジックは、ライブラリの `client.variables.bind(ref, options)` が持っています。フレームワークに依存しないので、自分の画面のコンポーネントは、返る `state`（`Readable`）を描き、`write(value)` を呼ぶだけで作れます。
+The logic of a widget that shows and writes one variable, such as a slider, a switch or a lamp, is in the library's `client.variables.bind(ref, options)`. It does not depend on any framework, so a widget on your own screen only draws the returned `state` (a `Readable`) and calls `write(value)`.
 
-| `state` のフィールド | 内容 | コードで比較する値 |
+| Field of `state` | Contents | Values to compare in code |
 |---|---|---|
-| `info`、`reading` | 変数の定義と、最後の値（いつの値かつき） | なし |
-| `condition` | 値の状態 | `condition.kind`: `unavailable`、`missing`、`waiting`、`live`、`paused`、`stale`、`ended` |
-| `block` | いま書き込めない理由（書き込めるなら `null`） | `read-only`、`disconnected`、`ended`、`not-ready`、`missing`、`peer-disconnected`、`parameter`、`scenario`、`no-range`、`no-value` |
-| `writeStatus`、`pending` | 最後の書き込みの状態と、送って結果を待っている値 | `writeStatus.kind`: `idle`、`sending`、`queued`、`applied` など |
+| `info`, `reading` | The variable definition, and the last value (with the time it belongs to) | None |
+| `condition` | The value condition | `condition.kind`: `unavailable`, `missing`, `waiting`, `live`, `paused`, `stale`, `ended` |
+| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `parameter`, `scenario`, `no-range`, `no-value` |
+| `writeStatus`, `pending` | The status of the last write, and the value sent and waiting for its result | `writeStatus.kind`: `idle`, `sending`, `queued`, `applied` and others |
 
-`condition.kind` の意味は次のとおりです。`block` と `writeStatus` の値の意味と細かいルールは、[gui/client/README.md](../gui/client/README.md) の「コンポーネントを作る（`bind`）」にあります。
+The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [gui/client/README.md](../gui/client/README.md#build-widgets-bind).
 
-| `condition.kind` | 意味 |
+| `condition.kind` | Meaning |
 |---|---|
-| `unavailable` | 変数の機能が使えない（実行していない、など） |
-| `missing` | この実行にない変数 |
-| `waiting` | まだ値がない |
-| `live` | 動いている途中の値 |
-| `paused` | 止まっている時刻の値 |
-| `stale` | 古い値（理由つき） |
-| `ended` | 終わった実行の最後の値 |
+| `unavailable` | The variable feature is not available (not running, for example) |
+| `missing` | A variable this run does not have |
+| `waiting` | No value yet |
+| `live` | A value while the simulation runs |
+| `paused` | A value at the paused time |
+| `stale` | A stale value (with a reason) |
+| `ended` | The last value of a run that ended |
 
-- 書き込みは、変数ごと・実行ごとに 1 つにまとめます。同じ変数を何か所で `bind` しても重ねて送らず、どこからも同じ状態が見えます。
-- サーバーが前の書き込みを受け取るまでの次の値は、最後の 1 つだけを覚えて後から送ります。
-- 応答がなかった書き込みを、自動で送り直すことはしません。
-- コンポーネントが多い画面では、`{ visible: false }` で作って `setVisible()` を呼ぶと、見えているコンポーネントだけが値を受信します。
-- 動く見本は、画面のテンプレートのスライダーとランプ（`gui_starter/main.js`）です。サンプルの画面のコンポーネント（Angular）も、この API を signal に変換して使っています（「[コンポーネントを追加する](#コンポーネントを追加する)」）。
+- Writes are combined into one per variable and per run. However many places `bind` the same variable, nothing is sent twice, and every place sees the same state.
+- Of the values that come before the server has received the previous write, only the last is kept and sent afterward.
+- A write that got no answer is never resent automatically.
+- On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
+- The working models are the slider and the lamp of the screen template (`gui_starter/main.js`). The widgets of the sample screens (Angular) also use this API, turned into signals (see "[Add a widget](#add-a-widget)").
 
-### 画面のテンプレート（`gui_starter`）
+### Screen template (`gui_starter`)
 
-[examples/gui_starter](../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。ビルド済みのツールでは、`gui_starter/` にあります。
+[examples/gui_starter](../examples/gui_starter/) is the smallest screen without a build step, using only the library (plain HTML, ES modules and the bundled library file). In the prebuilt tools, it is in `gui_starter/`.
 
-- 接続する、設定ファイルを照合する、実行を開始して止める、変数を 1 つ選んで見て書き込む、`client.variables.bind` で作ったスライダーとランプ、までがあります。
-- 使い方は、その README にあります。
-- `scripts/verify-gui.py` が、記録を再生するランチャーと偽の Control Server を相手に、`--web` で配信したこのテンプレートをブラウザで動かして確認します。
+- It connects, checks a configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp built with `client.variables.bind`.
+- Its README explains how to use it.
+- `scripts/verify-gui.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server.
 
-### 画面のないツールから使う
+### Use from tools without a screen
 
-リポジトリの [examples/gui_client](../examples/gui_client/) に、画面を使わずに API を呼ぶ、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。ビルド済みのツールのアーカイブには入っていません。
+[examples/gui_client](../examples/gui_client/) in the repository has single-file examples in plain JavaScript that call the API without a screen (Node 22 or later). They are not included in the prebuilt tools archive.
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| `run.mjs` | ライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたものです。 |
-| `run-with-library.mjs` | ライブラリを 1 つにまとめたファイルを使うものです。 |
-| `variables.mjs` | ライブラリで ECU の変数を読み書きします。 |
+| `run.mjs` | Written with only the standard `fetch` and `WebSocket`, without the library. |
+| `run-with-library.mjs` | Uses the bundled library file. |
+| `variables.mjs` | Reads and writes ECU variables with the library. |
 
-- `run.mjs` と `run-with-library.mjs` は、照合して実行を開始し、イベントを読み、終了を待って、結果で終了コードを返します。
-- `variables.mjs` は、止めた状態で始め、最初のステップの前に 1 つ書き込み、進めて止め、止まっている時刻の値を確認します（期待どおりなら終了コード 0）。
-- URL は環境変数で渡します（引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。
+- `run.mjs` and `run-with-library.mjs` check, start a run, read the events, wait for the end, and return an exit code from the result.
+- `variables.mjs` starts paused, writes one value before the first step, advances and pauses, and checks the value at the paused time (exit code 0 if it is as expected).
+- The URL is passed in an environment variable (as an argument, the token would be visible to other users in the process list).
 
   ```sh
-  VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
   ```
 
-- ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
+- They run outside a browser, so they send the server's own origin as `Origin`.
 
-### 画面を作るときのルール
+### Rules for building a screen
 
-次のルールは、ライブラリが代行しません。サンプルの画面はこれを守っているので、自分の画面でも同じにします。
+The library does not enforce these rules for you. The sample screens follow them; do the same on your own screen.
 
-| ルール | 守らないとき |
+| Rule | If you do not |
 |---|---|
-| ランチャーの `features` にない機能のフィールドを、照合と開始のリクエストで送らない | サーバーが 400 で拒否します。 |
-| 書き込む前に、変数に書き込めるかを確認する | サーバーが拒否しますが（`WriteError` の `refused`）、押せないことを先に見せられません。 |
-| 値が古いかを確認して表示する | 古い値が、いまの値に見えます。 |
-| 監視用の変数を、ECU が宣言した変数と区別する | 監視用の変数が、アプリの変数に混ざって並びます。 |
-| ハンドシェイクが拒否された理由を HTTP で調べる | ブラウザには理由が見えません。 |
+| Do not send fields for features missing from the launcher's `features` in check and start requests | The server rejects the request with 400. |
+| Before writing, check whether the variable can be written | The server rejects the write (`refused` of `WriteError`), but you cannot show in advance that it is disabled. |
+| Check whether a value is stale, and show it | A stale value looks like the current value. |
+| Tell monitoring variables apart from the variables the ECU declared | Monitoring variables get mixed in with the application's variables. |
+| Find out over HTTP why a handshake was rejected | The browser cannot see the reason. |
 
-**照合と開始のリクエスト**:
+**Check and start requests**:
 
-- ランチャーの `features`（`client.app.get()?.launcher.features`）にない機能のフィールドは送りません。
+- Do not send fields for features that the launcher's `features` (`client.app.get()?.launcher.features`) lack.
 
-  | フィールド | 必要な `features` |
+  | Field | `features` needed |
   |---|---|
   | `manual` | `manual-participants` |
   | `speed` | `speed` |
   | `start_paused` | `start-paused` |
   | `scenario` | `scenario` |
 
-- `manual` に `disable` の名前を入れません（サーバーが 400 で拒否します）。
-- シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では開始できません）。
-- 照合は、前の照合のレスポンスを待ってから送ります（サーバーは 1 つずつ実行します）。
+- Do not put a name from `disable` into `manual` (the server rejects it with 400).
+- If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
+- Send a check only after the response to the previous check (the server runs checks one at a time).
 
-**変数に書き込めるか**: コンポーネントを `client.variables.bind` で作れば、`state` の `block` がこのルールを確認します。`write` を直接呼ぶ画面は、自分で確認します。
+**Whether a variable can be written**: if you build your widgets with `client.variables.bind`, `block` of `state` checks these rules. A screen that calls `write` directly checks them itself.
 
-- `writable` が偽の変数（`output`）には書き込めません。
-- `parameter` は最初のステップの前（`client.time.state` の `beforeStart`）だけです。
-- シナリオを実行している実行（セッションのコピーに `scenario` があり、ランチャーが動いている）には書き込めません。
-- Control Server と接続していない participant（`client.variables.state` の `peers[].connected` が偽）にも書き込めません。
+- A variable whose `writable` is false (`output`) cannot be written.
+- A `parameter` can be written only before the first step (`beforeStart` of `client.time.state`).
+- A run that is running a scenario (the session copy has `scenario`, and the launcher is running) cannot be written.
+- A participant not connected to the Control Server (`peers[].connected` of `client.variables.state` is false) cannot be written either.
 
-**値が古いか**: `bind` の `state` の `condition` が `stale` と理由で通知します。`watch` を直接使う画面は、自分で確認します。
+**Whether a value is stale**: `condition` of `bind`'s `state` reports `stale` with the reason. A screen that uses `watch` directly checks this itself.
 
-- `client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。
-- participant が接続していない間の値も古いものです。
+- When `client.variables.state` is `ready` and has a `reason`, reading values keeps failing (the values are the last ones read).
+- Values of a participant that is not connected are stale too.
 
-**監視用の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<ネットワーク>.`）は、照合の結果の `participants[].variables[].builtin` で判定します。`builtin` がない（実行中に追加される監視用の変数、古いランチャー）ときは、名前の接頭辞（`ecu.`、`peer.`、`j1939.`）で分けます。
+**Monitoring variables**: decide which variables the ECU did not declare (`ecu.connected`, `peer.`, `j1939.<network>.`) by `participants[].variables[].builtin` in the check result. Where there is no `builtin` (monitoring variables added during the run, older launchers), decide by the name prefix (`ecu.`, `peer.`, `j1939.`).
 
-**ハンドシェイクで拒否された理由**: WebSocket のハンドシェイクが拒否されると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP のレスポンス（エラーの文）で理由がわかります。
+**Why a handshake was rejected**: when the WebSocket handshake is rejected, the browser cannot see the reason. When `client.connection.failures` grows, call `client.loadApp()` again: the HTTP response (its error text) gives the reason.
 
-**自分で起動した participant が残っている**: 実行の後も participant が残っていることは、いまはランチャーのログ（`vehicle_sil_launch` の行）の英語の文でだけ通知します。機械が読むフィールドはありません。
+**A participant you started yourself is still running**: currently, the only sign that a participant remains after the run is a line of text in the launcher's log (the `vehicle_sil_launch` lines). There is no machine-readable field for it.
 
-## 既知の制限
+## Known limitations
 
-| 対象 | 制限 |
+| What | Limitation |
 |---|---|
-| コンポーネントの並べ替え | 変数の画面でコンポーネントを並べ替えて保存することはできません。並べ方はダッシュボードのファイルに書きます。 |
-| 変数の値 | GUI サーバーが読んだ時点の最後の値で、全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。 |
-| 終了の後に残る値 | 最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終了時の値より少し古いことがあります。 |
-| リポジトリの外にインストールした GUI サーバー | 任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。 |
-| 古いランチャー（`time` のイベントに `paused` がない） | 仮想時間を開始時（0）と `stop_at_ms` に達したときにしか通知しないので、動いている間の 0 は表示しません。 |
-| Windows | 起動と照合だけを確認しています（`scripts/package.py verify`）。 |
+| Rearranging widgets | You cannot rearrange widgets on the Variables screen and save the result. Write the layout in a dashboard file. |
+| Variable values | The last value at the time the GUI server read it, not a record of every value (in a fast simulation, the values in between do not arrive). |
+| Values that remain after the end | The last values read. If the launcher closes the Control Server early, they may be slightly older than the values at the end. |
+| A GUI server installed outside the repository | The optional dependency `vehicle-sil-gui[variables]` (grpcio, protobuf) alone is not enough for variables. |
+| Older launchers (no `paused` in the `time` event) | They report virtual time only at the start (0) and on reaching `stop_at_ms`, so the screen does not show the 0 while the run runs. |
+| Windows | Only starting and checking are verified (`scripts/package.py verify`). |
 
-- **gRPC のスタブ**: 変数の読み書きは、ビルド済みのツールの `vehicle-sil-gui`（スタブを同梱）か、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。
-  - リポジトリの外にインストールした GUI サーバーでは、スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指定します）。
-  - スタブは、Python のパッケージ（`vehicle-sil-gui`）には入っていません（ビルド済みのツールには入っています）。
-- **Windows**: 実行中のランチャーの止め方（Ctrl+Break、`taskkill`）と一時ファイルの権限は、動かして確認していません。Windows はコンソールを閉じると約 5 秒でプロセスを終了させるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
+- **gRPC stubs**: reading and writing variables assumes the `vehicle-sil-gui` of the prebuilt tools (which bundles the stubs), or a GUI server run inside the repository (`uv run vehicle-sil-gui` after `uv sync`). The reason: the gRPC stubs are generated from the repository's `proto/` with `grpcio-tools` (or, failing that, the ones that `python -m vehicle_sil_control.generate` made are used).
+  - With a GUI server installed outside the repository, generate the stubs yourself and pass them in `VEHICLE_SIL_CONTROL_STUBS` (as with `PYTHONPATH`, the GUI server loads the code placed there; name only a directory of your own).
+  - The stubs are not in the Python package (`vehicle-sil-gui`); they are in the prebuilt tools.
+- **Windows**: how a running launcher is stopped (Ctrl+Break, `taskkill`) and the permissions of the temporary files have not been verified in practice. When you close the console, Windows ends the processes in about 5 seconds, so the server exits without waiting for `--stop-timeout` (the launcher sees the end of stdin).
 
-## 開発
+## Development
 
-GUI 自体を開発するときの、ディレクトリとテストです。
+Directories and tests for developing the GUI itself.
 
-| 部分 | 場所 |
+| Part | Location |
 |---|---|
-| GUI サーバー | `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー） |
-| サンプルの画面 | `gui/web` |
-| クライアントのライブラリ | `gui/client`（画面はこれを通してサーバーを使う） |
-| サーバーの API のリファレンス | `gui/protocol`（README と実例） |
+| GUI server | `gui/server` (Python package `vehicle_sil_gui`, a member of the uv workspace) |
+| Sample screens | `gui/web` |
+| Client library | `gui/client` (the screens use the server through it) |
+| Server API reference | `gui/protocol` (README and examples) |
 
-### テストの実行
+### Running the tests
 
-`scripts/verify-gui.py` が全体を実行します。サーバーだけなら `--skip-web` を付けます。
+`scripts/verify-gui.py` runs everything. For the server only, add `--skip-web`.
 
-| テスト | 実行するもの |
+| Test | What runs it |
 |---|---|
-| サーバーのテスト | `scripts/verify-gui.py` |
-| 画面のテスト | `scripts/verify-web.py`（`verify-gui.py` が呼びます） |
-| 最小の例 `examples/gui_client/` を、記録を再生するランチャーで動かすテスト | `scripts/verify-gui.py` |
-| ライブラリのテスト | `verify-web.py` の `client` の手順 |
-| ライブラリを 1 つにまとめる | `verify-web.py` の `bundle` の手順 |
-| パッケージ | `verify-web.py` の `package` の手順 |
-| 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
+| Server tests | `scripts/verify-gui.py` |
+| Screen tests | `scripts/verify-web.py` (`verify-gui.py` calls it) |
+| A test that runs the minimal example `examples/gui_client/` with the replay launcher | `scripts/verify-gui.py` |
+| Library tests | The `client` stage of `verify-web.py` |
+| Bundling the library into one file | The `bundle` stage of `verify-web.py` |
+| Package | The `package` stage of `verify-web.py` |
+| Serving the screen template `examples/gui_starter` with `--web` and running it in a browser | The end-to-end test `starter.spec.ts` |
 
-サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(秒)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
+The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map.md](code-map.md#timeouts-and-the-scale-factor)).
 
-### 記録を再生するランチャー
+### The replay launcher
 
-テストは、ランチャーの代わりに、本物のランチャーの出力の記録を再生するランチャー（`gui/server/tests/replay_launcher.py`）を使います。
+Instead of the launcher, the tests use a launcher that replays recordings of the real launcher's output (`gui/server/tests/replay_launcher.py`).
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 記録（`gui/server/tests/recordings/`） | `gui/server/tests/configs/` の設定ファイルを、本物のランチャーと ecu_main の例の ECU で動かしたときの、イベントの行、標準エラー、終了コード、`check --json`、`version --json` と、テストが書くコマンド（停止、時間のコマンド）の位置です。 |
-| 記録の選び方 | 同じ引数の記録が複数あるときは、来たコマンドで記録を選びます。 |
-| 記録のない引数やコマンド（記録より遅れて来たコマンドも） | 何を記録すればよいかを標準エラーに書いて終わり、そのテストは失敗します。 |
-| 本物では起こせないこと（壊れた行、異常終了、遅れる、読まない、止まらないなど） | 設定ファイルの `# replay-fault:` の行（または `REPLAY_FAULT`）で、記録を変えて再生します。 |
+| Recordings (`gui/server/tests/recordings/`) | For the configuration files in `gui/server/tests/configs/`, run with the real launcher and the ECUs of the ecu_main example: the event lines, stderr, the exit code, `check --json`, `version --json`, and the positions of the commands that the tests write (stop, time commands). |
+| Choosing a recording | When there are several recordings for the same arguments, the commands that arrive choose the recording. |
+| Arguments or commands without a recording (including a command that comes later than in the recording) | The replay launcher writes to stderr what to record and exits; that test fails. |
+| What the real launcher cannot be made to do (broken lines, abnormal exit, lateness, not reading, not stopping and so on) | A `# replay-fault:` line in the configuration file (or `REPLAY_FAULT`) changes the recording as it is replayed. |
 
-- 記録のないコマンドが来たことは、サーバーのテストの `gui_server` と e2e の起動側が、再生するランチャーの書いた報告のファイルが空かどうかで確認します。
-- 再生するランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になります）。
-- 変数のテストは、`REPLAY_FEATURES` に `control-server` を追加し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を起動させて行います。変数の `--describe` の出力は、偽の Control Server の値の作り方に合わせて置き換えます。`REPLAY_VARIABLES=more` で、コンポーネントの種類がそろう変数を追加します。
-- GUI サーバーの中の変数の取得元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序のテスト（`test_variable_units.py`）は、決めたとおりに応答する取得元を使います。
-- 再生するランチャーでも GUI を動かせます。
+- The server tests' `gui_server` and the end-to-end tests' startup code check whether a command without a recording arrived: they look at whether the report file written by the replay launcher is empty.
+- By default, the replay launcher stands in for a launcher without a Control Server (variables show **Not available**).
+- Variable tests add `control-server` to `REPLAY_FEATURES` and have it start a fake Control Server (`gui/server/tests/fake_control.py`; gRPC). The `--describe` output of the variables is replaced to match how the fake Control Server produces values. `REPLAY_VARIABLES=more` adds variables that cover every widget kind.
+- The GUI server's source of variables (`Source` in `vehicle_sil_gui/source.py`) can be replaced; the ordering tests (`test_variable_units.py`) use a source that answers as scripted.
+- You can also run the GUI with the replay launcher.
 
   ```sh
   uv run vehicle-sil-gui --launcher gui/server/tests/replay_launcher.py gui/server/tests/configs/simulation.yaml
   ```
 
-### 記録を本物と比較する
+### Compare recordings with the real launcher
 
-記録が本物と合うかは、次のコマンドで確認します。
+To check that the recordings match the real launcher, run:
 
 ```sh
 python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/launch/vehicle_sil_launch --compare
 ```
 
-- Linux で、隣にビルドした ecu_main の例の ECU を使います。CI の linux-gcc-release でも実行します。
-- Control Server なしでビルドしたランチャーでは、それが必要な場面を省き、`version --json` の features もその機能を除いて比較し、そのことを表示します。
-- 実行が実時間に遅れた場面（負荷の高い PC）は 3 回まで記録し直し、要約の行に表示します。
+- It runs on Linux and uses the ECUs of the ecu_main example built next to the launcher. CI also runs it in linux-gcc-release.
+- With a launcher built without a Control Server, it skips the cases that need one, compares the features of `version --json` without that feature, and says so.
+- A case whose run fell behind real time (on a heavily loaded computer) is recorded again up to 3 times, and the summary line says so.
 
-| 比較するもの | 内容 |
+| What is compared | Details |
 |---|---|
-| イベントの順 | 時刻、ログ、log_dropped の数と位置は除きます。 |
-| ランチャーが決める値 | 指摘の code、コマンドを受け付けたかと `ms`、participant の状態と終了コード、結果の `result` / `simulation` / `interrupted_by` と指摘の code、照合の結果と指摘の code、シナリオの手順の状態、`version --json` の features |
-| キーと型 | すべての種類のイベントと、その中のオブジェクトと配列のすべての要素のキーと型 |
-| そのほか | 書いたコマンド、終了コード、標準エラーの有無 |
+| Order of events | Times, logs, and the number and position of log_dropped are excluded. |
+| Values the launcher decides | Finding codes, whether commands were accepted and their `ms`, participant states and exit codes, `result` / `simulation` / `interrupted_by` of the result and its finding codes, the check result and its finding codes, the states of scenario steps, the features of `version --json` |
+| Keys and types | The keys and types of every kind of event, and of every object and array element in them |
+| Other | The commands written, the exit code, whether there is stderr output |
 
-- イベントの順では、ほかのイベントの間に並ぶ participant のイベントは、participant どうしの並びを問いません。同じ participant の状態の順は比較します。
-- 記録するときには、本物の行が `event`、`seq`、`t_ms` で始まり、`seq` が 0 から 1 ずつ増え、`t_ms` が戻らないことも確認します。
+- In the order of events, participant events among other events may come in any order relative to each other. The order of the states of one participant is compared.
+- When recording, it also checks that the real lines begin with `event`, `seq` and `t_ms`, that `seq` increases by 1 from 0, and that `t_ms` never goes back.
 
-### 記録し直す
+### Re-record
 
-ランチャーが変わったら、`--compare` が示す場面を記録し直します。
+When the launcher changes, record again the cases that `--compare` points out.
 
 ```sh
-python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <場面>...
+python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <case>...
 ```
 
-- 場面を書かなければ全部を記録します。手元のパス、利用者の名前、ホスト名、トークンは決まった印に置き換え、残っていれば書きません。
-- `git diff gui/server/tests/recordings` で、変わった所を読みます。
+- Without cases, it records all of them. Local paths, user names, host names and tokens are replaced with fixed markers; if any remain, the recording is not written.
+- Read what changed with `git diff gui/server/tests/recordings`.
 
-| 変わった所 | 対処 |
+| What changed | What to do |
 |---|---|
-| 時刻（`gap_ms`、`time` の `sim_ms`）、時刻とログの行の数、ログの文の中の時刻（Dashboard の `t=… ms`） | 記録するたびに変わってよいものです。 |
-| イベントの順、キー、型、指摘の code、コマンドを受け付けたか、終了コード | ランチャーの動作が変わったので、GUI が使う所なら GUI を直します。 |
+| Times (`gap_ms`, `sim_ms` of `time`), the number of time and log lines, times in log text (`t=… ms` of Dashboard) | These may change with every recording. |
+| Order of events, keys, types, finding codes, whether commands were accepted, exit codes | The launcher's behavior changed. Where the GUI uses it, fix the GUI. |
 
-- 設定ファイルを変えたときも記録し直します（記録は設定ファイルの内容と組で、変わっていればテストが失敗して通知します）。
-- テストが新しい引数やコマンドを使うときは、`record_launcher.py` の `CASES` に場面を追加して記録します。
+- Record again also when you change a configuration file (a recording is paired with the contents of its configuration file; if they differ, a test fails and tells you).
+- When a test uses new arguments or commands, add a case to `CASES` in `record_launcher.py` and record it.
 
-### 本物のランチャーで確認する
+### Verify with the real launcher
 
-`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）で、そのランチャーの隣にビルドした ecu_main の例の ECU を使って、次のテストを実行します。ランチャーを渡さなければ、これらは「skipped」と表示して省きます。
+`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch` (or the environment variable `VEHICLE_SIL_GUI_LAUNCHER`) runs the following tests with the ECUs of the ecu_main example built next to that launcher. Without a launcher, these show as "skipped" and are left out.
 
-| テスト | 確認すること |
+| Test | What it checks |
 |---|---|
-| `gui/server/tests/test_real_launcher.py` | 記録が、いまの本物の出力と合うか（上の `record_launcher.py --compare`） |
-| `test_real_variables.py`（Control Server を持つランチャーのとき） | 変数の読み書きと、保存したシナリオが本物の照合を通って実行できること、例 `examples/gui_client/variables.mjs` |
-| 画面の e2e（`gui/web/e2e/real/`） | 変数の画面で Engine のスロットルに書き込んで回転数が変わること、例のダッシュボードのファイルのとおりに並び、カスタムパネルが回転数を表示すること |
+| `gui/server/tests/test_real_launcher.py` | That the recordings match the current real output (`record_launcher.py --compare` above) |
+| `test_real_variables.py` (with a launcher that has a Control Server) | Reading and writing variables, that a saved scenario passes the real check and runs, and the example `examples/gui_client/variables.mjs` |
+| Screen end-to-end tests (`gui/web/e2e/real/`) | That writing the Engine throttle on the Variables screen changes the engine speed, that the example dashboard file's layout is followed, and that the custom panel shows the engine speed |
 
-ランチャーの `features` に `scenario-control` があれば、画面の e2e は、シナリオの実行中に値が見え、書き込むコンポーネントが理由を表示して書き込まず、一時停止、再開、停止ができることも確認します。
+If the launcher's `features` have `scenario-control`, the screen end-to-end tests also check that values are visible while a scenario runs, that writing widgets show the reason and do not write, and that pause, resume and stop work.
 
-## 関連するドキュメント
+## See also
 
-| ドキュメント | 内容 |
+| Document | Contents |
 |---|---|
-| [ブラウザの GUI に自分の画面を作る](howto/gui-screen.md) | 画面のテンプレートから、変数を 1 つ表示する画面を作る手順 |
-| [gui/client/README.md](../gui/client/README.md) | クライアントのライブラリの API |
-| [gui/protocol/README.md](../gui/protocol/README.md) | サーバーの HTTP と WebSocket の API |
-| [gui/web/README.md](../gui/web/README.md) | サンプルの画面の開発 |
-| [examples/gui_starter/README.md](../examples/gui_starter/README.md) | 画面のテンプレートの使い方 |
-| [simulation-run.md](simulation-run.md) | ランチャーの `run` と用語 |
-| [control-api.md](control-api.md) | ECU の変数と Control API |
-| [scenario.md](scenario.md) | シナリオのファイルの書き方 |
+| [Build your own screen for the browser GUI](howto/gui-screen.md) | How to build a screen that shows one variable, starting from the screen template |
+| [gui/client/README.md](../gui/client/README.md) | The client library API |
+| [gui/protocol/README.md](../gui/protocol/README.md) | The server's HTTP and WebSocket API |
+| [gui/web/README.md](../gui/web/README.md) | Developing the sample screens |
+| [examples/gui_starter/README.md](../examples/gui_starter/README.md) | How to use the screen template |
+| [simulation-run.md](simulation-run.md) | The launcher's `run` and its terms |
+| [control-api.md](control-api.md) | ECU variables and the Control API |
+| [scenario.md](scenario.md) | How to write scenario files |

@@ -1,88 +1,90 @@
-# 外部操作（Control API）
+# External control (Control API)
 
-Control API の Control Agent、Hub、SIL Kit の上のトランスポート、Control Server、ランチャーの Control Server、シナリオについて、反映の時刻、順序、上限、スレッドの保証と制限を書きます。使い方は [control-api.md](../control-api.md) にあります。
+[日本語](../ja/internals/control.md)
 
-| 節 | 書いてあること |
+This page states the guarantees and limits of the Control API: when writes are applied, ordering, limits and threads. It covers the Control Agent, the Hub, the transport over SIL Kit, the Control Server, the launcher's Control Server and scenarios. For how to use the API, see [control-api.md](../control-api.md).
+
+| Section | Contents |
 |---|---|
-| [全体の構成](#全体の構成) | 構成要素と、それぞれの接続の方式 |
-| [扱う機能](#扱う機能) | Control API でできること、できないこと |
-| [設計の方針](#設計の方針) | ステップを待たせない、仮想時刻、上限、認証の範囲、自己記述、GUI の分離 |
-| [Control Agent](#control-agentvehicle_silcontrol) | 変数、書き込みの反映の時刻と結果、値の読み出し、スレッドと上限、決定論性、Peer の監視 |
-| [Control Server の中核](#control-server-の中核vehicle_silcontrolhub) | Agent の接続の管理、書き込みと操作の状態、購読、まとめて読む、変数の対応表 |
-| [SIL Kit の上のトランスポート](#sil-kit-の上のトランスポートvehicle_silcontrol_silkit) | メッセージ、スレッド、受信の順序の保証、最初のステップの前で待つ区間、接続の終わり |
-| [Control Server と通信の層](#control-server-と通信の層vehicle_silcontrol_grpc) | gRPC のサービス、シミュレーションの監視、`GetSnapshot`、`Watch`、認証、上限 |
-| [ランチャーの Control Server](#ランチャーの-control-servervehicle_sil_launch-run---control) | 時間の操作の経路、`--start-paused`、開始の期限、終わり方 |
-| [シナリオ](#シナリオvehicle_sil_launch-run---scenario) | ガード、全サンプル、進め方、結果が決まる根拠、制限 |
+| [Overview](#overview) | The parts and how each one connects |
+| [Supported operations](#supported-operations) | What the Control API can and cannot do |
+| [Design principles](#design-principles) | Never making the step wait, virtual time, limits, the scope of authentication, self-description, a separate GUI |
+| [Control Agent](#control-agent-vehicle_silcontrol) | Variables, when writes are applied and their results, reading values, threads and limits, determinism, peer monitoring |
+| [Control Server core](#control-server-core-vehicle_silcontrolhub) | Managing Agent connections, writes and operation state, subscriptions, reading values together, the variable map |
+| [Transport over SIL Kit](#transport-over-sil-kit-vehicle_silcontrol_silkit) | Messages, threads, receive order guarantees, the start window before the first step, the end of a connection |
+| [Control Server and communication layer](#control-server-and-communication-layer-vehicle_silcontrol_grpc) | The gRPC service, simulation monitoring, `GetSnapshot`, `Watch`, authentication, limits |
+| [The launcher's Control Server](#the-launchers-control-server-vehicle_sil_launch-run---control) | The time control path, `--start-paused`, the start deadline, how it ends |
+| [Scenarios](#scenarios-vehicle_sil_launch-run---scenario) | The guard, every sample, how the scenario advances, why the result is fixed, limitations |
 
-## 全体の構成
+## Overview
 
-担当は次のように分けています。
+The work is split as follows:
 
-| 担当 | 受け持つもの |
+| Part | Responsible for |
 |---|---|
-| SIL Kit | CAN/LIN の通信と仮想時間の同期（データプレーン） |
-| Control API | 操作と監視 |
+| SIL Kit | CAN/LIN communication and virtual-time synchronization (the data plane) |
+| Control API | Operation and monitoring |
 
-クライアント（Python、CLI、GUI サーバー）が使う Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。Server は、シミュレーションを実行する `vehicle_sil_launch run --control` の中にあります（下の「ランチャーの Control Server」）。
+Clients (Python, the CLI, the GUI server) use the Control API: gRPC (Protocol Buffers, v1 of `proto/vehicle_sil/control/v1/control.proto`) on a connection separate from SIL Kit. The server runs inside `vehicle_sil_launch run --control`, which runs the simulation (see "The launcher's Control Server" below).
 
-ECU の Agent と Hub の間のトランスポートは、SIL Kit の publish/subscribe（`vehicle_sil::control_silkit`）だけです。`ecu_main()` で作った ECU が Agent の側を付け、`vehicle_sil_launch run` が Hub の側を自分の participant に持ちます。ECU の実行ファイルは gRPC にも Protocol Buffers にも依存しません。Hub は、値と結果を仮想時刻に合わせて受信します（下の「SIL Kit の上のトランスポート」）。
+The only transport between an ECU's Agent and the Hub is SIL Kit publish/subscribe (`vehicle_sil::control_silkit`). An ECU created with `ecu_main()` attaches the Agent side, and `vehicle_sil_launch run` holds the Hub side in its own participant. ECU executables depend on neither gRPC nor Protocol Buffers. The Hub receives values and results in step with virtual time (see "Transport over SIL Kit" below).
 
-プロセスと接続は次のとおりです。線は、接続と、その通信の方式です。
+The processes and their connections. Each line is labeled with how it communicates:
 
 ```mermaid
 flowchart LR
-    client["クライアント<br>(Python、CLI、GUI サーバー)"]
+    client["Client<br>(Python, CLI, GUI server)"]
     subgraph launch["vehicle_sil_launch"]
         server["Control Server"]
         hub["Hub"]
     end
-    a1["ECU の Agent"]
-    a2["ECU の Agent"]
+    a1["ECU Agent"]
+    a2["ECU Agent"]
     client --- |gRPC| server
-    hub --- |"SIL Kit の publish/subscribe"| a1
-    hub --- |"SIL Kit の publish/subscribe"| a2
+    hub --- |"SIL Kit publish/subscribe"| a1
+    hub --- |"SIL Kit publish/subscribe"| a2
 ```
 
-| 構成要素 | すること | 実装 | 接続 |
+| Part | What it does | Implementation | Connection |
 |---|---|---|---|
-| Control Agent | 各 ECU が持ち、ECU の変数（と Peer の状態）を公開して操作を受け付ける | `vehicle_sil::control::Agent`、`Ecu::input()`、`output()`、`agent()` | Hub へは `vehicle_sil::control_silkit::AgentTransport`（`ecu_main()` が付ける） |
-| Control Server | Peer の Agent を受け付け、操作を中継して状態を集約し、時間ゲートで時間を操作する | `vehicle_sil::control::Hub` | Agent の側は `vehicle_sil::control_silkit::HubTransport`（`vehicle_sil_launch run` が controller の participant に持つ）、クライアントの側は `vehicle_sil::control_grpc::ControlServer` の `ControlService`（`vehicle_sil_launch run --control`） |
-| クライアント | Python、CLI、GUI サーバーのどれも、共通の Control API を使う | Python のパッケージと CLI（`python/vehicle_sil_control`）、GUI サーバー（`gui/server`）の自分のクライアント（`vehicle_sil_gui/control.py`） | Control Server へ gRPC で接続する（GUI サーバーは、画面へ HTTP と WebSocket で中継する。[gui.md](../gui.md)） |
+| Control Agent | Each ECU has one. It exposes the ECU's variables (and the state of the `Peer`) and accepts operations. | `vehicle_sil::control::Agent`, `Ecu::input()`, `output()`, `agent()` | To the Hub through `vehicle_sil::control_silkit::AgentTransport` (attached by `ecu_main()`) |
+| Control Server | Accepts the peers' Agents, relays operations, aggregates state and controls time through the time gate. | `vehicle_sil::control::Hub` | Agent side: `vehicle_sil::control_silkit::HubTransport` (held by `vehicle_sil_launch run` in the controller's participant). Client side: `ControlService` of `vehicle_sil::control_grpc::ControlServer` (`vehicle_sil_launch run --control`). |
+| Client | Python, the CLI and the GUI server all use the same Control API. | The Python package and CLI (`python/vehicle_sil_control`); the GUI server's own client (`vehicle_sil_gui/control.py` in `gui/server`) | Connects to the Control Server over gRPC (the GUI server relays to the screen over HTTP and WebSocket; see [gui.md](../gui.md)) |
 
-## 扱う機能
+## Supported operations
 
-| 機能 | RPC |
+| Feature | RPC |
 |---|---|
-| Peer の一覧と状態 | `ListPeers` |
-| 時間: 取得、一時停止、再開、ステップ実行、指定時刻まで実行、速度、止まるのを待つ、停止 | `GetTime`、`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`、`WaitPaused`、`Stop` |
-| 変数の読み書き（スイッチ、レバー、センサー値など。仮想時刻を指定した書き込みを含む） | `GetValues`、`Write`、`GetOperation`、`WaitOperation` |
-| 時刻と値をまとめて読む | `GetSnapshot` |
-| 通信状態（J1939 のアドレスと統計、バスの状態）、エラー、イベント、性能情報の監視 | 変数として読む（下の「Control Agent」の「Peer の監視」） |
-| 状態の変化の通知（購読） | `Watch` |
-| 切断した Peer を忘れる | `ForgetPeer` |
+| Peer list and state | `ListPeers` |
+| Time: get, pause, resume, step, run until a given time, speed, wait until paused, stop | `GetTime`, `Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`, `WaitPaused`, `Stop` |
+| Reading and writing variables (switches, levers, sensor values and so on; includes writes at a given virtual time) | `GetValues`, `Write`, `GetOperation`, `WaitOperation` |
+| Reading time and values together | `GetSnapshot` |
+| Monitoring communication state (J1939 addresses and statistics, bus state), errors, events and performance | Read as variables (see "Peer monitoring" under "Control Agent" below) |
+| Notifications of state changes (subscription) | `Watch` |
+| Forgetting a disconnected peer | `ForgetPeer` |
 
-- 開始はランチャーが決めます（必須の participant がそろったとき。`--start-paused` では `Resume`、`Step`、`RunUntil` で始まります）。
-- リセットはありません。やり直すには、プロセスを起動し直します。
-- CAN/LIN のチャネルと Vector のデバイスは選べません（[bridges.md](../bridges.md) の「引数」）。
+- The launcher decides when the simulation starts: when the required participants have all joined. With `--start-paused`, it starts with `Resume`, `Step` or `RunUntil`.
+- There is no reset. To start over, restart the processes.
+- The Control API cannot select CAN/LIN channels or Vector devices (see "Arguments" in [bridges.md](../bridges.md#arguments)).
 
-## 設計の方針
+## Design principles
 
-| 方針 | 内容 | 詳しい節 |
+| Principle | Details | Section |
 |---|---|---|
-| ステップを待たせない | Agent のステップのスレッドはトランスポートを待たず、操作は上限つきのキューで受け渡す | 「Control Agent」の「スレッドと上限」 |
-| 仮想時刻に合わせる | 書き込みは、指定した仮想時刻以後の最初のステップで反映する | 「Control Agent」の「反映の時刻」 |
-| 上限を設ける | キューとメモリの使用量には上限がある | 各節の上限 |
-| クライアントの API だけを認証する | クライアント向けの gRPC（Control Server）は、TLS、トークン、ロールによる認可を持つ | 「Control Server と通信の層」の「認証とアクセス制御」 |
-| 変数を自己記述する | 各 ECU は、変数の名前、型、範囲、単位を公開する（`Agent::schema()`、`--describe` の `variables`） | 「Control Agent」の「変数」 |
-| GUI を分ける | GUI はシミュレーションと別のプロセスで、GUI サーバー（`gui/server`、Python）がランチャーを動かし、Control API のクライアントになって画面に中継する | [gui.md](../gui.md) |
+| Never make the step wait | The Agent's step thread does not wait for the transport. Operations pass through bounded queues. | "Threads and limits" under "Control Agent" |
+| Follow virtual time | A write is applied in the first step at or after the given virtual time. | "When writes are applied" under "Control Agent" |
+| Set limits | Queues and memory use are bounded. | The limits in each section |
+| Authenticate only the client API | The gRPC API for clients (Control Server) has TLS, tokens and role-based authorization. | "Authentication and access control" under "Control Server and communication layer" |
+| Self-describing variables | Each ECU exposes the name, type, range and unit of each variable (`Agent::schema()`, `variables` in `--describe`). | "Variables" under "Control Agent" |
+| Separate GUI | The GUI is a process separate from the simulation. The GUI server (`gui/server`, Python) runs the launcher, acts as a Control API client and relays to the screen. | [gui.md](../gui.md) |
 
-- Agent と Hub の間（SIL Kit の上のトランスポート）と、SIL Kit の registry とデータプレーンには認証がありません。閉じたネットワークで使います。
-- GUI のサンプルの画面は、ダッシュボードのファイルがなければ、公開された変数の情報を使って変数ごとにコンポーネントを並べます（[gui.md](../gui.md) の「変数の画面とコンポーネント」）。
-- 公開ライブラリ（`vehicle_sil::*`）は GUI に依存しません。
+- There is no authentication between the Agent and the Hub (the transport over SIL Kit), nor on the SIL Kit registry and data plane. Use them on a closed network.
+- Without a dashboard file, the GUI's sample screens use the information of the exposed variables to lay out one widget per variable (see "The Variables screen and widgets" in [gui.md](../gui.md#the-variables-screen-and-widgets)).
+- The public libraries (`vehicle_sil::*`) do not depend on the GUI.
 
-## Control Agent（`vehicle_sil::control`）
+## Control Agent (`vehicle_sil::control`)
 
-ECU の中で、外から操作できる変数を公開し、外からの書き込みをステップの中の決まった時刻に反映します。通信（Control Server との接続）は含まず、SIL Kit にも依存しません。ECU（`Ecu`）が 1 つ持ち、ECU のクラスが変数を宣言します（[execution.md](execution.md) の「`Ecu` クラス（`vehicle_sil::Ecu`）」の「変数の宣言」）。
+The Control Agent lives inside the ECU. It exposes the variables that can be operated from outside the simulation, and applies external writes at a fixed point in the step. It contains no communication (no connection to the Control Server) and does not depend on SIL Kit. Each ECU (`Ecu`) has one, and the ECU's class declares the variables (see "Declaring variables" under "The `Ecu` class (`vehicle_sil::Ecu`)" in [execution.md](execution.md#declaring-variables)).
 
 ```cpp
 class Body {
@@ -97,863 +99,863 @@ public:
 };
 ```
 
-### 変数
+### Variables
 
-| 型 | 検査と制限 |
+| Type | Checks and limits |
 |---|---|
-| bool | なし |
-| 整数 | C++ の型の範囲で検査する（64 ビットの符号なしは入力にできず、出力では int64 の最大で止めて読む） |
-| 実数 | `float` は `float` の範囲で検査する |
-| 列挙 | 値の一覧を持ち、値は型に収まり、名前と値が重複しないこと |
+| bool | None |
+| Integer | Checked against the range of the C++ type (a 64-bit unsigned integer cannot be an input; as an output, it is read clamped to the int64 maximum) |
+| Floating point | A `float` is checked against the range of `float` |
+| Enum | Has a list of values. The values fit the type, and no name or value appears twice. |
 
-| causality（FMI に合わせる） | 書き込み |
+| Causality (as in FMI) | Writes |
 |---|---|
-| Input | 走行中も書ける |
-| Output | 読むだけ |
-| Parameter | 最初のステップより前だけ書ける |
+| Input | Writable, also while running |
+| Output | Read-only |
+| Parameter | Writable only before the first step |
 
-メタデータは、名前（`.` で階層）、単位、最小、最大（どちらも含む。NaN は不可）、値の刻み幅（`step`。編集の目安で、強制しない）、説明、列挙の項目です。`schema()` が登録順に返します。
+The metadata consists of the name (`.` separates levels), the unit, the minimum and the maximum (both inclusive; NaN is not allowed), the value increment (`step`; a hint for editing, not enforced), the description and the enum items. `schema()` returns the variables in the order they were registered.
 
-#### スキーマの確定
+#### When the schema is fixed
 
-変数は、スキーマが確定する前に登録します。確定した後の登録は `std::logic_error` です。これは誤用の検出で、同期ではないので、登録と `submit()` を別のスレッドで同時に行いません。
+Register variables before the schema is fixed. Registering after that throws `std::logic_error`. This detects misuse; it is not synchronization. Do not register variables and call `submit()` at the same time on different threads.
 
-スキーマは、次のうち最初のもので確定します。
+The first of these fixes the schema:
 
-| 契機 | 備考 |
+| Trigger | Notes |
 |---|---|
-| `complete_schema()` | トランスポートが `schema()` を初めて読む前に呼ぶ（`control_silkit::AgentTransport` はコンストラクターで、ドライバーは最初のステップの前に呼ぶ） |
-| 最初の `submit()` | |
-| 最初のステップ | |
+| `complete_schema()` | The transport calls it before it first reads `schema()` (`control_silkit::AgentTransport` calls it in its constructor; the driver calls it before the first step) |
+| The first `submit()` | |
+| The first step | |
 
-`complete_schema()` は、`bind_driver()` に渡された関数（ドライバーが追加する変数。Peer の監視の出力）を 1 回呼んでから登録を閉じます。その関数が例外を投げれば、例外が伝わり、スキーマは確定しません。
+`complete_schema()` calls the function passed to `bind_driver()` once (that function adds the driver's variables: the outputs of peer monitoring), then closes registration. If that function throws, the exception propagates and the schema is not fixed.
 
-ポインタや関数の参照先は、Agent より長く生かします（ECU の Agent では、ECU が持つもの）。
+Whatever the pointers and functions refer to must outlive the Agent (for an ECU's Agent, these are things the ECU owns).
 
-### 書き込み（`Command`）
+### Writes (`Command`)
 
-- 1 つ以上の書き込みを、同じステップでまとめて反映します。
-- `submit()` が名前、型、範囲、列挙、書き込めるかを確認し、通らなければ `Invalid` を返して何も積みません。
-- 整数の変数の最小と最大が型の範囲の外にあれば、登録のときに `std::invalid_argument` です。
-- 範囲外の値は丸めません（整数の範囲は整数のまま比べます）。
-- `finish()` の後の `submit()` も `Invalid` です。
+- One or more writes are applied together in the same step.
+- `submit()` checks the name, the type, the range, the enum and whether the variable is writable. If a check fails, it returns `Invalid` and queues nothing.
+- If the minimum or maximum of an integer variable lies outside the range of its type, registration throws `std::invalid_argument`.
+- Out-of-range values are not clamped (integer ranges are compared as integers).
+- `submit()` after `finish()` also returns `Invalid`.
 
-| 変数の型 | 受け付ける値 |
+| Variable type | Accepted values |
 |---|---|
-| 整数 | 整数か、整数値の実数 |
-| 実数 | 整数か、有限の実数 |
+| Integer | An integer, or a floating-point number with an integral value |
+| Floating point | An integer, or a finite floating-point number |
 
-### 反映の時刻
+### When writes are applied
 
-書き込みは、`Command::at` 以上の開始時刻を持つ最初のステップで、アプリの処理の前に反映します。アプリはそのステップで新しい値を見ます。`at` がなければ次のステップです。
+A write is applied in the first step whose start time is at or after `Command::at`, before the application's processing. The application sees the new value in that step. Without `at`, the write is applied in the next step.
 
-Peer では、J1939 の受信処理、ハンドラー、タイマー（`PeriodicSender` の Encoder など）はアプリの処理より前に動くので、それらが新しい値を使うのは次のステップからです。
+In a `Peer`, J1939 receive processing, handlers and timers (such as the Encoder of a `PeriodicSender`) run before the application. They use the new value from the next step on.
 
-同じステップで反映するものは (at, seq) の順です（`at` のないものは、そのステップの時刻として並べます）。
+Writes applied in the same step are applied in (at, seq) order (a write without `at` sorts as if its time were the time of that step).
 
-| 条件 | 結果 |
+| Condition | Result |
 |---|---|
-| 操作を受信する前に、participant が `at` 以降に始まるステップを実行していた（遅すぎる操作）。既定 | 反映せずに `Late` |
-| 遅すぎる操作で、`LatePolicy::ApplyNext` | 次のステップで反映し、`late` を立てる |
-| Parameter への書き込みで、最初のステップが始まった後に `submit()` した | `Invalid` |
-| Parameter への書き込みで、始まる前に積み、時刻が最初のステップより後 | `Rejected` |
-| 関数で登録した入力の setter が例外を投げた | その操作は `Rejected` で、同じ操作の中で先に書いた値は残る（ステップは失敗しない） |
+| Before the operation was received, the participant had already run a step that starts at or after `at` (a late operation). Default. | Not applied; `Late` |
+| A late operation, with `LatePolicy::ApplyNext` | Applied in the next step, with `late` set |
+| A write to a Parameter, passed to `submit()` after the first step started | `Invalid` |
+| A write to a Parameter, queued before the start, with a time after the first step | `Rejected` |
+| The setter of an input registered with functions throws | The operation is `Rejected`. Values written earlier in the same operation stay (the step does not fail). |
 
-### 結果
+### Results
 
-- キューに積んだ操作には、必ず 1 つの `CommandResult`（`Applied` と反映したステップの時刻、`Late`、`Rejected`、`Cancelled`）が返ります。
-- シミュレーションが終わると、`finish()` が残っている操作を `Cancelled` にします（ECU の Agent では ECU が呼びます。[execution.md](execution.md) の「変数が反映される時点」）。
-- `VirtualTimeOptions::end` 以降の時刻を指定した操作と、ステップが失敗した Peer への操作も、`finish()` まで確定しません。
-- 実時間の Peer では、`at` はその Peer のドライバーの時計の時刻です。
+- Every queued operation gets exactly one `CommandResult`: `Applied` with the time of the step that applied it, `Late`, `Rejected` or `Cancelled`.
+- When the simulation ends, `finish()` sets the remaining operations to `Cancelled` (for an ECU's Agent, the ECU calls it; see "When variable writes are applied" in [execution.md](execution.md#when-variable-writes-are-applied)).
+- Operations with a time at or after `VirtualTimeOptions::end`, and operations on a `Peer` whose step failed, also remain unsettled until `finish()`.
+- In a real-time `Peer`, `at` is a time on the clock of that `Peer`'s driver.
 
-### 値の読み出し
+### Reading values
 
-ステップの終わり（Peer では LIN の処理の後）に全変数を読み、`latest()` で最新の 1 組を返します。読むのは、0、`sample_period`、2 `sample_period` … の時刻以後の最初のステップです（`Ecu::every()` と同じ数え方。既定 10 ms、0 なら毎ステップ）。受け渡しは 3 つのバッファで、ロックはありません。
+At the end of the step (in a `Peer`, after LIN processing), the Agent reads all variables. `latest()` returns the latest set. It reads them in the first step at or after each of the times 0, `sample_period`, 2 `sample_period`, … (counted as `Ecu::every()` counts; default 10 ms; 0 means every step). The values are handed over through three buffers, without locks.
 
-### ステップの中からの送信（`set_step_sink()`）
+### Sending from inside a step (`set_step_sink()`)
 
-関数を 1 つ登録すると、毎ステップの終わり（読み出しの直後）に、ステップのスレッドで呼びます。渡すのは、ステップの時刻と、そのステップが読んだ 1 組（読まなかったステップでは空）です。関数の中から `drain_results()` と `drain_events()` を呼べます。そのステップが作ったもの（反映の結果、イベント、値）を、そのステップの中で送信するための API で、`control_silkit::AgentTransport` が使います。
+If you register a function, the Agent calls it at the end of every step (right after reading values), on the step thread. It passes the time of the step and the set that the step read (empty in a step that did not read). The function can call `drain_results()` and `drain_events()`. This API lets a transport send what a step produced (results of applied writes, events, values) within that same step. `control_silkit::AgentTransport` uses it.
 
-- 登録は最初のステップの前に 1 回だけで、後からの登録と 2 つ目の登録は `std::logic_error` です。
-- 登録は外せません。
-- 登録がなければ、ステップの負担は分岐 1 つです。
-- 関数が投げた例外は、そのステップの失敗です。
+- Register once, before the first step. Registering later, or a second time, throws `std::logic_error`.
+- The registration cannot be removed.
+- Without a registration, the cost to the step is one branch.
+- An exception thrown by the function fails that step.
 
-### スレッドと上限
+### Threads and limits
 
-| スレッド | 呼ぶ関数 |
+| Thread | Functions it calls |
 |---|---|
-| ステップのスレッド（1 本） | `on_step_begin`、`on_step_end`、`log`、`finish` |
-| トランスポートの側 | `submit`、`drain_results`、`drain_events`、`latest`、`stats`（互いにスレッド安全で、複数のスレッドから呼べる） |
+| The step thread (one) | `on_step_begin`, `on_step_end`, `log`, `finish` |
+| The transport side | `submit`, `drain_results`, `drain_events`, `latest`, `stats` (thread-safe with each other; can be called from several threads) |
 
-- ステップのスレッドは、トランスポートの側を待ちません。
-- トランスポートの側は、`finish()` の間と、実時間のドライバーを起こす `Host::post()` の短いロックを待つことがあります。
-- `bind_driver()` に渡す起こしの関数の中から、`submit()` と `clear_wakeup()` は呼びません。
-- 受け渡しは固定容量の SPSC リングです。
-- 変数のアクセサはステップのスレッドだけで呼ぶので、モデルにロックは必要ありません。
-- ステップのスレッドは、トランスポートのスレッドが持つロックを取りません。
-- 使い終えた操作の解放と、結果の理由の文字列の確保は、ステップのスレッドで行います（量は 1 ステップに `max_pending` まで）。
+- The step thread never waits for the transport side.
+- The transport side may wait during `finish()`, and on the short lock of `Host::post()`, which wakes the real-time driver.
+- Do not call `submit()` or `clear_wakeup()` from inside the wake-up function passed to `bind_driver()`.
+- Hand-over uses fixed-capacity SPSC rings.
+- Variable accessors are called only on the step thread, so the model needs no locks.
+- The step thread does not take locks that transport threads hold.
+- Freeing finished operations and allocating the reason strings of results happen on the step thread (at most `max_pending` per step).
 
-| 上限 | 既定 | 超えたとき |
+| Limit | Default | When exceeded |
 |---|---|---|
-| 処理中の操作（積んでから、結果を `drain_results()` で受け取るまで）: `max_pending` | 256 | `submit()` がすぐ `Busy` を返す（そのため、結果は捨てない） |
-| イベント: `max_events` | 1024 | あふれたものは捨てて数える |
+| Operations in flight (from queuing until the result is taken with `drain_results()`): `max_pending` | 256 | `submit()` returns `Busy` at once (so no result is ever dropped) |
+| Events: `max_events` | 1024 | Events that overflow are dropped and counted |
 
-### 決定論性
+### Determinism
 
-Agent は反映の時刻を決めるだけで、ステップの並びとデータを変えません。Agent がない実行と、Agent があって値を読み続けている実行で、通信の結果は同じです。時刻を指定した書き込みは、participant がその時刻以降に始まるステップを実行する前に受信すれば、何度実行しても同じステップで反映されます。保証はこの範囲だけです。
+The Agent only decides when writes are applied. It does not change the order of steps or the data. A run without an Agent and a run with an Agent that keeps reading values produce the same communication. A write with a time is applied in the same step on every run, provided that it is received before the participant runs a step that starts at or after that time. That is the whole guarantee.
 
-時間ゲートで止めてから書くとき、止まっている位置 P（`TimeState::now`）に始まるステップを、すでに実行した、または実行中の participant があります。そのため、`at` は P より後（たとえば P + 1 ns）にします。`at` が P 以下なら `Late` になりえます。`at` がなければ、P と次のステップのどちらで反映されるかは、受信した時刻で決まります。
+If you stop at the time gate and then write, some participants have already run, or are running, the step that starts at the stop position P (`TimeState::now`). Set `at` after P (for example P + 1 ns). If `at` is P or earlier, the write can be `Late`. Without `at`, the time of reception decides whether the write is applied at P or in the next step.
 
-同じステップで反映する操作の順（seq）は、Hub が受け付けた順です。複数のクライアントが同じ変数に同じ時刻で書くと、残る値は受信した順で決まり、実行ごとに変わりえます。
+Operations applied in the same step are ordered (seq) as the Hub accepted them. If several clients write the same variable at the same time, the value that remains depends on the order of reception and can differ from run to run.
 
-### ECU からの駆動
+### Driving from the ECU
 
-- ECU は、Agent を作ったときに自分をドライバーとして結び付けます（`bind_driver()`）。
-- ECU は、アプリの処理の直前に `on_step_begin()`、LIN の処理の直後に `on_step_end()`、止まるときに `finish()` を呼びます（[execution.md](execution.md) の「1 ステップの順序」）。
-- 実時間の Peer では、操作を積むとドライバーを起こします（`Host::post()`。未処理の起こしは 1 つまで）。
-- Peer は止まり始めると起こさせるのをやめ、ステップがもう実行されなくなってから `finish()` を呼ぶので、その後の `submit()` は `Invalid` で、Peer を操作しません。
-- Peer は `start()` で、Agent があればスキーマを確定させます。
+- When the ECU creates the Agent, it binds itself to the Agent as the driver (`bind_driver()`).
+- The ECU calls `on_step_begin()` right before the application's processing, `on_step_end()` right after LIN processing and `finish()` when it stops (see "Order within one step" in [execution.md](execution.md#order-within-one-step)).
+- In a real-time `Peer`, queuing an operation wakes the driver (`Host::post()`; at most one pending wake-up).
+- When a `Peer` starts to stop, it no longer lets the Agent wake it, and it calls `finish()` once steps no longer run. A `submit()` after that returns `Invalid` and does not touch the `Peer`.
+- In `start()`, a `Peer` that has an Agent fixes the schema.
 
-### Peer の監視
+### Peer monitoring
 
-`PeerOptions::monitor`（既定で有効）のとき、Agent のスキーマが確定する時点で、Peer が ECU の変数の後に次の出力を追加します。値は、Agent の読み出しのときにステップのスレッドで読みます。どの Peer も `start()` までに Agent を作るので（`ecu.connected`）、変数を宣言しない Peer にも付き、ステップごとの記録も実行されます。不要なら `PeerOptions::monitor = false` にします。
+With `PeerOptions::monitor` (enabled by default), the `Peer` adds the following outputs after the ECU's variables when the Agent's schema is fixed. Their values are read on the step thread when the Agent reads values. Every `Peer` creates its Agent by `start()` (for `ecu.connected`), so a `Peer` that declares no variables gets these outputs too, and the per-step recording runs. If you do not need them, set `PeerOptions::monitor = false`.
 
-| 出力 | 内容 |
+| Output | Meaning |
 |---|---|
-| `peer.steps` | ステップの数 |
-| `peer.speed` | 前の読み出しからの仮想時間の秒 / 壁時計の秒（最初の読み出しでは 0、止まっていた後は小さくなる） |
-| `peer.app_time_max_us` | 前の読み出しから、アプリと LIN の処理にかかった最長の時間（J1939 の処理と書き込みの反映は含まない） |
-| `j1939.N.bus_state`（J1939 のネットワーク N ごと） | 列挙: unknown、error_active、error_passive、bus_off |
-| ネットワーク N ごとの統計 | `frames_received`、`frames_sent`、`send_failures`、`send_queue_full`、`receive_overflows`、`held_dropped`、`address_violations`、`transport_aborts_sent`、`transport_aborts_received` |
-| `j1939.N.node<i>.address`（N のノード i ごと） | ノードのアドレス |
-| `j1939.N.node<i>.address_state`（N のノード i ごと） | 列挙: fixed、not_started、claiming、claimed、cannot_claim |
+| `peer.steps` | The number of steps |
+| `peer.speed` | Seconds of virtual time / seconds of wall-clock time since the previous read (0 at the first read; smaller after a pause) |
+| `peer.app_time_max_us` | The longest time spent in application and LIN processing since the previous read (excludes J1939 processing and applying writes) |
+| `j1939.N.bus_state` (for each J1939 network N) | Enum: unknown, error_active, error_passive, bus_off |
+| Statistics for each network N | `frames_received`, `frames_sent`, `send_failures`, `send_queue_full`, `receive_overflows`, `held_dropped`, `address_violations`, `transport_aborts_sent`, `transport_aborts_received` |
+| `j1939.N.node<i>.address` (for each node i of N) | The node's address |
+| `j1939.N.node<i>.address_state` (for each node i of N) | Enum: fixed, not_started, claiming, claimed, cannot_claim |
 
-ノードのアドレスの状態かアドレスが変わったときは、イベントを出します。本文は「j1939.N.node<i>: <状態> at address <a>」で、状態の名前は列挙の項目と同じです。cannot_claim は Warning です。
+When a node's address state or address changes, the `Peer` emits an event. Its text is `j1939.N.node<i>: <state> at address <a>`, with the state named as in the enum. cannot_claim is a Warning.
 
-監視の対象は、スキーマが確定する時点（トランスポートの `control_silkit::AgentTransport` を作る、最初の `submit()`、`start()` のうち最初のもの）にあるネットワークとノードです。
+Monitoring covers the networks and nodes that exist when the schema is fixed (by the first of: creating the transport `control_silkit::AgentTransport`, the first `submit()`, `start()`).
 
-| 条件 | 起きること |
+| Condition | What happens |
 |---|---|
-| 確定した後に `Peer::j1939()`（両方の形）を呼ぶ | 監視されないネットワークになるので `std::logic_error`（文言に Peer とネットワークの名前と、直し方: トランスポートを作る前、最初の `submit()` の前に追加するか、`PeerOptions::monitor = false`） |
-| 確定した後にノードを追加する | そのノードは監視されない |
-| 生の CAN と LIN | 監視の対象ではない |
-| ECU の変数を `peer.` で始まる名前で宣言する（`input()`、`output()` など） | `peer.` で始まる名前は予約なので、`monitor` の設定と実装（`Peer`、`LocalBench`）によらず、宣言のときに `std::invalid_argument`（文言に ECU と変数の名前、ルール） |
-| ネットワークの出力（`j1939.N.` で始まる名前）が ECU の変数と重なる | 確定させる呼び出しが `std::invalid_argument`（何も変えず、スキーマは確定しない。文言に Peer の名前と `PeerOptions::monitor = false`） |
+| `Peer::j1939()` (either form) is called after the schema is fixed | It would be an unmonitored network, so it throws `std::logic_error`. The message names the `Peer` and the network, and the fix: add the network before creating the transport and before the first `submit()`, or set `PeerOptions::monitor = false`. |
+| A node is added after the schema is fixed | The node is not monitored |
+| Raw CAN and LIN | Not monitored |
+| An ECU variable is declared with a name that starts with `peer.` (`input()`, `output()` and so on) | Names that start with `peer.` are reserved. The declaration throws `std::invalid_argument`, whatever the `monitor` setting and the implementation (`Peer`, `LocalBench`). The message names the ECU, the variable and the rule. |
+| A network output (a name that starts with `j1939.N.`) clashes with an ECU variable | The call that fixes the schema throws `std::invalid_argument`. Nothing changes and the schema is not fixed. The message names the `Peer` and mentions `PeerOptions::monitor = false`. |
 
-最後の行の場合、その後に宣言した変数も、`describe()` の ECU の変数です。
+In the last case the schema stays open, so variables declared after the call that threw are also ECU variables in `describe()`.
 
-ステップの失敗はここでは通知しません（失敗の後はステップが実行されないため）。`Peer::failed()` と `error()`（スレッド安全）を、トランスポートの側で読みます。
+Step failures are not reported here (no step runs after a failure). Read `Peer::failed()` and `error()` (thread-safe) on the transport side.
 
-## Control Server の中核（`vehicle_sil::control::Hub`）
+## Control Server core (`vehicle_sil::control::Hub`)
 
-Control Server の、通信の方式によらない部分です。接続した Agent の一覧、書き込みの振り分け、Peer ごとの結果、最新の値、上限つきの購読を受け持ちます。全関数がスレッド安全です。
+The Hub is the part of the Control Server that does not depend on how it communicates. It keeps the list of connected Agents, routes writes, and holds the results per peer, the latest values and bounded subscriptions. Every function is thread-safe.
 
-### トランスポートからの呼び出し
+### Calls from the transport
 
-- トランスポートは、接続ごとに `agent_connected(hello, link)` を呼んで `ConnectionId` を受け取ります。
-- 以後、Agent から受信したもの（`agent_submitted`、`agent_result`、`agent_values`、`agent_events`、`agent_status`）と切断（`agent_disconnected`）を、その ID で渡します。
-- `hello` は、Agent を Peer に `attach()` した後で作ります（監視の出力がスキーマに入るため）。
-- `agent_status` には `Peer::failed()` と `error()` を渡します（ステップの失敗は、監視の出力では届かないため）。
-- SIL Kit のトランスポートは `agent_status` を呼ばない（Hub の API としては残っている）ので、クライアントに見える Peer の `status` はいつも空で、participant の失敗はシミュレーションの監視（`SimulationMonitor`）が通知します。
-- `agent_connected()` には、空でない名前、リンク、0 より大きい `max_pending` が必要です。
+- For each connection, the transport calls `agent_connected(hello, link)` and receives a `ConnectionId`.
+- From then on, it passes what it receives from the Agent (`agent_submitted`, `agent_result`, `agent_values`, `agent_events`, `agent_status`) and the disconnection (`agent_disconnected`) with that ID.
+- The `hello` is built after the Agent is attached to the `Peer` with `attach()` (so that the monitoring outputs are in the schema).
+- `agent_status` receives `Peer::failed()` and `error()` (step failures do not arrive through the monitoring outputs).
+- The SIL Kit transport does not call `agent_status` (it remains in the Hub's API). The `status` of a peer that clients see is therefore always empty, and the simulation monitoring (`SimulationMonitor`) reports participant failures.
+- `agent_connected()` needs a non-empty name, a link and a `max_pending` greater than 0.
 
 ### `AgentLink::send()`
 
-- Hub は、自分のロックを持たずに呼びます。
-- 1 つの Peer には 1 本のスレッドから、通し番号の順に 1 つずつ呼ぶので、短く待っても、中から Hub を呼び返してもかまいません。
-- `false` を返せばその操作は Invalid、例外なら Unknown になります。
-- `write()` を呼んだスレッドが、同じ Peer への前の操作の送信も引き受けることがあるので、`write()` は `send()` の分だけ待つことがあります。
-- Hub はリンクの最後の参照を、ロックの外で手放します。
+- The Hub calls it without holding its own lock.
+- For one peer, it is called from one thread, one operation at a time, in sequence-number order, so it may wait briefly and may call back into the Hub.
+- If it returns `false`, the operation becomes Invalid. If it throws, the operation becomes Unknown.
+- The thread that called `write()` may also take over sending earlier operations to the same peer, so `write()` may wait for those `send()` calls.
+- The Hub releases its last reference to a link outside its lock.
 
-### Agent の識別と再接続
+### Agent identity and reconnection
 
-Agent は、participant 名（空は不可）と、起動ごとの ID（incarnation）で名乗ります。
+An Agent identifies itself with its participant name (must not be empty) and an ID that changes with every start (the incarnation).
 
-#### 同じ名前と同じ ID（再接続）
+#### Same name, same ID (reconnection)
 
-同じプロセスの再接続です。SIL Kit のトランスポートは、トランスポートごとに新しいセッションで名乗るので、この形を使いません。再接続するトランスポートのための API です。
+This is the same process reconnecting. The SIL Kit transport identifies itself with a new session for each transport, so it never uses this form. The API exists for transports that reconnect.
 
-新しい接続が古い接続に代わり、未完了の操作は続きます。古い接続の切断の通知が後から届いても、Peer は切断になりません（その接続に渡して、積まれたと通知されていない操作だけが Unknown になります）。トランスポートは、届けられなかった結果を次の接続で送り直します。
+The new connection replaces the old one, and unfinished operations continue. If the disconnection notice of the old connection arrives later, the peer does not become disconnected (only the operations passed to that connection and not yet reported as queued become Unknown). The transport resends, over the next connection, the results it could not deliver.
 
-| hello の `open_seqs` | 扱い |
+| `open_seqs` in the hello | Handling |
 |---|---|
-| Agent がまだ持っている操作（積んだが、結果をトランスポートがまだ届けていないもの）を入れる | それらは新しい接続で Queued になり（古い接続の終わりの影響を受けない）、それ以外の未確定の操作は Unknown で確定する |
-| 入れない | 何も確定させないので、結果を失った操作は未確定のまま残り、その Peer の `max_pending` に数えられ続ける |
+| Contains the operations that the Agent still holds (queued, but the transport has not yet delivered their results) | Those operations become Queued on the new connection (the end of the old connection does not affect them). Other unsettled operations settle as Unknown. |
+| Does not contain them | Nothing is settled. Operations whose results were lost stay unsettled and keep counting toward the peer's `max_pending`. |
 
-#### 同じ名前で別の ID（再起動）
+#### Same name, different ID (restart)
 
-プロセスの再起動です。前の ID の未完了の操作は Unknown になり、前の ID の値は消えます。
+This is a restarted process. Unfinished operations of the previous ID become Unknown, and the values of the previous ID are discarded.
 
-#### 置き換えた古い接続
+#### Replaced connections
 
-どちらの場合も、置き換えた古い接続は `AgentLink::close()` で閉じます。同じ名前の 2 つのプロセスが同時に動いている（設定のエラー）ときも、古いほうは黙って無視されるのではなく、接続が切れたことを知ります。新しい接続が優先されます。
+In both cases, the Hub closes the replaced old connection with `AgentLink::close()`. Even when two processes with the same name run at once (a configuration error), the older one learns that its connection was closed instead of being silently ignored. The new connection takes precedence.
 
-#### 終わり（`agent_ended(connection, reason)`）
+#### End (`agent_ended(connection, reason)`)
 
-同じ ID ではもう接続しないとトランスポートがわかっているとき（participant がシミュレーションを去った、Agent が最後の通知を送信した）に呼びます。切断と同じ処理をしたうえで、その ID の未確定の操作をすべて Unknown（理由つき）で確定させるので、待っている呼び出しは残りません。
+The transport calls this when it knows that the same ID will not connect again (the participant left the simulation, or the Agent sent its last word). The Hub does what it does for a disconnection, then settles every unsettled operation of that ID as Unknown (with a reason). No waiting call is left behind.
 
-#### 切断
+#### Disconnection
 
-| 操作 | 切断したときの扱い |
+| Operation | On disconnection |
 |---|---|
-| Agent が積んだ操作 | Disconnected（未確定）になり、同じ ID で再接続した後に結果を受信すれば、それで確定する |
-| リンクに渡したが、積まれたと通知されていない操作 | Unknown |
-| まだリンクに渡していない操作 | Invalid |
+| Queued by the Agent | Becomes Disconnected (unsettled). If a result is received after the same ID reconnects, that result settles it. |
+| Passed to the link, but not reported as queued | Unknown |
+| Not yet passed to the link | Invalid |
 
-`forget_peer()` で切断した Peer を消すと、その未確定の操作は Unknown になり、購読者には `removed` のフラグつきの PeerUpdate が届きます。
+If `forget_peer()` removes a disconnected peer, its unsettled operations become Unknown and subscribers receive a PeerUpdate with the `removed` flag.
 
-#### どの接続のデータを使うか
+#### Which connection's data is used
 
-- 結果は、操作を送信した ID のどの接続から受信しても受け付け、別の ID からの結果は使いません。
-- 値、イベント、状態は、いまの接続からのものだけを使います。
-- スキーマと数が合わない値と、前より古い値は捨てます。
+- A result is accepted from any connection of the ID that the operation was sent to. Results from another ID are not used.
+- Values, events and status are used only from the current connection.
+- Values whose count does not match the schema, and values older than the previous ones, are discarded.
 
-### 書き込みと操作の状態（`write()`）
+### Writes and operation state (`write()`)
 
-- `write(request)` は、Peer ごとのまとめをロックの外で行います。
-- 操作には、Hub 全体で増える通し番号を振ります（既定の初めの値は壁時計のマイクロ秒で、Server を起動し直しても前より大きい）。
-- Peer ごとにまとめた `Command`（その番号を `seq` に持つ）を送信します。
-- Hub が確認するのは、Peer が接続していること、変数があって書けること、その Peer の未完了の操作が `max_pending`（hello で受け取る）より少ないこと（多ければ Busy）だけです。
-- 型、範囲、反映するステップは Agent が決めます。
+- `write(request)` groups the writes per peer outside the lock.
+- Each operation gets a sequence number that increases across the whole Hub (by default it starts from the wall-clock time in microseconds, so it is larger than before even after the Server restarts).
+- The Hub sends one `Command` per peer, with that number as `seq`.
+- The Hub checks only that the peer is connected, that the variable exists and is writable, and that the peer has fewer unfinished operations than `max_pending` (received in the hello; if not, Busy).
+- The Agent decides the type, the range and the step that applies the write.
 
-Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Late、Rejected、Cancelled のどれか、または Disconnected、Invalid、Busy、Unknown です。Sent、Queued、Disconnected 以外は確定で、二度と変わりません。
+For each peer, the state goes from Sent to Queued (the Agent queued it), then to one of Applied, Late, Rejected and Cancelled. It can also be Disconnected, Invalid, Busy or Unknown. Every state except Sent, Queued and Disconnected is final and never changes.
 
-### 受け付けと確定を待つ（`wait_queued()`、`wait_done()`）
+### Waiting for queued and done (`wait_queued()`, `wait_done()`)
 
-- `wait_queued(seq)` は、Sent の目標がなくなるまで待ち、そのときの操作を返します（タイムアウトと、知らない番号は空）。
-- 止まっている位置より後の時刻を指定して書き込み（「Control Agent」の「決定論性」）、すべての目標が Queued になったことを確認してから再開すれば、遅すぎる書き込みは起きません。
-- `wait_done(seq)` は確定まで待って操作を返すので、直後に操作が忘れられても結果はわかります。
-- 待っている間に忘れられたときも空を返すので、`max_operations` は待つ操作の数より大きくします。
+- `wait_queued(seq)` waits until no target is Sent, then returns the operation as it is at that point (empty on timeout and for an unknown number).
+- If you write with a time after the stop position (see "Determinism" under "Control Agent") and resume only after you confirm that every target is Queued, no write is late.
+- `wait_done(seq)` waits until the operation is settled and returns it, so you know the result even if the operation is forgotten right after.
+- It also returns empty if the operation is forgotten while it waits, so make `max_operations` larger than the number of operations you wait for.
 
-### 購読（`subscribe()`）
+### Subscriptions (`subscribe()`)
 
-- 始めると、その時点の Peer の一覧と最新の値がまず届きます。
-- Peer、値、操作は、それぞれ Peer ごと・操作ごとに最新の状態だけを持ちます（読む前に変われば置き換える）。
-- 上限（`capacity`）があるのはイベントと操作で、あふれたら、イベントは古いものから、操作はいちばん前に変わったものから捨てて数えます。
-- 値には、そのスキーマの incarnation が付きます。
-- `poll()` の順は、Peer、操作（番号の順）、イベント（受信した順）、値です。
-- `close()` で、待っている `poll()` を起こして終えます。
+- A new subscription first receives the current peer list and the latest values.
+- For peers, values and operations, it keeps only the latest state per peer and per operation (a change before it is read replaces the previous one).
+- Events and operations are bounded (`capacity`). On overflow, the oldest events and the operations that changed longest ago are dropped and counted.
+- Values carry the incarnation of their schema.
+- `poll()` returns peers, then operations (in number order), then events (in order of reception), then values.
+- `close()` wakes a waiting `poll()` and ends it.
 
-### まとめて読む（`latest_of()`）
+### Reading the latest values together (`latest_of()`)
 
-- `latest_of(peers)` は、複数の Peer（空なら全部）の最新の値を、Hub のロックを 1 回取って、同じ瞬間のものとして返します（値は共有で、コピーしません）。
-- 時刻と値を 1 組で読みたい側は、時間の状態を先に読んでから、これを呼びます。
-- 値は新しくなる一方なので、時間の状態を読んだ時点で Hub にあったものは必ず入っています。
-- `none_after(values, now)` は、`now` より後のステップの値が混ざっていないかを返します。
+- `latest_of(peers)` returns the latest values of several peers (all of them if empty) as of one instant, taking the Hub's lock once (values are shared, not copied).
+- To read time and values as one set, read the time state first, then call this.
+- Values only ever get newer, so everything the Hub had when you read the time state is included.
+- `none_after(values, now)` returns whether none of the values comes from a step after `now`.
 
-### 変数の対応表（`set_variable_map()`）
+### Variable map (`set_variable_map()`)
 
-`set_variable_map(participant, map)`（`control/variable_map.hpp` の `MappedSchema`）は、その participant の変数を、読む側と書く側の全員に、対応の後の名前と値で見せます。ランチャーが、設定ファイルの `participants[].variables` から渡します（`RunControl::hub()` の最初の呼び出しで、Agent が接続する前）。
+`set_variable_map(participant, map)` (`MappedSchema` in `control/variable_map.hpp`) shows that participant's variables to every reader and writer with the mapped names and values. The launcher passes it from `participants[].variables` in the configuration file (on the first call of `RunControl::hub()`, before any Agent connects).
 
-変換は Hub の中の 4 か所だけです。見せる一覧はロックの外で作ってロックの中で入れ替え、ほかの 3 つはロックの中で行います。トランスポートと読む API（tap、最新の値、購読、Control Server）は、変換を知りません。
+The conversion happens in only 4 places in the Hub. The list that is shown is built outside the lock and swapped in inside it; the other 3 conversions run inside the lock. The transport and the reading APIs (tap, latest values, subscriptions, the Control Server) do not know about the conversion.
 
-| 変換する所 | すること |
+| Where | What it does |
 |---|---|
-| 一覧（`agent_connected()`） | hello の一覧から、見せる一覧を接続ごとに 1 回作る |
-| 値（`agent_values()`） | Hub が持つ前に変換する |
-| 書き込み（`write()`） | 名前と向きを確認する所で、実行ファイルの名前と値に直してから `Command` に入れる |
-| 理由 | Agent が返す理由の先頭の変数名を、見せる名前に直す |
+| The list (`agent_connected()`) | Builds the list to show from the hello's list, once per connection |
+| Values (`agent_values()`) | Converts values before the Hub stores them |
+| Writes (`write()`) | Converts to the executable's names and values where the name and direction are checked, before putting them into the `Command` |
+| Reasons | Changes the variable name at the start of a reason returned by the Agent to the name that is shown |
 
-一覧:
+The list:
 
-- 並びと数は変えません（値は並びで対応するため）。
-- 合わない対応は適用せず、`PeerInfo::map_problems` に理由を入れます。
-- 対応が掛かった変数の、実行ファイルでの名前は `PeerInfo::sources` です。
-- すでに接続している接続には、後から渡した対応表は反映されません。
+- The order and count do not change (values correspond to variables by position).
+- A mapping that does not fit is not applied, and the reason goes into `PeerInfo::map_problems`.
+- `PeerInfo::sources` holds the executable's names of the mapped variables.
+- A map passed later does not apply to connections that already exist.
 
-値:
+Values:
 
-- tap、`latest()`、`latest_of()`、購読は同じ 1 つの変換済みの値を共有するので、API によって値が違うことはありません。
-- 時刻と通し番号は Agent のままで、順序の保証は変わりません。
+- The tap, `latest()`, `latest_of()` and subscriptions share one converted value, so no API sees a different value.
+- Times and sequence numbers stay as the Agent sent them. The ordering guarantees do not change.
 
-書き込み:
+Writes:
 
-- 確認する所で直すので、確認した一覧と直す一覧は同じ時点のものです。
-- 直す処理は、一次式の逆、整数への丸め（半分は 0 から遠いほうへ。浮動小数点の丸めモードによらない）、範囲と `map` の値の確認で、直せない値は Invalid です。
-- 範囲は実行ファイルの値で比べます（見せる範囲の端は積なので、10 進で書いた値から 1 ulp ずれうる。一覧に出す端は 15 桁に丸めた値）。
-- シナリオの照合も同じ判定を使います（`MappedSchema::in_range()` が `to_actual()` を呼ぶ）。
-- 適用されなかった対応の `name` と `from` への書き込みは、一覧を探す前に拒否します（`MappedSchema::not_writable()`）。読むのはそのままです。
-- ランチャーは、開始時に接続していた participant について、適用されなかった対応を実行の行で 1 回通知します（`RunControl::note_links()`）。
-- 直した `Command` は、その incarnation にだけ送信します（再起動なら捨てます）。
-- 操作の記録（`request`）は、クライアントが書いた名前と値のままです。
+- The conversion happens where the write is checked, so the list used for the check and the list used for the conversion are from the same moment.
+- The conversion inverts the linear expression, rounds to an integer (halves away from zero, independent of the floating-point rounding mode), and checks the range and the values of `map`. A value that cannot be converted is Invalid.
+- Ranges are compared in the executable's values (the ends of the shown range are products, so they can be 1 ulp off from values written in decimal; the ends shown in the list are rounded to 15 digits).
+- The scenario check uses the same test (`MappedSchema::in_range()` calls `to_actual()`).
+- Writes to the `name` and `from` of a mapping that was not applied are refused before the list is searched (`MappedSchema::not_writable()`). Reading them works as before.
+- For the participants connected at the start, the launcher reports each mapping that was not applied once, in a run line (`RunControl::note_links()`).
+- The converted `Command` is sent only to that incarnation (after a restart, it is dropped).
+- The operation record (`request`) keeps the names and values that the client wrote.
 
-ルール（型、範囲、衝突）は `MappedSchema::make()` の 1 か所にあり、照合（`launch::seen_variables()`）も同じ関数を `--describe` の一覧に掛けます。対応の形を追加するときは、次を直します。
+The rules (types, ranges, conflicts) live in one place, `MappedSchema::make()`, and the check (`launch::seen_variables()`) applies the same function to the `--describe` list. To add a kind of mapping, change:
 
-- `VariableMapping` のメンバー
-- `MappedSchema::make()` と変換
-- 設定ファイルを読む所（`libs/launch/src/config.cpp` の `kVariableMapKeys` と `read_variable()`）
-- `check --json` の `variable_map`（`check_format.cpp`）
+- The members of `VariableMapping`
+- `MappedSchema::make()` and the conversion
+- The configuration file reader (`kVariableMapKeys` and `read_variable()` in `libs/launch/src/config.cpp`)
+- `variable_map` in `check --json` (`check_format.cpp`)
 
-### 覚えておく操作
+### Retained operations
 
-確定した操作は `max_operations` までで、超えたら古いものから忘れます。未確定の操作は忘れません（数は Peer ごとの `max_pending` で決まります）。
+The Hub keeps up to `max_operations` settled operations and forgets the oldest beyond that. It never forgets unsettled operations (their number is bounded by each peer's `max_pending`).
 
-## SIL Kit の上のトランスポート（`vehicle_sil::control_silkit`）
+## Transport over SIL Kit (`vehicle_sil::control_silkit`)
 
-Agent と Hub の間のメッセージを、SIL Kit の publish/subscribe で運びます。新しい participant は作りません。ECU の側（`AgentTransport`）は ECU の participant に、Hub の側（`HubTransport`）は Hub を持つ側の participant（`vehicle_sil_launch run` では controller）に、発行者と購読者を作ります。
+This transport carries the messages between the Agent and the Hub over SIL Kit publish/subscribe. It creates no new participant. The ECU side (`AgentTransport`) creates its publishers and subscribers in the ECU's participant. The Hub side (`HubTransport`) creates them in the participant that holds the Hub (in `vehicle_sil_launch run`, the controller).
 
-### メッセージの種類
+### Message types
 
-メッセージの流れは、hello、最初のステップの前で待つ区間（全員が最初のステップの前で待つ）、コマンドと受け付け、ステップごとのステップのメッセージ、最後の通知（トランスポートを破棄するとき）とそのレスポンス、の順です。
+Messages flow in this order: the hello; the start window before the first step (everyone waits before the first step); commands and their submitted messages; a step message in each step; the last word (when the transport is destroyed) and its answer.
 
-| メッセージ | 向き | 送信する時点 |
+| Message | Direction | Sent when |
 |---|---|---|
-| hello | ECU → Hub | 開始の前（後から購読した相手のために、最後の 1 つを残す） |
-| コマンド | Hub → ECU | `Hub::write()` を呼んだとき |
-| 受け付け（`submit()` のレスポンス） | ECU → Hub | コマンドを受信したとき（受信のハンドラーから） |
-| ステップのメッセージ（結果、イベント、値） | ECU → Hub | ステップの中 |
-| 問い合わせ（probe） | Hub → ECU | 下の「コマンドを送信できるようになるまで」 |
-| ready（問い合わせへのレスポンス） | ECU → Hub | 問い合わせへのレスポンスとして |
-| last word received（最後の通知へのレスポンス） | Hub → ECU | 最後の通知を受信して接続を終えた後（下の「接続の終わり」） |
+| hello | ECU → Hub | Before the start (the last one is kept for subscribers that join later) |
+| command | Hub → ECU | `Hub::write()` is called |
+| submitted (the answer to `submit()`) | ECU → Hub | A command is received (from the receive handler) |
+| step message (results, events, values) | ECU → Hub | Inside the step |
+| probe | Hub → ECU | See "Until commands can be sent" below |
+| ready (the answer to a probe) | ECU → Hub | As the answer to a probe |
+| last word received (the answer to the last word) | Hub → ECU | After the Hub receives the last word and ends the connection (see "End of a connection" below) |
 
-### メッセージの形式（`control/wire.hpp`）
+### Message format (`control/wire.hpp`)
 
-形式は `vehicle_sil::control` の `control/wire.hpp` にあります。依存のないバイト列で、数はリトルエンディアンです。
+The format is defined in `control/wire.hpp` of `vehicle_sil::control`. It is a byte string with no dependencies. Numbers are little-endian.
 
-どのメッセージも、先頭に形式のバージョン（`kVersion`）を持ち、復号は自分のバージョンだけを受け付けます。バージョンは、メッセージの並びを変えたときに上げます。相手が知らなくても困らない種類を追加するだけなら上げません。知らない種類は、読めないメッセージとして数えて捨てます（最後の通知へのレスポンスは、こうして追加しました）。hello は、どのバージョンでも participant 名までが同じ並びなので、バージョンの違う hello からも名前を読めます。
+Every message starts with the format version (`kVersion`), and the decoder accepts only its own version. The version goes up when the layout of a message changes. Adding a kind that the other side can safely ignore does not change it: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way). In every version, a hello has the same layout up to the participant name, so the name can be read even from a hello of another version.
 
-- 復号は例外を投げず、渡されたバイト列の外を読みません。
-- 切れた入力、種類の違い、バージョンの違い、大きすぎる入力、範囲の外の値を、それぞれ別のエラーで返します。
-- 大きさの上限はバージョンより先に見ます（バージョンの違うメッセージも、上限を超えて読みません）。
-- 数のフィールドは、残りのバイト数に収まるかを確認し、申告された数の分の領域を先に取りません。
-- 同じメッセージのオブジェクトに続けて復号すると、領域を使い回します。
-- 宛先（セッション）だけを先に読む関数（`addressed()`）があり、ECU は自分宛てでないコマンドを復号しません。
+- The decoder never throws and never reads outside the bytes it is given.
+- It returns a distinct error for each of: truncated input, wrong kind, wrong version, oversized input, out-of-range value.
+- It checks the size limit before the version (it does not read past the limit, even for a message of another version).
+- For a count field, it checks that the count fits in the remaining bytes, and does not reserve space for the declared count up front.
+- Decoding again into the same message object reuses its storage.
+- A separate function (`addressed()`) reads only the destination (session) first, so an ECU does not decode commands addressed to another ECU.
 
-### 大きさの上限
+### Size limits
 
-| 対象 | 上限 | 超えたとき |
+| Item | Limit | When exceeded |
 |---|---|---|
-| コマンド、受け付け、ステップのメッセージ | 64 KiB（`kMaxMessageBytes`） | 下の表 |
-| hello | 4 MiB（`kMaxHelloBytes`）、変数 65536 個（`kMaxVariables`） | `AgentTransport` を作れない（`std::invalid_argument`） |
-| participant 名と変数名 | 1〜256 バイト（`kMaxNameBytes`） | `AgentTransport` を作れない（`std::invalid_argument`） |
-| 理由とイベントの文 | 1024 バイト | 切る |
+| Command, submitted message, step message | 64 KiB (`kMaxMessageBytes`) | See the table below |
+| hello | 4 MiB (`kMaxHelloBytes`), 65536 variables (`kMaxVariables`) | `AgentTransport` cannot be created (`std::invalid_argument`) |
+| Participant names and variable names | 1–256 bytes (`kMaxNameBytes`) | `AgentTransport` cannot be created (`std::invalid_argument`) |
+| Texts of reasons and events | 1024 bytes | Truncated |
 
-復号も、同じ上限で拒否します。
+The decoder also rejects input with the same limits.
 
-| 64 KiB を超えるもの | 扱い |
+| Over 64 KiB | Handling |
 |---|---|
-| 1 ステップの分（結果、イベント、値） | 複数のステップのメッセージに分けて同じステップの中で送信し、Hub の側が 1 組の値に組み立てる |
-| コマンド | 分けない（1 つのコマンドの書き込みは同じステップで反映するため）ので、送信せず、その操作は Invalid |
+| The output of one step (results, events, values) | Split into several step messages, sent within the same step. The Hub side reassembles one set of values. |
+| A command | Not split (all writes of one command are applied in the same step). It is not sent, and the operation is Invalid. |
 
-hello は 1 つのメッセージです（後から購読した相手には、最後に送信した 1 つしか届かないため）。
+A hello is always a single message, because a subscriber that joins later receives only the last one sent.
 
-### トピック
+### Topics
 
-- トピックは向きと種類ごとに 1 つで、全 participant で共通です（`vehicle_sil.control.hello`、`.step`、`.submitted`、`.command`）。
-- participant 名はトピックに入れません。
-- メッセージは、送信元か宛先の Agent を、`AgentTransport` ごとに新しく作る 64 ビットの番号（セッション。Hub から見た incarnation）で示します。
-- コマンドは全 ECU に届き、宛先でない ECU は捨てます。
-- この名前で始まる SIL Kit のサービスは、利用者が作らないでください。
+- There is one topic for each direction and kind, shared by all participants (`vehicle_sil.control.hello`, `.step`, `.submitted`, `.command`).
+- Topics do not contain participant names.
+- A message identifies its sending or destination Agent by a 64-bit number that each `AgentTransport` creates anew (the session; to the Hub, the incarnation).
+- Commands reach every ECU, and ECUs that are not the destination drop them.
+- Do not create SIL Kit services whose names start with these names.
 
-### ECU の側のスレッド（`AgentTransport`）
+### ECU-side threads (`AgentTransport`)
 
-| 場所 | すること |
+| Where | What it does |
 |---|---|
-| コンストラクター | Agent のスキーマを確定させ（`complete_schema()`）、hello を履歴 1 の発行者で送信する |
-| ステップのスレッド | ステップが作ったもの（反映の結果、イベント、読んだ値）を、値を読んだ直後に、そのステップの中で送信する（`Agent::set_step_sink()`） |
-| SIL Kit の受信のハンドラー | コマンドを `submit()` し、そのレスポンスをその場で送信する（ステップの外） |
-| デストラクター | まだ送信していない結果（`Peer::stop()` の後なら、取り消された書き込み）を「最後の通知」として送信し、Hub のレスポンスを待ってから戻る（下の「接続の終わり」） |
+| Constructor | Fixes the Agent's schema (`complete_schema()`) and sends the hello with a publisher of history 1 |
+| Step thread | Sends what the step produced (results of applied writes, events, values read) within the step, right after the values are read (`Agent::set_step_sink()`) |
+| SIL Kit receive handler | Passes a command to `submit()` and sends its answer at once (outside the step) |
+| Destructor | Sends the results not sent yet (after `Peer::stop()`, the cancelled writes) as the "last word", and waits for the Hub's answer before it returns (see "End of a connection" below) |
 
-- コンストラクターは、ECU を作った後、ECU を始める前に、組み立てのスレッドで呼びます（始めた後は `std::logic_error`）。
-- `AgentTransport` は Agent に 1 つだけです。
-- ほかのスレッドからは送信しません。
-- 何も作らなかったステップは、何も送信しません。
-- デストラクターが待つのは、長くても `AgentTransportOptions::last_word_wait`（既定 500 ms）です。
-- ECU を止めてから破棄し、ECU より先に破棄します（`control::TransportLease` を持ちます）。
-- SIL Kit のハンドラーの中からは破棄しません（レスポンスを受信するスレッドなので、上限まで待つことになります）。
+- Call the constructor on the setup thread, after creating the ECU and before starting it (after the start, it throws `std::logic_error`).
+- An Agent has only one `AgentTransport`.
+- Nothing is sent from other threads.
+- A step that produced nothing sends nothing.
+- The destructor waits at most `AgentTransportOptions::last_word_wait` (default 500 ms).
+- Destroy it after stopping the ECU and before destroying the ECU (it holds a `control::TransportLease`).
+- Do not destroy it from inside a SIL Kit handler (that is the thread that receives the answer, so the destructor would wait the full limit).
 
-### Hub の側のスレッド（`HubTransport`）
+### Hub-side threads (`HubTransport`)
 
-- 受信のハンドラーは、メッセージを復号して Hub に渡すだけです。
-- 受信のハンドラーは participant の SIL Kit のスレッドで動き、そのスレッドは participant のステップも動かすので、ハンドラーが遅いとシミュレーション全体が待ちます。
-- 待ち行列は持たず、何も捨てません（遅さは値の欠けではなく、実行の遅れになります。`HubTransportStats::handler_time`）。
-- Hub の購読者への配布は、購読者のスレッドが `Subscription::poll()` で行います。
-- コマンドの送信は、`Hub::write()` を呼んだスレッドがそのまま発行します。
-- `HubTransport` は、participant を始める前に作ります。
+- The receive handler only decodes messages and passes them to the Hub.
+- The receive handler runs on the participant's SIL Kit thread. That thread also runs the participant's steps, so a slow handler makes the whole simulation wait.
+- There is no queue, and nothing is dropped (slowness makes the run late instead of losing values; see `HubTransportStats::handler_time`).
+- Delivery to the Hub's subscribers happens on the subscriber's thread, in `Subscription::poll()`.
+- The thread that called `Hub::write()` publishes the commands itself.
+- Create `HubTransport` before starting the participant.
 
-### Hub の側の検査と上限
+### Hub-side checks and limits
 
-- 値の組は、hello のスキーマと、個数、順（分けた部分が先頭から続いていること）、変数ごとの型が合うものだけを Hub に渡し、合わないものは捨てて数えます（`HubTransportStats::unknown`）。
-- 覚える participant は `HubTransportOptions::max_links`（既定 256）までです（接続しているもの、終わったもの、バージョンの違うものの合計）。
-- 上限を超えた hello と、ほかの participant が接続しているセッション番号を名乗る hello は、捨てて数えます（`refused_hellos`）。
-- 1 つの hello が Hub に残すのは、上の hello の上限までです。
+- A set of values is passed to the Hub only if it matches the hello's schema in count, order (the split parts continue from the start) and the type of each variable. Other sets are dropped and counted (`HubTransportStats::unknown`).
+- It remembers up to `HubTransportOptions::max_links` participants (default 256), counting connected ones, ended ones and ones of another version.
+- Hellos beyond that limit, and hellos that claim the session number of another connected participant, are dropped and counted (`refused_hellos`).
+- What one hello leaves in the Hub is bounded by the hello limits above.
 
-### コマンドを送信できるようになるまで
+### Until commands can be sent
 
-hello を受信しただけでは、ECU の側のコマンドの購読が確立しているとは限りません（向きごとに別々に接続するため）。`HubTransport` は問い合わせ（probe）を送信し、ECU のレスポンス（ready）を受信してから、その Agent へコマンドを送信します（`LinkInfo::ready`）。問い合わせを送信するのは、hello のとき、ready が来るまでのステップのメッセージ（8 通に 1 回）のとき、`wait_for_hellos()` の中です。
+Receiving a hello does not mean that the ECU's subscription to commands is established (each direction connects separately). `HubTransport` sends a probe, and sends commands to an Agent only after it receives the ECU's answer (ready) (`LinkInfo::ready`). It sends a probe when a hello arrives, once every 8 step messages until ready arrives, and in `wait_for_hellos()`.
 
-次の書き込みは、`AgentLink::send()` が拒否し、Hub がその場で Invalid にします。誰にも届かないコマンドを送信して、操作が確定しないまま残ることがないようにするためです。
+`AgentLink::send()` refuses the following writes, and the Hub makes them Invalid at once. This keeps a command that reaches no one from leaving its operation unsettled.
 
-- ready の前の書き込み
-- ライフサイクルが止まり始めた（Stopping 以降、Error）participant への書き込み
+- Writes before ready
+- Writes to a participant whose lifecycle has started to stop (Stopping or later, or Error)
 
-最初のステップの前で待つ区間の中では、必須の participant への問い合わせは必ず届きます。
+Within the start window, a probe to a required participant always arrives.
 
-### 受信の順序の保証
+### Receive order guarantees
 
-Hub の側の participant が時刻同期に参加し、ECU が仮想時間で動くとき（`vehicle_sil_launch run` はいつもそうです）、Hub の側の participant のステップ P が始まった時点で（したがって、時間ゲートが P で止まった時点で）、次のことが保証されます。
+When the Hub-side participant takes part in time synchronization and the ECUs run in virtual time (`vehicle_sil_launch run` always does), the following holds once step P of the Hub-side participant has started (and therefore once the time gate has stopped at P):
 
-| ECU のステップの開始時刻 | その分の結果と値 |
+| Start time of the ECU's step | Its results and values |
 |---|---|
-| P より前 | すべて Hub に入っている |
-| ちょうど P | 入っているかどうか決まらない（止まっている間に受信する） |
-| P より後 | シミュレーションを進めるまで受信しない |
+| Before P | All of them are in the Hub |
+| Exactly P | Undetermined (they may arrive while stopped) |
+| After P | Not received until the simulation advances |
 
-「P まで」ではなく「P より前まで」として扱います（`StepInbox` と同じルール）。
+The guarantee is "everything before P", not "everything up to P" (the same rule as `StepInbox`).
 
-- 受け付けのレスポンス（Queued など）とコマンドはステップの外で送信するので、順序は保たれますが、時刻の保証はありません。
-- 止めてから `at` > P で書き、全員の Queued を待ってから進める手順（「Control Agent」の「決定論性」）は、そのまま使えます。
-- `HubTransport` は、この保証に反して受信したステップのメッセージ（Hub の側がすでに後のステップを始めていた）を数えます（`HubTransportStats::late_messages`、`LinkInfo::late_messages`）。
-- ECU がステップの中から送信している限り、`late_messages` は 0 です。
+- Submitted messages (Queued and so on) and commands are sent outside steps. Their order is kept, but their timing is not guaranteed.
+- The procedure of stopping, writing with `at` > P, waiting until every target is Queued and then advancing (see "Determinism" under "Control Agent") works as is.
+- `HubTransport` counts step messages received in violation of this guarantee (the Hub side had already started a later step) (`HubTransportStats::late_messages`, `LinkInfo::late_messages`).
+- As long as the ECUs send from inside their steps, `late_messages` is 0.
 
-### 最初のステップの前で待つ区間（`set_start_window()`）
+### Start window before the first step (`set_start_window()`)
 
-`SimulationController::set_start_window()` で関数を登録すると、controller は、必須の participant が全員最初のステップの前で待っている間（SIL Kit の CommunicationReady の非同期のハンドラー。`ParticipantRuntime::set_communication_ready_handler_async()`）に、その関数を自分のスレッド（SIL Kit のスレッドでも、`start()` を呼んだスレッドでもない）で呼びます。関数が戻ってから、シミュレーションを始めます。
+If you register a function with `SimulationController::set_start_window()`, the controller calls it while all required participants wait before their first step (in SIL Kit's asynchronous CommunicationReady handler; `ParticipantRuntime::set_communication_ready_handler_async()`). It calls the function on a thread of its own (neither a SIL Kit thread nor the thread that called `start()`). The simulation starts after the function returns.
 
-この間に `HubTransport::wait_for_hellos()` で Agent の hello を待ち、`Hub::write()` で Parameter を書いて `wait_queued()` で受け付けを待てば、その値は各 ECU の時刻 0 のステップで反映され、アプリはそのステップで見ます。ECU と controller がどの順に起動しても同じです。
+In this window, wait for the Agents' hellos with `HubTransport::wait_for_hellos()`, write Parameters with `Hub::write()` and wait with `wait_queued()` until they are queued. The values are then applied in each ECU's step at time 0, and the application sees them in that step. This holds whatever order the ECUs and the controller start in.
 
-#### 開始との関係
+#### Relation to the start
 
-- この区間は開始の一部です。
-- `start()` のタイムアウトはこの区間を含み（`StartWindow::deadline()`）、全 participant の `start()` が区間の終わりを待ちます。
-- 関数を外から止める手段はないので、関数は待つたびに `StartWindow::cancelled()`（停止の要求、ライフサイクルの終わり、`start()` のタイムアウト）を見て、すぐ戻ります。
-- `start()` は、戻るときも投げるときも、関数の終わりを待ちます。
-- 関数が投げても区間は閉じて全員が始まり、`start()` がその文言で `std::runtime_error` を投げます。
-- 区間より前（workflow の前や、hello を受信した直後）に書いたコマンドは、届く保証がありません。
+- The window is part of the start.
+- The timeout of `start()` includes the window (`StartWindow::deadline()`), and the `start()` of every participant waits for the window to end.
+- Nothing can stop the function from outside. Each time the function waits, it checks `StartWindow::cancelled()` (a stop request, the end of the lifecycle, the `start()` timeout) and returns at once if it is set.
+- `start()` waits for the function to end, whether `start()` returns or throws.
+- If the function throws, the window still closes and everyone starts. `start()` then throws `std::runtime_error` with the function's message.
+- Commands written before the window (before the controller publishes the SIL Kit workflow configuration with `SetWorkflowConfiguration`, or right after the hello arrives) are not guaranteed to arrive.
 
-#### 区間を必ず完了させる
+#### Always completing the window
 
-この区間は必ず完了させます。`start()` があきらめた後で区間が始まったとき（必須の participant の準備が遅かった）は、関数を呼ばずに完了だけします。全員が最初のステップまで進むので、その後の controller の停止で、区間のないときと同じに順に終わります。controller のデストラクターは、停止を待つ間も、始まった区間を完了させます。
+The window is always completed. If the window starts after `start()` has given up (a required participant was slow to get ready), it is completed without calling the function. Every participant then reaches its first step, so a later stop of the controller ends them in order, as without a window. The controller's destructor completes a window that has started, even while it waits for the stop.
 
-#### participant がいなくなったとき
+#### When a participant goes away
 
-- `vehicle_sil_launch` の `start()` は、開始を待つ間、必須の participant がシミュレーションを去っていないか（`has_finished()`。プロセスが終われば Error）を見て、去っていればすぐにあきらめます（`SimulationController::start()` の `give_up`）。区間の中で participant がいなくなると、残りの participant はタイムアウトまで待つためです。
-- `wait_for_hellos()` は、挙げた participant のそれぞれが、接続してコマンドを受信できるとレスポンスする、バージョンの違う hello を送信する、シミュレーションを去る、のどれかになるまで待ちます（期限と取り消しつき）。
-- 区間の中で participant がいなくなっても、`wait_for_hellos()` の待ちは終わります（その後の開始は、ほかの開始の失敗と同じにタイムアウトになります）。
+- While `start()` in `vehicle_sil_launch` waits for the start, it checks whether a required participant has left the simulation (`has_finished()`; when the process ends, the participant is in Error) and gives up at once if one has (`give_up` of `SimulationController::start()`). Without this, if a participant went away in the window, the remaining participants would wait until the timeout.
+- `wait_for_hellos()` waits until each listed participant has done one of these: connected and answered that it can receive commands, sent a hello of another version, or left the simulation (with a deadline and cancellation).
+- If a participant goes away in the window, the wait in `wait_for_hellos()` still ends (the start that follows times out like any other failed start).
 
-### 接続の終わり
+### End of a connection
 
-`HubTransport` は、次のときに `Hub::agent_ended()` で接続を終えます。
+`HubTransport` ends a connection with `Hub::agent_ended()` when:
 
-- Agent の「最後の通知」を受信したとき
-- その participant のライフサイクルが Error になったとき（ステップの失敗、接続が切れた＝プロセスが終わった）
-- `HubTransport` を破棄したとき
+- It receives the Agent's "last word"
+- The participant's lifecycle becomes Error (a step failure, or the connection was lost, that is, the process ended)
+- `HubTransport` is destroyed
 
-その Agent を待っていた操作は、最後の通知に入っていた結果（Cancelled など）か Unknown で確定します。
+Operations that were waiting for that Agent settle with the result in the last word (Cancelled and so on) or as Unknown.
 
-#### 最後の通知が届く保証
+#### Delivery guarantee for the last word
 
-`HubTransport` は、最後の通知を受信して接続を終えた後に、その Agent へレスポンスを送信します（すでに終わった接続の最後の通知にもレスポンスします）。`AgentTransport` のデストラクターは、そのレスポンスを待ってから戻ります。ECU のプロセスはトランスポートの直後に participant を破棄し、SIL Kit は participant を破棄するときに、まだソケットに書いていない送信を捨てるためです。
+`HubTransport` answers the Agent after it receives the last word and ends the connection (it also answers the last word of a connection that has already ended). The destructor of `AgentTransport` waits for that answer before it returns. The reason: the ECU process destroys the participant right after the transport, and SIL Kit drops sends that it has not yet written to the socket when it destroys a participant.
 
-Hub の側のトランスポートがいて、待つ時間の中にレスポンスができる限り、デストラクターが戻った時点で、最後の通知は届いていて、その Agent を待っていた操作は確定しています。
+As long as the Hub-side transport is present and answers within the wait time, the last word has arrived when the destructor returns, and the operations that were waiting for that Agent are settled.
 
-#### 待つ時間
+#### Wait times
 
-- 長くても `AgentTransportOptions::last_word_wait` です（既定 500 ms、0 で待たない。`ecu_main()` では `EcuMainOptions::last_word_wait`）。
-- レスポンスはふつうすぐ来るので、この時間いっぱい待つのは、Hub の側がいなくなったか、レスポンスをしないバージョンのときだけです。
-- 壁時計で、ステップが止まった後に 1 回だけ待つので、仮想時間と実行の速度には関係しません。
-- Hub から問い合わせもコマンドも受信したことのない Agent（Hub のいないシミュレーション）は待ちません。
+- At most `AgentTransportOptions::last_word_wait` (default 500 ms; 0 means no wait; in `ecu_main()`, `EcuMainOptions::last_word_wait`).
+- The answer normally comes at once. The full time passes only when the Hub side is gone or runs a version that does not answer.
+- The wait is in wall-clock time, happens once after the steps have stopped, and is unrelated to virtual time and to the speed of the run.
+- An Agent that has never received a probe or a command from a Hub (a simulation without a Hub) does not wait.
 
-#### 保証しないこと
+#### What is not guaranteed
 
-次のどれかのときは、最後の通知は届かないことがあります。
+The last word may not arrive if:
 
-- Hub の側のトランスポートがいない、または先に破棄された。
-- レスポンスをしないバージョンである。
-- 待つ時間の中にレスポンスが来なかった。
-- Hub の問い合わせ（probe）がまだその Agent に届いていない（hello の直後に終わる ECU。待ちません）。
+- There is no Hub-side transport, or it was destroyed first.
+- The other side runs a version that does not answer.
+- No answer arrived within the wait time.
+- The Hub's probe has not reached that Agent yet (an ECU that ends right after its hello; it does not wait).
 
-順に終わった（Shutdown になった）のに最後の通知が届かなかった participant の接続は、`HubTransport` を破棄するまで残り、そのときに Unknown で確定します。その間も、その participant への新しい書き込みは上の「コマンドを送信できるようになるまで」のとおり拒否するので、確定しない操作は増えません。
+If a participant ended in order (reached Shutdown) but its last word did not arrive, its connection remains until `HubTransport` is destroyed, and is settled as Unknown then. Meanwhile, new writes to that participant are refused as described in "Until commands can be sent" above, so the number of unsettled operations does not grow.
 
-#### バージョンを混ぜたとき
+#### Mixed versions
 
-| 組み合わせ | 動き |
+| Combination | Behavior |
 |---|---|
-| レスポンスを知らない Agent | レスポンスを捨てて、今までどおりに終わる |
-| レスポンスをしない Hub が相手の Agent | 待つ時間いっぱい待って終わる |
+| An Agent that does not know the answer | Drops the answer and ends as before |
+| An Agent whose Hub does not answer | Waits the full wait time, then ends |
 
-どちらも、形式のバージョン（`kVersion`）は同じなので、接続できます。
+In both cases the format version (`kVersion`) is the same, so they can connect.
 
-### hello が来ない相手
+### Peers that send no hello
 
-- トランスポートを付けていない ECU（`--no-control`、Agent のない古い vehicle-sil の実行ファイル、Agent を持たない participant）は hello を送信しないので、Hub の Peer になりません。
-- バージョンの違う hello を送信した相手は、Peer にならず、`HubTransport::links()` に participant 名とバージョンつきで残ります。
-- どちらも、待つ側には「来ない」ではなく別の結果として見えます（`HelloReport` の `connected`、`mismatched`、`ended`、`missing`）。
+- An ECU without a transport (`--no-control`, an executable of an old vehicle-sil without an Agent, a participant that has no Agent) sends no hello, so it does not become a peer of the Hub.
+- A participant that sent a hello of another version does not become a peer. It remains in `HubTransport::links()` with its participant name and version.
+- To a caller that waits, both cases appear as distinct results, not as "did not come" (`connected`, `mismatched`, `ended`, `missing` in `HelloReport`).
 
-### 実時間の Peer と、起動し直した participant
+### Real-time peers and restarted participants
 
-実時間の Peer（仮想時間なし）にも `AgentTransport` を付けられます。同じメッセージが流れますが、受信する時刻と Hub の側の仮想時刻の間に保証はありません（値は受信した時点のものとして扱い、`late_messages` にも数えません）。
+You can also attach an `AgentTransport` to a real-time `Peer` (without virtual time). The same messages flow, but there is no guarantee between the time of reception and the virtual time of the Hub side (values are treated as of the time they are received, and are not counted in `late_messages`).
 
-同じ名前で起動し直した participant は、新しいセッションの hello で古い接続に代わります。落ちた後の起動し直しでも同じです。hello を受信するときに、その名前のライフサイクルの状態は見ません（前のプロセスの状態かもしれないため）。
+A participant restarted with the same name replaces the old connection with the hello of its new session. This also holds for a restart after a crash. When a hello arrives, the lifecycle state of that name is not checked (it might be the state of the previous process).
 
-### 認証がないこと
+### No authentication
 
-この区間に認証はありません。registry に参加できる者は、コマンドのトピックへ書けます（シミュレーションのバスにフレームを送信できるのと同じです）。閉じたネットワークで使います。クライアント向けの gRPC の認証は、この区間に及びません。
+This segment has no authentication. Anyone who can join the registry can write to the command topic (just as they can send frames on the simulation's buses). Use it on a closed network. The authentication of the client gRPC API does not extend to this segment.
 
-### 量
+### Traffic volume
 
-値は間引きません。送信する量は「ECU の数 × `sample_period` ごとの 1 組」で、シミュレーションの速度に比例して増えます。量を減らすには、`AgentOptions::sample_period` を大きくします（`Ecu::set_agent_options()`）。
+Values are not thinned out. The traffic is "number of ECUs × one set per `sample_period`", and it grows in proportion to the simulation speed. To reduce it, increase `AgentOptions::sample_period` (`Ecu::set_agent_options()`).
 
-## Control Server と通信の層（`vehicle_sil::control_grpc`）
+## Control Server and communication layer (`vehicle_sil::control_grpc`)
 
-`VEHICLE_SIL_BUILD_CONTROL_SERVER`（既定 OFF）のときだけビルドします。gRPC は `find_package(gRPC CONFIG)` で探し、なければ FetchContent でバージョンを固定して取り込みます（[dependencies.md](../dependencies.md)）。ほかのライブラリは gRPC に依存しません。
+This layer is built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER` (default OFF). gRPC is found with `find_package(gRPC CONFIG)`; if it is not found, FetchContent fetches it at a pinned version (see [dependencies.md](../dependencies.md)). No other library depends on gRPC.
 
-### サービス
+### Service
 
-- サービスは、クライアント向けの `ControlService`（Peer の一覧、値、時刻と値をまとめて読む、書き込み、操作の結果と待ち、購読、Peer を忘れる、時間の操作）だけです。
-- Agent は gRPC で接続しません（Hub の側のトランスポートは `HubTransport` で、Server を使う側が付けます）。
-- 列挙はどれも 0 が UNSPECIFIED で、クライアントから来た知らない値は安全側に読みます（書き込みの遅れの扱いは Reject として）。
+- The only service is `ControlService`, for clients (peer list, values, reading time and values together, writes, operation results and waiting, subscriptions, forgetting peers, time control).
+- Agents do not connect over gRPC (the Hub-side transport is `HubTransport`, which the code that uses the Server attaches).
+- In every enum, 0 is UNSPECIFIED. An unknown value from a client is treated as the safe choice (for the handling of late writes, as Reject).
 
 ### `ControlServer`
 
-Hub にサービスを載せます。Hub は自分で持つか、呼ぶ側のもの（`ServerOptions::external_hub`。Server より長く生かすこと）を使います。
+`ControlServer` puts the service on a Hub. The Hub is either its own or the caller's (`ServerOptions::external_hub`; it must outlive the Server).
 
-### 時間の操作
+### Time control
 
-- `TimeControl`（`time_control_of(controller)` で SimulationController の時間ゲートを使う）があれば、時間の操作を受け付けます。
-- `TimeControl` がなければ、時間の操作は `FAILED_PRECONDITION` で、`GetTime` は `available = false` を返します。
-- `Stop` は停止を要求するだけで待ちません（複数のクライアントから同時に呼べます）。
-- `Stop` の理由は全 participant と SIL Kit のログに渡るので、制御文字を `?` にして 200 バイトまで（UTF-8 の文字の途中では切らない）にし、監査にも残します。
-- シミュレーションが始まる前の `Stop` は、始まった直後に止めます（`ParticipantRuntime::request_stop()` は、lifecycle が Running になる前の要求を保ち、最初のステップで渡します。SIL Kit は Running の前の Stop を無視するためです）。
+- If a `TimeControl` is given (`time_control_of(controller)` uses the time gate of a SimulationController), the Server accepts time control.
+- Without a `TimeControl`, time control returns `FAILED_PRECONDITION`, and `GetTime` returns `available = false`.
+- `Stop` only requests a stop and does not wait (several clients may call it at the same time).
+- The reason given with `Stop` reaches every participant and the SIL Kit log, so control characters in it are replaced with `?` and it is cut to 200 bytes (never inside a UTF-8 character). It is also recorded in the audit.
+- A `Stop` before the simulation starts stops it right after it starts. `ParticipantRuntime::request_stop()` keeps a request made before the lifecycle reaches Running, and delivers it at the first step, because SIL Kit ignores a Stop before Running.
 
-### シミュレーションの監視（`SimulationMonitor`）
+### Simulation monitoring (`SimulationMonitor`)
 
-`TimeControl` があれば、Server は 1 本のスレッドで `ServerOptions::monitor_period`（既定 50 ms）ごとに `TimeControl` を読み、次を 1 つのスナップショットに持ちます（`ControlServer::simulation()`）。
+If a `TimeControl` is given, the Server reads it on one thread every `ServerOptions::monitor_period` (default 50 ms) and keeps the following in one snapshot (`ControlServer::simulation()`):
 
-- 時間の状態
-- participant ごとの SIL Kit の状態
-- 失敗した participant と理由（`FailureCheck`。猶予は `leave_grace`。一度失敗を見たら消さない）
-- 終わったか
+- The time state
+- The SIL Kit state of each participant
+- Failed participants and the reasons (`FailureCheck`; the grace period is `leave_grace`; once a failure is seen, it is never cleared)
+- Whether the simulation has ended
 
-| ルール | 内容 |
+| Rule | Details |
 |---|---|
-| 購読者への通知 | 変わったときだけ通知する |
-| 購読者を呼ぶスレッド | 監視のスレッドか、`poll()` を呼んだスレッド（つまり、時間の呼び出しを処理する gRPC のスレッド）で、1 つずつ呼ぶ |
-| 購読者の制約 | 短くし、中から購読の登録や解除をしない |
-| `TimeControl` を読む所 | `ListPeers` と `Watch` はどちらもこのスナップショットを使うので、購読の数によらず、監視の 1 か所だけ |
-| 状態を読めなかったとき（`TimeControl` が投げた） | 前に読めた値を残し、理由を添える（`ListPeers` の `simulation_error`、`SimulationState::error`。participant と時間の両方を読めなければ両方の理由） |
-| participant を読めなかった回 | 失敗を判定しないので、いなくなった participant の猶予は数え直さずに続く |
+| Notifying subscribers | Only on change |
+| Thread that calls subscribers | The monitoring thread, or the thread that called `poll()` (that is, the gRPC thread that handles a time call), one subscriber at a time |
+| Constraints on subscribers | Keep them short. Do not subscribe or unsubscribe from inside one. |
+| Where `TimeControl` is read | `ListPeers` and `Watch` both use this snapshot, so only the monitor reads it, whatever the number of subscriptions |
+| When the state cannot be read (`TimeControl` threw) | The values read last are kept, with the reason attached (`simulation_error` in `ListPeers`, `SimulationState::error`; if neither the participants nor the time can be read, both reasons) |
+| A round in which the participants cannot be read | No failure is judged, so the grace period of a participant that went away continues without starting over |
 
-- `SimulationMonitor` は `TimeControl` だけに依存します。
-- `TimeControl::left_participant()` は純粋仮想です（実装し忘れると、失敗を判定しないまま動くため）。
-- SIL Kit の実装は、participant の状態を最初の 1 回だけ SIL Kit から読み直し（ハンドラーの登録中に届いた状態を SIL Kit が渡さないことがあるため）、以後はハンドラーが受信した状態を読みます。
+- `SimulationMonitor` depends only on `TimeControl`.
+- `TimeControl::left_participant()` is pure virtual (if an implementation forgot it, the monitor would run without ever judging a failure).
+- The SIL Kit implementation queries SIL Kit for the participant states directly only once, at the start, because SIL Kit may not pass on states that arrived while the handlers were being registered. After that, it reads the states that its handlers received.
 
-### Peer の一覧（`ListPeers`）
+### Peer list (`ListPeers`)
 
-- 一覧は、接続した Agent に、controller の必須の participant（`SimulationControllerOptions::required_participants`。Agent がなくても）を合わせたものです。
-- 必須でない participant は、Agent があるときだけ（`simulation_state` は空で）出ます。
-- 各 Peer に、Agent の有無（`has_agent`）と SIL Kit のライフサイクルの状態（`simulation_state`。まだ見えていなければ空）が付きます。
-- `Watch` の Peer も同じ変換で作るので、同じ Peer は `ListPeers` と同じ内容で届きます。
+- The list is the connected Agents plus the controller's required participants (`SimulationControllerOptions::required_participants`; even without an Agent).
+- A participant that is not required appears only if it has an Agent (with an empty `simulation_state`).
+- Each peer carries whether it has an Agent (`has_agent`) and its SIL Kit lifecycle state (`simulation_state`; empty if not seen yet).
+- `Watch` builds its peers with the same conversion, so a peer arrives with the same content as in `ListPeers`.
 
-### 時刻と値をまとめて読む（`GetSnapshot`）
+### Reading time and values together (`GetSnapshot`)
 
-時間の状態（`TimeControl::state()`）を先に読み、その後で `Hub::latest_of()` を呼びます。2 つの読み取りにまたがるロックは持ちません（`TimeControl` の側のロックを放してから、Hub のロックを取る）。
+The Server reads the time state (`TimeControl::state()`) first, then calls `Hub::latest_of()`. It holds no lock across the two reads (it releases the lock on the `TimeControl` side before it takes the Hub's lock).
 
-それでも、次のことが言えます。Hub の側の participant が時刻同期に参加していれば、ゲートが時刻 P を示した時点で、P より前に始まった各 Peer のステップの値は Hub に入っています（「SIL Kit の上のトランスポート」の「受信の順序の保証」）。Hub の値は新しくなる一方なので、後から読んだ値は時刻より古くなりません。
+The following still holds. If the Hub-side participant takes part in time synchronization, then when the gate shows time P, the values of every peer's steps that started before P are in the Hub (see "Receive order guarantees" under "Transport over SIL Kit"). The Hub's values only ever get newer, so values read afterwards are never older than the time.
 
-レスポンスの `consistent` は、読んだ時間の状態が止まっていて（終わっておらず）、どの値も P より後のステップのものでない（`none_after()`）ときだけ真です。
+`consistent` in the response is true only if the time state read was paused (and not ended) and no value comes from a step after P (`none_after()`).
 
-| 場合 | `consistent` |
+| Case | `consistent` |
 |---|---|
-| 2 つの読み取りの間に再開され、その後のステップの値が入っている | 偽 |
-| 2 つの読み取りの間に再開されたが、その後のステップの値が入っていない | 真（値は P のもののままなので、フラグは正しい） |
-| 実時間の Peer の値の時刻（その Peer の時計の時刻）が P より後 | 偽 |
-| `TimeControl` がない | 偽（値だけを返し、`available` も偽） |
+| Resumed between the two reads, and values of later steps are included | False |
+| Resumed between the two reads, but no values of later steps are included | True (the values are still those at P, so the flag is correct) |
+| The time of a real-time peer's value (on that peer's clock) is after P | False |
+| No `TimeControl` | False (only the values are returned, and `available` is also false) |
 
-- ちょうど P に始まるステップの値は、入っているかどうか決まりません。
-- 時間の状態を読めなければ（`state()` が投げた）、呼び出しは失敗します。
-- 名前は `max_peers_per_request`（既定 1024）までです。
-- レスポンスが `max_snapshot_bytes`（既定 4 MiB。gRPC のクライアントが受け取れる既定の大きさ）を超えるときは、Peer を分けるように言って `RESOURCE_EXHAUSTED` を返します。
+- Whether the values of a step that starts exactly at P are included is undetermined.
+- If the time state cannot be read (`state()` threw), the call fails.
+- A call takes up to `max_peers_per_request` names (default 1024).
+- If the response would exceed `max_snapshot_bytes` (default 4 MiB, the default size that a gRPC client accepts), the call returns `RESOURCE_EXHAUSTED` and says to split the peers.
 
-### エラー
+### Errors
 
-gRPC の状態コードで返します。
+Errors are returned as gRPC status codes.
 
-| 場合 | コード |
+| Case | Code |
 |---|---|
-| 引数のエラー | `INVALID_ARGUMENT` |
-| ない操作や Peer | `NOT_FOUND` |
-| 待ちのタイムアウト | `DEADLINE_EXCEEDED` |
+| Argument error | `INVALID_ARGUMENT` |
+| Unknown operation or peer | `NOT_FOUND` |
+| Timeout of a wait | `DEADLINE_EXCEEDED` |
 
-### 待つ呼び出し（`WaitOperation`、`WaitPaused`）
+### Waiting calls (`WaitOperation`, `WaitPaused`)
 
-- `max_wait`（既定 60 秒）で打ち切り、クライアントの取り消しと Server の終了でもすぐに終わります。
-- シミュレーションが終わった後の `WaitPaused` は、待たずに `FAILED_PRECONDITION` を返します。
-- 待つ呼び出しと `Watch` は、それぞれ Server のスレッドを 1 本使い、同時に `max_waiting_calls`（既定 256）までで、超えたら `RESOURCE_EXHAUSTED` です。
+- They end after `max_wait` (default 60 s), and end at once when the client cancels or the Server shuts down.
+- `WaitPaused` after the simulation has ended returns `FAILED_PRECONDITION` without waiting.
+- Each waiting call and each `Watch` uses one Server thread. At most `max_waiting_calls` (default 256) can run at once; beyond that, the call returns `RESOURCE_EXHAUSTED`.
 
-### 購読（`Watch`）
+### Subscriptions (`Watch`)
 
-始めに、その時点の Peer と最新値（`time` を求めれば時間の状態、`simulation` を求めればシミュレーションの状態も）を送信してから `initial_done` を送信し、以後は変化を送信します。
+A `Watch` first sends the current peers and the latest values (plus the time state if `time` is requested, and the simulation state if `simulation` is requested), then `initial_done`. After that, it sends changes.
 
-時間とシミュレーションの状態は、監視が通知したスナップショットを購読ごとの待ち行列（64 件）に入れておき、Hub の変化を待つ間（最長 100 ms）ごとに、順に、変わったものを送信します。
+For the time and simulation state, the snapshots that the monitor reports go into a queue for each subscription (64 entries). Each time the call has waited for Hub changes (at most 100 ms), it sends the changed ones in order.
 
-- 待ち行列があふれると古いものから捨て、捨てた数を `dropped` に加えます（遅いクライアントには途中の状態が届かないことがあります。止まるのを待つには `WaitPaused` を使います）。
-- 失敗と終わりは、一度立つと後のスナップショットすべてに残るので、捨てられても失われません。
-- 時間を変える呼び出し（一時停止、再開、ステップ、指定時刻まで、速度、停止）と `WaitPaused` は、その場で監視に読ませるので、その結果の状態は、待ち行列があふれない限り購読に届きます。
-- シミュレーションの状態（`SimulationState`）は、必須の participant とその SIL Kit の状態、失敗した participant とその状態と理由、終わったか、読めなかった理由です。
-- シミュレーションを調停しない Server は、`simulation` を求めた購読に `available = false` を 1 回だけ送信します。
-- 時間の状態の `running` が偽のとき、`ended` で「まだ始まっていない」と「終わった」を区別します。
-- Peer は `ListPeers` と同じ一覧（Agent のない必須の participant を含む）で、SIL Kit の状態が変わった Peer は送り直します。
-- Agent の Peer が忘れられても、必須の participant なら、Agent のない Peer として送信します（`removed_peer` は一覧から消えたときだけ）。
-- `capacity` は `max_watch_capacity`（既定 65536）までです。
+- When the queue overflows, the oldest entries are dropped and their number is added to `dropped` (a slow client may miss intermediate states; to wait until the simulation is paused, use `WaitPaused`).
+- A failure and the end, once set, stay in every later snapshot, so they are not lost even if snapshots are dropped.
+- Calls that change time (pause, resume, step, run until, speed, stop) and `WaitPaused` make the monitor read at once, so the resulting state reaches the subscription unless the queue overflows.
+- The simulation state (`SimulationState`) holds the required participants and their SIL Kit states, the failed participants with their states and reasons, whether the simulation has ended, and the reason if it could not be read.
+- A Server that does not coordinate a simulation sends `available = false` once to a subscription that requested `simulation`.
+- When `running` in the time state is false, `ended` tells "not started yet" from "ended".
+- The peers are the same list as in `ListPeers` (including required participants without an Agent). A peer whose SIL Kit state changed is sent again.
+- If the peer of an Agent is forgotten but it is a required participant, it is sent as a peer without an Agent (`removed_peer` is sent only when it leaves the list).
+- `capacity` is at most `max_watch_capacity` (default 65536).
 
-### 接続
+### Connections
 
-keepalive（10 秒ごと、5 秒で応答がなければ切断）を使うので、黙って切れた接続も数十秒以内に見つかります。
+The Server uses keepalive (every 10 s; the connection is closed if there is no answer within 5 s), so a connection that dropped silently is detected within a few tens of seconds.
 
-### 認証とアクセス制御
+### Authentication and access control
 
 #### TLS
 
-`SecurityOptions` にサーバーの証明書と秘密鍵（PEM）を渡すと、TLS で待ち受けます。クライアントは、ルート証明書（PEM）を渡して TLS で接続します。
+Pass a server certificate and private key (PEM) in `SecurityOptions` to listen with TLS. A client passes a root certificate (PEM) and connects with TLS.
 
-#### トークン
+#### Tokens
 
-認証情報（`Credential`: 名前、トークン、ロール）を渡すと、すべての呼び出しに `authorization: Bearer <token>`（`Bearer` の大文字と小文字は問わない）が必要です。認証情報を渡さなければ、誰でも何でもできます。トークンは、長さによらない時間で比べます。
+If credentials (`Credential`: name, token, role) are given, every call needs `authorization: Bearer <token>` (`Bearer` is case-insensitive). Without credentials, anyone can do anything. Token comparison takes the same time wherever the tokens differ.
 
-| 場合 | 結果 |
+| Case | Result |
 |---|---|
-| 資格情報のファイル（`load_credentials()`）に、同じトークンの重複がある | エラー |
-| 資格情報のファイルに、3 語でない行がある | エラー |
-| 資格情報のファイルに、ロール `agent` の行（Agent がトークンで gRPC に接続していたときのもの）がある | エラー（もう使わないので消すように、文言で言う） |
-| `SecurityOptions` に認証情報を直接渡す | 同じ検査をする（`std::invalid_argument`） |
-| `SecurityOptions` に、証明書と秘密鍵の片方だけを渡す | `std::invalid_argument` |
-| トークンがないか、合わない | `UNAUTHENTICATED` |
-| ロールが足りない | `PERMISSION_DENIED` |
+| The credentials file (`load_credentials()`) has the same token twice | Error |
+| The credentials file has a line that is not 3 words | Error |
+| The credentials file has a line with the role `agent` (from when Agents connected to gRPC with a token) | Error (the message says to delete the line, because it is no longer used) |
+| Credentials are passed directly in `SecurityOptions` | The same checks (`std::invalid_argument`) |
+| Only one of the certificate and the private key is passed in `SecurityOptions` | `std::invalid_argument` |
+| No token, or a wrong one | `UNAUTHENTICATED` |
+| Insufficient role | `PERMISSION_DENIED` |
 
-#### ロール
+#### Roles
 
-ロールは viewer < operator < admin の順で、後のロールは前のロールのできることを含みます。
+The roles are ordered viewer < operator < admin. Each role can do everything the roles before it can.
 
-| ロール | できること |
+| Role | Can |
 |---|---|
-| viewer | 読む: 一覧、値、操作、購読、時刻、時刻と値をまとめて読む |
-| operator | 変える: 書き込み、一時停止、再開、ステップ、速度、Peer を忘れる |
-| admin | 停止 |
+| viewer | Read: the list, values, operations, subscriptions, time, time and values together |
+| operator | Change: writes, pause, resume, step, speed, forgetting peers |
+| admin | Stop |
 
-- viewer は、値、スキーマ、イベント、操作（書いた人の認証情報の名前と接続元を含む）を読めます。
-- RPC ごとに必要なロールと監査の有無は、Server の 1 つの表（`rpc_rules()`）にあり、各 RPC はその表で認可してから処理します。
-- 表にない RPC は、誰が呼んでも `PERMISSION_DENIED` です（RPC を追加して表を忘れると、テストが失敗します）。
+- A viewer can read values, schemas, events and operations (including the credential name and origin of whoever wrote).
+- The role each RPC needs, and whether it is audited, are in one table in the Server (`rpc_rules()`). Each RPC is authorized through that table before it runs.
+- An RPC missing from the table returns `PERMISSION_DENIED` to anyone (if you add an RPC and forget the table, a test fails).
 
-#### ループバック以外のアドレス
+#### Non-loopback addresses
 
-ループバック以外のアドレスで待ち受けるには、TLS と認証情報の両方が必要です（`allow_insecure` を明示しない限り、`std::invalid_argument` で起動しません）。ループバックとみなすのは、`localhost`、`[::1]`、数字の `127.x.y.z`、`unix:` のアドレスだけです（`is_loopback_address()`）。
+To listen on a non-loopback address, both TLS and credentials are required (unless `allow_insecure` is set explicitly, the Server does not start and throws `std::invalid_argument`). Only `localhost`, `[::1]`, numeric `127.x.y.z` and `unix:` addresses count as loopback (`is_loopback_address()`).
 
-#### 監査
+#### Auditing
 
-- `audit` に、変更する呼び出し（書き込み、時間の操作、Peer を忘れる）と、拒否した呼び出しを、誰が（認証情報の名前と接続元）、何を、結果、の 1 行で渡します。
-- 制御文字は `?` に置き換えます（名前に改行を入れて、偽の行を書けない）。
-- 1 行は約 1000 バイトで切ります。
-- 書き込みの行は、最初の 16 個の名前と、残りの数です。
-- 拒否した呼び出しはポートに接続できる誰でも起こせるので、1 秒に 20 行までにします。
-- 記録しなかった数は、次に記録する拒否した呼び出しの行の前に通知します。
-- 監査の関数が投げた例外は無視します。
+- `audit` receives one line for each changing call (writes, time control, forgetting peers) and each refused call: who (credential name and origin), what, and the result.
+- Control characters are replaced with `?` (a newline in a name cannot forge a line).
+- A line is cut at about 1000 bytes.
+- A write line holds the first 16 names and the number of the rest.
+- Anyone who can connect to the port can cause refused calls, so they are limited to 20 lines per second.
+- The number of lines not recorded is reported before the next recorded line for a refused call.
+- Exceptions thrown by the audit function are ignored.
 
-#### 認証のない区間
+#### Unauthenticated segments
 
-SIL Kit の registry とデータプレーンには認証がありません。閉じたネットワークで使います。SIL Kit の上のトランスポート（`vehicle_sil::control_silkit`）で運ぶ Agent と Hub の間も同じです。
+The SIL Kit registry and data plane have no authentication. Use them on a closed network. The same applies between the Agent and the Hub, which the transport over SIL Kit (`vehicle_sil::control_silkit`) carries.
 
-### 上限
+### Limits
 
-| 対象 | 上限 | 超えたとき |
+| Item | Limit | When exceeded |
 |---|---|---|
-| Server の未完了の操作 | Peer ごとの `max_pending`（hello の値。65536 まで） | Busy（「Control Server の中核」の「書き込みと操作の状態」） |
-| 確定した操作 | `max_operations` | 古いものから忘れる |
-| 購読 | `capacity`（既定 1024、`max_watch_capacity` まで） | なし |
-| 1 回の `Write` の書き込み | `max_writes_per_request`（既定 4096） | `INVALID_ARGUMENT` |
-| 1 回の `GetSnapshot` の名前 | `max_peers_per_request`（既定 1024） | `INVALID_ARGUMENT` |
-| 待つ呼び出しと `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
-| 1 つのメッセージ | gRPC の既定の 4 MB | なし |
+| Unfinished operations in the Server | Each peer's `max_pending` (the value in the hello; up to 65536) | Busy (see "Writes and operation state" under "Control Server core") |
+| Settled operations | `max_operations` | The oldest are forgotten |
+| Unread events and operation updates, per subscription | `capacity` (default 1024; a larger value than `max_watch_capacity` is reduced to it) | The oldest are dropped and counted in `dropped` |
+| Writes in one `Write` | `max_writes_per_request` (default 4096) | `INVALID_ARGUMENT` |
+| Names in one `GetSnapshot` | `max_peers_per_request` (default 1024) | `INVALID_ARGUMENT` |
+| Waiting calls and `Watch` | `max_waiting_calls` | `RESOURCE_EXHAUSTED` |
+| One message | gRPC's default of 4 MiB | gRPC refuses the message with `RESOURCE_EXHAUSTED`. The Server checks a `GetSnapshot` reply itself first (`max_snapshot_bytes`; see [Reading time and values together](#reading-time-and-values-together-getsnapshot)). |
 
-Agent の hello の上限は、「SIL Kit の上のトランスポート」の「大きさの上限」にあります。
+For the limits on an Agent's hello, see "Size limits" under "Transport over SIL Kit".
 
-### Server の再起動
+### Server restarts
 
-- Hub の状態（操作、値）は引き継ぎません。
-- 前の Server の操作の番号を問い合わせると `NOT_FOUND` です。
-- Agent がまだ持っている前の Server の操作（時刻つきを含む）は、そのまま反映されます。
+- The Hub's state (operations, values) is not carried over.
+- Asking for the number of an operation of the previous Server returns `NOT_FOUND`.
+- Operations of the previous Server that an Agent still holds (including those with a time) are applied as usual.
 
-## ランチャーの Control Server（`vehicle_sil_launch run --control`）
+## The launcher's Control Server (`vehicle_sil_launch run --control`)
 
-`VEHICLE_SIL_BUILD_CONTROL_SERVER` のビルドの `vehicle_sil_launch` だけが持ちます（`tools/launch/control_server.cpp`）。`libs/launch` は gRPC に依存しません。ランチャーは、`run` の Hub（ECU の Agent が SIL Kit で接続する。上の「SIL Kit の上のトランスポート」）を、`ServerOptions::external_hub` で `ControlServer` に渡します。
+Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it (`tools/launch/control_server.cpp`). `libs/launch` does not depend on gRPC. The launcher passes the Hub of `run` (to which the ECUs' Agents connect over SIL Kit; see "Transport over SIL Kit" above) to `ControlServer` with `ServerOptions::external_hub`.
 
-### スレッドと呼ぶもの
+### Threads and what they call
 
-| スレッド | 呼ぶもの | 通るロック |
+| Thread | Calls | Locks it goes through |
 |---|---|---|
-| 標準入力を読むスレッド | `TimeCommands::apply()`（`source` は `stdin`） | `TimeCommands` のミューテックスの中で、controller の時間ゲートに渡す |
-| gRPC のスレッド（時間の操作） | `TimeCommands::apply()`（`source` は `control_server`） | `TimeCommands` のミューテックスの中で、controller の時間ゲートに渡す |
-| gRPC のスレッド（値の読み書き） | Hub | Hub のロック |
+| The thread that reads stdin | `TimeCommands::apply()` (`source` is `stdin`) | Passes the command to the controller's time gate inside the `TimeCommands` mutex |
+| gRPC threads (time control) | `TimeCommands::apply()` (`source` is `control_server`) | Passes the command to the controller's time gate inside the `TimeCommands` mutex |
+| gRPC threads (reading and writing values) | The Hub | The Hub's lock |
 
-### 見るだけのサーバー（`observe_only`）
+### Observe-only server (`observe_only`)
 
-- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。
-- 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があります。
-- `observe_only` のサーバーは、「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。
-- 拒否した呼び出しは、Hub にも `TimeControl` にも届きません。
-- 読む呼び出しがアクセスするのは、Hub（スレッド安全。購読は上限つきで、トランスポートのスレッドを待たせない）と `TimeCommands::inspect()` だけで、シナリオの tap、書き込み、ガードとは何も共有しません。
+- When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only`.
+- Each row of the call table (`rpc_rules()` in `libs/control_grpc/src/auth.cpp`) states what the call does to the simulation (read, change, stop).
+- An `observe_only` server refuses "change" calls in one place, right after the permission check and before the body of the call (`FAILED_PRECONDITION`, trailing metadata `vehicle-sil-reason`).
+- A refused call reaches neither the Hub nor `TimeControl`.
+- Read calls access only the Hub (thread-safe; subscriptions are bounded and never make the transport thread wait) and `TimeCommands::inspect()`. They share nothing with the scenario's tap, writes or guard.
 
-### 起動と終了の時期
+### When it starts and stops
 
-- 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。
-- Server を起動できなければ、何も起動しません（`setup`）。
-- 閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
+- After the check passes and before the registry starts, `run_file()` calls `RunOptions::serve_control` (on the main thread).
+- If the Server cannot start, nothing is started (`setup`).
+- The Server is closed after `run_file()` returns and before the result is written (on the main thread; `ControlServer::shutdown()`).
 
-### 時間の操作の経路
+### Time control path
 
-- `TimeControl` の実装は、`launch::TimeCommands` に渡すだけです。
-- 標準入力のコマンドと同じ `apply()` を、`source` を `control_server` にして呼びます。
-- `apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` のイベントを書き、ゲートに渡すので、標準入力と gRPC のコマンドは 1 列に並び、イベントの順が反映された順になります。
-- ルールも同じです（`step` は一時停止中だけ、など）。
-- 受け付けなかったコマンドは、`std::invalid_argument`（引数のエラー）か `std::logic_error` にして、`ControlServer` が `INVALID_ARGUMENT` か `FAILED_PRECONDITION` で返します。
-- `Stop` も `apply()` で受け付けるかを決めてイベントを書きます（実行が終わった後は拒否します）。
-- 受け付けた `Stop` は、標準入力の `stop` と同じ停止の要求にします（待ちません）。
+- The `TimeControl` implementation only forwards to `launch::TimeCommands`.
+- It calls the same `apply()` as stdin commands, with `source` set to `control_server`.
+- `apply()` decides whether to accept a command, writes the `command` event and passes the command to the gate, all inside one mutex. Commands from stdin and gRPC therefore form one sequence, and the order of the events is the order in which the commands took effect.
+- The rules are the same too (`step` only while paused, and so on).
+- A command that is not accepted becomes `std::invalid_argument` (an argument error) or `std::logic_error`, which `ControlServer` returns as `INVALID_ARGUMENT` or `FAILED_PRECONDITION`.
+- `Stop` also goes through `apply()`, which decides whether to accept it and writes the event (it is refused after the run has ended).
+- An accepted `Stop` becomes the same stop request as `stop` on stdin (it does not wait).
 
-### 状態の読み取り（`TimeCommands::inspect()`）
+### Reading state (`TimeCommands::inspect()`)
 
-- 読むのは、時間の状態、必須の participant と SIL Kit の状態、去った participant です。
-- `TimeCommands::inspect()` が、controller が付いている間だけ、ミューテックスの中で関数を呼びます。
-- 外れた後（`detach()`。controller を破棄する前に、どの終わり方でも呼ぶ）は、最後に読んだ値を返します（`ended` は真）。
-- そのため、gRPC のスレッドが、破棄された controller にアクセスすることはありません。
-- `WaitPaused` は `TimeCommands::wait_paused()` で、ミューテックスを持たずに待ち、外れたらすぐに戻ります。
+- It reads the time state, the required participants and their SIL Kit states, and the participants that left.
+- `TimeCommands::inspect()` calls the function that the caller passes (the Server's read of the controller) inside the mutex, only while the controller is attached.
+- After detachment (`detach()`, called before the controller is destroyed, however the run ends), it returns the values read last (`ended` is true).
+- A gRPC thread therefore never accesses a destroyed controller.
+- `WaitPaused` is `TimeCommands::wait_paused()`. It waits without holding the mutex, and returns at once on detachment.
 
-### ランチャーの `GetSnapshot`
+### The launcher's `GetSnapshot`
 
-- 時間の状態は上の `inspect()` で読み（`TimeCommands` のミューテックス → ゲートのロック。戻るときに両方を放す）、その後で Hub を読みます。
-- `TimeCommands` のミューテックスを持ったまま Hub のロックを取ることはないので、ロックの順序は増えません。
+- The time state is read with `inspect()` above (the `TimeCommands` mutex, then the gate's lock; both are released on return), then the Hub is read.
+- The Hub's lock is never taken while the `TimeCommands` mutex is held, so no new lock order is added.
 
-| 時点 | 返すもの | `consistent` |
+| When | Returns | `consistent` |
 |---|---|---|
-| 最初のステップの前で待つ区間で止まっている間 | 0 で止まっていて、値はまだない | 真 |
-| 実行が終わった後 | 最後の時刻と最後の値 | 偽 |
+| While stopped in the start window before the first step | Stopped at 0, no values yet | True |
+| After the run has ended | The last time and the last values | False |
 
-### 開始前に止める（`--start-paused`）
+### Pausing before the start (`--start-paused`)
 
-- 最初のステップの前で待つ区間の関数が、hello を待った後に `TimeCommands::hold_before_start()` で待ちます。
-- `resume`、`step`、`run_until` のどれかを受け付けると戻り、区間が閉じてシミュレーションが始まります。
-- 停止の要求、区間の取り消し、必須の participant が去ったこと、`--timeout-ms` でも戻ります（そのときは、時刻 0 のステップの後に 0 で止まる、ふつうの `--start-paused` になります）。
-- 区間より前に受け付けたコマンドで、止まる時点に 0 で止まることになっていなければ、止まりません（`TimeCommands` が、最後の `pause` の後に `resume`、`step`、`run_until`、後の時刻への `pause` があったかを持つ）。
-- この間、`GetTime` は 0 で止まって始まっていない状態を返し、`wait_paused()` はすぐに 0 を返します。
+- The function of the start window waits for the hellos, then waits in `TimeCommands::hold_before_start()`.
+- It returns when a `resume`, `step` or `run_until` is accepted. The window then closes and the simulation starts.
+- It also returns on a stop request, cancellation of the window, a required participant leaving, or `--timeout-ms`. The run then becomes an ordinary `--start-paused` run that stops at 0 after the step at time 0.
+- If commands accepted before the window mean that the run would not be stopped at 0 at that point, it does not stop (`TimeCommands` records whether a `resume`, `step`, `run_until` or a `pause` at a later time came after the last `pause`).
+- Meanwhile, `GetTime` returns a state that is stopped at 0 and not started, and `wait_paused()` returns 0 at once.
 
-### 開始の期限
+### Start deadline
 
-`vehicle_sil_launch` は、`SimulationController::start()` を期限なし（`kNoStartLimit`）で呼び、期限を `give_up` で自分で持ちます。
+`vehicle_sil_launch` calls `SimulationController::start()` with no deadline (`kNoStartLimit`) and keeps the deadline itself, in `give_up`.
 
-| 区間 | 期限 |
+| Phase | Deadline |
 |---|---|
-| 止まるまで | `start_timeout_ms` の残り（少なくとも hello の待ち + 1 秒） |
-| 止まっている間 | なし |
-| 止まるのをやめてから | 改めて `start_timeout_ms` |
+| Until the hold | The rest of `start_timeout_ms` (at least the hello wait + 1 s) |
+| During the hold | None |
+| After the hold ends | `start_timeout_ms` again |
 
-利用者が起動する（manual の）必須の participant がいる実行では、manual の participant がすべて ReadyToRun 以上に着くまで期限なしで、着いた時点から `start_timeout_ms` です。その participant はデバッガーで止まっていることがあるためです。止まるまでの区間も同じです。
+In a run with a required participant that you start yourself (a manual participant), there is no deadline until every manual participant has reached ReadyToRun or later. `start_timeout_ms` counts from that moment. The reason is that such a participant may be stopped in a debugger. The same applies to the phase until the hold.
 
-この実行では、どの段階でも、`give_up` は停止の要求（割り込み）と `--timeout-ms`（participant を待ち始めた時点から）を見ます。期限のない待ちから抜けるためです。manual のいない実行では、停止の要求は開始が終わってから反映されます。
+In such a run, in every phase, `give_up` watches for a stop request (an interrupt) and for `--timeout-ms` (counted from when the launcher starts waiting for participants), to get out of the waits that have no deadline. In a run without manual participants, a stop request takes effect after the start has finished.
 
-- 期限は、main と区間のスレッドが 1 つのミューテックスで読み書きします。
-- `give_up` は、main のスレッドで 5 ms ごとに見ます。
-- 期限を過ぎたら、最初のステップに着いていない participant（ReadyToRun でないもの）と状態を文言に挙げて、`start()` を終わらせます。
-- `--timeout-ms` は、止まった時点から数えます。
+- The main thread and the thread of the window read and write the deadline under one mutex.
+- The main thread checks `give_up` every 5 ms.
+- When the deadline passes, `start()` ends, and the message lists the participants that have not reached the first step (those not in ReadyToRun) and their states.
+- In a run without a required manual participant, `--timeout-ms` counts from the moment of the hold (it is not checked before the hold). In a run with one, it counts from when the launcher starts waiting for participants, as above.
 
-### 終わった後の値
+### Values after the end
 
-`TimeCommands::detach()` が、controller を外す前に `set_on_detach()` の関数を呼び、`LaunchTimeControl` がそこで最後の時刻（結果の `sim_ms` と同じ数え方）、participant、去った participant を読みます。外れた後の `GetTime` は、その値を返します。
+`TimeCommands::detach()` calls the function set with `set_on_detach()` before it detaches the controller. In that function, `LaunchTimeControl` reads the last time (counted the same way as the result's `sim_ms`), the participants and the participants that left. `GetTime` after detachment returns those values.
 
-### 終わり方
+### How it ends
 
-- ランチャーは、クライアントを待ちません。
-- `run_file()` の中のどのスレッドも gRPC を待たず、gRPC のスレッドが取るのは `TimeCommands`、Hub、ゲートの短いロックだけです。
-- `shutdown()` は、待つ呼び出しと購読に終わりを通知し（それぞれ 200 ms と 100 ms ごとに見る）、gRPC の Server を最長 2 秒の期限で止めます。
-- `WaitOperation` は、Agent の接続の終わり（`Hub::agent_ended()`）で操作が確定して戻ります。
+- The launcher does not wait for clients.
+- No thread in `run_file()` waits for gRPC. The gRPC threads take only short locks: those of `TimeCommands`, the Hub and the gate.
+- `shutdown()` tells waiting calls and subscriptions to end (they check every 200 ms and every 100 ms respectively), and stops the gRPC Server with a deadline of at most 2 s.
+- `WaitOperation` returns when the end of the Agent's connection (`Hub::agent_ended()`) settles the operation.
 
-### ランチャーの認証
+### Launcher authentication
 
-- `ControlServer` のルールのとおりです（ループバック以外は TLS と認証情報）。
-- ランチャーは、ループバックでないアドレスに TLS と認証情報がなければ、引数のエラーにします（`allow_insecure` は出しません）。
-- トークンは、ファイルでだけ受け取ります（引数はイベントの `hello` に出るため）。
+- The rules of `ControlServer` apply (TLS and credentials for a non-loopback address).
+- If a non-loopback address has no TLS and credentials, the launcher reports an argument error (it does not offer `allow_insecure`).
+- The launcher accepts tokens only in a file (arguments appear in the `hello` event).
 
-## シナリオ（`vehicle_sil_launch run --scenario`）
+## Scenarios (`vehicle_sil_launch run --scenario`)
 
-シナリオ（[scenario.md](../scenario.md)）は、ランチャーの中で、Hub と時間ゲートを直接使って進めます。gRPC は使いません。保証のリファレンスは、`libs/launch/include/vehicle_sil/launch/scenario_run.hpp` の `ScenarioEngine` のコメントです。
+A scenario ([scenario.md](../scenario.md)) runs inside the launcher and uses the Hub and the time gate directly. It does not use gRPC. The reference for the guarantees is the comment of `ScenarioEngine` in `libs/launch/include/vehicle_sil/launch/scenario_run.hpp`.
 
-データの流れは次のとおりです。矢印は、渡すものです。
+The data flow. Each arrow is labeled with what it passes:
 
 ```mermaid
 flowchart LR
-    ecu["ECU の Agent"] -- "サンプル、結果" --> hub["Hub"]
-    hub -- "全サンプル（tap）" --> engine["ScenarioEngine"]
-    engine -- "時刻つきの書き込み" --> hub
-    hub -- "コマンド" --> ecu
-    gate["時間ゲートのガード"] -- "保留したステップ P" --> engine
-    engine -- "ガードの次の位置" --> gate
+    ecu["ECU Agent"] -- "samples, results" --> hub["Hub"]
+    hub -- "every sample (tap)" --> engine["ScenarioEngine"]
+    engine -- "timed writes" --> hub
+    hub -- "commands" --> ecu
+    gate["time gate guard"] -- "held step P" --> engine
+    engine -- "next guard position" --> gate
 ```
 
-### ガード（`guard_from()`、`wait_guarded()`）
+### Guard (`guard_from()`, `wait_guarded()`)
 
-- `SimulationController::guard_from(t)` と `wait_guarded()` は、一時停止とペース調整とは別の保留です。
-- t 以降に始まる controller のステップを、持ち主がガードを先へ動かすまで保留します。
-- 保留している間の位置の意味は、一時停止と同じです（[virtual-time.md](virtual-time.md) の「一時停止、ステップ実行、速度（時間ゲート）」の「P で止まっている」）。
-- `TimeState::paused` は変えず、ペース調整の期限も変えません。
-- 持ち主が期限を過ぎて持っていた分は、次のステップの遅れとして、そのステップが始まったときに数えます。
-- ガードが保留している間は、期限を過ぎたステップとして数えません。
-- stop_at のステップは保留しません。
+- `SimulationController::guard_from(t)` and `wait_guarded()` are a hold separate from pausing and pacing.
+- They hold the controller's steps that start at or after t until the owner moves the guard forward.
+- While a step is held, the position means the same as when paused (see "stopped at P" under "Pause, step and speed (time gate)" in [virtual-time.md](virtual-time.md#pause-step-and-speed-time-gate)).
+- The guard changes neither `TimeState::paused` nor the pacing deadline.
+- Time that the owner holds past the deadline counts as lateness of the next step, when that step starts.
+- While the guard holds a step, the step does not count as past its deadline.
+- The stop_at step is not held.
 
-### 全サンプル（`set_values_tap()`）
+### Every sample (`set_values_tap()`)
 
-- `control::Hub::set_values_tap()` は、Hub が受信したサンプルを、受信した順に 1 つずつ渡します。
-- 購読は Peer ごとに最新の 1 つしか持たないので、条件の判定には使いません。
-- tap はトランスポートのスレッド（ランチャーでは controller の SIL Kit のスレッド）で、Hub のロックの中から呼ばれるので、積むだけにします。
+- `control::Hub::set_values_tap()` passes each sample that the Hub receives, one at a time, in order of reception.
+- A subscription keeps only the latest sample per peer, so subscriptions are not used to evaluate conditions.
+- The tap is called on the transport thread (in the launcher, the controller's SIL Kit thread) inside the Hub's lock, so it only queues the samples.
 
-### 進め方
+### How the scenario advances
 
-ランチャーは、controller のステップ 0 からガードをかけます。シナリオのスレッドは、ステップ P が保留されるたびに、受信したサンプルを `ScenarioEngine` に渡して `tick(P)` を呼び、戻ったらガードを P の先へ動かします。`tick(P)` は次の順に処理します。
+The launcher sets the guard from the controller's step 0. Each time step P is held, the scenario thread passes the received samples to `ScenarioEngine` and calls `tick(P)`. When `tick(P)` returns, the thread moves the guard past P. `tick(P)` does the following in order:
 
-| 順 | すること |
+| Order | What it does |
 |---|---|
-| 1 | 結果が届いているはずの書き込みを確認する |
-| 2 | P より前に始まったステップのサンプルだけを、時刻の順（同じ時刻は、シナリオに出てくる participant の順）に見て、条件を判定する |
-| 3 | (P, P + controller のステップ幅] の時刻の書き込みを Hub に渡し、Agent が積むまで待つ（`wait_queued()`） |
+| 1 | Checks the writes whose results should have arrived |
+| 2 | Evaluates conditions, looking only at samples of steps that started before P, in time order (for equal times, in the order in which the participants appear in the scenario) |
+| 3 | Passes the writes with times in (P, P + the controller's step size] to the Hub, and waits until the Agents have queued them (`wait_queued()`) |
 
-時刻 0 の書き込みは、最初のステップの前で待つ区間（「SIL Kit の上のトランスポート」）で渡します。
+Writes at time 0 are passed in the start window before the first step (see "Transport over SIL Kit").
 
-### 時間をかける書き込み（`ramp`、`wave`）
+### Writes over time (`ramp`, `wave`)
 
-- 値は、手順の始まりからの仮想時間だけの関数です（`Waveform`。`ramp` の直線も、波形の 1 つです）。
-- `ScenarioEngine` は、相手の ECU のステップごとに、その時刻の値を、送信する直前に計算して書きます。
-- 関数は状態を持たず、乱数も種、変数の名前、時刻から作るので、controller のステップ幅や受信の順を変えても、同じ時刻には同じ値が反映されます。
+- The value is a function only of the virtual time since the scenario step began (`Waveform`; the line of a `ramp` is one waveform too). Here a scenario step is an entry in the scenario's `steps`; everywhere else on this page, a step is a simulation step.
+- For each step of the target ECU, `ScenarioEngine` computes the value at that step's time right before it sends the write.
+- The function has no state, and random values are derived from the seed, the variable name and the time. The same value is therefore applied at the same time even if the controller's step size or the order of reception changes.
 
-### 書き込みが遅れない根拠
+### Why writes are never late
 
-P を保留している間、ECU は P より後のステップを始めません。P より後の時刻の書き込みを、その間に Agent が積めば、その時刻以降の最初のステップの先頭で反映されます（「Control Agent」の「決定論性」）。
+While P is held, no ECU starts a step after P. If an Agent queues a write with a time after P during that hold, the write is applied at the start of the first step at or after that time (see "Determinism" under "Control Agent").
 
-### 結果が PC の速度によらない根拠
+### Why results do not depend on the speed of the computer
 
-判定に使うのは、サンプルの時刻と controller のステップの時刻だけです。ステップ P が始まった時点で、P より前に始まった各 ECU のステップのサンプルと結果は、Hub にすべて届いています（「SIL Kit の上のトランスポート」の「受信の順序の保証」）。ちょうど P に始まるステップの分は、届いていることも、いないこともあるので、P では見ずに、次のステップで見ます。書き込みの結果も、届いているはずの決まったステップ（適用する ECU のステップより後の、最初の controller のステップ）で見ます。
+Evaluation uses only the times of samples and the times of the controller's steps. When step P starts, the samples and results of every ECU step that started before P have all arrived in the Hub (see "Receive order guarantees" under "Transport over SIL Kit"). Those of a step that starts exactly at P may or may not have arrived, so they are not looked at in P but in the next step. The results of writes are also looked at in a fixed step in which they must have arrived (the first controller step after the step of the ECU that applies the write).
 
-controller のステップ幅は、シナリオのある実行では速度によりません。実時間の待ちとタイムアウトは、結果を決めません（書き込みを Agent が積むのを待つ所に期限はなく、相手がいなくなれば Hub が確定させ、実行が終われば待つのをやめます）。
+In a run with a scenario, the controller's step size does not depend on the speed. Real-time waits and timeouts do not decide the result. The wait for an Agent to queue a write has no deadline: if the target goes away, the Hub settles the write, and if the run ends, the wait stops.
 
-### 終わり
+### End of a scenario
 
-- シナリオが終わる（全部通った、1 つ失敗した）と、シナリオのスレッドはガードを動かさずにフラグを立て、主スレッドがシミュレーションを順に止めます。
-- 止まる位置は、その controller のステップです。
-- stop_at で先に終わったときは、主スレッドが、最後のステップより前のサンプルで決められる所まで決めます。
-- 停止の要求、participant の失敗、`--timeout-ms` で終わったときは、シナリオは途中で終わった扱いです。
+- When the scenario ends (all passed, or one failed), the scenario thread sets a flag without moving the guard, and the main thread stops the simulation in order.
+- The simulation stops at that controller step.
+- If the run ends at stop_at first, the main thread decides as much as the samples before the last step allow.
+- If the run ends by a stop request, a participant failure or `--timeout-ms`, the scenario counts as ended partway.
 
-### 前提が破れたとき
+### When the assumptions break
 
-ECU がステップの外から送信するなどで、サンプルが遅れて届くと、判定が実行ごとに変わりえます。ランチャーは、遅れて届いたメッセージを数えて、警告 `control-link-late-values` を出します（`ecu_main` で作った ECU では起きません）。
+If samples arrive late, for example because an ECU sends from outside its steps, the evaluation can change from run to run. The launcher counts the messages that arrived late and reports the warning `control-link-late-values` (this does not happen with ECUs built with `ecu_main`).
 
-### 制限
+### Limitations
 
-- シナリオが使えるのは、仮想時間で動く ECU の変数だけです。
-- 待つ手順（`wait_until`、`within_ms`）の後の書き込みは、成り立ったサンプルから、controller のステップ幅で 2 つ先のステップより前には反映されません（サンプルを確かに持つのが次のステップ、書き込みが間に合うのがその次）。
-- controller のステップごとに、シナリオのスレッドとの受け渡しが 1 往復入ります。
+- A scenario can use only the variables of ECUs that run in virtual time.
+- A write after a wait step (`wait_until`, `within_ms`) is not applied before the step that is 2 controller step sizes after the sample that met the condition (the sample is certainly in hand in the next step, and the write is in time for the step after that).
+- Each controller step adds one round trip with the scenario thread.
 
-## 関連するドキュメント
+## See also
 
-- 使い方: [control-api.md](../control-api.md)
-- シナリオの書き方: [scenario.md](../scenario.md)
+- How to use the API: [control-api.md](../control-api.md)
+- How to write scenarios: [scenario.md](../scenario.md)
 - GUI: [gui.md](../gui.md)
-- 全体像: [architecture.md](../architecture.md)
-- どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」
+- Overview: [architecture.md](../architecture.md)
+- Where things are: [code-map.md](../code-map.md)
+- Other internals pages: "[Internals](../architecture.md#internals)" in architecture.md

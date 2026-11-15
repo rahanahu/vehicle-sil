@@ -1,77 +1,79 @@
-# ECU のプロジェクト（vehicle-sil のテンプレート）
+# ECU project (vehicle-sil template)
 
-[vehicle-sil](https://github.com/rahanahu/vehicle-sil) で ECU を作るプロジェクトのテンプレートです。2 つの ECU をビルドし、1 つのシミュレーションとして実行し、ブラウザの GUI で値を操作するところまでを、この README の手順で進めます。その後、ECU を自分のものに書き換えます。
+[日本語](README.ja.md)
 
-## 前提
+This is a project template for building ECUs with [vehicle-sil](https://github.com/rahanahu/vehicle-sil). Follow the steps in this README to build 2 ECUs, run them as one simulation, and read and write their values in the browser GUI. Then rewrite the ECUs into your own.
 
-| 必要なもの | Linux | Windows |
+## Prerequisites
+
+| Requirement | Linux | Windows |
 |---|---|---|
-| コンパイラ | GCC 12 以上か Clang（C++20 に対応したもの） | MSYS2 UCRT64 の MinGW-w64 GCC |
-| CMake 3.21 以上、Ninja、Git | ディストリビューションのパッケージ | MSYS2 のパッケージ |
-| Python 3.9 以上（`get_tools.py` の実行） | ディストリビューションのパッケージ | MSYS2 の Python |
-| Python 3.11 以上（GUI） | [uv](https://docs.astral.sh/uv/) があれば、足りない Python とパッケージを uv がインストールします。 | uv（MSYS2 の `mingw-w64-ucrt-x86_64-uv`）が必要です。 |
+| Compiler | GCC 12 or later, or Clang (with C++20 support) | MinGW-w64 GCC of MSYS2 UCRT64 |
+| CMake 3.21 or later, Ninja, Git | Distribution packages | MSYS2 packages |
+| Python 3.9 or later (to run `get_tools.py`) | Distribution package | The Python of MSYS2 |
+| Python 3.11 or later (for the GUI) | If you have [uv](https://docs.astral.sh/uv/), uv installs any missing Python and packages. | uv is required (`mingw-w64-ucrt-x86_64-uv` of MSYS2). |
 
-Windows では、MSYS2 の「UCRT64」シェルで作業します。必要なものは、次のコマンドでインストールします。
+On Windows, work in the MSYS2 "UCRT64" shell. Install the requirements with this command:
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-uv
 ```
 
-Windows の GUI は、uv がダウンロードする Python で動きます。MSYS2 の Python には、GUI のパッケージをインストールできません。
+On Windows, the GUI runs on a Python that uv downloads. The GUI packages cannot be installed into the Python of MSYS2.
 
-コマンドは、すべてテンプレートを展開したディレクトリ（`simulation.yaml` のある所）で実行します。`vehicle_sil_launch` と `vehicle-sil-gui` は、手順 2 で `PATH` に追加したものを使います。
+Run every command in the directory where you extracted the template (the one that contains `simulation.yaml`). Use the `vehicle_sil_launch` and `vehicle-sil-gui` that you add to `PATH` in step 2.
 
-## 全体の流れ
+## Overview
 
-| 手順 | すること | できるもの |
+| Step | What you do | What you get |
 |---|---|---|
-| 1 | テンプレートを展開する | 自分のプロジェクトのディレクトリ |
-| 2 | ビルド済みのツールをダウンロードする | `tools/` の下の `vehicle_sil_launch` と `vehicle-sil-gui` |
-| 3 | ビルドして実行する | `bin/` の 2 つの ECU と、照合、実行、シナリオの結果 |
-| 4 | ブラウザの GUI で操作する | 変数を見て書き込める画面 |
+| 1 | Extract the template | Your project directory |
+| 2 | Download the prebuilt tools | `vehicle_sil_launch` and `vehicle-sil-gui` under `tools/` |
+| 3 | Build and run | 2 ECUs in `bin/`, and the results of the check, the run and the scenario |
+| 4 | Use the ECUs in the browser GUI | A screen where you watch and write variables |
 
-## 手順 1: テンプレートを展開する
+## Step 1: Extract the template
 
-vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)から `vehicle-sil-template-0.1.0.zip` をダウンロードして展開し、ディレクトリの名前を自分のプロジェクトの名前にします。Git で管理するなら、そこで `git init` を実行します（`.gitignore` が `build/`、`bin/`、`tools/` を除外します）。
+Download `vehicle-sil-template-0.1.0.zip` from the [releases page](https://github.com/rahanahu/vehicle-sil/releases) of vehicle-sil, extract it, and rename the directory to the name of your project. To manage it with Git, run `git init` there (`.gitignore` excludes `build/`, `bin/` and `tools/`).
 
-テンプレートとツールは、リリースしたバージョンにだけあります。vehicle-sil のリポジトリの `template/` をコピーしても同じものですが、そのコピーの `get_tools.py` には、ツールの SHA-256 が入っていません（手順 2 で `--sha256` を渡します）。
+The template and the tools exist only for released versions. A copy of `template/` from the vehicle-sil repository is the same, but its `get_tools.py` does not contain the SHA-256 of the tools (pass it with `--sha256` in step 2).
 
-## 手順 2: ビルド済みのツールをダウンロードする
+## Step 2: Download the prebuilt tools
 
 ```sh
-python3 get_tools.py     # Windows（UCRT64 シェル）: python get_tools.py
+python3 get_tools.py     # Windows (UCRT64 shell): python get_tools.py
 ```
 
-`get_tools.py` は、次の順に処理します。
+`get_tools.py` does the following, in order:
 
-| 順 | すること |
+| # | What it does |
 |---|---|
-| 1 | リリースのページから、自分の OS のツールのアーカイブをダウンロードします。 |
-| 2 | アーカイブの SHA-256 を確認します。 |
-| 3 | `tools/vehicle-sil-tools-0.1.0-<OS>/` に展開します。 |
-| 4 | ツールに入っている JSON Schema を `schema/` にコピーします。 |
-| 5 | `bin` を `PATH` に追加するコマンドを表示します。 |
+| 1 | Downloads the tools archive for your OS from the releases page. |
+| 2 | Checks the SHA-256 of the archive. |
+| 3 | Extracts it to `tools/vehicle-sil-tools-0.1.0-<OS>/`. |
+| 4 | Copies the JSON Schemas in the tools to `schema/`. |
+| 5 | Prints the command that adds `bin` to `PATH`. |
 
-ダウンロードする URL とバージョンは、`get_tools.py` の `VERSION` と `URL` に書いてあります。最新のバージョンを自動でダウンロードすることはありません。
+`VERSION` and `URL` in `get_tools.py` set the version and the download URL. It never downloads the latest version on its own.
 
-最後に表示されたコマンド（Linux では `export PATH="…/bin:$PATH"`）を実行します。このコマンドは、シェルを開くたびに実行します。
+Run the command that it prints last (on Linux, `export PATH="…/bin:$PATH"`). Run it again in every new shell.
 
-### 確認
+### Verify the tools
 
-`vehicle_sil_launch version` がバージョンを表示すれば、`PATH` に追加できています。ツールの内容は、展開したディレクトリの `README.md` にあります。
+If `vehicle_sil_launch version` prints the version, the tools are in `PATH`. The `README.md` in the extracted directory describes the contents of the tools.
 
-### うまくいかないとき
+### Troubleshoot the download
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `may not be published yet` と表示して止まる | この README のバージョンが、まだリリースされていません。 | vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリからビルドする」）、そのビルドの `vehicle_sil_launch` を使います。 |
-| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
-| `this copy of the template has no SHA-256` と表示して止まる | リポジトリの `template/` をコピーしたので、SHA-256 が入っていません。 | リリースのページの `SHA256SUMS` にある値を `--sha256` で渡します。 |
+| Prints `may not be published yet` and stops | The version of this README is not released yet. | If you have the tools archive of that version as a file (for example from a colleague), run `python3 get_tools.py --archive <file>`. Otherwise clone and build the vehicle-sil repository ("Build from the repository" in the vehicle-sil README) and use the `vehicle_sil_launch` of that build. |
+| The download fails | Your computer cannot reach the releases page. | Download `vehicle-sil-tools-0.1.0-linux-x86_64.tar.gz` (on Windows, `-windows-x86_64.zip`) in a browser, then run `python3 get_tools.py --archive <downloaded file>`. It still checks the SHA-256. |
+| Prints `this copy of the template has no SHA-256` and stops | You copied `template/` from the repository, so it has no SHA-256. | Pass the value from `SHA256SUMS` on the releases page with `--sha256`. |
 
-`get_tools.py` を使わずに手で展開するときは、リリースのページの `SHA256SUMS` と照合してから展開し、その中の `bin` を `PATH` に追加します。
+To extract the tools by hand instead of with `get_tools.py`, check the archive against `SHA256SUMS` on the releases page before you extract it, then add its `bin` to `PATH`.
 
-## 手順 3: ビルドして実行する
+## Step 3: Build and run
 
 ```sh
 cmake --preset linux             # Windows: cmake --preset windows
@@ -81,107 +83,107 @@ vehicle_sil_launch run simulation.yaml
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
-| コマンド | すること |
+| Command | What it does |
 |---|---|
-| `cmake --preset` | vehicle-sil と SIL Kit をダウンロードします。 |
-| `cmake --build` | 2 つの ECU を `bin/` にビルドします（最初の 1 回だけ、SIL Kit のコンパイルに数分かかります）。 |
-| `check` | 各 ECU を `--describe` で起動し、その出力と設定ファイルを照合します。 |
-| `run` | registry と各 ECU を起動して、`stop_at_ms` まで実行します。 |
-| `run --scenario` | シナリオの手順どおりに値を設定して確認します。 |
+| `cmake --preset` | Downloads vehicle-sil and SIL Kit. |
+| `cmake --build` | Builds the 2 ECUs into `bin/`. The first build also compiles SIL Kit, which takes a few minutes. |
+| `check` | Starts each ECU with `--describe` and checks the configuration file against that output. |
+| `run` | Starts the registry and each ECU, and runs until `stop_at_ms`. |
+| `run --scenario` | Sets and checks values as the steps of the scenario say. |
 
-### 確認
+### Verify the build and run
 
-| コマンド | 成功したときに見えるもの |
+| Command | What you see on success |
 |---|---|
-| `check` | 最後の行が `passed: 0 errors, 0 warnings, 0 notes` です。 |
-| `run` | `ended` の列が、2 つの ECU とも `exit code 0` です。 |
-| `run --scenario` | `result` の列がすべて `ok` で、終了コードが 0 です。 |
+| `check` | The last line is `passed: 0 errors, 0 warnings, 0 notes`. |
+| `run` | The `ended` column is `exit code 0` for both ECUs. |
+| `run --scenario` | Every entry in the `result` column is `ok`, and the exit code is 0. |
 
-`check` と `run` の出力の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」の手順 1 にあります。
+Step 1 of the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)" shows the full output of `check` and `run`.
 
-### うまくいかないとき
+### Troubleshoot the build and run
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示されたコマンドを実行します。 |
-| Windows で、ECU が何も表示せずに終了する | ECU は MinGW のランタイムの DLL（`libstdc++-6.dll` など）を UCRT64 の `PATH` から読み込みます。 | `vehicle_sil_launch` と `vehicle-sil-gui` を UCRT64 シェルから起動します。 |
-| `check` が `version-mismatch` を表示する | ECU とツールで、vehicle-sil のバージョンが違います。 | 下の「vehicle-sil のバージョンを上げる」で、バージョンをそろえます。 |
+| `vehicle_sil_launch` is not found | You are in a new shell and have not run the command that adds the tools to `PATH`. | Run `python3 get_tools.py` again, then run the command it prints. |
+| On Windows, an ECU exits without printing anything | ECUs load the MinGW runtime DLLs (`libstdc++-6.dll` and others) from the `PATH` of UCRT64. | Start `vehicle_sil_launch` and `vehicle-sil-gui` from the UCRT64 shell. |
+| `check` prints `version-mismatch` | The ECUs and the tools use different versions of vehicle-sil. | Make the versions match, as described in "Upgrade vehicle-sil" below. |
 
-ツールの `vehicle_sil_launch` は、DLL が不要な 1 つの実行ファイルです（ツールの `bin` に DLL はありません）。
+The `vehicle_sil_launch` of the tools is a single executable that needs no DLLs (the `bin` of the tools contains none).
 
-## 手順 4: ブラウザの GUI で操作する
+## Step 4: Use the ECUs in the browser GUI
 
 ```sh
 vehicle-sil-gui simulation.live.yaml
 ```
 
-ブラウザで、設定ファイルを照合し、シミュレーションを実行し、変数を見て書き込む画面を開きます。終了するときは Ctrl+C を押します。
+The browser opens a screen where you check the configuration file, run the simulation, and watch and write variables. To quit, press Ctrl+C.
 
-`simulation.live.yaml` は、同じ 2 つの ECU を、等速で、止めるまで実行する設定ファイルです。`simulation.yaml` は 1000 ms で終わるので、GUI で値を見ながら操作するのには向きません。
+`simulation.live.yaml` is a configuration file that runs the same 2 ECUs at real-time speed until you stop them. `simulation.yaml` ends at 1000 ms, which is too short to watch and change values in the GUI.
 
-## 入っているファイル
+## What the template contains
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| `engine/main.cpp` | エンジンの ECU です（入力の変数 `engine.throttle`、出力の変数 `engine.speed`、回転数を J1939 で 100 ms ごとに送信）。 |
-| `dashboard/main.cpp` | 表示の ECU です（回転数を J1939 で受信して、出力の変数 `dashboard.engine_speed` に反映）。 |
-| `engine_speed.hpp` | 2 つの ECU が共有するメッセージの定義です（PGN とデータの形式）。 |
-| `CMakeLists.txt`、`CMakePresets.json` | vehicle-sil を FetchContent で取り込み、実行ファイルを `bin/` にビルドします（`GIT_TAG` が vehicle-sil のバージョン）。 |
-| `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする設定ファイルです。 |
-| `scenarios/throttle_step.yaml` | スロットルを踏んで、回転数と表示を確認するシナリオです。 |
-| `simulation.dashboard.yaml` | GUI の「変数」の画面の配置です。 |
-| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | 等速で、止めるまで実行する設定ファイル（`stop_at_ms` なし、`speed: 1`）と、その画面の配置です。 |
-| `schema/` | 上の 3 種類の YAML の JSON Schema です。 |
-| `get_tools.py` | ツール（`vehicle_sil_launch` と GUI）を、バージョンと SHA-256 を確認して `tools/` にダウンロードします。 |
+| `engine/main.cpp` | The engine ECU (input variable `engine.throttle`, output variable `engine.speed`, sends the engine speed over J1939 every 100 ms). |
+| `dashboard/main.cpp` | The dashboard ECU (receives the engine speed over J1939 and puts it in the output variable `dashboard.engine_speed`). |
+| `engine_speed.hpp` | The message definition that the 2 ECUs share (PGN and data format). |
+| `CMakeLists.txt`, `CMakePresets.json` | Include vehicle-sil with FetchContent and build the executables into `bin/` (`GIT_TAG` is the vehicle-sil version). |
+| `simulation.yaml` | The configuration file that combines the 2 ECUs into one simulation. |
+| `scenarios/throttle_step.yaml` | A scenario that presses the throttle and checks the engine speed and the dashboard. |
+| `simulation.dashboard.yaml` | The layout of the **Variables** screen of the GUI. |
+| `simulation.live.yaml`, `simulation.live.dashboard.yaml` | A configuration file that runs at real-time speed until you stop it (no `stop_at_ms`, `speed: 1`), and its screen layout. |
+| `schema/` | JSON Schemas for the 3 kinds of YAML above. |
+| `get_tools.py` | Downloads the tools (`vehicle_sil_launch` and the GUI) to `tools/`, checking the version and the SHA-256. |
 
-`schema/` があるので、YAML の言語サーバーを使うエディターで、キーの補完と説明、形式の検査が使えます。各 YAML の 1 行目の `# yaml-language-server: $schema=...` がスキーマを指しています。自分で追加する YAML にも、同じ 1 行を書きます。
+Because `schema/` is there, editors that use a YAML language server offer completion and descriptions of keys, and check the format. The first line of each YAML file, `# yaml-language-server: $schema=...`, points to its schema. Write the same line in YAML files that you add.
 
-`schema/` のファイルは手で編集しません。`get_tools.py` が、ツールに入っているスキーマで上書きするためです。上書きするのは同じ名前のファイルだけで、自分で追加したファイルはそのまま残ります。
+Do not edit the files in `schema/` by hand: `get_tools.py` overwrites them with the schemas in the tools. It overwrites only files with the same names; files you added stay as they are.
 
-## 自分の ECU にする
+## Make it your own ECU
 
-| したいこと | 変える所 |
+| Goal | What to change |
 |---|---|
-| ECU の中身を変える | `engine/main.cpp` のクラスの中身（ネットワーク、J1939 のノード、変数、ステップごとの処理）を書き換えます。 |
-| ECU の名前を変える | `main()` の `ecu_main<...>(..., {.name = "Engine", ...})` を変えます。 |
-| ECU を追加する | `CMakeLists.txt` に `add_executable` から `vehicle_sil_copy_runtime_dlls` までの 4 行を追加し、`simulation.yaml` の `participants` に追加します。 |
-| ネットワークの名前（`J1939_CAN`）を変える | ECU のコードと `simulation.yaml` の `networks` で、同じ名前にします。 |
+| Change what the ECU does | Rewrite the body of the class in `engine/main.cpp` (networks, J1939 nodes, variables, per-step work). |
+| Rename the ECU | Change `ecu_main<...>(..., {.name = "Engine", ...})` in `main()`. |
+| Add an ECU | Add the 4 lines from `add_executable` to `vehicle_sil_copy_runtime_dlls` to `CMakeLists.txt`, and add the ECU to `participants` in `simulation.yaml`. |
+| Rename the network (`J1939_CAN`) | Use the same name in the ECU code and in `networks` of `simulation.yaml`. |
 
-Manufacturer Code の 0x7F0 は仮の値です。
+The Manufacturer Code 0x7F0 is a placeholder.
 
-ECU を 1 つ追加する手順の全体は、ガイド「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」にあります。
+For the complete procedure to add an ECU, see the guide "[Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)".
 
-## 1 つの実行ファイルで配布する
+## Distribute a single executable
 
-ECU の実行ファイルを、ほかのファイル（`libSilKit.so`、`SilKit.dll`、MinGW の DLL）なしで人に渡したいときは、`VEHICLE_SIL_STATIC` を付けて configure し直します。
+To give an ECU executable to someone without any other files (`libSilKit.so`, `SilKit.dll`, MinGW DLLs), reconfigure with `VEHICLE_SIL_STATIC`:
 
 ```sh
 cmake --preset linux -DVEHICLE_SIL_STATIC=ON      # Windows: cmake --preset windows -DVEHICLE_SIL_STATIC=ON
 cmake --build --preset linux                      # Windows: cmake --build --preset windows
 ```
 
-SIL Kit と C++ のランタイムを、実行ファイルに静的にリンクします（Linux の glibc は共有ライブラリのままです）。Linux では、静的な libstdc++ が必要です（Fedora は `libstdc++-static`）。元に戻すときは、`-DVEHICLE_SIL_STATIC=OFF` で configure し直します。
+SIL Kit and the C++ runtime are then linked statically into the executable (glibc on Linux stays a shared library). On Linux, this needs a static libstdc++ (`libstdc++-static` on Fedora). To switch back, reconfigure with `-DVEHICLE_SIL_STATIC=OFF`.
 
-人に渡すときは、実行ファイルの中に入ったもののライセンスの表示を添えます。添えるものの一覧は、vehicle-sil の [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/build.md) の「配布するときに添えるライセンスの表示」にあります。ツールの `licenses/sil-kit/`（Windows は `licenses/msys2/` も）に、そのまま添えられるファイルがあります。
+When you give the executable to someone, ship the license notices of what it contains with it. For the list, see "License notices to ship with the executable" in [docs/build.md](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/build.md) of vehicle-sil. The tools contain files ready to ship in `licenses/sil-kit/` (and, on Windows, `licenses/msys2/`).
 
-## vehicle-sil のバージョンを上げる
+## Upgrade vehicle-sil
 
-ECU とツールは、同じバージョンの vehicle-sil にそろえます。バージョンが違うと、`check` が `version-mismatch` を表示します。
+Keep the ECUs and the tools on the same version of vehicle-sil. If the versions differ, `check` prints `version-mismatch`.
 
-| 順 | すること |
+| # | What you do |
 |---|---|
-| 1 | 新しいバージョンのテンプレートから、`get_tools.py` と、`CMakeLists.txt` の `GIT_TAG` の行をコピーします。 |
-| 2 | `python3 get_tools.py` をもう一度実行します。 |
-| 3 | `cmake --build --preset linux` でビルドし直します（Windows は `windows`）。 |
+| 1 | From the template of the new version, copy `get_tools.py` and the `GIT_TAG` line of `CMakeLists.txt`. |
+| 2 | Run `python3 get_tools.py` again. |
+| 3 | Rebuild with `cmake --build --preset linux` (`windows` on Windows). |
 
-`get_tools.py` は、ツールに入っている JSON Schema を `schema/` にコピーし直し、コピーしたファイルを 1 行で表示します。これで、エディターの補完と検査が、新しいバージョンのキーに対応します。変更点と対応のしかたは、vehicle-sil の `CHANGELOG.md` にあります。
+`get_tools.py` copies the JSON Schemas in the tools to `schema/` again and prints the copied files on one line. Editor completion and checks then know the keys of the new version. The `CHANGELOG.md` of vehicle-sil lists the changes and what to do about them.
 
-## 次に読むもの
+## What to read next
 
-- ECU を 1 つ追加して、Python から変数を読み書きする → [最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)（J1939 での通信と、デバッガーからの起動も）
-- J1939 のノードを書く → [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-codec.md)
-- 設定ファイルとコマンドを調べる → [設定ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/gui.md)
+- Add an ECU and read and write its variables from Python: [Create your first ECU](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md) (also covers J1939 communication and starting an ECU from a debugger)
+- Write J1939 nodes: [Writing J1939 nodes](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-guide.md), [J1939 typed messages](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-codec.md)
+- Look up the configuration file and the commands: [Configuration file](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-config.md), [Checks](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-check.md), [Running](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-run.md), [Scenarios](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/scenario.md), [Browser GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/gui.md)
 
-## ライセンス
+## License
 
-このテンプレートのファイルは MIT-0（MIT No Attribution、`LICENSE`）です。コピーして作ったプロジェクトに、このテンプレートの著作権やライセンスの表示を残す必要はありません。テンプレートが取り込む vehicle-sil 本体とその依存ライブラリは、それぞれのライセンスのままです（vehicle-sil は MIT。依存ライブラリは vehicle-sil の `THIRD_PARTY_NOTICES.md`）。
+The files of this template are under MIT-0 (MIT No Attribution, `LICENSE`). A project that you create from a copy of the template does not need to keep the copyright or license notice of this template. vehicle-sil itself and its dependencies, which the template pulls in, keep their own licenses (vehicle-sil is MIT; for the dependencies, see `THIRD_PARTY_NOTICES.md` of vehicle-sil).

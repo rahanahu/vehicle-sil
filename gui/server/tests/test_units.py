@@ -724,9 +724,12 @@ def test_a_static_file_is_read_only_when_it_is_still_the_checked_one(tmp_path: P
 
 def test_the_docs_show_the_csp_that_the_screens_get() -> None:
     # docs/gui.md tells the authors of their own screens what the CSP allows: it shows the server's own.
+    from conftest import REPOSITORY, manual_pages
     from vehicle_sil_gui.server import CSP
-    docs = (Path(__file__).resolve().parents[3] / "docs" / "gui.md").read_text(encoding="utf-8")
-    assert f"\n{CSP}\n" in docs, "docs/gui.md, section CSP による制限: copy the CSP of gui/server/.../server.py there"
+    for page in manual_pages("docs/gui.md"):
+        name = page.relative_to(REPOSITORY).as_posix()
+        assert f"\n{CSP}\n" in page.read_text(encoding="utf-8"), \
+            f"{name}, the section on the CSP: copy the CSP of gui/server/.../server.py there"
 
 
 # ---------------------------------------------------------------- processes

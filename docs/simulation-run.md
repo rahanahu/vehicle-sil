@@ -1,487 +1,489 @@
-# シミュレーションの実行（`vehicle_sil_launch run`）
+# Running a simulation (`vehicle_sil_launch run`)
 
-`vehicle_sil_launch run <file>` が何をどの順にするか、いつ中断するか、何を出力するかのリファレンスです。複数のシナリオをまとめて実行する `vehicle_sil_launch test` も、このドキュメントにあります。引数の一覧は [simulation-config.md](simulation-config.md) の「引数と終了コード」にあります。
+[日本語](ja/simulation-run.md)
 
-| 調べること | 節 |
+This reference describes what `vehicle_sil_launch run <file>` does and in which order, when it aborts and what it writes. It also covers `vehicle_sil_launch test`, which runs several scenarios in one command. For the list of arguments, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes).
+
+| To find | See |
 |---|---|
-| `run` が何をどの順にするか | [実行の流れ](#実行の流れ) |
-| どんなときに中断するか、タイムアウトの数え方 | [中断する条件とタイムアウト](#中断する条件とタイムアウト) |
-| ECU の変数を読み書きできるか（`control_link`） | [ECU の変数との接続](#ecu-の変数との接続control_link) |
-| `speed` と、実時間からの遅れの数え方 | [速度を指定して動かす](#速度を指定して動かすspeed) |
-| participant を終了させる順序、Ctrl+C | [止め方](#止め方)、[中断（Ctrl+C）](#中断ctrlc) |
-| どのアドレスで待ち受けるか、Windows のファイアウォール | [待ち受けるアドレス](#待ち受けるアドレス) |
-| 標準エラー、ログのファイル、結果の表、指摘の `code` | [出力](#出力) |
-| 終了コード | [終了コード](#終了コード) |
-| `run --json` のキー | [JSON](#jsonrun---json) |
-| 全部の機種で、シナリオをまとめて実行する | [`test`](#シナリオをまとめて実行するvehicle_sil_launch-test) |
+| What `run` does and in which order | [How a run proceeds](#how-a-run-proceeds) |
+| When a run aborts, and how timeouts are measured | [Abort conditions and timeouts](#abort-conditions-and-timeouts) |
+| Whether ECU variables can be read and written (`control_link`) | [Connection to ECU variables](#connection-to-ecu-variables-control_link) |
+| `speed`, and how lateness behind real time is measured | [Running at a set speed](#running-at-a-set-speed-speed) |
+| The order in which participants are ended, Ctrl+C | [Stopping a run](#stopping-a-run), [Interrupting (Ctrl+C)](#interrupting-ctrlc) |
+| Which addresses participants listen on, Windows Firewall | [Listen addresses](#listen-addresses) |
+| Stderr, log files, the result table, the `code` of findings | [Output](#output) |
+| Exit codes | [Exit codes](#exit-codes) |
+| Keys of `run --json` | [JSON](#json-run---json) |
+| Running several scenarios on every variant | [`test`](#running-several-scenarios-vehicle_sil_launch-test) |
 
-## 実行の流れ
+## How a run proceeds
 
-| 手順 | すること |
+| Stage | What `run` does |
 |---|---|
-| 1 | `check` と同じ照合をします。 |
-| 2 | registry を、このプロセスの中で起動します。 |
-| 3 | controller（participant 名 `SimulationController`）を、このプロセスの中で動かします。 |
-| 4 | 無効にしていない participant を、設定ファイルの順に、それぞれ別のプロセスで起動します。 |
-| 5 | 必須の participant がそろったら、シミュレーションを始めます。 |
-| 6 | シミュレーションが終わったら、すべての participant を終了させ、結果を書きます。 |
+| 1 | Runs the same check as `check`. |
+| 2 | Starts the registry inside this process. |
+| 3 | Runs the controller (participant name `SimulationController`) inside this process. |
+| 4 | Starts each participant that is not disabled as a process of its own, in configuration file order. |
+| 5 | Starts the simulation once all required participants have joined. |
+| 6 | When the simulation ends, ends all participants and writes the result. |
 
-手順 1: 照合でエラーがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。機種（`variants`）を書いた設定ファイルでは、`--variant <名前>` で選んだ機種を照合し、その機種の実行ファイル、変数の対応、participant で動かします（[simulation-config.md](simulation-config.md) の「機種」）。`--variant` がなければ引数のエラーで、何も起動しません。
+Stage 1: If the check finds errors (with `--strict`, also warnings), `run` starts nothing, writes the check result and exits with code 1. For a configuration file with variants (`variants`), `run` checks the variant you select with `--variant <name>` and runs with that variant's executables, variable map and participants (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)). If you omit `--variant`, `run` reports a usage error and starts nothing.
 
-手順 2: registry のアドレスは `registry_uri` で、なければ 127.0.0.1 の空いているポートです。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、registry より前に Control Server を起動し、`[vehicle_sil_launch] control server at <address>` の行を書きます。
+Stage 2: The registry address is `registry_uri`, or a free port on 127.0.0.1 if `registry_uri` is not set. The first line on stderr gives that URI (`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`). With `--control`, the Control Server starts before the registry and `run` writes the line `[vehicle_sil_launch] control server at <address>`.
 
-手順 3: シミュレーションが待つ participant（このドキュメントでは「必須の participant」）は、無効にしていない `required: true` のものです。controller はタイムステップ（`time_step_ms` か、その既定値）で時刻同期に参加し、タイムステップの終わりを止めて、速度、一時停止、ステップ実行を決めます。最速のときも同じで、タイムステップごとに同期が 1 回増えます。
+Stage 3: The participants the simulation waits for (called "required participants" on this page) are those with `required: true` that are not disabled. The controller joins time synchronization with the time step (`time_step_ms`, or its default). It holds each time step at its end and decides there on speed, pauses and single-steps. This applies at maximum speed too, which adds one synchronization per time step.
 
-手順 4: `manual` の participant は起動せず、起動するコマンドを書きます。起動する participant の作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。
+Stage 4: `run` does not start a `manual` participant; it prints the command that starts it. A participant that `run` starts gets the directory of the configuration file as its working directory and an empty stdin.
 
-手順 5: 始める前に、変数を公開する ECU との接続を待ちます（[ECU の変数との接続](#ecu-の変数との接続control_link)の「始まる前の待ち」。ふつうは待ちません）。`--control` と `--start-paused` を付けたときは、どの participant も時刻 0 のステップを始める前で止まり、`resume`、`step` か `run_until` のコマンドを待ちます（[control-api.md](control-api.md) の「始まる前に書く」）。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
+Stage 5: Before the start, `run` waits for the connection to the ECUs that expose variables (see [Waiting before the start](#waiting-before-the-start); normally there is no wait). With `--control` and `--start-paused`, every participant pauses before it starts the step at time 0, and the run waits for a `resume`, `step` or `run_until` command (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)). If `stop_at_ms` is set, the simulation stops when virtual time reaches it. Otherwise it runs until a participant stops it, or until Ctrl+C.
 
-手順 6: participant を終了させる順序は[止め方](#止め方)にあります。
+Stage 6: For the order in which the participants are ended, see [Stopping a run](#stopping-a-run).
 
-### シナリオを付けた実行（`--scenario`）
+### Runs with a scenario (`--scenario`)
 
-`--scenario <file>` を付けると、照合でシナリオも確認し、始まった後はシナリオの手順を進めて、シナリオが終わった所でシミュレーションを止めます（[scenario.md](scenario.md)）。
+With `--scenario <file>`, `run` also checks the scenario. Once the simulation has started, `run` carries out the scenario steps and stops the simulation when the scenario ends (see [scenario.md](scenario.md)).
 
-| 項目 | `--scenario` を付けたとき |
+| Item | With `--scenario` |
 |---|---|
-| controller のタイムステップ | 速度を指定したときの既定と同じです（`time_step_ms` か、ECU のステップがすべて controller のステップから始まるタイムステップ）。 |
-| パラメーター（`${名前}`）の値 | 設定ファイルの `params`、機種の `params`、`--param <名前>=<値>` で替えられます。 |
-| その機種にない変数（`absent: true`）を使う手順 | 飛ばして、結果に表示します。 |
-| 機種が無効にした participant の変数を使う手順 | 同じく飛ばして、結果に表示します。 |
+| The controller's time step | The same as the default with a set speed (`time_step_ms`, or a time step such that every ECU step starts at a controller step). |
+| Values of parameters (`${name}`) | Can be overridden with `params` in the configuration file, `params` of the variant, and `--param <name>=<value>`. |
+| Scenario steps that use a variable the variant does not have (`absent: true`) | Skipped and shown in the result. |
+| Scenario steps that use variables of a participant the variant disables | Also skipped and shown in the result. |
 
-飛ばした手順の `at_ms` は null です。確認する手順が全部飛ぶと、照合の警告 `scenario-nothing-checked` です（[scenario.md](scenario.md) の「機種とパラメーター」）。
+A skipped step has `at_ms` null. If every checking step is skipped, the check reports the warning `scenario-nothing-checked` (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)).
 
-## 中断する条件とタイムアウト
+## Abort conditions and timeouts
 
-### 始まる前
+### Before the start
 
-| 起きたこと | `run` がすること | 指摘 |
+| What happens | What `run` does | Finding |
 |---|---|---|
-| 必須の participant のプロセスが終わった | `start_timeout_ms` を待たずに、開始をやめます。 | `ended-before-start` |
-| 必須の participant が、`start_timeout_ms` の間に参加しなかった | 参加しなかったものを全部挙げて、開始をやめます。 | `not-joined` |
-| そろった後、開始を待っている間に、必須の participant のプロセスが終わった | すぐに開始をやめます。 | `ended-before-start` |
-| そろった後、開始を待っている間に、プロセスは動いたまま接続が切れた | すぐに開始をやめます。 | `simulation-start` |
-| そろった後、最初のステップまでの上限を過ぎた | 開始をやめ、最初のステップに着いていない participant と状態をメッセージに挙げます。 | `simulation-start` |
+| The process of a required participant ends | Abandons the start without waiting for `start_timeout_ms`. | `ended-before-start` |
+| A required participant does not join within `start_timeout_ms` | Lists every participant that did not join and abandons the start. | `not-joined` |
+| After all have joined, the process of a required participant ends while the run waits for the start | Abandons the start at once. | `ended-before-start` |
+| After all have joined, a connection drops while the run waits for the start, with the process still running | Abandons the start at once. | `simulation-start` |
+| After all have joined, the time limit for reaching the first step expires | Abandons the start; the message lists the participants that have not reached the first step and their states. | `simulation-start` |
 
-「開始を待っている間」は、変数を公開する ECU を待つ間と、`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間です。
+"Waits for the start" covers the wait for the ECUs that expose variables, and the pause before the step at time 0 with `--control` and `--start-paused`.
 
-### 実行中
+### During the run
 
-| 起きたこと | `run` がすること | 指摘 |
+| What happens | What `run` does | Finding |
 |---|---|---|
-| 必須の participant のプロセスが、0 でない終了コードかシグナルで終わった | すぐにシミュレーションを中断します。 | `participant-failed` |
-| 必須の participant が Error の状態でシミュレーションから抜けた | すぐに中断します。 | `participant-failed` |
-| 必須の participant が、ほかの状態でシミュレーションから抜けた | 5 秒たってもシミュレーションが終わらなければ、中断します。 | `participant-failed` |
-| `required: false` の participant が終わった | シミュレーションを止めません。 | 0 でない終了コードは警告 |
-| `--timeout-ms` の実時間で終わらなかった | 中断します。 | `timeout`（エラー） |
-| 一時停止していないのに、仮想時間が 10 秒進まない | 標準エラーに 1 行書いて、待ち続けます。 | なし |
-| `stop_at_ms` より前に、participant がシミュレーションを止めた | そのまま終わります。 | `ended-before-stop-at`（注記。`--strict` でも失敗にしません） |
+| The process of a required participant ends with a nonzero exit code or by a signal | Aborts the simulation at once. | `participant-failed` |
+| A required participant leaves the simulation in the Error state | Aborts at once. | `participant-failed` |
+| A required participant leaves the simulation in another state | Aborts if the simulation has not ended within 5 seconds. | `participant-failed` |
+| A participant with `required: false` ends | Does not stop the simulation. | A warning for a nonzero exit code |
+| The run has not ended within the real time of `--timeout-ms` | Aborts. | `timeout` (error) |
+| Virtual time does not advance for 10 seconds although the simulation is not paused | Writes one line to stderr and keeps waiting. | None |
+| A participant stops the simulation before `stop_at_ms` | The run ends as it is. | `ended-before-stop-at` (note; not a failure, even with `--strict`) |
 
-participant がシミュレーションから抜けたかどうかは、controller から見て判断します。中断の規則は `vehicle_sil_sim_controller` と `vehicle_sil::Simulation` と同じです。中断されても、ほかの ECU は自分で終わります（終了コード 0）。`required: false` の participant は、始まるときも待ちません。
+Whether a participant has left the simulation is decided from the controller's view. The abort rules are the same as in `vehicle_sil_sim_controller` and `vehicle_sil::Simulation`. When the simulation is aborted, the other ECUs still end on their own (exit code 0). The start does not wait for participants with `required: false` either.
 
-一時停止している間も、participant の失敗、止める要求、`--timeout-ms` は同じように扱います。
+While the simulation is paused, participant failures, stop requests and `--timeout-ms` are handled the same way.
 
-### `start_timeout_ms` の数え方
+### How `start_timeout_ms` is measured
 
-`start_timeout_ms` は、必須の participant がそろうまでの時間の上限です。
+`start_timeout_ms` limits the time until all required participants have joined.
 
-| 場合 | 数え方 |
+| Case | How it is measured |
 |---|---|
-| そろった後、最初のステップまで | `start_timeout_ms` の残りが上限です（少なくとも、変数を公開する ECU を待つ時間 + 1 秒）。 |
-| `--control` と `--start-paused` で、時刻 0 のステップの前に止まっている間 | 数えません。 |
-| その停止から進んだ後 | 改めて `start_timeout_ms` が上限です。 |
-| manual の必須の participant が参加するまで | 上限がありません。 |
-| 全員が参加した後、manual の participant が最初のステップの準備を終えるまで | 上限がありません。 |
-| `run` が起動した participant が参加するまで（manual の participant がいる実行） | `start_timeout_ms` が上限です。 |
-| manual の participant の準備が終わった後 | `start_timeout_ms` が上限です。 |
+| From all joined to the first step | The remainder of `start_timeout_ms` is the limit (at least the time spent waiting for ECUs that expose variables + 1 second). |
+| While paused before the step at time 0 with `--control` and `--start-paused` | Not counted. |
+| After the run advances from that pause | `start_timeout_ms` applies again as the limit. |
+| Until a required manual participant joins | No limit. |
+| After everyone has joined, until the manual participants are ready for the first step | No limit. |
+| Until the participants that `run` started have joined (in a run with manual participants) | `start_timeout_ms` is the limit. |
+| After the manual participants are ready | `start_timeout_ms` is the limit. |
 
-manual は、利用者が自分で起動する participant です（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）。
+A manual participant is one that you start yourself (see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)).
 
-### `--timeout-ms` の数え方
+### How `--timeout-ms` is measured
 
-`--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、エラー（`timeout`）にします。既定は上限なしです。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないので、CI などではこの引数を使います。
+With `--timeout-ms <ms>`, if the simulation has not ended `<ms>` of real time after it started, `run` aborts it and reports an error (`timeout`). By default there is no limit. An ECU that hangs inside a step stops virtual time, and the run never ends even with `stop_at_ms`, so use this option in CI and similar settings.
 
-| 場合 | 数え方 |
+| Case | How it is measured |
 |---|---|
-| ふつうの実行 | シミュレーションが始まってから数えます。 |
-| 一時停止している時間 | 数えます。 |
-| `--control` と `--start-paused` | 時刻 0 のステップの前に止まった時点から数えます（止まっている時間も数えます）。 |
-| manual の必須の participant がいる実行 | participant を待ち始めた時点から数えます（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）。 |
+| A normal run | From the start of the simulation. |
+| Time spent paused | Counted. |
+| `--control` and `--start-paused` | From when the run pauses before the step at time 0 (the time spent paused counts too). |
+| A run with a required manual participant | From when `run` starts waiting for the participants (see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
 
-`--control` と `--start-paused` で止まったまま上限を過ぎると、時刻 0 のステップを実行してから中断し、`timeout` のメッセージに、最初のステップの前に止まっていたことを書きます。進めた後に過ぎたときは、そのうち何 ms 止まっていたかを書きます。
+If the limit expires while the run is still paused by `--control` and `--start-paused`, `run` executes the step at time 0 and then aborts; the `timeout` message says that the run was paused before the first step. If the limit expires after the run has advanced, the message says how many ms of that time the run was paused.
 
-### 仮想時間が進まないときの表示
+### Message when virtual time stops advancing
 
-実行中に、一時停止していないのに仮想時間が 10 秒進まないと、次の形の行を書きます。
+If virtual time does not advance for 10 seconds during a run that is not paused, `run` writes a line of this form:
 
 ```text
 [vehicle_sil_launch] virtual time has not advanced for 10 s (at t=<ms> ms, not paused): ...
 ```
 
-行には、考えられる原因（ほかの PC の participant のネットワークが切れた、デバッガーで止めている、ステップの中で固まった）と、`--timeout-ms` を挙げます。同じ状態が続けば、60 秒と 10 分にも 1 回ずつ書きます。また進んだら `virtual time advances again: it stood still for <s> s at t=<ms> ms` を書きます。
+The line lists the possible causes (a participant on another computer lost its network, a debugger holds a process, a process hangs inside a step) and mentions `--timeout-ms`. If virtual time still does not advance, the line is written again at 60 seconds and at 10 minutes. When virtual time advances again, `run` writes `virtual time advances again: it stood still for <s> s at t=<ms> ms`.
 
-`run` は中断せず、待ち続けます。この行は指摘にはしません（`--events` では `log` のイベントです）。速度を指定したときは、タイムステップの期限を過ぎた時間で数えます。遅い速度で期限を待つ間は数えません。
+`run` does not abort; it keeps waiting. The line is not a finding (with `--events`, it is a `log` event). With a set speed, the time counts from the deadline of the time step; time spent waiting for the deadline at a slow speed does not count.
 
-ネットワークが切れても、SIL Kit は接続が切れたことに長い間気づきません（Linux では十数分）。
+When a network goes down, SIL Kit takes a long time to notice that the connection has dropped (more than 10 minutes on Linux).
 
-## ECU の変数との接続（`control_link`）
+## Connection to ECU variables (`control_link`)
 
-`vehicle_sil_launch run` は、controller の participant の上に、ECU の変数を読み書きする側（`vehicle_sil::control::Hub` と `vehicle_sil::control_silkit::HubTransport`）を持ちます。`ecu_main` で作った ECU は、自分から SIL Kit の publish/subscribe で接続します（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。どの ECU にも `ecu.connected` があるので、変数を宣言していない ECU も接続します。設定ファイルに書くことはありません。gRPC は使いません。しくみと保証は [internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」にあります。
+On top of the controller participant, `vehicle_sil_launch run` hosts the side that reads and writes ECU variables (`vehicle_sil::control::Hub` and `vehicle_sil::control_silkit::HubTransport`). An ECU built with `ecu_main` connects to it on its own, through SIL Kit publish/subscribe (see "Exposing variables (`--registry-uri`)" in [ecu-executable.md](ecu-executable.md#exposing-variables---registry-uri)). Every ECU has `ecu.connected`, so an ECU that declares no variables connects too. The configuration file needs nothing for this, and gRPC is not used. For how it works and what it guarantees, see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit).
 
-この接続を使うのは、`vehicle_sil_launch` の中の Hub です。`run --control <address>`（Control Server を持つビルドだけ）を付けると、Hub を gRPC の Control API としてクライアント（Python、CLI、GUI）に公開します。使い方は [control-api.md](control-api.md) の「ランチャーに接続する」です。
+The Hub inside `vehicle_sil_launch` uses this connection. With `run --control <address>` (only in builds with the Control Server), the Hub is exposed to clients (Python, CLI, GUI) as the gRPC Control API. For its use, see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher).
 
-ECU が変数を公開するかどうかは、実行ファイルの `--describe` の出力でわかります（`control`: 通信の方式と、メッセージの形式のバージョン。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。そのため、公開しない ECU とバージョンの違う ECU は、照合の段階でわかります。
+Whether an ECU exposes variables shows in the `--describe` output of its executable (`control`: the transport and the version of the message format; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). This lets the check find ECUs that do not expose variables and ECUs with a different version before the run.
 
-設定ファイルの `participants[].variables`（対応表）があれば、その participant の変数は、対応の後の名前と値で読み書きします（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。シナリオと Control API のクライアントが見るのは、対応の後だけです。
+If the configuration file has `participants[].variables` (a variable map), that participant's variables are read and written with the names and values after mapping (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)). Scenarios and Control API clients see only the mapped names and values.
 
-### 接続の状態（`state`）
+### Connection state (`state`)
 
-接続の状態は participant ごとに 5 つで、結果の `participants[].control_link` と、イベント `control_link` に表示します。シミュレーションが始まった時点の状態で、後から変わっても書き直しません。
+Each participant has one of 5 connection states. The state appears in `participants[].control_link` of the result and in the event `control_link`. It is the state at the moment the simulation started and is not updated when the state changes later.
 
-| `state` | 意味 | 変数の読み書き | 指摘 |
+| `state` | Meaning | Reading and writing variables | Finding |
 |---|---|---|---|
-| `connected` | hello を受信し、コマンドを受け取れるという返事があった | できる | なし |
-| `no_hello` | `--describe` の出力では公開するのに、待っても hello（か返事）が来なかった | この実行ではできない | 警告 `control-link-no-hello`（実行の指摘） |
-| `version_mismatch` | メッセージの形式のバージョンが `vehicle_sil_launch` と違う | この実行ではできない | 警告 `control-link-version` |
-| `not_offered` | 変数はあるが、`--describe` の出力では公開しない（`--no-control`、`control` のない古い vehicle-sil の実行ファイル） | できない | 注記 `control-link-not-offered`（照合の指摘） |
-| `none` | 接続するものがない（変数がない古い vehicle-sil の実行ファイル、`describe: false`） | できない | なし |
+| `connected` | `run` received hello, and a reply saying that the ECU can take commands | Possible | None |
+| `no_hello` | The `--describe` output says that the ECU exposes variables, but no hello (or reply) arrived in time | Not possible in this run | Warning `control-link-no-hello` (run finding) |
+| `version_mismatch` | The version of the message format differs from that of `vehicle_sil_launch` | Not possible in this run | Warning `control-link-version` |
+| `not_offered` | The ECU has variables, but its `--describe` output says that it does not expose them (`--no-control`, or an older vehicle-sil executable without `control`) | Not possible | Note `control-link-not-offered` (check finding) |
+| `none` | Nothing to connect to (an older vehicle-sil executable without variables, `describe: false`) | Not possible | None |
 
-- `version_mismatch` のバージョンは、`--describe` の出力のものか、受信した hello のものです。前者でわかれば照合の指摘、hello で初めてわかれば実行の指摘です。
-- `not_offered` の ECU は待ちません。
-- `--describe` の出力では公開しないのに hello を受信した participant は、`connected` です。
-- どの状態でも、シミュレーションは動きます（`--strict` では警告が失敗です）。
+- For `version_mismatch`, the version comes from the `--describe` output or from the received hello. If the `--describe` output reveals the mismatch, it is a check finding; if only the hello reveals it, it is a run finding.
+- `run` does not wait for a `not_offered` ECU.
+- A participant whose `--describe` output does not offer variables but that sends hello is `connected`.
+- The simulation runs in every state (with `--strict`, warnings are failures).
 
-### 始まる前の待ち
+### Waiting before the start
 
-必須の participant がそろうと、全員が最初のステップの前で待ちます。その間に `run` は、次の条件を全部満たす ECU の hello と、「コマンドを受け取れる」という返事を待ちます。
+Once all required participants have joined, they all wait before the first step. During that wait, `run` waits for hello and the reply "can take commands" from every ECU that meets all of these conditions:
 
-- 変数がある。
-- `--describe` の出力で、`vehicle_sil_launch` と同じバージョンで公開すると言っている。
-- 必須で、無効にしていない。
+- It has variables.
+- Its `--describe` output says that it exposes them, with the same version as `vehicle_sil_launch`.
+- It is required and not disabled.
 
-SIL Kit が participant を接続する順序から、hello はこの待ちが始まる前に受信しているので、ふつうは待ちません。公開すると言っているのに来ない ECU がいるときだけ、最長 5000 ms 待ちます。待っている間に Ctrl+C か止めるコマンドが来れば、待つのをやめます。そろうのが `start_timeout_ms` の期限の間際だったときは、この待ちが `start_timeout_ms` の後に加わることがあります。
+Because of the order in which SIL Kit connects participants, hello has normally arrived before this wait starts, so there is normally no wait. `run` waits, for up to 5000 ms, only when an ECU that says it exposes variables has not sent hello. A Ctrl+C or a stop command during the wait ends it. If all participants joined just before the `start_timeout_ms` deadline, this wait can extend past `start_timeout_ms`.
 
-### 実行中の保証
+### Guarantees during the run
 
-時間を止めたとき（`--start-paused`、`pause`、`step` の後）、止まった仮想時刻 P より前に始まった各 ECU のステップの値と、書き込みの結果は、すべて受信しています。ちょうど P に始まるステップの分は、止まっている間に受信します。これに反して遅れて受信したメッセージがあれば、警告 `control-link-late-values` を出します。`ecu_main` で作った ECU では起きません。数は結果の `control_link.late_messages` にあります。
+When time is paused (`--start-paused`, `pause`, after a `step`), `run` has received the values and write results of every ECU step that started before the paused virtual time P. Those of the steps that start exactly at P arrive while the simulation is paused. If a message arrives later than this guarantee allows, `run` reports the warning `control-link-late-values`. This does not happen with ECUs built with `ecu_main`. The count is in `control_link.late_messages` of the result.
 
-始まった後に参加した participant（`required: false`、自分で起動した実時間の Peer、同じ名前での起動し直し）は、hello の後、「コマンドを受け取れる」という返事を受信してから書けるようになります（ふつうは一瞬です）。それまでの書き込みは、送らずにすぐ Invalid で確定します。シミュレーションから抜け始めた participant（ライフサイクルが止まり始めた、失敗した）への書き込みも同じです。
+A participant that joins after the start (`required: false`, a real-time `Peer` that you started yourself, a restart under the same name) accepts writes once `run` has received its hello and then its reply "can take commands" (normally an instant later). Writes before that are not sent; they complete as Invalid at once. The same applies to writes to a participant that has started to leave the simulation (its lifecycle has started to stop, or it failed).
 
-### 通信量と認証
+### Traffic and authentication
 
-値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送信します。ECU が多く、変数が多く、速く動かすほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。
+Values are not thinned out. An ECU sends all its variables every `sample_period` of its Agent (default: 10 ms of virtual time). The traffic grows with more ECUs, more variables and a higher speed. If the load is too high, increase the ECU's `sample_period`.
 
-ECU と `vehicle_sil_launch` の間に認証はありません。registry に参加できる者は、ECU の変数に書けます（バスにフレームを送信できるのと同じです）。registry は既定で 127.0.0.1 だけで待ち受けます。
+There is no authentication between the ECUs and `vehicle_sil_launch`. Anyone who can join the registry can write ECU variables, in the same way as they can send frames on the bus. By default, the registry listens only on 127.0.0.1.
 
-## 速度を指定して動かす（`speed`）
+## Running at a set speed (`speed`)
 
-`speed`（設定ファイル）か `run --speed` を指定すると、controller はタイムステップ（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
+With `speed` (configuration file) or `run --speed`, the controller paces virtual time to real time at every time step (`time_step_ms`). With `speed: 1`, 1000 ms of virtual time takes at least 1000 ms of real time. Use a set speed to run together with devices that work in real time, or when a person operates the simulation while watching a screen.
 
-合わせるために待つだけなので、いちばん遅い participant より速くはなりません。最速（`max`）では合わせず、遅れも数えません。
+Pacing only adds waits, so it never makes the simulation faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
 
-実時間で動く機器は、シミュレーションを待ちません。シミュレーションが実時間に遅れると、機器から見た結果が変わります。そのため、遅れを次の定義で数えて報告します。
+Real-time devices do not wait for the simulation. When the simulation falls behind real time, the devices see different results. That is why `run` measures lateness with the definitions below and reports it.
 
-### 遅れの定義
+### Definition of lateness
 
-| 言葉 | 意味 |
+| Term | Meaning |
 |---|---|
-| 期限 | タイムステップ（仮想時刻 T に始まる controller のステップ）を始めてよい実時間 |
-| 遅れ | タイムステップが実際に始まった実時間から、期限を引いたもの（負なら 0） |
-| 遅れたタイムステップ | 遅れが `late_tolerance_ms`（既定は実時間の 10 ms）を超えたタイムステップ |
-| ずれ | 遅れたタイムステップの遅れ（合計が `slipped_ms`） |
+| Deadline | The real time at which a time step (the controller step that starts at virtual time T) may start at the earliest |
+| Lateness | The real time at which the time step actually started, minus its deadline (0 if negative) |
+| Late time step | A time step whose lateness exceeds `late_tolerance_ms` (default: 10 ms of real time) |
+| Slip | The lateness of a late time step (the total is `slipped_ms`) |
 
-期限は、「基準の実時間 +（T − 基準の仮想時刻）÷ 速度」で決まります。基準は最初のタイムステップでとり、再開のたびにとり直します。途中で速度を数から数へ変えても、次のタイムステップの期限は動きません。どのタイムステップも、期限より前には始まりません。
+The deadline is "base real time + (T − base virtual time) ÷ speed". The base is taken at the first time step and taken again at every resume. If the speed changes from one number to another during the run, the deadline of the next time step does not move. No time step starts before its deadline.
 
-タイムステップが始まるのは、controller が前のタイムステップを放し、そのタイムステップより前に始まる participant のステップが全部終わったと controller が知ったときです。遅れには、controller 自身が起きるのが遅れた分も入ります。機器からは区別がつかないためです。
+A time step starts when the controller has released the previous time step and knows that every participant step that starts before this time step has finished. Lateness includes any delay in the controller itself waking up, because devices cannot tell the difference.
 
-遅れたタイムステップの後、シミュレーションは追いつこうとしません。そのタイムステップを新しい基準にして、そこから指定の速度で進みます。それ以後の仮想時間は、遅れた分だけ後ろにずれたままです。許容の内の遅れでは基準を変えないので、次のタイムステップで自然に取り戻します。
+After a late time step, the simulation does not try to catch up. That time step becomes the new base, and the simulation proceeds at the set speed from there. All later virtual time stays shifted later by that lateness. Lateness within the tolerance does not change the base, so the next time step makes it up naturally.
 
-数える範囲は、基準をとった次のタイムステップから、最後のタイムステップ（`stop_at_ms` のタイムステップを含みます）までです。
+Counting runs from the time step after the base was taken to the last time step (including the time step of `stop_at_ms`).
 
-| 場合 | 数え方 |
+| Case | How it is counted |
 |---|---|
-| 期限を過ぎても、まだ始まっていないタイムステップ | そのときまでの遅れで数えます。 |
-| participant が止まったまま、時間切れ、失敗、停止で実行が終わった | その遅れは結果に残ります。 |
-| 一時停止していた時間 | 数えません。 |
-| 最速（`max`）の間 | どのタイムステップも遅れません。 |
-| 最速にした時点で期限を過ぎていたタイムステップ | そのときの遅れを保ち、始まったときに 1 回だけ数えます（最速にしていた間の実時間は遅れに入りません）。 |
-| そのタイムステップが始まる前に、数の速度に戻した | そのタイムステップの期限は「戻した時刻 − 保っていた遅れ」です。 |
+| A time step that is past its deadline but has not started yet | Counted with its lateness so far. |
+| The run ends by timeout, failure or stop while a participant is stuck | That lateness stays in the result. |
+| Time spent paused | Not counted. |
+| While at maximum speed (`max`) | No time step is late. |
+| A time step that was already past its deadline when the speed was set to maximum | It keeps the lateness it had, and is counted once, when it starts (real time spent at maximum speed is not added to its lateness). |
+| The speed is set back to a number before that time step starts | The deadline of that time step is "the time of the change − the kept lateness". |
 
-### 遅れたときに、実時間で動く機器から見て起きること
+### What real-time devices see when the run falls behind
 
-あるタイムステップが 490 ms 遅れると、それ以後のメッセージは、すべて 490 ms 遅れて出ます。周期は変わりません（10 ms 周期のメッセージは、その後も 10 ms おきに出ます）。追いつこうとしないのは、追いつくと、たまった分（この例では約 49 周期分）のメッセージが数 ms の間にまとめて出て、受信する側の周期やタイムアウトの判定を乱すためです。
+If a time step is 490 ms late, every later message comes out 490 ms late. The period does not change (a 10 ms message still comes out every 10 ms). The simulation does not catch up, because catching up would release the backlog (about 49 periods of messages in this example) within a few ms, which would upset the receivers' period and timeout checks.
 
-遅れたタイムステップの数は、遅れが起きた回数です。1 回の遅いステップは、どれだけ長くても遅れたタイムステップ 1 つです。ECU のステップがいつも実時間に間に合わないシミュレーションは、ずれ続けます。全体でどれだけ遅れたかは、`slipped_ms` と `actual_speed` でわかります（かかった実時間は、仮想時間 ÷ 速度 に `slipped_ms` を足したものより短くなりません）。
+The number of late time steps is the number of times lateness occurred. One slow step, however long, is 1 late time step. A simulation whose ECU steps never keep up with real time keeps slipping. `slipped_ms` and `actual_speed` show how far behind the whole run fell (the real time taken is never shorter than virtual time ÷ speed + `slipped_ms`).
 
-1 つのタイムステップの遅れ（`max_late_ms`）は、大きめに出ることがあります。participant があるステップを終えてすぐ次のステップに入ると、終わったことは次のステップの後で controller に伝わります。controller はその分（最大で、その participant の 1 ステップにかかる実時間）だけ遅く知ります。小さく出ることはありません。
+The lateness of a single time step (`max_late_ms`) can be reported larger than it really was. When a participant finishes a step and immediately enters the next one, the controller learns that the step finished only after the next step. The controller learns it late by that amount (at most the real time that participant takes for 1 step). The value is never reported smaller than the real lateness.
 
-そのため、ステップの計算が続けてステップの枠（ステップ幅 ÷ 速度 の実時間）をはみ出す ECU では、許容が、次の 1 ステップの計算時間の分だけ小さくなります。大きめに測った遅れが許容を超えると、そのタイムステップは遅れたタイムステップになり、基準をとり直すので、以後は実際にその分だけずれます。こういう ECU があるときは、`late_tolerance_ms` を「機器が待てる時間 + ECU の 1 ステップの計算時間」を目安に決めます。
+So, for an ECU whose step computation repeatedly exceeds the real time available for a step (step size ÷ speed), the effective tolerance shrinks by the computation time of the next step. When the overestimated lateness exceeds the tolerance, the time step becomes late and the base is taken again, so from then on the run really is shifted by that amount. With such ECUs, set `late_tolerance_ms` to roughly "the time the devices can wait + the computation time of 1 ECU step".
 
-### タイムステップと ECU のステップ
+### Time steps and ECU steps
 
-合わせるのはタイムステップの境目だけです。仮想時刻 T に始まる ECU のステップは、T 以後の最初のタイムステップの期限に動きます。タイムステップの間に始まるステップは、次のタイムステップの期限に、まとめて動きます。T にあたる実時間より遅くなり、早くはなりません。
+Pacing happens only at time step boundaries. An ECU step that starts at virtual time T runs at the deadline of the first time step at or after T. Steps that start between time steps run together at the deadline of the next time step. They run later than the real time that corresponds to T, and never earlier.
 
-遅くなる量は、最大で「タイムステップ −（タイムステップと ECU のステップ幅の最大公約数）」です。この量は遅れの数には入りません。結果の `timing` の `step_delay_ms` にあります。
+This delay is at most "time step − (greatest common divisor of the time step and the ECU step size)". It is not counted as lateness. It is in `step_delay_ms` of `timing` in the result.
 
-| タイムステップ | ECU のステップ幅 | 遅くなる量の最大 |
+| Time step | ECU step size | Maximum delay |
 |---|---|---|
 | 10 ms | 1 ms | 9 ms |
 | 10 ms | 15 ms | 5 ms |
-| 10 ms | タイムステップの倍数 | 0 |
+| 10 ms | A multiple of the time step | 0 |
 
-そのため、速度を指定して `time_step_ms` を書かなければ、タイムステップは、10 ms、`stop_at_ms`、ECU のステップ幅の最大公約数になります。ECU のステップ幅は、無効にしていない ECU の `--describe` の出力を照合で読んだものです。
+So, with a set speed and no `time_step_ms`, the time step is the greatest common divisor of 10 ms, `stop_at_ms` and the ECU step sizes. The ECU step sizes are those that the check reads from the `--describe` output of the ECUs that are not disabled.
 
-| ECU のステップ幅 | タイムステップ |
+| ECU step sizes | Time step |
 |---|---|
-| 10 ms と 5 ms | 5 ms |
-| 4 ms と 6 ms | 2 ms |
-| 20 ms だけ | 10 ms |
-| ステップ幅がわからない participant（`describe: false`）がある | 1 ms |
-| 最大公約数が 1 ms の倍数でない | 1 ms |
+| 10 ms and 5 ms | 5 ms |
+| 4 ms and 6 ms | 2 ms |
+| Only 20 ms | 10 ms |
+| A participant whose step size is unknown (`describe: false`) is present | 1 ms |
+| The greatest common divisor is not a multiple of 1 ms | 1 ms |
 
-`time_step_ms` を書いたときは、その値を使います。速度の指定があり、ECU のステップがタイムステップの境目で始まらないときは、警告 `coarse-time-step` を出します。警告には、最大で何 ms 遅れてまとまるかと、何と書けばよいかを書きます。
+If you set `time_step_ms`, that value is used. With a set speed, if ECU steps do not start at time step boundaries, the warning `coarse-time-step` is reported. The warning says by how many ms at most the steps are delayed and bunched together, and what value to write.
 
-| 場合 | `coarse-time-step` を出す時点 |
+| Case | When `coarse-time-step` is reported |
 |---|---|
-| 設定ファイルに `speed` も書いてある | `check` の時点（`run` ではその 1 つだけ） |
-| `run --speed` で速度を変えた | `run` が、変えた速度で判断します。 |
-| 最速で始めて、途中で `speed` のコマンドを受けた | そのとき（タイムステップは始めに決まり、途中で変わりません） |
+| `speed` is also in the configuration file | At the check (in `run`, only that finding is reported) |
+| `run --speed` changed the speed | At `run`, with the changed speed |
+| The run started at maximum speed and received a `speed` command | At that moment (the time step is set at the start and does not change during the run) |
 
-タイムステップを細かくすると、時刻同期の回数が増えます。最速のときの既定が 10 ms のままなのは、そのためです。
+A finer time step means more time synchronizations. That is why the default at maximum speed stays 10 ms.
 
-### 遅れたときの警告と対処
+### Lateness warnings and what to do
 
-遅れたタイムステップが 1 つでもあれば、警告 `behind-real-time` を出します（`--strict` では失敗）。数は、結果の `timing`、人向けの出力の `time:` の行、`--events` の `time` にあります。
+If there is even 1 late time step, the warning `behind-real-time` is reported (a failure with `--strict`). The counts are in `timing` of the result, in the `time:` line of the human-readable output and in the `time` events of `--events`.
 
-遅れたときは、速度を下げるか、遅い原因を探します。
+When the run falls behind, lower the speed or look for the cause.
 
-| 原因 | 対処 |
+| Cause | Fix |
 |---|---|
-| 1 ステップの計算が重い ECU がある | そのステップを軽くします（ステップ幅を大きくしても、1 ステップが重ければ遅れは減りません）。 |
-| 小さいステップの ECU が多くて、同期の回数が多い | ECU のステップ幅と `time_step_ms` を大きくします。 |
-| どの participant が遅いかわからない | ECU を 1 つずつ無効にして（`--disable`）比べます。 |
+| An ECU has a heavy computation in one step | Make that step lighter (a larger step size does not reduce lateness if a single step is heavy). |
+| Many ECUs with small steps cause many synchronizations | Increase the ECU step sizes and `time_step_ms`. |
+| You do not know which participant is slow | Disable the ECUs one at a time (`--disable`) and compare. |
 
-`vehicle_sil_launch` は、どの participant が遅いかを知りません。SIL Kit は、各 participant のステップにかかった時間を controller に伝えないためです。
+`vehicle_sil_launch` does not know which participant is slow, because SIL Kit does not tell the controller how long each participant's step took.
 
-`late_tolerance_ms` の既定の 10 ms は、実時間で動く機器のタイムアウトに比べて十分小さく、OS のタイマーの揺れより十分大きい値として選んでいます。実時間の長さで、タイムステップと速度によりません。機器が待てる時間に合わせて変えます。
+The default `late_tolerance_ms` of 10 ms was chosen to be well below the timeouts of real-time devices and well above the jitter of OS timers. It is a length of real time and does not depend on the time step or the speed. Change it to match how long the devices can wait.
 
-### 一時停止、ステップ実行、速度の変更
+### Pausing, stepping and changing speed
 
-一時停止、ステップ実行、途中での速度の変更は、標準入力のコマンドと、Control Server（`--control`）のクライアントの呼び出しでします（[標準入力のコマンド](simulation-events.md#標準入力のコマンドrun---stdin-commands)）。
+Pause, single-step and change the speed during a run with stdin commands and with calls from Control Server (`--control`) clients (see [Stdin commands](simulation-events.md#stdin-commands-run---stdin-commands)).
 
-`run --start-paused` は、全員がそろったら仮想時間 0 で止まり、`resume` か `step` を待ちます。`--stdin-commands` か `--control` と一緒に使います。
+`run --start-paused` pauses at virtual time 0 once all participants have joined, and waits for `resume` or `step`. Use it with `--stdin-commands` or `--control`.
 
-| 一緒に付けた引数 | 止まる所 |
+| Options given with it | Where the run pauses |
 |---|---|
-| `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
-| `--control` がある | 時刻 0 のステップの前で止まります。 |
+| Only `--stdin-commands` | After it has executed the step at time 0. |
+| `--control` | Before the step at time 0. |
 
-## 止め方
+## Stopping a run
 
-シミュレーションが終わったら（中断と Ctrl+C のときも）、次の順に participant を終了させます。
+When the simulation ends (also after an abort and on Ctrl+C), `run` ends the participants in this order:
 
-1. 必須の participant が自分で終わるのを、`stop_timeout_ms` まで待ちます（ecu_main の実行ファイルは、シミュレーションが終われば自分で終わります）。
-2. まだ動いている participant に、止まるよう求めます（Linux: その participant のプロセスグループに SIGTERM。Windows: そのプロセスグループに Ctrl+Break）。`required: false` の participant は、ここで止めます（警告にしません）。必須の participant はエラーです（`did-not-end`）。
-3. さらに `stop_timeout_ms` まで、止まるよう求めた participant と、それが起動したプロセス（プロセスグループ、Windows ではジョブオブジェクト）が終わるのを待ちます。残ったものを、それが起動したプロセスごと強制終了します（Linux: プロセスグループに SIGKILL。Windows: ジョブオブジェクトの終了）。
-4. 自分で終わった participant でも、それが起動したプロセスが残っていれば終了させ、警告にします（`left-processes`）。
+1. Wait up to `stop_timeout_ms` for the required participants to end on their own (ecu_main executables end on their own when the simulation ends).
+2. Ask the participants that are still running to stop (Linux: SIGTERM to the participant's process group. Windows: Ctrl+Break to its process group). Participants with `required: false` are stopped here, without a warning. For a required participant, this is an error (`did-not-end`).
+3. Wait up to another `stop_timeout_ms` for the participants asked to stop, and the processes they started (process group; on Windows, job object), to end. Kill whatever remains, together with the processes it started (Linux: SIGKILL to the process group. Windows: terminate the job object).
+4. If a participant ended on its own but processes it started remain, end them and report a warning (`left-processes`).
 
-| 場合 | 違い |
+| Case | Difference |
 |---|---|
-| 利用者が起動する（manual の）participant | どの手順も適用しません（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)の「止め方」）。 |
-| シミュレーションが始まらなかった | 1 を飛ばして 2 からです（その participant のエラーにはしません）。 |
-| Windows で `vehicle_sil_launch` にコンソールがない | Ctrl+Break を送信できないので、2 の代わりにすぐ強制終了します（メッセージにそう書きます）。 |
+| A participant that you start yourself (manual) | None of the items apply (see "How to stop" in [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual)). |
+| The simulation did not start | Item 1 is skipped and the order starts at item 2 (this is not an error of that participant). |
+| On Windows, `vehicle_sil_launch` has no console | Ctrl+Break cannot be sent, so `run` kills the participant at once instead of item 2 (the message says so). |
 
-ecu_main の実行ファイルは、始まる前に止まるよう求められると、すぐに終わります（[ecu-executable.md](ecu-executable.md)）。
+An ecu_main executable that is asked to stop before the start ends at once (see [ecu-executable.md](ecu-executable.md)).
 
-各 participant は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動きます。端末の Ctrl+C は `vehicle_sil_launch` だけが受け取り、participant は受け取りません。Windows で `vehicle_sil_launch` にコンソールがないとき（participant と共有するコンソールがないとき）、participant は、コンソールの窓を開かないように起動します。
+Each participant runs in its own process group (on Windows, a process group and a job object). Ctrl+C in the terminal reaches only `vehicle_sil_launch`, not the participants. On Windows, when `vehicle_sil_launch` has no console (no console to share with the participants), the participants are started without opening a console window.
 
-### `run` 自身の接続を閉じる
+### Closing the connection of `run` itself
 
-participant を終了させた後、`run` は自分の SIL Kit の接続（ECU の変数との接続、controller、registry）を閉じてから、結果を書きます。期限は、5 秒に、`stop_timeout_ms` と 5 秒の長い方を足した時間です。期限のうちに閉じなければ、待つのをやめ、警告 `connection-not-closed` を追加して結果を書き、接続を閉じないままプロセスを終えます。結果と終了コードのルールは変わりません。
+After ending the participants, `run` closes its own SIL Kit connections (the connection to ECU variables, the controller, the registry) and then writes the result. The deadline is 5 seconds plus the longer of `stop_timeout_ms` and 5 seconds. If the connections have not closed by then, `run` stops waiting, adds the warning `connection-not-closed`, writes the result and exits the process without closing them. The rules for the result and the exit code do not change.
 
-この待ちも、Ctrl+C か `stop` のコマンドをもう 1 回送ると打ち切ります。打ち切ったときは、そう 1 行書いて、同じように終えます。求められたとおりなので、指摘にはしません。
+Another Ctrl+C or `stop` command also cuts this wait short. `run` then writes one line that says so and exits the same way. The user asked for this, so it is not a finding.
 
-## 中断（Ctrl+C）
+## Interrupting (Ctrl+C)
 
-Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けると、`vehicle_sil_launch` はシミュレーションを順に止め（controller の stop）、上の止め方で participant を終了させ、結果に中断を書いて、終了コード 130 で終わります。
+On Ctrl+C (SIGINT), SIGTERM or SIGHUP (Windows: Ctrl+C, Ctrl+Break, closing the console), `vehicle_sil_launch` stops the simulation in order (the controller's stop), ends the participants as described in [Stopping a run](#stopping-a-run), records the interruption in the result and exits with code 130.
 
-| 受けた時点 | すること |
+| When it arrives | What `run` does |
 |---|---|
-| 照合の間 | 照合が終わってから中断します（何も起動しません）。 |
-| 始まる前 | participant を止めます。 |
-| シミュレーションが終わった後、participant が自分で終わるのを待っている間 | その待ちをやめて、止まるよう求めます（止め方の 2）。 |
-| 2 回目 | 待つのをやめて、残っている participant をすぐに強制終了します。 |
+| During the check | Interrupts after the check has finished (nothing is started). |
+| Before the start | Stops the participants. |
+| After the simulation has ended, while waiting for participants to end on their own | Stops that wait and asks them to stop (item 2 of "Stopping a run"). |
+| The second time | Stops waiting and kills the remaining participants at once. |
 
-| シグナルなど | 扱い |
+| Signal or event | Handling |
 |---|---|
-| `vehicle_sil_launch` を起動した側が無視するように設定したシグナル（`nohup` の SIGHUP など） | 無視したままです。 |
-| 端末の Ctrl+Z（SIGTSTP） | `vehicle_sil_launch` だけを止めます。 |
-| Windows でコンソールを閉じる | Windows が数秒でプロセスを終了させます。 |
+| A signal that the program which started `vehicle_sil_launch` set to be ignored (SIGHUP with `nohup`, for example) | Stays ignored. |
+| Ctrl+Z (SIGTSTP) in the terminal | Stops only `vehicle_sil_launch`. |
+| Closing the console on Windows | Windows ends the process within a few seconds. |
 
-Ctrl+Z では、participant は別のプロセスグループなので動き続け、registry と controller だけが止まります。Windows でコンソールを閉じたとき、participant はジョブオブジェクトが終了させますが、結果を書けないことがあります。
+On Ctrl+Z, the participants keep running because they are in other process groups; only the registry and the controller stop. When the console is closed on Windows, the job objects end the participants, but the result may not be written.
 
-プログラムから `vehicle_sil_launch` を動かすときは、`--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じると、Ctrl+C と同じように順に止まります（[プログラムから使う](simulation-events.md)）。シグナルも Ctrl+Break も送信できない、コンソールのない Windows の `vehicle_sil_launch` も、これで順に止められます。シミュレーションを止めると、ecu_main の実行ファイルは自分で終わります。自分で終わらない participant は、Ctrl+Break を送信できないので、止め方の 2 の代わりにすぐ強制終了します。
+When a program drives `vehicle_sil_launch`, pass `--stdin-commands`, then write `{"command":"stop"}` to stdin or close stdin. The run then stops in order, as on Ctrl+C (see [Programmatic use](simulation-events.md)). This also stops in order a `vehicle_sil_launch` on Windows that has no console and so can receive neither signals nor Ctrl+Break. When the simulation stops, ecu_main executables end on their own. A participant that does not end on its own is killed at once instead of item 2 of "Stopping a run", because Ctrl+Break cannot be sent.
 
-## participant を残さないこと
+## Leaving no participant behind
 
-`vehicle_sil_launch` は、終わる前に、起動したすべての participant を終了させます。participant は、標準入力（空）、標準出力、標準エラー（`vehicle_sil_launch` が読むパイプ）のほかに、`vehicle_sil_launch` のファイルやハンドルを継承しません。
+Before it exits, `vehicle_sil_launch` ends every participant it started. Participants inherit no files or handles of `vehicle_sil_launch` other than stdin (empty), stdout and stderr (pipes that `vehicle_sil_launch` reads).
 
-| OS | `vehicle_sil_launch` が強制終了されたとき（SIGKILL、クラッシュを含む） |
+| OS | When `vehicle_sil_launch` is killed (including SIGKILL and crashes) |
 |---|---|
-| Windows | participant とそれが起動したプロセスは終わります。 |
-| Linux | participant は SIGKILL を受けますが、participant が起動したプロセスは残ることがあります。 |
-| Linux 以外の POSIX | 対象にしていません（participant が残ります）。 |
+| Windows | The participants and the processes they started end. |
+| Linux | The participants receive SIGKILL, but processes they started can remain. |
+| POSIX systems other than Linux | Not supported (participants remain). |
 
-- Windows: participant はそれぞれジョブオブジェクト（最後のハンドルが閉じたら、中のプロセスを終了させる）に入ります。`vehicle_sil_launch` がどう終わっても同じです。
-- Linux: participant は、`vehicle_sil_launch` が終わると SIGKILL を受けます（親が終わったときのシグナル）。強制終了されたときに participant が起動したプロセスが残るのは、止め方の 3 と 4 が動かないためです。
-- Linux: participant のプロセスグループを抜けたプロセス（`setsid()` などを呼んだもの）は、どの場合も終了させられません。
-- Linux 以外の POSIX には、親が終わったときのシグナルがありません。
+- Windows: each participant is in a job object, which ends the processes in it when its last handle closes. This holds however `vehicle_sil_launch` ends.
+- Linux: participants receive SIGKILL when `vehicle_sil_launch` ends (the parent-death signal). Processes started by a participant remain after a kill because items 3 and 4 of "Stopping a run" do not run.
+- Linux: processes that have left the participant's process group (by calling `setsid()` or similar) cannot be ended in any case.
+- POSIX systems other than Linux have no parent-death signal.
 
-## 待ち受けるアドレス
+## Listen addresses
 
-SIL Kit の participant は、ほかの participant からの接続を待ち受けます。どのアドレスで待ち受けるかは、registry の URI のホストがループバックのアドレスかどうかで決まります。
+A SIL Kit participant listens for connections from other participants. The addresses it listens on depend on whether the host of the registry URI is a loopback address.
 
-| registry の URI のホスト | participant が待ち受けるアドレス | ほかの PC からの接続 | Windows のファイアウォール |
+| Host of the registry URI | Addresses participants listen on | Connections from other computers | Windows Firewall |
 |---|---|---|---|
-| ループバックのアドレス（`registry_uri` を書かない実行は、いつもこれ） | ループバックのアドレスだけ | できません。 | 待ち受けてよいかを尋ねません。 |
-| ループバックでないアドレス（`silkit://0.0.0.0:8500` など） | SIL Kit の既定のとおり、全部のアドレス | できます。 | 下の「Windows のファイアウォール」 |
+| A loopback address (always, in a run without `registry_uri`) | Loopback address only | Not possible. | Does not ask for permission to listen. |
+| A non-loopback address (`silkit://0.0.0.0:8500`, for example) | All addresses, as SIL Kit does by default | Possible. | See "Windows Firewall" below. |
 
-この表が当てはまるのは、vehicle-sil が SIL Kit の設定を作る participant です。ecu_main の実行ファイル、`ParticipantRuntime` や `Simulation` を使うプログラム、`vehicle_sil_can_bus_simulator`、Vector XL のブリッジ、`run` の controller がそうです。
+This table applies to the participants whose SIL Kit configuration vehicle-sil creates: ecu_main executables, programs that use `ParticipantRuntime` or `Simulation`, `vehicle_sil_can_bus_simulator`, the Vector XL CAN Bridge and the controller of `run`.
 
-ループバックのアドレスだけで待ち受けるとき、TCP は `127.0.0.1` です（URI が `::1` なら `::1`）。Windows 以外では、ほかに一時ディレクトリの local-domain ソケットでも待ち受けます。
+When participants listen on loopback only, TCP uses `127.0.0.1` (`::1` if the URI uses `::1`). On systems other than Windows, they also listen on a local-domain socket in a temporary directory.
 
-ループバックでないアドレスでは、SIL Kit には認証がないので、この PC に接続できる誰でもシミュレーションに参加できます（注記 `registry-on-network`）。
+With a non-loopback address, anyone who can connect to this computer can join the simulation, because SIL Kit has no authentication (note `registry-on-network`).
 
-registry は、自分の URI のアドレスで、TCP だけで待ち受けます（local-domain ソケットを使いません）。そのポートを別のプログラムや別の `run` が使っていれば、何も起動せずに `setup` のエラー（終了コード 3、`the registry cannot listen at <URI>: ...`）です。
+The registry listens on the address of its own URI, over TCP only (no local-domain socket). If another program or another `run` uses that port, `run` starts nothing and reports the `setup` error (exit code 3, `the registry cannot listen at <URI>: ...`).
 
-### ループバックのアドレスとみなすもの
+### What counts as a loopback address
 
-| 書き方 | 例 |
+| Form | Examples |
 |---|---|
-| `127.0.0.0/8` の IPv4 アドレス（`getaddrinfo()` が読む数の書き方） | `127.0.0.1`、`127.1` |
-| `::1` | `[::1]`、`[0:0:0:0:0:0:0:1]` |
-| IPv6 にマップした `127.x.x.x` | `[::ffff:127.0.0.1]` |
-| `localhost`（大文字小文字を問わず） | `localhost`、`localhost.` |
+| An IPv4 address in `127.0.0.0/8` (any numeric form that `getaddrinfo()` reads) | `127.0.0.1`, `127.1` |
+| `::1` | `[::1]`, `[0:0:0:0:0:0:0:1]` |
+| `127.x.x.x` mapped to IPv6 | `[::ffff:127.0.0.1]` |
+| `localhost` (in any case) | `localhost`, `localhost.` |
 
-ほかの名前は、名前解決をせずに、ループバックでないとみなします。
+Any other name counts as non-loopback, without name resolution.
 
-### Windows のファイアウォール
+### Windows Firewall
 
-`registry_uri` がループバックのアドレスでないとき、Windows のファイアウォールは、registry（`vehicle_sil_launch`）と participant のプログラムに、待ち受けてよいかを尋ねます。どちらも全部のアドレスで待ち受けるためです。
+When `registry_uri` is not a loopback address, Windows Firewall asks whether the registry (`vehicle_sil_launch`) and the participant programs may listen, because both listen on all addresses.
 
-許可が必要なのは、registry を持つ `vehicle_sil_launch` だけです。participant の実行ファイルは、許可しなくても参加できます。participant のほうから、ランチャーを動かす PC に接続するためです。直接接続できない participant どうしは、registry の中継で接続します（[dependencies.md](dependencies.md) の「混ぜてよい SIL Kit のバージョン」）。
+Only `vehicle_sil_launch`, which hosts the registry, needs permission. Participant executables can join without it, because the participants connect out to the computer that runs the launcher. Participants that cannot connect to each other directly connect through the registry, which relays between them (see "SIL Kit versions that can be mixed" in [dependencies.md](dependencies.md#sil-kit-versions-that-can-be-mixed)).
 
-| 許可の状態 | 起きること |
+| Permission | What happens |
 |---|---|
-| `vehicle_sil_launch` の許可がない | ほかの PC から参加する ECU が、約 5 秒で失敗します。 |
-| ランチャーを動かす PC の participant の許可がない | ほかの PC からの参加のたびに、5 秒ほどかかります。 |
-| 参加する PC の participant の許可がない | 確認している構成では、そのまま参加できます。 |
+| `vehicle_sil_launch` is not allowed | ECUs that join from other computers fail after about 5 seconds. |
+| A participant on the computer that runs the launcher is not allowed | Each join from another computer takes about 5 seconds. |
+| A participant on the joining computer is not allowed | In the tested setups, it joins normally. |
 
-確認している構成と、許可するコマンドは、[複数の PC で動かす](howto/multi-pc.md) の「ファイアウォールの許可」と「確認している構成」にあります。
+For the tested setups and the commands that grant permission, see "Firewall rules" and "Tested setups" in [Run on several computers](howto/multi-pc.md).
 
-### ほかの PC から参加する URI の表示
+### The URI printed for joining from another computer
 
-`registry_uri` がループバックのアドレスでないとき、`run` は `registry at` の行の次に、ほかの PC から参加する URI の行を書きます。
+When `registry_uri` is not a loopback address, `run` writes a line with the URI for joining from other computers after the `registry at` line.
 
 ```text
 [vehicle_sil_launch] from other computers, join at silkit://192.0.2.10:8500 (this computer's address): give it as --registry-uri to a participant started by hand on another computer ...
 ```
 
-| `registry_uri` のホスト | 表示するアドレス |
+| Host of `registry_uri` | Address shown |
 |---|---|
-| `0.0.0.0` | この PC の、動いているネットワークの IPv4 アドレス（ループバックとリンクローカル `169.254.x.x` を除く） |
-| `[::]` | IPv6 のアドレス（ループバックとリンクローカルを除く）と、Linux では IPv4 のアドレス |
-| アドレスを書いたもの | その URI |
+| `0.0.0.0` | The IPv4 addresses of this computer's active networks (except loopback and link-local `169.254.x.x`) |
+| `[::]` | The IPv6 addresses (except loopback and link-local) and, on Linux, the IPv4 addresses |
+| A specific address | That URI |
 
-- 既定の経路のあるネットワークのアドレスを先に並べ、ほかにもあれば、先頭がそれだと書き添えます。WSL、Docker、仮想マシンの仮想のネットワークのアドレスは、ほかの PC から接続できないことが多いためです。
-- Linux の `[::]` で IPv4 のアドレスも並べるのは、`net.ipv6.bindv6only` が `1` でなければ、`[::]` が IPv4 も受けるためです。
-- Windows の `[::]` は IPv6 だけを受けるので、IPv4 には `silkit://0.0.0.0:<port>` と書くよう添えます。
-- アドレスが見つからなければ、`ipconfig`（Windows）か `ip addr` で調べるよう書きます。
+- The address of the network with the default route comes first. If there are other addresses, the line adds that the first one is that address. This is because addresses of the virtual networks of WSL, Docker and virtual machines often cannot be reached from other computers.
+- On Linux, `[::]` also lists IPv4 addresses, because `[::]` also accepts IPv4 unless `net.ipv6.bindv6only` is `1`.
+- On Windows, `[::]` accepts IPv6 only, so the line adds that for IPv4 you write `silkit://0.0.0.0:<port>`.
+- If no address is found, the line says to look one up with `ipconfig` (Windows) or `ip addr`.
 
-### 環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`
+### The environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK`
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `1` | registry の URI がループバックのアドレスでも、全部のアドレスで待ち受けます。 |
-| `0`、空、設定なし | 上のルールのとおりです。 |
-| ほかの値 | エラーです（participant を作れず、変数の名前と値を挙げたメッセージで失敗します）。 |
+| `1` | Listen on all addresses even if the registry URI is a loopback address. |
+| `0`, empty, unset | The rules above apply. |
+| Any other value | An error (the participant cannot be created and fails with a message that gives the variable's name and value). |
 
-`run` は、起動する participant に、いつもこの変数を渡します。`registry_uri` がループバックのアドレスでなければ `1`、そうでなければ `0` です。`vehicle_sil_launch` 自身の環境の値は渡さず、controller も使いません。その値が `run` の渡す値と違えば、注記 `listen-variable-ignored` を出します。
+`run` always passes this variable to the participants it starts: `1` if `registry_uri` is not a loopback address, otherwise `0`. It does not pass on the value from the environment of `vehicle_sil_launch` itself, and the controller does not use it. If that value differs from the one `run` passes, `run` reports the note `listen-variable-ignored`.
 
-`1` を渡す理由は次のとおりです。`registry_uri` が `0.0.0.0`（または `[::]`）のとき、`run` はこの PC の participant に `127.0.0.1`（`[::1]`）の URI を渡します。そのままではループバックのアドレスだけで待ち受け、SIL Kit はそのアドレスを、ほかの PC の participant にもそのまま渡します。受け取った側は、それを自分のループバックのアドレスで試します。そこで別のプログラムが同じポートで待ち受けていると、そこに接続して返事を待ち続け、参加に失敗します。そうならないように、全部のアドレスで待ち受けさせます。
+Why `1` is passed: when `registry_uri` is `0.0.0.0` (or `[::]`), `run` gives the participants on this computer a URI with `127.0.0.1` (`[::1]`). With only that, they would listen on loopback only, and SIL Kit passes that address unchanged to the participants on other computers too. A participant that receives it tries it on its own loopback address. If another program listens on the same port there, the participant connects to that program, waits for a reply forever and fails to join. Listening on all addresses prevents this.
 
-自分で起動する participant（manual）には、`run` が書くコマンドの行とイベント `participant`（`manual`）の `environment` に、設定する値を示します（`1` のときだけ）。ほかの PC の registry に、その PC の上でループバックのアドレスで接続する participant にも、自分で `1` を設定します。
+For a participant that you start yourself (manual), the value to set appears in the command line that `run` prints and in `environment` of the `participant` event (`manual`), only when it is `1`. Also set `1` yourself for any other participant that runs on the registry's computer and connects to it through a loopback address (such as `127.0.0.1`), when participants on other computers join the same registry.
 
-### 自分の SIL Kit の設定を渡した participant
+### Participants with their own SIL Kit configuration
 
-| participant | 待ち受けるアドレス |
+| Participant | Addresses it listens on |
 |---|---|
-| SIL Kit の設定を渡し、そこに `Middleware.AcceptorUris` がある | そのとおりに待ち受けます。 |
-| SIL Kit の設定を渡し、そこに `Middleware.AcceptorUris` がない | 上のルールのとおりです（vehicle-sil が、設定に追加します）。 |
-| vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など） | それぞれの設定のとおりです（`Middleware.AcceptorUris` がなければ全部のアドレス）。 |
+| A SIL Kit participant configuration is passed and has `Middleware.AcceptorUris` | As configured. |
+| A SIL Kit participant configuration is passed without `Middleware.AcceptorUris` | The rules above (vehicle-sil adds them to the configuration). |
+| A SIL Kit program that does not use vehicle-sil (a `describe: false` participant, for example) | As its own configuration says (all addresses if there is no `Middleware.AcceptorUris`). |
 
-SIL Kit の設定は、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration` などで渡します（[ecu-executable.md](ecu-executable.md) の「SIL Kit の設定ファイルを渡す」）。
+Pass a SIL Kit participant configuration with `--silkit-config` of ecu_main, `vehicle_sil_can_bus_simulator --participant-configuration` and similar options (see "Passing a SIL Kit configuration file (`--silkit-config`)" in [ecu-executable.md](ecu-executable.md#passing-a-sil-kit-configuration-file---silkit-config)).
 
-## 出力
+## Output
 
-| 出力先 | 内容 |
+| Destination | Content |
 |---|---|
-| 標準エラー | participant の出力と、`vehicle_sil_launch` 自身の経過 |
-| `--log-dir` のファイル | participant ごとの出力 |
-| 標準出力 | 結果だけ（人向けか `--json`。`--events` ではイベント） |
+| Stderr | Participant output and the progress of `vehicle_sil_launch` itself |
+| `--log-dir` files | Output per participant |
+| Stdout | Only the result (human-readable or `--json`; events with `--events`) |
 
-`--events` のときは、標準エラーに書く行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、イベントとして標準出力に書きます（[プログラムから使う](simulation-events.md)）。
+With `--events`, the lines that would go to stderr (participant lines and the progress of `vehicle_sil_launch`) go to stdout as events instead (see [Programmatic use](simulation-events.md)).
 
-### 標準エラー
+### Stderr
 
-participant の標準出力と標準エラーは、行ごとに `[<participant 名>] ` を付けて、`vehicle_sil_launch` の標準エラーに書きます。`vehicle_sil_launch` 自身の経過は `[vehicle_sil_launch] ` で始まります。経過として書くのは、registry の URI、ほかの PC から参加する URI、起動したコマンド、始まった、仮想時間が進まない、終わった、止めた、です。
+Each line of a participant's stdout and stderr goes to the stderr of `vehicle_sil_launch` with `[<participant name>] ` in front. The progress lines of `vehicle_sil_launch` itself start with `[vehicle_sil_launch] `. They report the registry URI, the URI for joining from other computers, the commands started, the start, virtual time not advancing, the end, and stops.
 
-| 行の内容 | 扱い |
+| Line content | Handling |
 |---|---|
-| 4096 バイトを超える行 | UTF-8 の文字の間で分けて書きます。 |
-| 制御文字（タブを除く C0、DEL、U+0080 から U+009F の C1） | `?` にします。 |
-| UTF-8 でないバイト | `?` にします。 |
+| A line longer than 4096 bytes | Split between UTF-8 characters. |
+| Control characters (C0 except tab, DEL, C1 from U+0080 to U+009F) | Replaced with `?`. |
+| Bytes that are not UTF-8 | Replaced with `?`. |
 
-participant は UTF-8 で書いてください。Windows のコンソールにも UTF-8 として表示するので、ほかのコードページの文字は文字化けします。
+Participants must write UTF-8. The Windows console also shows the output as UTF-8, so characters in other code pages come out garbled.
 
-標準エラーを読む側が止まる（読まれないパイプ）と、`vehicle_sil_launch` も書くところで止まります。
+If the reader of stderr stops (a pipe that nobody reads), `vehicle_sil_launch` also blocks where it writes to stderr.
 
-### ログのファイル（`--log-dir`）
+### Log files (`--log-dir`)
 
-`--log-dir <dir>` を付けると、participant ごとに `<dir>/<participant 名>.log` にも書きます（`[名前]` なし）。ディレクトリがなければ作ります。JSON の `participants[].log` が、どのファイルかを示します。
+With `--log-dir <dir>`, each participant's output is also written to `<dir>/<participant name>.log` (without `[name]`). The directory is created if it does not exist. `participants[].log` in the JSON names the file.
 
-前の実行のログは、同じ名前のものだけを書き直します。今の設定にない participant のログは残ります。
+Logs from a previous run are overwritten only where the names match. Logs of participants that are not in the current configuration remain.
 
-| participant の名前 | ファイルの名前 |
+| Participant name | File name |
 |---|---|
-| ASCII の英数字、`.`、`-`、`_` 以外のバイト | `_` にします。 |
-| Windows のデバイスの名前（`NUL`、`CON`、`PRN`、`AUX`、`COM1`〜`COM9`、`LPT1`〜`LPT9`。`.` の前も） | どの OS でも、後ろに `_` を付けます。 |
-| 大文字と小文字だけが違う名前 | 重なりとみなし、`-2` などを付けます。 |
+| Bytes other than ASCII letters, digits, `.`, `-` and `_` | Replaced with `_`. |
+| Windows device names (`NUL`, `CON`, `PRN`, `AUX`, `COM1`–`COM9`, `LPT1`–`LPT9`, also before a `.`) | `_` is appended, on every OS. |
+| Names that differ only in case | Treated as a collision; `-2` or similar is appended. |
 
-### 標準出力
+### Stdout
 
-標準出力には結果だけを書きます。同じ PC の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。ただし、時間の進み方を示す次の値は、実行ごとに違います。
+Stdout gets only the result. The same result on the same computer gives the same output (it contains no times of day, durations, process IDs or registry URI). These values, which show how time progressed, differ from run to run:
 
-- 人向けの `time:` の行
-- JSON の `timing` の `wall_ms`、`actual_speed`、`paused_ms`
-- JSON の `timing` の遅れの数（`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`）
+- The `time:` line of the human-readable output
+- `wall_ms`, `actual_speed` and `paused_ms` in `timing` of the JSON
+- The lateness counts in `timing` of the JSON (`late_steps`, `max_late_ms`, `slipped_ms`, `late_ms`)
 
-改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
+Line endings are LF on every OS. When writing to the Windows console, both `check` and `run` show the text as UTF-8 characters, whatever the console code page.
 
-### 人向けの結果
+### Human-readable result
 
-人向けの結果は、次の順に並びます。
+The human-readable result has these parts, in this order:
 
-| 順 | 内容 |
+| Order | Content |
 |---|---|
-| 1 | 照合の表と、照合の指摘 |
-| 2 | `run:` で始まるシミュレーションの 1 行 |
-| 3 | `time:` の 1 行（速度を指定したか、速度を合わせたタイムステップがあったとき） |
-| 4 | participant の表（必須か、どう終わったか） |
-| 5 | 実行の指摘 |
-| 6 | 結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせたエラー、警告、注記の数） |
+| 1 | The check tables and the check findings |
+| 2 | The simulation line, which starts with `run:` |
+| 3 | The `time:` line (when a speed is set, or when there was a paced time step) |
+| 4 | The participant table (whether each is required, and how it ended) |
+| 5 | The run findings |
+| 6 | The result line (`passed:`, `failed:` or `interrupted:`, with the numbers of errors, warnings and notes from the check and the run together) |
 
-照合にエラーがあるときは、照合の表と指摘の後に `nothing was started:` の行を書きます。
+If the check has errors, the `nothing was started:` line follows the check tables and findings.
 
 <!-- vehicle_sil_launch run simulation.yaml -->
 ```text
@@ -503,27 +505,27 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-`time:` の行は、速度、全体の実際の速度（一時停止を除く）、速度を合わせたタイムステップの数と、そのうち許容を超えて遅れた数、最大の遅れ、ずれの合計、一時停止していた時間（あれば）です。次は `--speed 4` で動かしたときの行です。`<` と `>` で囲んだ所は、実行ごとに違う値です。タイムステップは、Dashboard のステップ幅に合わせて 5 ms になるので、200 個です。
+The `time:` line gives the speed, the overall actual speed (excluding pauses), the number of paced time steps and how many of them were later than the tolerance, the largest lateness, the total slip, and the time spent paused (if any). Here is the line from a run with `--speed 4`. Values between `<` and `>` differ from run to run. The time step follows the step size of Dashboard and becomes 5 ms, so there are 200 time steps.
 
 <!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
 ```text
 time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
 ```
 
-participant の表の `ended` の列:
+The `ended` column of the participant table:
 
-| 表示 | 意味 |
+| Shown | Meaning |
 |---|---|
-| `exit code <n>` | 自分で終わった（Windows の NTSTATUS の値は 16 進で、例: `0xC0000005`） |
-| `signal <名前>` | シグナルで終わった（Linux。例: `signal SIGSEGV`） |
-| `stopped (SIGTERM), exit code <n>` | 止まるよう求めた後に終わった（Windows では `Ctrl+Break`） |
-| `killed` | 強制終了した |
-| `not started` | 起動できなかった（またはその前に実行をやめた） |
-| `not started (disabled)` | 無効にした participant（`required` の列は `-`） |
-| `started by you (manual)` | 利用者が起動する participant で、シミュレーションに参加した（どう終わったかは、`run` にはわからない） |
-| `not joined (manual)` | 利用者が起動する participant で、参加しなかった |
+| `exit code <n>` | Ended on its own (a Windows NTSTATUS value is in hex, for example `0xC0000005`) |
+| `signal <name>` | Ended by a signal (Linux; for example `signal SIGSEGV`) |
+| `stopped (SIGTERM), exit code <n>` | Ended after being asked to stop (`Ctrl+Break` on Windows) |
+| `killed` | Killed |
+| `not started` | Could not be started (or the run ended before it was started) |
+| `not started (disabled)` | A disabled participant (the `required` column shows `-`) |
+| `started by you (manual)` | A participant that you start yourself, which joined the simulation (`run` cannot know how it ended) |
+| `not joined (manual)` | A participant that you start yourself, which did not join |
 
-無効にした participant がいるときの例です。照合の部分は `check` と同じです（[participant を無効にする](simulation-config.md#participant-を無効にするenabled--disable--enable)）。
+An example with a disabled participant. The check part is the same as the output of `check` (see [Disabling a participant](simulation-config.md#disabling-a-participant-enabled---disable---enable)).
 
 <!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->
 ```text
@@ -548,184 +550,184 @@ Dashboard    -         not started (disabled)
 passed: 0 errors, 1 warning, 1 note
 ```
 
-### 実行の指摘（`code`）
+### Run findings (`code`)
 
-| `code` | 重大度 | 内容 |
+| `code` | Severity | Meaning |
 |---|---|---|
-| `setup` | エラー（終了コード 3） | registry を起動できない（`registry_uri` のポートが使われているなど）、controller を作れない、`--log-dir` に書けない |
-| `start` | エラー（`required: false` は警告） | participant を起動できない |
-| `ended-before-start` | エラー | 必須の participant が、シミュレーションが始まる前に終わった |
-| `not-joined` | エラー | 必須の participant が、プロセスは動いているのに `start_timeout_ms` の間に参加しなかった |
-| `simulation-start` | エラー | 必須の participant がそろったのに、シミュレーションを始められなかった |
-| `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
-| `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
-| `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
-| `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
-| `connection-not-closed` | 警告 | `run` 自身の SIL Kit の接続が、participant を終了させた後、期限（[止め方](#止め方)）のうちに閉じなかった |
-| `timeout` | エラー | シミュレーションが `--timeout-ms` の実時間で終わらなかったので、中断した |
-| `simulation` | エラー | シミュレーションが正常に終わらなかった（理由の participant がわからない） |
-| `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
-| `control-link-no-hello` | 警告 | 変数を公開するはずの ECU の hello か、コマンドを受け取れるという返事が、始まる前に来なかった |
-| `control-link-dropped` | 警告 | `vehicle_sil_launch` が、ECU の変数との接続のメッセージを捨てた |
-| `control-link-version` | 警告 | 受信した hello の、メッセージの形式のバージョンが `vehicle_sil_launch` と違う |
-| `control-link-late-values` | 警告 | ECU の値か結果を、仮想時刻の保証より遅れて受信した |
-| `variable-map-not-applied` | エラー | 設定ファイルの `variables` の対応のうち、ECU が接続のときに通知した変数に合わないものがあった |
-| `before-start` | エラー | 開始を待っている間にする処理が失敗した |
-| `behind-real-time` | 警告 | 速度を合わせたタイムステップのうち、遅れが `late_tolerance_ms` を超えたものがあった |
-| `coarse-time-step` | 警告 | 速度の指定があり、controller のタイムステップが ECU のステップより粗い |
-| `interrupted` | 注記 | 中断された |
+| `setup` | Error (exit code 3) | The registry cannot be started (the port of `registry_uri` is in use, for example), the controller cannot be created, or `--log-dir` cannot be written |
+| `start` | Error (warning for `required: false`) | A participant cannot be started |
+| `ended-before-start` | Error | A required participant ended before the simulation started |
+| `not-joined` | Error | The process of a required participant is running, but it did not join within `start_timeout_ms` |
+| `simulation-start` | Error | All required participants joined, but the simulation could not be started |
+| `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
+| `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
+| `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
+| `left-processes` | Warning | Processes started by a participant were still running after the participant ended |
+| `connection-not-closed` | Warning | The SIL Kit connections of `run` itself did not close within the deadline (see [Stopping a run](#stopping-a-run)) after the participants were ended |
+| `timeout` | Error | The simulation did not end within the real time of `--timeout-ms`, so it was aborted |
+| `simulation` | Error | The simulation did not end normally (and the participant responsible is unknown) |
+| `ended-before-stop-at` | Note | A participant stopped the simulation before `stop_at_ms` |
+| `control-link-no-hello` | Warning | The hello of an ECU that should expose variables, or its reply that it can take commands, did not arrive before the start |
+| `control-link-dropped` | Warning | `vehicle_sil_launch` dropped messages of the connection to ECU variables |
+| `control-link-version` | Warning | The version of the message format in a received hello differs from that of `vehicle_sil_launch` |
+| `control-link-late-values` | Warning | Values or results of an ECU arrived later than the virtual-time guarantee allows |
+| `variable-map-not-applied` | Error | Some entries of the `variables` map in the configuration file do not match the variables that the ECU reported when it connected |
+| `before-start` | Error | An action to perform while waiting for the start failed |
+| `behind-real-time` | Warning | Some of the paced time steps were later than `late_tolerance_ms` |
+| `coarse-time-step` | Warning | A speed is set, and the controller's time step is coarser than the ECU steps |
+| `interrupted` | Note | The run was interrupted |
 
-`code` ごとの補足:
+Notes on individual codes:
 
-| `code` | 補足 |
+| `code` | Notes |
 |---|---|
-| `connection-not-closed` | 待った時間を書きます。結果はそろっています。 |
-| `timeout` | manual の必須の participant がいる実行では、始まらなかったときにも出ます（待っていたものを書きます）。 |
-| `control-link-no-hello` | hello が来なかったのか、返事が来なかったのかは、メッセージに書きます（[接続の状態](#接続の状態state)）。 |
-| `control-link-dropped` | 受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます。 |
-| `control-link-version` | `--describe` の出力のバージョンが違うときは、照合の同じ `code` の指摘で、実行では繰り返しません。 |
-| `control-link-late-values` | ステップの外から送信しています（自作の通信の側のエラー）。 |
-| `variable-map-not-applied` | どれが、なぜ合わないかを書きます。 |
-| `before-start` | 処理は、`run` を関数として呼ぶ側が渡すものです（内部用）。 |
-| `behind-real-time` | 遅れたタイムステップの数、最大の遅れ、ずれの合計、全体の実際の速度、止まったまま終わったならそのときの遅れを書きます。 |
-| `coarse-time-step` | ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます。 |
+| `connection-not-closed` | Gives the time waited. The result is complete. |
+| `timeout` | In a run with a required manual participant, also reported when the simulation did not start (it names what the run was waiting for). |
+| `control-link-no-hello` | The message says whether the hello or the reply did not arrive (see [Connection state](#connection-state-state)). |
+| `control-link-dropped` | Gives the numbers of rejected hellos, of unreadable messages, and of messages that matched no known ECU or none of its variables. |
+| `control-link-version` | When the version in the `--describe` output differs, it is a check finding with the same `code`, and the run does not repeat it. |
+| `control-link-late-values` | The ECU sends from outside its step (an error in hand-written communication code). |
+| `variable-map-not-applied` | Says which entries do not match, and why. |
+| `before-start` | The action is supplied by the code that calls `run` as a function (internal use). |
+| `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. |
+| `coarse-time-step` | Gives by how many ms at most ECU steps are delayed and run bunched together, and the value to write in `time_step_ms`. |
 
-`connection-not-closed` は、どの設定でも起きないはずなので、`vehicle_sil_launch` か SIL Kit の不具合です。結果と `run` の出力を添えて報告してください。
+`connection-not-closed` should not happen with any configuration, so it indicates a bug in `vehicle_sil_launch` or SIL Kit. Report it with the result and the output of `run`.
 
-`control-link-dropped` で考えられる原因は、次の 4 つです。該当する participant の変数は、欠けているか古いことがあります。
+`control-link-dropped` has 4 possible causes. The variables of the participant concerned can be missing or stale.
 
-- 変数を公開する participant が上限（256）を超えた。
-- バージョンの違う vehicle-sil の ECU がいる。
-- 別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている。
-- 実行中に参加した participant の hello を、まだ受信していなかった。
+- More participants expose variables than the limit (256).
+- An ECU built with a different vehicle-sil version is present.
+- Another program writes to the same topics (`vehicle_sil.control.*`).
+- The hello of a participant that joined during the run had not arrived yet.
 
-`control-link-version` が出たら、同じバージョンの vehicle-sil でビルドします。
+If `control-link-version` appears, build with the same vehicle-sil version.
 
-`variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、接続した時点で実行の行（`log`）にも 1 回書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
+With `variable-map-not-applied`, the entries that do not match are not applied. Those variables appear with the executable's names and values, and writes to the mapped names of those entries are rejected. The same information is also written once to the run's lines (`log`) when the ECU connects. The check catches mismatches before the run, so this finding appears only for `describe: false` participants, or for executables that report variables different from their `--describe` output (see [Matching variable names and values](simulation-config.md#matching-variable-names-and-values-variables)).
 
-`before-start` が出たとき、シミュレーションは始まっていて、すぐに中断しています。
+When `before-start` appears, the simulation had started and was aborted at once.
 
-`behind-real-time` と `coarse-time-step` は、どの participant の指摘でもありません（[速度を指定して動かす](#速度を指定して動かすspeed)）。
+`behind-real-time` and `coarse-time-step` belong to no participant (see [Running at a set speed](#running-at-a-set-speed-speed)).
 
-## 終了コード
+## Exit codes
 
-`run` の終了コードです。`check` と `test` を含む全体の表と、引数のエラーの一覧は、[simulation-config.md](simulation-config.md) の「引数と終了コード」にあります。`test` の終了コードは[シナリオをまとめて実行する](#シナリオをまとめて実行するvehicle_sil_launch-test)にもあります。
+These are the exit codes of `run`. For the full table that includes `check` and `test`, and for the list of usage errors, see "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes). The exit codes of `test` are also in [Running several scenarios](#running-several-scenarios-vehicle_sil_launch-test).
 
-| 終了コード | 意味 | `--json` の `result` |
+| Exit code | Meaning | `result` of `--json` |
 |---|---|---|
-| 0 | シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった（`--strict` では警告もない） | `"passed"` |
-| 1 | 照合のエラーで、何も起動しなかった | `"check_failed"` |
-| 1 | 実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど） | `"failed"` |
-| 3 | 設定ファイルを読めない（ファイルがない、文法のエラー、知らない形式のバージョンなど） | `"unreadable"` |
-| 3 | registry や controller を用意できない（指摘 `setup`） | `"setup_failed"` |
-| 3 | 結果を標準出力に書けない、`vehicle_sil_launch` 自身の想定外の失敗 | |
-| 4 | 引数のエラー | `"usage"` |
-| 130 | 中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） | `"interrupted"` |
+| 0 | The simulation ended normally and every required participant exited with 0 (with `--strict`, also no warnings) | `"passed"` |
+| 1 | Check errors; nothing was started | `"check_failed"` |
+| 1 | Run errors (a participant failed, the participants did not all join, a participant did not end when stopped, and so on) | `"failed"` |
+| 3 | The configuration file cannot be read (missing file, syntax error, unknown format version, and so on) | `"unreadable"` |
+| 3 | The registry or the controller cannot be set up (finding `setup`) | `"setup_failed"` |
+| 3 | The result cannot be written to stdout, or an unexpected failure of `vehicle_sil_launch` itself | |
+| 4 | Usage error | `"usage"` |
+| 130 | Interrupted (Ctrl+C, `{"command":"stop"}`, end of stdin, closed stdout, `Stop` from a Control Server client, and so on) | `"interrupted"` |
 
-ファイルがないときの終了コードは、ファイルの種類で違います。
+For a missing file, the exit code depends on the kind of file.
 
-| ないファイル | 終了コード | 理由 |
+| Missing file | Exit code | Reason |
 |---|---|---|
-| 設定ファイル（`run nofile.yaml`） | 3 | 設定ファイルを読めないので、照合を始められません。 |
-| `--scenario` のファイル | 1 | 照合のエラー（`code` は `file`）として数えます。 |
-| `test --scenarios` のパス | 4 | 引数のエラーです。 |
+| The configuration file (`run nofile.yaml`) | 3 | The configuration file cannot be read, so the check cannot start. |
+| The `--scenario` file | 1 | It counts as a check error (`code` is `file`). |
+| A path given to `test --scenarios` | 4 | It is a usage error. |
 
-## JSON（`run --json`）
+## JSON (`run --json`)
 
-1 つの JSON のオブジェクトです。ルール（キーの順、`null`、字下げ、改行、バージョンの上げ方と読む側の扱い）は照合の JSON と同じです。
+One JSON object. The rules (key order, `null`, indentation, line breaks, how versions go up and how readers handle them) are the same as for the check JSON.
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `vehicle_sil_run` | 形式のバージョン（今は 1） |
-| `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil のバージョン |
-| `file` | 設定ファイル（引数に書いたとおり） |
-| `result` | `"passed"`、`"failed"`、`"interrupted"`、`"check_failed"`（照合のエラーで何も起動しなかった）、`"unreadable"`、`"setup_failed"`、`"usage"` |
-| `strict` | `--strict` を付けたか |
-| `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
-| `simulation` | シミュレーションの終わり方（下の表）。何も起動しなかったときは `null` |
-| `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
-| `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
-| `participants[]` | participant ごとの結果（下の表）。設定ファイルの順で、無効にした participant も含む |
-| `findings[]` | 実行の指摘（照合の `findings[]` と同じ形） |
-| `check` | 照合の結果（`check --json` と同じオブジェクト） |
-| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」） |
+| `vehicle_sil_run` | Format version (currently 1) |
+| `vehicle_sil` | vehicle-sil version of `vehicle_sil_launch` |
+| `file` | The configuration file (as given in the arguments) |
+| `result` | `"passed"`, `"failed"`, `"interrupted"`, `"check_failed"` (check errors; nothing was started), `"unreadable"`, `"setup_failed"`, `"usage"` |
+| `strict` | Whether `--strict` was given |
+| `errors`, `warnings`, `notes` | Counts for the check and the run together |
+| `simulation` | How the simulation ended (see the table below). `null` if nothing was started |
+| `interrupted_by` | The signal or key that interrupted the run (`"SIGINT"`, `"Ctrl+C"` and so on). `null` if the run was not interrupted |
+| `timing` | How time progressed (see the table below). `null` if nothing was started |
+| `participants[]` | Result per participant (see the table below), in configuration file order, including disabled participants |
+| `findings[]` | Run findings (same form as `findings[]` of the check) |
+| `check` | The check result (the same object as `check --json`) |
+| `scenario` | Only with `--scenario`: the scenario result (see "Output" in [scenario.md](scenario.md#output)) |
 
-選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）は、`check` の中にあります。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。
+The selected variant (`variant`) and the parameters (`params`, `scenario.params`) are inside `check`. `check` also contains a `scenario` (`file`, `name`, `steps`).
 
-`simulation` の値:
+Values of `simulation`:
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `"reached_stop_at"` | `stop_at_ms` まで動いた |
-| `"ended"` | participant が止めた（`--scenario` では、シナリオが終わってランチャーが止めたときも） |
-| `"aborted"` | 中断した（`--timeout-ms` のときも） |
-| `"interrupted"` | 止める要求（Ctrl+C など）で止めた |
-| `"not_started"` | 始まらなかった |
+| `"reached_stop_at"` | Ran until `stop_at_ms` |
+| `"ended"` | A participant stopped it (with `--scenario`, also when the scenario ended and the launcher stopped it) |
+| `"aborted"` | Aborted (also by `--timeout-ms`) |
+| `"interrupted"` | Stopped by a stop request (Ctrl+C and similar) |
+| `"not_started"` | Did not start |
 
-`--scenario` を付けた実行で、`"ended"` がどちらの意味かを見分けるには、`scenario.status` を見ます。`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。
+In a run with `--scenario`, look at `scenario.status` to tell which meaning `"ended"` has. If it is `"passed"` or `"failed"`, the run stopped because the scenario ended. If scenario steps were skipped, `scenario.skipped_steps` has their number (`status` stays `"passed"`). A skipped step has `at_ms` null.
 
-`participants[]` のキー:
+Keys of `participants[]`:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `name` | participant の名前 |
-| `required` | 設定ファイルの `required` |
-| `enabled` | `false` なら無効にした participant（`ended` は `"not_started"`、`log` は `null`） |
-| `manual` | `true` なら利用者が起動する participant（`ended` は `"not_started"`、`exit_code` は `null`） |
-| `ended` | `"exited"`、`"stopped"`、`"killed"`、`"not_started"` |
-| `exit_code` | 終了コード（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`） |
-| `signal` | `"SIGSEGV"` など（なければ `null`） |
-| `left_processes` | 起動したプロセスを残したか |
-| `log` | `--log-dir` のファイル（なければ `null`） |
-| `control_link` | 始まったときの、ECU の変数との接続の状態（下の表） |
+| `name` | Participant name |
+| `required` | `required` in the configuration file |
+| `enabled` | `false` for a disabled participant (`ended` is `"not_started"`, `log` is `null`) |
+| `manual` | `true` for a participant that you start yourself (`ended` is `"not_started"`, `exit_code` is `null`) |
+| `ended` | `"exited"`, `"stopped"`, `"killed"`, `"not_started"` |
+| `exit_code` | Exit code (`null` if the participant ended by a signal, was killed or was not started) |
+| `signal` | `"SIGSEGV"` and so on (`null` if none) |
+| `left_processes` | Whether processes it started were left behind |
+| `log` | The `--log-dir` file (`null` if none) |
+| `control_link` | State of the connection to ECU variables at the start (see the table below) |
 
-シミュレーションが待つのは、`required` と `enabled` がどちらも `true` のものです。`manual` は [participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)にあります。
+The simulation waits for the participants whose `required` and `enabled` are both `true`. For `manual`, see [Starting a participant yourself](simulation-config.md#starting-a-participant-yourself-manual---manual).
 
-`participants[].control_link` のキー（[ECU の変数との接続](#ecu-の変数との接続control_link)）:
+Keys of `participants[].control_link` (see [Connection to ECU variables](#connection-to-ecu-variables-control_link)):
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `state` | `"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`（起動しなかった participant は `"none"`） |
-| `variables` | `connected` のとき、その ECU が公開する変数の数（ほかは `null`） |
-| `version` | `version_mismatch` のとき、相手の形式のバージョン（ほかは `null`） |
-| `late_messages` | 保証より遅れて受信したメッセージの数（ふつうは 0） |
+| `state` | `"connected"`, `"no_hello"`, `"version_mismatch"`, `"not_offered"`, `"none"` (`"none"` for a participant that was not started) |
+| `variables` | For `connected`, the number of variables the ECU exposes (otherwise `null`) |
+| `version` | For `version_mismatch`, the ECU's format version (otherwise `null`) |
+| `late_messages` | Number of messages received later than the guarantee allows (normally 0) |
 
-`variables` は、ECU の実行が追加する `peer.` などの出力を含むので、`--describe` の数より多いことがあります。
+`variables` includes outputs such as `peer.` that are added when the ECU runs, so it can be larger than the count in `--describe`.
 
-`timing` のキー（数の定義は[速度を指定して動かす](#速度を指定して動かすspeed)）:
+Keys of `timing` (for the definitions of the counts, see [Running at a set speed](#running-at-a-set-speed-speed)):
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `speed` | 終わったときの速度（数か `"max"`） |
-| `time_step_ms` | controller のタイムステップ（設定ファイルの値か既定値） |
-| `ecu_step_ms` | ECU のステップ幅の最小（ミリ秒） |
-| `step_delay_ms` | タイムステップが ECU のステップより粗いために、ECU のステップが、その仮想時刻にあたる実時間より遅く動く量の最大（ミリ秒） |
-| `late_tolerance_ms` | 遅れの許容（設定ファイルの値か既定値） |
-| `sim_ms` | 進んだ仮想時間（ミリ秒。最後に始まったタイムステップの時刻） |
-| `wall_ms` | かかった実時間（ミリ秒。一時停止していた時間を含む） |
-| `actual_speed` | 全体の実際の速度（`sim_ms` ÷（`wall_ms` − `paused_ms`）、小数 3 桁） |
-| `paced_steps` | 速度を合わせたタイムステップの数（期限と比べたタイムステップ） |
-| `late_steps` | そのうち、遅れが `late_tolerance_ms` を超えたタイムステップの数（ずれた回数） |
-| `max_late_ms` | 速度を合わせたタイムステップの、最大の遅れ（ミリ秒、切り上げ。許容の内のものも含む） |
-| `slipped_ms` | ずれの合計（遅れたタイムステップの遅れの合計。ミリ秒、切り上げ） |
-| `late_ms` | 実行が終わったとき、期限を過ぎたまま始まっていなかったタイムステップの遅れ（ミリ秒、切り上げ。なければ 0） |
-| `paused_ms` | 一時停止していた実時間（ミリ秒） |
+| `speed` | Speed at the end (a number or `"max"`) |
+| `time_step_ms` | The controller's time step (the value from the configuration file, or the default) |
+| `ecu_step_ms` | The smallest ECU step size (milliseconds) |
+| `step_delay_ms` | The largest amount by which ECU steps run later than the real time that corresponds to their virtual time, because the time step is coarser than the ECU steps (milliseconds) |
+| `late_tolerance_ms` | The lateness tolerance (the value from the configuration file, or the default) |
+| `sim_ms` | Virtual time reached (milliseconds; the time of the last time step that started) |
+| `wall_ms` | Real time taken (milliseconds, including time spent paused) |
+| `actual_speed` | Overall actual speed (`sim_ms` ÷ (`wall_ms` − `paused_ms`), 3 decimal places) |
+| `paced_steps` | Number of paced time steps (time steps compared with a deadline) |
+| `late_steps` | Of those, the number of time steps whose lateness exceeded `late_tolerance_ms` (the number of slips) |
+| `max_late_ms` | Largest lateness of the paced time steps (milliseconds, rounded up; includes lateness within the tolerance) |
+| `slipped_ms` | Total slip (the sum of the lateness of the late time steps; milliseconds, rounded up) |
+| `late_ms` | Lateness of a time step that was past its deadline and had not started when the run ended (milliseconds, rounded up; 0 if none) |
+| `paused_ms` | Real time spent paused (milliseconds) |
 
-`timing` の時間は、controller の最初のタイムステップ（仮想時間 0）が始まってから、最後のタイムステップが始まるまでのものです。participant の起動、止める処理、失敗に気づくまでの待ちは入りません。次のタイムステップが期限を過ぎたまま実行が終わったときと、最速のときは、実行が終わった時点までです。
+The times in `timing` run from the start of the controller's first time step (virtual time 0) to the start of the last time step. Starting the participants, stopping them and the wait until a failure is noticed are not included. When the run ends with the next time step past its deadline, and at maximum speed, the times run up to the end of the run.
 
-| キー | 補足 |
+| Key | Notes |
 |---|---|
-| `ecu_step_ms` | ステップ幅がわからない participant（`describe: false`）があるとき、ステップを持つ ECU がないときは `null` です。 |
-| `step_delay_ms` | 速度を合わせているときに意味があります。 |
-| `step_delay_ms` | 0 なら、どの ECU のステップもタイムステップの境目で始まります。 |
-| `step_delay_ms` | ステップ幅がわからない participant があるときは `null` です。 |
-| `sim_ms` | participant の失敗や中断で終わった実行では、1 タイムステップの幅で実行ごとに変わります。 |
-| `actual_speed` | 動いた時間が 1 ms に満たなければ `null` です。 |
-| `paced_steps` | 期限を過ぎたまま始まらなかった最後のタイムステップを含みます。 |
-| `slipped_ms` | シミュレーションが、指定の速度で進んだ場合より、全体でこれだけ遅れました。 |
-| `late_ms` | 0 でなければ、シミュレーションは止まったまま終わりました（`late_steps`、`max_late_ms`、`slipped_ms` に入っています）。 |
+| `ecu_step_ms` | `null` when a participant's step size is unknown (`describe: false`), or when no ECU has a step. |
+| `step_delay_ms` | Meaningful when the run is paced. |
+| `step_delay_ms` | 0 means that every ECU step starts at a time step boundary. |
+| `step_delay_ms` | `null` when a participant's step size is unknown. |
+| `sim_ms` | In a run that ended by a participant failure or an abort, it varies by one time step from run to run. |
+| `actual_speed` | `null` if the run lasted less than 1 ms. |
+| `paced_steps` | Includes a last time step that was past its deadline and never started. |
+| `slipped_ms` | The simulation as a whole fell this far behind the set speed. |
+| `late_ms` | If not 0, the simulation ended while standing still (the lateness is included in `late_steps`, `max_late_ms` and `slipped_ms`). |
 
-`sim_ms` が実行ごとに変わるのは、失敗や中断に気づく時点が、controller の次のタイムステップが始まる前か後かで違うためです。
+`sim_ms` varies because the moment the failure or abort is noticed can fall before or after the start of the controller's next time step.
 
 <!-- vehicle_sil_launch run simulation.yaml --json -->
 ```json
@@ -976,104 +978,104 @@ passed: 0 errors, 1 warning, 1 note
 }
 ```
 
-この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` のバージョンと、`<wall_ms>`、`<actual_speed>` にした値を除いて、バイト単位で）。
+The CTest test `launch_run.docs` also compares the examples of this section with a real run (byte for byte, except the `vehicle_sil` version and the values shown as `<wall_ms>` and `<actual_speed>`).
 
-## シナリオをまとめて実行する（`vehicle_sil_launch test`）
+## Running several scenarios (`vehicle_sil_launch test`)
 
-`vehicle_sil_launch test <file> --scenarios <ディレクトリかファイル>...` は、設定ファイルの機種ごとに、並べたシナリオを 1 つずつ実行し、全部の結果を 1 つの表にします。CI で「全部の機種で、全部のシナリオが成功するか」を 1 つのコマンドと終了コードで確認するためのものです。
+`vehicle_sil_launch test <file> --scenarios <directory or files>...` runs the listed scenarios one at a time for each variant of the configuration file, and puts all the results in one table. It is meant for CI: one command, and its exit code tells you whether every scenario passes on every variant.
 
 ```sh
-vehicle_sil_launch test simulation.yaml --scenarios scenarios/                      # 全部の機種 × ディレクトリのシナリオ
-vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.yaml  # 1 つの機種 × 並べたファイル
+vehicle_sil_launch test simulation.yaml --scenarios scenarios/                      # every variant × the scenarios in the directory
+vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.yaml  # one variant × the listed files
 ```
 
-### 実行する組と順序
+### Which runs, in which order
 
-実行する組は、機種 × シナリオの全部です。
+The runs are every variant × every scenario.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 順序 | 機種が設定ファイルに書いた順、その中でシナリオが引数の順です。 |
-| 機種のない設定ファイル | シナリオだけを並べます。 |
-| `--variant <名前>` | その機種だけを実行します（繰り返せます。順は設定ファイルの順のままです）。 |
-| 1 組の実行 | `run <file> --variant <機種> --scenario <シナリオ> --speed max` と同じです。 |
-| 速度 | 設定ファイルの `speed` によらず、最速です。 |
-| 組と組の間 | registry、controller、participant のプロセスを作り直します（前の組の状態は残りません）。 |
-| 同時の実行 | しません。 |
+| Order | Variants in configuration file order; within each variant, scenarios in argument order. |
+| A configuration file without variants | Only the scenarios are listed. |
+| `--variant <name>` | Runs only that variant (repeatable; the order stays the configuration file order). |
+| One run | The same as `run <file> --variant <variant> --scenario <scenario> --speed max`. |
+| Speed | Maximum, whatever `speed` the configuration file sets. |
+| Between runs | The registry, the controller and the participant processes are created anew (no state carries over from the previous run). |
+| Concurrent runs | None. |
 
-### シナリオの指定（`--scenarios`）
+### Selecting scenarios (`--scenarios`)
 
-`--scenarios` には、ディレクトリかファイルを書きます。いくつでも並べられ、`--scenarios` も繰り返せます。`--scenarios` は、次の `--` で始まる引数までを全部シナリオとして読むので、設定ファイルは `--scenarios` より前に書きます。後ろに書くなら `--` の後です（`test --scenarios scenarios/ -- simulation.yaml`）。
+Give `--scenarios` directories or files. You can list any number of them and repeat `--scenarios`. `--scenarios` reads every argument up to the next one that starts with `--` as a scenario, so put the configuration file before `--scenarios`, or after `--` (`test --scenarios scenarios/ -- simulation.yaml`).
 
-| 書いたもの | 実行するシナリオ | 順序 |
+| Given | Scenarios run | Order |
 |---|---|---|
-| ディレクトリ | 直下にある、名前が `.yaml`、`.yml`、`.json` で終わるファイルの全部 | ファイルの名前を UTF-8 のバイト列として比べた順 |
-| ファイル | 拡張子によらず、そのファイル | 書いた順 |
+| A directory | All files directly in it whose names end in `.yaml`, `.yml` or `.json` | File names compared as UTF-8 byte strings |
+| A file | That file, whatever its extension | The order given |
 
-- ディレクトリでは、拡張子の大文字と小文字を区別せず、下のディレクトリには入りません。
-- ディレクトリの順序は、どの OS でも同じです（大文字は小文字より前）。
-- ディレクトリのシナリオは、表に `<書いたディレクトリ>/<名前>` で表示します。
-- ディレクトリに、シナリオでない YAML は置きません（置くと、その組は照合で失敗します）。
-- ファイルのパスは、設定ファイルと同じく、今のディレクトリからのものです。
-- ないパス、シナリオのファイルが 1 つもないディレクトリは、引数のエラーです（何も実行しません）。
+- In a directory, the extension is not case-sensitive, and subdirectories are not entered.
+- The directory order is the same on every OS (upper case comes before lower case).
+- A scenario from a directory is shown in the table as `<directory as given>/<name>`.
+- Do not put YAML files that are not scenarios in the directory (if you do, that run fails the check).
+- File paths are relative to the current directory, like the configuration file.
+- A path that does not exist, or a directory with no scenario file, is a usage error (nothing runs).
 
-### 飛ばす組、失敗した組、中断
+### Skipped runs, failed runs and interruption
 
-| 場合 | `test` がすること |
+| Case | What `test` does |
 |---|---|
-| シナリオの `only` に機種がない組 | 実行せずに `skipped` にします。 |
-| 全部の組が `skipped` | 表の後に警告 `test-nothing-run`（`nothing was run: ...`）を 1 行書きます。 |
-| 失敗した組がある | 残りも実行します。 |
-| `--fail-fast` を付けて、失敗した組がある | 最初の失敗の後は実行しません（残りは `not run`）。 |
-| Ctrl+C（1 回目） | 実行している組を `run` と同じ順で止め、残りを実行せずに、そこまでの表を書きます（終了コード 130）。 |
-| Ctrl+C（2 回目） | `run` と同じで、participant が終わるのを待たずに終了させます。 |
+| A run whose variant is not in the scenario's `only` | Does not run it and marks it `skipped`. |
+| Every run is `skipped` | After the table, writes one line with the warning `test-nothing-run` (`nothing was run: ...`). |
+| A run failed | Still carries out the remaining runs. |
+| `--fail-fast` is given and a run failed | Runs nothing after the first failure (the rest are `not run`). |
+| Ctrl+C (first) | Stops the current run in the same order as `run`, skips the remaining runs and writes the table up to that point (exit code 130). |
+| Ctrl+C (second) | As with `run`: ends the participants without waiting for them to end. |
 
-`only` に機種がない組は、`run` ではエラー `scenario-variant` ですが、`test` では失敗にしません。その組の設定やシナリオにほかのエラーがあれば、`skipped` ではなく失敗です。
+A run whose variant is not in `only` is the error `scenario-variant` with `run`, but `test` does not count it as a failure. If that run's configuration or scenario has other errors, it is a failure, not `skipped`.
 
-全部の組が `skipped` になるのは、`--variant` で絞った機種が、どのシナリオの `only` にもないときなどです。このときは、何も確認していません。既定では成功で（終了コード 0）、`--strict` では失敗です（終了コード 1）。
+Every run is `skipped`, for example, when the variants selected with `--variant` are in no scenario's `only`. Then nothing has been checked. By default this passes (exit code 0); with `--strict`, it fails (exit code 1).
 
-### 使える引数
+### Accepted options
 
-| 引数 | `test` での扱い |
+| Option | In `test` |
 |---|---|
-| `--json`、`--strict`、`--describe-timeout-ms`、`--disable`、`--enable` | 使えます（どの組にも同じように適用します）。 |
-| `--timeout-ms` | 使えます（1 組ごとの上限）。 |
-| `--param <名前>=<値>` | そのパラメーターを宣言しているか使っているシナリオにだけ適用します。 |
-| `--speed`、`--log-dir`、`--events`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数 | 引数のエラーです。 |
-| `--scenario` | 引数のエラーです。 |
+| `--json`, `--strict`, `--describe-timeout-ms`, `--disable`, `--enable` | Accepted (applied the same way to every run). |
+| `--timeout-ms` | Accepted (the limit for each run). |
+| `--param <name>=<value>` | Applied only to scenarios that declare or use that parameter. |
+| `--speed`, `--log-dir`, `--events`, `--stdin-commands`, `--control`, `--manual` and other options only for `run` | Usage error. |
+| `--scenario` | Usage error. |
 
-`--param` の名前がどのシナリオにもなければ、引数のエラーです（何も実行しません）。打ち間違いを黙って無視しないためです。
+If no scenario has the name given to `--param`, it is a usage error (nothing runs). This keeps a typo from being silently ignored.
 
-### 設定ファイルの扱い
+### How the configuration file is used
 
-最初の組の前に、設定ファイルを読みます。読めなければ、何も実行せずに終了コード 3 です。設定ファイルに照合のエラーがあるときは、どの組も失敗になります（組ごとに照合するためです）。
+`test` reads the configuration file before the first run. If it cannot be read, nothing runs and the exit code is 3. If the configuration file has check errors, every run fails (each run is checked on its own).
 
-`test` は、どの組も自分で起動します。実行する機種の設定に、有効で `manual: true` の participant（人が起動するもの）がいると、組ごとに人を待つことになります。そのため、最初の組の前に引数のエラーにします（終了コード 4。participant の名前をメッセージに書きます）。
+`test` starts every participant itself. If the configuration of a variant to run has an enabled participant with `manual: true` (one that a person starts), every run would wait for a person. So `test` reports a usage error before the first run (exit code 4; the message names the participant).
 
-| したいこと | 方法 |
+| Goal | How |
 |---|---|
-| その participant なしで実行する | `--disable <名前>` で無効にします。 |
-| その participant と一緒に動かす | `run --scenario` で 1 つずつ実行します。 |
+| Run without that participant | Disable it with `--disable <name>`. |
+| Run together with that participant | Run the scenarios one at a time with `run --scenario`. |
 
-`--disable` で無効にしたとき、その participant の変数を使う手順のあるシナリオは、その組の照合で失敗します。
+If you disable the participant with `--disable`, a scenario with steps that use its variables fails the check of that run.
 
-### 出力
+### Output of `test`
 
-標準エラーには、`run` と同じ行（participant の出力、ランチャーの行）を書きます。組の前後に、次の行が入ります。
+Stderr gets the same lines as with `run` (participant output, launcher lines). Before and after each run, these lines appear:
 
 ```text
 [vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml
 [vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml: skipped (the scenario is only for medium (its only))
 ```
 
-標準出力には、次の順に書きます（時刻、所要時間、プロセス ID は入りません）。
+Stdout gets the following, in this order (no times of day, durations or process IDs):
 
-| 順 | 内容 |
+| Order | Content |
 |---|---|
-| 1 | 組ごとに 1 行の表 |
-| 2 | 失敗があれば、1 組だけを実行し直すコマンド |
-| 3 | `test` 全体の指摘（あれば） |
-| 4 | 結果の 1 行 |
+| 1 | The table, one line per run |
+| 2 | If a run failed, the command to rerun one run alone |
+| 3 | Findings for the whole `test` (if any) |
+| 4 | The result line |
 
 ```text
 variant  scenario        result
@@ -1087,90 +1089,90 @@ to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --spe
 FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 ```
 
-| 表の `result` | 意味 | 右の列 |
+| `result` in the table | Meaning | Right column |
 |---|---|---|
-| `passed` | その組の `run` が成功した | 飛ばした手順の数、確認しなかった `expect` の数、警告の数（あるものだけ） |
-| `FAILED` | 照合か実行が失敗した（`run` の終了コードが 1 か 3） | 最初のエラー（シナリオのエラーなら行つき）と、残りの数 |
-| `skipped` | シナリオの `only` に、この機種がない | `only` の機種 |
-| `interrupted` | この組の途中で中断された | 中断のシグナルかキー |
-| `not run` | 実行しなかった（中断、`--fail-fast`、または前の組でランチャーの SIL Kit の接続が閉じなかった） | 理由 |
+| `passed` | `run` passed for that run | The number of skipped steps, of `expect`s not checked and of warnings (only those present) |
+| `FAILED` | The check or the run failed (exit code 1 or 3 of `run`) | The first error (with its line, for a scenario error) and the number of the rest |
+| `skipped` | The scenario's `only` does not include this variant | The variants in `only` |
+| `interrupted` | The run was interrupted midway | The signal or key that interrupted it |
+| `not run` | Not run (interruption, `--fail-fast`, or the launcher's SIL Kit connection did not close after an earlier run) | The reason |
 
-- `passed` の「確認しなかった `expect`」は、`ramp` と `wave` の横の `expect` です（`1 expect was not checked`）。
-- `passed` の警告の中身は、その組を 1 つだけ実行するか、`--json` の `runs[].run` で見ます。
-- `FAILED` が `--strict` で警告だけのときは、右の列は最初の警告です。
-- 機種のない設定ファイルでは、`variant` の列がありません。
+- The "`expect`s not checked" of `passed` are `expect`s beside `ramp` and `wave` (`1 expect was not checked`).
+- To see what the warnings of a `passed` run are, run it alone or read `runs[].run` in `--json`.
+- For a `FAILED` run that has only warnings under `--strict`, the right column shows the first warning.
+- A configuration file without variants gives no `variant` column.
 
-1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
+The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
 
-最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です。`interrupted` と `not run` の数は、あるときだけ書きます。
+The last line is `passed`, `FAILED` or `interrupted`, followed by the counts of runs. The counts of `interrupted` and `not run` appear only when there are such runs.
 
-| 場合 | 最後の行の末尾 |
+| Case | End of the last line |
 |---|---|
-| 接続が閉じなかったので、残りを実行しなかった | `(the launcher's connection to the simulation did not close)` |
-| `--strict` を付けた | `(--strict)` |
+| The remaining runs were not run because a connection did not close | `(the launcher's connection to the simulation did not close)` |
+| `--strict` was given | `(--strict)` |
 
-### `test` 全体の指摘
+### Findings for the whole `test`
 
-`test` 全体の指摘は、表の後に `<重大度>: <設定ファイル>: <文> [<code>]` の 1 行で書きます（`--json` では `findings[]`）。
+Findings for the whole `test` are written after the table, one line each, as `<severity>: <configuration file>: <text> [<code>]` (in `--json`, in `findings[]`).
 
-| `code` | 重大度 | 意味 |
+| `code` | Severity | Meaning |
 |---|---|---|
-| `test-nothing-run` | 警告 | 実行した組が 1 つもない（全部が `skipped`）ので、何も確認していない（`--strict` では失敗） |
-| `test-runs-left` | エラー | 中断されていないのに、実行しなかった組がある |
+| `test-nothing-run` | Warning | No run was carried out (every run is `skipped`), so nothing was checked (a failure with `--strict`) |
+| `test-runs-left` | Error | Some runs were not carried out although `test` was not interrupted |
 
-`test-runs-left` は、ある組の後でランチャー自身の SIL Kit の接続が閉じなかったときに出ます（その組の警告 `connection-not-closed`。[止め方](#止め方)）。このとき `test` は、同じプロセスで次のシミュレーションを始めずに終わっています。`not run` の組を、`--variant` と `--scenarios` で選んで実行し直します。
+`test-runs-left` appears when the launcher's own SIL Kit connection did not close after a run (that run has the warning `connection-not-closed`; see [Stopping a run](#stopping-a-run)). `test` then ends without starting another simulation in the same process. Select the `not run` runs with `--variant` and `--scenarios` and run them again.
 
-### `test` の終了コード
+### Exit codes of `test`
 
-| 終了コード | 意味 |
+| Exit code | Meaning |
 |---|---|
-| 0 | 失敗した組も、実行しなかった組もない |
-| 1 | 失敗した組が 1 つ以上ある |
-| 1 | 中断されていないのに実行しなかった組がある（`test-runs-left`） |
-| 1 | `--strict` で、実行した組が 1 つもない（`test-nothing-run`） |
-| 3 | 設定ファイルを読めない（何も実行していません） |
-| 3 | 結果を書けない、`vehicle_sil_launch` 自身の想定外の失敗 |
-| 4 | 引数のエラー（何も実行していません） |
-| 130 | 中断された（その前に失敗した組があっても 130） |
+| 0 | No run failed and none was left out |
+| 1 | 1 or more runs failed |
+| 1 | Some runs were not carried out although `test` was not interrupted (`test-runs-left`) |
+| 1 | With `--strict`, no run was carried out (`test-nothing-run`) |
+| 3 | The configuration file cannot be read (nothing was run) |
+| 3 | The result cannot be written, or an unexpected failure of `vehicle_sil_launch` itself |
+| 4 | Usage error (nothing was run) |
+| 130 | Interrupted (130 even if a run failed before) |
 
-`skipped` は失敗に数えません。全部が `skipped` でも、`--strict` がなければ 0 です。設定ファイルの `manual: true` の participant のエラーも 4 です。
+`skipped` does not count as a failure. Even if every run is `skipped`, the exit code is 0 without `--strict`. The error for a participant with `manual: true` in the configuration file is also 4.
 
-### JSON（`test --json`）
+### JSON (`test --json`)
 
-1 つの JSON のオブジェクトです。ルール（キーの順、`null`、字下げ、改行、バージョンの上げ方と読む側の扱い）は照合の JSON と同じです。
+One JSON object. The rules (key order, `null`, indentation, line breaks, how versions go up and how readers handle them) are the same as for the check JSON.
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `vehicle_sil_test` | 形式のバージョン（今は 1） |
-| `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil のバージョン |
-| `file` | 設定ファイル（引数に書いたとおり） |
-| `result` | `"passed"`、`"failed"`（終了コード 1 の全部）、`"interrupted"`、`"unreadable"`、`"usage"` |
-| `strict` | `--strict` を付けたか |
-| `variants` | 実行する機種（設定ファイルの順）。機種のない設定ファイルでは空 |
-| `scenarios` | 実行するシナリオ（表に出る名前、実行する順） |
-| `passed`、`failed`、`skipped`、`interrupted`、`not_run` | それぞれの結果の組の数 |
-| `runs[]` | 組ごとの結果（下の表）。実行する順 |
-| `findings[]` | 何も実行しなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の指摘（`test-nothing-run`、`test-runs-left`）。なければ空 |
+| `vehicle_sil_test` | Format version (currently 1) |
+| `vehicle_sil` | vehicle-sil version of `vehicle_sil_launch` |
+| `file` | The configuration file (as given in the arguments) |
+| `result` | `"passed"`, `"failed"` (every case of exit code 1), `"interrupted"`, `"unreadable"`, `"usage"` |
+| `strict` | Whether `--strict` was given |
+| `variants` | The variants to run (in configuration file order). Empty for a configuration file without variants |
+| `scenarios` | The scenarios to run (names as shown in the table, in run order) |
+| `passed`, `failed`, `skipped`, `interrupted`, `not_run` | Number of runs with each result |
+| `runs[]` | Result per run (see the table below), in run order |
+| `findings[]` | Why nothing was run (when `result` is `"usage"` or `"unreadable"`), and the findings for the whole `test` (`test-nothing-run`, `test-runs-left`). Empty if there are none |
 
-`findings[]` は、照合の `findings[]` と同じ形です。
+`findings[]` has the same form as `findings[]` of the check.
 
-`runs[]` のキー:
+Keys of `runs[]`:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `variant` | 機種（機種のない設定ファイルでは `null`） |
-| `scenario` | シナリオ |
-| `result` | `"passed"`、`"failed"`、`"skipped"`、`"interrupted"`、`"not_run"` |
-| `reason` | 表の右の列（なければ `null`） |
-| `run` | その組の `run --json` と同じオブジェクト（`skipped` と `not_run` では `null`） |
+| `variant` | The variant (`null` for a configuration file without variants) |
+| `scenario` | The scenario |
+| `result` | `"passed"`, `"failed"`, `"skipped"`, `"interrupted"`, `"not_run"` |
+| `reason` | The right column of the table (`null` if empty) |
+| `run` | The same object as `run --json` for that run (`null` for `skipped` and `not_run`) |
 
-`version --json` の `formats` と `features` には、`test` の項目はありません。
+`formats` and `features` of `version --json` have no entries for `test`.
 
-## 関連するドキュメント
+## See also
 
-- 設定ファイルの書き方と引数の一覧 → [simulation-config.md](simulation-config.md)
-- 照合と、照合の指摘 → [simulation-check.md](simulation-check.md)
-- `run --events` のイベントと、標準入力のコマンド → [simulation-events.md](simulation-events.md)
-- シナリオの書き方 → [scenario.md](scenario.md)
-- 実行中の変数をプログラムから読み書きする → [control-api.md](control-api.md)
-- 複数の PC で動かす手順 → [howto/multi-pc.md](howto/multi-pc.md)
+- How to write the configuration file, and the list of arguments → [simulation-config.md](simulation-config.md)
+- The check and its findings → [simulation-check.md](simulation-check.md)
+- The events of `run --events`, and stdin commands → [simulation-events.md](simulation-events.md)
+- How to write scenarios → [scenario.md](scenario.md)
+- Reading and writing the variables of a running simulation from a program → [control-api.md](control-api.md)
+- How to run on several computers → [howto/multi-pc.md](howto/multi-pc.md)

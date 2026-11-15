@@ -29,8 +29,8 @@ endforeach()
 
 add_test(NAME template.check_and_run
          COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch> -DDIR=${project_dir}
-                 -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/first-ecu.md
-                 -DSCENARIO_DOC=${PROJECT_SOURCE_DIR}/docs/scenario.md
+                 -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/first-ecu.md
+                 -DSCENARIO_DOC=${VEHICLE_SIL_TESTED_DOCS}/scenario.md
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check_and_run.cmake)
 set_tests_properties(template.check_and_run PROPERTIES LABELS integration TIMEOUT 300)
 
@@ -43,7 +43,7 @@ vehicle_sil_target_defaults(cooler_ecu)
 add_test(NAME template.first_ecu
          COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch> -DBIN=${project_dir}/bin
                  -DCOOLER=$<TARGET_FILE:cooler_ecu> -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/first_ecu
-                 -DTEMPLATE=${PROJECT_SOURCE_DIR}/template -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/first-ecu.md
+                 -DTEMPLATE=${PROJECT_SOURCE_DIR}/template -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/first-ecu.md
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}/first_ecu
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/first_ecu.cmake)
 set_tests_properties(template.first_ecu PROPERTIES LABELS integration TIMEOUT 300)

@@ -1,8 +1,10 @@
-# ECU の実行ファイル（`ecu_main`）と `--describe` の出力
+# ECU executables (`ecu_main`) and the `--describe` output
 
-ECU のクラス（`Ecu&` を受け取るクラス）を 1 つの実行ファイルにする関数 `ecu_main()` のリファレンスです。実行ファイルの引数と終了コード、止まり方、ECU が自分の構成を JSON で出力する `--describe` の形式を載せています。API はまだ変わることがあります。
+[日本語](ja/ecu-executable.md)
 
-ECU ごとに別の人が実行ファイルをビルドし、それらを 1 つの SIL Kit のシミュレーションで動かすときに使います。どの ECU の実行ファイルも同じ引数を持つので、ECU の中身を知らなくても動かせます。
+This is the reference for `ecu_main()`, the function that turns an ECU class (a class that takes an `Ecu&`) into an executable. It covers the executable's arguments and exit codes, how it stops, and the JSON format in which `--describe` prints the ECU's configuration. The API may still change.
+
+Use it when different people build the executables of different ECUs and you run them together in one SIL Kit simulation. Every ECU executable takes the same arguments, so you can run an ECU without knowing what is inside it.
 
 ```cpp
 #include "vehicle_sil/simulation/ecu_main.hpp"
@@ -13,161 +15,161 @@ int main(int argc, char** argv)
 }
 ```
 
-完全な例は [examples/ecu_main](../examples/ecu_main)（`vehicle_sil_engine_ecu` と `vehicle_sil_dashboard_ecu`）です。
+For a complete example, see [examples/ecu_main](../examples/ecu_main) (`vehicle_sil_engine_ecu` and `vehicle_sil_dashboard_ecu`).
 
-| 調べること | 節 |
+| To find | See |
 |---|---|
-| `ecu_main()` の呼び出し方、引数、終了コード | [`ecu_main`](#ecu_main) |
-| ECU を作る人に依頼すること、使えない変数名 | [ECU を作る人に依頼すること](#ecu-を作る人に依頼すること) |
-| `Ecu::describe()` が返す内容 | [`Ecu::describe()`](#ecudescribe) |
-| `--describe` の JSON のキー | [JSON の形式](#json-の形式) |
-| ランチャーを使わずに複数の ECU を動かす方法 | [複数の ECU を 1 つのシミュレーションで動かす](#複数の-ecu-を-1-つのシミュレーションで動かす) |
+| How to call `ecu_main()`, its arguments and exit codes | [`ecu_main`](#ecu_main) |
+| What to ask of ECU authors, and reserved variable names | [Requirements for ECU authors](#requirements-for-ecu-authors) |
+| What `Ecu::describe()` returns | [`Ecu::describe()`](#ecudescribe) |
+| The keys of the `--describe` JSON | [JSON format](#json-format) |
+| How to run several ECUs without the launcher | [Running several ECUs in one simulation](#running-several-ecus-in-one-simulation) |
 
 ## `ecu_main`
 
-ライブラリは `vehicle_sil::simulation` です。ヘッダーは SIL Kit のヘッダーを含みません。
+The library is `vehicle_sil::simulation`. Its header does not include the SIL Kit headers.
 
-| 呼び出し方 | すること |
+| Call | What it does |
 |---|---|
-| `ecu_main<App>(argc, argv, EcuMainOptions, args...)` | ECU に `App{ecu, args...}` を持たせて（`Ecu::emplace()`）、引数のとおりに動かします。 |
-| `ecu_main(argc, argv, EcuMainOptions, std::function<void(Ecu&)>)` | クラスの代わりに関数で ECU を組み立てて、引数のとおりに動かします。 |
+| `ecu_main<App>(argc, argv, EcuMainOptions, args...)` | Gives the ECU an `App{ecu, args...}` (`Ecu::emplace()`) and runs it as the arguments say. |
+| `ecu_main(argc, argv, EcuMainOptions, std::function<void(Ecu&)>)` | Builds the ECU with a function instead of a class, and runs it as the arguments say. |
 
-`args` は `App` のコンストラクターへそのまま渡します。`App` は 1 回だけ作るので、ムーブしかできない値も渡せます。関数で組み立てる形では、関数は 1 回だけ、何かを動かす前に呼ばれます。
+`args` are passed unchanged to the constructor of `App`. `App` is constructed only once, so move-only values can be passed too. In the form with a function, the function is called once, before anything runs.
 
-| `EcuMainOptions` のメンバー | 内容 |
+| Member of `EcuMainOptions` | Meaning |
 |---|---|
-| `name` | ECU の名前です（SIL Kit の participant 名で、`--describe` の `name`）。 |
-| `step` | ステップ幅です（0 より大きいこと）。 |
-| `last_word_wait` | `--registry-uri` で終わるときに、最後の通知へのランチャーのレスポンスを待つ上限です（既定 500 ms、0 で待たない）。 |
+| `name` | Name of the ECU (the SIL Kit participant name, and `name` in `--describe`). |
+| `step` | Step size (must be greater than 0). |
+| `last_word_wait` | The longest time that the ECU, when it ends under `--registry-uri`, waits for the launcher's response to its last word (default 500 ms; 0 means no wait). |
 
-`last_word_wait` で待つ最後の通知は、取り消された書き込みなどをランチャーに伝えるものです。レスポンスはふつうすぐ来るので、変える必要があるのは、レスポンスに 500 ms 以上かかるほど遅い PC だけです。この値を変える引数はありません。
+The last word that `last_word_wait` waits on tells the launcher about cancelled writes and similar results. The response usually comes at once, so change this value only on a computer so slow that the response takes 500 ms or more. No command-line argument sets this value.
 
-### 引数と終了コード
+### Arguments and exit codes
 
-| 引数 | すること |
+| Argument | What it does |
 |---|---|
-| `--describe` | ECU をプロセス内の仮想バスの上で組み立て、何も動かさず、どこにも接続せずに、`to_json(Ecu::describe())` を標準出力に書いて終了します。 |
-| `--registry-uri <uri>` | `<uri>` の registry の SIL Kit のシミュレーションに、Coordinated で仮想時間の participant として参加し、シミュレーションが終わるまで動きます。 |
-| `--start-timeout-ms <ms>` | `--registry-uri` のときだけ使えます。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。 |
-| `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションに公開しません（[変数を公開する](#変数を公開する--registry-uri)）。 |
-| `--silkit-config <file>` | `--registry-uri` のとき、この participant に SIL Kit の設定ファイル（YAML か JSON）を渡します（[SIL Kit の設定ファイルを渡す](#sil-kit-の設定ファイルを渡す--silkit-config)）。 |
-| `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。 |
-| `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。 |
-| `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。 |
+| `--describe` | Constructs the ECU on in-process virtual buses, runs nothing and connects to nothing, writes `to_json(Ecu::describe())` to stdout and exits. |
+| `--registry-uri <uri>` | Joins the SIL Kit simulation of the registry at `<uri>` as a coordinated virtual-time participant, and runs until the simulation ends. |
+| `--start-timeout-ms <ms>` | Only with `--registry-uri`. How long to wait from joining until the simulation starts (an integer of 1 or more; default 30000). |
+| `--no-control` | With `--registry-uri`, does not expose the ECU's variables to the simulation (see [Exposing variables](#exposing-variables---registry-uri)). |
+| `--silkit-config <file>` | With `--registry-uri`, passes a SIL Kit participant configuration file (YAML or JSON) to this participant (see [Passing a SIL Kit configuration file](#passing-a-sil-kit-configuration-file---silkit-config)). |
+| `--local --run-for-ms <ms>` | Runs this ECU alone on in-process virtual buses for `<ms>` milliseconds of virtual time (an integer of 1 or more). |
+| `--name <name>` | Participant name used instead of `EcuMainOptions::name` (ASCII or UTF-8). |
+| `--help` (`-h`) | Writes the usage to stdout and exits with 0. |
 
-`--describe`、`--registry-uri`、`--local` のどれか 1 つが必要です。引数ごとの補足は次のとおりです。
+Exactly one of `--describe`, `--registry-uri` and `--local` is required. Notes on individual arguments:
 
-| 引数 | 補足 |
+| Argument | Notes |
 |---|---|
-| `--registry-uri` | シミュレーションを始めるのと止めるのは、ほかのプロセスの controller（`vehicle_sil_sim_controller`）です。 |
-| `--registry-uri` | `<uri>` のホストがループバックのアドレス（`127.0.0.1`、`localhost` など）なら、ほかの participant からの接続をループバックのアドレスだけで待ち受けます。 |
-| `--registry-uri` | 環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を設定すると、全部のアドレスで待ち受けます（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
-| `--start-timeout-ms` | 時間内に始まらなければ、終了コード 3 で終わります。 |
-| `--start-timeout-ms` | ECU をたくさん起動するときや、遅い PC で使います。 |
-| `--no-control` | ECU の動きは変わりません。 |
-| `--no-control` | `--describe` に付けると、`variables` はそのままで、`control` が `null` になります（`vehicle_sil_launch run` は、この ECU を待ちません）。 |
-| `--no-control` | `--local` に付けても何も変わりません。 |
-| `--silkit-config` | `--describe` に付けると、ファイルを読んで確認するだけです（エラーは終了コード 3）。 |
-| `--silkit-config` | `--local` には付けられません（終了コード 4）。 |
-| `--local` | ECU を単体で確認するときに使います。 |
-| `--name` | `--describe` の `name` にも反映されます。 |
-| `--name` | 変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。 |
-| `--help` | ほかの引数にエラーがあっても使い方を書きます。 |
-| `--help` | 値を取る引数の後ろの `-h` は値です（`--name -h` は名前が `-h`）。 |
+| `--registry-uri` | A controller in another process (`vehicle_sil_sim_controller`) starts and stops the simulation. |
+| `--registry-uri` | If the host of `<uri>` is a loopback address (`127.0.0.1`, `localhost` and so on), the ECU listens for connections from other participants on loopback addresses only. |
+| `--registry-uri` | With the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` set, it listens on all addresses (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
+| `--start-timeout-ms` | If the simulation does not start in time, the ECU exits with exit code 3. |
+| `--start-timeout-ms` | Use it when you start many ECUs, or on a slow computer. |
+| `--no-control` | Does not change how the ECU behaves. |
+| `--no-control` | With `--describe`, `variables` is unchanged and `control` becomes `null` (`vehicle_sil_launch run` does not wait for this ECU). |
+| `--no-control` | With `--local`, it changes nothing. |
+| `--silkit-config` | With `--describe`, the file is only read and checked (an error gives exit code 3). |
+| `--silkit-config` | Not allowed with `--local` (exit code 4). |
+| `--local` | Use it to try the ECU on its own. |
+| `--name` | Also changes `name` in `--describe`. |
+| `--name` | Only the name changes. The J1939 NAME, the addresses and the variable names stay the same. |
+| `--help` | Writes the usage even if other arguments have errors. |
+| `--help` | A `-h` right after an argument that takes a value is read as that value (`--name -h` sets the name to `-h`). |
 
-同じ ECU を 2 つ載せるときは、`--name` で変わらないもの（NAME、アドレス、変数の名前）が重ならないようにします。方法は [複数の ECU をつないで動かす](howto/integrate-ecus.md) の「同じ ECU を 2 つ載せる」にあります。
+To run two instances of the same ECU, make sure that the NAME and the addresses, which `--name` leaves unchanged, do not overlap. The variable names can stay the same: each participant has its own. For how, see "Run two instances of the same ECU" in [Integrate and run several ECUs](howto/integrate-ecus.md#run-two-instances-of-the-same-ecu).
 
-終了コードは、ほかのツールと同じです。
+The exit codes are the same as those of the other tools.
 
-| 終了コード | 意味 |
+| Exit code | Meaning |
 |---|---|
-| 0 | 終わった（`--describe` は JSON を書いた。`--registry-uri` はシミュレーションが終わった。`--local` は時間まで動いた） |
-| 1 | 実行中に ECU が失敗した（ステップの例外。`SimulationError`） |
-| 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` のエラー、registry に接続できない、シミュレーションが始まらない、標準出力に書けない） |
-| 4 | 引数のエラー |
-| 130 | `--registry-uri` で、停止を求められた（[止まるよう求められたとき](#止まるよう求められたとき--registry-uri)） |
+| 0 | Done (`--describe` wrote the JSON, the `--registry-uri` simulation ended, `--local` ran for the full time) |
+| 1 | The ECU failed while running (an exception in a step; `SimulationError`) |
+| 3 | Setup failed (an exception in the constructor of `App`, an error in `EcuMainOptions`, the registry cannot be reached, the simulation does not start, stdout cannot be written) |
+| 4 | Usage error |
+| 130 | Under `--registry-uri`, the ECU was asked to stop (see [When asked to stop](#when-asked-to-stop---registry-uri)) |
 
-終了コード 4 になる引数は次のとおりです。何も始めずに、使い方を標準エラーに書きます。
+The following give exit code 4. The ECU starts nothing and writes the usage to stderr.
 
-| 引数のエラー | 補足 |
+| Usage error | Notes |
 |---|---|
-| `--describe`、`--registry-uri`、`--local` のどれもない | 引数がないときも同じです。 |
-| 3 つのうち 2 つ以上がある | |
-| 知らない引数 | `--name=X` の形も知らない引数です（値は空白で区切ります）。 |
-| 値のない `--name`、`--registry-uri`、`--run-for-ms`、`--start-timeout-ms` | 次が `--` で始まる引数のときも、値がないとみなします。 |
-| 空の値 | |
-| ASCII でも UTF-8 でもない `--name` | Windows のコードページの名前などで、メッセージにバイト列を 16 進で表示します。 |
-| 同じ引数の 2 回目 | |
-| `--run-for-ms` のない `--local`、`--local` のない `--run-for-ms` | |
-| `--registry-uri` のない `--start-timeout-ms` | |
-| 整数でない、0 の、または 10^12 を超える `--run-for-ms` と `--start-timeout-ms` | |
+| None of `--describe`, `--registry-uri` and `--local` | Also with no arguments at all. |
+| 2 or more of the 3 | |
+| An unknown argument | The form `--name=X` is an unknown argument too (separate the value with a space). |
+| `--name`, `--registry-uri`, `--run-for-ms` or `--start-timeout-ms` without a value | The value also counts as missing when the next argument starts with `--`. |
+| An empty value | |
+| A `--name` that is neither ASCII nor UTF-8 | For example, a name in a Windows code page. The message shows the bytes in hexadecimal. |
+| An argument given twice | |
+| `--local` without `--run-for-ms`, or `--run-for-ms` without `--local` | |
+| `--start-timeout-ms` without `--registry-uri` | |
+| A `--run-for-ms` or `--start-timeout-ms` that is not an integer, is 0 or exceeds 10^12 | |
 
-失敗したときは、標準エラーに 1 行 `error: <ECU 名>: <理由と直し方>` を書きます。
+On failure, the ECU writes one line `error: <ECU name>: <reason and how to fix it>` to stderr.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 1 行にする方法 | SIL Kit のメッセージの改行は空白にし、`std::exception` でない例外も固定のメッセージで 1 行にします。 |
-| ECU 名 | `--name` で変えた名前です（引数のエラーのときは `EcuMainOptions::name`）。 |
-| 引数のエラー | 続けて使い方を書きます。 |
-| シミュレーションが始まらないとき | 時間切れと、それ以外とで、メッセージを分けます。 |
+| Keeping it to one line | Line breaks in SIL Kit messages become spaces, and an exception that is not a `std::exception` gets a fixed one-line message. |
+| ECU name | The name set with `--name` (`EcuMainOptions::name` for a usage error). |
+| Usage error | The usage follows the line. |
+| The simulation does not start | Different messages for a timeout and for other causes. |
 
-時間切れは、controller がいないか、必要な participant がそろわないときで、メッセージに controller と `--start-timeout-ms` の確認方法を添えます。それ以外の例は、変数の名前が `Peer` の監視用の変数と重なったときです。
+A timeout means that there is no controller or that the required participants did not all join; its message also says how to check the controller and points to `--start-timeout-ms`. An example of another cause is a variable name that collides with a monitoring variable of `Peer`.
 
-registry に接続できないときのメッセージ（`cannot join the simulation at "<URI>": ...`）は、確認することを挙げます。挙げるのは、`vehicle_sil_launch run` を先に起動して待たせること、URI のアドレスとポート、その PC のファイアウォール、同じ名前の participant です。
+The message when the registry cannot be reached (`cannot join the simulation at "<URI>": ...`) lists what to check: that `vehicle_sil_launch run` was started first and is waiting, the address and port of the URI, the firewall of that computer, and a participant with the same name.
 
-registry が「その名前は使用中」として拒否したときは、5 秒の間、participant を作り直してから失敗します（`--start-timeout-ms` が 5 秒より短ければ、その時間）。同じ名前ですぐに起動し直したとき、registry が前のプロセスの終了にまだ気づいていないことがあるためです。このときのメッセージは、待った時間と名前のことだけを言います。registry には接続できているので、確認することの一覧は付けません。
+When the registry refuses the participant because its name is in use, the ECU retries creating the participant for 5 seconds before it fails (or for `--start-timeout-ms`, if that is shorter). The reason: when you restart a participant with the same name right away, the registry may not yet have noticed that the previous process ended. The message then mentions only the time it waited and the name. Because the registry was reached, the message leaves out the list of things to check.
 
-### ECU 独自の引数
+### ECU-specific arguments
 
-`ecu_main()` は、知らない引数があると終了コード 4 で終わります。ECU に独自の引数（J1939 のアドレスなど）を持たせるときのルールは次のとおりです。
+`ecu_main()` exits with exit code 4 on an unknown argument. To give an ECU arguments of its own (a J1939 address, for example), follow these rules:
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 取り出す場所 | `main()` で独自の引数を `argv` から取り出し、残りを `ecu_main()` に渡します。 |
-| `App` への渡し方 | 取り出した値は、`ecu_main<App>()` の `args...` で `App` のコンストラクターに渡せます。 |
-| 使えない名前 | `ecu_main()` の引数（上の表）と同じ名前は使えません。 |
-| `--help` | 独自の引数は `ecu_main()` の `--help` に表示されません。 |
+| Where to take them out | In `main()`, take the ECU's own arguments out of `argv` and pass the rest to `ecu_main()`. |
+| Passing them to `App` | Pass the values to the constructor of `App` through the `args...` of `ecu_main<App>()`. |
+| Names you cannot use | The names of the `ecu_main()` arguments (table above). |
+| `--help` | The `--help` of `ecu_main()` does not show the ECU's own arguments. |
 
-`vehicle_sil_launch` は、`check` でも `run` でも、設定ファイルの `command` に書いた引数を付けて ECU を起動します。そのため、`--describe` の出力は、独自の引数で作った構成（ノードのアドレスや NAME）になります。
+For both `check` and `run`, `vehicle_sil_launch` starts the ECU with the arguments in its `command` in the configuration file. So the `--describe` output shows the configuration that the ECU's own arguments produce (the addresses and NAMEs of its nodes).
 
-### 標準出力と標準エラー
+### Stdout and stderr
 
-`ecu_main` が標準出力に書くのは、`--describe` の JSON と `--help` の使い方だけです。
+`ecu_main` writes only two things to stdout: the `--describe` JSON and the `--help` usage.
 
-`--describe` では、ECU を組み立てる前からプロセスが終わるまで、標準出力（fd 1）を標準エラーに向けます（元に戻しません）。JSON は、元の標準出力を複製した記述子に直接書きます。そのため、`App` が標準出力に書いたものが JSON に混ざりません。
+With `--describe`, stdout (fd 1) is redirected to stderr from before the ECU is constructed until the process ends; it is not restored. The JSON is written directly to a duplicate of the original stdout descriptor. So nothing that `App` writes to stdout gets mixed into the JSON.
 
-| 場合 | 起きること |
+| Case | What happens |
 |---|---|
-| `App` のコンストラクターとデストラクター、`App` のスレッド、`atexit`、リンクしたライブラリが標準出力に書く（`printf`、`std::cout` など） | 標準エラーに出力されます。 |
-| 標準エラーが閉じている | 先に null デバイスを開いて標準エラーにするので、`App` の出力はどこにも出ません。 |
-| 標準出力が閉じている | JSON を書けないので、終了コード 3 です。 |
+| The constructor and destructor of `App`, threads of `App`, `atexit` handlers or linked libraries write to stdout (`printf`, `std::cout` and so on) | The output goes to stderr. |
+| Stderr is closed | The null device is opened as stderr first, so the output of `App` goes nowhere. |
+| Stdout is closed | The JSON cannot be written, so the exit code is 3. |
 
-`ecu_main` が戻った後も fd 1 は標準エラーのままなので、`ecu_main` は `main()` の最後で呼びます。
+After `ecu_main` returns, fd 1 is still stderr, so call `ecu_main` at the end of `main()`.
 
-### 変数を公開する（`--registry-uri`）
+### Exposing variables (`--registry-uri`)
 
-ECU は、`--registry-uri` で参加するとき、何も書かなくても、自分の変数を SIL Kit の publish/subscribe でシミュレーションに公開します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」）。変数を宣言していない ECU にも `ecu.connected` があるので、どの ECU も公開します。
+When the ECU joins with `--registry-uri`, it exposes its variables to the simulation with SIL Kit publish/subscribe, with no code of your own (`vehicle_sil::control_silkit::AgentTransport`; see "Transport over SIL Kit (`vehicle_sil::control_silkit`)" in [internals/control.md](internals/control.md#transport-over-sil-kit-vehicle_silcontrol_silkit)). An ECU that declares no variables still has `ecu.connected`, so every ECU exposes variables.
 
-`vehicle_sil_launch run` がそれを受信して、変数を読み書きします（[simulation-run.md](simulation-run.md) の「ECU の変数との接続」）。受信するプロセスがいなければ、送信したものは誰にも届かないだけです。
+`vehicle_sil_launch run` receives what the ECU publishes and reads and writes the variables (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). If no process receives it, what the ECU sends reaches no one, and nothing else happens.
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| 依存するライブラリ | gRPC も Protocol Buffers も必要ありません（ECU の実行ファイルは、どちらにも依存しません）。 |
-| 送信する時点 | 値と書き込みの結果は、ステップの中で、値を読んだ直後に送信します。 |
-| 送信する頻度 | Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）で、間引きはしません。 |
-| `--describe` の `control` | 公開することを `control` に出力します（`Ecu::describe()` 自体は出力せず、`ecu_main` が追加します）。 |
-| ランチャーが待つ ECU | `vehicle_sil_launch run` は、`control` で公開すると出力した ECU だけを待ちます。 |
-| `--no-control` | 公開しなくなり、`--describe` の `control` も `null` になります。 |
-| 認証 | ECU とランチャーの間に認証はありません（registry に参加できるプロセスは、変数に書き込めます）。 |
+| Dependencies | Neither gRPC nor Protocol Buffers is needed (ECU executables depend on neither). |
+| When it sends | Values and the results of writes are sent within the step, right after the values are read. |
+| How often it sends | At the Agent's `sample_period` (default 10 ms; `Ecu::set_agent_options()`), without thinning out. |
+| `control` in `--describe` | Reports in `control` that the ECU exposes its variables (`Ecu::describe()` itself does not report it; `ecu_main` adds it). |
+| ECUs the launcher waits for | `vehicle_sil_launch run` waits only for ECUs that report in `control` that they expose their variables. |
+| `--no-control` | The ECU no longer exposes its variables, and `control` in `--describe` becomes `null`. |
+| Authentication | There is no authentication between the ECU and the launcher (any process that can join the registry can write the variables). |
 
-アプリが Agent に自分のトランスポート（`control::TransportLease` を持つもの）を付けているときは、`ecu_main` はトランスポートを付けません。このとき、`--describe` の時点でトランスポートが付いていれば、`ecu_main` は `control` に公開すると出力しません。付いていなければ公開すると出力し、`vehicle_sil_launch run` が ECU からの最初のメッセージ（hello）を待ちます。そのため、アプリが Agent に自分のトランスポートを付けるときは、`--no-control` を付けてください。
+If the application has attached its own transport (something that holds a `control::TransportLease`) to the Agent, `ecu_main` does not attach one. In that case, if the transport is already attached at the time of `--describe`, `ecu_main` does not report in `control` that the ECU exposes its variables. If it is not attached yet, `ecu_main` reports that it does, and `vehicle_sil_launch run` waits for the first message from the ECU (hello). So if the application attaches its own transport to the Agent, pass `--no-control`.
 
-### SIL Kit の設定ファイルを渡す（`--silkit-config`）
+### Passing a SIL Kit configuration file (`--silkit-config`)
 
-SIL Kit のミドルウェアやログの設定を変えるとき（決まったポートで待ち受ける、接続を試す回数を増やす、SIL Kit のログをファイルに書く、など）に使います。なくても動きます。
+Use this option to change SIL Kit's middleware or logging settings, for example to listen on a fixed port, to try to connect more times or to write the SIL Kit log to a file. The ECU runs without it.
 
 ```yaml
-# engine.silkit.yaml: 決まったポートで待ち受け、SIL Kit のログをファイルにも書く
+# engine.silkit.yaml: listen on a fixed port, and also write the SIL Kit log to a file
 Middleware:
   AcceptorUris: ["tcp://0.0.0.0:8601"]
   ConnectAttempts: 5
@@ -182,238 +184,238 @@ Logging:
 engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-config engine.silkit.yaml
 ```
 
-ファイルの形式とキーは、SIL Kit の participant の設定（SIL Kit のドキュメントの「Configuration」）です。相対パスは、プロセスの作業ディレクトリを基準にします。
+The file format and the keys are those of the SIL Kit participant configuration ("Configuration" in the SIL Kit documentation). A relative path is relative to the working directory of the process.
 
-書いたものは、書いたとおりに使います。書いていないものには、vehicle-sil の既定を追加します。
+Settings that you write are used as written. For settings that you leave out, vehicle-sil adds its own defaults.
 
-| キー | 書いていないとき |
+| Key | If not written |
 |---|---|
-| `Middleware.AcceptorUris` | 設定ファイルなしのときと同じです（registry の URI がループバックのアドレスなら、ループバックだけで待ち受ける。[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
-| `Middleware.EnableDomainSockets` | Windows では `false` にします。 |
-| `Experimental.TimeSynchronization.DynamicSimulationStep` | `false` にします。 |
+| `Middleware.AcceptorUris` | The same as without a configuration file (if the URI of the registry has a loopback address, the ECU listens on loopback only; see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
+| `Middleware.EnableDomainSockets` | Set to `false` on Windows. |
+| `Experimental.TimeSynchronization.DynamicSimulationStep` | Set to `false`. |
 
-Windows では、`Middleware.EnableDomainSockets` に `true` と書いても `false` になります。SIL Kit の既定が `true` なので、書いたかどうかを見分けられないためです。
+On Windows, `Middleware.EnableDomainSockets` becomes `false` even if you write `true`. The SIL Kit default is `true`, so vehicle-sil cannot tell whether you wrote it.
 
-エラーになる設定は次のとおりです。
+How problems in the file are handled:
 
-| 設定 | 扱い | 理由と補足 |
+| Setting | Handling | Reason and notes |
 |---|---|---|
-| 知らないキー | SIL Kit が警告にします。 | |
-| 型の違う値 | SIL Kit がエラーにします。 | メッセージは `error: <名前>: --silkit-config "<file>": SIL Kit does not accept the configuration: ...` です。 |
-| YAML として読めないファイル | SIL Kit がエラーにします。 | 上のメッセージに「(at line <行>, column <列> of the configuration text)」が付きます。 |
-| `ParticipantName` が participant 名（`--name`、なければ `EcuMainOptions::name`）と違う | 接続する前にエラーにします。 | SIL Kit は設定ファイルの名前で参加するので、participant 名で待つプロセスが待ち続けます。 |
-| `Middleware.RegistryUri` が `--registry-uri` と違う | 接続する前にエラーにします。 | SIL Kit は設定ファイルの URI に接続します。 |
-| `DynamicSimulationStep: true` | 接続する前にエラーにします。 | vehicle-sil の participant は、自分の固定のステップ幅で動きます。 |
+| Unknown keys | SIL Kit prints a warning. | |
+| Values of the wrong type | SIL Kit reports an error. | The message is `error: <name>: --silkit-config "<file>": SIL Kit does not accept the configuration: ...`. |
+| A file that cannot be read as YAML | SIL Kit reports an error. | The message above ends with "(at line <line>, column <column> of the configuration text)". |
+| `ParticipantName` differs from the participant name (`--name`, or `EcuMainOptions::name` without it) | An error before connecting. | SIL Kit joins under the name in the configuration file, so a process that waits for the participant name keeps waiting. |
+| `Middleware.RegistryUri` differs from `--registry-uri` | An error before connecting. | SIL Kit connects to the URI in the configuration file. |
+| `DynamicSimulationStep: true` | An error before connecting. | vehicle-sil participants run with their own fixed step size. |
 
-接続する前のエラーは終了コード 3 で、メッセージ（`error: <名前>: --silkit-config "<file>": ...`）に直し方が入ります。`ParticipantName` と `Middleware.RegistryUri` は、同じ値なら通ります。`--describe` は URI を知らないので、`Middleware.RegistryUri` を比べません。
+An error before connecting gives exit code 3, and the message (`error: <name>: --silkit-config "<file>": ...`) says how to fix it. `ParticipantName` and `Middleware.RegistryUri` pass if they have the same value. `--describe` does not know the URI, so it does not compare `Middleware.RegistryUri`.
 
-そのほかのルールは次のとおりです。
+Other rules:
 
-- `Includes` で分けたファイルは、設定ファイルのあるディレクトリからも探します。
-- 上の検査と既定は、分けたファイルも合わせた結果を見ます（どのファイルに書いても同じです）。
-- コントローラーの節（`CanControllers` の `Network` など）は書かないでください。ネットワークの名前が `--describe` の出力とずれます（確認する仕組みはありません）。
-- `vehicle_sil_launch` では、`command` に書きます（[simulation-config.md](simulation-config.md) の「ecu_main の実行ファイル」）。照合の `--describe` にも渡るので、設定のエラーは `check` で分かります。
+- Files split off with `Includes` are also searched for in the directory of the configuration file.
+- The checks and defaults above apply to the configuration with the split files included (it does not matter which file a setting is in).
+- Do not write controller sections (`Network` in `CanControllers` and so on). The network names would no longer match the `--describe` output, and nothing detects this.
+- With `vehicle_sil_launch`, write the option in `command` (see "ecu_main executables (`describe: true`)" in [simulation-config.md](simulation-config.md#ecu_main-executables-describe-true)). The check's `--describe` run gets the option too, so `check` finds errors in the SIL Kit configuration.
 
-ライブラリから使うときは、`SilKitOptions::participant_configuration` か `ParticipantRuntimeOptions::participant_configuration` に、設定の文字列を渡します。`SilKitOptions` は `Simulation` のもので、そのプロセスの全部の participant に渡ります。ファイルから読むときは `participant_configuration_from_file()` を使います（ルールは [internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。
+From the library, pass the configuration as a string to `SilKitOptions::participant_configuration` or `ParticipantRuntimeOptions::participant_configuration`. `SilKitOptions` belongs to `Simulation` and applies to every participant in the process. To read it from a file, use `participant_configuration_from_file()` (for the rules, see "SIL Kit configuration defaults" in [internals/core.md](internals/core.md#sil-kit-configuration-defaults)).
 
-### 止まるよう求められたとき（`--registry-uri`）
+### When asked to stop (`--registry-uri`)
 
-`--registry-uri` のとき、`ecu_main` は SIGINT（Ctrl+C）と SIGTERM（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受信して止まります。
+Under `--registry-uri`, `ecu_main` stops when it receives SIGINT (Ctrl+C) or SIGTERM (on Windows: Ctrl+C, Ctrl+Break, closing the console).
 
-| 受信した時点 | `ecu_main` がすること | 標準エラーのメッセージ |
+| When it is received | What `ecu_main` does | Message on stderr |
 |---|---|---|
-| シミュレーションが始まった後 | participant を止め（`request_stop()`）、`run()` が戻って `App` のデストラクターなどが動いてから、終了コード 130 で終わります。 | `error: <ECU 名>: interrupted (SIGTERM): it stopped the simulation and left it` |
-| 始まる前（registry への接続中、開始の待ち） | デストラクターを動かさずに、すぐに終了コード 130 で終わります。 | `error: <ECU 名>: interrupted (SIGTERM) before the simulation started: it ends at once` |
-| 止めている間の 2 回目 | すぐに終わります。 | |
+| After the simulation started | Stops the participant (`request_stop()`). When `run()` has returned and the destructor of `App` and the rest have run, exits with exit code 130. | `error: <ECU name>: interrupted (SIGTERM): it stopped the simulation and left it` |
+| Before the start (while connecting to the registry, or while waiting for the start) | Exits at once with exit code 130, without running destructors. | `error: <ECU name>: interrupted (SIGTERM) before the simulation started: it ends at once` |
+| A second time, while stopping | Exits at once with exit code 130, without running destructors. | `error: <ECU name>: interrupted (SIGTERM) again while it stopped: it ends at once` |
 
-coordinated の participant が止まると、シミュレーション全体が順に止まります。始まる前に受信したときにデストラクターが動かないのは、シグナルの既定の動作と同じです。このときも、終わる前に C の標準入出力（`printf` など）のバッファーは書き出します。
+When a coordinated participant stops, the whole simulation stops in an orderly way. Skipping the destructors when the signal arrives before the start matches the signal's default action. Even then, the C standard I/O buffers (`printf` and so on) are flushed before the process ends.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 受信する期間 | `ecu_main` の中で `--registry-uri` のシミュレーションが動いている間だけです。 |
-| `App` のデストラクター | 動くときには、シグナルの設定を前の設定に戻しています。 |
-| `--describe` と `--local` | シグナルを扱いません（既定の動作ですぐに終わります）。 |
-| `App` の `read()` など | `SA_RESTART` を使うので、途中で戻しません。 |
-| 起動したプロセスが無視するように設定したシグナル（`nohup`） | 無視したままです。 |
-| Windows でコンソールを閉じたとき | 順に止める処理が終わるのを、最大 4 秒待ちます（その後 Windows がプロセスを終わらせます）。 |
+| When the signals are handled | Only while the `--registry-uri` simulation runs inside `ecu_main`. |
+| Destructor of `App` | By the time it runs, the previous signal settings have been restored. |
+| `--describe` and `--local` | Do not handle the signals (the default action ends the process at once). |
+| `read()` and similar calls in `App` | Not interrupted, because `SA_RESTART` is used. |
+| Signals that the parent process set to be ignored (`nohup`) | Stay ignored. |
+| Closing the console on Windows | The ECU waits up to 4 seconds for the orderly stop to finish (then Windows ends the process). |
 
-受信している間、これらのシグナルは `ecu_main` が使います。シグナルを自分で扱いたい ECU は、`ecu_main` を使わず、`Simulation` を直接使います。
+While `ecu_main` handles these signals, they are its own. An ECU that needs to handle them itself must use `Simulation` directly instead of `ecu_main`.
 
-`vehicle_sil_launch run` は、シミュレーションが終わっても終わらない participant や、始まらなかったときの participant に、この方法で停止を求めます（[simulation-run.md](simulation-run.md) の「止め方」）。
+`vehicle_sil_launch run` uses these signals to ask participants to stop: those that do not end after the simulation ends, and those of a simulation that did not start (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)).
 
-### 実行中にほかの参加者がいなくなったとき（`--registry-uri`）
+### When another participant leaves during a run (`--registry-uri`)
 
-`ecu_main` が自分で終わるのは、次の 3 つの場合だけです。
+`ecu_main` exits on its own in only 3 cases:
 
-| 場合 | 終了コード |
+| Case | Exit code |
 |---|---|
-| シミュレーションが終わった | 0 |
-| この ECU のステップが失敗した | 1 |
-| 停止を求められた | 130 |
+| The simulation ended | 0 |
+| A step of this ECU failed | 1 |
+| The ECU was asked to stop | 130 |
 
-ステップが失敗した ECU は、Error の状態のまま、controller がシミュレーションを中断するのを最大 5 秒待ってから終わります。controller が失敗を Error として見られるようにするためです。Error を見るとすぐ中断する controller の下では、待つのはその間だけです。
+An ECU whose step failed stays in the Error state and waits up to 5 seconds for the controller to abort the simulation before it ends. This lets the controller see the failure as Error. Under a controller that aborts as soon as it sees Error, the ECU waits only that long.
 
-ほかのプロセスがいなくなったときに起きることは、次のとおりです。
+What happens when another process goes away:
 
-| いなくなったもの | 起きること |
+| What goes away | What happens |
 |---|---|
-| controller のプロセス | シミュレーションは止まらずに、仮想時間が進み続け、ECU は自分では終わりません。 |
-| registry のプロセス | participant の間の接続によっては、ほかの participant から見てこの ECU が Error になり、この ECU は仮想時間が進まないまま待ち続けることがあります。 |
-| 失敗したほかの participant（controller がシミュレーションを中断する） | この ECU は終了コード 0 で終わります。 |
+| The controller process | The simulation does not stop: virtual time keeps advancing, and the ECU does not end by itself. |
+| The registry process | Depending on the connections between the participants, this ECU may be in the Error state as other participants see it, and it may keep waiting without virtual time advancing. |
+| Another participant that failed (the controller aborts the simulation) | This ECU ends with exit code 0. |
 
-どの participant が失敗したかは、controller（`vehicle_sil_sim_controller` の出力と終了コード 1）が通知します。
+The controller reports which participant failed (in the output of `vehicle_sil_sim_controller`, and with exit code 1).
 
-どの場合も、ECU を起動したプロセスが、controller の終了を見て ECU のプロセスを止めてください。`vehicle_sil_launch run` はこれをします（[simulation-run.md](simulation-run.md)）。自分で起動するときのルールは次の 2 つです。
+In every case, the process that started the ECUs must watch for the controller to end and then stop the ECU processes. `vehicle_sil_launch run` does this (see [simulation-run.md](simulation-run.md)). If you start them yourself, follow these 2 rules.
 
-シミュレーションの結果は、controller の終了コードで決めます。ECU の終了コードだけでは決めません。ほかの participant が失敗しても、ECU は 0 で終わることがあるためです。ECU の終了コード 1 は、その ECU のステップが失敗したことだけを示します。
+Decide the result of the simulation by the exit code of the controller, not by the exit codes of the ECUs alone. An ECU can end with 0 even when another participant failed. An exit code 1 from an ECU means only that a step of that ECU failed.
 
-controller のプロセスが結果を出さずにいなくなったら、すべての ECU を止めます（ECU は自分では終わりません）。controller が終わった後もしばらく動いている ECU（registry がいなくなった場合など）も止めます。まず SIGTERM（Windows: Ctrl+Break）で停止を求め（上の「止まるよう求められたとき」）、それでも終わらなければ強制終了します。
+If the controller process goes away without a result, stop all ECUs (they do not end by themselves). Also stop ECUs that are still running some time after the controller ended (when the registry has gone away, for example). First ask them to stop with SIGTERM (Ctrl+Break on Windows; see "When asked to stop" above), and kill those that still do not end.
 
-## ECU を作る人に依頼すること
+## Requirements for ECU authors
 
-`vehicle_sil_launch` で複数の ECU を動かすとき、ECU の実行ファイルに求めることです。守らないと起きることは、ランチャーの指摘か表示に現れます。
+When you run several ECUs with `vehicle_sil_launch`, each ECU executable must meet these requirements. A requirement that is not met shows up as a finding or in the launcher's output.
 
-| 依頼すること | 守らないと起きること |
+| Ask the ECU author to | If they do not |
 |---|---|
-| `main()` を `ecu_main()` で作ります。 | `check` がその ECU を照合できません。 |
-| 設定ファイルを書く人と決めた名前（ネットワーク名など）を使い、渡す前に `--describe` で確認します。 | `check` の指摘になります（[simulation-check.md](simulation-check.md)）。 |
-| `vehicle_sil_launch` と同じバージョンの vehicle-sil でビルドします。 | 注記 `version-mismatch` が出て、変数を読み書きするメッセージの形式のバージョンも違えば、警告 `control-link-version` でその ECU の変数を読み書きできません。 |
-| ECU が自分で起動したプロセスは、ECU が終わるときに終了させます。 | 警告 `left-processes` が出ます（[simulation-run.md](simulation-run.md) の「止め方」）。 |
-| 標準出力と標準エラーは UTF-8 で出力します。 | `vehicle_sil_launch run` は、UTF-8 でないバイトを `?` と表示します。 |
-| 変数の名前に、次の表の接頭辞を使いません。 | ECU が終了コード 3 で終わります。 |
+| Build `main()` with `ecu_main()`. | `check` cannot check the ECU. |
+| Use the names agreed with the integrator (the person who writes the configuration file), such as network names, and check them with `--describe` before handing the ECU over. | `check` reports findings ([simulation-check.md](simulation-check.md)). |
+| Build with the same version of vehicle-sil as `vehicle_sil_launch`. | The check reports the note `version-mismatch`. If the format version of the messages that read and write variables also differs, it reports the warning `control-link-version`, and the variables of that ECU cannot be read or written. |
+| End the processes that the ECU started itself when the ECU ends. | The run reports the warning `left-processes` (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). |
+| Write stdout and stderr in UTF-8. | `vehicle_sil_launch run` shows bytes that are not UTF-8 as `?`. |
+| Do not use the prefixes in the next table in variable names. | The ECU exits with exit code 3. |
 
-### 使えない変数名の接頭辞
+### Reserved variable name prefixes
 
-次の接頭辞で始まる名前は、vehicle-sil が追加する変数に使います。
+Names that start with these prefixes are for the variables that vehicle-sil adds.
 
-| 接頭辞 | 使う変数 | 例 |
+| Prefix | Used for | Example |
 |---|---|---|
-| `ecu.` | どの ECU にもある変数 | `ecu.connected` |
-| `peer.` | `Peer` が追加する監視用の変数 | `peer.steps` |
-| `j1939.<ネットワーク名>.` | `Peer` が J1939 のネットワークごとに追加する監視用の変数 | `j1939.J1939_CAN.frames_sent` |
+| `ecu.` | Variables that every ECU has | `ecu.connected` |
+| `peer.` | Monitoring variables that `Peer` adds | `peer.steps` |
+| `j1939.<network name>.` | Monitoring variables that `Peer` adds for each J1939 network | `j1939.J1939_CAN.frames_sent` |
 
-監視用の変数は、SIL Kit のシミュレーションに参加する ECU（`Peer`）が、ECU の宣言した変数の後に追加します（`PeerOptions::monitor`、既定で有効）。`--describe` の `variables` には含まれませんが、実行中は ECU の変数と並んで見えます。変数の一覧は [internals/control.md](internals/control.md) の「Peer の監視」にあります。
+An ECU that joins a SIL Kit simulation (`Peer`) adds the monitoring variables after the variables that the ECU declared (`PeerOptions::monitor`, enabled by default). They are not in `variables` of `--describe`, but during a run they appear next to the ECU's variables. For the list of variables, see "Peer monitoring" in [internals/control.md](internals/control.md#peer-monitoring).
 
-重なる名前を宣言したときにエラーになる時点は、宣言のしかたと接頭辞で違います。
+When a colliding name causes an error depends on how it is declared and on the prefix.
 
-| 宣言 | エラーになる時点 |
+| Declaration | When it fails |
 |---|---|
-| `Ecu` の `input()`、`output()` などで、`ecu.` か `peer.` で始まる名前を宣言する | 宣言のときに `std::invalid_argument` になるので、`--describe` と `--local` でも見つかります。 |
-| `agent()` に直接登録した名前が、`Peer` の監視用の変数と重なる | 登録のときは検査せず、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。 |
-| `j1939.<ネットワーク名>.` で始まる監視用の変数と重なる名前を宣言する | SIL Kit で始めるときにだけ見つかります。 |
+| Declaring a name that starts with `ecu.` or `peer.` with `input()`, `output()` and the like of `Ecu` | At the declaration, with `std::invalid_argument`, so `--describe` and `--local` find it too. |
+| A name registered directly with `agent()` collides with a monitoring variable of `Peer` | Not checked at registration; found when the ECU starts on SIL Kit (exit code 3 with `ecu_main`). |
+| Declaring a name that collides with a monitoring variable that starts with `j1939.<network name>.` | Found only when the ECU starts on SIL Kit. |
 
-`input()` などの `std::invalid_argument` は、`Peer` でも `LocalBench` でも同じで、メッセージに変数の名前とルールが入ります。変数名は ECU ごとに独立なので、ECU の間でそろえる必要はありません。
+The `std::invalid_argument` of `input()` and the like is the same for `Peer` and `LocalBench`, and its message gives the variable name and the rule. Variable names belong to each ECU, so they need not be aligned between ECUs.
 
 ## `Ecu::describe()`
 
-`Ecu::describe()` は、ECU の構成を `EcuDescription`（`vehicle_sil/ecu/describe.hpp`）で返します。
+`Ecu::describe()` returns the configuration of the ECU as an `EcuDescription` (`vehicle_sil/ecu/describe.hpp`).
 
-| メンバー | 内容 |
+| Member | Meaning |
 |---|---|
-| `name` | ECU の名前（SIL Kit では participant 名）。 |
-| `step` | ステップ幅。実時間の `Peer` では空です。 |
-| `networks` | ECU が接続するネットワーク。 |
-| `networks` の `mac` | イーサネットだけ。`ethernet()` に渡した自分のアドレス（`eth::ChannelOptions::mac`）。 |
-| `networks` の `nodes` | J1939 だけ。ノードを追加した順に、追加したときの値（`NodeOptions`）。 |
-| `variables` | 変数の `control::VariableInfo`。 |
+| `name` | Name of the ECU (the participant name in SIL Kit). |
+| `step` | Step size. Empty for a real-time `Peer`. |
+| `networks` | The networks the ECU connects to. |
+| `mac` of `networks` | Ethernet only. The ECU's own address passed to `ethernet()` (`eth::ChannelOptions::mac`). |
+| `nodes` of `networks` | J1939 only. The values given when each node was added (`NodeOptions`), in the order the nodes were added. |
+| `variables` | The `control::VariableInfo` of the variables. |
 
-**`networks`**: `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つの要素です。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`、`Ethernet`）、`kind()`（`use` から決まる `NetworkKind`: `Can`、`Lin`、`Ethernet`）、`nodes`、`mac` です。
+**`networks`**: In the order in which `j1939()`, `can()`, `lin_master()`, `lin_slave()` and `ethernet()` were called, across kinds. One call is one element. If the same ECU has `j1939()` and `can()` with the same name, the same CAN network appears twice (because there are 2 controllers). Each element has `name`, `use` (`NetworkUse`: `Raw`, `J1939`, `LinMaster`, `LinSlave`, `Ethernet`), `kind()` (the `NetworkKind` that follows from `use`: `Can`, `Lin`, `Ethernet`), `nodes` and `mac`.
 
-**`mac`**: `ethernet()` にアドレスを渡さなければ空です（アドレスをアプリケーションが実行中に決める ECU）。チャネルはこの値をフレームに書き込みません。照合が、同じネットワークの ECU のアドレスの重なりを確認するのに使います。
+**`mac`**: Empty if no address was passed to `ethernet()` (an ECU whose application decides the address at run time). The channel does not write this value into frames. The check uses it to confirm that the addresses of the ECUs on a network do not overlap.
 
-**`nodes`**: `address` は、ノードが求めたアドレスです。Address Claim で別のアドレスになった後も変わりません（今のアドレスは `Node::address()`、求めたアドレスは `Node::requested_address()`）。`j1939::kNullAddress`（254）は、任意アドレスの範囲から空いているものを取るノードです。`name` は NAME です（NAME を持たないノードは空。JSON のキーは `j1939_name`）。`arbitrary_address_capable()` は、NAME の任意アドレスの bit です。
+**`nodes`**: `address` is the address that the node requested. It does not change when address claiming leaves the node at another address (the current address is `Node::address()`, the requested one `Node::requested_address()`). `j1939::kNullAddress` (254) marks a node that takes a free address from the arbitrary address range. `name` is the NAME (empty for a node without a NAME; the JSON key is `j1939_name`). `arbitrary_address_capable()` is the arbitrary address bit of the NAME.
 
-**`variables`**: 先頭は、どの ECU にもある入力 `ecu.connected` で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が追加する監視用の変数（`PeerOptions::monitor`）は含みません。
+**`variables`**: First comes `ecu.connected`, the input that every ECU has; it is listed even before the Agent is created. Then come the variables the ECU declared (with `input()`, `output()` and the like, and those registered directly with `agent()`), in declaration order. The monitoring variables that `Peer` adds (`PeerOptions::monitor`) are not included.
 
-`ecu.connected` は bool の入力で、`false` の間、ECU はすべてのバスから切断されます。ステップは動き続けます（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。
+`ecu.connected` is a bool input. While it is `false`, the ECU is disconnected from all its buses, and its steps keep running (see "Disconnecting from the bus (`ecu.connected`)" in [internals/execution.md](internals/execution.md#disconnecting-from-the-bus-ecuconnected)).
 
-`describe()` を呼べる時点と、返す内容のルールは次のとおりです。
+When you can call `describe()`, and what it returns:
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 呼べる時点 | いつでも呼べます（組み立ての途中でも、実行の前でも後でも）。 |
-| 実行中 | その ECU のステップの中からだけ呼びます（ほかの関数と同じです）。 |
-| 宣言への影響 | 宣言は閉じません（Agent のスキーマを確定しないので、後から変数、ネットワーク、ノードを追加できます）。 |
-| 実装による違い | 同じクラスで同じように組み立てた ECU は、`Peer`（仮想時間）と `LocalBench` で同じ内容を返します（`name` と `step` を含めて）。 |
-| 実行の前後 | 実行の前と後でも同じ内容です。 |
-| 比較 | `EcuDescription` とそのメンバーの型は `==` で比べられます。 |
+| When you can call it | At any time (during construction, before and after the run). |
+| During the run | Only from within a step of that ECU (as for the other functions). |
+| Effect on declarations | It does not close the declarations (it does not fix the Agent's schema, so you can add variables, networks and nodes afterwards). |
+| Differences between implementations | An ECU built the same way from the same class returns the same content on `Peer` (virtual time) and on `LocalBench`, including `name` and `step`. |
+| Before and after the run | The same content. |
+| Comparison | `EcuDescription` and the types of its members can be compared with `==`. |
 
-## JSON の形式
+## JSON format
 
-`to_json(const EcuDescription&)`（`vehicle_sil/ecu/describe.hpp`）は、`EcuDescription` を JSON のオブジェクトにします。`--describe` が書くのはこの文字列です。同じ内容からは、同じバイト列ができます。
+`to_json(const EcuDescription&)` (`vehicle_sil/ecu/describe.hpp`) turns an `EcuDescription` into a JSON object. `--describe` writes this string. The same content always gives the same bytes.
 
-| 項目 | 書き方 |
+| Item | How it is written |
 |---|---|
-| キーの順 | 下の表のとおりです。 |
-| 値のないキー | 省きません（`null`、空の文字列、空の配列）。 |
-| 字下げと行 | 字下げは空白 2 つで、1 行に 1 つのキーか要素を書き、最後は改行です。 |
-| 改行 | LF です（`--describe` は Windows でも `\r\n` にしません）。 |
-| 整数 | 10 進で、桁を落としません。 |
-| 浮動小数 | 読み戻すと同じ `double` になる最も短い書き方です（`std::to_chars`。例: `0.1`、`100`、`1e+300`）。 |
-| 有限でない値 | `null` です。 |
-| 時間 | 整数のナノ秒です（`step_ns`）。 |
-| NAME | `"0x"` と 16 桁の大文字の 16 進の文字列です（キー `j1939_name`。64 ビットの値を識別子として扱うため）。 |
-| 文字列 | 正しい UTF-8 ならそのまま書き、`"`、`\`、0x20 未満の制御文字はエスケープします（`\b`、`\f`、`\n`、`\r`、`\t`、ほかは `\u00XX`）。 |
-| 正しい UTF-8 の並びを始めないバイト | 1 バイトごとに U+FFFD にします（出力は、いつも正しい JSON です）。 |
-| 範囲外の列挙値（キャストで作った `NetworkUse` など） | 名前を作らずに `std::logic_error` です。 |
+| Key order | As in the table below. |
+| Keys without a value | Always written (as `null`, an empty string or an empty array). |
+| Indent and lines | An indent of 2 spaces, one key or element per line, and a line break at the end. |
+| Line endings | LF (`--describe` never writes `\r\n`, not even on Windows). |
+| Integers | Decimal, with no digits lost. |
+| Floating-point numbers | The shortest form that reads back as the same `double` (`std::to_chars`; for example `0.1`, `100`, `1e+300`). |
+| Non-finite values | `null`. |
+| Times | Integer nanoseconds (`step_ns`). |
+| NAME | A string of `"0x"` and 16 upper-case hexadecimal digits (key `j1939_name`), because the 64-bit value is an identifier. |
+| Strings | Valid UTF-8 is written as is. `"`, `\` and control characters below 0x20 are escaped (`\b`, `\f`, `\n`, `\r`, `\t`, others as `\u00XX`). |
+| Bytes that do not start a valid UTF-8 sequence | Each byte becomes U+FFFD (the output is always valid JSON). |
+| Enumerator values out of range (a `NetworkUse` made with a cast, for example) | `std::logic_error` is thrown instead of writing a made-up name. |
 
-列挙の値は 64 ビットの整数で、2^53 を超えることがあります。整数として読んでください。
+Enum values are 64-bit integers and can exceed 2^53. Read them as integers.
 
-### 形式のバージョン
+### Format version
 
-先頭の `vehicle_sil_ecu` は形式のバージョンです。
+The first key, `vehicle_sil_ecu`, is the format version.
 
-| 変更 | `vehicle_sil_ecu` |
+| Change | `vehicle_sil_ecu` |
 |---|---|
-| キーの意味が変わる、キーがなくなる | 上がります。 |
-| キーが増える | 上がりません。 |
-| 決まった値をとるキー（`kind`、`use`、`type`、`causality`）に値が増える | 上がりません。 |
+| The meaning of a key changes, or a key is removed | Goes up. |
+| A key is added | Does not go up. |
+| A key that takes fixed values (`kind`, `use`, `type`, `causality`) gets a new value | Does not go up. |
 
-読む側は、知らないバージョンを拒否し、知らないキーは無視します。決まった値をとるキーの知らない値は、その ECU のエラーにします（`vehicle_sil_launch check` の指摘 `describe-unknown-value`。ほかの participant の照合は続けます）。新しい vehicle-sil の ECU を古い `vehicle_sil_launch` で読むと、そうなります。
+A reader rejects an unknown version and ignores unknown keys. An unknown value of a key that takes fixed values is an error for that ECU (the `vehicle_sil_launch check` finding `describe-unknown-value`; checking of the other participants continues). This happens when an old `vehicle_sil_launch` reads an ECU from a newer vehicle-sil.
 
-`vehicle_sil` は、ECU をビルドした vehicle-sil のバージョン（CMake のプロジェクトのバージョン）です。別々にビルドした実行ファイルを 1 つのシミュレーションで動かすときに、バージョンの違いを見つけるのに使います。
+`vehicle_sil` is the version of vehicle-sil that the ECU was built with (the version of the CMake project). Use it to find version differences when you run executables built separately in one simulation.
 
-### キー
+### Keys
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `vehicle_sil_ecu` | 形式のバージョン（今は 1） |
-| `vehicle_sil` | vehicle-sil のバージョンの文字列 |
-| `name` | ECU の名前 |
-| `step_ns` | ステップ幅（ナノ秒）。実時間の `Peer` では `null` |
-| `networks` | ネットワークの配列（`describe()` の順） |
-| `networks[].name` | ネットワークの名前 |
-| `networks[].kind` | `"can"`、`"lin"`、`"ethernet"` |
-| `networks[].use` | `"raw"`、`"j1939"`、`"lin_master"`、`"lin_slave"`、`"ethernet"` |
-| `networks[].nodes` | J1939 のノードの配列（`use` が `"j1939"` のときだけ要素がある） |
-| `networks[].nodes[].address` | 求めたアドレス（0〜253、254 は任意アドレスの範囲から取る） |
-| `networks[].nodes[].j1939_name` | NAME（`"0x"` と 16 桁）。NAME のないノードは `null` |
-| `networks[].nodes[].arbitrary_address_capable` | NAME の任意アドレスの bit（NAME がなければ `false`） |
-| `networks[].mac` | イーサネットのネットワークでの ECU のアドレス（`"02:00:00:00:00:01"` の形、小文字）。出力していないときと、イーサネット以外のネットワークでは `null` |
-| `variables` | 変数の配列（`ecu.connected`、続いて宣言の順） |
-| `variables[].name` | 変数の名前 |
-| `variables[].type` | `"bool"`、`"integer"`、`"real"`、`"enum"` |
-| `variables[].causality` | `"input"`、`"output"`、`"parameter"` |
-| `variables[].unit` | 単位（なければ `""`） |
-| `variables[].min`、`max` | 範囲（両端を含む）。なければ `null` |
-| `variables[].step` | 値を編集するときの増減の幅の目安。なければ `null` |
-| `variables[].description` | 説明（なければ `""`） |
-| `variables[].items` | `"enum"` の値の配列（`name` と、64 ビットの整数の `value`）。ほかの型では空 |
-| `variables[].builtin` | `true` は vehicle-sil がどの ECU にも付ける変数（名前が `ecu.` で始まる。`ecu.connected`）、`false` は ECU が宣言した変数 |
-| `control` | この実行ファイルが `--registry-uri` のときに変数をシミュレーションに公開するなら、その方法。公開しない（`--no-control`）なら `null` |
-| `control.transport` | トランスポート。今は `"silkit"`（SIL Kit の publish/subscribe）だけ |
-| `control.wire_version` | メッセージの形式のバージョン（整数） |
+| `vehicle_sil_ecu` | Format version (currently 1) |
+| `vehicle_sil` | The vehicle-sil version string |
+| `name` | Name of the ECU |
+| `step_ns` | Step size (ns). `null` for a real-time `Peer` |
+| `networks` | Array of networks (in the order of `describe()`) |
+| `networks[].name` | Name of the network |
+| `networks[].kind` | `"can"`, `"lin"`, `"ethernet"` |
+| `networks[].use` | `"raw"`, `"j1939"`, `"lin_master"`, `"lin_slave"`, `"ethernet"` |
+| `networks[].nodes` | Array of J1939 nodes (has elements only when `use` is `"j1939"`) |
+| `networks[].nodes[].address` | The requested address (0–253; 254 takes one from the arbitrary address range) |
+| `networks[].nodes[].j1939_name` | NAME (`"0x"` and 16 digits). `null` for a node without a NAME |
+| `networks[].nodes[].arbitrary_address_capable` | The arbitrary address bit of the NAME (`false` without a NAME) |
+| `networks[].mac` | The ECU's address on an Ethernet network (in the form `"02:00:00:00:00:01"`, lower case). `null` if not reported, and on networks other than Ethernet |
+| `variables` | Array of variables (`ecu.connected`, then in declaration order) |
+| `variables[].name` | Name of the variable |
+| `variables[].type` | `"bool"`, `"integer"`, `"real"`, `"enum"` |
+| `variables[].causality` | `"input"`, `"output"`, `"parameter"` |
+| `variables[].unit` | Unit (`""` if none) |
+| `variables[].min`, `max` | Range (both ends included). `null` if none |
+| `variables[].step` | Suggested increment for editing the value. `null` if none |
+| `variables[].description` | Description (`""` if none) |
+| `variables[].items` | Array of the values of an `"enum"` (`name` and a 64-bit integer `value`). Empty for other types |
+| `variables[].builtin` | `true`: a variable that vehicle-sil gives every ECU (its name starts with `ecu.`; `ecu.connected`). `false`: a variable that the ECU declared |
+| `control` | How this executable exposes its variables to the simulation under `--registry-uri`. `null` if it does not (`--no-control`) |
+| `control.transport` | The transport. Currently only `"silkit"` (SIL Kit publish/subscribe) |
+| `control.wire_version` | The message format version (an integer) |
 
-キーのない JSON の読み方は次のとおりです。
+How to read JSON in which a key is missing:
 
-| キー | ないとき |
+| Key | If missing |
 |---|---|
-| `networks[].mac` | 前のバージョンの ECU の JSON です。`null` として読みます。 |
-| `control` | このキーができる前の vehicle-sil でビルドした実行ファイルです。`null` と同じに扱います。 |
+| `networks[].mac` | The JSON of an ECU from an earlier version. Read it as `null`. |
+| `control` | An executable built with a vehicle-sil from before this key existed. Treat it as `null`. |
 
-`variables[].builtin` は、画面などが、アプリの変数と分けて表示するのに使います。`control.wire_version` が `vehicle_sil_launch` のバージョンと違えば、変数を読み書きできません。
+Screens and other tools use `variables[].builtin` to show these variables separately from the application's variables. If `control.wire_version` differs from that of `vehicle_sil_launch`, the variables cannot be read or written.
 
-例: `vehicle_sil_engine_ecu --describe` の出力です（CTest の `ecu_main.describe` が、実行ファイルの出力とこのブロックをバイト単位で照合します）。
+Example: the output of `vehicle_sil_engine_ecu --describe`. The CTest test `ecu_main.describe` compares the output of the executable with this block, byte for byte.
 
 <!-- vehicle_sil_engine_ecu --describe -->
 ```json
@@ -482,20 +484,20 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 }
 ```
 
-## 複数の ECU を 1 つのシミュレーションで動かす
+## Running several ECUs in one simulation
 
-2 つの ECU の実行ファイルを 1 つの SIL Kit のシミュレーションで動かすには、設定ファイルを書いて `vehicle_sil_launch run` に渡します（[simulation-config.md](simulation-config.md)、[simulation-run.md](simulation-run.md)）。`run` は、照合してから、registry、controller、各 ECU を起動し、終わりまで監視して、各 ECU がどう終わったかを表示します。
+To run 2 ECU executables in one SIL Kit simulation, write a configuration file and pass it to `vehicle_sil_launch run` ([simulation-config.md](simulation-config.md), [simulation-run.md](simulation-run.md)). `run` runs the check, starts the registry, the controller and each ECU, monitors them to the end and shows how each ECU ended.
 
 ```sh
 cd build/<preset>/examples/ecu_main
 vehicle_sil_launch run simulation.yaml
 ```
 
-実行する前に、ECU の名前、ステップ幅、ネットワーク、J1939 のアドレスと NAME に不整合がないかを、設定ファイルと `vehicle_sil_launch check` で確認できます（[simulation-check.md](simulation-check.md)）。手順は [複数の ECU をつないで動かす](howto/integrate-ecus.md) にあります。
+Before you run, you can use the configuration file and `vehicle_sil_launch check` to find mismatches in the ECU names, step sizes, networks, and J1939 addresses and NAMEs ([simulation-check.md](simulation-check.md)). For the steps, see the guide [Integrate and run several ECUs](howto/integrate-ecus.md).
 
-### ランチャーを使わずに動かす
+### Running without the launcher
 
-同じことを、ランチャーを使わずにコマンドで組み立てる例です。ECU は `--registry-uri` で参加し、`vehicle_sil_sim_controller` が全員の参加を待って始め、仮想時間 1 秒で止めます。
+The same setup, started with plain commands and without the launcher. The ECUs join with `--registry-uri`, and `vehicle_sil_sim_controller` waits for all of them to join, starts the simulation and stops it at 1 second of virtual time.
 
 ```sh
 sil-kit-registry --listen-uri silkit://localhost:8500 &
@@ -504,14 +506,14 @@ vehicle_sil_dashboard_ecu --registry-uri silkit://localhost:8500 &
 vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Engine,Dashboard --stop-at-ms 1000
 ```
 
-`--required` には、各 ECU の名前（`--describe` の `name`）を並べます。
+In `--required`, list the name of each ECU (`name` in `--describe`).
 
-## 関連するドキュメント
+## See also
 
-| 調べること | ドキュメント |
+| To find | See |
 |---|---|
-| ECU のクラスの書き方 | [j1939-guide.md](j1939-guide.md) |
-| ECU を 1 つ作って動かす手順 | [最初の ECU を作る](howto/first-ecu.md) |
-| 設定ファイルのキーと `vehicle_sil_launch` の引数 | [simulation-config.md](simulation-config.md) |
-| 照合の順序と指摘のコード | [simulation-check.md](simulation-check.md) |
-| 実行、止め方、結果 | [simulation-run.md](simulation-run.md) |
+| How to write an ECU class | [j1939-guide.md](j1939-guide.md) |
+| Steps to build and run one ECU | [Create your first ECU](howto/first-ecu.md) |
+| Keys of the configuration file and arguments of `vehicle_sil_launch` | [simulation-config.md](simulation-config.md) |
+| The check order and the finding codes | [simulation-check.md](simulation-check.md) |
+| Running, stopping and results | [simulation-run.md](simulation-run.md) |

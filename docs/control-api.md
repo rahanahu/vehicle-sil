@@ -1,259 +1,261 @@
-# Control API の使い方
+# Using the Control API
 
-Control API は、実行中のシミュレーションを外から操作・監視する gRPC の API です（`proto/vehicle_sil/control/v1/control.proto`）。このドキュメントは、起動のしかた、認証、ECU の変数の宣言、呼び出しの一覧、Python のクライアントと CLI、時間の操作のルールのリファレンスです。手順を追って試すときは、ガイド「[信号を外から操作する](howto/operate-signals.md)」から始めます。
+[日本語](ja/control-api.md)
 
-| 調べたいこと | 節 |
+The Control API is a gRPC API for controlling and monitoring a running simulation from outside (`proto/vehicle_sil/control/v1/control.proto`). This page is the reference for starting it, authentication, declaring ECU variables, the list of calls, the Python client and the CLI, and the rules for controlling time. To try it one step at a time, start with the guide [Read and write signals from outside](howto/operate-signals.md).
+
+| To find | See |
 |---|---|
-| クライアント、ランチャー、ECU のつながり | [全体の構成](#全体の構成) |
-| Control Server を持つランチャーのビルド | [ビルド](#ビルド) |
-| `--control` のアドレス、サーバーが起動する時点と終わる時点 | [ランチャーに接続する](#ランチャーに接続する) |
-| 最初のステップの前に値を書く | [始まる前に書く（`--start-paused`）](#始まる前に書く--start-paused) |
-| 時間のコマンドの順序とルール | [標準入力とクライアントのコマンド](#標準入力とクライアントのコマンド) |
-| TLS、トークン、ロール | [認証](#認証) |
-| ECU のコードでの変数の宣言 | [ECU の変数](#ecu-の変数) |
-| gRPC の呼び出しと、Python、CLI、ロールの対応 | [呼び出しの一覧](#呼び出しの一覧) |
-| Python のクライアント | [Python](#python) |
-| 時刻と値を同じ瞬間のものとして読む | [時刻と値をまとめて読む（`snapshot()`）](#時刻と値をまとめて読むsnapshot) |
-| コマンドラインから使う | [CLI](#cli) |
-| 状態コードと例外 | [エラー](#エラー) |
-| できないこと、上限 | [制限](#制限) |
+| How clients, the launcher and ECUs connect | [Overview](#overview) |
+| Building a launcher with the Control Server | [Build](#build) |
+| The address for `--control`, and when the server starts and ends | [Connect to the launcher](#connect-to-the-launcher) |
+| Writing values before the first simulation step | [Write before the start (`--start-paused`)](#write-before-the-start---start-paused) |
+| The order and rules of time commands | [Stdin commands and client commands](#stdin-commands-and-client-commands) |
+| TLS, tokens and roles | [Authentication](#authentication) |
+| Declaring variables in ECU code | [ECU variables](#ecu-variables) |
+| gRPC calls and the matching Python methods, CLI commands and roles | [List of calls](#list-of-calls) |
+| The Python client | [Python](#python) |
+| Reading the time and values as of the same instant | [Read time and values together (`snapshot()`)](#read-time-and-values-together-snapshot) |
+| Using it from the command line | [CLI](#cli) |
+| Status codes and exceptions | [Errors](#errors) |
+| What it cannot do, and limits | [Limitations](#limitations) |
 
-## 全体の構成
+## Overview
 
-ECU が、外から読み書きする変数を宣言します。クライアント（Python、CLI、GUI）は、Control Server の API で、その変数と仮想時間を操作します。Control Server は、シミュレーションを実行する `vehicle_sil_launch run` に `--control` を付けると、ランチャーの中で起動します。
+An ECU declares the variables that can be read and written from outside. Clients (Python, the CLI, the GUI) use the API of the Control Server to work with those variables and with virtual time. The Control Server runs inside the launcher when you add `--control` to `vehicle_sil_launch run`, the command that runs the simulation.
 
-| 区間 | 通信 |
+| Between | Protocol |
 |---|---|
-| クライアントとランチャー（Control Server） | gRPC |
-| ランチャーと ECU | SIL Kit |
+| Client and launcher (Control Server) | gRPC |
+| Launcher and ECUs | SIL Kit |
 
-- `ecu_main` で作った ECU は、変数を宣言していれば、何も書かなくてもランチャーから読み書きできます。ECU の実行ファイルは gRPC を持ちません。
-- ECU の実行ファイルの変数の名前と型は、`--describe` の `variables` で調べられます（[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。
-- ECU をランチャーに起動させずに、自分で起動する（デバッガーから動かす、別の端末で起動する）ときも、同じランチャーに接続します。設定ファイルの participant に `manual: true` を付けるか、`run --manual <name>` を使います（[simulation-config.md](simulation-config.md) の「participant を自分で起動する」）。
-- 保証の詳細（反映の時刻、順序、上限、スレッド）は [internals/control.md](internals/control.md) にあります。
+- If an ECU built with `ecu_main` declares variables, the launcher can read and write them with no further code. ECU executables do not contain gRPC.
+- `variables` in the `--describe` output lists the names and types of the variables of an ECU executable (see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)).
+- An ECU that you start yourself instead of having the launcher start it (from a debugger, or in another terminal) connects to the same launcher. Add `manual: true` to the participant in the configuration file, or use `run --manual <name>` (see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual)).
+- [internals/control.md](internals/control.md) details the guarantees: when writes are applied, ordering, limits and threads.
 
-## ビルド
+## Build
 
 ```sh
 cmake --preset linux-gcc-release -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON
 cmake --build --preset linux-gcc-release
 ```
 
-このビルドの `vehicle_sil_launch` は `--control` を持ち、`vehicle_sil_launch version --json` の `features` に `control-server` があります。持たないビルドで `--control` を付けると、引数のエラー（終了コード 4）で、ビルドし直す方法を標準エラーに表示します。
+In this build, `vehicle_sil_launch` has `--control`, and `features` in `vehicle_sil_launch version --json` includes `control-server`. In a build without the Control Server, `--control` is a usage error (exit code 4), and stderr explains how to rebuild.
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| gRPC が見つからないとき | FetchContent で取り込みます（初回はダウンロードとビルドに数分かかります）。 |
-| Windows（MSYS2 UCRT64）の gRPC | `pacman -S mingw-w64-ucrt-x86_64-grpc` でインストールしておきます。 |
-| Control Server のテストまでまとめて実行する | プリセット `linux-gcc-control`（GCC の Debug でこの設定）を `scripts/verify.py linux-gcc-control` で使えます（[build.md](build.md) の「Linux」）。 |
-| 依存ライブラリの詳細 | [dependencies.md](dependencies.md) にあります。 |
+| If gRPC is not found | FetchContent fetches it. The first download and build take a few minutes. |
+| gRPC on Windows (MSYS2 UCRT64) | Install it beforehand with `pacman -S mingw-w64-ucrt-x86_64-grpc`. |
+| Running the Control Server tests as well | Use the preset `linux-gcc-control` (GCC Debug with this setting) with `scripts/verify.py linux-gcc-control` (see "Linux" in [build.md](build.md#linux)). |
+| Dependency details | See [dependencies.md](dependencies.md). |
 
-## ランチャーに接続する
+## Connect to the launcher
 
 ```sh
 vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simulation.yaml
 ```
 
-`--control <address>` を付けると、ランチャーが Control Server を起動します。`<address>` は次のどれかです。
+With `--control <address>`, the launcher starts the Control Server. `<address>` is one of these:
 
-| `<address>` | 待ち受ける所 |
+| `<address>` | Listens on |
 |---|---|
-| ポート番号だけ | 127.0.0.1 のそのポートです（0 なら空いているポート）。 |
-| `<host>:<port>` | そのアドレスです。 |
-| `unix:<path>` | そのパスのソケットです。 |
+| A port number only | That port on 127.0.0.1 (0 picks a free port). |
+| `<host>:<port>` | That address. |
+| `unix:<path>` | A socket at that path. |
 
-`unix:` のパスには OS の上限があります（Linux では 107 バイト。`%20` のような `%XX` は、表す 1 バイトとして数えます）。長すぎると、ランチャーは待ち受ける前に、長さと上限を表示して引数のエラー（終了コード 4）で終わります（`the path of the socket is ... bytes long and this system takes ... at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock`）。`/tmp` の下などの短いパスにします。
+The OS limits the length of a `unix:` path (107 bytes on Linux; a `%XX` such as `%20` counts as the 1 byte it stands for). If the path is too long, the launcher prints the length and the limit before it starts listening, and exits with a usage error (exit code 4): `the path of the socket is ... bytes long and this system takes ... at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock`. Use a short path, for example under `/tmp`.
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| 実際のアドレス（ポート 0 なら選ばれたポート） | イベント `control_server` の `address` と、人向けの出力の `[vehicle_sil_launch] control server at <address>` の行で通知します。 |
-| 起動する時点 | 照合が成功した後、registry より前です（照合で失敗した実行では起動しません）。 |
-| 起動できなかった（ポートが使われているなど） | 何も起動せずに、設定のエラー（`setup`、終了コード 3）です。 |
-| サーバーが扱う範囲 | そのランチャーの実行だけです。 |
-| 扱うもの（ECU の変数） | Peer の一覧、値、書き込み、操作の結果、購読です。 |
-| 扱うもの（仮想時間） | 一時停止、再開、ステップ実行、指定時刻まで、速度、停止です。 |
-| Peer の一覧 | 設定ファイルの必須の participant は、Agent がなくても一覧にあります。 |
+| The actual address (the chosen port if you gave port 0) | Reported in `address` of the `control_server` event, and in the line `[vehicle_sil_launch] control server at <address>` of the human-readable output. |
+| When the server starts | After the check passes, before the registry. A run whose check fails does not start it. |
+| If it cannot start (the port is in use, for example) | Nothing starts, and the run ends with a setup error (`setup`, exit code 3). |
+| What the server covers | The run of that launcher only. |
+| What it handles (ECU variables) | The list of peers, values, writes, results of operations, subscriptions. |
+| What it handles (virtual time) | Pause, resume, step, run until a time, speed, stop. |
+| List of peers | Required participants from the configuration file are in the list even without an Agent. |
 
-例は [examples/launch_control](../examples/launch_control) にあります。
+[examples/launch_control](../examples/launch_control) contains examples.
 
-| 例 | 内容 |
+| Example | What it does |
 |---|---|
-| `write_before_start.py` | Python から起動して接続し、始まる前に書いて、読み返して確認します。 |
-| `pause_and_step.py` | 動いている途中で止め、時刻を指定して書き、`snapshot()` で時刻と値をまとめて読んで確認し、速度を変えて最後まで動かします。 |
+| `write_before_start.py` | Starts the launcher from Python, connects, writes before the start, and reads the value back to verify it. |
+| `pause_and_step.py` | Pauses a running simulation, writes at a given time, reads the time and values together with `snapshot()` to verify them, then changes the speed and runs to the end. |
 
-### 実行が終わるとき
+### When the run ends
 
-実行が終わると（通常の終了、停止の要求、`--timeout-ms`、participant の失敗、どれでも）、ランチャーは participant を終わらせてから、結果を出力する前にサーバーを閉じます。
+When the run ends, whether normally, by a stop request, by `--timeout-ms` or by a participant failure, the launcher ends the participants and then closes the server before it prints the result.
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| 待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`） | サーバーを閉じる時点で終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。 |
-| クライアントが接続したままのとき | ランチャーはクライアントを待たないので、終了は遅れません。 |
-| シミュレーションが終わってからサーバーを閉じるまでの間 | 終わった時点の値を読めます。 |
+| Calls that are waiting (`Watch`, `WaitOperation`, `WaitPaused`) | End when the server closes (`Watch` with the end of its stream, `WaitPaused` with `FAILED_PRECONDITION` or `CANCELLED`). |
+| Clients that stay connected | The launcher does not wait for clients, so they do not delay its exit. |
+| Between the end of the simulation and the closing of the server | Clients can read the values as of the end. |
 
-### シナリオの実行中
+### While a scenario runs
 
-シナリオの実行（`--scenario`）では、クライアントができるのは、読むこと、待つこと、止めることだけです。
+In a scenario run (`--scenario`), a client can only read, wait and stop.
 
-| 呼び出し | シナリオの実行中 |
+| Call | During a scenario |
 |---|---|
-| 読む・待つ呼び出し、`Stop` | いつもどおりです。 |
-| 書く呼び出し（`Write`、`ForgetPeer`） | `FAILED_PRECONDITION` で拒否します。 |
-| 時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`） | `FAILED_PRECONDITION` で拒否します。 |
+| Read and wait calls, `Stop` | Work as usual. |
+| Write calls (`Write`, `ForgetPeer`) | Rejected with `FAILED_PRECONDITION`. |
+| Calls that move time (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) | Rejected with `FAILED_PRECONDITION`. |
 
-拒否の理由は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
+`vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies this rejection. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
 
-### 始まる前に書く（`--start-paused`）
+### Write before the start (`--start-paused`)
 
-`--control` と `--start-paused` を一緒に付けると、全員がそろった後、どの participant も時刻 0 のステップを始める前で止まり、`resume`、`step`、`run_until` のどれかを待ちます（標準入力からでも、クライアントからでもかまいません）。この間に書いた値は、各 ECU の時刻 0 のステップで反映されます（Parameter も書けます）。
+With both `--control` and `--start-paused`, once all participants have joined, every participant stops before its step at time 0 and waits for `resume`, `step` or `run_until`, from stdin or from a client. Values written during this wait are applied in each ECU's step at time 0. Parameters can be written too.
 
 ```python
 from vehicle_sil_control import Control, Launch, ms
 
 with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch, Control(launch.address) as c:
-    c.sim.wait_paused()                               # 0 で止まっている（time().running は偽: まだ始まっていない）
+    c.sim.wait_paused()                               # stopped at 0 (time().running is false: not started yet)
     seq = c.write({"Engine": {"engine.throttle": 50.0}})
-    c.wait(seq, until="queued")                       # 全員が受け取ってから進める
+    c.wait(seq, until="queued")                       # advance only once every participant has it
     c.sim.step(ms(500)); c.sim.wait_paused()
     print(c.wait(seq).target("Engine").applied_at)    # 0
 ```
 
-書いたら、`wait(seq, until="queued")` で全員が受け取ったことを確認してから進めます。受け取る前に進めると、時刻 0 に間に合わないことがあります。
+After writing, call `wait(seq, until="queued")` to confirm that every participant has received the write, then advance. If you advance before that, the write may miss time 0.
 
-止まっている間の状態は、次のとおりです。
+The state while stopped:
 
-| 見る所 | 値 |
+| Where to look | Value |
 |---|---|
-| `GetTime` | `now` は 0、`paused` は真、`running` は偽（まだ始まっていない）、`ended` は偽です。 |
-| `WaitPaused` | すぐに 0 を返します。 |
-| イベントの `phase` | `waiting` のままです。 |
-| ランチャーの出力 | `standing still before the first step until a resume, step or run_until command ...` の行を表示します。 |
+| `GetTime` | `now` is 0, `paused` is true, `running` is false (not started yet) and `ended` is false. |
+| `WaitPaused` | Returns 0 at once. |
+| `phase` of the events | Stays `waiting`. |
+| Launcher output | The line `standing still before the first step until a resume, step or run_until command ...`. |
 
-止まっている間に受け付けたコマンドの動作は、次のとおりです。
+What the commands accepted while stopped do:
 
-| コマンド | 動作 |
+| Command | Effect |
 |---|---|
-| `resume` | 始まります。 |
-| `step`、`run_until` | 0 から進んで、その時刻で止まります。 |
-| `run_until` 0 | 時刻 0 のステップを実行して、0 で止まります（`--control` なしの `--start-paused` と同じ止まり方）。 |
-| 時刻を指定した `pause`（0 より後） | `run_until` と同じく進みます。 |
-| `pause`（時刻なし）、`speed` | 進みません（`speed` は、進んだ後の速度になります）。 |
-| 停止の要求（Ctrl+C、`stop` のコマンド、標準入力の終わり、クライアントの `Stop`） | 待つのをやめ、時刻 0 のステップを 1 つ実行してから止まります。 |
+| `resume` | The simulation starts. |
+| `step`, `run_until` | The simulation advances from 0 and stops at that time. |
+| `run_until` 0 | The simulation runs the step at time 0 and stops at 0 (the same stop as `--start-paused` without `--control`). |
+| `pause` with a time (after 0) | The simulation advances, as with `run_until`. |
+| `pause` (without a time), `speed` | The simulation does not advance. `speed` sets the speed for when it does. |
+| A stop request (Ctrl+C, the `stop` command, the end of stdin, `Stop` from a client) | The launcher stops waiting, runs one step at time 0, then stops. |
 
-止まるより前（照合や、participant がそろうのを待つ間）に受け付けたコマンドも有効です。止まるのは、止まる時点で、0 で止まることになっているときだけです。
+Commands accepted before the stop (during the check, or while waiting for the participants to join) also take effect. The simulation stops only if, at the moment it would stop, it is still due to stop at 0.
 
-| 止まるより前に受け付けたコマンド | 動作 |
+| Command accepted before the stop | Effect |
 |---|---|
-| `resume` | 止まらずに始まります。 |
-| `step`、`run_until` | 止まらずに 0 から進んで、その時刻で止まります（止まってから受け付けたのと同じ結果）。 |
-| その後の `pause` | また止まります。 |
+| `resume` | The simulation starts without stopping. |
+| `step`, `run_until` | The simulation advances from 0 without stopping and stops at that time (the same result as accepting the command after the stop). |
+| A later `pause` | The simulation stops again. |
 
-標準入力から来たコマンドも同じです。
+Commands from stdin behave the same way.
 
-止まっている時間と、タイムアウトの関係は次のとおりです。
+How the time spent stopped relates to timeouts:
 
-| 設定 | 止まっている時間の扱い |
+| Setting | Time spent stopped |
 |---|---|
-| なし | 止まっている時間そのものに上限はなく、停止の要求が来るまで待ちます。 |
-| `start_timeout_ms` | 止まっている間は数えません。 |
-| `--timeout-ms` | 止まっている時間も数えます（一時停止している時間を数えるのと同じです）。 |
+| None | The stop itself has no time limit. The launcher waits until a stop request arrives. |
+| `start_timeout_ms` | Not counted while stopped. |
+| `--timeout-ms` | Counted, the same way as time spent paused. |
 
-- `start_timeout_ms` は、止まるまで（全員がそろい、変数を出す ECU と接続するまで）と、進んだ後（全員が最初のステップに達するまで）に、それぞれ適用されます。
-- 止まるまでか進んだ後に participant が応答しなくなると、エラー `simulation-start` になります（達していない participant と状態を、メッセージに挙げます）。
-- クライアントが来ないまま `--timeout-ms` が過ぎると、時刻 0 のステップを実行してから中断し、エラー `timeout` になります（メッセージに、最初のステップの前で止まっていたことを書きます）。
-- 進めた後に `--timeout-ms` が過ぎたときも、メッセージに、最初のステップの前で止まっていた時間を書きます。
-- 待っている間に必須の participant がいなくなると（プロセスが終わったなど）、すぐに待つのをやめて、始まらなかった実行として終わります（`ended-before-start`）。
+- `start_timeout_ms` applies separately before the stop (until all participants have joined and the ECUs that expose variables have connected) and after the simulation advances (until all participants reach their first step).
+- If a participant stops responding before the stop or after the advance, the error is `simulation-start`. The message lists the participants that have not reached that point and their states.
+- If `--timeout-ms` passes and no client has come, the launcher runs the step at time 0, then aborts with the error `timeout`. The message says that the simulation was stopped before the first step.
+- If `--timeout-ms` passes after the advance, the message also gives how long the simulation was stopped before the first step.
+- If a required participant goes away during the wait (its process ends, for example), the launcher stops waiting at once and ends the run as one that did not start (`ended-before-start`).
 
-`--control` なしの `--start-paused`（`--stdin-commands` だけ）は、時刻 0 のステップを実行してから 0 で止まります。この場合と、一時停止してから書く場合は、`at` を止まっている時刻より後にします（下の「Python」）。
+`--start-paused` without `--control` (with `--stdin-commands` only) runs the step at time 0 and then stops at 0. In that case, and when you write after a pause, set `at` later than the time at which the simulation is stopped (see [Rules for writes](#rules-for-writes) below).
 
-### 標準入力とクライアントのコマンド
+### Stdin commands and client commands
 
-時間のコマンドは、標準入力（`--stdin-commands`）とクライアントの両方から受け付けます。どちらも同じ経路を通り、ルールも同じです（`step` は一時停止している間だけ、など）。
+The launcher accepts time commands from stdin (`--stdin-commands`) and from clients. Both go through the same path and follow the same rules (`step` only while paused, for example).
 
-| クライアントの呼び出し | コマンドの名前 | 引数 |
+| Client call | Command name | Argument |
 |---|---|---|
-| `Pause` | `pause` | 時刻つきなら `at_ms` |
-| `Resume` | `resume` | なし |
+| `Pause` | `pause` | `at_ms`, for a pause at a time |
+| `Resume` | `resume` | None |
 | `Step` | `step` | `ms` |
 | `RunUntil` | `run_until` | `at_ms` |
-| `SetSpeed` | `speed` | 速度 |
-| `Stop` | `stop` | なし |
+| `SetSpeed` | `speed` | The speed |
+| `Stop` | `stop` | None |
 
-| 項目 | ルール |
+| Topic | Rule |
 |---|---|
-| 処理の順 | 1 つずつ順に処理します。 |
-| 1 つのコマンドの処理 | 受け付けるかを決め、イベント `command` を出力し、時間ゲートに渡すまでを、ほかのコマンドをはさまずに行います。 |
-| 有効になった順 | イベントの順です。 |
-| どちらから来たか | イベントの `source` でわかります（`stdin`、`eof`、`control_server`）。 |
-| 標準入力とクライアントが同時にコマンドを送った | どちらが先かは、受け取った順です。 |
-| 時刻の丸め | ミリ秒に切り上げ、さらに controller のタイムステップに切り上げます（イベントの値が、実際に止まる時刻です）。 |
+| Processing order | One command at a time, in order. |
+| Processing one command | Deciding whether to accept it, emitting the `command` event and handing it to the time gate happen with no other command in between. |
+| Order in which commands take effect | The order of the events. |
+| Where a command came from | `source` of the event (`stdin`, `eof`, `control_server`). |
+| Stdin and a client send commands at the same time | The order of receipt decides which comes first. |
+| Rounding of times | Up to whole milliseconds, then up to the controller's time step. The value in the event is the time at which the simulation actually stops. |
 
-たとえば、クライアントの `step` と標準入力の `resume` が重なると、イベントの順で、止まるか進み続けるかが決まります。
+For example, if a `step` from a client and a `resume` from stdin overlap, the order of the events decides whether the simulation stops or keeps running.
 
-クライアントへのレスポンスは、受け付けなければ gRPC のエラーで、メッセージはイベントの `message` と同じです。
+If the launcher does not accept a command, the client gets a gRPC error whose message is the same as `message` of the event.
 
-| 受け付けない理由 | 状態コード |
+| Reason for not accepting | Status code |
 |---|---|
-| 引数のエラー（範囲の外の速度、0 以下のステップ） | `INVALID_ARGUMENT` |
-| 今はできないコマンド | `FAILED_PRECONDITION` |
+| An argument error (a speed out of range, a step of 0 or less) | `INVALID_ARGUMENT` |
+| A command that is not possible now | `FAILED_PRECONDITION` |
 
-`Stop` は、標準入力の `{"command":"stop"}` と同じです。
+`Stop` is the same as `{"command":"stop"}` on stdin.
 
-| 項目 | `Stop` の動作 |
+| Topic | Behavior of `Stop` |
 |---|---|
-| 1 回目と 2 回目 | 1 回目は順に止め、2 回目は待たずに participant を終わらせます。 |
-| 結果の `interrupted_by` | `"control server stop"` です。 |
-| 理由の文 | 監査ログの行にだけ残ります。 |
-| シミュレーションが終わった後（始まらなかったときも） | 時間のコマンドと同じく拒否し（`accepted: false`、`FAILED_PRECONDITION`）、結果は変わりません。 |
-| イベントの順 | 時間のコマンドと同じ順に並びます。 |
+| First and second call | The first stops the participants in order. The second ends them without waiting. |
+| `interrupted_by` of the result | `"control server stop"`. |
+| The reason text | Kept only in the audit log line. |
+| After the simulation has ended (also when it never started) | Rejected like time commands (`accepted: false`, `FAILED_PRECONDITION`). The result does not change. |
+| Order of events | In the same order as time commands. |
 
-### 認証
+### Authentication
 
-認証が必要かは、待ち受けるアドレスで決まります。
+The listen address decides whether authentication is required.
 
-| アドレス | 認証 |
+| Address | Authentication |
 |---|---|
-| ループバック（ポート番号だけ、`localhost:<port>`、`[::1]:<port>`、数字の `127.x.y.z:<port>`、`unix:<path>`） | `--control-credentials` を付けなければ、認証はありません。 |
-| ほかの PC から接続できるアドレス（`0.0.0.0:<port>` など） | TLS と認証情報が必要です（`--control-tls-cert`、`--control-tls-key`、`--control-credentials`）。 |
+| Loopback (a port number only, `localhost:<port>`, `[::1]:<port>`, a numeric `127.x.y.z:<port>`, `unix:<path>`) | None, unless you add `--control-credentials`. |
+| An address that other computers can reach (`0.0.0.0:<port>`, for example) | TLS and credentials are required (`--control-tls-cert`, `--control-tls-key`, `--control-credentials`). |
 
-- 認証のないループバックには、同じ PC の誰でも接続できます。`unix:` のソケットは、ファイルの権限しだいで、同じ PC のほかの利用者も接続できます。
-- ほかの PC から接続できるアドレスで、TLS か認証情報が足りなければ、引数のエラー（終了コード 4）です。
+- Anyone on the same computer can connect to a loopback address without authentication. Depending on the file permissions, other users on the same computer can also connect to a `unix:` socket.
+- On an address that other computers can reach, missing TLS or missing credentials is a usage error (exit code 4).
 
-認証情報のファイルには、1 行に 1 つ、`<role> <name> <token>` を書きます。
+A credentials file has one `<role> <name> <token>` per line.
 
 ```text
 # role     name     token
-viewer     guest    5e07d2...（長い乱数）
+viewer     guest    5e07d2... (a long random string)
 operator   tester   0f3c9a...
 admin      lead     7b21e4...
 ```
 
-| 項目 | ルール |
+| Topic | Rule |
 |---|---|
-| `role` | `viewer`、`operator`、`admin` のどれかです。 |
-| `token` | 16 文字以上の、秘密の文字列です。 |
-| コメント | `#` で始まる語から行末までです。 |
-| ECU | トークンを使いません。 |
-| 前のバージョンの `agent` の行 | 読み込みのエラーです（メッセージのとおり、その行を消します）。 |
-| 1 件もないファイル（空、コメントだけ） | 引数のエラーです（「付けたのに誰でも接続できる」を避けるため）。 |
-| エラーのメッセージ | 行番号と、何が違うかだけです（行の語は、トークンかもしれないので表示しません）。 |
-| トークンを引数に書く | できません（ランチャーの引数は、イベント `hello` の `arguments` や、プロセスの一覧に表示されるため）。 |
+| `role` | One of `viewer`, `operator` and `admin`. |
+| `token` | A secret string of at least 16 characters. |
+| Comments | From a word that starts with `#` to the end of the line. |
+| ECUs | Do not use tokens. |
+| An `agent` line from an earlier version | A read error. Remove the line, as the message says. |
+| A file with no entries (empty, or comments only) | A usage error, so that the option never leaves the server open to anyone. |
+| Error messages | Give only the line number and what is wrong. They do not show the words of the line, because one of them may be a token. |
+| Tokens as arguments | Not possible, because the launcher's arguments appear in `arguments` of the `hello` event and in the process list. |
 
-呼び出しに必要なロールは、次のとおりです（呼び出しごとの対応は[呼び出しの一覧](#呼び出しの一覧)）。
+The roles that calls require (for each call, see [List of calls](#list-of-calls)):
 
-| ロール | できること |
+| Role | Allows |
 |---|---|
-| `viewer` | 読むだけです。 |
-| `operator` | 時間の操作と書き込みです。 |
-| `admin` | `Stop` です（`Stop` を呼べるのは `admin` だけです）。 |
+| `viewer` | Reading only. |
+| `operator` | Controlling time and writing. |
+| `admin` | `Stop`. Only `admin` can call `Stop`. |
 
-`--control-audit-log <file>` を付けると、誰が何を変えたかをファイルに追記します。書き込めなくなっても実行は続き、その行は失われます。
+With `--control-audit-log <file>`, the launcher appends who changed what to the file. If the file can no longer be written, the run goes on and those lines are lost.
 
-ECU とランチャーの間（SIL Kit）には、認証がありません。registry に参加できる者は、ECU に書き込めます。閉じたネットワークで使います。
+There is no authentication between the ECUs and the launcher (SIL Kit). Anyone who can join the registry can write to the ECUs. Run the simulation on a closed network.
 
-## ECU の変数
+## ECU variables
 
-ECU のクラス（`Ecu&` を受け取るクラス）が、コンストラクターで変数を宣言します。宣言は ECU の Control Agent（`Ecu::agent()`。ECU に 1 つ）が保持します。SIL Kit の `Peer` でも、ローカルの `Simulation()` と `LocalBench` でも、同じコードが同じように動きます。
+An ECU class (a class that takes `Ecu&`) declares its variables in its constructor. The ECU's Control Agent (`Ecu::agent()`, one per ECU) holds the declarations. The same code works the same way with a SIL Kit `Peer` and with a local `Simulation()` or `LocalBench`.
 
 ```cpp
 class Engine {
@@ -269,140 +271,140 @@ private:
 };
 ```
 
-### 宣言の関数
+### Declaration functions
 
-| 関数 | 宣言するもの |
+| Function | Declares |
 |---|---|
-| `input(name, &value, options)` | 外から書き込める変数です。 |
-| `input(name, get, set, options)` | 外から書き込める変数で、setter が値の保存以外もするときに使います。 |
-| `input_enum(name, &value, items, options)` | 外から書き込める、列挙の変数です。 |
-| `output(name, &value, options)` | 外から読むだけの変数です。 |
-| `output(name, get, options)` | 外から読むだけの変数で、値を getter で返します。 |
-| `output_enum(name, get, items, options)` | 外から読むだけの、列挙の変数です。 |
+| `input(name, &value, options)` | A variable that can be written from outside. |
+| `input(name, get, set, options)` | A variable that can be written from outside, for when the setter does more than store the value. |
+| `input_enum(name, &value, items, options)` | An enumerated variable that can be written from outside. |
+| `output(name, &value, options)` | A variable that can only be read from outside. |
+| `output(name, get, options)` | A variable that can only be read from outside, whose value a getter returns. |
+| `output_enum(name, get, items, options)` | An enumerated variable that can only be read from outside. |
 
-型は、bool、整数、実数、列挙です。値は ECU のステップのスレッドで読み書きするので、モデルにロックは不要です。
+The types are bool, integer, real and enum. Values are read and written on the ECU's step thread, so the model needs no locks.
 
-| `VariableOptions` のメンバー | 意味 |
+| `VariableOptions` member | Meaning |
 |---|---|
-| `unit` | 単位です。 |
-| `min`、`max` | 範囲です。 |
-| `step` | 値の刻み幅です。 |
-| `description` | 説明です。 |
-| `parameter` | 真にすると、最初のステップの前だけ書ける変数（Parameter）になります。 |
+| `unit` | The unit. |
+| `min`, `max` | The range. |
+| `step` | The value increment. |
+| `description` | A description. |
+| `parameter` | If true, the variable is a Parameter: it can be written only before the first simulation step. |
 
-| 宣言のルール | 内容 |
+| Declaration rule | Details |
 |---|---|
-| 宣言できる時点 | 実行の前（ECU の組み立ての中）だけです。 |
-| 開始後の宣言 | `std::logic_error` です（メッセージに ECU の名前があります）。 |
-| 同じ ECU での同じ名前 | `std::invalid_argument` です（メッセージに ECU の名前があります）。 |
-| ポインターと関数が指すもの | ECU が持つもの（`Simulation::add()` が作るクラス、`emplace()` したオブジェクト）にします。 |
-| 破棄の順 | ECU は Agent を、ネットワークの後、`emplace()` したオブジェクトの前に破棄します。 |
+| When you can declare | Only before the run, while the ECU is being set up. |
+| Declaring after the start | Throws `std::logic_error`. The message names the ECU. |
+| The same name twice in one ECU | Throws `std::invalid_argument`. The message names the ECU. |
+| What pointers and functions refer to | Objects that the ECU owns (the class that `Simulation::add()` creates, objects added with `emplace()`). |
+| Destruction order | The ECU destroys the Agent after the networks and before the objects added with `emplace()`. |
 
-### Agent の設定（`set_agent_options()`）
+### Agent options (`set_agent_options()`)
 
-`set_agent_options()` で、読み出しの周期（`sample_period`、既定 10 ms、0 で毎ステップ）とキューの大きさを選べます。呼べるのは、最初の `input()`、`output()`、`agent()` より前だけです。不正な値は、その場で `std::invalid_argument` です（メッセージに ECU の名前があります）。
+`set_agent_options()` sets the read period (`sample_period`: 10 ms by default, 0 for every step) and the queue sizes. Call it only before the first `input()`, `output()` or `agent()`. An invalid value throws `std::invalid_argument` at once. The message names the ECU.
 
-どの ECU にも Agent があります。変数を宣言しなくても、どの ECU にもある入力 `ecu.connected` を持つためです。そのため、変数を宣言しない ECU でも、ステップごとに Agent の処理（書き込みの反映と、`sample_period` ごとの値の読み出し）が動きます。`ecu_main` の ECU は、`sample_period` ごと（既定 10 ms）に値のメッセージを 1 通送信します。`Peer` では、監視の出力（`PeerOptions::monitor`）も付きます。
+Every ECU has an Agent, because every ECU has the input `ecu.connected`, even if it declares no variables. So even in an ECU without declared variables, the Agent's work (applying writes, and reading the values every `sample_period`) runs in each step. An `ecu_main` ECU sends one values message every `sample_period` (10 ms by default). With `Peer`, the monitoring outputs (`PeerOptions::monitor`) are added as well.
 
-### 書き込みが反映される時点
+### When a write is applied
 
-外からの書き込みは、指定した仮想時間以後の最初のステップで、アプリケーションの処理の前に反映されます。そのステップの J1939 の受信処理やコンポーネントのタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップからです。値は、アプリケーションと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
+A write from outside is applied in the first ECU step at or after the given virtual time, before the application's work. In that step, J1939 reception and the timers of protocol parts run before the write is applied, so they use the new value from the next step on. Values are read after the application and the LIN processing. The timing is the same with SIL Kit and locally.
 
-書き込みは、いまの値と比べません。同じ値の書き込みも 1 つずつ反映し、そのたびに setter を呼びます（同じステップに 2 つあれば、(時刻、`seq`) の順に 2 回）。そのため、「押すたびに 1 回」のような入力は、いつも false と読める getter と、呼ばれた回数を数える setter で書けます。
+Writes are not compared with the current value. Each write is applied, even with the same value, and calls the setter each time: 2 writes in the same step call it twice, in the order of (time, `seq`). So you can implement an input such as "once per press" with a getter that always reads false and a setter that counts its calls.
 
-| 書き込む方法 | ECU が受け取る数 |
+| How you write | Writes the ECU receives |
 |---|---|
-| シナリオの `set`、Control API の `Write`、`agent().submit()` | 書いた数だけです。 |
-| GUI のコンポーネント（`client.variables.bind`） | 速く続けた書き込みは、数が減ります（[gui.md](gui.md)）。 |
+| A scenario's `set`, the Control API's `Write`, `agent().submit()` | As many as you write. |
+| A GUI widget (`client.variables.bind`) | Fewer, when writes come in quick succession (see [gui.md](gui.md)). |
 
-GUI のコンポーネントは、サーバーが前の書き込みを受け取るまでの間に来た値を、最後の 1 つにまとめます。
+If values arrive before the server has received a widget's previous write, the widget merges them into the last one.
 
-### 接続のしかた
+### How the connection is made
 
-| ECU の作り方 | Control Server との接続 |
+| How the ECU is built | Connection to the Control Server |
 |---|---|
-| `ecu_main` の ECU | 自動で接続します。 |
-| 自分で書いた `Peer` | `AgentTransport` を作って接続します（下の文）。 |
-| ローカル（`Simulation()`、`LocalBench`）の ECU | 接続しません（同じプロセスから `agent()` で読み書きします）。 |
+| An `ecu_main` ECU | Connects automatically. |
+| Your own `Peer` | Create an `AgentTransport` to connect (see below). |
+| A local ECU (`Simulation()`, `LocalBench`) | Does not connect. Read and write it with `agent()` from the same process. |
 
-ランチャーの Control Server に接続するのは、SIL Kit の participant の ECU だけです。自分で書いた `Peer` は、ECU が変数を宣言した後、`start()` の前に `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` を作って接続します（`peer.stop()` の後、`Peer` より先に破棄します）。
+Only ECUs that are SIL Kit participants connect to the launcher's Control Server. For your own `Peer`, create `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` after the ECU has declared its variables and before `start()`. Destroy it after `peer.stop()` and before the `Peer`.
 
-同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で追加した ECU の Agent は、`sim.ecu(name).agent()` で取得できます（例: `examples/vehicle`）。
+From the same process, write with `ecu.agent().submit()` and read with `latest()`. For an ECU added with `Simulation::add<App>()`, get its Agent with `sim.ecu(name).agent()` (example: `examples/vehicle`).
 
-## 呼び出しの一覧
+## List of calls
 
-gRPC の呼び出しと、Python のクライアント（`Control` のメソッド。`sim.` は `Control.sim` のメソッド）、CLI のコマンド、必要なロールの対応です。
+The gRPC calls, the matching methods of the Python client (methods of `Control`; `sim.` marks methods of `Control.sim`) and CLI commands, and the role each call requires:
 
-| gRPC | すること | Python | CLI | ロール |
+| gRPC | What it does | Python | CLI | Role |
 |---|---|---|---|---|
-| `Ping` | サーバーのバージョンを返します。 | `ping()` | なし | `viewer` |
-| `ListPeers` | Peer と変数の一覧を読みます。 | `peers()`、`peer()` | `peers`、`show` | `viewer` |
-| `GetValues` | 1 つの Peer の最後の値を読みます。 | `values()` | `show` | `viewer` |
-| `GetSnapshot` | 時刻と値をまとめて読みます。 | `snapshot()` | なし | `viewer` |
-| `Watch` | 値、イベント、操作などを購読します。 | `watch()` | `watch` | `viewer` |
-| `GetTime` | 時間の状態を読みます。 | `sim.time()` | `time` | `viewer` |
-| `WaitPaused` | 止まるのを待ちます。 | `sim.wait_paused()` | `pause --wait`、`step`、`run-until` | `viewer` |
-| `GetOperation` | 書き込みの結果を読みます。 | `operation()` | なし | `viewer` |
-| `WaitOperation` | 書き込みの結果を待ちます。 | `wait()` | `set`（`--wait`） | `viewer` |
-| `Write` | 変数に書き込みます。 | `write()` | `set` | `operator` |
-| `ForgetPeer` | 切断された Peer を消します。 | `forget_peer()` | `forget` | `operator` |
-| `Pause` | 一時停止します。 | `sim.pause()` | `pause` | `operator` |
-| `Resume` | 再開します。 | `sim.resume()` | `resume` | `operator` |
-| `Step` | 指定した時間だけ進めて止めます。 | `sim.step()` | `step` | `operator` |
-| `RunUntil` | 指定した時刻まで進めて止めます。 | `sim.run_until()` | `run-until` | `operator` |
-| `SetSpeed` | 速度を変えます。 | `sim.set_speed()` | `speed` | `operator` |
-| `Stop` | シミュレーションを止めます。 | `sim.stop()` | `stop` | `admin` |
+| `Ping` | Returns the server version. | `ping()` | None | `viewer` |
+| `ListPeers` | Reads the list of peers and their variables. | `peers()`, `peer()` | `peers`, `show` | `viewer` |
+| `GetValues` | Reads the latest values of one peer. | `values()` | `show` | `viewer` |
+| `GetSnapshot` | Reads the time and values together. | `snapshot()` | None | `viewer` |
+| `Watch` | Subscribes to values, events, operations and more. | `watch()` | `watch` | `viewer` |
+| `GetTime` | Reads the time state. | `sim.time()` | `time` | `viewer` |
+| `WaitPaused` | Waits until the simulation stops. | `sim.wait_paused()` | `pause --wait`, `step`, `run-until` | `viewer` |
+| `GetOperation` | Reads the result of a write. | `operation()` | None | `viewer` |
+| `WaitOperation` | Waits for the result of a write. | `wait()` | `set` (`--wait`) | `viewer` |
+| `Write` | Writes variables. | `write()` | `set` | `operator` |
+| `ForgetPeer` | Removes a disconnected peer. | `forget_peer()` | `forget` | `operator` |
+| `Pause` | Pauses. | `sim.pause()` | `pause` | `operator` |
+| `Resume` | Resumes. | `sim.resume()` | `resume` | `operator` |
+| `Step` | Advances by the given time and stops. | `sim.step()` | `step` | `operator` |
+| `RunUntil` | Advances to the given time and stops. | `sim.run_until()` | `run-until` | `operator` |
+| `SetSpeed` | Changes the speed. | `sim.set_speed()` | `speed` | `operator` |
+| `Stop` | Stops the simulation. | `sim.stop()` | `stop` | `admin` |
 
 ## Python
 
 ```sh
-uv sync                                         # .venv に grpcio、grpcio-tools、protobuf などを入れる
-source .venv/bin/activate                       # または、各コマンドの前に uv run を付ける
-python -m vehicle_sil_control.generate          # スタブを python/vehicle_sil_control/_generated に作る
+uv sync                                         # installs grpcio, grpcio-tools, protobuf and more into .venv
+source .venv/bin/activate                       # or put uv run in front of each command
+python -m vehicle_sil_control.generate          # generates the stubs in python/vehicle_sil_control/_generated
 export PYTHONPATH=$PWD/python
 ```
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| Python のバージョン | 3.11 以上です。 |
-| バージョンと依存の指定 | リポジトリのルートの `pyproject.toml`（`control` グループ）と `uv.lock` です（[build.md](build.md) の「Python（uv）」）。 |
-| uv を使わない場合 | `pip install grpcio grpcio-tools protobuf` でインストールします。 |
-| uv を使わない場合（MSYS2 UCRT64） | `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` でインストールします。 |
+| Python version | 3.11 or later. |
+| Versions and dependencies | `pyproject.toml` at the repository root (the `control` group) and `uv.lock` (see "Python (uv)" in [build.md](build.md#python-uv)). |
+| Without uv | Install with `pip install grpcio grpcio-tools protobuf`. |
+| Without uv (MSYS2 UCRT64) | Install with `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools`. |
 
-### ランチャーを起動する（`Launch`）
+### Start the launcher (`Launch`)
 
-ランチャーは、`Launch` で子プロセスとして起動できます。`vehicle_sil_launch run --events --stdin-commands --control <address>` を起動し、イベントを別のスレッドで読みます（標準ライブラリだけで、gRPC は不要です）。
+`Launch` starts the launcher as a child process. It runs `vehicle_sil_launch run --events --stdin-commands --control <address>` and reads the events on a separate thread. It uses only the standard library and needs no gRPC.
 
 ```python
 from vehicle_sil_control import Control, Launch, ms
 
 with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
-    with Control(launch.address) as c:   # address はイベント control_server を待って返す
+    with Control(launch.address) as c:   # address waits for the control_server event, then returns
         ...
-    launch.stop()                        # {"command":"stop"}（with を出るときも、動いていれば止める）
-    print(launch.wait()["result"])       # run --json と同じ結果
+    launch.stop()                        # {"command":"stop"} (leaving with also stops it if it is running)
+    print(launch.wait()["result"])       # the same result as run --json
 ```
 
-`Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)` の `arguments` は、`run` のほかの引数（`--speed`、`--disable`、`--control-credentials` など）です。
+In `Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)`, `arguments` takes the other arguments of `run` (`--speed`, `--disable`, `--control-credentials` and so on).
 
-| メンバー | 内容 |
+| Member | Details |
 |---|---|
-| `address` | Control Server のアドレスです（イベント `control_server` を待って返します）。 |
-| `events` | 読んだイベントの dict の一覧です。 |
-| `result` | 結果です。 |
-| `wait_for_event(event, timeout, after=None, **keys)` | キーの値が合う最初のイベントを待ちます。 |
-| `send(command)` | 標準入力にコマンドを 1 行送信します。 |
-| `stop()` | `{"command":"stop"}` を送信します（`with` を出るときも、動いていれば止めます）。 |
-| `wait(timeout)` | ランチャーが終わるのを待って、結果を返します。 |
-| `returncode` | ランチャーの終了コードです。 |
+| `address` | The address of the Control Server. It waits for the `control_server` event, then returns. |
+| `events` | The list of the events read so far, as dicts. |
+| `result` | The result. |
+| `wait_for_event(event, timeout, after=None, **keys)` | Waits for the first event whose keys have the given values. |
+| `send(command)` | Sends one command line to stdin. |
+| `stop()` | Sends `{"command":"stop"}`. Leaving `with` also stops the launcher if it is running. |
+| `wait(timeout)` | Waits for the launcher to end and returns the result. |
+| `returncode` | The exit code of the launcher. |
 
-ランチャーが結果を出力せずに終わったときと、待つイベントが来ないまま実行が終わったときは、`LaunchError` です（メッセージに、結果とエラーの指摘があります）。
+If the launcher ends without printing a result, or the run ends before the awaited event arrives, `LaunchError` is raised. Its message includes the result and the error findings.
 
-自分でランチャーを起動するときは、`control_address(lines)` が、イベントの行（文字列か dict）から最初の `control_server` の `address` を返します。
+If you start the launcher yourself, `control_address(lines)` returns `address` of the first `control_server` event in the event lines (strings or dicts).
 
-### 接続して読み書きする（`Control`）
+### Connect, read and write (`Control`)
 
-別の PC から、TLS とトークンを付けたランチャー（上の「認証」）にも、同じように接続します（証明書の作り方と、接続できないときのメッセージは [howto/multi-pc.md](howto/multi-pc.md)）。
+To connect from another computer to a launcher that uses TLS and tokens, do the same (see [Authentication](#authentication) above). For how to make the certificates and what the messages mean when a connection fails, see [howto/multi-pc.md](howto/multi-pc.md).
 
 ```python
 from vehicle_sil_control import Control, ms
@@ -411,213 +413,213 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
     print([p.participant for p in c.peers()])
     c.sim.wait_paused()
     seq = c.write({"Engine": {"engine.throttle": 50.0}, "Body": {"cabin.lamp": 2}}, at=ms(100))
-    c.wait(seq, until="queued")         # 全員が受け取ってから進める（at が止まっている時刻より後なので、遅すぎる書き込みが起きない）
+    c.wait(seq, until="queued")         # advance only once every participant has it (at is after the paused time, so no write is too late)
     c.sim.run_until(ms(500)); c.sim.wait_paused()
-    print(c.wait(seq).target("Engine").applied_at)   # 100 ms（ns で）
+    print(c.wait(seq).target("Engine").applied_at)   # 100 ms (in ns)
     print(c.values("Engine").values["engine.speed"])
-    for update in c.watch(peers=["Body"]):           # Peer、Values、EventInfo、Operation
+    for update in c.watch(peers=["Body"]):           # Peer, Values, EventInfo, Operation
         print(update)
         break
 ```
 
-時刻は、仮想時間のナノ秒です（`ms()`、`s()` で作ります）。
+Times are virtual time in nanoseconds. Make them with `ms()` and `s()`.
 
-| 起きたこと | Python での現れ方 |
+| What happened | How it shows in Python |
 |---|---|
-| 呼び出しの失敗 | 例外 `ControlError` です（[エラー](#エラー)）。 |
-| Agent が拒否した書き込み | 例外ではなく、操作の結果（`invalid` など）になります。 |
+| A call fails | The exception `ControlError` (see [Errors](#errors)). |
+| The Agent rejects a write | Not an exception: the result of the operation (`invalid` and others). |
 
-### 書き込みのルール
+### Rules for writes
 
-| 項目 | ルール |
+| Topic | Rule |
 |---|---|
-| 止めてから書くとき | `at` を、止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。 |
-| 送り直し | `write()` は、自動では送り直しません。 |
-| 複数のクライアントが、同じ変数に同じ時刻で書いた | 残る値は、Server が受け取った順で決まります。 |
+| Writing after a pause | Set `at` later than the time at which the simulation is stopped (`c.sim.time().now`), for example 1 ns later. |
+| Resending | `write()` does not resend automatically. |
+| Several clients write the same variable for the same time | The order in which the server receives the writes decides which value remains. |
 
-- 止まっている時刻のステップは、すでに実行した Peer があります。そのため、その時刻か `at` なしの書き込みは、`late` になるか、反映のステップが実行ごとに変わることがあります。
-- 例外は、ランチャーの `--start-paused` で最初のステップの前に止まっているときです（上の「始まる前に書く」）。
-- レスポンスを受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
+- At the time at which the simulation is stopped, some peers have already run their step. A write for that time, or without `at`, can therefore be `late`, or the step that applies it can vary from run to run.
+- The exception is when the launcher's `--start-paused` holds the simulation before the first step (see [Write before the start](#write-before-the-start---start-paused) above).
+- If the connection drops before the response arrives, the write may still have been accepted. Sending the same write again makes a separate operation.
 
-### 時間の状態を読む
+### Read the time state
 
-| したいこと | 使うもの |
+| Goal | Use |
 |---|---|
-| 止まるのを待つ | `c.sim.wait_paused()`（達して止まった状態は、このレスポンスで読みます） |
-| 時刻と、複数の Peer の値を、同じ瞬間のものとして読む | `c.snapshot(peers=())`（下の「時刻と値をまとめて読む」） |
-| 時間の状態を購読する | `watch(time=True)`（約 100 ms ごとの最新で、短い一時停止は現れないことがあります） |
+| Wait until the simulation stops | `c.sim.wait_paused()`. Its response gives the state in which the simulation stopped. |
+| Read the time and the values of several peers as of the same instant | `c.snapshot(peers=())` (see [Read time and values together](#read-time-and-values-together-snapshot) below). |
+| Subscribe to the time state | `watch(time=True)`. It gives the latest state about every 100 ms, so a short pause may not appear. |
 
-- `c.sim.time()` と `c.values()` を別々に呼ぶと、その間にシミュレーションが進むことがあり、2 つの間に保証はありません。
-- `step()`、`run_until()`、時刻つきの `pause()` のレスポンス（`TimeState`）と、その直後の `time()` は、コマンドを受け付けた後のその時点の状態です。
-- 進んでいる途中なら、`paused` は偽で、`now` は進む前か途中の時刻です（速ければ、もう達して止まっていることもあります）。
-- `TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
+- If you call `c.sim.time()` and `c.values()` separately, the simulation may advance between them. Nothing is guaranteed about how the two relate.
+- The response (`TimeState`) of `step()`, `run_until()` and `pause()` with a time, and `time()` right after it, give the state at that moment, after the command was accepted.
+- While the simulation is advancing, `paused` is false and `now` is the time before or during the advance. If the simulation is fast, it may already have reached the time and stopped.
+- When `TimeState.running` is false, `ended` is true if the simulation has ended, and false if it has not started yet.
 
-### Peer と変数の情報（`peers()`、`watch()`）
+### Peers and variable information (`peers()`, `watch()`)
 
-`peers()` と `watch()` は、同じ Peer を同じ内容で返します。
+`peers()` and `watch()` return the same peers with the same contents.
 
-| Peer のフィールド | 意味 |
+| Peer field | Meaning |
 |---|---|
-| `has_agent` | Agent が接続したことがあるかです（既定は偽）。 |
-| `simulation_state` | SIL Kit の状態です。 |
-| `virtual_time` | Agent がシミュレーションの時刻で動くかです（Agent の hello のとおり。偽は実時間の Peer か、Agent がない）。 |
+| `has_agent` | Whether an Agent has ever connected (false by default). |
+| `simulation_state` | The SIL Kit state. |
+| `virtual_time` | Whether the Agent runs on the simulation's time, as the Agent's hello says. False means a real-time peer, or no Agent. |
 
-`virtual_time` を持たない前のバージョンの Server では、どの Peer も偽になります。
+A server of an earlier version, without `virtual_time`, gives false for every peer.
 
-| 変数（`schema` の各要素）のフィールド | 意味 |
+| Variable field (each element of `schema`) | Meaning |
 |---|---|
-| `builtin` | vehicle-sil が付けた変数か（真）、アプリケーションが宣言した変数か（偽）です。 |
-| `source` | 設定ファイルの対応表（`participants[].variables`）が適用されている変数の、実行ファイルでの名前です（適用されていなければ空）。 |
+| `builtin` | Whether vehicle-sil added the variable (true) or the application declared it (false). |
+| `source` | For a variable to which the variable map of the configuration file (`participants[].variables`) applies, its name in the executable. Empty if no mapping applies. |
 
-- `builtin` は、Server が名前で決めます（名前が `ecu.`、`peer.`、`j1939.` で始まれば真）。アプリケーションが `j1939.` で始まる名前の変数を宣言すると、それも真になります。
-- `source` を持たない前のバージョンの Server でも、`source` は空です。
+- The server decides `builtin` by the name: true if the name starts with `ecu.`, `peer.` or `j1939.`. If the application declares a variable whose name starts with `j1939.`, that variable is true as well.
+- A server of an earlier version, without `source`, also gives an empty `source`.
 
-対応表のある Peer では、次のものが対応の後のものになります。
+For a peer with a variable map, these are after mapping:
 
-| 項目 | 対応表のある Peer |
+| Topic | Peer with a variable map |
 |---|---|
-| `schema` の名前、型、範囲、単位、読む値、書く値 | どれも、対応の後のものです。 |
-| `builtin` | 対応の後の名前で決まります。 |
-| 書き込みを拒否する理由の文 | 対応の後の名前で書きます。 |
-| ECU の側が拒否したときの文 | `engine.speed (the executable's rpm_x10): ...` の形で、値は実行ファイルの値です。 |
-| 実行ファイルの変数に合わなかった対応 | その対応の名前（共通の名前と実行ファイルでの名前）への書き込みは `invalid` で拒否され、理由に、合わなかった訳が入ります（値は実行ファイルの名前のまま読めます）。 |
+| Names, types, ranges, units, read values and written values in `schema` | All after mapping. |
+| `builtin` | Decided by the mapped name. |
+| Reason text when a write is rejected | Uses the mapped name. |
+| Text when the ECU side rejects a write | Has the form `engine.speed (the executable's rpm_x10): ...`, with the value as the executable has it. |
+| A mapping that did not match a variable of the executable | Writes to the names of that mapping (the common name and the name in the executable) are rejected as `invalid`, and the reason says why the mapping did not match. The value can still be read under the executable's name. |
 
-### シミュレーションの状態（`watch(simulation=True)`）
+### Simulation state (`watch(simulation=True)`)
 
-シミュレーションの状態の購読は、`SimulationState` を返します。
+A subscription to the simulation state returns `SimulationState`.
 
-| `SimulationState` のフィールド | 意味 |
+| `SimulationState` field | Meaning |
 |---|---|
-| `participants` | 必須の participant ごとの SIL Kit の状態です。 |
-| `failed_participant`、`failure_reason` | 失敗した participant と理由です。 |
-| `ended` | 終わったかです。 |
-| `error` | Server が状態を読めなかったときの理由です（状態は前の値のままです）。 |
+| `participants` | The SIL Kit state of each required participant. |
+| `failed_participant`, `failure_reason` | The participant that failed, and the reason. |
+| `ended` | Whether the simulation has ended. |
+| `error` | Why the server could not read the state. The state keeps its previous value. |
 
-- クライアントが遅くて Server が途中の状態を保持しきれなかったときは、捨てた数が gRPC の `Update.dropped` に入ります。Python の `watch()` はこの数を返しません。失敗と終わりは後の状態に残るので、失われません。
-- `peers()` も、Server が状態を読めなかったときは、呼ぶたびに `ControlWarning` で通知します（同じ箇所からの 2 回目以降も通知します）。表示するか、例外にするか、無視するかは利用者の警告フィルターのとおりで、ライブラリはフィルターを変えません。
+- If a client is slow and the server cannot keep all intermediate states, the number of dropped states goes into `Update.dropped` of gRPC. Python's `watch()` does not return this number. Failures and the end remain in later states, so they are never lost.
+- While the server cannot read the state, `peers()` also reports it with a `ControlWarning` on every call, including the second and later calls from the same place. Your warning filters decide whether the warning is shown, raised or ignored; the library does not change the filters.
 
-### 時刻と値をまとめて読む（`snapshot()`）
+### Read time and values together (`snapshot()`)
 
 ```python
 c.sim.step(ms(100)); c.sim.wait_paused()
-snap = c.snapshot()                       # 全 Peer。c.snapshot(["Engine", "Body"]) で絞る
-if snap.consistent:                       # 値は、止まっている時刻 snap.time.now のもの
+snap = c.snapshot()                       # all peers; c.snapshot(["Engine", "Body"]) to narrow it down
+if snap.consistent:                       # the values are those of the paused time snap.time.now
     print(snap.time.now, snap.values["Engine"].values["engine.speed"])
 ```
 
-`snapshot()`（gRPC の `GetSnapshot`）は、時間の状態（`sim.time()` と同じ `TimeState`）と、Peer ごとの最後の値（`values()` と同じ `Values`）を、Server が 1 回で読んで返します。Server は、時間の状態を先に読み、その後で全 Peer の値を同じ瞬間に読みます。
+`snapshot()` (gRPC `GetSnapshot`) returns the time state (the same `TimeState` as `sim.time()`) and the latest values of each peer (the same `Values` as `values()`), which the server reads in one go. The server reads the time state first, then the values of all peers at the same instant.
 
-保証は、シミュレーションの時刻で動く Peer について、Server が時間を操作できる（`time.available`）ときのものです。
+The guarantees apply to peers that run on the simulation's time, while the server can control time (`time.available`).
 
-| `consistent` | 保証 |
+| `consistent` | Guarantee |
 |---|---|
-| 真でも偽でも（動いている間も） | 値は時刻より古くありません。`time.now` より前に始まった各 Peer のステップの値は、すべて入っています。 |
-| 真 | 時刻は `time.now` で止まっていて（`time.paused`）、どの値も `time.now` より後のステップのものではありません。 |
-| 偽 | 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、のどれかです（値と時刻は、偽でも入っています）。 |
+| True or false (also while running) | The values are not older than the time: every value of each peer's steps that started before `time.now` is included. |
+| True | Time is stopped at `time.now` (`time.paused`), and no value comes from a step after `time.now`. |
+| False | The simulation is running, has ended, or advanced during the call so that a value from a later step got in. Values and time are present even when it is false. |
 
-- 値のほうが時刻より新しいことはあります（読む間にシミュレーションが進んだ分）。
-- `consistent` が真のとき、値は、止まっている時刻のものです（`time.now` より前のステップは全部、後のステップは 1 つもない）。
-- 止まるのを待って（`sim.wait_paused()`）から呼び、その間にだれもシミュレーションを進めなければ、`consistent` は真です。
-- ちょうど `time.now` に始まるステップの値は、入っているかどうか決まりません（止まっている間に受信します）。どちらかは `Values.time` でわかります。
-- そのため、止まった直後は、同じ時刻でも、ちょうどその時刻のステップの値を受信する前と後の 2 通りのレスポンスがありえます（どちらも `consistent` は真）。
+- The values can be newer than the time, by as much as the simulation advanced during the read.
+- When `consistent` is true, the values are those of the time at which the simulation is stopped: from every step before `time.now`, and from none after it.
+- If you call `snapshot()` after waiting for the stop (`sim.wait_paused()`), and nobody advances the simulation in between, `consistent` is true.
+- Whether the values of a step that starts exactly at `time.now` are included is not defined, because they are received while the simulation is stopped. `Values.time` tells you which.
+- So, right after a stop, the same time can give 2 different responses: before and after the values of the step at exactly that time arrive. `consistent` is true for both.
 
-前提と限界は、次のとおりです。
+Assumptions and limits:
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| 保証の前提 | ECU が値をステップの中から送信していることです（`ecu_main` で作った ECU は、そうします）。 |
-| 前提が破れたとき | ランチャーが警告 `control-link-late-values` を表示し、`consistent` が真でも、値が欠けていることがあります。 |
-| 「ステップの値」 | その時刻より前に読んだ最後のサンプルです（Agent が読むのは `sample_period` ごとで、ステップより長いことがあります）。 |
-| 実時間の Peer（`peers()` の `virtual_time` が偽）の値 | 保証がありません（`consistent` は、その値を見ずに決めます）。 |
-| 切断された Peer | 最後の値が、そのまま入っています（接続しているかは `c.peers()` で確認します）。 |
+| Assumption of the guarantees | The ECU sends its values from inside its step. ECUs built with `ecu_main` do. |
+| If the assumption does not hold | The launcher prints the warning `control-link-late-values`, and values may be missing even when `consistent` is true. |
+| "The values of a step" | The last sample read before that time. An Agent reads every `sample_period`, which can be longer than a step. |
+| Values of real-time peers (`virtual_time` false in `peers()`) | No guarantee. `consistent` is decided without looking at them. |
+| Disconnected peers | Their last values are included as they are. Check with `c.peers()` whether a peer is connected. |
 
-`values` に入る Peer は、次のとおりです。
+Which peers `values` contains:
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| Python の `values` | 値を持つ Peer だけが入ります（まだ値のない Peer、Agent のない participant、知らない名前は入りません）。 |
-| gRPC のレスポンス（`GetSnapshotReply.values`）で、名前を挙げたとき | 挙げた順に 1 つずつです（同じ名前は 1 回）。 |
-| gRPC のレスポンスで、名前を挙げなかったとき | Agent を持つ Peer を、名前の順に並べます。 |
-| 値のない Peer | `snapshot` がありません。 |
-| Agent のない名前 | `incarnation` も空です。 |
-| 値の並び | その `incarnation` のスキーマ（`ListPeers`）の順です。 |
+| `values` in Python | Only peers that have values. Peers without values yet, participants without an Agent and unknown names are left out. |
+| The gRPC response (`GetSnapshotReply.values`) when names are given | One entry per name, in the order given (a repeated name once). |
+| The gRPC response when no names are given | The peers that have an Agent, in name order. |
+| A peer without values | Has no `snapshot`. |
+| A name without an Agent | Has no `incarnation` either. |
+| Order of the values | The order of the schema of that `incarnation` (`ListPeers`). |
 
-| 項目 | 内容 |
+| Topic | Details |
 |---|---|
-| ロール | `viewer` で呼べます。 |
-| 1 回に挙げられる名前 | 1024 個までです（超えると `INVALID_ARGUMENT`）。 |
-| レスポンスが 1 つのメッセージの上限（4 MiB）を超える | `RESOURCE_EXHAUSTED` です。メッセージのとおり、Peer を分けて呼びます（分けた呼び出しどうしの間に保証はありません）。 |
-| この呼び出しを持たない前のバージョンの Server | `ControlError`（`code` は `UNIMPLEMENTED`）になります。そのときは `sim.time()` と `values()` を使います（2 つの間に保証はありません）。 |
+| Role | `viewer` can call it. |
+| Names per call | Up to 1024. More gives `INVALID_ARGUMENT`. |
+| The response is larger than the limit of one message (4 MiB) | `RESOURCE_EXHAUSTED`. As the message says, split the peers over several calls. Nothing is guaranteed about how separate calls relate. |
+| A server of an earlier version, without this call | `ControlError` (`code` is `UNIMPLEMENTED`). Use `sim.time()` and `values()` instead. Nothing is guaranteed about how the two relate. |
 
 ## CLI
 
-`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーのイベント `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。コマンドと gRPC の呼び出しの対応は、[呼び出しの一覧](#呼び出しの一覧)にあります。
+Pass `address` of the launcher's `control_server` event (in the human-readable output, the `control server at` line) to `--server` (default: `VEHICLE_SIL_CONTROL_SERVER`). [List of calls](#list-of-calls) maps the commands to gRPC calls.
 
 ```sh
 export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
 python -m vehicle_sil_control peers
 python -m vehicle_sil_control show Engine
-python -m vehicle_sil_control set Engine engine.throttle=50 --at-ms 100   # 既定は全員が積むまで待つ（--wait done で反映まで）
+python -m vehicle_sil_control set Engine engine.throttle=50 --at-ms 100   # by default waits until every participant has queued it (--wait done: until applied)
 python -m vehicle_sil_control run-until 500
 python -m vehicle_sil_control step 10
-python -m vehicle_sil_control speed 1        # 実時間。max でできるだけ速く
+python -m vehicle_sil_control speed 1        # real time; max for as fast as possible
 python -m vehicle_sil_control watch --peer Body --count 10
 python -m vehicle_sil_control stop
 ```
 
-## エラー
+## Errors
 
-呼び出しの失敗は、gRPC の状態コードで返ります。Python では例外 `ControlError` になります。
+A failed call returns a gRPC status code. In Python, it raises the exception `ControlError`.
 
-| `ControlError` のメンバー | 内容 |
+| `ControlError` member | Details |
 |---|---|
-| `code` | gRPC の状態コードです。 |
-| `reason` | Server が理由を付けて拒否したときの、その語です（なければ空）。 |
+| `code` | The gRPC status code. |
+| `reason` | The word the server gave when it rejected the call with a reason. Empty otherwise. |
 
-| 状態コード | 返るとき |
+| Status code | Returned when |
 |---|---|
-| `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込みと時刻の操作）。 |
-| `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
-| `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
-| `UNIMPLEMENTED` | Server が、その呼び出しを持たない前のバージョンです。 |
+| `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes and time control during a scenario). |
+| `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
+| `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
+| `UNIMPLEMENTED` | The server is an earlier version without that call. |
 
-シナリオの実行中の書き込みと時刻の操作は、`reason` が `scenario-running` です。
+Writes and time control during a scenario have the `reason` `scenario-running`.
 
-| Python の例外と警告 | 出るとき |
+| Python exception or warning | Raised when |
 |---|---|
-| `ControlError` | 呼び出しが失敗しました。 |
-| `LaunchError` | ランチャーが結果を出力せずに終わったか、待つイベントが来ないまま実行が終わりました。 |
-| `ControlWarning` | `peers()` を呼んだとき、Server がシミュレーションの状態を読めていません。 |
+| `ControlError` | A call failed. |
+| `LaunchError` | The launcher ended without printing a result, or the run ended before the awaited event arrived. |
+| `ControlWarning` | `peers()` was called while the server cannot read the simulation state. |
 
-## 制限
+## Limitations
 
-| 項目 | 制限 |
+| Topic | Limitation |
 |---|---|
-| 時間の操作（一時停止、ステップ実行、速度）で止まる Peer | 仮想時間で同期している Peer だけで、実時間の Peer は動き続けます。 |
-| 速度を指定したときの遅れ | シミュレーションが実時間に遅れても、後から追いつこうとはしません。 |
-| ない操作 | リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。 |
-| サーバーが扱う実行 | そのランチャーの 1 回の実行だけで、実行が終わると閉じます。 |
-| Peer の `status`（Python の `Peer.failed` と `error`、CLI の `FAILED`） | いつも空です（ECU の Agent はこれを送信しません）。 |
-| 値の購読 | 最新値です（読む前に来た新しい値で置き換えます）。 |
+| Peers that time control (pause, step, speed) stops | Only peers synchronized in virtual time. Real-time peers keep running. |
+| Lateness at a set speed | If the simulation falls behind real time, it does not try to catch up later. |
+| Operations that do not exist | Reset, starting and restarting participants, and selecting CAN or LIN channels. |
+| Runs the server covers | One run of that launcher only. The server closes when the run ends. |
+| `status` of a peer (`Peer.failed` and `error` in Python, `FAILED` in the CLI) | Always empty. ECU Agents do not send it. |
+| Value subscriptions | Latest value only. A newer value that arrives before the client reads replaces the older one. |
 
-- 速度を指定して遅れたときは、遅れた分だけ後ろにずれたまま、指定の速度で進みます（[internals/virtual-time.md](internals/virtual-time.md) の時間ゲートの「遅れ」）。
-- participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
-- すべての値を記録するには、SIL Kit のトレースか `TapPort` を使います。
+- When a run at a set speed falls behind, it keeps going at the set speed, shifted back by the lateness (see "How lateness is measured" in [internals/virtual-time.md](internals/virtual-time.md#how-lateness-is-measured)).
+- Read participant failures from the simulation state (`failed_participant` and `failure_reason` of `watch(simulation=True)`).
+- To record every value, use SIL Kit tracing or `TapPort`.
 
-| 上限（Server の既定） | 値 |
+| Limit (server default) | Value |
 |---|---|
-| 1 回の `write()` の書き込み | 4096 個まで |
-| 1 回の `snapshot()` の Peer の名前 | 1024 個まで |
-| 同時に待つ呼び出しと購読 | 合わせて 256 本まで |
+| Writes in one `write()` | Up to 4096 |
+| Peer names in one `snapshot()` | Up to 1024 |
+| Waiting calls and subscriptions at the same time | Up to 256 in total |
 
-## 関連するドキュメント
+## See also
 
-| 知りたいこと | ドキュメント |
+| To find | See |
 |---|---|
-| 手順を追って、値を読み書きし、時間を止めて進める | [信号を外から操作する](howto/operate-signals.md) |
-| ほかの PC から接続する手順（証明書の作り方） | [複数の PC で動かす](howto/multi-pc.md) |
-| 保証の詳細（反映の時刻、順序、上限、スレッド） | [internals/control.md](internals/control.md) |
-| イベントと標準入力のコマンド | [simulation-events.md](simulation-events.md) |
-| シナリオの実行中にクライアントができること | [scenario.md](scenario.md) の「実行中に変数を見る」 |
-| ブラウザで値を見て操作する | [gui.md](gui.md) |
+| Reading and writing values, and pausing and stepping time, step by step | [Read and write signals from outside](howto/operate-signals.md) |
+| Connecting from another computer, step by step (including making certificates) | [Run on several computers](howto/multi-pc.md) |
+| Details of the guarantees (when writes are applied, ordering, limits, threads) | [internals/control.md](internals/control.md) |
+| Events and stdin commands | [simulation-events.md](simulation-events.md) |
+| What clients can do during a scenario | "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control) |
+| Viewing and changing values in a browser | [gui.md](gui.md) |

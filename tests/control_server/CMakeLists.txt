@@ -77,14 +77,14 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicl
              WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(control_server.guide_operate_signals PROPERTIES
       LABELS "control;control_server;python;examples" TIMEOUT 300 RUN_SERIAL TRUE
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_REPOSITORY=${PROJECT_SOURCE_DIR}")
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=${_example_dir};VEHICLE_SIL_REPOSITORY=${PROJECT_SOURCE_DIR};VEHICLE_SIL_TESTED_DOCS=${VEHICLE_SIL_TESTED_DOCS}")
     # The script of the guide docs/howto/first-ecu.md (examples/first_ecu/read_cooler.py) with the three ECUs
     # of that example, which tests/template builds wherever there is a launcher (the targets are named in
     # generator expressions only, so that the order of the areas does not matter). Its output is the guide's.
     add_test(NAME control_server.example_first_ecu
              COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch> -DBIN=$<TARGET_FILE_DIR:cooler_ecu>
                      -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/first_ecu -DTEMPLATE=${PROJECT_SOURCE_DIR}/template
-                     -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/first-ecu.md -DWORK=${CMAKE_CURRENT_BINARY_DIR}/first_ecu
+                     -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/first-ecu.md -DWORK=${CMAKE_CURRENT_BINARY_DIR}/first_ecu
                      "-DPYTHON=${_control_python}" -DPYTHON_PATH=${PROJECT_SOURCE_DIR}/python -DSTUBS=${_stubs}
                      -P ${PROJECT_SOURCE_DIR}/tests/template/first_ecu.cmake)
     set_tests_properties(control_server.example_first_ecu PROPERTIES

@@ -1,57 +1,59 @@
-# シナリオでテストを書く
+# Write tests with scenarios
 
-ECU の変数に値を設定し、結果を確認するテストを、YAML のファイル（シナリオ）に書いて実行する手順です。`vehicle_sil_launch` がシミュレーションを起動してシナリオを最後まで進め、終了コードで合否を返すので、そのまま CI で使えます。
+[日本語](../ja/howto/scenario-tests.md)
 
-判定に使うのは仮想時間だけです。同じ設定ファイルと同じシナリオなら、PC の速度によらず、どの手順がどの時刻にどの値で成功したかは毎回同じです。
+In this guide you write tests as scenarios and run them. A scenario is a YAML file that sets ECU variables and checks the results. `vehicle_sil_launch` starts the simulation, runs the scenario to the end and returns the result as its exit code, so you can use it in CI as is.
 
-シナリオの `steps` に書く 1 項目も「手順」と呼びます。この文書の見出しの手順は、「手順 1」のように番号を付けて書きます。「ステップ」は、ECU が仮想時間を 1 回進める単位のことです。
+A scenario judges results by virtual time only. With the same configuration file and the same scenario, the time and value at which each step passes are the same in every run, however fast the computer is.
 
-## 前提
+Each entry in a scenario's `steps` is a scenario step; in this guide, "step" on its own means a scenario step. "Step 1" to "Step 8" are the numbered parts of this guide. The unit by which an ECU advances virtual time is an "ECU step".
 
-| 必要なもの | 条件 |
+## Prerequisites
+
+| Requirement | Details |
 |---|---|
-| ビルド | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」のとおりに、`linux-gcc-control` でビルドしてあること。 |
-| 例の ECU | [examples/ecu_main](../../examples/ecu_main) の Engine と Dashboard を使います。ビルドすると、設定ファイルと一緒に `build/linux-gcc-control/examples/ecu_main/` に置かれます。 |
+| Build | You have built with the `linux-gcc-control` preset, as described in "[Build from the repository](../../README.md#build-from-the-repository)" in the README. |
+| Example ECUs | This guide uses Engine and Dashboard from [examples/ecu_main](../../examples/ecu_main). The build puts them, with their configuration file, in `build/linux-gcc-control/examples/ecu_main/`. |
 
-リポジトリのルートで次の 2 行を実行します。これ以降のコマンドは、すべてこのディレクトリ（`simulation.yaml` のある所）で実行します。
+Run these 2 lines in the root of the repository. Run every later command in the directory they change to, the one that contains `simulation.yaml`.
 
 ```sh
-export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # vehicle_sil_launch のある所
+export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"   # where vehicle_sil_launch is
 cd build/linux-gcc-control/examples/ecu_main
 ```
 
-ほかの環境では、次の所が変わります。
+Some things differ in other environments:
 
-| 環境 | 変わる所 |
+| Environment | What differs |
 |---|---|
-| ほかのプリセットでビルドした | 上の 2 行の `linux-gcc-control` を、そのプリセットの名前にします。シナリオは Control API のないビルドでも動きます。 |
-| Windows | MSYS2 UCRT64 のシェルで、同じコマンドを実行します。ビルドの手順は [build.md](../build.md) にあります。 |
-| テンプレートのプロジェクト | `simulation.yaml` のあるディレクトリで実行します。`PATH` には、`get_tools.py` が表示した行で追加します。`scenarios/` にあるのは `throttle_step.yaml` だけなので、`engine_disconnect.yaml` はこの文書のブロックから作ります。 |
+| You built another preset | Replace `linux-gcc-control` in the 2 lines above with the name of that preset. Scenarios also work in a build without the Control API. |
+| Windows | Run the same commands in the MSYS2 UCRT64 shell. For how to build, see [build.md](../build.md). |
+| Template project | Run the commands in the directory that contains `simulation.yaml`. Add the tools' `bin` directory to `PATH` as in step 1 of [Create your first ECU](first-ecu.md#step-1-build-and-run-the-template). `scenarios/` contains only `throttle_step.yaml`, so create `engine_disconnect.yaml` from the block in this guide. |
 
-## 全体の流れ
+## Overview
 
-| 手順 | すること | できるもの |
+| Step | What you do | What you get |
 |---|---|---|
-| 1 | 付属のシナリオを実行する | 6 つの手順が成功したことを示す表 |
-| 2 | 使える変数を調べる | シナリオに書く変数の名前 |
-| 3 | 自分のシナリオを書いて、照合して実行する | `my_tests/throttle_up.yaml` |
-| 4 | 失敗するシナリオを実行し、指摘を読んで直す | `my_tests/response_time.yaml` |
-| 5 | 入力を動かしながら、その間ずっと確認する | `my_tests/throttle_motion.yaml` |
-| 6 | パラメーターと機種を使う | `my_tests/dashboard_speed.yaml`、`simulation.variants.yaml` |
-| 7 | ディレクトリのシナリオをまとめて実行する | 機種とシナリオの組ごとの結果の表 |
-| 8 | CI で実行する | 終了コードと JSON |
+| 1 | Run the bundled scenario | A table that shows that all 6 steps passed |
+| 2 | List the available variables | The variable names to write in a scenario |
+| 3 | Write your own scenario, check it and run it | `my_tests/throttle_up.yaml` |
+| 4 | Run a failing scenario, read the finding and fix it | `my_tests/response_time.yaml` |
+| 5 | Move an input and check values the whole time | `my_tests/throttle_motion.yaml` |
+| 6 | Use parameters and variants | `my_tests/dashboard_speed.yaml`, `simulation.variants.yaml` |
+| 7 | Run all scenarios in a directory at once | A table with the result of each run (variant and scenario) |
+| 8 | Run in CI | An exit code and JSON |
 
-手順 1〜8 は順に進めます。手順 3〜6 で作るファイルの完成形は、[examples/scenario_tests](../../examples/scenario_tests) にあります。その後の「ECU をバスから切断する」と「注意点」は、必要になったときに読みます。
+Do Steps 1–8 in order. [examples/scenario_tests](../../examples/scenario_tests) contains the finished files of Steps 3–6. Read the sections that follow, "Disconnect an ECU from the bus" and "Pitfalls", when you need them.
 
-## 手順 1: 付属のシナリオを実行する
+## Step 1: Run the bundled scenario
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
-### 確認
+### Verify the bundled scenario
 
-標準出力の最後が `passed:` で、終了コード（`echo $?`）が 0 なら成功です。最後の行は、設定ファイルの照合とシナリオの両方の指摘を数えます（シナリオが失敗すると `failed:` になります）。
+The last line on stdout is `passed:` and the exit code (`echo $?`) is 0. The last line counts the findings of both the configuration file check and the scenario (if the scenario fails, it is `failed:`).
 
 <!-- vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -->
 ```text
@@ -85,18 +87,18 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-| 出力の部分 | 読み方 |
+| Part of the output | How to read it |
 |---|---|
-| 最初の 2 つの表 | 設定ファイルと各 ECU を照合した結果です。 |
-| `run:` の行 | シナリオが終わった 705 ms で、シミュレーションを止めています。 |
-| `line` の列 | シナリオのファイルの行番号です。 |
-| `at` の列 | その手順の結果が決まった仮想時間です。 |
+| The first 2 tables | The result of checking the configuration file against each ECU. |
+| The `run:` line | The simulation stopped at 705 ms, when the scenario ended. |
+| The `line` column | The line number in the scenario file. |
+| The `at` column | The virtual time at which the step's result was decided. |
 
-標準エラーには、ECU の出力と、手順の結果が決まるたびの行（`[vehicle_sil_launch] scenario: line 10: ...: ok at 330 ms`）が表示されます。
+Stderr shows the output of the ECUs, and a line each time the result of a step is decided (`[vehicle_sil_launch] scenario: line 10: ...: ok at 330 ms`).
 
-### シナリオの内容
+### What the scenario contains
 
-`scenarios/throttle_step.yaml` の、コメントを除いた内容です。スロットルを 50 % にして、回転数が上がるのを待ち、表示の ECU がそれを受信したことを確認してから、スロットルを戻します。
+Here is `scenarios/throttle_step.yaml` without its comments. It sets the throttle to 50 %, waits for the engine speed to rise, checks that the dashboard ECU has received it, then brings the throttle back. On an `expect`, `within_ms: 200` means that the condition must hold at least once within 200 ms, and `hold_for_ms: 100` that it must hold for the whole 100 ms (step 3 has the details).
 
 <!-- examples/ecu_main/scenarios/throttle_step.yaml -->
 ```yaml
@@ -117,33 +119,33 @@ steps:
     within_ms: 100
 ```
 
-手順は上から順に進みます。1 つの手順には、すること（`set`、`wait_until`、`expect`、`ramp`、`wave` のどれか）を 1 つと、時刻を書きます。`within_ms` と `hold_for_ms` は、手順 3 で説明します。
+The steps run from top to bottom. Each step has one action (`set`, `wait_until`, `expect`, `ramp` or `wave`) and a time.
 
-| 時刻の書き方 | 意味 |
+| How to give the time | Meaning |
 |---|---|
-| `at_ms: 0` | 仮想時間の 0 ms に実行します。 |
-| `after_ms: 50` | 前の手順が終わってから 50 ms 後に実行します。 |
-| どちらも書かない | 前の手順が終わった時刻に実行します。 |
+| `at_ms: 0` | Runs at virtual time 0 ms. |
+| `after_ms: 50` | Runs 50 ms after the previous step ends. |
+| Neither | Runs when the previous step ends. |
 
-### うまくいかないとき
+### Troubleshoot the bundled scenario
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | 「前提」の 2 行を、リポジトリのルートで実行します。 |
-| 末尾に `[executable]` の付いたエラーが表示される | ECU の実行ファイルがありません。 | README の手順でビルドします。 |
-| `simulation.yaml` を読めない（終了コード 3） | 実行するディレクトリが違います。 | 「前提」の `cd` を実行します。 |
+| `vehicle_sil_launch` is not found | You are in a new shell and have not added it to `PATH`. | Run the 2 lines in "Prerequisites" in the root of the repository. |
+| An error that ends in `[executable]` | The ECU executables are missing. | Build as the README describes. |
+| `simulation.yaml` cannot be read (exit code 3) | You are in the wrong directory. | Run the `cd` in "Prerequisites". |
 
-## 手順 2: 使える変数を調べる
+## Step 2: List the available variables
 
-シナリオが読み書きするのは、ECU が宣言した変数です。名前と型は、`check --json` の出力の `participants[].variables` にあります。
+A scenario reads and writes the variables that the ECUs declare. The output of `check --json` lists their names and types in `participants[].variables`.
 
 ```sh
 vehicle_sil_launch check simulation.yaml --json
 ```
 
-### 確認
+### Verify the variable list
 
-Engine の `variables` に、次の項目があります。
+The `variables` of Engine include this entry:
 
 <!-- scenario guide: check simulation.yaml --json, one variable -->
 ```json
@@ -161,25 +163,25 @@ Engine の `variables` に、次の項目があります。
         },
 ```
 
-シナリオには `<participant の名前>.<変数の名前>` と書きます。この変数は `Engine.engine.throttle` です。例の 2 つの ECU の変数は、次のとおりです。
+In a scenario, write a variable as `<participant name>.<variable name>`. This one is `Engine.engine.throttle`. The variables of the 2 example ECUs:
 
-| シナリオに書く名前 | 型 | `causality` | 内容 |
+| Name in a scenario | Type | `causality` | Description |
 |---|---|---|---|
-| `Engine.engine.throttle` | real（0〜100 %） | input | スロットル。回転数は、800 + 20 × スロットル rpm に近づいていきます。 |
-| `Engine.engine.speed` | integer（rpm） | output | エンジンの回転数です。 |
-| `Dashboard.dashboard.engine_speed` | integer（rpm） | output | 表示の ECU が J1939 で受信した回転数です。 |
-| `Dashboard.dashboard.engine_lost` | bool | output | 回転数を 300 ms 受信していなければ true です。 |
-| `Engine.ecu.connected`、`Dashboard.ecu.connected` | bool | input | どの ECU にもある変数で、false を書くとバスから切断します。 |
+| `Engine.engine.throttle` | real (0–100 %) | input | The throttle. The engine speed moves toward 800 + 20 × throttle rpm. |
+| `Engine.engine.speed` | integer (rpm) | output | The engine speed. |
+| `Dashboard.dashboard.engine_speed` | integer (rpm) | output | The engine speed that the dashboard ECU received over J1939. |
+| `Dashboard.dashboard.engine_lost` | bool | output | True if the dashboard ECU has not received the engine speed for 300 ms. |
+| `Engine.ecu.connected`, `Dashboard.ecu.connected` | bool | input | Every ECU has this variable. Writing false disconnects the ECU from the bus. |
 
-| `causality` | シナリオでできること |
+| `causality` | What a scenario can do |
 |---|---|
-| input | `set`、`ramp`、`wave` で書き込めて、`expect` と `wait_until` で読めます。 |
-| output | 読むだけです。 |
-| parameter | 時刻 0 の `set` でだけ書き込めます。 |
+| input | Write it with `set`, `ramp` and `wave`; read it with `expect` and `wait_until`. |
+| output | Read it only. |
+| parameter | Write it only with a `set` at time 0. |
 
-## 手順 3: シナリオを書く
+## Step 3: Write a scenario
 
-スロットルを 50 % にすると回転数が 1800 rpm になることを確認するシナリオを書きます。`my_tests` ディレクトリを作り、次の内容で `my_tests/throttle_up.yaml` を作ります。
+Write a scenario that checks that the engine speed reaches 1800 rpm when the throttle is at 50 %. Create the directory `my_tests`, then create `my_tests/throttle_up.yaml` with the content below.
 
 ```sh
 mkdir my_tests
@@ -197,28 +199,28 @@ steps:
     hold_for_ms: 100
 ```
 
-| 書くもの | すること |
+| Key | What it does |
 |---|---|
-| `set` | 変数に値を設定します。 |
-| `wait_until` と `timeout_ms` | 条件が成り立つまで待ちます。`timeout_ms` の間に成り立たなければ失敗です。 |
-| `expect` だけ | その時刻に条件が成り立つことを確認します。 |
-| `expect` と `within_ms` | その時間のうちに 1 度でも成り立つことを確認します。成り立った時点で次の手順へ進みます。 |
-| `expect` と `hold_for_ms` | その時間ずっと成り立つことを確認します。 |
+| `set` | Sets a variable to a value. |
+| `wait_until` and `timeout_ms` | Waits until the condition holds. If it does not hold within `timeout_ms`, the step fails. |
+| `expect` alone | Checks that the condition holds at that time. |
+| `expect` and `within_ms` | Checks that the condition holds at least once within that time. As soon as it holds, the scenario moves on to the next step. |
+| `expect` and `hold_for_ms` | Checks that the condition holds for the whole time. |
 
-条件には、値そのもの（等しい）か、`ge`、`le`、`gt`、`lt`、`eq`、`ne`、`near` と `tolerance` を書きます。キーと条件の全部は、[scenario.md](../scenario.md) の「ファイルの形式」にあります。
+A condition is either a plain value (the variable must equal it) or one of `ge`, `le`, `gt`, `lt`, `eq`, `ne`, and `near` with `tolerance`. For all keys and conditions, see "File format" in [scenario.md](../scenario.md#file-format).
 
-`wait_until` と、`within_ms` を付けた `expect` は、どちらも条件が成り立つまで待ちます。テストの前提がそろうのを待つときは `wait_until` を、テストしたい応答には `expect` を使います。失敗したときの指摘のコードが `scenario-timeout` と `scenario-failed` に分かれるので、どちらで失敗したかが結果からわかります。
+`wait_until` and an `expect` with `within_ms` both wait until the condition holds. Use `wait_until` to wait for the preconditions of a test, and `expect` for the response you want to test. They fail with different finding codes, `scenario-timeout` and `scenario-failed`, so the result shows which of the two failed. Keep the waits short enough for the scenario to end before `stop_at_ms` of the configuration file (1000 ms in `simulation.yaml`); otherwise the run fails with `scenario-out-of-time`.
 
-実行する前に、`check --scenario` で照合します。変数の名前、型、値の範囲、時刻の順序のエラーが、シミュレーションを起動せずにわかります。
+Before you run the scenario, check it with `check --scenario`. It finds errors in variable names, types, value ranges and the order of times without starting the simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml --scenario my_tests/throttle_up.yaml
 vehicle_sil_launch run simulation.yaml --scenario my_tests/throttle_up.yaml
 ```
 
-### 確認
+### Verify your scenario
 
-`check` の出力は、2 つの表の後が次の 3 行です。
+After the 2 tables, the `check` output ends with these 3 lines:
 
 <!-- scenario guide: check simulation.yaml --scenario my_tests/throttle_up.yaml, the end -->
 ```text
@@ -227,7 +229,7 @@ scenario my_tests/throttle_up.yaml (throttle up): 3 steps
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-`run` の出力は、`run:` の行から後が次のとおりです。終了コードは 0 です。
+The exit code of `run` is 0, and its output from the `run:` line on is:
 
 <!-- scenario guide: run simulation.yaml --scenario my_tests/throttle_up.yaml, from the line run: -->
 ```text
@@ -247,16 +249,16 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-### うまくいかないとき
+### Troubleshoot your scenario
 
-変数の名前を間違えると、`check` が、行番号と直し方を付けて報告します。名前を書き間違えたコピーで確認します。
+If you misspell a variable name, `check` reports it with the line number and how to fix it. Try it with a copy that has a misspelled name:
 
 ```sh
 sed 's/engine.throttle/engine.throttel/' my_tests/throttle_up.yaml > mistake.yaml
 vehicle_sil_launch check simulation.yaml --scenario mistake.yaml
 ```
 
-終了コードは 1 で、出力の最後は次のとおりです。`run --scenario` も最初に同じ照合をして、エラーがあれば何も起動しません。
+The exit code is 1 and the output ends like this. `run --scenario` does the same check first, and starts nothing if it finds an error.
 
 <!-- scenario guide: check simulation.yaml --scenario mistake.yaml, the end -->
 ```text
@@ -265,18 +267,18 @@ error: mistake.yaml:4: 'Engine.engine.throttel': participant 'Engine' has no var
 failed: 1 error, 0 warnings, 0 notes
 ```
 
-| 指摘のコード | 原因 | 直し方 |
+| Code | Cause | Fix |
 |---|---|---|
-| `scenario-variable` | その participant に、その名前の変数がありません。 | 手順 2 の出力にある名前にします。 |
-| `scenario-not-writable` | output の変数に書き込んでいます。 | input の変数に書き込みます。 |
-| `scenario-value` | 値が、変数の型か範囲（`min`、`max`）に合いません。 | 範囲の中の値にします。 |
-| `scenario-time` | 待つ手順（`wait_until`、`within_ms` を付けた `expect`）より後ろに `at_ms` を書いています。 | 待つ手順がいつ終わるかは実行するまで決まらないので、`after_ms` で書きます。 |
+| `scenario-variable` | The participant has no variable with that name. | Use a name from the output of Step 2. |
+| `scenario-not-writable` | The step writes to an output variable. | Write to an input variable. |
+| `scenario-value` | The value does not fit the variable's type or range (`min`, `max`). | Use a value within the range. |
+| `scenario-time` | An `at_ms` comes after a wait step (`wait_until`, or `expect` with `within_ms`). | Use `after_ms` instead. The time at which a wait step ends is known only when the scenario runs. |
 
-指摘のコードの全部は、[scenario.md](../scenario.md) の「照合（`check --scenario`、`run --scenario` の最初）」にあります。
+For all finding codes, see "Check (`check --scenario`, start of `run --scenario`)" in [scenario.md](../scenario.md#check-check---scenario-start-of-run---scenario).
 
-## 手順 4: 失敗を読んで直す
+## Step 4: Read a failure and fix it
 
-スロットルを設定してから 200 ms のうちに、回転数が 1700 rpm に達することを確認するシナリオを書きます。次の内容で `my_tests/response_time.yaml` を作ります。
+Write a scenario that checks that the engine speed reaches 1700 rpm within 200 ms after the throttle is set. Create `my_tests/response_time.yaml` with this content:
 
 <!-- scenario guide: my_tests/response_time.yaml with within_ms: 200 -->
 ```yaml
@@ -294,9 +296,9 @@ steps:
 vehicle_sil_launch run simulation.yaml --scenario my_tests/response_time.yaml
 ```
 
-### 確認
+### Verify the fix
 
-このシナリオは失敗します。終了コードは 1 で、`run:` の行から後は次のとおりです。
+This scenario fails. The exit code is 1, and from the `run:` line on, the output is:
 
 <!-- scenario guide: run simulation.yaml --scenario my_tests/response_time.yaml with within_ms: 200, from the line run: -->
 ```text
@@ -318,25 +320,26 @@ error: my_tests/response_time.yaml:5: expect Engine.engine.speed ge 1700 (within
 failed: 1 error, 0 warnings, 0 notes
 ```
 
-`error:` の行に、失敗の内容が全部あります。
+The `error:` line tells you everything about the failure.
 
-| `error:` の行の部分 | この例での意味 |
+| Part of the `error:` line | Meaning in this example |
 |---|---|
-| `my_tests/response_time.yaml:5:` | 失敗した手順は、ファイルの 5 行目です。 |
-| `not true at any time within 200 ms (from 0 ms to 200 ms)` | 0 ms から 200 ms までの間に、条件が 1 度も成り立ちませんでした。 |
-| `but it was 1050 (its sample of 200 ms)` | 200 ms の時点のサンプル（ECU が一定の間隔、既定では 10 ms ごとに送信する変数の値）では、回転数は 1050 rpm でした。 |
-| `[scenario-failed]` | 指摘のコードです。`expect` の条件が成り立たなかったことを表します。 |
+| `my_tests/response_time.yaml:5:` | The failed step is on line 5 of the file. |
+| `not true at any time within 200 ms (from 0 ms to 200 ms)` | The condition did not hold even once between 0 ms and 200 ms. |
+| `at the end Engine.engine.speed ge 1700` | The condition that still did not hold at the end of that time (200 ms). |
+| `but it was 1050 (its sample of 200 ms)` | In the sample at 200 ms, the engine speed was 1050 rpm. A sample is the value of a variable that the ECU sends at a fixed interval, every 10 ms by default. |
+| `[scenario-failed]` | The finding code. It means that the condition of an `expect` did not hold. |
 
-手順が 1 つ失敗すると、シナリオはそこで終わり、シミュレーションも止まります（`run:` の行の 205 ms）。後ろの手順は実行されず、表では `not run` になります。
+When one step fails, the scenario ends there and the simulation stops too (205 ms in the `run:` line). The later steps do not run, and the table shows them as `not run`.
 
-この例の ECU は、回転数が 1700 rpm になるまでに 330 ms かかります（手順 3 の表の `at`）。ECU の動作が正しいなら、テストのほうを直します。6 行目の `within_ms: 200` を `within_ms: 400` に書き換えて、もう一度実行します。
+The ECU in this example takes 330 ms to reach 1700 rpm (the `at` in the table of Step 3). If the ECU behaves correctly, fix the test instead. Change `within_ms: 200` on line 6 to `within_ms: 400`, and run the scenario again:
 
 ```sh
 sed -i 's/within_ms: 200/within_ms: 400/' my_tests/response_time.yaml
 vehicle_sil_launch run simulation.yaml --scenario my_tests/response_time.yaml
 ```
 
-今度は成功し、終了コードは 0 です。
+This time it passes, and the exit code is 0.
 
 <!-- scenario guide: run simulation.yaml --scenario my_tests/response_time.yaml, the result -->
 ```text
@@ -348,24 +351,24 @@ line  step                                                result  at
 7     expect Engine.engine.speed le 1800 (for 100 ms)     ok      440 ms
 ```
 
-### うまくいかないとき
+### Troubleshoot failures
 
-実行して初めてわかる失敗は、次の 4 つです。
+These 4 finding codes appear only when the scenario runs:
 
-| 指摘のコード | 原因 | 直し方 |
+| Code | Cause | Fix |
 |---|---|---|
-| `scenario-failed` | `expect` の条件が成り立ちませんでした。 | `error:` の行の値と時刻を見て、ECU かシナリオを直します。 |
-| `scenario-timeout` | `wait_until` の条件が、`timeout_ms` の間に成り立ちませんでした。 | 前提がそろわない原因を調べるか、`timeout_ms` を大きくします。 |
-| `scenario-out-of-time` | シナリオが終わる前に、設定ファイルの `stop_at_ms` に達しました。 | `stop_at_ms` を大きくするか、消します。シナリオが終わればシミュレーションも止まります。 |
-| `scenario-incomplete` | ECU の異常終了、Ctrl+C、`--timeout-ms` で、シナリオの途中で実行が終わりました。 | 一緒に表示されるエラーを先に直します。 |
+| `scenario-failed` | The condition of an `expect` did not hold. | Look at the value and the time on the `error:` line, then fix the ECU or the scenario. |
+| `scenario-timeout` | The condition of a `wait_until` did not hold within `timeout_ms`. | Find out why the precondition is not met, or increase `timeout_ms`. |
+| `scenario-out-of-time` | The run reached `stop_at_ms` of the configuration file before the scenario ended. | Increase `stop_at_ms`, or remove it. The simulation also stops when the scenario ends. |
+| `scenario-incomplete` | The run ended in the middle of the scenario: an ECU ended abnormally, or the run was ended by Ctrl+C or `--timeout-ms`. | Fix the error reported with it first. |
 
-結果のルールは、[scenario.md](../scenario.md) の「結果」にあります。
+For the rules of the result, see "Results" in [scenario.md](../scenario.md#results).
 
-## 手順 5: 入力を動かしながら確認する
+## Step 5: Check values while an input moves
 
-`ramp` は、決めた時間をかけて値を直線で動かします。`wave` は、正弦波やパルスなどの波形で値を動かします。どちらも、同じ手順に `expect` を並べて書くと、動かしている間のすべてのサンプルで条件が成り立つことを確認します。
+`ramp` moves a value in a straight line over a set time. `wave` moves a value along a waveform, such as a sine wave or a pulse. With an `expect` beside it, either one checks that the condition holds in every sample while the value moves.
 
-次の内容で `my_tests/throttle_motion.yaml` を作ります。
+Create `my_tests/throttle_motion.yaml` with this content:
 
 <!-- examples/scenario_tests/my_tests/throttle_motion.yaml -->
 ```yaml
@@ -381,19 +384,19 @@ steps:
     expect: { Engine.engine.speed: { le: 0xA28 } }
 ```
 
-| 行 | すること |
+| Line | What it does |
 |---|---|
-| 7〜8 | スロットルを 200 ms かけて 80 % まで上げ、その間ずっと回転数が 1800〜2400 rpm にあることを確認します。 |
-| 9〜10 | スロットルを 80 % の上下 10 % の正弦波で 200 ms 動かし、その間ずっと回転数が 2600 rpm 以下であることを確認します。 |
-| 10 の `0xA28` | 2600 の 16 進の表記です。integer と enum の値は、16 進でも書けます。 |
+| 7–8 | Raises the throttle to 80 % over 200 ms, and checks that the engine speed stays within 1800–2400 rpm the whole time. |
+| 9–10 | Moves the throttle in a sine wave from 10 % below to 10 % above 80 % for 200 ms, and checks that the engine speed stays at or below 2600 rpm the whole time. |
+| `0xA28` on line 10 | 2600 in hexadecimal. You can write integer and enum values in hexadecimal. |
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario my_tests/throttle_motion.yaml
 ```
 
-### 確認
+### Verify the moving input
 
-終了コードは 0 で、出力に次の表があります。`ramp` と `wave` の行の `expecting` の後が、動かしている間に確認した条件です。
+The exit code is 0, and the output contains this table. In the `ramp` and `wave` rows, the text after `expecting` is the condition that was checked while the value moved.
 
 <!-- scenario guide: run simulation.yaml --scenario my_tests/throttle_motion.yaml, the result -->
 ```text
@@ -406,30 +409,30 @@ line  step                                                                      
 9     wave Engine.engine.throttle sine amplitude 10 period 100 ms for 200 ms, expecting Engine.engine.speed le 2600  ok      760 ms
 ```
 
-`ramp` と `wave` は、動かし終わるまで次の手順に進みません。動かした後の結果を確認するときは、次の手順に `expect` を書きます。その例が、手順 1 の `throttle_step.yaml` の最後の 2 つの手順と、`scenarios/throttle_wave.yaml` です。
+`ramp` and `wave` do not move on to the next step until the movement ends. To check the result after the movement, put an `expect` in the next step. The last 2 steps of `throttle_step.yaml` in Step 1 do this, and so does `scenarios/throttle_wave.yaml` of the repository (the template does not have it).
 
-### うまくいかないとき
+### Troubleshoot ramps and waves
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `not true during the ramp (from ... to ...): at 430 ms ...` で失敗する | 動かしている間のサンプルの 1 つで、条件が成り立ちませんでした。 | 表示された時刻と値を見て、ECU か条件を直します。 |
-| `ramp` の横の `expect` に `within_ms` か `hold_for_ms` を書いて、照合のエラーになる | 横の `expect` が確認する区間は、動かしている間に決まっています。 | ほかの区間で確認するときは、`expect` を次の手順にします。 |
-| `wave` に、照合の警告 `scenario-wave-undersampled` が出る | 波形が、ECU のステップより細かく変化します。 | 周期を長くします。意図したものなら、その手順に `undersampled: ok` を書きます。 |
-| `0x1F` を引用符で囲んで、照合のエラーになる | `"0x1F"` は文字列です。 | 引用符を外します。 |
+| The step fails with `not true during the ramp (from ... to ...): at 430 ms ...` | The condition did not hold in one of the samples during the movement. | Look at the time and the value shown, then fix the ECU or the condition. |
+| `within_ms` or `hold_for_ms` on the `expect` beside `ramp` gives a check error | The interval that an `expect` beside `ramp` checks is fixed: it is the time during which the value moves. | To check over another interval, put the `expect` in the next step. |
+| The check reports the warning `scenario-wave-undersampled` for a `wave` | The waveform changes faster than the ECU steps. | Make the period longer. If this is intended, write `undersampled: ok` in that step. |
+| `0x1F` in quotes gives a check error | `"0x1F"` is a string. | Remove the quotes. |
 
-リファレンスは次のとおりです。
+For reference:
 
-| 知りたいこと | 読む所 |
+| To find | See |
 |---|---|
-| 波形の種類（`sine`、`square`、`pulse`、`noise` など）と書き方 | [scenario.md](../scenario.md) の「波形で動かす（`wave`）」 |
-| 横の `expect` が見るサンプルの範囲 | [scenario.md](../scenario.md) の「動かしている間ずっと確認する」 |
-| 16 進で書ける位置 | [scenario.md](../scenario.md) の「ファイルの形式」 |
+| The waveform types (`sine`, `square`, `pulse`, `noise` and others) and how to write them | "Waveforms (`wave`)" in [scenario.md](../scenario.md#waveforms-wave) |
+| The samples that an `expect` beside `ramp` or `wave` looks at | "Checking values during a ramp or wave" in [scenario.md](../scenario.md#checking-values-during-a-ramp-or-wave) |
+| Where you can write hexadecimal | "File format" in [scenario.md](../scenario.md#file-format) |
 
-## 手順 6: パラメーターと機種を使う
+## Step 6: Use parameters and variants
 
-シナリオの中の値をパラメーターにすると、同じシナリオを、値を替えて実行できます。機種（`variants`）のある設定ファイルでは、シナリオを実行する機種を `only` で限定できます。
+Turn values in a scenario into parameters to run the same scenario with different values. With a configuration file that has variants (`variants`), `only` limits the variants that a scenario runs in.
 
-まず、機種のある設定ファイルを作ります。`simulation.yaml` をコピーして、末尾に機種を 2 つ追加します。`full` は 2 つの ECU をそのまま使い、`engine_only` は Dashboard を無効にします。
+First, create a configuration file with variants. Copy `simulation.yaml` and add 2 variants at the end. `full` uses both ECUs as they are; `engine_only` disables Dashboard.
 
 ```sh
 cp simulation.yaml simulation.variants.yaml
@@ -442,7 +445,7 @@ variants:
 EOF
 ```
 
-追加した 5 行です。
+The 5 lines added:
 
 <!-- examples/scenario_tests/simulation.variants.yaml: the lines added -->
 ```yaml
@@ -453,7 +456,7 @@ variants:
       Dashboard: { enabled: false }
 ```
 
-次の内容で `my_tests/dashboard_speed.yaml` を作ります。
+Create `my_tests/dashboard_speed.yaml` with this content:
 
 <!-- examples/scenario_tests/my_tests/dashboard_speed.yaml -->
 ```yaml
@@ -467,22 +470,22 @@ steps:
     within_ms: 600
 ```
 
-| 行 | 意味 |
+| Line | Meaning |
 |---|---|
-| `only: [full]` | このシナリオは、機種 `full` でだけ実行します。Dashboard のない `engine_only` では実行できないためです。 |
-| `params: { ... }` | パラメーターと、その既定の値です。 |
-| `"${throttle}"` | その位置に、パラメーター `throttle` の値を書いたのと同じになります。`{ }` の中では引用符で囲みます。 |
+| `only: [full]` | Runs this scenario only in the variant `full`. It cannot run in `engine_only`, which has no Dashboard. |
+| `params: { ... }` | The parameters and their default values. |
+| `"${throttle}"` | The same as writing the value of the parameter `throttle` in its place. Inside `{ }`, put it in quotes. |
 
-機種のある設定ファイルでは、`--variant` で機種を選びます。1 つ目は既定の値で、2 つ目は `--param` で値を替えて実行します。
+With a configuration file that has variants, select the variant with `--variant`. The first command runs with the default values; the second changes them with `--param`.
 
 ```sh
 vehicle_sil_launch run simulation.variants.yaml --variant full --scenario my_tests/dashboard_speed.yaml
 vehicle_sil_launch run simulation.variants.yaml --variant full --scenario my_tests/dashboard_speed.yaml --param throttle=30 --param speed=1400
 ```
 
-### 確認
+### Verify parameters and variants
 
-どちらも終了コードは 0 です。2 つ目の出力には、次の行と表があります。`parameters:` の行で、それぞれの値がどこから来たかがわかります。
+Both commands exit with code 0. The output of the second has this line and this table. The `parameters:` line shows where each value came from.
 
 <!-- scenario guide: run --variant full --scenario my_tests/dashboard_speed.yaml --param throttle=30 --param speed=1400, the parameters -->
 ```text
@@ -496,7 +499,7 @@ line  step                                                                      
 7     expect Dashboard.dashboard.engine_speed near 1400 (tolerance 50) (within 600 ms)  ok      310 ms
 ```
 
-機種 `engine_only` を選ぶと、何も起動せずに終了コード 1 で終わり、次のエラーが表示されます。
+If you select the variant `engine_only`, the launcher starts nothing, exits with code 1 and prints the error below.
 
 ```sh
 vehicle_sil_launch run simulation.variants.yaml --variant engine_only --scenario my_tests/dashboard_speed.yaml
@@ -507,33 +510,33 @@ vehicle_sil_launch run simulation.variants.yaml --variant engine_only --scenario
 error: my_tests/dashboard_speed.yaml:3: the scenario is only for the variant full (its only), not for engine_only: run it with --variant full, or add engine_only to only [scenario-variant]
 ```
 
-### うまくいかないとき
+### Troubleshoot parameters and variants
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `the file defines variants ...: give --variant <name>`（終了コード 4） | 機種のある設定ファイルに、`--variant` を付けていません。 | 表示された機種の名前の 1 つを `--variant` に書きます。 |
-| `--param x=1: the scenario has no parameter x`（終了コード 4） | シナリオにない名前のパラメーターを渡しています。 | 名前を直します。 |
-| `only` のあるシナリオを `simulation.yaml` で実行して、エラーになる | 機種のない設定ファイルには、`only` のあるシナリオを使えません。 | 機種のある設定ファイルで実行します。 |
+| `the file defines variants ...: give --variant <name>` (exit code 4) | The configuration file has variants, and you did not give `--variant`. | Give `--variant` one of the variant names in the message. |
+| `--param x=1: the scenario has no parameter x` (exit code 4) | You passed a parameter whose name is not in the scenario. | Correct the name. |
+| A scenario with `only` gives an error when you run it with `simulation.yaml` | A configuration file without variants cannot run a scenario that has `only`. | Run it with a configuration file that has variants. |
 
-パラメーターの値は、設定ファイルの `params` と、機種ごとの `params` にも書けます。機種によって実行ファイルや変数の名前が違うときの書き方も含めて、リファレンスは次のとおりです。
+You can also set parameter values in the `params` of the configuration file and in the `params` of each variant. These sections cover them, and how to write scenarios for variants whose executables or variable names differ:
 
-| 知りたいこと | 読む所 |
+| To find | See |
 |---|---|
-| `${名前}` を書ける位置と、値が決まる順 | [scenario.md](../scenario.md) の「パラメーター（`params`、`${名前}`）」 |
-| その機種にない変数を使う手順の扱い | [scenario.md](../scenario.md) の「ない変数を使う手順のスキップ」 |
-| 設定ファイルの `variants` の書き方 | [simulation-config.md](../simulation-config.md) の「機種（`variants`、`--variant`）」 |
+| Where you can write `${name}`, and the order in which values are decided | "Parameters (`params`, `${name}`)" in [scenario.md](../scenario.md#parameters-params-name) |
+| What happens to a step that uses a variable the variant does not have | "Skipping steps that use an absent variable" in [scenario.md](../scenario.md#skipping-steps-that-use-an-absent-variable) |
+| How to write `variants` in the configuration file | "Variants (`variants`, `--variant`)" in [simulation-config.md](../simulation-config.md#variants-variants---variant) |
 
-## 手順 7: シナリオをまとめて実行する
+## Step 7: Run several scenarios at once
 
-`test` は、設定ファイルの機種ごとに、ディレクトリのシナリオを 1 つずつ実行して、全部の結果を 1 つの表にします。
+`test` runs the scenarios in a directory one at a time, for each variant of the configuration file, and puts all the results in one table.
 
 ```sh
 vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/
 ```
 
-### 確認
+### Verify the test run
 
-標準出力は次のとおりで、終了コードは 0 です。
+The exit code is 0 and stdout is:
 
 <!-- scenario guide: test simulation.variants.yaml --scenarios my_tests/ -->
 ```text
@@ -550,13 +553,13 @@ engine_only  my_tests/throttle_up.yaml      passed   1 warning
 passed: 8 runs, 7 passed, 0 failed, 1 skipped
 ```
 
-| 表の部分 | 読み方 |
+| Part of the table | How to read it |
 |---|---|
-| 行の順 | 機種は設定ファイルに書いた順で、シナリオはファイルの名前の順です。 |
-| `skipped` | シナリオの `only` にその機種がないので、実行していません。失敗にはなりません。 |
-| `1 warning` | 設定ファイルへの警告です。`engine_only` では、`J1939_CAN` に参加する ECU が Engine だけになるためです。 |
+| Row order | Variants in the order of the configuration file, scenarios in the order of their file names. |
+| `skipped` | The variant is not in the scenario's `only`, so the scenario did not run. This does not count as a failure. |
+| `1 warning` | A warning about the configuration file: in `engine_only`, Engine is the only ECU on `J1939_CAN` (`single-participant`). |
 
-失敗する組があると、終了コードは 1 になります。パラメーターの `speed` を、達しない値に替えて確認します。
+If any run fails, the exit code is 1. Try it by changing the parameter `speed` to a value that the engine never reaches:
 
 ```sh
 vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/ --param speed=3000
@@ -579,38 +582,38 @@ to see a failed run in full, run it alone: vehicle_sil_launch run simulation.var
 FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 ```
 
-失敗した組があっても、残りの組は実行されます。`to see a failed run in full` の行のコマンドで、失敗した 1 組だけを実行し直せます。
+When a run fails, the remaining runs still run. The command on the `to see a failed run in full` line reruns only the failed run, as `test` ran it (`--speed max`: as fast as possible).
 
-| したいこと | 書き方 |
+| Goal | How |
 |---|---|
-| 1 つの機種だけを実行する | `--variant full` を付けます。 |
-| ファイルを選んで実行する | `--scenarios` の後に、ファイルを並べます。 |
-| 最初の失敗で止める | `--fail-fast` を付けます。 |
-| 機種のない設定ファイルで実行する | `test simulation.yaml --scenarios scenarios/` のように、同じ書き方です。 |
+| Run only one variant | Add `--variant full`. |
+| Run selected files | List the files after `--scenarios`. |
+| Stop at the first failure | Add `--fail-fast`. |
+| Run with a configuration file without variants | Write the command the same way: `test simulation.yaml --scenarios scenarios/`. |
 
-`test` のルールは、[simulation-run.md](../simulation-run.md) の「シナリオをまとめて実行する（`vehicle_sil_launch test`）」にあります。
+For the rules of `test`, see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](../simulation-run.md#running-several-scenarios-vehicle_sil_launch-test).
 
-## 手順 8: CI で実行する
+## Step 8: Run in CI
 
-合否は終了コードで判定します。`check`、`run`、`test` で共通です。
+The exit code gives the result, for `check`, `run` and `test` alike.
 
-| 終了コード | 意味 |
+| Exit code | Meaning |
 |---|---|
-| 0 | 成功しました。 |
-| 1 | 手順が失敗したか、照合でエラーが見つかりました。`--strict` を付けたときは、警告でも 1 です。 |
-| 3 | 設定ファイルを読めません。 |
-| 4 | 引数が正しくありません。 |
-| 130 | Ctrl+C などで中断されました。 |
+| 0 | Passed. |
+| 1 | A step failed, or the check found an error. With `--strict`, a warning also gives 1. |
+| 3 | The configuration file cannot be read. |
+| 4 | The arguments are wrong. |
+| 130 | The run was interrupted, for example with Ctrl+C. |
 
-失敗の内容をプログラムで読むときは、`--json` を付けます。結果が、1 つの JSON として標準出力に書かれます。
+To read the failures from a program, add `--json`. The result is written to stdout as one JSON document.
 
 ```sh
 vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/ --param speed=3000 --json > result.json
 ```
 
-### 確認
+### Verify the CI job
 
-終了コードは 1 です。`result.json` の先頭に全体の結果があり、`runs` に、機種とシナリオの組ごとの結果が並びます。次は、そのうち全体の結果と最初の 1 組を抜き出したものです。
+The exit code is 1. `result.json` starts with the overall result, and `runs` lists the result of each run (variant and scenario). Here are the overall result and the first run, taken from that file:
 
 <!-- scenario guide: test --json, an excerpt -->
 ```json
@@ -632,28 +635,28 @@ vehicle_sil_launch test simulation.variants.yaml --scenarios my_tests/ --param s
 }
 ```
 
-各組の `run` には、その組を `run --json` で実行したときと同じ JSON が入っています。その中の `scenario.steps[]` に、手順ごとの `line`、`status`、`code`、`message` があります。
+The `run` key of each entry in `runs` holds the JSON that `run --json` prints for that run. Its `scenario.steps[]` has the `line`, `status`, `code` and `message` of each step.
 
-CI では、次の引数も使います。
+In CI, these options are also useful:
 
-| 引数 | 使う場面 |
+| Option | Used for |
 |---|---|
-| `--timeout-ms <ms>` | 実時間の上限を付けます。ステップの中で止まった ECU がいると仮想時間が進まず、実行が終わらないためです。`test` では 1 組ごとの上限です。 |
-| `--strict` | 警告も失敗にします。 |
-| `--log-dir <dir>` | `run` で、ECU ごとの出力をファイルに残します。 |
-| `--events` | `run` で、経過を 1 行に 1 つの JSON で読みます。手順が始まったときと結果が決まったときに、イベント `scenario_step` が出力されます。 |
+| `--timeout-ms <ms>` | Sets a limit in wall-clock time. If an ECU hangs inside an ECU step, virtual time stops advancing and the run never ends. In `test`, the limit applies to each run. |
+| `--strict` | Treats warnings as failures. |
+| `--log-dir <dir>` | With `run`, keeps the output of each ECU in files. |
+| `--events` | With `run`, writes the progress as one JSON object per line. The `scenario_step` event is emitted when a step starts and when its result is decided. |
 
-| 知りたいこと | 読む所 |
+| To find | See |
 |---|---|
-| `run --json` の `scenario` のキー | [scenario.md](../scenario.md) の「出力」 |
-| 引数と終了コードの全部 | [simulation-config.md](../simulation-config.md) の「引数と終了コード」 |
-| `--events` のイベント | [simulation-events.md](../simulation-events.md) |
+| The keys of `scenario` in `run --json` | "Output" in [scenario.md](../scenario.md#output) |
+| All arguments and exit codes | "Arguments and exit codes" in [simulation-config.md](../simulation-config.md#arguments-and-exit-codes) |
+| The events of `--events` | [simulation-events.md](../simulation-events.md) |
 
-## ECU をバスから切断する
+## Disconnect an ECU from the bus
 
-どの ECU にもある入力 `ecu.connected` に `false` を書くと、その ECU は動いたまま、すべてのバスから切断されます。`true` を書くと戻ります。通信の相手がいなくなったことを、ほかの ECU が検出するかをテストできます。
+Every ECU has the input `ecu.connected`. Write `false` to it, and the ECU disconnects from all buses while it keeps running. Write `true` to reconnect it. With this, you can test whether the other ECUs detect that the ECU they communicate with is gone.
 
-`scenarios/engine_disconnect.yaml` の、コメントを除いた内容です。300 ms に Engine を切断し、Dashboard の `dashboard.engine_lost` が 400 ms のうちに true になることを確認します。続けて Engine を戻し、200 ms のうちに false に戻ることを確認します。
+Here is `scenarios/engine_disconnect.yaml` without its comments. It disconnects Engine at 300 ms and checks that `dashboard.engine_lost` of Dashboard becomes true within 400 ms. Then it reconnects Engine and checks that the value returns to false within 200 ms.
 
 <!-- examples/ecu_main/scenarios/engine_disconnect.yaml -->
 ```yaml
@@ -673,9 +676,9 @@ steps:
 vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.yaml
 ```
 
-### 確認
+### Verify the disconnection
 
-終了コードは 0 で、出力に次の表があります。
+The exit code is 0, and the output contains this table:
 
 <!-- scenario guide: run simulation.yaml --scenario scenarios/engine_disconnect.yaml, the result -->
 ```text
@@ -688,42 +691,42 @@ line  step                                                             result  a
 14    expect Dashboard.dashboard.engine_lost eq false (within 200 ms)  ok      610 ms
 ```
 
-`line` は、コメントを含むファイルの行番号です。
+The `line` column counts lines in the file including its comments.
 
-検出しているのは Dashboard の ECU のコードで、シナリオはその出力を読むだけです。この例の Dashboard は、回転数を 300 ms 受信しなければ `engine_lost` を true にします。`within_ms` は、検出に許容する遅れに合わせて決めます。
+The code of the Dashboard ECU does the detection; the scenario only reads its output. The Dashboard in this example sets `engine_lost` to true when it has not received the engine speed for 300 ms. Choose `within_ms` to match how long you allow the detection to take.
 
-| 知りたいこと | 読む所 |
+| To find | See |
 |---|---|
-| 切断している間に ECU の中で動き続けるもの | [internals/execution.md](../internals/execution.md) の「バスからの切断（`ecu.connected`）」 |
-| 切断したときと戻したときの J1939 の動作 | [j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」 |
+| What keeps running inside an ECU while it is disconnected | "Disconnecting from the bus (`ecu.connected`)" in [internals/execution.md](../internals/execution.md#disconnecting-from-the-bus-ecuconnected) |
+| How J1939 behaves on disconnect and reconnect | "Disconnect an ECU from the bus (`ecu.connected`)" in [j1939-guide.md](../j1939-guide.md#disconnect-an-ecu-from-the-bus-ecuconnected) |
 
-## 注意点
+## Pitfalls
 
-シナリオが見る値は、ECU が `sample_period`（既定は仮想時間の 10 ms）ごとに送信するサンプルです。次の表の上の 2 つは、そのために起きます。
+The values that a scenario sees are the samples that each ECU sends every `sample_period` (10 ms of virtual time by default). The first 2 rows of this table follow from that.
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `set` と同じ時刻の `expect` が、設定する前の値を見て失敗する | その時刻に始まる ECU のステップが、サンプルを取らないことがあります。照合ではわかりません。 | 値が反映されたことは、`within_ms` を付けた `expect` で確認します。 |
-| 短いパルスが、`within_ms` でも `hold_for_ms` でも見えない | サンプルとサンプルの間に変化して戻った値は、条件に現れません。 | ECU の `sample_period` を小さくします（[control-api.md](../control-api.md) の「ECU の変数」の `set_agent_options()`）。 |
-| 待つ手順の次の `after_ms` が、表の `at` から数えた時刻とずれる | 待つ手順が終わる時刻は、条件が成り立ったサンプルの時刻（`at`）の少し後です。 | 時刻に余裕を持たせます。決め方は、[scenario.md](../scenario.md) の「時刻」にあります。 |
-| `--scenario cannot be used with --start-paused`（終了コード 4） | シナリオは、時刻 0 の値を自分で書き込んで実行します。 | `--start-paused` を外します。 |
-| `--control` で接続したクライアントが、シナリオの実行中に値を書き込めない | シナリオの実行中、クライアントができるのは、読むこと、待つこと、止めることだけです。 | 値を変えながら確認するときは、[信号を外から操作する](operate-signals.md) の方法を使います。 |
-| ある participant の変数を、シナリオで使えない | 無効にした participant、`describe: false` の participant、実時間で動く participant の変数は使えません。 | [scenario.md](../scenario.md) の「一緒に使えない引数と制限」を確認します。 |
+| An `expect` at the same time as a `set` sees the value from before the `set`, and fails | The ECU step that starts at that time may not take a sample. The check cannot detect this. | Use an `expect` with `within_ms` to check that the value was applied. |
+| A short pulse is not seen, with either `within_ms` or `hold_for_ms` | A value that changes and changes back between 2 samples does not appear in the condition. | Make the ECU's `sample_period` smaller (`set_agent_options()` in "ECU variables" in [control-api.md](../control-api.md#ecu-variables)). |
+| An `after_ms` after a wait step does not match the time counted from the `at` in the table | A wait step ends a little after the time of the sample in which the condition held (`at`). | Leave a margin in the times. For how the time is decided, see "Timing" in [scenario.md](../scenario.md#timing). |
+| `--scenario cannot be used with --start-paused` (exit code 4) | A scenario itself writes the values at time 0 when it runs. | Remove `--start-paused`. |
+| A client connected with `--control` cannot write values while a scenario runs | While a scenario runs, a client can only read, wait and stop. | To check values while you change them, use the methods in [Read and write signals from outside](operate-signals.md). |
+| The variables of a participant cannot be used in a scenario | The variables of a disabled participant, a participant with `describe: false` and a participant that runs in real time cannot be used. | See "Incompatible options and limitations" in [scenario.md](../scenario.md#incompatible-options-and-limitations). |
 
-サンプルのルールは、[scenario.md](../scenario.md) の「値の見え方」にあります。
+For the rules of samples, see "Values that conditions see" in [scenario.md](../scenario.md#values-that-conditions-see).
 
-## 補足
+## Notes
 
-バージョンの違う `vehicle_sil_launch` を使うときは、`vehicle_sil_launch version --json` の `features` で、使える機能を確認できます。
+If you use a different version of `vehicle_sil_launch`, the `features` in the output of `vehicle_sil_launch version --json` tell you what it supports.
 
-| `features` の値 | 使える機能 |
+| `features` value | Feature |
 |---|---|
 | `scenario` | `--scenario` |
-| `scenario-wave` | 手順 `wave` |
-| `scenario-motion-expect` | `ramp` と `wave` の横の `expect` |
+| `scenario-wave` | The `wave` step |
+| `scenario-motion-expect` | `expect` beside `ramp` and `wave` |
 
-## 次に読むもの
+## What to read next
 
-- シナリオの形式、時刻、結果、指摘のコードを調べる → [scenario.md](../scenario.md)
-- 値を変えながら対話的に確認する、時間を止めて進める → [信号を外から操作する](operate-signals.md)
-- ほかの人が作った ECU と一緒に動かす → [複数の ECU をつないで動かす](integrate-ecus.md)
+- Look up the scenario format, timing, results and finding codes: [scenario.md](../scenario.md)
+- Check values interactively while you change them, and pause and step time: [Read and write signals from outside](operate-signals.md)
+- Run your ECU with ECUs that other people built: [Integrate and run several ECUs](integrate-ecus.md)

@@ -1,19 +1,21 @@
-# LIN のノードの作り方
+# Writing LIN nodes
 
-ECU に LIN の Master か Slave を持たせる方法と、LIN の例を別々のプロセスで動かす方法です。スケジュール、フレームの送受信、診断フレーム（0x3C、0x3D）、Sleep/Wakeup のルールと制約は、[internals/lin.md](internals/lin.md) にあります。
+[日本語](ja/lin-guide.md)
 
-`vehicle_sil::lin` は、仮想時間で動く LIN の Master と Slave です（SIL Kit にも J1939 にも依存しません）。
+This page shows how to give an ECU a LIN master or slave, and how to run the LIN example as separate processes. For the rules and constraints of the schedule, frame transmission and reception, diagnostic frames (0x3C, 0x3D) and Sleep/Wakeup, see [internals/lin.md](internals/lin.md).
 
-| したいこと | 使うもの | 節 |
+`vehicle_sil::lin` provides a LIN master and slave that run in virtual time. It depends on neither SIL Kit nor J1939.
+
+| Goal | Use | Section |
 |---|---|---|
-| ECU のクラスに Master か Slave を持たせる | `Ecu::lin_master()`、`Ecu::lin_slave()` | [ECU のクラスで使う](#ecu-のクラスで使う) |
-| `Peer` を使わずに、SIL Kit の上で自分で組み立てる | `SilKitLinPort`、`LinMaster`、`LinSlave` | [`Peer` を使わずに組み立てる](#peer-を使わずに組み立てる) |
+| Give an ECU class a master or a slave | `Ecu::lin_master()`, `Ecu::lin_slave()` | [Use LIN in an ECU class](#use-lin-in-an-ecu-class) |
+| Build the nodes yourself on SIL Kit, without `Peer` | `SilKitLinPort`, `LinMaster`, `LinSlave` | [Build without `Peer`](#build-without-peer) |
 
-## ECU のクラスで使う
+## Use LIN in an ECU class
 
-ECU のクラスの中で `Ecu::lin_master()` と `Ecu::lin_slave()` から使うと、`Simulation()`（プロセス内の仮想 LIN バス）でも `Simulation(SilKitOptions{})`（SIL Kit）でも同じ結果になります。
+Inside an ECU class, create the nodes with `Ecu::lin_master()` and `Ecu::lin_slave()`. The result is then the same with `Simulation()` (the in-process virtual LIN bus) and with `Simulation(SilKitOptions{})` (SIL Kit).
 
-[examples/vehicle/main.cpp](../examples/vehicle/main.cpp) の `BodyController`（Master）と `DoorModule`（Slave。別の ECU）です。`#include`、定数、`main()` は、このファイルにあります。`lin` は `vehicle_sil::lin` の別名です。
+The code below is `BodyController` (the master) and `DoorModule` (a slave in another ECU) from [examples/vehicle/main.cpp](../examples/vehicle/main.cpp). That file contains the `#include` lines, the constants and `main()`. `lin` is an alias for `vehicle_sil::lin`.
 
 ```cpp
 class BodyController // a J1939 node on "Body" and the LIN master of "Door"
@@ -52,30 +54,30 @@ public:
 };
 ```
 
-| 役割 | 呼び出し | 動作 |
+| Role | Call | Behavior |
 |---|---|---|
-| Master | `ecu.lin_master(network, schedule)` | スケジュールを、ECU のステップ幅で進めます。 |
-| Master | スケジュールの `LinPublisher::Master` と `LinPublisher::Slave` | `kCommand` は Master が送信し、`kDoorStatus` は Slave が応答します。 |
-| Master | `on_result` | スロットの終わりに結果を受け取ります。 |
-| Master | `ecu.on_step` の中の `set_frame_data` | アプリの処理は LIN の処理より前なので、このステップのヘッダーから効きます。 |
-| Master | `request_sleep()`、`request_wakeup()` | 必要なら、クラスタを休止させ、起こします。 |
-| Slave | `ecu.lin_slave(network, {.subscriptions = {...}})` | 指定した ID のフレームを受信します。 |
-| Slave | `on_frame` | ヘッダーの時刻付きで受信し、アプリは次のステップで読みます。 |
-| Slave | `set_response(now, id, data)` | `now` より後のヘッダーに応答します。 |
+| Master | `ecu.lin_master(network, schedule)` | Advances the schedule by the ECU's step size. |
+| Master | `LinPublisher::Master` and `LinPublisher::Slave` in the schedule | The master sends `kCommand`, and the slave responds to `kDoorStatus`. |
+| Master | `on_result` | Receives the result at the end of each slot. |
+| Master | `set_frame_data` inside `ecu.on_step` | The application runs before the LIN processing, so the data takes effect from the header of this step. |
+| Master | `request_sleep()`, `request_wakeup()` | Puts the cluster to sleep and wakes it up when you need to. |
+| Slave | `ecu.lin_slave(network, {.subscriptions = {...}})` | Receives the frames with the given IDs. |
+| Slave | `on_frame` | Receives each frame with the time of its header. The application reads it in the next step. |
+| Slave | `set_response(now, id, data)` | Responds to the headers after `now`. |
 
-## `Peer` を使わずに組み立てる
+## Build without `Peer`
 
-`Peer` を使わずに組み立てるときは、SIL Kit の LIN コントローラの上に `vehicle_sil::lin::SilKitLinPort`（`vehicle_sil::lin_silkit`）を作り、`LinMaster(port, schedule, step)` と `LinSlave(port, options)` を自分のステップハンドラで動かします。
+To build the nodes without `Peer`, create a `vehicle_sil::lin::SilKitLinPort` (`vehicle_sil::lin_silkit`) on top of a SIL Kit LIN controller. Then run `LinMaster(port, schedule, step)` and `LinSlave(port, options)` from your own step handler.
 
-例は [examples/lin](../examples/lin) です（`master/main.cpp` と `slave/main.cpp`）。3 つのピアが、SIL Kit の上で 1 つのクラスタを作ります。
+[examples/lin](../examples/lin) is the example (`master/main.cpp` and `slave/main.cpp`). Its 3 peers form one cluster on SIL Kit:
 
-| ピア | participant 名 | ステップ幅 |
+| Peer | Participant name | Step size |
 |---|---|---|
 | `vehicle_sil_lin_master` | `LinMaster` | 5 ms |
 | `vehicle_sil_lin_slave --role echo` | `LinEcho` | 2 ms |
-| `vehicle_sil_lin_slave --role status` | `LinStatus` | 4 ms（`--step-us 4000`） |
+| `vehicle_sil_lin_slave --role status` | `LinStatus` | 4 ms (`--step-us 4000`) |
 
-リポジトリのルートで、`linux-gcc-release` のプリセットでビルドした後に実行します。Master は 200 ms でクラスタを休止させ、400 ms で起こします。
+Build with the `linux-gcc-release` preset, then run these commands from the repository root. The master puts the cluster to sleep at 200 ms and wakes it up at 400 ms.
 
 ```sh
 B=build/linux-gcc-release
@@ -84,26 +86,26 @@ $B/Release/sil-kit-registry --listen-uri $URI &
 $B/tools/sim_controller/vehicle_sil_sim_controller --registry-uri $URI \
     --required LinMaster,LinEcho,LinStatus --stop-at-ms 1000 &
 E=$B/examples/lin
-# Master（5 ms）: 200 ms で休止させ、400 ms で起こす
+# Master (5 ms): puts the cluster to sleep at 200 ms, wakes it up at 400 ms
 $E/vehicle_sil_lin_master --registry-uri $URI --end-ms 1000 --sleep-at-ms 200 --wakeup-at-ms 400 --trace master.trace &
 $E/vehicle_sil_lin_slave --role echo   --registry-uri $URI --end-ms 1000 --trace echo.trace &     # 2 ms
 $E/vehicle_sil_lin_slave --role status --registry-uri $URI --end-ms 1000 --step-us 4000 --trace status.trace
 ```
 
-### 確認
+### Verify the LIN run
 
-成功すると、3 つのピアと `vehicle_sil_sim_controller` が終了コード 0 で終わり、`master.trace`、`echo.trace`、`status.trace` ができます。`vehicle_sil_sim_controller` は、終わりに次の行を表示します。
+On success, the 3 peers and `vehicle_sil_sim_controller` end with exit code 0, and `master.trace`, `echo.trace` and `status.trace` are created. At the end, `vehicle_sil_sim_controller` prints this line:
 
 ```text
 [sim-controller] result sim_ms=1000 wall_us=... speed=...
 ```
 
-`sil-kit-registry` は動いたままなので、最後に `kill %1` で止めます。
+The registry (`sil-kit-registry`) keeps running. Stop it with `kill %1` when you are done.
 
-## 関連するドキュメント
+## See also
 
-| 読むもの | 内容 |
+| Page | Contents |
 |---|---|
-| README の「[ECU の書き方](../README.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
-| [internals/lin.md](internals/lin.md) | スケジュール、送受信、診断フレーム、Sleep/Wakeup のルールと制約 |
-| [peers.md](peers.md) | ピアを別々のプロセスで動かす方法 |
+| "[Writing an ECU](../README.md#writing-an-ecu)" in the README | The minimal form of an ECU. Read it before this page. |
+| [internals/lin.md](internals/lin.md) | Rules and constraints of the schedule, transmission and reception, diagnostic frames and Sleep/Wakeup |
+| [peers.md](peers.md) | How to run peers as separate processes |

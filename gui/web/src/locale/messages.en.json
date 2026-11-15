@@ -1172,7 +1172,7 @@
     },
     "6360246307357765998": {
       "source": "読み込んだパネルのモジュール:",
-      "target": "Loaded panel modules:"
+      "target": " Loaded panel modules:"
     },
     "7156814396060841952": {
       "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} がないので、変数を自動で並べています。",

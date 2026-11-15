@@ -1,26 +1,28 @@
-# 自分の画面のテンプレート（gui_starter）
+# Template for your own screen (gui_starter)
 
-GUI サーバー（`vehicle-sil-gui`）に配信させる自分の画面の、最小の形です。クライアントのライブラリ（[gui/client](../../gui/client/README.md)）だけを使い、ビルドなしの素の HTML と ES モジュールで書いてあります。これをコピーして、自分の画面に書き換えます。変数を 1 つ表示する画面にするまでの手順は、ガイド [ブラウザの GUI に自分の画面を作る](../../docs/howto/gui-screen.md) にあります。
+[日本語](README.ja.md)
 
-| ファイル | 内容 |
+A minimal screen of your own for the GUI server (`vehicle-sil-gui`) to serve. It uses only the client library ([gui/client](../../gui/client/README.md)) and is written in plain HTML and ES modules, with no build step. Copy it and rewrite it into your own screen. The guide [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md) walks you through turning it into a screen that shows one variable.
+
+| File | Contents |
 |---|---|
-| `index.html` | 画面です。スクリプトはファイルから読み込みます（インラインのスクリプトは CSP で実行されません）。 |
-| `main.js` | ライブラリを使うスクリプトです（トークン、接続、照合、開始と停止、変数の watch と書き込み、コンポーネントと変数を接続する `bind`）。 |
-| `style.css` | 見た目です。 |
-| `vehicle-sil-gui-client.mjs` | ライブラリを 1 つにまとめたファイルです。 |
+| `index.html` | The screen. It loads its script from a file (CSP blocks inline scripts). |
+| `main.js` | The script that uses the library: token, connection, check, start and stop, watching and writing a variable, and `bind`, which connects a widget to a variable. |
+| `style.css` | The styles. |
+| `vehicle-sil-gui-client.mjs` | The library bundled into one file. |
 
-画面にあるのは、接続の状態、設定ファイルの照合、実行の開始と停止、変数を 1 つ選んで値を見て書き込む操作、スライダーとランプです。
+The screen shows the connection state, checks the configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp.
 
-## 実行する
+## Run it
 
-`--web` でこのディレクトリを渡して、GUI サーバーを起動します。ライブラリのファイル（`vehicle-sil-gui-client.mjs`）が `index.html` の隣に必要で、その用意のしかたが 2 通りあります。
+Start the GUI server and pass this directory with `--web`. The library file (`vehicle-sil-gui-client.mjs`) must sit next to `index.html`. There are 2 ways to get it there:
 
-| 使うもの | ライブラリのファイル | 起動するコマンド |
+| Use | Library file | Command to start |
 |---|---|---|
-| ビルド済みのツール | `<ツール>/gui_starter/` に最初から入っています。 | `vehicle-sil-gui --web <ツール>/gui_starter simulation.yaml` |
-| リポジトリ | Git で管理していないので、下のコマンドでビルドしてコピーします。 | 下のコマンドの 3 行目 |
+| Prebuilt tools | Already in `<tools>/gui_starter/`. | `vehicle-sil-gui --web <tools>/gui_starter simulation.yaml` |
+| Repository | Not tracked in Git: build it and copy it with the commands below. | Line 3 of the commands below |
 
-リポジトリでは、ルートで次を実行します。
+In the repository, run this from the root:
 
 ```sh
 (cd gui/web && npm ci && npm run build:client)    # build/gui-client/vehicle-sil-gui-client.mjs
@@ -29,65 +31,65 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
   --web examples/gui_starter build/<preset>/examples/ecu_main/simulation.yaml
 ```
 
-### 確認
+### Verify the screen
 
-ブラウザが開き、サーバーが表示した URL（`#token=` つき）でこの画面が表示されます。
+The browser opens the URL that the server printed (with `#token=`) and shows this screen.
 
-| 操作 | 起きること |
+| Action | What happens |
 |---|---|
-| 「Check」を押す | 設定ファイルを照合し、結果を表示します。 |
-| 「Start」を押す | 実行を開始します。 |
-| 「Variable」で変数を選ぶ | その変数の値を表示します。 |
-| 「New value」に値を入力して「Write」を押す | 変数に書き込みます。 |
+| Click **Check** | The screen checks the configuration file and shows the result. |
+| Click **Start** | The run starts. |
+| Select a variable under **Variable** | The screen shows the value of that variable. |
+| Enter a value in **New value** and click **Write** | The value is written to the variable. |
 
-変数は、ランチャーが Control Server を持つときに一覧に表示されます。例の ECU では、`Engine.engine.throttle` に数を書き込むと、`Engine.engine.speed` が変わります。
+Variables appear in the list when the launcher has a Control Server. In the example ECUs, writing a number to `Engine.engine.throttle` changes `Engine.engine.speed`.
 
-## スライダーとランプ
+## The slider and the lamp
 
-「Slider and lamp」は、コンポーネントの作り方の見本です。
+The **Slider and lamp** section of the screen shows how to build a widget.
 
-| コンポーネント | 対象の変数 |
+| Widget | Variable it uses |
 |---|---|
-| スライダー | 範囲のある書き込める数の変数のうち、最初のもの |
-| ランプ | bool の変数（読み取り専用のものがあればそれ） |
+| Slider | The first writable number variable that has a range |
+| Lamp | A bool variable (a read-only one if there is one) |
 
-どちらも `client.variables.bind(ref, options)` が返す `state` を描いているだけで、次のことはライブラリが決めます。
+Both only draw the `state` that `client.variables.bind(ref, options)` returns. The library decides the rest:
 
-| `state` が持つもの | 例 |
+| What `state` holds | Examples |
 |---|---|
-| 値の状態 | まだない、古い、終わった実行の値 |
-| 書き込めない理由 | 実行がない、ECU が切断されている |
-| 書き込みの状態 | 送った、受け付けた、反映した、失敗した理由 |
+| Value condition | No value yet, stale, the value of an ended run |
+| Why a write is blocked | No run, the ECU is disconnected |
+| Write status | Sent, accepted, applied, the reason it failed |
 
-スライダーを続けて動かしても、サーバーが前の書き込みを受け取るまでは、最後の値だけを覚えて送ります。自分のコンポーネント（スイッチ、数値の入力、選択肢）も同じ形で作れます（[gui/client/README.md](../../gui/client/README.md) の「コンポーネントを作る（`bind`）」）。
+If you keep moving the slider before the server has received the previous write, the library keeps only the last value and sends that. You can build your own widgets (switch, number input, choice) the same way (see "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)).
 
-## 自分の画面にする
+## Make it your own screen
 
-自分の画面は、別のディレクトリにコピーして作ります。
+Copy the template to another directory and build your screen there.
 
-| 使うもの | コピーするコマンド | 起動するときの引数 |
+| Use | Command to copy | Argument to start with |
 |---|---|---|
-| ビルド済みのツール | `cp -r <ツール>/gui_starter my-screen` | `--web my-screen` |
-| リポジトリ | `cp -r examples/gui_starter my-screen` | `--web my-screen` |
+| Prebuilt tools | `cp -r <tools>/gui_starter my-screen` | `--web my-screen` |
+| Repository | `cp -r examples/gui_starter my-screen` | `--web my-screen` |
 
-`--web` に渡すのは、ビルドした画面の置き場所（`index.html` のあるディレクトリ）です。配信のルール（配信するファイル、CSP、トークン）は [docs/gui.md](../../docs/gui.md) の「自分の画面のリファレンス」にあります。
+`--web` takes the location of the built screen (the directory that contains `index.html`). For the serving rules (which files are served, CSP, token), see "Reference for your own screen" in [docs/gui.md](../../docs/gui.md#reference-for-your-own-screen).
 
-## TypeScript とフレームワークで作る
+## Build with TypeScript and a framework
 
-ライブラリは、型つきの npm のパッケージ（`.tgz`）にもなっています。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（依存はありません）。
+The library also comes as a typed npm package (`.tgz`). Run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client`. It has no dependencies.
 
-| 入手先 | 場所 |
+| Source | Location |
 |---|---|
-| ビルド済みのツール | `<ツール>/client/vehicle-sil-gui-client-<バージョン>.tgz` |
-| リリースのページ | 同じファイル |
-| リポジトリ | `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<バージョン>.tgz` ができます。 |
+| Prebuilt tools | `<tools>/client/vehicle-sil-gui-client-<version>.tgz` |
+| Releases page | The same file |
+| Repository | Run `npm run pack:client` in `gui/web`. It creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`. |
 
 ```ts
 import { WriteError, createClient, takeToken } from '@vehicle-sil/gui-client';
 
-const token = takeToken(window); // URL の #token= を読み、URL から消す（ルーティングが URL を書き換える前に）
+const token = takeToken(window); // reads #token= from the URL and removes it (before routing rewrites the URL)
 if (token === null) throw new Error('open the URL that vehicle-sil-gui printed');
-// API の URL はサーバーのルートから作る（画面のパス /settings/foo の上でも api/app が /settings/api/app にならないように）
+// build the API URL from the server root (so that api/app does not become /settings/api/app on a screen path /settings/foo)
 const client = createClient({ baseUrl: new URL('/', location.href).href, token });
 await client.loadApp();
 client.connect();
@@ -102,7 +104,7 @@ try {
   if (error instanceof WriteError) console.log(error.kind, error.message);
 }
 
-// コンポーネント 1 つと変数 1 つ: 値の状態、書き込めない理由、書き込みの状態が 1 つの state にまとまる
+// one widget and one variable: the value condition, why a write is blocked and the write status come in one state
 const throttle = client.variables.bind({ peer: 'Engine', name: 'engine.throttle' }, { needsRange: true });
 throttle.state.subscribe(({ reading, pending, block, writeStatus }) =>
   console.log(pending ?? reading?.value, block, writeStatus.kind),
@@ -110,6 +112,6 @@ throttle.state.subscribe(({ reading, pending, block, writeStatus }) =>
 throttle.write(60);
 ```
 
-- この例は、`npm run pack:client` が、作ったパッケージの型で検査します（型の解決 `nodenext` と `bundler` の両方）。
-- 状態はどれも `Readable`（`get()` と `subscribe(fn)` を持つ、読み取り専用の値）です。フレームワークの状態（React の `useSyncExternalStore`、Vue の `ref`、Svelte の store、Angular の signal など）へは、`subscribe` で変換します。
-- 開発サーバー（Vite など）で作りながら接続する手順は、[docs/gui.md](../../docs/gui.md) の「開発サーバーを使う」です。
+- `npm run pack:client` type-checks this example against the types of the package it built, with both `nodenext` and `bundler` module resolution.
+- Every state is a `Readable`: a read-only value with `get()` and `subscribe(fn)`. To turn it into your framework's state (React `useSyncExternalStore`, a Vue `ref`, a Svelte store, an Angular signal and so on), convert it with `subscribe`.
+- To develop on a development server (Vite and others) while connected, see "Use a development server" in [docs/gui.md](../../docs/gui.md#use-a-development-server).

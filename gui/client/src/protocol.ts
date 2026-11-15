@@ -1,19 +1,21 @@
 /**
- * サーバーとの間でやりとりするデータの形と、その読み取り関数（正本は gui/protocol/）。
+ * Shapes of the data exchanged with the server, and their parsers (gui/protocol/ is the authority).
  *
- * サーバーとの間の型はここにだけ書き、ライブラリの利用者（画面も）は入口（index.ts）から import する。
- * 届いた JSON は、ここの read* 関数で型を確かめてから使う（HTTP の応答、WebSocket の通知）。
- * - 知らない欄は無視する。知らない事象と知らない通知は null にして読み飛ばす。
- * - 値の集合が増えうる欄（段階、状態、結果など）は、知らない値も文字列のまま通す。
- * - 形が違うもの（欄がない、型が違う、知らない形式の版）は ProtocolError を投げる。
- * - ただし、セッションの要約とランチャーの事象は部分ごとに読む（readSessionSummary、readServerMessage）。
- *   ランチャーから来る部分（照合、結果、所見、participant）や、サーバーが上限で縮めた部分が読めなくても、
- *   読める部分は使い、読めない部分は既定の値にして、その名前を `unreadable` に入れる。要約の芯（id、state、
- *   launcher、stop）と事象の芯（seq、event）が読めないときだけ、全体を読めないとする。
- * 単体試験（api.spec.ts）が gui/protocol/examples/ の実例をすべて読ませて確かめる。
+ * The types of the server API are written here only; users of the library (the screens too) import them from the
+ * entry point (index.ts). JSON that arrives (HTTP answers, WebSocket notifications) is used only after a read*
+ * function here has checked its type.
+ * - Unknown fields are ignored. Unknown events and unknown notifications become null and are skipped.
+ * - Fields whose set of values may grow (phase, state, result and so on) pass unknown values through as strings.
+ * - Data of the wrong shape (missing field, wrong type, unknown format version) throws ProtocolError.
+ * - Exception: the session summary and launcher events are read part by part (readSessionSummary, readServerMessage).
+ *   If a part that comes from the launcher (check, result, findings, participants) or a part the server shrank to fit
+ *   its limits cannot be read, the readable parts are still used; an unreadable part gets its default value and its
+ *   name goes into `unreadable`. Only when the summary core (id, state, launcher, stop) or the event core (seq, event)
+ *   cannot be read is the whole thing unreadable.
+ * The unit tests (protocol.spec.ts) feed every example in gui/protocol/examples/ through these parsers.
  */
 
-/** 読めない形のデータ。path は壊れていた場所（例: `event.participants[0].name`）。 */
+/** Data of an unreadable shape. path is where it broke (for example `event.participants[0].name`). */
 export class ProtocolError extends Error {
   constructor(
     readonly path: string,
@@ -24,18 +26,22 @@ export class ProtocolError extends Error {
   }
 }
 
-/** 値の集合が増えうる文字列。知っている値は補完が効き、知らない値も入る。 */
+/** A string whose set of values may grow. Known values get completion; unknown values are allowed too. */
 export type Open<T extends string> = T | (string & {});
 
 /**
- * このライブラリが読む GUI サーバーの口の版（`api/app` と `hello` の `vehicle_sil_gui`）。違う版の hello と api/app は
- * 読まない（欄の意味が変わっているかもしれないため）。版を上げる決まりは gui/protocol/README.md の「バージョンと互換性」。
+ * The version of the GUI server's API that this library reads (`vehicle_sil_gui` of `api/app` and `hello`). It does not
+ * read a hello or an api/app of another version (their fields may mean something else). When to raise the version:
+ * "Versioning and compatibility" in gui/protocol/README.md.
  */
 export const PROTOCOL_VERSION = 1;
 
-// --- 読み取りの部品 ---------------------------------------------------------------------------
+// --- Parsing helpers -----------------------------------------------------------------------------
 
-/** 届いた値を読む関数。path は誤りの場所の表示（例: `message.session`）。形が違えば ProtocolError を投げる。 */
+/**
+ * Reads a received value. path is how the error location is shown (for example `message.session`). Throws ProtocolError
+ * on the wrong shape.
+ */
 export type Reader<T> = (value: unknown, path: string) => T;
 type Fields = Record<string, unknown>;
 
@@ -72,7 +78,7 @@ function nullable<T>(read: Reader<T>): Reader<T | null> {
   return (value, path) => (value === null ? null : read(value, path));
 }
 
-/** 欄がない（undefined）ときは fallback。古いランチャーがまだ出さない欄に使う。 */
+/** fallback when the field is absent (undefined). For fields that older launchers do not write yet. */
 function optional<T, F>(read: Reader<T>, fallback: F): Reader<T | F> {
   return (value, path) => (value === undefined ? fallback : read(value, path));
 }
@@ -89,8 +95,8 @@ function field<T>(fields: Fields, path: string, key: string, read: Reader<T>): T
 }
 
 /**
- * 部分ごとに読むときに、読めなかった部分の名前を集める。名前は root からの相対で、配列の添え字を除く
- * （`message.session.participants[2].signal` → `participants.signal`）。
+ * Collects the names of the parts that could not be read when reading part by part. Names are relative to root,
+ * without array indexes (`message.session.participants[2].signal` → `participants.signal`).
  */
 export class Unreadable {
   private readonly names = new Set<string>();
@@ -110,7 +116,9 @@ export class Unreadable {
   }
 }
 
-/** 読めなければ fallback にして、その場所を u に覚える（u がなければ投げる）。欄がないのも読めないうち。 */
+/**
+ * If unreadable, uses fallback and records the location in u (throws without u). An absent field counts as unreadable.
+ */
 function lenient<T, F>(read: Reader<T>, fallback: F, u?: Unreadable): Reader<T | F> {
   if (!u) return read;
   return (value, path) => {
@@ -124,12 +132,15 @@ function lenient<T, F>(read: Reader<T>, fallback: F, u?: Unreadable): Reader<T |
   };
 }
 
-/** 欄がなければ黙って fallback、型が違えば fallback にして u に覚える（u がなければ投げる）。 */
+/**
+ * An absent field silently becomes fallback; a field of the wrong type becomes fallback and is recorded in u (throws
+ * without u).
+ */
 function soft<T, F>(read: Reader<T>, fallback: F, u?: Unreadable): Reader<T | F> {
   return lenient(optional(read, fallback), fallback, u);
 }
 
-/** 配列。u があれば、読めない要素を読み飛ばして u に覚える（配列でないか、ないときは空）。 */
+/** An array. With u, unreadable elements are skipped and recorded in u (empty if absent or not an array). */
 function items<T>(read: Reader<T>, u?: Unreadable): Reader<T[]> {
   if (!u) return array(read);
   return (value, path) => {
@@ -151,8 +162,8 @@ function items<T>(read: Reader<T>, u?: Unreadable): Reader<T[]> {
 }
 
 /**
- * 形式の版の欄。知らない版は読まない（意味が変わっているかもしれないため）。部分ごとに読むとき（u）は、
- * 読めない部分として覚えて、読める欄は読む。
+ * A format version field. An unknown version is not read (its meaning may have changed). When reading part by part
+ * (u), it is recorded as an unreadable part and the readable fields are still read.
  */
 function version(
   fields: Fields,
@@ -168,12 +179,12 @@ function version(
   }
 }
 
-// --- ランチャー: 照合（check --json と同じ形） --------------------------------------------------
+// --- Launcher: check (same shape as check --json) ------------------------------------------------
 
-/** 所見の重さ。知らない重さは誤りとして扱う（severityRank）。 */
+/** Severity of a finding. An unknown severity is treated as an error (severityRank). */
 export type Severity = Open<'error' | 'warning' | 'note'>;
 
-/** 照合と実行の所見。message と detail は英語のまま出す。 */
+/** A finding of the check or the run. message and detail are shown in English, unchanged. */
 export interface Finding {
   severity: Severity;
   code: string;
@@ -185,12 +196,12 @@ export interface Finding {
   detail: string | null;
 }
 
-/** 重い順に並べるための順位（error 0、warning 1、note 2。知らない重さは error と同じ）。 */
+/** Rank for sorting by severity, most severe first (error 0, warning 1, note 2; an unknown severity ranks as error). */
 export function severityRank(severity: Severity): number {
   return severity === 'note' ? 2 : severity === 'warning' ? 1 : 0;
 }
 
-/** 所見を読む。u があれば部分ごとに（重さと文が読めなければ、その所見は読めない）。 */
+/** Reads a finding. With u, part by part (if the severity and text cannot be read, the finding is unreadable). */
 export const readFinding = (value: unknown, path: string, u?: Unreadable): Finding => {
   const f = object(value, path);
   return {
@@ -205,7 +216,7 @@ export const readFinding = (value: unknown, path: string, u?: Unreadable): Findi
   };
 };
 
-/** ECU が自己申告した変数（実行前にパネルを描くため）。 */
+/** A variable the ECU declared about itself (so panels can be drawn before the run). */
 export interface Variable {
   name: string;
   type: Open<'bool' | 'integer' | 'real' | 'enum'>;
@@ -214,8 +225,8 @@ export interface Variable {
   min: number | null;
   max: number | null;
   /**
-   * vehicle-sil がどの ECU にも付ける変数（`ecu.connected` など）なら true、ECU が宣言した変数なら false。
-   * 書かない古いランチャーでは null。
+   * true for a variable vehicle-sil adds to every ECU (`ecu.connected` and so on), false for a variable the ECU
+   * declared. null from an older launcher that does not write it.
    */
   builtin: boolean | null;
 }
@@ -233,47 +244,50 @@ const readVariable: Reader<Variable> = (value, path) => {
   };
 };
 
-// --- ランチャー: シナリオ（docs/scenario.md） ---------------------------------------------------
+// --- Launcher: scenarios (docs/scenario.md) -----------------------------------------------------
 
-/** ランチャーの features: シナリオを回せる（`--scenario`）。 */
+/** Launcher feature: can run scenarios (`--scenario`). */
 export const FEATURE_SCENARIO = 'scenario';
 /**
- * ランチャーの features: シナリオの実行中も Control Server を持てる（変数を読める。書き込みはランチャーが断る）。
- * ないランチャーでは、シナリオの実行に変数はない。
+ * Launcher feature: can keep a Control Server during a scenario run (variables can be read; the launcher refuses
+ * writes). With a launcher without it, a scenario run has no variables.
  */
 export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
 
-// --- ランチャー: 利用者が起動する participant（docs/simulation-config.md の「participant を自分で起動する」） -----
+// --- Launcher: participants that the user starts ("Starting a participant yourself" in docs/simulation-config.md) ---
 
 /**
- * ランチャーの features: 利用者が起動する participant（構成ファイルの `manual: true`、`--manual`）。ランチャーは
- * 起動せず、起動するコマンドを participant の事象（state が `manual`）で知らせ、参加を待つ。
+ * Launcher feature: participants the user starts (`manual: true` in the configuration file, `--manual`). The launcher
+ * does not start them; it reports the command that starts them in a participant event (state `manual`) and waits for
+ * them to join.
  */
 export const FEATURE_MANUAL = 'manual-participants';
 
-/** シナリオの手順の状態。running は事象だけ（結果の手順にはない）。 */
+/** State of a scenario step. running only appears in events (not in the steps of the result). */
 export type ScenarioStepStatus = Open<'running' | 'passed' | 'failed' | 'unfinished' | 'not_run'>;
 
-/** シナリオの全体の結果。 */
+/** Overall result of a scenario. */
 export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'>;
 
-/** シナリオの手順 1 つ（事象 `scenario_step`、結果の `scenario.steps[]`、要約の `scenario.steps[]`）。 */
+/**
+ * One scenario step (the `scenario_step` event, `scenario.steps[]` of the result, `scenario.steps[]` of the summary).
+ */
 export interface ScenarioStep {
-  /** 1 から。 */
+  /** From 1. */
   index: number;
-  /** シナリオのファイルの行。 */
+  /** Line in the scenario file. */
   line: number | null;
   kind: Open<'set' | 'ramp' | 'wave' | 'expect' | 'wait_until'>;
-  /** 手順の文（英語のまま出す）。 */
+  /** Text of the step (shown in English, unchanged). */
   text: string;
   status: ScenarioStepStatus;
-  /** 手順の時刻（仮想時刻、ミリ秒）。 */
+  /** Time of the step (virtual time, ms). */
   start_ms: number | null;
-  /** 手順を決めた仮想時刻。 */
+  /** Virtual time at which the step's result was decided. */
   at_ms: number | null;
-  /** 手順が終わる仮想時刻（決まっていなければ null）。 */
+  /** Virtual time at which the step ends (null if not fixed). */
   end_ms: number | null;
-  /** 失敗の所見の code と文（英語のまま出す）。 */
+  /** code and text of the failure finding (shown in English, unchanged). */
   code: string | null;
   message: string | null;
 }
@@ -294,12 +308,12 @@ const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): Scenar
 const readScenarioStep = (value: unknown, path: string, u?: Unreadable): ScenarioStep =>
   readScenarioStepFields(object(value, path), path, u);
 
-/** 照合の結果の `scenario`（`--scenario` を付けたときだけ）。 */
+/** `scenario` of the check result (only with `--scenario`). */
 export interface CheckScenario {
-  /** シナリオのファイル（ランチャーに渡したとおり）。 */
+  /** The scenario file (as passed to the launcher). */
   file: string;
   name: string | null;
-  /** 手順の数。 */
+  /** Number of steps. */
   steps: number;
 }
 
@@ -312,12 +326,12 @@ const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckS
   };
 };
 
-/** 実行の結果の `scenario`（`--scenario` を付けたときだけ）。 */
+/** `scenario` of the run result (only with `--scenario`). */
 export interface ScenarioResult {
   file: string;
   name: string | null;
   status: ScenarioStatus;
-  /** シナリオが終わった controller のステップ（passed と failed。ほかは null）。 */
+  /** The controller step at which the scenario ended (passed and failed; null otherwise). */
   over_at_ms: number | null;
   steps: ScenarioStep[];
 }
@@ -341,18 +355,21 @@ const readScenarioResult = (value: unknown, path: string, u?: Unreadable): Scena
 export type CheckStatus = Open<'described' | 'not_checked' | 'failed' | 'skipped' | 'disabled'>;
 
 export interface CheckParticipant {
-  /** 読めなかったときは null。 */
+  /** null if unreadable. */
   name: string | null;
   line: number | null;
   required: boolean | null;
   enabled: boolean | null;
-  /** 利用者が起動する（構成ファイルの `manual: true` か `--manual`）。古いランチャーは書かないので false。 */
+  /**
+   * Started by the user (`manual: true` in the configuration file, or `--manual`). Older launchers do not write it, so
+   * false.
+   */
   manual: boolean;
   step_ms: number | null;
   status: CheckStatus;
-  /** 自己申告の変数。null は「わからない」（申告がない、外した、読めなかった）、空の配列は「0 個」。 */
+  /** Self-declared variables. null means unknown (not declared, left out, or unreadable); an empty array means none. */
   variables: Variable[] | null;
-  /** ECU が申告した変数の出し方。申告がない、照合していない、古いランチャーでは null。 */
+  /** How the ECU declared it exposes its variables. null if not declared, not checked, or from an older launcher. */
   control: ControlOffer | null;
 }
 
@@ -388,7 +405,7 @@ const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): Che
 export interface CheckNetwork {
   name: string | null;
   kind: string | null;
-  /** 使う participant 名（構成ファイルの順）。 */
+  /** Participant names in use (in configuration file order). */
   participants: string[];
 }
 
@@ -403,7 +420,7 @@ const readCheckNetwork = (value: unknown, path: string, u?: Unreadable): CheckNe
 
 export type CheckOutcome = Open<'passed' | 'failed' | 'unreadable' | 'usage'>;
 
-/** `vehicle_sil_launch check --json` の結果（形式の版 1）。 */
+/** Result of `vehicle_sil_launch check --json` (format version 1). */
 export interface CheckResult {
   file: string | null;
   result: CheckOutcome;
@@ -414,11 +431,11 @@ export interface CheckResult {
   participants: CheckParticipant[];
   networks: CheckNetwork[];
   findings: Finding[];
-  /** シナリオ（`--scenario` を付けた照合だけ。ほかは null）。 */
+  /** The scenario (only for a check with `--scenario`; null otherwise). */
   scenario: CheckScenario | null;
 }
 
-/** 照合の結果を読む。u があれば部分ごとに。 */
+/** Reads a check result. With u, part by part. */
 export const readCheckResult = (value: unknown, path: string, u?: Unreadable): CheckResult => {
   const f = object(value, path);
   version(f, path, 'vehicle_sil_check', 1, u);
@@ -460,47 +477,53 @@ export const readCheckResult = (value: unknown, path: string, u?: Unreadable): C
   };
 };
 
-// --- ランチャー: 実行の結果（run --json と同じ形） ------------------------------------------------
+// --- Launcher: run result (same shape as run --json) ---------------------------------------------
 
 export interface RunParticipant {
   name: string;
   required: boolean;
   enabled: boolean;
-  /** 利用者が起動した（する）participant。ended は not_started のまま（参加したかは事象の joined でわかる）。 */
+  /**
+   * A participant the user started (or is to start). ended stays not_started (the joined event tells whether it
+   * joined).
+   */
   manual: boolean;
   ended: Open<'exited' | 'stopped' | 'killed' | 'not_started'>;
   exit_code: number | null;
   signal: string | null;
   left_processes: boolean;
-  /** 始まったときの、ECU の変数との接続の状態（古いランチャーは書かないので null）。 */
+  /** State of the connection to the ECU's variables at the start (null from older launchers, which do not write it). */
   control_link: ControlLink | null;
 }
 
 /**
- * ECU の変数との接続（ランチャーの control-links）の状態。ランチャーの語はここにだけ書く（名前が増えたり
- * 変わったりしても、知らない値は文字列のまま通す）。
- * connected: 変数を読み書きできる、no_hello: 出すと申告したのに hello が来なかった、version_mismatch: 形式の版が
- * 違う、not_offered: 変数はあるが出すと申告していない（--no-control、古い実行ファイル）、none: 変数を出す ECU では
- * ない。
+ * State of the connection to the ECU's variables (the launcher's control links). The launcher's words appear only here
+ * (unknown values pass through as strings, in case names are added or changed).
+ * connected: variables can be read and written; no_hello: the ECU declared that it exposes variables but no hello
+ * came; version_mismatch: the format versions differ; not_offered: the ECU has variables but did not declare that it
+ * exposes them (--no-control, an older executable); none: not an ECU that exposes variables.
  */
 export type ControlState = Open<
   'connected' | 'no_hello' | 'version_mismatch' | 'not_offered' | 'none'
 >;
 
-/** ランチャーのイベントの名前（ECU の変数との接続の状態）。 */
+/** Name of the launcher event (state of the connection to the ECU's variables). */
 export const CONTROL_EVENT = 'control_link';
-/** ランチャーの結果の participants[] の、口のつながり方のキー（オブジェクト）。 */
+/** Key (an object) for the variable interface's connection in participants[] of the launcher's result. */
 export const CONTROL_RESULT_KEY = 'control_link';
-/** GUI サーバーの要約の participants[] の、口のつながり方の欄（事象の欄を重ねたもの）。 */
+/**
+ * Field for the variable interface's connection in participants[] of the GUI server's summary (the event fields laid
+ * over each other).
+ */
 export const CONTROL_SUMMARY_KEY = 'control_link';
-/** 照合の結果の participants[] の、ECU が申告した変数の出し方の欄。 */
+/** Field in participants[] of the check result for how the ECU declared it exposes its variables. */
 export const CONTROL_CHECK_KEY = 'control';
 
-/** ECU が申告した、変数の出し方（照合の participants[].control）。 */
+/** How the ECU declared it exposes its variables (participants[].control of the check). */
 export interface ControlOffer {
-  /** 運び手（いまは silkit）。 */
+  /** Transport (silkit for now). */
   transport: string;
-  /** メッセージの形式の版。 */
+  /** Format version of the messages. */
   wire_version: number | null;
 }
 
@@ -512,14 +535,17 @@ const readControlOffer = (value: unknown, path: string, u?: Unreadable): Control
   };
 };
 
-/** ランチャーの control_link の事象と結果（と、要約の participant の control_link）: ある participant の口のつながり方。 */
+/**
+ * The launcher's control_link event and result (and control_link of a participant in the summary): how a participant's
+ * variable interface is connected.
+ */
 export interface ControlLink {
   state: ControlState;
-  /** connected: その ECU が出す変数の数。 */
+  /** connected: number of variables the ECU exposes. */
   variables: number | null;
-  /** version_mismatch: 相手の形式の版。 */
+  /** version_mismatch: the other side's format version. */
   version: number | null;
-  /** 約束より遅れて届いたメッセージの数（結果だけ。事象にはないので null）。 */
+  /** Number of messages that arrived later than promised (result only; events lack it, so null). */
   late_messages: number | null;
 }
 
@@ -557,29 +583,30 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
   };
 };
 
-/** 実行の結果の名前（`result` 事象の `result.result`）。 */
+/** Name of the run result (`result.result` of the `result` event). */
 export type RunResultName = Open<
   'passed' | 'failed' | 'interrupted' | 'check_failed' | 'unreadable' | 'setup_failed' | 'usage'
 >;
 
 /**
- * 結果の timing: 時間の進み方（数の定義はランチャーの docs の「速度を指定して動かす」）。何も起動しなかったとき、古い
- * ランチャーでは結果に null。欄ごとに、ないか読めなければ null。
+ * The result's timing: how time advanced (the numbers are defined in "Running at a set speed (`speed`)" in
+ * docs/simulation-run.md). null in the result when nothing was started, or from an older launcher. Each field is null
+ * when it is missing or cannot be read.
  */
 export interface RunTiming {
-  /** 終わったときの速さ。 */
+  /** Speed at the end. */
   speed: Speed;
-  /** controller の刻み（ミリ秒）。ステップ送りはこの倍数に切り上がる。 */
+  /** The controller's time step (ms). A step command is rounded up to a multiple of it. */
   time_step_ms: number | null;
   ecu_step_ms: number | null;
-  /** 刻みが ECU のステップより粗いために、ECU のステップが遅れて動く量の最大（ミリ秒）。 */
+  /** Maximum by which an ECU step runs late because the time step is coarser than the ECU's step (ms). */
   step_delay_ms: number | null;
   late_tolerance_ms: number | null;
   sim_ms: number | null;
-  /** かかった実時間（一時停止していた時間を含む）。 */
+  /** Real time taken (including time spent paused). */
   wall_ms: number | null;
   actual_speed: number | null;
-  /** 速さを合わせた刻みの数。0 なら最速で動いた（遅れは数えていない）。 */
+  /** Number of paced time steps. 0 means it ran as fast as possible (lateness not counted). */
   paced_steps: number | null;
   late_steps: number | null;
   max_late_ms: number | null;
@@ -609,7 +636,7 @@ const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming 
   };
 };
 
-/** `vehicle_sil_launch run --json` の結果（形式の版 1）。 */
+/** Result of `vehicle_sil_launch run --json` (format version 1). */
 export interface RunResult {
   file: string | null;
   result: RunResultName;
@@ -618,18 +645,19 @@ export interface RunResult {
   notes: number;
   simulation: string | null;
   interrupted_by: string | null;
-  /** 時間の進み方。古いランチャーと、何も起動しなかったときは null。 */
+  /** How time advanced. null from older launchers, and when nothing was started. */
   timing: RunTiming | null;
   participants: RunParticipant[];
   findings: Finding[];
   check: CheckResult | null;
-  /** シナリオの結果（`--scenario` を付けた実行だけ。ほかは null）。 */
+  /** Result of the scenario (only for a run with `--scenario`; null otherwise). */
   scenario: ScenarioResult | null;
 }
 
 /**
- * 実行の結果を読む。u があれば部分ごとに: サーバーが上限で縮めた結果（入れ子でない短い欄だけ）も、結果として
- * 読む（participant と所見は空にして、読めない部分に入れる）。結果の名前が読めなければ ''。
+ * Reads a run result. With u, part by part: a result the server shrank to fit its limits (only the short, non-nested
+ * fields) is still read as a result (participants and findings become empty and go into the unreadable parts). ''
+ * if the result's name cannot be read.
  */
 export const readRunResult = (value: unknown, path: string, u?: Unreadable): RunResult => {
   const f = object(value, path);
@@ -687,9 +715,9 @@ export const readRunResult = (value: unknown, path: string, u?: Unreadable): Run
   };
 };
 
-// --- ランチャー: 経過の事象（run --events の 1 行） ---------------------------------------------
+// --- Launcher: progress events (one line of run --events) ----------------------------------------
 
-/** 段階。この順に進み、飛ばすことはあるが戻らない。 */
+/** Phases. They advance in this order; one may be skipped, but they never go back. */
 export const PHASES = ['checking', 'starting', 'waiting', 'running', 'stopping', 'ended'] as const;
 export type Phase = Open<(typeof PHASES)[number]>;
 
@@ -697,7 +725,7 @@ export type ParticipantState = Open<
   | 'disabled'
   | 'not_started'
   | 'started'
-  /** 利用者が起動する participant なので、起動しなかった（started の代わり）。参加すれば joined が来る。 */
+  /** Not started because the user starts this participant (instead of started). joined follows once it joins. */
   | 'manual'
   | 'joined'
   | 'failed'
@@ -708,9 +736,11 @@ export type ParticipantState = Open<
 
 interface EventBase {
   seq: number;
-  /** ランチャーの開始からの実時間（ミリ秒）。ない事象もある（サーバーは欄がなくても通す）。 */
+  /** Real time since the launcher started (ms). Some events lack it (the server passes them through without it). */
   t_ms: number | null;
-  /** 読めなかった欄の名前（`finding.code` のように事象の種類を先に付ける）。なければ欄がない。 */
+  /**
+   * Names of the fields that could not be read (prefixed with the event kind, as in `finding.code`). Absent if none.
+   */
   unreadable?: string[];
 }
 
@@ -733,52 +763,57 @@ export type LauncherEvent =
       pid: number | null;
       exit_code: number | null;
       signal: string | null;
-      /** failed: なぜ失敗としたか（left_simulation、process_ended、ended_before_start。増えることがある）。 */
+      /**
+       * failed: why it was counted as failed (left_simulation, process_ended, ended_before_start; more may be added).
+       */
       reason: string | null;
-      /** not_started: 起動できなかった理由。failed: その所見の文（決まっていれば）。 */
+      /** not_started: why it could not be started. failed: the text of that finding (if decided). */
       message: string | null;
-      /** manual: 起動するコマンドを、この OS のシェルに貼れる 1 行にしたもの（ランチャーのまま）。 */
+      /** manual: the command that starts it, as one line to paste into this OS's shell (as the launcher wrote it). */
       command_line: string | null;
-      /** manual: そのコマンドを実行するディレクトリ。 */
+      /** manual: the directory to run that command in. */
       working_directory: string | null;
       /**
-       * manual: 起動するときに設定する環境変数（名前と値）。registry がループバックのアドレスでないときだけ
-       * （`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`）。なければ null。
+       * manual: environment variables to set when starting it (names and values). Only when the registry is not on a
+       * loopback address (`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`). null if none.
        */
       environment: Record<string, string> | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
-  /** ECU の変数との接続の状態（始まる直前に、起動した participant ごとに 1 回）。 */
+  /** State of the connection to the ECU's variables (once per started participant, just before the start). */
   | (EventBase & { event: typeof CONTROL_EVENT; name: string; link: ControlLink })
-  /** 読む側が遅くて、ランチャーが書けなかった log の行の数（出どころごと）。その位置に来る。 */
+  /**
+   * Number of log lines the launcher could not write because the reader was slow (per source). Arrives at their
+   * position.
+   */
   | (EventBase & { event: 'log_dropped'; count: number; sources: Record<string, number> })
   | (EventBase & { event: 'finding'; finding: Finding })
   | (EventBase & { event: 'time' } & TimeReport)
   | (EventBase & { event: 'command' } & CommandReport)
-  /** シナリオの手順が始まった（status が running）か、決まった。 */
+  /** A scenario step started (status running) or was decided. */
   | (EventBase & { event: 'scenario_step'; step: ScenarioStep })
   | (EventBase & { event: 'result'; result: RunResult });
 
 /**
- * time の事象（と要約の time）: controller が見ている仮想時間と、その進み方。古いランチャーは sim_ms だけを書くので、
- * ほかの欄はないか読めなければ null（画面は、null なら出さない）。
+ * The time event (and time of the summary): the virtual time the controller sees, and how it advances. Older launchers
+ * write only sim_ms, so the other fields are null when absent or unreadable (the screen does not show null values).
  */
 export interface TimeReport {
-  /** 仮想時間（ミリ秒。減らない）。 */
+  /** Virtual time (ms; never decreases). */
   sim_ms: number;
-  /** いまの速さ（数か 'max'）。書いていなければ null。 */
+  /** The current speed (a number or 'max'). null if not written. */
   speed: Speed;
-  /** 一時停止しているか（止まる予定の時刻に着いたら true）。書いていなければ null。 */
+  /** Whether it is paused (true once it reaches the time it was to stop at). null if not written. */
   paused: boolean | null;
-  /** 直近 1 秒ほどの実際の速さ。動いた時間が短いとき、一時停止しているときは null。 */
+  /** Actual speed over roughly the last second. null when it has run only briefly, or while paused. */
   actual_speed: number | null;
-  /** それまでに遅れた刻みの数（いま終わったとしたときの値。最速では 0）。 */
+  /** Number of late time steps so far (the value if it ended now; 0 when running as fast as possible). */
   late_steps: number | null;
-  /** それまでの最大の遅れ（ミリ秒）。 */
+  /** Max lateness so far (ms). */
   max_late_ms: number | null;
-  /** それまでのずれの合計（ミリ秒）。 */
+  /** Total slip so far (ms). */
   slipped_ms: number | null;
-  /** 期限を過ぎてもまだ始まっていない刻みの、いまの遅れ（ミリ秒。なければ 0）。 */
+  /** Current lateness of a time step that is past its deadline and has not started yet (ms; 0 if none). */
   late_ms: number | null;
 }
 
@@ -796,20 +831,26 @@ function readTimeFields(f: Fields, path: string, u?: Unreadable): TimeReport {
   };
 }
 
-/** command の事象（と要約の last_command）: ランチャーが標準入力の命令を受けたか。 */
+/** The command event (and last_command of the summary): whether the launcher accepted a command from stdin. */
 export interface CommandReport {
-  /** 命令の名前（読めなかった行は null）。 */
+  /** Name of the command (null for an unreadable line). */
   command: string | null;
-  /** stdin: 行で来た、eof: 標準入力の終わり。 */
+  /** stdin: arrived as a line; eof: end of stdin. */
   source: Open<'stdin' | 'eof'>;
   accepted: boolean;
-  /** 受け付けなかった理由（英語のまま出す）。受け付けたら null。 */
+  /** Why it was not accepted (shown in English, unchanged). null if accepted. */
   message: string | null;
-  /** 受け付けた step の、実際に進む仮想時間（刻みの倍数に切り上げたもの）。ほかは null。 */
+  /**
+   * For an accepted step, the virtual time it actually advances (rounded up to a multiple of the time step). null
+   * otherwise.
+   */
   ms: number | null;
 }
 
-/** 要約の last_command: 事象の欄と、その事象の seq（古いサーバーは書かないので null）。 */
+/**
+ * last_command of the summary: the event's fields and that event's seq (null from older servers, which do not write
+ * it).
+ */
 export type SummaryCommand = CommandReport & { seq: number | null };
 
 function readCommandFields(f: Fields, path: string, u?: Unreadable): CommandReport {
@@ -823,8 +864,9 @@ function readCommandFields(f: Fields, path: string, u?: Unreadable): CommandRepo
 }
 
 /**
- * ランチャーの事象を 1 つ読む。知らない事象は null（読み飛ばす）。partly が真なら部分ごとに読み、読めない欄は
- * 既定の値にして、その名前を unreadable に入れる（芯の seq と event、事象ごとの芯の欄が読めないときだけ投げる）。
+ * Reads one launcher event. An unknown event is null (skipped). If partly is true, reads part by part: an unreadable
+ * field gets its default value and its name goes into unreadable (throws only when the core seq and event, or the core
+ * fields of the event kind, cannot be read).
  */
 export const readLauncherEvent = (
   value: unknown,
@@ -857,7 +899,7 @@ function readEventFields(
 ): LauncherEvent | null {
   switch (kind) {
     case 'hello':
-      // 形式の版の食い違いはサーバーが見つけて知らせる。画面は読める欄だけを使う
+      // The server detects and reports a format version mismatch. The screen uses only the readable fields
       return {
         ...base,
         event: kind,
@@ -870,7 +912,7 @@ function readEventFields(
     case 'phase':
       return { ...base, event: kind, phase: field(f, path, 'phase', string) };
     case 'check':
-      // 読めない照合は null（読めない部分として出し、ほかの事象は当てる）
+      // An unreadable check is null (reported as an unreadable part; the other events are still applied)
       return {
         ...base,
         event: kind,
@@ -920,14 +962,14 @@ function readEventFields(
         line: field(f, path, 'line', string),
       };
     case 'finding':
-      // 所見の欄は事象の行にそのまま並ぶ
+      // The finding's fields sit directly in the event line
       return { ...base, event: kind, finding: readFinding(f, path, u) };
     case 'time':
       return { ...base, event: kind, ...readTimeFields(f, path, u) };
     case 'command':
       return { ...base, event: kind, ...readCommandFields(f, path, u) };
     case 'scenario_step':
-      // 手順の欄は事象の行にそのまま並ぶ
+      // The step's fields sit directly in the event line
       return { ...base, event: kind, step: readScenarioStepFields(f, path, u) };
     case 'result':
       return {
@@ -940,24 +982,26 @@ function readEventFields(
   }
 }
 
-// --- GUI サーバー: 共通 -------------------------------------------------------------------------
+// --- GUI server: common --------------------------------------------------------------------------
 
-/** サーバーの知らせ（API の誤り、WebSocket の error、セッションの problems）。message は英語のまま出す。 */
+/**
+ * A server notice (an API error, a WebSocket error, problems of the session). message is shown in English, unchanged.
+ */
 export interface ServerProblem {
   code: string;
   message: string;
-  /** launcher-stderr の、ここで落とした行の数（`detail.skipped`）。ほかの知らせにはない。 */
+  /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
   skipped?: number;
 }
 
-/** サーバーの知らせ（`{code, message, detail}`）を読む。HTTP の誤りの `error` の中身も同じ形。 */
+/** Reads a server notice (`{code, message, detail}`). The `error` in an HTTP error has the same shape. */
 export const readServerProblem: Reader<ServerProblem> = (value, path) => {
   const f = object(value, path);
   const problem: ServerProblem = {
     code: field(f, path, 'code', string),
     message: field(f, path, 'message', string),
   };
-  // detail の中身は code ごとに違う。使うものだけを、形が合うときだけ取る
+  // The contents of detail differ by code. Take only what is used, and only when its shape fits
   const detail = f['detail'];
   if (typeof detail === 'object' && detail !== null && 'skipped' in detail) {
     const skipped = detail.skipped;
@@ -969,52 +1013,56 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
 };
 
 /**
- * 速さ。'max' は最速、数は倍率（1 が等速）。null は、始めるときの指定ではランチャーの既定（構成ファイルの値）、
- * ランチャーが書く値では「書いていない」。
+ * Speed. 'max' is as fast as possible; a number is a factor (1 is real-time speed). null means the launcher's default
+ * (the value in the configuration file) when given at the start, and "not written" in a value the launcher writes.
  */
 export type Speed = null | number | 'max';
 
 const readSpeed: Reader<Speed> = (value, path) =>
   value === null || value === 'max' ? value : number(value, path);
 
-// --- GUI サーバー: HTTP の API -----------------------------------------------------------------
+// --- GUI server: HTTP API ------------------------------------------------------------------------
 
-/** GET api/app: サーバーとランチャーの版、使えるか、上限。 */
+/** GET api/app: versions of the server and the launcher, whether they are usable, and limits. */
 export interface AppInfo {
   version: string;
-  /** サーバーの起動ごとに変わる識別子。変わったら、サーバーが起動し直した。 */
+  /** An identifier that changes every time the server starts. If it changed, the server restarted. */
   instance: string;
-  /** 構成ファイルを選べる範囲（表示用）。 */
+  /** Where configuration files can be chosen from (for display). */
   root: string;
-  /** 起動のときに渡された構成ファイル（root からの相対）。なければ null。 */
+  /** The configuration file given at start-up (relative to root). null if none. */
   initial_file: string | null;
   launcher: {
     path: string | null;
-    /** 画面に要る機能をランチャーが持っているか。 */
+    /** Whether the launcher has the features the screen needs. */
     usable: boolean;
-    /** 使えない理由（英語のまま出す）。 */
+    /** Why it is unusable (shown in English, unchanged). */
     problems: ServerProblem[];
     features: string[];
   };
   limits: {
     speed_min: number;
     speed_max: number;
-    /** ステップ送りの ms の上限。古いサーバーは書かないので、ランチャーの上限（10^12）。 */
+    /** Upper limit of the ms of a step. Older servers do not write it, so the launcher's limit (10^12). */
     step_ms_max: number;
-    /** 照合の時間の上限（秒。`--check-timeout`）。古いサーバーは書かないので、その既定（120）。 */
+    /** Time limit of a check (s; `--check-timeout`). Older servers do not write it, so its default (120). */
     check_timeout_s: number;
-    /** 変数の watch: 間隔（ミリ秒）の下限と上限、接続ごとの数、1 つに名前で挙げられる変数の数。 */
+    /**
+     * Variable watches: lower and upper limit of the interval (ms), number per connection, variables that can be named
+     * in one.
+     */
     watch_period_ms_min: number;
     watch_period_ms_max: number;
     watches: number;
     watch_variables: number;
-    /** 1 回の書き込みの変数の数の上限と、書き込みに指定できる仮想時刻（ミリ秒）の上限。 */
+    /** Limit on the variables in one write, and limit on the virtual time (ms) a write can name. */
     writes_per_request: number;
     write_at_ms_max: number;
   };
   /**
-   * いま実行を始めたら変数を読み書きできるか（ランチャーが Control Server を持ち、GUI サーバーが gRPC を持つ）と、
-   * できない理由（英語のまま出す）。古いサーバーは書かない（available は false、reason は null）。
+   * Whether variables could be read and written if a run started now (the launcher has a Control Server and the GUI
+   * server has gRPC), and why not (shown in English, unchanged). Older servers do not write it (available is false,
+   * reason is null).
    */
   variables: { available: boolean; reason: string | null };
 }
@@ -1063,16 +1111,16 @@ export const readAppInfo = (value: unknown): AppInfo => {
   };
 };
 
-/** GET api/configs の 1 件。 */
+/** One entry of GET api/configs. */
 export interface ConfigFile {
-  /** root からの相対パス（区切りは /）。 */
+  /** Path relative to root (separator /). */
   path: string;
 }
 
-/** GET api/configs: root の下の構成ファイル。 */
+/** GET api/configs: the configuration files under root. */
 export interface ConfigList {
   files: ConfigFile[];
-  /** 上限で打ち切ったか。 */
+  /** Whether the list was cut off at the limit. */
   truncated: boolean;
 }
 
@@ -1090,39 +1138,39 @@ export const readConfigList = (value: unknown): ConfigList => {
   };
 };
 
-/** POST api/check の本文。 */
+/** Body of POST api/check. */
 export interface CheckRequest {
-  /** root からの相対パス。 */
+  /** Path relative to root. */
   file: string;
-  /** 外す participant の名前（照合の結果にある名前だけ）。 */
+  /** Names of the participants to leave out (only names in the check result). */
   disable: string[];
   /**
-   * 利用者が起動する participant の名前（照合の結果にある名前で、disable にないものだけ）。ランチャーの `features` に
-   * `manual-participants` があるときだけ送る。
+   * Names of the participants the user starts (only names in the check result that are not in disable). Send only when
+   * the launcher's `features` include `manual-participants`.
    */
   manual?: string[];
   /**
-   * シナリオ（`GET api/scenarios` の `path`。その構成ファイルの一覧にあるものだけ）。省くか null なら、なし。
-   * ランチャーの `features` に `scenario` があるときだけ送る。
+   * The scenario (`path` from `GET api/scenarios`; only one in the list for that configuration file). Omitted or null
+   * means none. Send only when the launcher's `features` include `scenario`.
    */
   scenario?: string | null;
 }
 
-/** GET api/scenarios の 1 件。 */
+/** One entry of GET api/scenarios. */
 export interface ScenarioFile {
-  /** root からの相対パス（api/check と api/run の `scenario` に、このまま送る）。 */
+  /** Path relative to root (send it as is in `scenario` of api/check and api/run). */
   path: string;
-  /** ファイルの名前。 */
+  /** File name. */
   name: string;
 }
 
-/** GET api/scenarios: 構成ファイルの隣の `scenarios` の .yaml と .yml。 */
+/** GET api/scenarios: the .yaml and .yml files in `scenarios` next to the configuration file. */
 export interface ScenarioList {
-  /** 構成ファイル（root からの相対）。 */
+  /** The configuration file (relative to root). */
   file: string;
-  /** シナリオのディレクトリ（root からの相対）。 */
+  /** The scenario directory (relative to root). */
   directory: string;
-  /** ディレクトリがあるか（シンボリックリンクのディレクトリは、ないとする）。 */
+  /** Whether the directory exists (a symbolic link to a directory counts as absent). */
   found: boolean;
   scenarios: ScenarioFile[];
   truncated: boolean;
@@ -1149,29 +1197,29 @@ export const readScenarioList = (value: unknown): ScenarioList => {
 };
 
 /**
- * GET api/recording: いまの（または最後の）実行で、GUI サーバーを通して書き、反映された値を、シナリオの YAML に
- * したもの。サーバーはファイルを書かない（画面がブラウザの保存として渡す）。
+ * GET api/recording: the values written through the GUI server and applied in the current (or last) run, as scenario
+ * YAML. The server writes no file (the screen hands it over as a browser download).
  */
 export interface Recording {
   session_id: number;
-  /** 実行の構成ファイル（root からの相対）。 */
+  /** The run's configuration file (relative to root). */
   file: string;
   state: Open<'running' | 'ended'>;
-  /** この実行で記録しているか（変数のない実行と、シナリオの実行では false）。 */
+  /** Whether this run is being recorded (false for a run without variables and for a scenario run). */
   available: boolean;
-  /** yaml がない理由（英語のまま出す）。 */
+  /** Why there is no yaml (shown in English, unchanged). */
   reason: string | null;
-  /** YAML に入れた値の数。 */
+  /** Number of values put in the YAML. */
   writes: number;
-  /** 上限を超えて入れなかった値の数。 */
+  /** Number of values beyond the limit that were left out. */
   omitted: number;
-  /** YAML の手順（`set`）の数。 */
+  /** Number of steps (`set`) in the YAML. */
   steps: number;
-  /** シナリオの YAML。まだ反映された書き込みがなければ null。 */
+  /** Scenario YAML. null while no write has been applied yet. */
   yaml: string | null;
 }
 
-/** GET api/recording の応答（実行がまだなければ null）。 */
+/** Answer of GET api/recording (null if there has been no run yet). */
 export const readRecording = (value: unknown): Recording | null => {
   const r = field(object(value, 'response'), 'response', 'recording', nullable(object));
   if (r === null) return null;
@@ -1189,38 +1237,41 @@ export const readRecording = (value: unknown): Recording | null => {
   };
 };
 
-/** POST api/check の応答から、ランチャーの照合の結果を取り出す。 */
+/** Takes the launcher's check result out of the answer to POST api/check. */
 export const readCheckResponse = (value: unknown): CheckResult =>
   field(object(value, 'response'), 'response', 'check', readCheckResult);
 
-/** POST api/run の本文。 */
+/** Body of POST api/run. */
 export interface RunRequest extends CheckRequest {
   speed: Speed;
   start_paused: boolean;
 }
 
-/** セッションの要約の participant（participant の事象を名前ごとに重ねたもの。まだ届いていない欄は null）。 */
+/**
+ * A participant in the session summary (the participant events laid over each other per name; fields not received yet
+ * are null).
+ */
 export interface SummaryParticipant {
   name: string;
   state: ParticipantState | null;
   pid: number | null;
   exit_code: number | null;
   signal: string | null;
-  /** failed の事象の reason（失敗とした理由。後で ended が来ても残る）。 */
+  /** reason of the failed event (why it was counted as failed; kept even if ended arrives later). */
   reason: string | null;
-  /** not_started の理由、failed の所見の文。 */
+  /** The reason of not_started, or the text of the failed finding. */
   message: string | null;
-  /** 大きすぎて要約に入れなかった欄の名前（後の事象でその欄が届けば消える）。 */
+  /** Names of fields too large to put in the summary (cleared once a later event delivers the field). */
   omitted_fields: string[];
-  /** ランチャーが止めるよう求めた（stop_requested の事象が来た。後の状態でも残る）。 */
+  /** The launcher asked it to stop (a stop_requested event arrived; kept in later states). */
   stop_requested: boolean;
-  /** manual の事象の command_line（起動するコマンドの 1 行）。なければ null。 */
+  /** command_line of the manual event (the command that starts it, as one line). null if none. */
   command_line: string | null;
-  /** manual の事象の working_directory。なければ null。 */
+  /** working_directory of the manual event. null if none. */
   working_directory: string | null;
-  /** manual の事象の environment（起動するときに設定する環境変数）。なければ null。 */
+  /** environment of the manual event (environment variables to set when starting it). null if none. */
   environment: Record<string, string> | null;
-  /** ECU の変数との接続の状態（ランチャーの control_link のイベント）。まだなければ null。 */
+  /** State of the connection to the ECU's variables (the launcher's control_link event). null until it arrives. */
   control_link: ControlLink | null;
 }
 
@@ -1256,14 +1307,20 @@ const readSummaryParticipant = (
   };
 };
 
-/** 要約の launcher: ランチャーのプロセスが動いているか、終わったならその終わり方。 */
+/** launcher of the summary: whether the launcher process is running and, if it ended, how. */
 export interface SummaryLauncher {
-  /** 動いているか。結果を出した後も、プロセスが終わるまでは true。止められるかはこれで決める。 */
+  /**
+   * Whether it is running. Stays true after it printed the result, until the process exits. Decides whether it can be
+   * stopped.
+   */
   running: boolean;
   exit_code: number | null;
-  /** 終わらせたシグナルの番号（POSIX だけ）。 */
+  /** Number of the signal that ended it (POSIX only). */
   signal: number | null;
-  /** 動いているのに、この秒数より長く何も書いていない（心拍も来ない。止まっているかもしれない）。なければ null。 */
+  /**
+   * Running but has written nothing for longer than this many seconds (no heartbeat either; it may be stuck). null if
+   * not.
+   */
   silent_s: number | null;
 }
 
@@ -1277,10 +1334,13 @@ const readSummaryLauncher: Reader<SummaryLauncher> = (value, path) => {
   };
 };
 
-/** サーバーがランチャーに頼んだ停止。none: 頼んでいない、requested: 順に止める、forced: 待たずに止める。 */
+/**
+ * The stop the server requested from the launcher. none: not requested; requested: stop in order; forced: stop without
+ * waiting.
+ */
 export type StopRequest = Open<'none' | 'requested' | 'forced'>;
 
-/** 出どころごとの、サーバーが覚えている行と落とした行の数。 */
+/** Per source, the number of lines the server holds and has dropped. */
 export interface LogCounts {
   kept: number;
   dropped: number;
@@ -1298,67 +1358,75 @@ function record<T>(read: Reader<T>): Reader<Record<string, T>> {
     );
 }
 
-/** サーバーのセッション（ランチャーの 1 回の run）の要約。画面の状態はこれで作り直す（要約が正）。 */
+/**
+ * Summary of a server session (one run of the launcher). The screen rebuilds its state from it (the summary is
+ * authoritative).
+ */
 export interface SessionSummary {
   id: number;
-  /** root からの相対パス。 */
+  /** Path relative to root. */
   file: string;
   disable: string[];
-  /** 画面から利用者が起動すると指定した participant（`--manual`。構成ファイルの `manual: true` は照合の結果にある）。 */
+  /**
+   * Participants the user chose on the screen to start themselves (`--manual`; `manual: true` in the configuration file
+   * is in the check result).
+   */
   manual: string[];
-  /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
+  /** Speed given at the start (null means as in the configuration file). The current speed is time.speed. */
   speed: Speed;
-  /** 止めた状態で始めたか。 */
+  /** Whether the run started paused. */
   start_paused: boolean;
-  /** サーバーから見た状態。`ended` なら、ランチャーは終わり、その出力も読み終えた。 */
+  /** State as the server sees it. `ended` means the launcher has exited and its output has been read to the end. */
   state: Open<'running' | 'ended'>;
   launcher: SummaryLauncher;
   stop: StopRequest;
   phase: Phase | null;
   last_seq: number | null;
-  /** 最後に受け取った事象の t_ms。 */
+  /** t_ms of the last event received. */
   last_t_ms: number | null;
-  /** 最後の time 事象の仮想時刻。 */
+  /** Virtual time of the last time event. */
   sim_ms: number | null;
-  /** 最後の time 事象の、大きすぎて要約に入れなかった欄の名前。 */
+  /** Names of the fields of the last time event too large to put in the summary. */
   time_omitted_fields: string[];
-  /** 最後の time 事象（仮想時間、速さ、一時停止、遅れの数）。まだなければ null。 */
+  /** The last time event (virtual time, speed, pause, lateness figures). null until it arrives. */
   time: TimeReport | null;
-  /** 最後の command 事象（受け付けたか、理由）。まだなければ null。 */
+  /** The last command event (whether it was accepted, and why not). null until it arrives. */
   last_command: SummaryCommand | null;
   /**
-   * この run の照合の結果（check の事象）。まだなければ null。`session_without_check` を頼んだ接続の `session` の
-   * 通知には欄がなく、null として読む（手元の照合の結果をそのまま使う）。
+   * The check result of this run (the check event). null until it arrives. The `session` notifications of a connection
+   * that asked for `session_without_check` lack the field and read it as null (the local check result is used as is).
    */
   check: CheckResult | null;
   participants: SummaryParticipant[];
   findings: Finding[];
   result: RunResult | null;
-  /** 出どころごとの、サーバーが覚えている行と落とした行の数。 */
+  /** Per source, the number of lines the server holds and has dropped. */
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
-  /** シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では null。 */
+  /** Progress of the scenario run (`scenario` of `api/run`). null for a run without a scenario. */
   scenario: SummaryScenario | null;
   /**
-   * 読めなかった部分の名前（`result.participants`、`findings.code` など。画面が付ける。サーバーの欄ではない）。
-   * 上限で縮めた結果の、ない欄もここに入る。
+   * Names of the parts that could not be read (`result.participants`, `findings.code` and so on; set by the screen,
+   * not a server field). The missing fields of a result shrunk to fit the limits go here too.
    */
   unreadable: string[];
 }
 
-/** 要約の `scenario`: 照合、`scenario_step` の事象、結果から、サーバーがまとめたもの。 */
+/**
+ * `scenario` of the summary: what the server put together from the check, the `scenario_step` events and the result.
+ */
 export interface SummaryScenario {
-  /** シナリオのファイル（root からの相対）。 */
+  /** The scenario file (relative to root). */
   file: string;
   name: string | null;
-  /** 手順の数（照合の結果から。まだなければ null）。 */
+  /** Number of steps (from the check result; null until then). */
   step_count: number | null;
-  /** 届いた手順（index の順）。結果の後は、全部の手順（not_run を含む）。 */
+  /** Steps received (in index order). After the result, every step (not_run included). */
   steps: ScenarioStep[];
-  /** 上限を超えて覚えていない手順の数。 */
+  /** Number of steps beyond the limit that were not kept. */
   steps_omitted: number;
-  /** 結果の status（結果がまだなければ null）。 */
+  /** status of the result (null until there is a result). */
   status: ScenarioStatus | null;
   over_at_ms: number | null;
 }
@@ -1382,8 +1450,8 @@ const readSummaryScenario = (value: unknown, path: string, u: Unreadable): Summa
 };
 
 /**
- * セッションの要約を、部分ごとに読む。芯（id、state、launcher、stop）が読めなければ投げる。ほかの部分は、
- * 読めなければ既定の値（null、空）にして、その名前を unreadable に入れる。
+ * Reads a session summary part by part. Throws if the core (id, state, launcher, stop) cannot be read. Any other part
+ * that cannot be read gets its default value (null, empty) and its name goes into unreadable.
  */
 export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const f = object(value, path);
@@ -1475,7 +1543,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   return { ...summary, unreadable: u.parts };
 };
 
-/** 出どころごとの数を、読めるものだけ読む。 */
+/** Reads the per-source counts, only those that are readable. */
 function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, T>> {
   return (value, path) => {
     const out: Record<string, T> = {};
@@ -1487,30 +1555,32 @@ function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, 
   };
 }
 
-/** GET api/session、POST api/run、POST api/stop の応答（いまのセッション。なければ null）。 */
+/** Answer of GET api/session, POST api/run and POST api/stop (the current session; null if none). */
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
   field(object(value, 'response'), 'response', 'session', nullable(readSessionSummary));
 
-/** POST api/stop の本文。force: false は順に止める（何度頼んでも同じ）、true は待たずに止める。 */
+/**
+ * Body of POST api/stop. force: false stops in order (asking again has no further effect); true stops without waiting.
+ */
 export interface StopRequestBody {
   force: boolean;
 }
 
-/** 時刻の命令の名前（ランチャーの標準入力の命令のうち、stop を除くもの）。 */
+/** Names of the time commands (the launcher's stdin commands other than stop). */
 export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed';
 
 /**
- * POST api/time の本文。サーバーはランチャーに 1 行で渡して、すぐ返す。受け付けたかは command の事象で、効いたことは
- * time の事象で届く。
+ * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
+ * arrives as a command event, and its effect as a time event.
  */
 export type TimeCommand =
   | { command: 'pause' }
   | { command: 'resume' }
-  /** 一時停止している間だけ。ms 進めて、また止まる（ランチャーが刻みの倍数に切り上げる）。 */
+  /** Only while paused. Advances by ms and pauses again (the launcher rounds up to a multiple of the time step). */
   | { command: 'step'; ms: number }
   | { command: 'speed'; value: number | 'max' };
 
-/** POST api/time の応答: 送った実行の番号と、ランチャーに渡した命令。 */
+/** Answer of POST api/time: the number of the run it was sent to, and the command passed to the launcher. */
 export interface TimeAnswer {
   session_id: number;
   command: TimeCommandName;
@@ -1526,10 +1596,13 @@ export const readTimeResponse = (value: unknown): TimeAnswer => {
   };
 };
 
-// --- GUI サーバー: WebSocket -------------------------------------------------------------------
+// --- GUI server: WebSocket -----------------------------------------------------------------------
 
-/** つないだ直後に送る最初のメッセージ。session と from_seq を言うと、その続きから再送される。 */
-/** 変数 1 つの定義（要約の `variables.peers[].variables[]`）。 */
+/**
+ * The first message sent right after connecting. With session and from_seq, the server resends from where that left
+ * off.
+ */
+/** Definition of one variable (`variables.peers[].variables[]` of the summary). */
 export interface VariableSummary {
   name: string;
   type: Open<'bool' | 'integer' | 'real' | 'enum'>;
@@ -1540,14 +1613,14 @@ export interface VariableSummary {
   max: number | null;
   step: number | null;
   description: string;
-  /** 列挙の項目（type が enum のとき。ほかは null）。 */
+  /** Items of an enum (when type is enum; null otherwise). */
   enum: { name: string; value: number }[] | null;
 }
 
-/** 書き込みの結果（`operation` の通知と、要約の `variables.operations[]`）。 */
+/** Result of a write (the `operation` notification, and `variables.operations[]` of the summary). */
 export interface OperationReport {
   seq: number;
-  /** sent、queued（途中）。確定したら applied、late、rejected、cancelled、invalid、busy、unknown、mixed。 */
+  /** sent, queued (in progress). Once settled: applied, late, rejected, cancelled, invalid, busy, unknown, mixed. */
   state: string;
   done: boolean;
   peers: Record<
@@ -1556,18 +1629,18 @@ export interface OperationReport {
   >;
 }
 
-/** 要約の `variables`: 変数の機能の状態、participant ごとの変数、最近の操作。 */
+/** `variables` of the summary: state of the variable API, variables per participant, recent operations. */
 export interface VariablesSummary {
   state: Open<'off' | 'connecting' | 'ready' | 'failed' | 'ended'>;
   reason: string | null;
   peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
   peers_omitted: number;
   variables_omitted: number;
-  /** 未確定の操作の全部（サーバーが覚えている分）と、最近の操作。 */
+  /** Every unsettled operation (those the server keeps), and the recent operations. */
   operations: OperationReport[];
-  /** この番号以上の操作は、全部 operations に入っている（言わないサーバーでは null）。 */
+  /** Every operation numbered at or above this is in operations (null from a server that does not say). */
   operations_from_seq: number | null;
-  /** サーバーが覚えきれなかった未確定の操作の数（ふつうは 0）。 */
+  /** Number of unsettled operations the server could not keep (normally 0). */
   operations_open_omitted: number;
 }
 
@@ -1623,7 +1696,7 @@ const readVariableSummary: Reader<VariableSummary> = (value, path) => {
   };
 };
 
-/** 要約の `variables` を読む（`hello` と HTTP の要約にある。`session` の通知にはない）。 */
+/** Reads `variables` of a summary (present in `hello` and HTTP summaries, absent from `session` notifications). */
 export const readVariablesSummary = (value: unknown): VariablesSummary =>
   readVariables(value, 'variables');
 
@@ -1656,24 +1729,26 @@ const readVariables: Reader<VariablesSummary> = (value, path) => {
   };
 };
 
-/** `values` の通知: watch している変数の最後の値と、それがいつのものか。 */
+/** The `values` notification: the last values of the watched variables, and when they are from. */
 export interface ValuesMessage {
   type: 'values';
-  /** watch の id。 */
+  /** id of the watch. */
   id: number;
   session: number;
-  /** controller の仮想時間（ミリ秒。わからなければ null）。 */
+  /** The controller's virtual time (ms; null if unknown). */
   sim_ms: number | null;
-  /** true: 止まっていて、sim_ms より前に始まったステップの値は全部入っている。 */
+  /** true: paused, and the values include every step that began before sim_ms. */
   paused: boolean;
-  /** participant ごとの、値を読んだステップの仮想時間と、変数の値（有限でない実数は null）。 */
+  /**
+   * Per participant, the virtual time of the step that read the values, and the values (null for a non-finite real).
+   */
   peers: Record<string, { sample_ms: number; values: Record<string, number | boolean | null> }>;
 }
 
-/** `api/write` の応答。 */
+/** Answer of `api/write`. */
 export interface WriteAnswer {
   session_id: number;
-  /** 操作の番号。結果は `operation` の通知で届く。 */
+  /** Operation number. The result arrives in `operation` notifications. */
   operation: number;
 }
 
@@ -1685,9 +1760,12 @@ export const readWriteResponse = (value: unknown): WriteAnswer => {
   };
 };
 
-// --- ダッシュボードのファイル（GET api/dashboard） ------------------------------------------------
+// --- Dashboard files (GET api/dashboard) ---------------------------------------------------------
 
-/** ダッシュボードのファイルの誤り 1 つ: 行と桁（1 から）、データの中の場所（`sections[0].items[2].widget`）、直し方を含む英語の文。 */
+/**
+ * One error in a dashboard file: line and column (from 1), location in the data (`sections[0].items[2].widget`), and
+ * English text that says how to fix it.
+ */
 export interface DashboardFileError {
   line: number;
   column: number;
@@ -1695,17 +1773,17 @@ export interface DashboardFileError {
   message: string;
 }
 
-/** ファイルに書いた変数（`<participant>.<変数名>` を分けたもの）。 */
+/** A variable written in the file (`<participant>.<variable name>` split up). */
 export interface DashboardVariable {
   peer: string;
   name: string;
 }
 
 /**
- * ファイルの項目。どれか 1 つの形（知らない形の項目は、読み取りが捨てる）。
- * - variable: 変数を部品で出す（widget が null なら既定の部品）。
- * - panel: 持ち込みのパネル（custom element の名前）。
- * - auto: その participant の、ファイルのほかの所に置いていない変数（既定の部品で）。
+ * An item in the file, of exactly one of these shapes (the parser drops items of an unknown shape).
+ * - variable: shows a variable with a widget (the default widget if widget is null).
+ * - panel: a custom panel (the name of a custom element).
+ * - auto: the variables of that participant not placed elsewhere in the file (with the default widgets).
  */
 export type DashboardFileItem =
   | {
@@ -1722,20 +1800,20 @@ export type DashboardFileItem =
     }
   | { auto: string };
 
-/** ファイルのまとまり。 */
+/** A section of the file. */
 export interface DashboardFileSection {
   title: string;
   collapsed: boolean;
   items: DashboardFileItem[];
 }
 
-/** 持ち込みのパネルのモジュール: ファイルに書いた名前と、読み込む URL（画面の base からの相対）。 */
+/** A custom panel module: the name written in the file, and the URL to load (relative to the screen's base). */
 export interface DashboardPanelModule {
   module: string;
   url: string;
 }
 
-/** サーバーが確かめたダッシュボードのファイルの中身。 */
+/** Contents of a dashboard file, as checked by the server. */
 export interface DashboardFile {
   title: string | null;
   panels: DashboardPanelModule[];
@@ -1743,13 +1821,13 @@ export interface DashboardFile {
 }
 
 /**
- * `GET api/dashboard?file=<構成ファイル>`: 構成ファイルの隣の `<名前>.dashboard.yaml`。ないとき（found が偽）と、
- * 誤りがあるとき（errors。dashboard は null）は、画面は自動のダッシュボードにする。
+ * `GET api/dashboard?file=<configuration file>`: `<name>.dashboard.yaml` next to the configuration file. When there is
+ * none (found is false) or it has errors (errors; dashboard is null), the screen uses the automatic dashboard.
  */
 export interface DashboardResponse {
-  /** 構成ファイル（root からの相対）。 */
+  /** The configuration file (relative to root). */
   file: string;
-  /** ダッシュボードのファイル（root からの相対）。 */
+  /** The dashboard file (relative to root). */
   path: string;
   found: boolean;
   errors: DashboardFileError[];
@@ -1783,7 +1861,7 @@ const readDashboardItem = (value: unknown, path: string): DashboardFileItem | nu
     };
   }
   if (f['auto'] !== undefined) return { auto: field(f, path, 'auto', string) };
-  return null; // 知らない形の項目
+  return null; // An item of an unknown shape
 };
 
 const readDashboardFile: Reader<DashboardFile> = (value, path) => {
@@ -1842,7 +1920,10 @@ export const readDashboardResponse = (value: unknown): DashboardResponse => {
   };
 };
 
-/** 認証の後に画面が送る通知: 変数の watch を始める（同じ id なら置き換える）、やめる。 */
+/**
+ * Notifications the screen sends after authentication: start a variable watch (replacing one with the same id), or stop
+ * it.
+ */
 export type WatchMessage =
   | {
       type: 'watch';
@@ -1858,13 +1939,13 @@ export interface AuthMessage {
   session?: number;
   from_seq?: number;
   /**
-   * true なら、この接続の `session` の通知の要約に `check` を入れない（`hello` の要約と `check` の事象で届く）。
-   * 照合の結果は大きく、実行の間に変わらないため。
+   * If true, the summaries in this connection's `session` notifications leave out `check` (it arrives in the `hello`
+   * summary and the `check` event), because the check result is large and does not change during the run.
    */
   session_without_check?: boolean;
 }
 
-/** hello の replay: どこから再送するか（null は最初から）。 */
+/** replay of hello: where the resend starts (null: from the beginning). */
 export interface Replay {
   from_seq: number | null;
 }
@@ -1874,43 +1955,55 @@ const readReplay: Reader<Replay> = (value, path) => {
   return { from_seq: field(f, path, 'from_seq', nullable(integer)) };
 };
 
-/** dropped: この画面に送らなかったものの数。 */
+/** dropped: how much was not sent to this screen. */
 export interface Dropped {
   type: 'dropped';
   session: number | null;
-  /** not-kept: サーバーが覚えていない（再送の前）、slow-client: 画面の受け取りが遅く、送る分から落とした。 */
+  /**
+   * not-kept: the server no longer holds it (before the resend); slow-client: the screen read too slowly and the server
+   * dropped some of what it was to send.
+   */
   reason: Open<'not-kept' | 'slow-client'>;
-  /** 出どころごとの、落とした log の行の数。 */
+  /** Per source, the number of log lines dropped. */
   log: Record<string, number>;
-  /** 数が下限でしかない（もっと落ちているかもしれない）出どころ。 */
+  /** Sources whose count is only a lower bound (more may have been dropped). */
   at_least: string[];
-  /** 落としたほかの事象の数。 */
+  /** Number of other events dropped. */
   events: number;
 }
 
 export type ServerMessage =
-  /** つないだ直後（と resync の後）。いまのセッションの要約と、続く再送の説明。 */
+  /**
+   * Right after connecting (and after resync): summary of the current session, and a description of the resend that
+   * follows.
+   */
   | { type: 'hello'; instance: string; session: SessionSummary | null; replay: Replay | null }
-  /** ランチャーの事象（再送の log の行も、新しいものも）。 */
+  /** A launcher event (resent log lines as well as new events). */
   | { type: 'event'; session: number; event: LauncherEvent }
-  /** 再送が終わった。 */
+  /** The resend has finished. */
   | { type: 'synced'; session: number | null; last_seq: number | null }
-  /** セッションの要約が変わった（始まった、停止を頼んだ、ランチャーが終わった、実行が終わった）。 */
+  /** The session summary changed (started, stop requested, the launcher exited, the run ended). */
   | { type: 'session'; session: SessionSummary }
-  /** サーバーの知らせ（seq の抜け、ランチャーの不正な行、結果のない終わり、認証の失敗など）。 */
+  /**
+   * A server notice (a gap in seq, an invalid line from the launcher, an end without a result, failed authentication
+   * and so on).
+   */
   | ({ type: 'error'; session: number | null } & ServerProblem)
-  /** 送らなかったものの数。 */
+  /** How much was not sent. */
   | Dropped
-  /** 画面が読むのが遅く、メッセージを落とした。続けて hello から送り直される。 */
+  /** The screen read too slowly and messages were dropped. Everything is sent again, starting with hello. */
   | { type: 'resync'; message: string }
-  /** 変数の機能の状態か一覧が変わった（実行が始まった直後にも 1 回）。 */
+  /** The state or the list of the variable API changed (also once right after a run starts). */
   | { type: 'variables'; session: number; variables: VariablesSummary }
-  /** watch している変数の値。 */
+  /** Values of the watched variables. */
   | ValuesMessage
-  /** 書き込みの結果が変わった。 */
+  /** The result of a write changed. */
   | ({ type: 'operation'; session: number } & OperationReport);
 
-/** WebSocket の通知を 1 つ読む。知らない通知と、知らない事象を包んだ通知は null（読み飛ばす）。 */
+/**
+ * Reads one WebSocket notification. Unknown notifications, and notifications wrapping an unknown event, are null
+ * (skipped).
+ */
 export const readServerMessage = (value: unknown): ServerMessage | null => {
   const path = 'message';
   const f = object(value, path);

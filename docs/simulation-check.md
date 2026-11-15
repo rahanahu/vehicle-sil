@@ -1,222 +1,224 @@
-# 照合と指摘（`vehicle_sil_launch check`）
+# Checks and findings (`vehicle_sil_launch check`)
 
-`vehicle_sil_launch check <file>` が、設定ファイルと ECU の実行ファイルを照合する順序、指摘のコードの一覧、出力の形式（人が読む表と JSON）のリファレンスです。`vehicle_sil_launch run` も、最初に同じ照合をします。
+[日本語](ja/simulation-check.md)
 
-| 調べること | 節 |
+This is the reference for `vehicle_sil_launch check <file>`: the order in which it checks the configuration file against the ECU executables, the list of finding codes, and the output formats (a human-readable table and JSON). `vehicle_sil_launch run` runs the same check first.
+
+| To find | See |
 |---|---|
-| 何を、どの順に照合するか | [照合の順序](#照合の順序) |
-| 指摘のコードの意味と直し方 | [指摘のコード](#指摘のコード) |
-| J1939 のアドレスが重なったときの重大度 | [J1939 のアドレスの重なり](#j1939-のアドレスの重なり) |
-| 人が読む出力の読み方 | [人向け](#人向け) |
-| `check --json` のキー | [JSON（`--json`）](#json--json) |
-| 引数と終了コード | [simulation-config.md](simulation-config.md) の「引数と終了コード」 |
+| What is checked, and in which order | [Check order](#check-order) |
+| What each finding code means and how to fix it | [Finding codes](#finding-codes) |
+| The severity when J1939 addresses overlap | [Overlapping J1939 addresses](#overlapping-j1939-addresses) |
+| How to read the human-readable output | [Human-readable](#human-readable) |
+| The keys of `check --json` | [JSON (`--json`)](#json---json) |
+| Arguments and exit codes | "Arguments and exit codes" in [simulation-config.md](simulation-config.md#arguments-and-exit-codes) |
 
-## 照合
+## Checks
 
-`check` は、見つけたものを全部まとめて、指摘として表示します。指摘には 3 つの重大度があります。
+`check` reports everything it finds, all at once, as findings. A finding has one of 3 severities.
 
-| 重大度 | 行の先頭 | 照合の結果 |
+| Severity | Start of the line | Result of the check |
 |---|---|---|
-| エラー | `error:` | 照合を失敗にします。 |
-| 警告 | `warning:` | `--strict` のときだけ失敗にします。 |
-| 注記 | `note:` | 失敗にしません（照合が確認できなかったことを伝えます）。 |
+| Error | `error:` | Fails the check. |
+| Warning | `warning:` | Fails the check only with `--strict`. |
+| Note | `note:` | Never fails the check. It tells you what the check could not confirm. |
 
-### 照合の順序
+### Check order
 
-| 順 | 照合するもの | 内容 |
+| Stage | What is checked | Details |
 |---|---|---|
-| 1 | 設定ファイルの文面 | 形式のバージョン、知らないキーと足りないキー、値の型と範囲、名前、`command` の引数と波括弧を確認します。 |
-| 2 | 実行ファイル | あること、ディレクトリでないこと、バッチファイルでないこと、（Linux では）実行の許可があることを確認します。 |
-| 3 | `--describe` の出力 | `describe: true` の各実行ファイルを `--describe --name <participant 名>` で起動し、標準出力の JSON を読みます。 |
-| 4 | 設定ファイルと `--describe` の出力 | 2 つを照合します。 |
+| 1 | The text of the configuration file | The format version, unknown and missing keys, value types and ranges, names, and the arguments and braces of `command`. |
+| 2 | The executables | That each one exists, is not a directory, is not a batch file and (on Linux) has execute permission. |
+| 3 | The `--describe` output | Starts each `describe: true` executable with `--describe --name <participant name>` and reads the JSON on its stdout. |
+| 4 | The configuration file against the `--describe` output | Checks the two against each other. |
 
-**順 1 の補足**
+**Notes on stage 1**
 
-- 機種（`variants`）は、選んでいないものも含めて全部の形を確認します。
-- その後、`--variant` で選んだ機種の差分を共通の部分に重ね、ここから先は、重ねた後の設定を照合します（[simulation-config.md](simulation-config.md) の「機種」）。
-- 機種を選んだときは、人向けの出力の最初の行に `(variant <名前>)` が付きます。
-- エラーのある participant は、順 2 に進めません。
-- ここでいうエラーは、名前がない・使えない、`command` が使えない、名前が重複している、`describe` が真偽値でない、`command` の引数のエラーです。
-- 知らないキーや `step_ms` のエラーは、照合を止めません。
+- The form of every variant (`variants`) is checked, including the variants that are not selected.
+- Then the differences of the variant selected with `--variant` are applied on top of the common part, and from here on the check works on the result (see "Variants (`variants`, `--variant`)" in [simulation-config.md](simulation-config.md#variants-variants---variant)).
+- When a variant is selected, the first line of the human-readable output ends with `(variant <name>)`.
+- A participant with an error does not go on to stage 2.
+- The errors meant here are a missing or invalid name, an invalid `command`, a duplicate name, a `describe` that is not a boolean, and errors in the arguments of `command`.
+- Unknown keys and errors in `step_ms` do not stop the check.
 
-**順 2 の補足**
+**Notes on stage 2**
 
-- 無効にした participant（`enabled: false`、`--disable`）は、順 2 以降を照合しません。
+- Disabled participants (`enabled: false`, `--disable`) are not checked from stage 2 on.
 
-**順 3 の補足**
+**Notes on stage 3**
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 起動の順 | 1 つずつ順に起動します（並列にしません）。 |
-| 作業ディレクトリと標準入力 | 作業ディレクトリは設定ファイルのあるディレクトリで、標準入力は空です。 |
-| 時間の上限 | `--describe-timeout-ms`（既定 10000 ms）を過ぎたら止めます（出力を書き続ける実行ファイルも止めます）。 |
-| その participant のエラーになるもの | 終了コードが 0 でない、時間内に終わらない、JSON でない、形式のバージョンが違う、のどれかです。 |
-| シグナルや例外で終わったとき | 指摘の文に、そう書きます。 |
-| 添えるもの | エラーには、標準エラーの最後の 10 行を添えます。 |
-| 読む量 | 標準出力の最初の 1 MiB と、標準エラーの最後の 1 MiB です。 |
-| 標準出力を切ったとき | `--describe` の出力のエラーに添える文に、そう書きます。 |
-| 標準エラーを切ったとき | 末尾を添えるところに、そう書きます。 |
+| Start order | One executable at a time, in turn (not in parallel). |
+| Working directory and stdin | The working directory is the directory of the configuration file. Stdin is empty. |
+| Time limit | The executable is stopped after `--describe-timeout-ms` (default 10000 ms), even if it is still writing output. |
+| What makes it an error for that participant | A nonzero exit code, not ending in time, output that is not JSON, or a different format version. |
+| Ended by a signal or an exception | The finding message says so. |
+| Attached text | An error comes with the last 10 lines of stderr. |
+| How much is read | The first 1 MiB of stdout and the last 1 MiB of stderr. |
+| Stdout cut off | The text attached to an error about the `--describe` output says so. |
+| Stderr cut off | The attached stderr tail says so. |
 
-### 指摘のコード
+### Finding codes
 
-各ルールには、出力に表示する固定の名前（コード。JSON では `code`）があります。重大度の「（読めない）」は、設定ファイルを読めないエラーで、終了コードが 3 になります。直し方は指摘の文にも入っているので、この表は、コードから意味を調べるのに使います。シナリオ（`--scenario`）の指摘のコードは、下の表の 1 つを除いて、[scenario.md](scenario.md) にあります。
+Each rule has a fixed name (the code; `code` in JSON) that the output shows. A severity marked "(unreadable)" is an error that makes the configuration file unreadable and gives exit code 3. The finding message itself says how to fix the problem; use this table to look up what a code means. The finding codes of scenarios (`--scenario`) are in [scenario.md](scenario.md), except for the one in the table below.
 
-| コード | 重大度 | 意味 | 直し方 |
+| Code | Severity | Meaning | Fix |
 |---|---|---|---|
-| `syntax` | エラー（読めない） | YAML または JSON の文法のエラーです。 | 添えられた場所の文法を直します。 |
-| `not-a-configuration` | エラー（読めない） | 空のファイルか、マッピングでないファイルです。 | `vehicle_sil_simulation: 1`、`networks`、`participants` を持つマッピングを書きます。 |
-| `encoding` | エラー（読めない） | UTF-8 でないファイルです（UTF-16、NUL を含む）。 | UTF-8 で保存します。 |
-| `unsupported-yaml` | エラー（アンカーとエイリアスは読めない） | アンカーとエイリアスか、2 つ目の文書（`---`）があります。 | 値を書き下し、2 つ目以降の文書は削除するか別のファイルにします。 |
-| `format-version` | エラー（知らないバージョンは読めない） | `vehicle_sil_simulation` が 1 ではありません。 | `vehicle_sil_simulation: 1` と書くか、そのファイルの形式を読める vehicle-sil を使います。 |
-| `file` | エラー（読めない） | ファイルがない、ディレクトリ、通常のファイルでない、大きすぎる、開けない、のどれかです。 | パスとファイルを確認します。 |
-| `missing-key` | エラー | 必須のキーがありません。 | 指摘の文にあるキーを追加します。 |
-| `unknown-key` | エラー | 知らないキーがあります。 | キーの名前を直します（指摘の文に、近い名前と書けるキーの一覧があります）。 |
-| `duplicate-key` | エラー | 同じキーが 2 回あります。 | 片方を削除します。 |
-| `value` | エラー | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダー、`stop_at_ms` の約数でない `time_step_ms` のどれかです。 | 指摘の文に従って、値を直します。 |
-| `duplicate-name` | エラー | participant 名、またはネットワークの名前が 2 回あります。 | 片方を削除するか、別の名前にします。 |
-| `reserved-name` | エラー | participant 名が `SimulationController` です。 | 別の名前にします。 |
-| `launcher-argument` | エラー | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがあります。 | それを削除するか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
-| `unknown-placeholder` | エラー | `describe: false` の `command` に知らない `{語}` があります。 | `{registry_uri}` か `{name}` に直すか、文字列として渡すなら `{{語}}` と書きます。 |
-| `no-registry-uri` | 注記 | `describe: false` の `command` に `{registry_uri}` がありません。 | 実行ファイルが registry の URI を必要とするなら、その引数の値に `"{registry_uri}"` を書きます。 |
-| `registry-on-network` | 注記 | `registry_uri` がループバックのアドレスではありません。 | この PC だけで動かすなら、`127.0.0.1` にするか、`registry_uri` を書きません。 |
-| `listen-variable-ignored` | 注記 | `vehicle_sil_launch` 自身の環境の `VEHICLE_SIL_LISTEN_ON_NETWORK` が、`run` が participant に渡す値と違います（その値は使いません）。 | ほかの PC から参加させたいときだけ、`registry_uri` に、その PC から接続できるアドレスを書きます。 |
-| `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` があります。 | `step_ms` を削除するか、`ecu_main` の実行ファイルなら `describe: true` にします。 |
-| `executable` | エラー | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない、のどれかです。 | `command` のパスを直すか、実行ファイルを置きます。 |
-| `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけました（その場所を表示します）。 | 表示された場所が、意図した実行ファイルかを確認します。 |
-| `not-required-ecu` | エラー | `describe: true` の participant に `required: false` があります。 | `required: false` を削除します（その ECU なしで動かすなら、`enabled: false` か `--disable`）。 |
-| `no-required-participant` | エラー | 無効にしていない participant がどれも `required: false` か、すべてを無効にしました（シミュレーションが待つ participant がない）。 | 必須（`required: true`）の participant を、1 つ以上有効にします。 |
-| `describe-start` | エラー | 実行ファイルを起動できません。 | そのファイルが、この PC で動く実行ファイルかを確認します。 |
-| `describe-timeout` | エラー | `--describe` が時間内に終わりません。 | ECU の組み立ての中で待っている処理（接続、入力）を直すか、`--describe-timeout-ms` を長くします。 |
-| `describe-failed` | エラー | `--describe` の終了コードが 0 ではありません（4 は、ecu_main でない実行ファイルの見込みが高い）。 | 添えられた標準エラーの原因を直すか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
-| `describe-output` | エラー | `--describe` の出力が、`--describe` の JSON ではありません。 | ほかのものが標準出力に書かないようにするか、`ecu_main` で作っていない実行ファイルなら `describe: false` を書きます。 |
-| `describe-version` | エラー | `--describe` の出力の形式のバージョン（`vehicle_sil_ecu`）を読めません。 | 指摘の文が言うほう（ECU か `vehicle_sil_launch`）を、新しくします。 |
-| `describe-unknown-value` | エラー | `--describe` の出力の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値があります（新しい vehicle-sil の ECU）。 | `vehicle_sil_launch` を、ECU と同じか、それより新しい vehicle-sil のものにします。 |
-| `name-mismatch` | エラー | `--describe` の出力の `name` が participant 名と違います（`--name` を `ecu_main` に渡していない）。 | ECU の `main()` を、引数を全部 `ecu_main` に渡すように直します。 |
-| `step-mismatch` | エラー | `step_ms` が、`--describe` の出力のステップ幅と違います（実時間で、ステップ幅のない ECU も）。 | `step_ms` を指摘の文の値に直すか、削除します。 |
-| `unknown-network` | エラー | ECU が、`networks` にないネットワークを使います。 | 1 つのバスのつもりなら ECU の側の名前をそろえ、別のバスなら `networks` に追加します。 |
-| `kind-mismatch` | エラー | ECU が、ネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使います。 | `networks` の `kind` か、ECU の側のネットワークを直します。 |
-| `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。 |
-| `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移ります。 | どのノードがどのアドレスにいるかを決めたいなら、ノードごとに別のアドレスにします。 |
-| `name-conflict` | エラー | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じです。 | ノードごとに別の NAME にします（同じ ECU の 2 つ目は、identity number を変えます）。 |
-| `lin-masters` | エラー | 1 つの LIN のネットワークに master が 2 つ以上あります（同じ participant の 2 回も）。 | master を 1 つにします（ほかを slave にするか、`lin_master()` を 1 回だけ呼びます）。 |
-| `lin-no-master` | エラー（`describe: false` の participant がいるときは注記） | LIN の slave がいて、master がいません。 | master になる participant を追加します。 |
-| `ethernet-duplicate-mac` | エラー | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを `--describe` に出力しています。 | participant ごとに別のアドレスにします（`eth::ChannelOptions::mac` と、送信するフレームの送信元のアドレス）。 |
-| `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを `--describe` に出力しない participant がいます。 | `ethernet()` にアドレスを渡す（`eth::ChannelOptions::mac`）か、アドレスが重ならないことを自分で確認します。 |
-| `unused-network` | 警告（`describe: false` の participant がいるときは注記） | どの participant も使わないネットワークです。 | ネットワークを削除するか、ECU の側のネットワーク名を確認します。 |
-| `single-participant` | 警告（`describe: false` の participant がいるときは注記） | participant が 1 つだけのネットワークです（送信したものを誰も受信しない）。 | そのネットワークのほかの participant を追加するか、ネットワークを削除します。 |
-| `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを持つ participant と、ブリッジが、同じネットワークにいるかもしれません。 | その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その実行ではブリッジを無効にします。 |
-| `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
-| `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
-| `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
-| `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` のバージョンと違います。 | 一緒に動かなければ、同じバージョンでビルドし直します。 |
-| `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
-| `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションに公開すると `--describe` に出力していません（`--no-control`、`control` のない古い実行ファイル）。 | 変数を読み書きしたいなら、`--no-control` を削除するか、新しい vehicle-sil で ECU をビルドし直します。 |
-| `control-link-version` | 警告 | 変数のある ECU が出力した、メッセージの形式のバージョン（かトランスポート）が、`vehicle_sil_launch` と違います。 | ECU と `vehicle_sil_launch` を、同じバージョンの vehicle-sil でビルドします。 |
-| `variable-map-unknown` | エラー | `variables` の対応の `from` の変数が、実行ファイルにありません。 | `from` の名前を直します（指摘の文に、近い名前か、実行ファイルの変数の一覧があります）。 |
-| `variable-map-type` | エラー | 対応の形が、変数の型に合いません。 | `scale`、`offset` は整数か実数の変数に、`map` は整数か列挙の変数に書きます。 |
-| `variable-map-value` | エラー | `map` の値を、実行ファイルの変数が取れません（列挙の項目にない、範囲の外）。 | `map` の値を、変数が取れる値にします。 |
-| `variable-map-collision` | エラー | 対応の名前が、実行ファイルのほかの変数の見える名前と同じか、同じ変数に対応を 2 つ書いています。 | 対応の名前を変えるか、2 つの対応の片方を削除します。 |
-| `variable-map-absent` | エラー | `absent: true` と書いた名前の変数が、実行ファイルにあります。 | その `absent: true` を削除します。 |
-| `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` があります（実行の前には比べられない）。 | 対応は不要です。 |
-| `variant-participant` | エラー | 機種（`variants`）の `participants` に、設定ファイルの `participants` にない名前があります。 | 名前を直すか、その機種にだけいる participant なら、`participants` に `enabled: false` で書きます。 |
-| `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確認する手順（`expect`、`wait_until`）が、この設定（機種）では全部飛びます。 | 変数の名前が違うだけなら `variables` で対応させ、この機種向けでないシナリオなら、シナリオの `only` に対象の機種を書きます。 |
-| `usage` | エラー | 引数のエラーです（`--json` のときの JSON だけ）。 | 標準エラーの使い方に従って、引数を直します。 |
-| `internal` | エラー | `vehicle_sil_launch` 自身の想定外の失敗です（`--json` のときの JSON だけ）。 | 標準エラーの理由を確認します。 |
+| `syntax` | Error (unreadable) | A YAML or JSON syntax error. | Fix the syntax at the place given in the attached text. |
+| `not-a-configuration` | Error (unreadable) | The file is empty or is not a mapping. | Write a mapping with `vehicle_sil_simulation: 1`, `networks` and `participants`. |
+| `encoding` | Error (unreadable) | The file is not UTF-8 (UTF-16, or it contains NUL). | Save the file as UTF-8. |
+| `unsupported-yaml` | Error (unreadable for anchors and aliases) | The file has anchors and aliases, or a second document (`---`). | Write the values out in full, and delete the second and later documents or move them to other files. |
+| `format-version` | Error (unreadable for an unknown version) | `vehicle_sil_simulation` is not 1. | Write `vehicle_sil_simulation: 1`, or use a vehicle-sil that can read the format of that file. |
+| `file` | Error (unreadable) | The file does not exist, is a directory, is not a regular file, is too large or cannot be opened. | Check the path and the file. |
+| `missing-key` | Error | A required key is missing. | Add the key named in the finding message. |
+| `unknown-key` | Error | There is an unknown key. | Correct the key name (the finding message gives a close name and the list of valid keys). |
+| `duplicate-key` | Error | The same key appears twice. | Delete one of them. |
+| `value` | Error | A value of the wrong type or out of range, an invalid name, a placeholder in the executable path, or a `time_step_ms` that does not divide `stop_at_ms`. | Correct the value as the finding message says. |
+| `duplicate-name` | Error | A participant name or a network name appears twice. | Delete one of them, or rename it. |
+| `reserved-name` | Error | The participant name is `SimulationController`. | Use another name. |
+| `launcher-argument` | Error | The `command` of an ecu_main executable has an argument of `ecu_main` or a placeholder. | Delete it, or write `describe: false` if the executable is not built with `ecu_main`. |
+| `unknown-placeholder` | Error | The `command` of a `describe: false` participant has an unknown `{word}`. | Correct it to `{registry_uri}` or `{name}`, or write `{{word}}` to pass it as a string. |
+| `no-registry-uri` | Note | The `command` of a `describe: false` participant has no `{registry_uri}`. | If the executable needs the URI of the registry, write `"{registry_uri}"` as the value of that argument. |
+| `registry-on-network` | Note | `registry_uri` is not a loopback address. | To run on this computer only, use `127.0.0.1`, or do not write `registry_uri`. |
+| `listen-variable-ignored` | Note | `VEHICLE_SIL_LISTEN_ON_NETWORK` in the environment of `vehicle_sil_launch` itself differs from the value that `run` passes to the participants (it is not used). | Only if participants are to join from other computers, write an address in `registry_uri` that those computers can connect to. |
+| `step-not-checked` | Note | A `describe: false` participant has `step_ms`. | Delete `step_ms`, or set `describe: true` if it is an ecu_main executable. |
+| `executable` | Error | The executable does not exist (a name without a separator is not on `PATH` either), is a directory or a batch file, or has no execute permission. | Correct the path in `command`, or put the executable there. |
+| `found-on-path` | Note | The executable was found on `PATH` (the note shows where). | Check that the location shown is the executable you meant. |
+| `not-required-ecu` | Error | A `describe: true` participant has `required: false`. | Delete `required: false` (to run without that ECU, use `enabled: false` or `--disable`). |
+| `no-required-participant` | Error | Every participant that is not disabled has `required: false`, or all participants are disabled (the simulation has no participant to wait for). | Enable at least one required (`required: true`) participant. |
+| `describe-start` | Error | The executable cannot be started. | Check that the file is an executable that runs on this computer. |
+| `describe-timeout` | Error | `--describe` does not end in time. | Fix what the ECU waits for during construction (a connection, input), or increase `--describe-timeout-ms`. |
+| `describe-failed` | Error | The exit code of `--describe` is not 0 (exit code 4 most likely means an executable that is not built with `ecu_main`). | Fix the cause shown in the attached stderr, or write `describe: false` if the executable is not built with `ecu_main`. |
+| `describe-output` | Error | The output of `--describe` is not the `--describe` JSON. | Keep other output off stdout, or write `describe: false` if the executable is not built with `ecu_main`. |
+| `describe-version` | Error | The format version of the `--describe` output (`vehicle_sil_ecu`) cannot be read. | Update the side that the finding message names (the ECU or `vehicle_sil_launch`). |
+| `describe-unknown-value` | Error | A key of the `--describe` output that takes fixed values (`kind`, `use`, `type`, `causality`) has a value that this `vehicle_sil_launch` does not know (an ECU from a newer vehicle-sil). | Use a `vehicle_sil_launch` from the same vehicle-sil as the ECU, or a newer one. |
+| `name-mismatch` | Error | `name` in the `--describe` output differs from the participant name (`main()` does not pass `--name` to `ecu_main`). | Change the ECU's `main()` so that it passes all arguments to `ecu_main`. |
+| `step-mismatch` | Error | `step_ms` differs from the step size in the `--describe` output (also for a real-time ECU, which has no step size). | Change `step_ms` to the value in the finding message, or delete it. |
+| `unknown-network` | Error | An ECU uses a network that is not in `networks`. | If it is meant to be the same bus, align the network names on the ECU side; if it is another bus, add it to `networks`. |
+| `kind-mismatch` | Error | An ECU uses a network as a different kind (CAN, LIN, Ethernet) from the one in `networks`. | Correct `kind` in `networks`, or the network on the ECU side. |
+| `address-conflict` | Error | 2 or more J1939 nodes on the same network ask for the same address, and one of them cannot work. | Give each node its own address. |
+| `address-shared` | Warning | Of the nodes that ask for the same address, the node with the lowest NAME gets it, and all the others move to other addresses. | To decide which node is at which address, give each node its own address. |
+| `name-conflict` | Error | 2 or more J1939 nodes on the same network have the same NAME. | Give each node its own NAME (for a second copy of the same ECU, change the identity number). |
+| `lin-masters` | Error | A LIN network has 2 or more masters (also the same participant twice). | Keep one master (make the others slaves, or call `lin_master()` only once). |
+| `lin-no-master` | Error (a note when there is a `describe: false` participant) | There are LIN slaves and no master. | Add a participant that acts as the master. |
+| `ethernet-duplicate-mac` | Error | On an Ethernet network, 2 or more participants report the same MAC address in their `--describe` output. | Give each participant its own address (`eth::ChannelOptions::mac`, and the source address of the frames it sends). |
+| `ethernet-mac-unknown` | Note | An Ethernet network has a participant that does not report a MAC address in its `--describe` output. | Pass the address to `ethernet()` (`eth::ChannelOptions::mac`), or confirm yourself that the addresses do not overlap. |
+| `unused-network` | Warning (a note when there is a `describe: false` participant) | No participant uses the network. | Delete the network, or check the network names on the ECU side. |
+| `single-participant` | Warning (a note when there is a `describe: false` participant) | The network has only one participant (nobody receives what it sends). | Add the other participants of the network, or delete the network. |
+| `test-participant-talks-on-bridged-network` | Warning | A `role: test` participant with a J1939 node may be on the same network as a bridge. | Make the participant only receive on that network (create no J1939 node), or disable the bridge for that run. |
+| `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
+| `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
+| `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
+| `version-mismatch` | Note | The vehicle-sil version that the executable was built with differs from the version of `vehicle_sil_launch`. | If they do not work together, rebuild with the same version. |
+| `coarse-time-step` | Warning | The file has `speed` (a number) and `time_step_ms`, and an ECU's steps do not start on time step boundaries. | Set `time_step_ms` to the value given in the finding message. |
+| `control-link-not-offered` | Note | An ECU with variables does not report in its `--describe` output that it exposes them to the simulation (`--no-control`, or an old executable without `control`). | To read and write the variables, remove `--no-control`, or rebuild the ECU with a newer vehicle-sil. |
+| `control-link-version` | Warning | The message format version (or the transport) reported by an ECU with variables differs from that of `vehicle_sil_launch`. | Build the ECU and `vehicle_sil_launch` with the same version of vehicle-sil. |
+| `variable-map-unknown` | Error | The `from` variable of a mapping in `variables` does not exist in the executable. | Correct the `from` name (the finding message gives a close name or the list of the executable's variables). |
+| `variable-map-type` | Error | The form of the mapping does not fit the type of the variable. | Write `scale`, `offset` for integer or real variables, and `map` for integer or enum variables. |
+| `variable-map-value` | Error | The executable's variable cannot take a value in `map` (not an item of the enum, or out of range). | Change the values in `map` to values the variable can take. |
+| `variable-map-collision` | Error | The name of a mapping equals the visible name of another variable of the executable, or the same variable has 2 mappings. | Rename the mapping, or delete one of the 2 mappings. |
+| `variable-map-absent` | Error | The executable has a variable whose name is marked `absent: true`. | Delete that `absent: true`. |
+| `variable-map-not-checked` | Note | A `describe: false` participant has `variables` (they cannot be compared before the run). | No action needed. |
+| `variant-participant` | Error | `participants` of a variant (`variants`) has a name that is not in `participants` of the configuration file. | Correct the name, or, for a participant that exists only in that variant, write it in `participants` with `enabled: false`. |
+| `scenario-nothing-checked` | Warning | With this configuration (variant), all checking steps (`expect`, `wait_until`) of the `--scenario` scenario are skipped. | If only the variable names differ, map them with `variables`; if the scenario is not meant for this variant, write its target variants in `only` of the scenario. |
+| `usage` | Error | A usage error (only in the JSON with `--json`). | Correct the arguments as the usage on stderr says. |
+| `internal` | Error | An unexpected failure of `vehicle_sil_launch` itself (only in the JSON with `--json`). | Read the reason on stderr. |
 
-### コードごとの補足
+### Notes on individual codes
 
-| コード | 補足 |
+| Code | Notes |
 |---|---|
-| `unsupported-yaml` | 2 つ目の文書があるときも、最初の文書は読みます。 |
-| `registry-on-network` | registry と participant がネットワークで待ち受け、この PC に接続できる誰でもシミュレーションに参加できます（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
-| `listen-variable-ignored` | どの値を渡すかは、[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス) にあります。 |
-| `describe-version` | 指摘の文は、ECU の vehicle-sil のバージョン（出力にあれば）と `vehicle_sil_launch` のバージョン、新しくするのがどちらかを言います。 |
-| `describe-unknown-value` | 指摘の文は、キーと値、知っている値、両方の vehicle-sil のバージョンを言います。 |
-| `describe-unknown-value` | その participant だけのエラーで、ほかの participant は照合を続けます。 |
-| `address-conflict` | 重大度の条件は、下の「J1939 のアドレスの重なり」にあります。 |
-| `test-participant-talks-on-bridged-network` | ブリッジとして扱うのは `role: bridge` の participant で、1 つもなければ、`role` を書いていない `describe: false` の participant です。 |
-| `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの要求（Address Claimed）が、実機のバスに出ます。 |
-| `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
-| `coarse-time-step` | `run` の指摘と同じ文です（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
-| `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
-| `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |
-| `variable-map-not-checked` | 合わない対応は、実行の指摘 `variable-map-not-applied` になります。 |
-| `scenario-nothing-checked` | シナリオは、何も確認せずに通ります（[scenario.md](scenario.md) の「機種とパラメーター」）。 |
-| `usage` | 機種を書いた設定ファイルに `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます。 |
+| `unsupported-yaml` | When there is a second document, the first document is still read. |
+| `registry-on-network` | The registry and the participants listen on the network, and anyone who can connect to this computer can join the simulation (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
+| `listen-variable-ignored` | For the value that `run` passes, see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses). |
+| `describe-version` | The finding message gives the vehicle-sil version of the ECU (if its output has one), the version of `vehicle_sil_launch`, and which of the two to update. |
+| `describe-unknown-value` | The finding message gives the key and the value, the values it knows, and the vehicle-sil versions of both sides. |
+| `describe-unknown-value` | It is an error of that participant only. Checking of the other participants continues. |
+| `address-conflict` | For the conditions of the severity, see "Overlapping J1939 addresses" below. |
+| `test-participant-talks-on-bridged-network` | The `role: bridge` participants are treated as bridges. If there is none, the `describe: false` participants without `role` are. |
+| `test-participant-talks-on-bridged-network` | The participant's transmissions and its address claim (Address Claimed) go out on the real bus. |
+| `test-participant-talks-on-bridged-network` | The finding message says whether a bridge is definitely or only possibly on the network, and how to fix it (see "Test participants and bridges (`role`)" in [simulation-config.md](simulation-config.md#test-participants-and-bridges-role)). |
+| `coarse-time-step` | The same message as the run finding (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
+| `control-link-not-offered`, `control-link-version` | `run` cannot read or write the variables of that ECU (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)). |
+| `variable-map-*` | For how to write a mapping, see "Matching variable names and values (`variables`)" in [simulation-config.md](simulation-config.md#matching-variable-names-and-values-variables). |
+| `variable-map-not-checked` | A mapping that does not match becomes the run finding `variable-map-not-applied`. |
+| `scenario-nothing-checked` | The scenario passes without checking anything (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)). |
+| `usage` | Also covers a configuration file with variants and no `--variant`, a variant name that does not exist, and `--param` with a name that is not in the scenario. |
 
-**`unknown-network`**: 指摘の文は、同じ種類のネットワークで、その participant が使わず、ほかの participant が使うものがあれば、それを名指しします（`networks` にあるものも、ないものも）。そのうえで、1 つのバスのつもりなら名前をそろえること、別のバスなら `networks` に追加することを言います。名前は設定ファイルでは付け替えられないので、そろえるには、ECU を作った人が直してビルドし直します。名指しするネットワークがなければ、`networks` に追加することを先に言います。
+**`unknown-network`**: If there are networks of the same kind that this participant does not use and other participants do, the finding message names them (whether or not they are in `networks`). It then says to align the names if it is meant to be one bus, or to add the network to `networks` if it is another bus. The configuration file cannot rename a network, so to align the names, the ECU author fixes the ECU and rebuilds it. If there is no network to name, the message says first to add the network to `networks`.
 
-**`single-participant`**: `role: test` の participant は数えません。そのため、ECU が 1 つとテスト用の participant（受信するだけの spy など）のネットワークでも、テスト用の participant だけのネットワークでも出ます。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、指摘の文はそのネットワークを挙げ、1 つのバスを ECU が別の名前で呼んでいるかもしれないと言います。
+**`single-participant`**: `role: test` participants are not counted. So the finding is reported for a network with one ECU and a test participant (such as a spy that only receives), and for a network with only test participants. If another network of the same kind also has a single ECU, a different one, the finding message names that network and says that the ECUs may be calling one bus by different names.
 
-**`ethernet-duplicate-mac`**: 指摘の文は、participant とアドレスを言います。同じアドレスをわざと使う設定（待機系と現用系など）では、1 つを残して、ほかの participant の `eth::ChannelOptions::mac` を渡さずにおきます。そうすると、`ethernet-mac-unknown` の注記だけになります。ただし、`mac` のないチャネルは `Accept::Addressed` を使えません。同じステップで送信したフレームの順は、SIL Kit では実行ごとに変わりえます。
+**`ethernet-duplicate-mac`**: The finding message gives the participants and the address. In a setup that uses the same address on purpose (a standby and an active unit, for example), keep `eth::ChannelOptions::mac` on one participant and do not pass it on the others. Only the note `ethernet-mac-unknown` then remains. A channel without `mac` cannot use `Accept::Addressed`, however. In SIL Kit, the order of frames sent in the same step can change from run to run.
 
-**`ethernet-mac-unknown`**: `ethernet()` にアドレスを渡していない ECU がいると出ます。アドレスの重なりを確認できないことを伝える注記です。
+**`ethernet-mac-unknown`**: Reported when an ECU does not pass its address to `ethernet()`. The note tells you that the check cannot confirm that the addresses do not overlap.
 
-**`participant-manual`**: `registry_uri` がループバックのアドレスでないとき、この注記の文は、環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を設定して起動するように言います。この変数が必要なのは、ランチャーと同じ PC で、ループバックのアドレスの URI で起動するときだけです。ほかの PC で起動するときは、設定しません（[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）。注記の文は、どの PC で起動するかを区別しません。
+**`participant-manual`**: If `registry_uri` is not a loopback address, the text of this note tells you to start the participant with the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` set. The variable is needed only when you start the participant on the same computer as the launcher, with a URI that has a loopback address. When you start it on another computer, do not set it (see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual)). The note text does not distinguish which computer you start it on.
 
-**`unused-network`、`single-participant`、`lin-no-master`**: すべての participant の `--describe` の出力がそろったときだけ出ます。照合できなかった participant（`failed` と `skipped`）がいる間は出ません（その participant のエラーを先に直します）。`describe: false` の participant がいるときは注記です。その participant が使っているかもしれないためで、指摘の文にもそう書きます。
+**`unused-network`, `single-participant`, `lin-no-master`**: These are reported only when the `--describe` output of every participant has been read. While any participant could not be checked (`failed` or `skipped`), they are not reported; fix that participant's errors first. When there is a `describe: false` participant, they are notes, because that participant may use the network. The finding message says so too.
 
-### J1939 のアドレスの重なり
+### Overlapping J1939 addresses
 
-アドレスは、ノードを追加したときに求めたアドレスです（[ecu-executable.md](ecu-executable.md) の `nodes`）。254（任意アドレスの範囲から空いているものを取る）は、重なりとみなしません。同じアドレスを求めるノードについては、vehicle-sil の J1939 スタックの Address Claim で起きることを判定します。
+The address is the one that a node requested when it was added (`nodes` in [ecu-executable.md](ecu-executable.md#keys)). 254 (take a free address from the arbitrary address range) does not count as an overlap. For nodes that ask for the same address, the check works out the outcome of address claiming in vehicle-sil's J1939 stack.
 
-| 同じアドレスを求めるノード | 起きること | 重大度 |
+| Nodes that ask for the same address | What happens | Severity |
 |---|---|---|
-| NAME のないノードがある | NAME のないノードは Address Claim をせず、そのアドレスから送信し続ける | エラー |
-| NAME の最も小さいノードが 2 つ以上ある（同じ NAME） | 同じ NAME は Address Claim に負けるので、どれもアドレスを取れない | エラー（`name-conflict` が、同じアドレスであることも書きます） |
-| どれも NAME があり、NAME の最も小さいノード以外に、任意アドレスを取れない（NAME の任意アドレスの bit がない）ノードがある | NAME の最も小さいノードが取り、取れないノードはアドレスを失う（Cannot Claim） | エラー |
-| どれも NAME があり、NAME の最も小さいノード以外は、どれも任意アドレスを取れる | NAME の最も小さいノードが取り、ほかは空いたアドレスへ移る | 警告 |
+| A node without a NAME is among them | A node without a NAME does not take part in address claiming and keeps sending from that address | Error |
+| 2 or more nodes share the lowest NAME (equal NAMEs) | An equal NAME loses the address claim, so none of them gets the address | Error (`name-conflict` also says that the address is the same) |
+| All have a NAME, and a node other than the one with the lowest NAME cannot take an arbitrary address (the arbitrary address bit of its NAME is not set) | The node with the lowest NAME gets the address, and the node that cannot move loses its address (Cannot Claim) | Error |
+| All have a NAME, and every node other than the one with the lowest NAME can take an arbitrary address | The node with the lowest NAME gets the address, and the others move to free addresses | Warning |
 
-`address-shared` の「別のアドレスへ移る」は、移る先が空いていることを前提にします。NAME のないノードは Address Claim をしないので、任意アドレスの範囲にそのノードがいると、移ったノードと重なることがあります。照合は移る先を決めないので、これは確認しません。
+When `address-shared` says that the other nodes "move to other addresses", it assumes that those addresses are free. A node without a NAME does not take part in address claiming, so if such a node is in the arbitrary address range, a node that moved may overlap with it. The check does not decide where nodes move to, so it does not check this.
 
-`networks` にないネットワークの上の、アドレスと NAME の重なりは確認しません（先に `unknown-network` を直します）。種類を読めなかったネットワークも確認しません。
+Overlapping addresses and NAMEs on a network that is not in `networks` are not checked (fix `unknown-network` first). Neither are networks whose kind could not be read.
 
-### ネットワークを使う participant とイーサネットのアドレス
+### Participants on a network, and Ethernet addresses
 
-ネットワークを使う participant は、名前と種類の両方が合うものです（表と JSON の `networks[].participants` も同じです）。
+A participant uses a network when both the name and the kind match (the same holds for the table and for `networks[].participants` in JSON).
 
-イーサネットの MAC アドレスの扱いは次のとおりです。
+How Ethernet MAC addresses are handled:
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 照合する値 | ECU が `ethernet()` に渡して `--describe` に出力した値です（[ecu-executable.md](ecu-executable.md) の `networks[].mac`）。 |
-| 実際のフレーム | 実際に送信するフレームの送信元のアドレスは見ません。 |
-| 別のネットワーク | 同じアドレスでも、別のネットワークなら重なりとみなしません。 |
-| 表での表示 | ネットワークの欄にアドレスを書きます（`ETH (ethernet 02:00:00:00:00:01)`。出力がなければ `ETH (ethernet)`）。 |
+| Value that is checked | The value that the ECU passed to `ethernet()` and reported in its `--describe` output (`networks[].mac` in [ecu-executable.md](ecu-executable.md#keys)). |
+| Actual frames | The source address of the frames actually sent is not looked at. |
+| Different networks | The same address on different networks does not count as an overlap. |
+| Shown in the table | The address is written in the networks column (`ETH (ethernet 02:00:00:00:00:01)`, or `ETH (ethernet)` if not reported). |
 
-## 出力
+## Output
 
-標準出力に、人向けの表（既定）か JSON（`--json`）を書きます。同じ設定ファイルと実行ファイルからは、同じ出力になります。
+`check` writes a human-readable table (the default) or JSON (`--json`) to stdout. The same configuration file and executables always give the same output.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 改行 | どの OS でも LF です（Windows でも `\r\n` にしません）。 |
-| 設定ファイルの名前 | 引数に書いたとおりに書きます。 |
-| 照合が組み立てたパス（探した実行ファイルなど） | Windows でも `/` で区切って書きます。 |
+| Line endings | LF on every OS (never `\r\n`, not even on Windows). |
+| Name of the configuration file | Written as given in the argument. |
+| Paths that the check builds (an executable it found, for example) | Written with `/` as the separator, even on Windows. |
 
-### 人向け
+### Human-readable
 
-上から順に、次の 4 つを書きます。
+The output has these 4 parts, from top to bottom:
 
-| 部分 | 内容 |
+| Part | Content |
 |---|---|
-| participant の表 | `--describe` に出力されたステップ幅とネットワークです。 |
-| ネットワークの表 | ネットワークを使う participant です。 |
-| 指摘 | 1 つが 1 行で、エラー、警告、注記の順に、それぞれ行の順に並びます。 |
-| 結果の 1 行 | エラー、警告、注記の数です。 |
+| Participant table | The step size and networks reported by `--describe`. |
+| Network table | The participants that use each network. |
+| Findings | One per line: errors, then warnings, then notes, each group in line order. |
+| Result line | The numbers of errors, warnings and notes. |
 
-participant の表では、J1939 のネットワークにノードの求めたアドレスを書きます（`any` は 254）。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書きます。表の幅は文字の数でそろえるので、全角の文字があるとずれます。
+In the participant table, J1939 networks show the address that each node asked for (`any` is 254). The name of a participant whose `role` is not `ecu` is followed by `(role: test)` or similar. The columns of the table are aligned by character count, so full-width characters break the alignment.
 
-指摘の行は、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<コード>]` の形です。
+A finding line starts with `error:`, `warning:` or `note:` and has the form `<file>:<line>: <what, with which value, and how to fix it> [<code>]`.
 
-| 行の部分 | 内容 |
+| Part of the line | Content |
 |---|---|
-| `<ファイル>` | 引数に書いたとおりのファイル名です。 |
-| `<行>` | 行のない指摘では、ファイル名だけになります。 |
-| `[<コード>]` | 指摘のコードです（上の表と、JSON の `code` と同じ）。 |
-| 次の行から 4 文字下げた文 | 添える文です（標準エラーの末尾、文法のエラーの場所など）。 |
+| `<file>` | The file name as given in the argument. |
+| `<line>` | For a finding without a line, only the file name is written. |
+| `[<code>]` | The finding code (the same as in the table above and as `code` in JSON). |
+| Text on the following lines, indented by 4 spaces | Attached text (the tail of stderr, the location of a syntax error and so on). |
 
-コードで、このドキュメントの説明を探せます。コードを行の終わりに置くのは GCC の `[-W...]` と同じ置き方で、行の先頭は `error:` などのままです。
+Use the code to look up its description in this document. As GCC does with `[-W...]`, the code goes at the end of the line, so the line still starts with `error:`, `warning:` or `note:`.
 
 <!-- vehicle_sil_launch check simulation.yaml -->
 ```text
@@ -232,7 +234,7 @@ J1939_CAN  can   Engine, Dashboard
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-エラーのある例です。同じ ECU を 2 つ載せ、ステップ幅とキーを書き間違えています。
+An example with errors: it runs two instances of the same ECU, and has a wrong step size and a misspelled key.
 
 <!-- two-engines.yaml -->
 ```yaml
@@ -275,121 +277,121 @@ warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove 
 failed: 3 errors, 1 warning, 0 notes
 ```
 
-### JSON（`--json`）
+### JSON (`--json`)
 
-1 つの JSON のオブジェクトです。形は `--describe` の JSON と同じルールです（キーの順は固定、値がなくてもキーを省かない、字下げは空白 2 つ、改行は Windows でも LF）。値のないものは `null` で（空の文字列にしません）、配列は空の配列です。
+The output is one JSON object. It follows the same rules as the `--describe` JSON: a fixed key order, every key written even without a value, an indent of 2 spaces, and LF line endings even on Windows. A missing value is `null` (never an empty string), and a missing array is an empty array.
 
-先頭の `vehicle_sil_check` は形式のバージョンです。バージョンが上がるのは、あるキーか `code` の意味が変わるとき、またはなくなるときです。キーと、`code`、`severity`、`result`、`participants[].status` の値は、バージョンを上げずに増えることがあります。読む側は、知らないものを次のように扱います。
+The first key, `vehicle_sil_check`, is the format version. The version goes up when the meaning of a key or a `code` changes, or when one is removed. Keys, and values of `code`, `severity`, `result` and `participants[].status`, may be added without a new version. A reader handles what it does not know as follows:
 
-| 知らないもの | 読む側の扱い |
+| Unknown item | What the reader does |
 |---|---|
-| バージョン | 拒否します。 |
-| キー | 無視します。 |
-| `code` | その `severity` で扱います。 |
-| `severity` | `"error"` として扱います。 |
-| `result` | 成功でないものとして扱います（終了コードを見ます）。 |
-| `status` | 照合できなかったものとして扱います。 |
+| Version | Rejects the output. |
+| Key | Ignores it. |
+| `code` | Handles it by its `severity`. |
+| `severity` | Handles it as `"error"`. |
+| `result` | Handles it as not passed (looks at the exit code). |
+| `status` | Handles the participant as not checked. |
 
-照合に進まないときも、`--json` があれば JSON を書きます。
+With `--json`, `check` writes JSON even when it stops before the check.
 
-| 場合 | 終了コード | JSON |
+| Case | Exit code | JSON |
 |---|---|---|
-| 設定ファイルを読めない | 3 | `result` が `"unreadable"` で、`participants` と `networks` は空です。 |
-| 引数のエラー | 4 | `result` が `"usage"` で、`findings` に `code` が `usage` のエラーがあります。 |
+| The configuration file cannot be read | 3 | `result` is `"unreadable"`, and `participants` and `networks` are empty. |
+| Usage error | 4 | `result` is `"usage"`, and `findings` has an error with `code` `usage`. |
 
-引数のエラーのときの `file` は、引数から設定ファイルがわかればその名前で、わからないとき（ファイルがない、2 つ以上など）は `null` です。
+On a usage error, `file` is the name of the configuration file if the arguments name one, and `null` if they do not (no file, 2 or more files and so on).
 
-全体のキーは次のとおりです。
+Top-level keys:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `vehicle_sil_check` | 形式のバージョン（今は 1） |
-| `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil のバージョン |
-| `file` | 設定ファイル（引数に書いたとおり） |
-| `result` | `"passed"`、`"failed"`、`"unreadable"`、`"usage"` |
-| `strict` | `--strict` を付けたか |
-| `errors`、`warnings`、`notes` | エラー、警告、注記の数 |
-| `variant` | 選んだ機種（`--variant`）。機種を書いた設定ファイル（`variants`）のときだけあります |
-| `variants` | 設定ファイルにある機種の名前の配列。機種を書いた設定ファイルのときだけあります |
-| `params` | 共通の `params` に、選んだ機種の `params` を重ねたもの。設定ファイルに `params` があるときだけあります |
-| `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 設定ファイルの値 |
-| `participants[]` | participant の配列（設定ファイルの順） |
-| `networks[]` | ネットワークの配列（設定ファイルの順） |
-| `findings[]` | 指摘の配列（人向けと同じ順） |
+| `vehicle_sil_check` | Format version (currently 1) |
+| `vehicle_sil` | The vehicle-sil version of `vehicle_sil_launch` |
+| `file` | The configuration file (as given in the argument) |
+| `result` | `"passed"`, `"failed"`, `"unreadable"`, `"usage"` |
+| `strict` | Whether `--strict` was given |
+| `errors`, `warnings`, `notes` | The numbers of errors, warnings and notes |
+| `variant` | The selected variant (`--variant`). Present only for a configuration file with variants (`variants`) |
+| `variants` | Array of the variant names in the configuration file. Present only for a configuration file with variants |
+| `params` | The common `params`, overridden by the `params` of the selected variant. Present only when the configuration file has `params` |
+| `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri` | Values from the configuration file |
+| `participants[]` | Array of participants (in the order of the configuration file) |
+| `networks[]` | Array of networks (in the order of the configuration file) |
+| `findings[]` | Array of findings (in the same order as the human-readable output) |
 
-- `--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます。
-- `params` の要素は、`name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`）です。
-- 設定ファイルを読めないときは、`stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` が `null` です。
-- 書いていない `stop_at_ms` と `registry_uri` は `null` で、書いていない `start_timeout_ms` と `stop_timeout_ms` は既定の値です。
+- If `--variant` is missing or names no variant (`result` is `"usage"`), `variant` is `null` and `variants` gives the names you can choose from.
+- Each element of `params` has `name`, `value` (`true`/`false`, a number or a string) and `from` (`configuration` or `variant`).
+- If the configuration file cannot be read, `stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms` and `registry_uri` are `null`.
+- `stop_at_ms` and `registry_uri` are `null` if not written; `start_timeout_ms` and `stop_timeout_ms` have their defaults if not written.
 
-`participants[]` の要素のキーは次のとおりです。
+Keys of each element of `participants[]`:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `name` | participant 名（読めなかったときは `null`） |
-| `line` | 設定ファイルの行 |
-| `command` | 実行ファイルと引数 |
-| `describe`、`required` | 設定ファイルの値 |
-| `enabled` | `--disable` と `--enable` を反映した後の値 |
-| `manual` | `--manual` を反映した後の値 |
-| `role` | `"ecu"`、`"test"`、`"bridge"` |
-| `step_ms` | 設定ファイルの値（なければ `null`） |
-| `status` | 照合の状態（下の表） |
-| `reported` | `--describe` の出力（`status` が `described` のときだけ。ほかは `null`） |
-| `variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順） |
-| `variable_map` | 設定ファイルの `variables` に書いた対応の配列（書いた順）。`variables` を書いた participant だけにあります |
-| `control` | ECU が `--describe` に出力した、変数の公開の方法 |
+| `name` | Participant name (`null` if it could not be read) |
+| `line` | Line in the configuration file |
+| `command` | Executable and arguments |
+| `describe`, `required` | Values from the configuration file |
+| `enabled` | Value after `--disable` and `--enable` are applied |
+| `manual` | Value after `--manual` is applied |
+| `role` | `"ecu"`, `"test"`, `"bridge"` |
+| `step_ms` | Value from the configuration file (`null` if not written) |
+| `status` | State of the check (table below) |
+| `reported` | The `--describe` output (only when `status` is `described`; `null` otherwise) |
+| `variables` | Array of the ECU's variables as the simulation sees them (`ecu.connected`, then in declaration order) |
+| `variable_map` | Array of the mappings written in `variables` of the configuration file (in the order written). Present only for participants that have `variables` |
+| `control` | How the ECU exposes its variables, as reported in its `--describe` output |
 
-| `status` | 意味 |
+| `status` | Meaning |
 |---|---|
-| `"described"` | `--describe` の出力を読んだ |
+| `"described"` | The `--describe` output was read |
 | `"not_checked"` | `describe: false` |
-| `"failed"` | 実行ファイルがない、`--describe` の失敗 |
-| `"skipped"` | 設定ファイルのエラーで進めなかった |
-| `"disabled"` | 無効にした（項目にエラーがあっても） |
+| `"failed"` | The executable is missing, or `--describe` failed |
+| `"skipped"` | An error in the configuration file stopped the check of this participant |
+| `"disabled"` | Disabled (even if the entry has errors) |
 
-**`reported`**: キーは `vehicle_sil`、`name`、`step_ns`、`networks` です（`--describe` の JSON と同じ形）。変数は、次の `variables` にあります。
+**`reported`**: The keys are `vehicle_sil`, `name`, `step_ns` and `networks` (in the same form as the `--describe` JSON). The variables are in `variables`, described next.
 
-**`variables`**: 設定ファイルの `variables`（対応表）を反映した後の名前、型、範囲、単位です。シナリオと Control API が見るものと同じです。対応表がなければ、ECU が出力したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。実行の前に、どの ECU にどの変数があるかを見るのに使います。
+**`variables`**: The names, types, ranges and units after the variable map (`variables` in the configuration file) is applied. They are what scenarios and the Control API see. Without a variable map, they are as the ECU reported them. Each element has the same form as `variables[]` of the `--describe` JSON (`name`, `type`, `causality`, `unit`, `min`, `max`, `step`, `description`, `items`, `builtin`; see "JSON format" in [ecu-executable.md](ecu-executable.md#json-format)). Use it to see which ECU has which variables before you run.
 
-| `variables` の値 | 意味 |
+| Value of `variables` | Meaning |
 |---|---|
-| 空の配列 | 変数が 0 個です。 |
-| `null` | わかりません。 |
+| Empty array | The ECU has no variables. |
+| `null` | Unknown. |
 
-`null` になるのは、`--describe` の出力のない participant（`describe: false`）、無効にした participant、`--describe` の出力を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU です。
+`variables` is `null` for a participant without `--describe` output (`describe: false`), a disabled participant, a participant whose `--describe` output could not be read, and an ECU from an old vehicle-sil that does not write `variables`.
 
-**`variable_map`**: 読めなかった対応（エラー `value` など）は含みません。要素のキーは次のとおりです。
+**`variable_map`**: Mappings that could not be read (the error `value` and so on) are not included. Keys of each element:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `name` | シミュレーションで使う名前 |
-| `line` | 設定ファイルの行 |
-| `from` | 実行ファイルの変数名（`absent` なら `null`） |
-| `absent` | `absent: true` と書いたか |
-| `scale`、`offset` | 一次式の値（一次式の形でなければ両方 `null`） |
-| `unit` | 単位（書いていなければ `null`） |
-| `map` | `name` と `value` の配列（なければ `null`） |
+| `name` | Name used in the simulation |
+| `line` | Line in the configuration file |
+| `from` | Variable name in the executable (`null` for `absent`) |
+| `absent` | Whether `absent: true` was written |
+| `scale`, `offset` | Values of the linear form (both `null` if the mapping is not in the linear form) |
+| `unit` | Unit (`null` if not written) |
+| `map` | Array of `name` and `value` (`null` if there is none) |
 
-`scale` と `offset` の片方だけを書いたときは、もう片方が既定の 1 か 0 になります。
+If only one of `scale` and `offset` is written, the other has its default, 1 or 0.
 
-**`control`**: キーは `transport`（今は `"silkit"`）と `wire_version`（メッセージの形式のバージョン）です。`control` を出力していない（`--no-control`、古い実行ファイル）、照合していない、失敗した、無効にした participant では `null` です。
+**`control`**: The keys are `transport` (currently `"silkit"`) and `wire_version` (the message format version). It is `null` for a participant that does not report `control` (`--no-control`, an old executable), and for a participant that was not checked, failed or is disabled.
 
-`networks[]` と `findings[]` の要素のキーは次のとおりです。
+Keys of each element of `networks[]` and `findings[]`:
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `networks[].name` | ネットワークの名前 |
-| `networks[].kind` | 種類（読めなかったときは `null`） |
-| `networks[].line` | 設定ファイルの行 |
-| `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順） |
-| `findings[].severity` | `"error"`、`"warning"`、`"note"` |
-| `findings[].code` | 指摘のコード |
-| `findings[].file` | 設定ファイル（`--scenario` のシナリオについての指摘では、シナリオのファイル） |
-| `findings[].line` | 行（なければ `null`） |
-| `findings[].participant`、`findings[].network` | 関係する participant とネットワーク（なければ `null`） |
-| `findings[].message` | 指摘の文（1 行） |
-| `findings[].detail` | 添える文（なければ `null`） |
+| `networks[].name` | Name of the network |
+| `networks[].kind` | Kind (`null` if it could not be read) |
+| `networks[].line` | Line in the configuration file |
+| `networks[].participants` | Names of the participants that use the network (in the order of the configuration file) |
+| `findings[].severity` | `"error"`, `"warning"`, `"note"` |
+| `findings[].code` | Finding code |
+| `findings[].file` | The configuration file (for a finding about the scenario of `--scenario`, the scenario file) |
+| `findings[].line` | Line (`null` if there is none) |
+| `findings[].participant`, `findings[].network` | The participant and network concerned (`null` if there is none) |
+| `findings[].message` | Finding message (one line) |
+| `findings[].detail` | Attached text (`null` if there is none) |
 
 <!-- engine-alone.yaml -->
 ```yaml
@@ -531,13 +533,13 @@ participants:
 }
 ```
 
-このドキュメントの設定ファイルと出力の例は、CTest の `launch_cli.docs` が、実際の実行ファイルと照合します（`vehicle_sil` のバージョンを除いて、バイト単位で）。
+The CTest test `launch_cli.docs` compares the example configuration files and outputs in this document with the real executables, byte for byte except for the `vehicle_sil` version.
 
-## 関連するドキュメント
+## See also
 
-| 調べること | ドキュメント |
+| To find | See |
 |---|---|
-| 設定ファイルのキー、引数、終了コード | [simulation-config.md](simulation-config.md) |
-| `--describe` の JSON | [ecu-executable.md](ecu-executable.md) |
-| 実行と、実行の指摘 | [simulation-run.md](simulation-run.md) |
-| 指摘を見つけて直す手順 | [複数の ECU をつないで動かす](howto/integrate-ecus.md) |
+| Keys of the configuration file, arguments and exit codes | [simulation-config.md](simulation-config.md) |
+| The `--describe` JSON | [ecu-executable.md](ecu-executable.md) |
+| Running, and run findings | [simulation-run.md](simulation-run.md) |
+| Steps to find and fix findings | [Integrate and run several ECUs](howto/integrate-ecus.md) |

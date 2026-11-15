@@ -11,7 +11,9 @@ describe('RunControl', () => {
   let client: GuiClient;
   let run: ReturnType<typeof view>;
 
-  /** 試験が読むもの（実行の操作とセッションの写しの読める値を、呼べば値が返る形にしたもの）。 */
+  /**
+   * What the tests read (the readable values of run control and the session copy, as functions that return the value).
+   */
   function view(c: GuiClient) {
     return {
       start: (request: Parameters<GuiClient['run']['start']>[0]) => {
@@ -103,10 +105,11 @@ describe('RunControl', () => {
     run.stop();
     expect(run.stopWhileStarting()).toBe(true);
     expect(run.stopping()).toBe('stop');
-    // 停止の応答は、まだ前の実行（ここでは何もない）の要約
+    // The stop's answer still has the summary of the previous run (here, none)
     http.expectOne('api/stop').flush({ session: null });
     expect(run.stopping()).toBeNull();
-    // 開始の応答の要約は「頼んでいない」: 何度頼んでも同じ停止を、もう一度頼む
+    // The summary in the start's answer says "not requested": ask again for the stop (asking again has no further
+    // effect)
     http.expectOne('api/run').flush(answer('run'));
     expect(run.stopWhileStarting()).toBe(false);
     expect(http.expectOne('api/stop').request.body).toEqual({ force: false });
@@ -143,7 +146,7 @@ describe('RunControl', () => {
         { status: 409, statusText: 'Conflict' },
       );
     expect(run.actionError()).toBe('a run is running');
-    // 別の画面が始めた実行の要約が届いた
+    // The summary of a run another screen started arrived
     void client.fetchSession();
     http.expectOne('api/session').flush(answer('run'));
     expect(run.actionError()).toBeNull();
@@ -157,7 +160,7 @@ describe('RunControl', () => {
         rejected = e;
       });
     const request = http.expectOne('api/run');
-    // 開始の中で照合し直すことがある: 順番待ちと照合の 2 つ分と、余裕
+    // A start may check again: room for waiting its turn and for the check, plus a margin
     expect(request.request.timeoutMs).toBe(2 * 120 * 1000 + DEFAULT_TIMEOUT_MS);
     request.fail(HttpError.noAnswer('POST', 'api/run', request.request.timeoutMs ?? 0));
     expect(run.starting()).toBe(false);

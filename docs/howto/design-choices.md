@@ -1,84 +1,86 @@
-# 作り始める前に決めること
+# Decisions to make before you start
 
-ECU を作る人と、ECU をまとめる人が、作り始める前に決めておくとよいことと、迷ったときの選び方です。手順は書きません。それぞれの書き方は、項目ごとに示したドキュメントにあります。
+[日本語](../ja/howto/design-choices.md)
 
-ここにあるのは、決まりではなく勧めです。`check` が確かめるのは、決めた結果が ECU どうしで合っているかだけです。
+This page lists what the ECU authors and the integrator (the person who puts the ECUs together in a configuration file) should decide before anyone starts writing ECUs, and how to choose when you are unsure. It has no procedures; each section links to the page that shows how.
 
-| 決めること | 勧める選び方 |
+These are recommendations, not rules. The [`check` command](integrate-ecus.md#step-3-check-the-configuration-and-read-the-findings) only checks whether the ECUs agree with each other on what you chose.
+
+| Decision | Recommendation |
 |---|---|
-| [1 つの ECU に何を入れるか](#1-つの-ecu-に何を入れるか) | 実車の ECU 1 つを、実行ファイル 1 つにします。 |
-| [何をバスに送り、何を変数にするか](#何をバスに送り何を変数にするか) | ECU の間でやり取りする値はバスに、ECU の外から与える値と中を見る値は変数にします。 |
-| [どの変数を読んで確認するか](#どの変数を読んで確認するか) | 確認したいことに合わせて、送信側か受信側かを選びます。 |
-| [ネットワークの名前](#ネットワークの名前) | バス 1 本に名前 1 つを決め、共有のヘッダーに定数として置きます。 |
-| [アドレスと NAME](#アドレスと-name) | 2 つ以上載せるかもしれない ECU は、引数で受け取れるようにします。 |
-| [変数の名前](#変数の名前) | `<ECU>.<信号>` の形にし、単位と範囲を付けます。 |
-| [ECU の間で共有するコード](#ecu-の間で共有するコード) | メッセージの番号と、値の詰め方だけを共有します。 |
+| [What goes into one ECU](#what-goes-into-one-ecu) | Make one executable per ECU of the real vehicle. |
+| [What goes on the bus and what becomes a variable](#what-goes-on-the-bus-and-what-becomes-a-variable) | Values that ECUs exchange go on the bus. Values that you feed in from outside, and internal values that you want to see, become variables. |
+| [Which variables to read for verification](#which-variables-to-read-for-verification) | Read the sender or the receiver, depending on what you want to verify. |
+| [Network names](#network-names) | Pick one name per bus, and keep it as a constant in a shared header. |
+| [Addresses and NAMEs](#addresses-and-names) | If an ECU may run as 2 or more instances, let it take its address and NAME as arguments. |
+| [Variable names](#variable-names) | Use the form `<ECU>.<signal>`, and give each variable a unit and a range. |
+| [Code shared between ECUs](#code-shared-between-ecus) | Share only the message numbers and how values are packed. |
 
-## 1 つの ECU に何を入れるか
+## What goes into one ECU
 
-実車の ECU 1 つを、実行ファイル 1 つにします。作る人、ビルド、差し替えの単位がそろうからです。
+Make one executable per ECU of the real vehicle. One ECU is then also one author, one build and one unit that you can swap.
 
-- まとめる人は、ECU を 1 つずつ無効にしたり、別のバージョンに差し替えたりできます（[複数の ECU をつないで動かす](integrate-ecus.md) の「ECU を無効にして動かす（`enabled`、`--disable`）」）。
-- まだ相手の ECU がないときは、相手の代わりをする小さい ECU を自分で作って並べます。例の表示の ECU は、エンジンの ECU から見た「受信する相手」の代わりでもあります。
+- The integrator can disable ECUs one at a time, or replace one with another version (see "Run with an ECU disabled (`enabled`, `--disable`)" in [Integrate and run several ECUs](integrate-ecus.md#run-with-an-ecu-disabled-enabled---disable)).
+- If an ECU that yours talks to does not exist yet, write a small ECU yourself that stands in for it, and run them together. The dashboard ECU of the example is such a stand-in: it plays the ECU that receives the engine speed from the engine ECU.
 
-## 何をバスに送り、何を変数にするか
+## What goes on the bus and what becomes a variable
 
-変数とバスは別のものです。変数は ECU のメンバー変数を外から読み書きできるようにしたもので、バスには流れません。バスに送るかどうかは、コードで送信を書くかどうかで決まります。
+Variables and the bus are separate things. A variable is a member variable of the ECU, exposed so that it can be read and written from outside the ECU; it never travels on the bus. A value goes on the bus only if your code sends it.
 
-| 値 | 置く場所 | 例 |
+| Value | Where it goes | Example |
 |---|---|---|
-| ほかの ECU が使う値 | バス（メッセージ） | エンジンの回転数 |
-| 実車ではセンサーやスイッチから来る値 | 入力の変数 | `engine.throttle` |
-| テストで確かめたい内部の状態 | 出力の変数 | 状態の番号、故障のフラグ、積分した値 |
-| バスに送っている値を、送信側でも見たい | バスと出力の変数の両方 | `engine.speed` |
+| A value that other ECUs use | The bus (a message) | Engine speed |
+| A value that comes from a sensor or a switch in the real vehicle | An input variable | `engine.throttle` |
+| Internal state that you want to check in tests | An output variable | A state number, a fault flag, an integrated value |
+| A value sent on the bus that you also want to see at the sender | Both the bus and an output variable | `engine.speed` |
 
-ほかの ECU からバスで届く値を、受信側の入力の変数にもするのは勧めません。外から書き込むとバスを通らずに値が入り、通信を確かめたことにならないからです。受信した値を見たいときは、出力の変数にします（例の `dashboard.engine_speed`）。
+Avoid also declaring a value that arrives over the bus from another ECU as an input variable of the receiver. A write from outside would set the value without going through the bus, and the test would no longer show that the communication works. To see a received value, make it an output variable (`dashboard.engine_speed` in the example).
 
-書き方は [最初の ECU を作る](first-ecu.md) にあります。
+For how to write these, see [Create your first ECU](first-ecu.md).
 
-## どの変数を読んで確認するか
+## Which variables to read for verification
 
-同じ回転数でも、どの ECU の変数を読むかで、確かめられることが違います。
+The same engine speed tells you different things depending on which ECU you read it from.
 
-| 確かめたいこと | 読むもの | 例 |
+| To verify | Read | Example |
 |---|---|---|
-| ECU のモデルが正しく計算したか | その ECU の出力の変数 | `engine.speed` |
-| 値がバスを通って相手に届いたか | 受信側の ECU の出力の変数 | `dashboard.engine_speed` |
-| 相手が、届かなくなったことに気づくか | 受信側の ECU の、途切れを示す変数 | `dashboard.engine_lost` |
+| That the ECU's model computes correctly | An output variable of that ECU | `engine.speed` |
+| That the value reached the other ECU over the bus | An output variable of the receiving ECU | `dashboard.engine_speed` |
+| That the receiver notices when the value stops arriving | The variable of the receiving ECU that signals message loss | `dashboard.engine_lost` |
 
-送信側と受信側の値が違うときは、原因は通信にあります（ネットワークの名前の不整合、ECU の切断、値の詰め方の違い）。モデルのテストは送信側の変数で、通信のテストは受信側の変数で書くと、失敗したときにどちらの問題かが分かります。
+If the sender and the receiver show different values, the cause is in the communication: a network name mismatch, a disconnected ECU, or a difference in how the values are packed. Write model tests against the sender's variables and communication tests against the receiver's. When a test fails, you then know which of the two is at fault.
 
-## ネットワークの名前
+## Network names
 
-名前 1 つが、バス 1 本です。同じ名前を使う ECU どうしが同じバスに接続され、名前が違えば互いのフレームは見えません。
+One name is one bus. ECUs that use the same name connect to the same bus. ECUs with different names do not see each other's frames.
 
-- バスが 2 本あれば、名前も 2 つ決めます（ビットレートが違う 2 本の CAN など）。両方に接続する ECU は、コードで 2 つのネットワークを開きます。
-- 名前は ECU のコードに書く値で、設定ファイルでは変えられません。作り始める前に決めて、全員に伝えます（[複数の ECU をつないで動かす](integrate-ecus.md) の「手順 1: 名前を決めて伝える」）。
-- 名前は、ECU のソースのあちこちに文字列で書かずに、ECU の間で共有するヘッダーに定数として 1 か所に置きます。変えるときに 1 か所で済み、打ち間違いがコンパイルで分かります。
-- ビットレートは、名前とは別のものです。ふつうの実行では使いません（フレームは、送信したステップの次のステップで届きます）。使うのは、CAN のネットワークシミュレーターを並べた実行と、実機に接続するブリッジです（[CAN](../internals/can.md)、[ブリッジ](../bridges.md)）。
+- If there are 2 buses (for example, 2 CAN buses with different bit rates), decide on 2 names. An ECU on both buses opens 2 networks in its code.
+- The name is a value in the ECU's code. The configuration file cannot change it. Decide on the names before work starts and share them with everyone (see "Step 1: Agree on names and share them" in [Integrate and run several ECUs](integrate-ecus.md#step-1-agree-on-names-and-share-them)).
+- Do not scatter the name across an ECU's sources as string literals. Define it once, as a constant, in a header that the ECUs share. A change then touches one place, and the compiler catches typos.
+- The bit rate is separate from the name. A normal run does not use it: a frame arrives in the simulation step after the one in which it was sent (a simulation step is the interval by which the simulation advances virtual time). Only 2 things use the bit rate: runs that include a CAN network simulator, and bridges to real hardware (see [CAN foundation](../internals/can.md) and [Vector XL CAN Bridge](../bridges.md)).
 
-## アドレスと NAME
+## Addresses and NAMEs
 
-J1939 のアドレスと NAME も、ECU のコードに書く値です。
+J1939 addresses and NAMEs are also values in the ECU's code.
 
-- 1 つしか載せない ECU は、定数でかまいません。
-- 同じ実行ファイルを 2 つ以上載せるかもしれない ECU（車輪ごと、車軸ごとの ECU など）は、最初から引数で受け取れるようにします。後から足すと、まとめる人が作り直しを待つことになります（[複数の ECU をつないで動かす](integrate-ecus.md) の「同じ ECU を 2 つ載せる」）。
-- 例、テスト、ドキュメントに書く Manufacturer Code は、実在の会社の番号に見えない値にします。
+- For an ECU that runs as a single instance, constants are fine.
+- If an executable may run as 2 or more instances (one ECU per wheel or per axle, for example), let it take its address and NAME as arguments from the start. If you add this later, `check` reports `name-conflict` for the 2 instances, the configuration file cannot fix it, and the integrator has to wait for the rebuilt ECU (see "Run two instances of the same ECU" in [Integrate and run several ECUs](integrate-ecus.md#run-two-instances-of-the-same-ecu)).
+- In examples, tests and documentation, use a Manufacturer Code that does not look like the code of a real company.
 
-## 変数の名前
+## Variable names
 
-- `<ECU>.<信号>` の形にします（`engine.speed`）。複数の ECU の変数を 1 つの画面やシナリオに並べたときに、どの ECU のものかが名前で分かります。
-- 単位と、入力の範囲を付けます。範囲の外の書き込みは断られ、単位は画面とコマンドの出力に表示されます。
-- 実行ファイルによって名前が違ってしまったものは、設定ファイルの対応表でそろえられます（[設定ファイル](../simulation-config.md) の「変数の名前と値を合わせる（`variables`）」）。ECU の側でそろえられるなら、そのほうが簡単です。
+- Use the form `<ECU>.<signal>`, as in `engine.speed`. When the variables of several ECUs appear together on one screen or in one scenario, the name tells you which ECU each one belongs to.
+- Give each variable a unit, and each input a range. Writes outside the range are rejected, and the unit appears on the screen and in command output.
+- If different executables ended up with different names for the same thing, the variable map in the configuration file can align them (see "Matching variable names and values (`variables`)" in [simulation-config.md](../simulation-config.md#matching-variable-names-and-values-variables)). If you can align the names in the ECUs instead, that is simpler.
 
-## ECU の間で共有するコード
+## Code shared between ECUs
 
-ECU の間で共有するのは、バスの上の決まりだけにします。メッセージの番号、値の詰め方、周期、ネットワークの名前です。例では [examples/ecu_main/engine_speed.hpp](../../examples/ecu_main/engine_speed.hpp) が、メッセージの番号と値の詰め方を置くヘッダーです（例は小さいので、ネットワークの名前は各 ECU に直接書いています）。
+Share between ECUs only the rules of the bus: message numbers, how values are packed, periods and network names. In the example, [examples/ecu_main/engine_speed.hpp](../../examples/ecu_main/engine_speed.hpp) is the header that holds the message number and how the value is packed. The example is small, so each ECU writes the network name as a string. In a real project, keep the name in the shared header, as "[Network names](#network-names)" recommends.
 
-モデルや状態は共有しません。共有すると、ECU を別々の人が別々のバージョンで作れなくなります。
+Do not share models or state. If you do, different people can no longer build the ECUs separately, each at its own version.
 
-## 次に読むもの
+## What to read next
 
-- ECU を 1 つ作る → [最初の ECU を作る](first-ecu.md)
-- 受け取った ECU を並べて動かす → [複数の ECU をつないで動かす](integrate-ecus.md)
-- 確認を自動のテストにする → [シナリオでテストを書く](scenario-tests.md)
+- Build one ECU: [Create your first ECU](first-ecu.md)
+- Run the ECUs you received together: [Integrate and run several ECUs](integrate-ecus.md)
+- Turn your checks into automated tests: [Write tests with scenarios](scenario-tests.md)

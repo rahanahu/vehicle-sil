@@ -1,267 +1,269 @@
-# 共通仮想時間
+# Shared virtual time
 
-仮想時間の進み方、時間ゲート（一時停止、ステップ実行、速度）、受信の順序について、実装が守る保証と制限を書きます。
+[日本語](../ja/internals/virtual-time.md)
 
-SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間を共有します。ピアごとにステップ幅を決められます（例: 物理モデル 1 ms、LIN Slave 2 ms、LIN Master 5 ms、J1939 ECU 10 ms）。ピアはそれぞれ独立したプロセスで、同じ PC でも別の PC でも動きます。
+This page gives the guarantees and limitations the implementation keeps for how virtual time advances, for the time gate (pause, step and speed) and for the order of reception.
 
-| 節 | 書いてあること |
+All peers share one virtual time through SIL Kit's `ITimeSyncService`. Each peer can have its own step size (for example: physics model 1 ms, LIN slave 2 ms, LIN master 5 ms, J1939 ECU 10 ms). Each peer is a separate process, on the same computer or on different computers.
+
+| Section | Contents |
 |---|---|
-| [時間の型](#時間の型) | `SimTime`、`SimDuration`、`SimClock` |
-| [参加と進み方](#参加と進み方) | 時刻同期への参加、ステップの順序、`stop_at` と `end`、中断、例外、停止 |
-| [実時間との結合](#実時間との結合) | `real_time_factor` で壁時計に合わせる方法 |
-| [一時停止、ステップ実行、速度（時間ゲート）](#一時停止ステップ実行速度時間ゲート) | 止まる位置、操作、遅れの測り方、制限 |
-| [受信の扱い（決定論性）](#受信の扱い決定論性) | ステップ T で渡すメッセージの範囲と順序 |
-| [J1939 を仮想時間で動かす](#j1939-を仮想時間で動かす) | `Network` とホストのステップ、タイマー |
-| [固定周期 tick() の統合](#固定周期-tick-の統合) | `TickScheduler`、`every`、DLL を統合するときの制約 |
-| [検証の範囲](#検証の範囲) | 単体テストと統合テストが確認していること |
+| [Time types](#time-types) | `SimTime`, `SimDuration`, `SimClock` |
+| [Joining and advancing](#joining-and-advancing) | Joining time synchronization, step order, `stop_at` and `end`, aborts, exceptions, stopping |
+| [Coupling to real time](#coupling-to-real-time) | Keeping pace with the wall clock with `real_time_factor` |
+| [Pause, step and speed (time gate)](#pause-step-and-speed-time-gate) | Where it stops, operations, how lateness is measured, limitations |
+| [Reception handling (determinism)](#reception-handling-determinism) | Which messages step T hands over, and in what order |
+| [Running J1939 in virtual time](#running-j1939-in-virtual-time) | `Network` and the host's step, timers |
+| [Integrating a fixed-period tick()](#integrating-a-fixed-period-tick) | `TickScheduler`, `every`, constraints when integrating a DLL |
+| [Test coverage](#test-coverage) | What the unit and integration tests check |
 
-## 時間の型
+## Time types
 
-- シミュレーション時間は `vehicle_sil::SimTime`（`std::chrono::time_point<SimClock, nanoseconds>`）と `SimDuration` で表します。
-- `SimClock` は壁時計ではなく、`now()` を持ちません。
-- `SimTime` は `steady_clock` や `system_clock` の時刻とは型が違うので、混ぜるとコンパイルエラーになります。
-- `SimTime{}` はシミュレーションの開始時刻（T = 0）です。
+- Simulation time is expressed with `vehicle_sil::SimTime` (`std::chrono::time_point<SimClock, nanoseconds>`) and `SimDuration`.
+- `SimClock` is not a wall clock and has no `now()`.
+- `SimTime` is a different type from the time points of `steady_clock` and `system_clock`, so mixing them is a compile error.
+- `SimTime{}` is the start time of the simulation (T = 0).
 
-## 参加と進み方
+## Joining and advancing
 
-### 時刻同期への参加とステップハンドラー
+### Joining time synchronization, and the step handler
 
-`ParticipantRuntimeOptions::virtual_time` を指定すると、participant は時刻同期に参加します。ハンドラーは非同期版（`SetSimulationStepHandlerAsync`）で、利用者のハンドラーが戻るとすぐに `CompleteSimulationStep()` を呼びます。利用者から見ると、ハンドラーが戻ったときにステップが終わる点はブロッキング版と同じです。
+If `ParticipantRuntimeOptions::virtual_time` is set, the participant joins time synchronization. The handler is the asynchronous version (`SetSimulationStepHandlerAsync`), and it calls `CompleteSimulationStep()` as soon as the user's handler returns. To the user, it behaves like the blocking version: the step ends when the handler returns.
 
-SIL Kit はステップハンドラーと受信ハンドラーを同じ I/O スレッドで呼ぶので、ステップの実行中、その participant のほかのハンドラーは呼ばれません。
+SIL Kit calls the step handler and the receive handlers on the same I/O thread, so while a step runs, no other handler of that participant is called.
 
-`CompleteSimulationStep()` は完了の処理を I/O スレッドのタスクとして積みます。そのため、ステップで送信したメッセージだけでなく、SIL Kit がそれを自分に配送するときに送信するメッセージ（LIN の Master が送信するフレーム）も、次のステップの時刻を通知する前に送信されます。ブロッキング版では、この 2 段目の送信が通知より後になり、受信側のステップに間に合う保証がありません（[dependencies.md](../dependencies.md)）。
+`CompleteSimulationStep()` queues the completion as a task on the I/O thread. So not only the messages sent in the step, but also the messages SIL Kit sends when it delivers those messages to the participant itself (frames the LIN master sends: a second round of sends), are sent before the time of the next step is announced. With the blocking version, this second round of sends comes after the announcement, and there is no guarantee that it arrives in time for the receiver's step (see [dependencies.md](../dependencies.md)).
 
-利用者は `set_step_handler()` でステップごとの処理を渡します。`start()` より前に渡さないと、`start()` が `std::logic_error` を投げます。
+You pass the per-step work with `set_step_handler()`. If you do not pass it before `start()`, `start()` throws `std::logic_error`.
 
-### 開始と進む順序
+### Start and order of advance
 
-開始と停止は `LifecycleMode::Coordinated` でそろえます。`SimulationController`（または `vehicle_sil_sim_controller`）が、必要な参加者がそろってから workflow configuration を配布します。その結果、全員が T = 0 から同時に始まります。
+Participants start and stop together through `LifecycleMode::Coordinated`. `SimulationController` (or `vehicle_sil_sim_controller`) distributes the workflow configuration once the required participants are all present. As a result, all participants start together at T = 0.
 
-SIL Kit は、participant がステップ T を実行するのを、ほかの全員が T より前のステップを終えるまで待たせます。全体の進み方は最も遅いピアで決まります。
+SIL Kit makes a participant wait to run step T until all the others have finished their steps before T. The slowest peer sets the pace of the whole simulation.
 
-- ステップハンドラーが壁時計で長くかかると（重い `tick()` など）、ほかのピアはそれを待ちます。ステップは飛ばしません。
-- そのため、実行速度に関係なく、各ピアのステップの並びと受信するデータは同じになります。
+- If a step handler takes a long wall-clock time (a heavy `tick()`, for example), the other peers wait for it. No step is skipped.
+- So whatever the execution speed, each peer's sequence of steps and the data it receives are the same.
 
-### 終わりの時刻（`stop_at` と `VirtualTimeOptions::end`）
+### End time (`stop_at` and `VirtualTimeOptions::end`)
 
-`SimulationController` の `stop_at` を指定すると、controller は stop_at だけのステップで時刻同期に参加し、時刻 stop_at で全体を停止します。このとき、ほかの全ピアは stop_at より前のステップをすべて終えています。stop_at と同時刻のステップを実行するかどうかは決まっていません。
+If `stop_at` of `SimulationController` is set, the controller joins time synchronization with a single step of length stop_at, and stops the whole simulation at time stop_at. At that point, every other peer has finished all its steps before stop_at. Whether a step at exactly stop_at runs is not defined.
 
-そのため、各ピアの作業範囲は `VirtualTimeOptions::end` で決めます。end ≤ stop_at にすれば、最後に処理するステップは停止のタイミングに左右されません。
+So set the range of each peer's work with `VirtualTimeOptions::end`. With end ≤ stop_at, the last step a peer processes does not depend on the timing of the stop.
 
-| ステップ | ステップハンドラー | `steps_completed()` | 時刻同期と実時間との結合 |
+| Step | Step handler | `steps_completed()` | Time synchronization and coupling to real time |
 |---|---|---|---|
-| end より前に始まる | 呼ばれる | 数える | 参加する |
-| end 以降 | 呼ばれない | 数えない | 参加する |
+| Starts before end | Called | Counted | Takes part |
+| At or after end | Not called | Not counted | Takes part |
 
-end 以降はハンドラーが受信バッファ（`StepInbox`、`SilKitCanPort` の受信キュー）を空にしないので、ほかのピアが送信し続けるとあふれます。あふれの判定は、処理したステップの範囲で行います。
+From end on, the handler no longer empties the receive buffers (`StepInbox`, the receive queue of `SilKitCanPort`), so they overflow if other peers keep sending. Overflow is judged over the range of steps that were processed.
 
-### 実行の上限と中断（`vehicle_sil_sim_controller`）
+### Run limits and aborting (`vehicle_sil_sim_controller`)
 
-`vehicle_sil_sim_controller` の `--timeout-ms` は、起動待ちの上限です。`--stop-at-ms` を指定したときは、起動後の実行にも同じ値を上限として別に適用します。`--stop-at-ms` がなければ、シミュレーションは Ctrl+C / SIGTERM まで続きます。起動待ちの間の Ctrl+C は、プロセスをそのまま終了させます。
+`--timeout-ms` of `vehicle_sil_sim_controller` limits the wait for the start. If `--stop-at-ms` is given, the same value is also applied separately as a limit on the run after the start. Without `--stop-at-ms`, the simulation continues until Ctrl+C or SIGTERM. Ctrl+C during the wait for the start ends the process at once.
 
-実行中に必要な参加者が抜けると、controller は次の条件でシミュレーションを中断し、終了コード 1 で終わります。
+If a required participant leaves during the run, the controller aborts the simulation under these conditions and exits with exit code 1:
 
-| 参加者の抜け方 | 中断するとき |
+| How the participant left | When the controller aborts |
 |---|---|
-| Error で抜けた（ステップの失敗、接続断） | すぐ |
-| ほかの状態で抜けた | 5 秒たってもシミュレーションが終わらないとき |
+| In Error (a step failure, a lost connection) | At once |
+| In any other state | When the simulation has not ended 5 seconds later |
 
-5 秒は、参加者が自分で止めたシミュレーションを、誤って失敗にしないための猶予です。
+The 5 seconds are a grace period so that a simulation a participant stopped on its own is not mistaken for a failure.
 
-この判定は `vehicle_sil::FailureCheck`（`vehicle_sil/core/failure_check.hpp`）で、`vehicle_sil::Simulation`、`vehicle_sil_launch run`、Control Server の `SimulationMonitor` と共通です。controller を持つツール（`Simulation`、`vehicle_sil_sim_controller`、`vehicle_sil_launch run`）は、終わりを待って中断や停止をするループも `vehicle_sil::watch_simulation()`（`vehicle_sil/core/simulation_watch.hpp`）で共有します。どのツールも、ログに参加者の名前、状態、理由を出力します。SIL Kit は失敗した参加者がいても全体を止めず、仮想時間が進まなくなるだけだからです。
+This decision is `vehicle_sil::FailureCheck` (`vehicle_sil/core/failure_check.hpp`), shared by `vehicle_sil::Simulation`, `vehicle_sil_launch run` and the Control Server's `SimulationMonitor`. The tools that own a controller (`Simulation`, `vehicle_sil_sim_controller`, `vehicle_sil_launch run`) also share the loop that waits for the end and aborts or stops: `vehicle_sil::watch_simulation()` (`vehicle_sil/core/simulation_watch.hpp`). Every tool logs the participant's name, state and reason. This matters because SIL Kit does not stop the simulation when a participant fails; instead, virtual time stops advancing.
 
-### ステップハンドラーの例外と停止
+### Step handler exceptions and stopping
 
-ステップハンドラーが例外を投げると、`ParticipantRuntime` はそれを捕まえて SIL Kit にエラーを報告します。その participant は Error になり、`step_error()` がメッセージを返します。`wait_until_finished()` は Error も終了として返します。SIL Kit は Error の participant を停止するまでそのままにするので、`stop()` かデストラクターで Shutdown にします。
+If the step handler throws, `ParticipantRuntime` catches the exception and reports an error to SIL Kit. The participant goes to Error, and `step_error()` returns the message. `wait_until_finished()` returns on Error too, as an end. SIL Kit leaves a participant in Error as it is until it is stopped, so bring it to Shutdown with `stop()` or the destructor.
 
-例のピア（`examples/virtual_time`）は、シミュレーションが `--end-ms` より前の最後のステップに達せずに終わった場合（中断）、Shutdown でも終了コード 1 で終わります。
+The example peer (`examples/virtual_time`) exits with exit code 1 if the simulation ends (is aborted) before reaching its last step before `--end-ms`, even in Shutdown.
 
-停止の保証とルールは次のとおりです。
+Guarantees and rules for stopping:
 
-- `stop()` が戻った時点で、ステップハンドラーは実行中でなく、以後も呼ばれません。
-- 実行中のハンドラーがあれば、`stop()` は終わるまで待ちます。
-- ハンドラーが使うオブジェクトは、`stop()`（またはデストラクター）のあとに破棄します。
-- ステップハンドラーの中からは `stop()` ではなく `request_stop()` を呼びます。
-- coordinated では、どの participant が停止しても全体が止まります。
+- When `stop()` returns, the step handler is not running and is not called again.
+- If a handler is running, `stop()` waits for it to finish.
+- Destroy the objects the handler uses after `stop()` (or the destructor).
+- From inside the step handler, call `request_stop()`, not `stop()`.
+- In coordinated mode, the stop of any participant stops the whole simulation.
 
-## 実時間との結合
+## Coupling to real time
 
-- 何も指定しなければ、仮想時間はできるだけ速く進みます（実時間より速くなりえます）。
-- `VirtualTimeOptions::real_time_factor` を指定すると、そのピアは各ステップを壁時計に合わせて保持します。1.0 で実時間、4.0 で 4 倍速、0.5 で半分の速度です。
-  - 最初のステップで壁時計と仮想時間を対応づけ、ステップ [T, T+Δ) は「対応づけた時刻 + (T + Δ − 開始時刻) / factor」まで終わりません（`RealTimePacer`）。
-  - 1 つのピアを結合すれば、ほかのピアもそれを待つので全体が同じ速度になります。
-  - 待つことしかしないので、目標より遅いピアを速くはできません。
-- SIL Kit の `AnimationFactor`（experimental）は使いません。
+- By default, virtual time advances as fast as possible (it can run faster than real time).
+- If `VirtualTimeOptions::real_time_factor` is set, the peer holds each step to the wall clock. 1.0 is real time, 4.0 is 4 times as fast, 0.5 is half speed.
+  - The first step ties the wall clock to virtual time. Step [T, T+Δ) does not end before "the tied wall-clock time + (T + Δ − start time) / factor" (`RealTimePacer`).
+  - Coupling one peer is enough: the other peers wait for it, so the whole simulation runs at the same speed.
+  - Pacing only waits, so it cannot speed up a peer that is slower than the target.
+- SIL Kit's `AnimationFactor` (experimental) is not used.
 
-## 一時停止、ステップ実行、速度（時間ゲート）
+## Pause, step and speed (time gate)
 
-`SimulationControllerOptions::time_control` を指定すると、`SimulationController` は `TimeControlOptions::step`（既定 10 ms）のステップで時刻同期に参加します。そのステップの完了を保留して、シミュレーション全体を止めます（時間ゲート）。
+If `SimulationControllerOptions::time_control` is set, `SimulationController` joins time synchronization with steps of `TimeControlOptions::step` (default 10 ms). By holding the completion of its step, it stops the whole simulation (the time gate).
 
-### 止まる位置
+### Where it stops
 
-controller がステップ P を保留すると、時刻同期に参加しているほかの全ピアは「開始時刻が P 以下のステップ」をすべて実行し、P より後に始まるステップを実行しません。ステップ幅が違っても同じです（P = 50 ms なら、1 ms のピアは 50 ms、3 ms のピアは 48 ms のステップまで）。これを「P で止まっている」と呼びます。止まる位置は controller のステップの倍数です。
+While the controller holds step P, every other peer in time synchronization runs all its steps whose start time is P or earlier, and runs no step that starts after P. This holds whatever the step sizes (with P = 50 ms, a 1 ms peer runs up to its step at 50 ms, a 3 ms peer up to its step at 48 ms). This is called "stopped at P". The stop position is a multiple of the controller's step.
 
-### 操作
+### Operations
 
-どの操作もスレッド安全で、待ちません。
+Every operation is thread-safe and does not wait.
 
-| 操作 | すること |
+| Operation | What it does |
 |---|---|
-| `pause()` | ペース調整で保留しているステップがあればそこで、なければ次のステップで止める。 |
-| `pause_at(T)` | T 以上で最初の controller のステップで止める（T を過ぎていれば次のステップ）。 |
-| `resume()` | 再開する（止める予定も消す）。 |
-| `run_until(T)` | T 以上で最初の controller のステップまで進めて止める。すでに T 以降で止まっていれば何もしない。 |
-| `step(d)` | `run_until(time_state().now + d)` と同じ。 |
-| `set_speed(f)` | 速度を、仮想時間の秒 / 壁時計の秒で指定する（空ならできるだけ速く）。 |
-| `time_state()` | 現在の位置（止まっているか、P、止める予定、速度）と、遅れと止まっていた時間（下の「遅れの測り方」）を読む。 |
-| `wait_until_paused(timeout)` | 止まるのを待つ（ライフサイクルが終わったら空を返す）。 |
-| `TimeControlOptions::start_paused` | T = 0 で止めて始める（全ピアは時刻 0 のステップだけを実行して止まる）。 |
+| `pause()` | Stops at the step held for pacing if there is one, otherwise at the next step. |
+| `pause_at(T)` | Stops at the first controller step at or after T (at the next step if T has passed). |
+| `resume()` | Resumes (and clears a planned stop). |
+| `run_until(T)` | Advances to the first controller step at or after T and stops. Does nothing if already stopped at or after T. |
+| `step(d)` | The same as `run_until(time_state().now + d)`. |
+| `set_speed(f)` | Sets the speed, in virtual seconds per wall-clock second (empty means as fast as possible). |
+| `time_state()` | Reads the current position (whether stopped, P, the planned stop, the speed), lateness and paused time (see "How lateness is measured" below). |
+| `wait_until_paused(timeout)` | Waits until it stops (returns empty once the lifecycle has ended). |
+| `TimeControlOptions::start_paused` | Starts stopped at T = 0 (all peers run only their step at time 0 and stop). |
 
-`set_speed(f)` では、controller が各ステップの完了を壁時計の期限まで遅らせます。速度を変えたときは待ち終えた分を保ち、再開のときは壁時計との対応づけをやり直します。いちばん遅いピアより速くはできません。遅れたときは追いつきません（下の「遅れの測り方」）。
+With `set_speed(f)`, the controller delays the completion of each step until a wall-clock deadline. A speed change keeps the waiting already done, and a resume ties the wall clock again. The gate cannot make the simulation faster than the slowest peer. When a step is late, the gate does not catch up (see "How lateness is measured" below).
 
-### ステップの保留
+### Holding a step
 
-保留はステップハンドラーの外で行います（`ParticipantRuntime::set_step_hold()` と `release_step()`）。controller の SIL Kit のスレッドは空いたままなので、止まっている間も状態の通知と停止を受信します。SIL Kit の HealthCheck は保留しているステップを時間切れにしません。止まっている間の `stop()` と `abort()` は、そのまま全体を終わらせます。
+The hold happens outside the step handler (`ParticipantRuntime::set_step_hold()` and `release_step()`). The controller's SIL Kit thread stays free, so it receives state notifications and stop requests even while stopped. SIL Kit's HealthCheck does not time out the held step. `stop()` and `abort()` while stopped end the whole simulation directly.
 
-### 決定論性
+### Determinism
 
-時間ゲートは止める位置と速度を決めるだけです。途中で止めた実行、1 ステップずつ進めた実行、速度を変えた実行のどれでも、各ピアが実行するステップと受信するデータは、止めずに実行したときと同じです。
+The time gate decides only where to stop and how fast to run. Whether a run is stopped partway, stepped one step at a time or run at changed speeds, each peer runs the same steps and receives the same data as in a run without stops.
 
-### `stop_at` との併用
+### Combining with `stop_at`
 
-`stop_at` と併用すると、controller は stop_at 以上で最初の自分のステップで停止します。`wall_time_to_stop_at()` には、止まっていた時間と速度の調整で待った時間も入ります（止まっていた時間を除いた値は `TimeState::running_for`）。stop_at のステップは保留しませんが、遅れは測ります。
+With `stop_at`, the controller stops at the first of its own steps at or after stop_at. `wall_time_to_stop_at()` includes the time spent stopped and the time waited for speed pacing (the value without the stopped time is `TimeState::running_for`). The step at stop_at is not held, but its lateness is measured.
 
-### 速度を変える時点と期限
+### When a speed change takes effect, and deadlines
 
-`set_speed()` で同じ値を設定し直しても、何も変わりません。値を変えたときの扱いは、変える時点で決まります。
+Setting the same value again with `set_speed()` changes nothing. When the value changes, what happens depends on when it changes:
 
-| 速度を変える時点 | 起きること |
+| When the speed changes | What happens |
 |---|---|
-| ペース調整でステップを保留している間 | 待ち終えた分はそのままで、残りを新しい速度で待つ。 |
-| ステップの間 | 次のステップの期限はそのままで（そのステップがすでに遅れていれば、その遅れも保って）、そこから新しい速度で数える。 |
-| ステップの間（速度の指定がない状態から速度を付ける） | 次のステップの期限はその時点になる。 |
-| 止まっている状態から再開するとき | そこから壁時計との対応づけをやり直す。 |
-| 最初のステップより前（`start()` の前） | 最初のステップで対応づける（始まるまでの時間を遅れに数えず、取り戻そうと速く進めることもない）。 |
+| While a step is held for pacing | The waiting already done stays; the rest is waited at the new speed. |
+| Between steps | The deadline of the next step stays (if that step is already late, its lateness stays too), and counting continues from there at the new speed. |
+| Between steps (setting a speed when none was set) | The deadline of the next step becomes that moment. |
+| On resuming from stopped | The wall clock is tied again from there. |
+| Before the first step (before `start()`) | The tie is made at the first step (the time before the start is not counted as lateness, and the gate does not run faster to make it up). |
 
-### 遅れの測り方
+### How lateness is measured
 
-定義は `TimeControlOptions` のコメントを正とします。遅れは、速度があり、壁時計との対応づけ（基準）がある間だけ数えます。
+The comments of `TimeControlOptions` are the authoritative definitions. Lateness is counted only while there is a speed and a tie to the wall clock (the base).
 
-| 言葉 | 定義 |
+| Term | Definition |
 |---|---|
-| 期限 | controller のステップ P を始めてよい壁時計の時刻（基準の壁時計 +（P − 基準の仮想時刻）÷ 速度）。 |
-| 遅れ | ステップ P が始まった壁時計の時刻 − 期限（負なら 0）。 |
-| 遅れたステップ（`late_steps`） | 遅れが `TimeControlOptions::late_tolerance`（既定 10 ms。壁時計の時間で、ステップと速度によらない）を超えたステップ。 |
-| `max_lateness` | 許容の内のものも含む、遅れの最大。 |
-| ずれ（`slipped`） | 遅れたステップの遅れの合計。 |
-| `paused_for` | 止まっていた壁時計の時間の合計（止まっている間も増える）。 |
-| `running_for` | 最初のステップが始まってから最後のステップが始まるまでの、止まっていた時間を除いた壁時計の時間。 |
+| Deadline | The wall-clock time at which controller step P may start (base wall-clock time + (P − base virtual time) ÷ speed). |
+| Lateness | The wall-clock time at which step P started − its deadline (0 if negative). |
+| Late step (`late_steps`) | A step whose lateness exceeds `TimeControlOptions::late_tolerance` (default 10 ms; wall-clock time, independent of the step and the speed). |
+| `max_lateness` | The largest lateness, including lateness within the tolerance. |
+| Slip (`slipped`) | The sum of the lateness of the late steps. |
+| `paused_for` | The total wall-clock time spent stopped (it also grows while stopped). |
+| `running_for` | The wall-clock time from the start of the first step to the start of the last step, without the time spent stopped. |
 
-**期限**。どのステップも期限より前には始まりません。
+**Deadline.** No step starts before its deadline.
 
-**遅れ**。ステップ P が始まるのは、ゲートが前のステップを放し、P より前に始まるピアのステップが全部終わったと controller が知ったときです。ゲートのスレッドの起床の遅れも入ります（`TimeState::max_gate_lateness` に、その分だけを別に持ちます）。ピアがステップを終えてすぐ次のステップに入ると、SIL Kit は終わったことを次のステップの後で伝えるので、遅れは最大でピアの 1 ステップの時間だけ大きく出ます（小さくは出ません）。
+**Lateness.** Step P starts when the gate has released the previous step and the controller knows that all peer steps that start before P have finished. The wake-up delay of the gate's thread is included (`TimeState::max_gate_lateness` holds that part alone, separately). If a peer finishes a step and goes straight into its next step, SIL Kit reports the finish only after that next step, so lateness can be measured larger, by up to the time of one step of that peer (never smaller).
 
-**ずれ**。遅れたステップでは追いつかず、そのステップを新しい基準にします。以後のステップは、そこから指定の速度で進みます。許容の内の遅れでは基準を変えず、期限を過ぎたステップは保留しないので、自然に取り戻します。
+**Slip.** A late step is not caught up with; it becomes the new base. The steps after it advance at the requested speed from there. Lateness within the tolerance does not change the base, and a step whose deadline has passed is not held, so such lateness is made up naturally.
 
-**数える範囲**。基準をとった次のステップから、最後のステップ（stop_at のステップを含む）までです。期限を過ぎてもまだ始まっていないステップは、`time_state()` を呼んだ時点までの遅れ（`current_lateness`）で数えます。`time_state()` の数は「いま終わったとしたら」の値で、同じステップを 2 回は数えません。数は、次のどれか早い時点で固定します（`ParticipantRuntime::set_stop_observer()`）。
+**What is counted.** From the step after the base was taken to the last step (including the step at stop_at). A step whose deadline has passed but that has not started yet is counted with its lateness up to the call of `time_state()` (`current_lateness`). The figures of `time_state()` are "as if the run ended now", and the same step is never counted twice. The figures are fixed at the earliest of these points (`ParticipantRuntime::set_stop_observer()`):
 
-- 止める要求（`stop()`、`request_stop()`、stop_at）
+- A request to stop (`stop()`, `request_stop()`, stop_at)
 - `abort()`
-- controller のライフサイクルが Running を離れたとき（ほかのピアが止めたときも）
+- The controller's lifecycle leaving Running (also when another peer stopped it)
 
-止まったままの実行が終わっても、その遅れは残ります。
+If a run ends while stopped, its lateness remains.
 
-**止まっていた時間**。止まっていた時間は数えません（再開で基準をとり直します）。`running_for` は、次のステップが期限を過ぎている間と、速度の指定がなくゲートが何も保留していない間は、いままでの時間です。起動と終了の処理は入りません。
+**Stopped time.** Time spent stopped is not counted (a resume takes the base again). In 2 cases `running_for` counts up to now: while the next step is past its deadline, and while no speed is set and the gate holds nothing. Startup and shutdown are not included.
 
-**ステップの細かさ**。ゲートが壁時計に合わせるのは controller のステップの境目だけです。時刻 T に始まるピアのステップは、T 以上で最初の controller のステップの期限に動きます。T にあたる壁時計の時刻より、最大で「controller のステップ −（controller のステップとピアのステップの最大公約数）」遅く、早くはなりません。実時間で動く機器と接続するときは、controller のステップを、ピアのステップの最大公約数にします（`vehicle_sil_launch` は、速度の指定があるとき、既定でそうします）。
+**Step granularity.** The gate keeps pace with the wall clock only at the boundaries of controller steps. A peer step that starts at time T runs at the deadline of the first controller step at or after T. That is up to "controller step − (greatest common divisor of the controller step and the peer step)" later than the wall-clock time for T, and never earlier. When you connect devices that run in real time, make the controller step the greatest common divisor of the peer steps (`vehicle_sil_launch` does this by default when a speed is given).
 
-### ゲートの待ち
+### Waiting at the gate
 
-ゲートのスレッドは、期限まで `steady_clock` の時刻で待ちます（`libs/core/src/deadline_waiter.cpp`）。Windows では、条件変数の時間つきの待ちがシステムのタイマーの分解能（既定で約 15.6 ms）で丸められるので、高分解能の待機タイマー（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）で待ちます。それがない Windows では、普通の待機タイマーと `timeBeginPeriod(1)`（ゲートがある間だけ）を使います。
+The gate's thread waits until the deadline in `steady_clock` time (`libs/core/src/deadline_waiter.cpp`). On Windows, a timed wait on a condition variable is rounded to the resolution of the system timer (about 15.6 ms by default), so the thread waits on a high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`). On Windows versions without it, it uses an ordinary waitable timer and `timeBeginPeriod(1)` (only while a gate exists).
 
-### 実装の場所
+### Where it is implemented
 
-状態と計算は `libs/core/src/time_gate.{hpp,cpp}`（`detail::TimeGate`）にあり、スレッド、ロック、時計を持ちません（どの関数も壁時計の時刻を引数で受け取ります）。`SimulationController` が mutex の下で呼び、保留したステップを放すスレッドを持ちます。遅れの数は、時刻を決めた例で `tests/core/test_time_gate_model.cpp` が確認します。
+The state and the calculations are in `libs/core/src/time_gate.{hpp,cpp}` (`detail::TimeGate`). It has no threads, locks or clocks (every function takes the wall-clock time as an argument). `SimulationController` calls it under a mutex and owns the thread that releases held steps. `tests/core/test_time_gate_model.cpp` checks the lateness figures with examples that fix the times.
 
-### 制限
+### Limitations
 
-- 止まるのは時刻同期に参加しているピアだけです。仮想時間を使わないピア（実時間のピア、Vector XL のブリッジなど）は動き続けます。
-- controller のステップを小さくすると、ステップごとの同期の往復が増え、全体が遅くなります。
-- ピア自身の `real_time_factor` と `set_speed()` は両方かかります（遅いほうで決まります）。速度を controller で決めるときは、ピアの `real_time_factor` を使いません。
-- 巻き戻しと、終わったシミュレーションのやり直し（リセット）はできません。やり直すにはプロセスを起動し直します。
-- 速度の調整は controller のステップごとです。ピアの (P, P + controller のステップ] のステップは、controller が保留を解いてからまとめて進みます。
-- `wait_until_paused()` は、同じプロセスのピアのステップの中から呼びません（そのステップが終わらないと止まる位置に達しないので、必ず時間切れになります）。ほかの操作はステップの中からも呼べます。
-- time_control があるとき、controller の `runtime()` の `set_step_hold()` と `release_step()` は時間ゲートが使っているので、呼びません。
-- `ParticipantRuntime::set_step_hold()` の保留の判断は、`stop()` が戻った後と、停止の要求の後には呼ばれません。`VirtualTimeOptions::end` 以降のステップでは呼ばれます。
-- 保留の判断の中から `release_step()` と `stop()` は呼びません（`request_stop()` は呼べます）。
+- Only peers in time synchronization stop. Peers that do not use virtual time (real-time peers, the Vector XL bridge and so on) keep running.
+- A smaller controller step means more synchronization round trips per step, which slows the whole simulation.
+- A peer's own `real_time_factor` and `set_speed()` both apply (the slower one decides). When the controller sets the speed, do not use `real_time_factor` on the peers.
+- Rewinding, and restarting (resetting) a finished simulation, are not possible. To start again, restart the processes.
+- Speed pacing is per controller step. A peer's steps in (P, P + controller step] advance together once the controller releases its hold.
+- Do not call `wait_until_paused()` from inside the step of a peer in the same process (the stop position is not reached until that step ends, so it always times out). The other operations can be called from inside a step.
+- With time_control, the time gate uses `set_step_hold()` and `release_step()` of the controller's `runtime()`; do not call them.
+- The hold decision of `ParticipantRuntime::set_step_hold()` is not called after `stop()` has returned or after a stop request. It is called for steps at or after `VirtualTimeOptions::end`.
+- Do not call `release_step()` or `stop()` from inside the hold decision (`request_stop()` is allowed).
 
-## 受信の扱い（決定論性）
+## Reception handling (determinism)
 
-SIL Kit が保証するのは、ステップ T の時点で T より前のタイムスタンプのメッセージをすべて受信していることだけです。タイムスタンプがちょうど T のメッセージをステップ T の前に受信するかどうかは決まっていません。そこで、次のようにしています。
+SIL Kit guarantees only that at step T every message with a timestamp before T has been received. Whether a message with a timestamp of exactly T is received before step T is not defined. vehicle-sil therefore does the following:
 
-- ステップの外で受信したメッセージは `StepInbox` にためます。
-- ステップ T では、タイムスタンプが T より前のものだけを、(タイムスタンプ, タイブレーク, 到着順) の順に渡します。T ちょうどのものは次のステップで渡します。
-- 別のピアがステップ T で送信したデータは、受信側では T より後の最初のステップで処理されます。たとえば 1 ms の物理モデルが T で出した値を、10 ms の ECU はステップ T+1 ms 以降（実際には次の 10 ms 境界）で受信します。
-- `StepInbox` の容量は固定です。満杯になると捨てて数えます。
+- Messages received outside a step are collected in a `StepInbox`.
+- Step T hands over only the messages with a timestamp before T, ordered by (timestamp, tie-breaker, arrival order). Messages at exactly T are handed over in the next step.
+- Data another peer sent in step T is processed by the receiver in its first step after T. For example, a value that a 1 ms physics model outputs at T is received by a 10 ms ECU in its step at T+1 ms or later (in practice, at the next 10 ms boundary).
+- The capacity of `StepInbox` is fixed. When it is full, messages are dropped and counted.
 
-CAN のフレームも同じルールです。`SilKitCanPort` は、タイムスタンプが T より前のフレームだけをステップ T で渡します。同じ時刻に別の送信者が送信したフレームの到着順は SIL Kit では決まらないので、J1939 の `Network` は、送信者ごとの列を CAN の調停の順に取り出して並べます（[j1939.md](j1939.md) の「1 ステップの処理」）。結果はステップ幅と到着順によりません。
+CAN frames follow the same rule. `SilKitCanPort` hands over in step T only the frames with a timestamp before T. In SIL Kit, the arrival order of frames that different senders sent at the same time is not defined, so the J1939 `Network` takes frames from each sender's queue in CAN arbitration order (see "Processing in one step" in [j1939.md](j1939.md#processing-in-one-step)). The result depends neither on step size nor on arrival order.
 
-## J1939 を仮想時間で動かす
+## Running J1939 in virtual time
 
-J1939 の `Network` は SIL Kit の `SilKitCanPort` の上で、ホストのステップとして動きます。`Peer` を使うか、`bind_host(runtime, host)` でホストを `ParticipantRuntime` のステップハンドラーに結び付けます。スタックはスレッドを作らず、時計を読みません。タイマー（Address Claim の後の 250 ms など）は仮想時間で進みます。
+The J1939 `Network` runs as a step of the host, on SIL Kit's `SilKitCanPort`. Use `Peer`, or bind the host to the step handler of `ParticipantRuntime` with `bind_host(runtime, host)`. The stack creates no threads and does not read a clock. Timers (such as the 250 ms after Address Claim) advance in virtual time.
 
-1 ステップの中では、受信と処理、アプリの処理、送信の順です（[j1939.md](j1939.md) の「1 ステップの処理」、`Peer` は [execution.md](execution.md) の「Peer」）。アプリがステップの中で送信したメッセージは、そのステップの終わりに、ステップの時刻で送信されます。送信を起点とするタイマー（T3 など）も、この時刻から数えます。
+Within one step, the order is receive and process, application processing, then transmit (see "Processing in one step" in [j1939.md](j1939.md#processing-in-one-step), and for `Peer`, "Peer" in [execution.md](execution.md#peer-vehicle_silpeer)). Messages the application sends inside a step are transmitted at the end of that step, with the step's time. Timers started by a transmission (such as T3) also count from that time.
 
-## 固定周期 tick() の統合
+## Integrating a fixed-period tick()
 
-既存の ECU モデル（固定周期の `tick()` を持つ DLL など）は、ステップハンドラーから `TickScheduler` で呼びます。vehicle-sil は、DLL から使える共通ライブラリです。DLL そのものは取り込みません。
+Call an existing ECU model (such as a DLL with a fixed-period `tick()`) from the step handler through `TickScheduler`. vehicle-sil is a library that a DLL can use; it does not incorporate the DLL itself.
 
-| 呼び方 | 周期とステップ幅の関係 |
+| How it is called | Relation between period and step size |
 |---|---|
-| `TickScheduler` | タスクの周期とオフセットは、participant のステップ幅の倍数でなければならない。そうでなければ `add()` が例外を投げる。 |
-| `Ecu` の `every(period, fn)` | 検査しない（周期の時刻以後の最初のステップで、1 ステップに 1 回まで呼ぶ）。 |
+| `TickScheduler` | A task's period and offset must be multiples of the participant's step size. Otherwise `add()` throws. |
+| `every(period, fn)` of `Ecu` | Not checked (called at most once per step, in the first step at or after the period's time). |
 
-`TickScheduler` では、周期がずれたまま黙って動くことはありません。例の ECU は、周期がステップ幅の倍数であることを起動時に `on_step_grid()` で確認してから `every` を使います。
+With `TickScheduler`, a task never runs silently off its period. The example ECU checks at startup with `on_step_grid()` that the period is a multiple of the step size before it uses `every`.
 
-1 つの participant に、周期の違う複数のタスクを載せられます（例: ステップ 5 ms で、10 ms の `tick()` と 20 ms の診断タスク）。
+One participant can host several tasks with different periods (for example: a 5 ms step with a 10 ms `tick()` and a 20 ms diagnostic task).
 
-`tick()` はステップハンドラーの中で動くので、次のことが言えます。
+`tick()` runs inside the step handler, so:
 
-- `tick()` の実行中、その participant のほかの SIL Kit ハンドラーは呼ばれません。受信コールバックとの排他は不要です。
-- 長い `tick()` は全体を待たせます。
+- While `tick()` runs, no other SIL Kit handler of that participant is called. No mutual exclusion with receive callbacks is needed.
+- A long `tick()` makes the whole simulation wait.
 
-### DLL を統合する前に確認すること
+### What to check before integrating a DLL
 
-`tick()` の中で、同じステップのうちに別のピアの応答を待つことはできません（デッドロックする）。ステップはハンドラーが戻ると完了するので（「参加と進み方」）、応答を待ってから `CompleteSimulationStep()` を呼ぶ形はありません。統合する DLL にこの処理がないかを、統合の前に確認します。
+Inside `tick()`, you cannot wait for another peer's response within the same step (it deadlocks). The step completes when the handler returns (see "Joining and advancing"), so there is no way to wait for a response before calling `CompleteSimulationStep()`. Before you integrate a DLL, check that it does not do this.
 
-DLL の内部で実時間に依存している箇所（スリープ、`GetTickCount` などでの時刻の取得、XL ドライバのタイムスタンプ）は、vehicle-sil では置き換えられません。統合する DLL ごとに確認が必要です。
+Places where the DLL depends on real time internally (sleeps, reading the time with `GetTickCount` and the like, XL driver timestamps) cannot be replaced by vehicle-sil. Check each DLL you integrate.
 
-## 検証の範囲
+## Test coverage
 
-単体テストは、プロセス内のレジストリか偽の CAN コントローラーを使い、仮想時間で動きます。速度を変えて結果を比べるテストを除き、壁時計の速度によりません。確認していることは次のとおりです。
+The unit tests use an in-process registry or a fake CAN controller and run in virtual time. Except for the tests that compare results at different speeds, they do not depend on wall-clock speed. They check:
 
-- 共通仮想時間
-  - ステップ幅の違う参加者が SIL Kit の進行条件を守ること（ステップ T を始めた時点で、ほかの全員が T より前のステップを終えている）
-  - 遅い参加者を全体が待つこと
-  - `real_time_factor` で指定した速度で進むこと
-  - 例外が報告されること
-  - `TickScheduler` の周期
-  - `StepInbox` の順序と容量
+- Shared virtual time
+  - Participants with different step sizes keep SIL Kit's rule for advancing (when step T starts, every other participant has finished its steps before T)
+  - The whole simulation waits for a slow participant
+  - The speed set with `real_time_factor` is kept
+  - Exceptions are reported
+  - The periods of `TickScheduler`
+  - The order and capacity of `StepInbox`
 
-- 上流へのパッチ（[dependencies.md](../dependencies.md)）には、どれも、パッチを外すと失敗する vehicle-sil のテストがあります。
+- Every upstream patch ([dependencies.md](../dependencies.md)) has a vehicle-sil test that fails without the patch.
 
-プロセスを分けた統合テストでは、次のことを確認しています。
+The multi-process integration tests check:
 
-- 統合テスト（`virtual_time.*`）では、registry、`vehicle_sil_sim_controller`、物理モデル（1 ms）、ECU（10 ms、共有ライブラリの `tick()` と J1939）、LIN センサー（2 ms）、ボディコントローラー（5 ms、LIN Master と J1939 の受信）を別プロセスで動かします。どのピアも `Peer` の上で動きます。
-  - 各ピアのトレースを照合し、データがピアの間を予測どおりの仮想時刻で渡ることを確認します。
-  - ECU は最初のステップで Address Claimed を送信し、その 250 ms 後に自分のアドレスを持ちます。CCVS はそれ以後だけ送信します。ボディコントローラーが受信した Address Claimed と CCVS の時刻と内容を、ECU のトレースと照合します。
-  - 全速、遅い `tick()`、4 倍速への結合、1 つのピアだけ 0.5 倍速への結合の各条件で、トレースがバイト単位で一致することを確認します。
-  - 壁時計の所要時間が、実時間より速い（全速、4 倍速）または遅い（遅い `tick()`、0.5 倍速）ことを確認します。
+- The integration tests (`virtual_time.*`) run the registry, `vehicle_sil_sim_controller`, a physics model (1 ms), an ECU (10 ms, a `tick()` from a shared library, and J1939), a LIN sensor (2 ms) and a body controller (5 ms, a LIN master and J1939 reception) as separate processes. Every peer runs on `Peer`.
+  - They compare the traces of the peers and check that data passes between peers at the expected virtual times.
+  - The ECU sends Address Claimed in its first step and holds its address 250 ms later. It sends CCVS only after that. The times and contents of the Address Claimed and CCVS that the body controller received are compared with the ECU's trace.
+  - The traces match byte for byte under each condition: full speed, a slow `tick()`, coupling at 4 times speed, and coupling only one peer at 0.5 times speed.
+  - The wall-clock duration is shorter than real time (full speed, 4 times speed) or longer (slow `tick()`, 0.5 times speed).
 
-## 関連するドキュメント
+## See also
 
-- participant の開始と停止、スレッド: [core.md](core.md)
-- 全体像: [architecture.md](../architecture.md)
-- どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」
+- Starting and stopping a participant, threads: [core.md](core.md)
+- Overview: [architecture.md](../architecture.md)
+- Where things are: [code-map.md](../code-map.md)
+- The other internals pages: "[Internals](../architecture.md#internals)" in architecture.md

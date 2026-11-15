@@ -82,6 +82,6 @@ if(TARGET vehicle_sil_engine_ecu)
          --controller $<TARGET_FILE:vehicle_sil_sim_controller>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
          --dashboard $<TARGET_FILE:vehicle_sil_dashboard_ecu>
-         --docs ${PROJECT_SOURCE_DIR}/docs/ecu-executable.md
+         --docs ${VEHICLE_SIL_TESTED_DOCS}/ecu-executable.md
          --timeout-ms 120000)
 endif()

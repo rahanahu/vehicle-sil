@@ -3,7 +3,7 @@
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicle_sil_dashboard_ecu)
   add_test(NAME multi_host.docs
            COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
-                   -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/multi-pc.md
+                   -DDOC=${VEHICLE_SIL_TESTED_DOCS}/howto/multi-pc.md
                    -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/ecu_main/simulation.two-pcs.yaml
                    -DEXAMPLE_DIR=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/docs.cmake)

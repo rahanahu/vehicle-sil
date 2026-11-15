@@ -261,7 +261,7 @@ void howto_copies_agree(const fs::path& docs, const std::string& command)
             {
                 const fs::path original = marked_file(docs, line);
                 expect_text(block_after(entry.path(), line), block_after(original, line),
-                            "docs/howto/" + entry.path().filename().string() + ": the copy after " + line +
+                            entry.path().generic_string() + ": the copy after " + line +
                                 " (copy the block after the same line in " + original.filename().string() + ")");
                 ++copies;
             }

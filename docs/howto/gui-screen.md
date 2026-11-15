@@ -1,72 +1,76 @@
-# ブラウザの GUI に自分の画面を作る
+# Build your own screen for the browser GUI
 
-画面のテンプレート（`gui_starter`）をコピーし、ECU の変数を 1 つ表示する画面に書き換えて、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面を作るのに、ビルドも Node.js も使いません（手順 4 で値を API から確認するときだけ、Node.js を使います）。各手順の「確認」には、ブラウザがなくても `curl` でできる方法も書いてあります。
+[日本語](../ja/howto/gui-screen.md)
 
-## 前提
+In this guide you copy the screen template (`gui_starter`), rewrite it into a screen that shows one ECU variable, and have the GUI server (`vehicle-sil-gui`) serve it. The screen needs no build and no Node.js; step 4 uses Node.js only to read the value through the API. Each "Verify" section also shows how to verify with `curl`, without a browser.
 
-| 必要なもの | 条件 |
+## Prerequisites
+
+| Requirement | Details |
 |---|---|
-| テンプレートのプロジェクト | [最初の ECU を作る](first-ecu.md) の手順 1 まで済ませて、ECU をビルドし、ツールの `bin` を `PATH` に追加しておきます。 |
-| Python | 3.11 以上が必要で、[uv](https://docs.astral.sh/uv/) があれば、Python とパッケージは uv がインストールします。 |
-| ブラウザか `curl` | ブラウザは、GUI サーバーと同じ PC のものを使います。 |
-| Node.js | 22 以上。ブラウザを使わずに、手順 4 で値を確認するときだけ使います。 |
+| Template project | You have done step 1 of [Create your first ECU](first-ecu.md): the ECUs are built and the tools' `bin` directory is in `PATH`. |
+| Python | 3.11 or later. If you have [uv](https://docs.astral.sh/uv/), uv installs Python and the packages. |
+| A browser or `curl` | Use a browser on the same computer as the GUI server. |
+| Node.js | 22 or later. Needed only to verify the value in step 4 without a browser. |
 
-コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを、次の変数に設定しておきます。
+Run the commands in the template project directory (the one that contains `simulation.yaml`). Set this variable to the directory of the prebuilt tools, and put its `bin` directory in `PATH` (again in every new shell):
 
 ```sh
-TOOLS=tools/vehicle-sil-tools-<バージョン>-linux-x86_64   # <バージョン> は vehicle_sil_launch version が表示するもの
+TOOLS=tools/vehicle-sil-tools-<version>-linux-x86_64   # <version>: as in the directory name under tools/
+export PATH="$PWD/$TOOLS/bin:$PATH"                    # vehicle-sil-gui and vehicle_sil_launch
 ```
 
-リポジトリをビルドして使う場合は、次のように読み替えます。
+If you use a repository build, use these replacements:
 
-| | テンプレートのプロジェクト | リポジトリ（ルートで実行） |
+| | Template project | Repository (run in the root) |
 |---|---|---|
-| 画面のテンプレート | `$TOOLS/gui_starter/` | `examples/gui_starter/` |
-| ライブラリのファイル（`vehicle-sil-gui-client.mjs`） | `gui_starter/` に最初から入っています。 | `(cd gui/web && npm ci && npm run build:client)` で作り、`build/gui-client/` から画面のディレクトリにコピーします。 |
-| 起動するコマンド | `vehicle-sil-gui --web my-screen simulation.live.yaml` | `uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch --web my-screen build/<preset>/examples/ecu_main/simulation.live.yaml` |
-| ランチャーと ECU | `vehicle_sil_launch`、`bin/engine_ecu` | `build/<preset>/tools/launch/vehicle_sil_launch`、`build/<preset>/examples/ecu_main/` の実行ファイル |
+| Screen template | `$TOOLS/gui_starter/` | `examples/gui_starter/` |
+| Library file (`vehicle-sil-gui-client.mjs`) | Included in `gui_starter/` | Build it with `(cd gui/web && npm ci && npm run build:client)`, then copy it from `build/gui-client/` to the screen directory. |
+| Start command | `vehicle-sil-gui --web my-screen simulation.live.yaml` | `uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch --web my-screen build/<preset>/examples/ecu_main/simulation.live.yaml` |
+| Launcher and ECUs | `vehicle_sil_launch`, `bin/engine_ecu` | `build/<preset>/tools/launch/vehicle_sil_launch`, the executables in `build/<preset>/examples/ecu_main/` |
 
-## 全体の流れ
+## Overview
 
-| 手順 | すること | できるもの |
+| Step | What you do | What you get |
 |---|---|---|
-| 1 | 画面のテンプレートをコピーして、そのまま配信する | `my-screen/` と、テンプレートの画面 |
-| 2 | 表示する変数の名前を調べる | participant の名前 `Engine` と、変数の名前 `engine.speed` |
-| 3 | 変数を 1 つ表示する画面に書き換える | `my-screen/index.html` と `my-screen/main.js` |
-| 4 | 配信して、値が表示されることを確認する | 回転数を表示する画面 |
+| 1 | Copy the screen template and serve it as is | `my-screen/` and the template screen |
+| 2 | Find the name of the variable to show | The participant name `Engine` and the variable name `engine.speed` |
+| 3 | Rewrite the screen to show one variable | `my-screen/index.html` and `my-screen/main.js` |
+| 4 | Serve the screen and verify that the value appears | A screen that shows the engine speed |
 
-## 手順 1: 画面のテンプレートをコピーして配信する
+## Step 1: Copy the screen template and serve it
 
-画面のテンプレートを `my-screen/` にコピーし、`--web` でそのディレクトリを渡して GUI サーバーを起動します。
+Copy the screen template to `my-screen/`, then start the GUI server and pass that directory with `--web`.
 
 ```sh
 cp -r "$TOOLS/gui_starter" my-screen
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
-`my-screen/` には、次のファイルができます。
+`my-screen/` contains these files:
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| `index.html` | 画面です。 |
-| `main.js` | ライブラリを呼び出すスクリプトです。 |
-| `style.css` | 見た目です。 |
-| `vehicle-sil-gui-client.mjs` | クライアントのライブラリを 1 つにまとめたファイルです。 |
-| `README.md` | テンプレートの説明です（配信されません）。 |
+| `index.html` | The screen |
+| `main.js` | The script that calls the library |
+| `style.css` | The styles |
+| `vehicle-sil-gui-client.mjs` | The client library, bundled into one file |
+| `README.md` | A description of the template (not served) |
+| `README.ja.md` | The same description in Japanese (not served) |
 
-### 確認
+### Verify the template screen
 
-端末に URL が表示され、ブラウザに「My vehicle-sil screen」という画面が開きます（ブラウザを開かないときは、`--no-browser` を付けて起動します）。「Start」を押すと、「Phase」が `running` になります。
+The terminal prints a URL, and the browser opens a screen titled "My vehicle-sil screen". To start the server without opening a browser, add `--no-browser`. Click **Start**: **Phase** changes to `running`.
 
 ```text
-http://127.0.0.1:36917/#token=<起動のたびに変わるトークン>
+http://127.0.0.1:36917/#token=<a token that changes at every start>
 vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ```
 
-ブラウザがないときは、別の端末から、表示された URL の `#` より前の部分を `curl` で読みます。ポートは起動のたびに変わるので、表示された URL から取り出します（決まったポートにするときは `--port`）。画面のファイルは、トークンなしで読めます。
+To verify without a browser, fetch the part of the printed URL before `#` with `curl` from another terminal. The port changes at every start, so take it from the printed URL (for a fixed port, use `--port`). The server serves the screen files without the token.
 
 ```sh
-URL='<サーバーが表示した URL>'
+URL='<the URL that the server printed>'
 BASE="${URL%%/#*}"
 curl -s "$BASE/" | grep '<title>'
 ```
@@ -75,27 +79,27 @@ curl -s "$BASE/" | grep '<title>'
     <title>My vehicle-sil screen</title>
 ```
 
-確認したら、Ctrl+C で GUI サーバーを止めます。別の端末からは、`kill <PID>`（SIGTERM）で止まります。
+When you are done, stop the GUI server with Ctrl+C. From another terminal, `kill <PID>` (SIGTERM) also stops it.
 
-### うまくいかないとき
+### Troubleshoot serving the template
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `there is no index.html in it` と表示して、終了コード 2 で終わる | 渡したディレクトリに `index.html` がありません。 | `index.html` のあるディレクトリを渡します。 |
-| `it has package.json, so it is the project and not its build` と表示して、終了コード 2 で終わる | ビルドの出力でなく、プロジェクトのディレクトリを渡しています。 | ビルドの出力のディレクトリ（`dist/` など）を渡します。 |
-| 画面に「No token: open the URL that vehicle-sil-gui printed」と表示される | `#token=` のない URL を開いています。 | 端末に表示された URL を、`#token=` の後ろまで含めて開きます。 |
+| `there is no index.html in it`, and the exit code is 2 | The directory you passed has no `index.html`. | Pass a directory that contains `index.html`. |
+| `it has package.json, so it is the project and not its build`, and the exit code is 2 | You passed the project directory, not its build output. | Pass the build output directory (such as `dist/`). |
+| The screen shows `No token: open the URL that vehicle-sil-gui printed (with #token=...).` | You opened a URL without `#token=`. | Open the URL that the terminal printed, including everything after `#token=`. |
 
-## 手順 2: 表示する変数の名前を調べる
+## Step 2: Find the name of the variable to show
 
-変数は、participant の名前と、変数の名前の組で指定します。名前は、次のどれかで調べます。
+A variable is identified by a participant name and a variable name. Find the names with one of these methods:
 
-| 方法 | 向いているとき |
+| Method | Best for |
 |---|---|
-| `vehicle_sil_launch check --json <設定ファイル>` の `participants[].variables[]` | 設定ファイルの全部の ECU の変数を、実行の前に調べる |
-| ECU の実行ファイルの `--describe`（`bin/engine_ecu --describe`）の `variables[]` | ECU を 1 つだけ調べる |
-| 実行中の `GET api/session` の `session.variables.peers[].variables[]` | 実行中に追加される監視用の変数も含めて調べる |
+| `participants[].variables[]` in the output of `vehicle_sil_launch check --json <configuration file>` | Looking up the variables of all ECUs in the configuration file before a run |
+| `variables[]` in the `--describe` output of the ECU executable (`bin/engine_ecu --describe`) | Looking up one ECU |
+| `session.variables.peers[].variables[]` of `GET api/session` during a run | Looking up variables including the monitoring variables that are added during the run |
 
-ここでは、1 つ目の方法で、ECU が宣言した変数（`builtin` が偽のもの）を一覧にします。
+This guide uses the first method to list the variables that the ECUs declare (those with `builtin` false):
 
 ```sh
 vehicle_sil_launch check --json simulation.live.yaml | python3 -c "
@@ -107,9 +111,9 @@ for p in json.load(sys.stdin)['participants']:
 "
 ```
 
-### 確認
+### Verify the variable name
 
-participant の名前、変数の名前、型、入出力の向き、単位、説明が表示されます。説明は ECU の作者が書いたもので、空のこともあります。どの変数かを名前と説明で決められないときは、ECU の作者に確認します。
+Each line shows the participant name, the variable name, the type, the direction (input or output), the unit and the description. The ECU author writes the description, and it can be empty. If the name and the description do not tell you which variable you need, ask the ECU author.
 
 ```text
 Engine | engine.throttle | real | input | % | accelerator pedal position
@@ -118,57 +122,57 @@ Dashboard | dashboard.engine_speed | integer | output | rpm | the speed shown
 Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more than 300 ms (it comes every 100 ms)
 ```
 
-この手順では、`Engine` の `engine.speed`（エンジンの回転数）を表示します。`output` の変数は読み取り専用で、`input` の変数には書き込めます。ライブラリには `{ peer: 'Engine', name: 'engine.speed' }` の形で渡します（シナリオとダッシュボードのファイルでは `Engine.engine.speed` と書きます）。
+This guide shows `engine.speed` (the engine speed) of `Engine`. `output` variables are read-only; `input` variables can be written. Pass the variable to the library as `{ peer: 'Engine', name: 'engine.speed' }`. In scenarios and dashboard files, write it as `Engine.engine.speed`.
 
-### うまくいかないとき
+### Troubleshoot the variable lookup
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `vehicle_sil_launch` が見つからない | ツールの `bin` が `PATH` にありません。 | `get_tools.py` が表示した `export PATH=...` の行を実行します。 |
+| `vehicle_sil_launch` or `vehicle-sil-gui` is not found | The tools' `bin` directory is not in `PATH` (each new shell needs it again). | Run the `TOOLS=...` and `export PATH=...` lines of "[Prerequisites](#prerequisites)". |
 
-## 手順 3: 変数を 1 つ表示する画面に書き換える
+## Step 3: Rewrite the screen to show one variable
 
-`my-screen/index.html` を、次の内容に置き換えます。スクリプトは、ファイルから読み込みます（インラインの `<script>` は、GUI サーバーが付ける CSP で実行されません）。
+Replace `my-screen/index.html` with the following. The page loads its script from a file, because the CSP that the GUI server adds blocks inline `<script>`.
 
 ```html
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>エンジンの回転数</title>
+    <title>Engine speed</title>
     <script type="module" src="main.js"></script>
   </head>
   <body>
-    <h1>エンジンの回転数</h1>
-    <p>接続: <output id="connection">-</output></p>
-    <button type="button" id="start">開始</button>
-    <button type="button" id="stop">停止</button>
-    <p>Engine.engine.speed: <output id="value">-</output> rpm（<output id="condition">-</output>）</p>
+    <h1>Engine speed</h1>
+    <p>Connection: <output id="connection">-</output></p>
+    <button type="button" id="start">Start</button>
+    <button type="button" id="stop">Stop</button>
+    <p>Engine.engine.speed: <output id="value">-</output> rpm (<output id="condition">-</output>)</p>
     <p id="error" role="alert"></p>
   </body>
 </html>
 ```
 
-`my-screen/main.js` を、次の内容に置き換えます。
+Replace `my-screen/main.js` with the following:
 
 ```js
 import { createClient, errorMessage, takeToken } from './vehicle-sil-gui-client.mjs';
 
-const CONFIG = 'simulation.live.yaml'; // 起動時に渡した設定ファイルのディレクトリ（--root）からの相対パス
-const SPEED = { peer: 'Engine', name: 'engine.speed' }; // participant の名前と、変数の名前
+const CONFIG = 'simulation.live.yaml'; // relative to the directory of the configuration file given at startup (--root)
+const SPEED = { peer: 'Engine', name: 'engine.speed' }; // the participant name and the variable name
 
 const show = (id, text) => (document.getElementById(id).textContent = text);
 
-// サーバーが表示した URL の #token= を読み取り、URL から消す
+// Read #token= from the URL that the server printed, and remove it from the URL
 const token = takeToken(window);
 if (token === null) {
-  show('connection', 'vehicle-sil-gui が表示した URL（#token=... つき）から開いてください');
+  show('connection', 'Open this page from the URL that vehicle-sil-gui printed (with #token=...)');
   throw new Error('no token');
 }
 const client = createClient({ baseUrl: new URL('/', location.href).href, token });
 client.connection.state.subscribe((state) => show('connection', state));
 
-// 変数 1 つの値と、値の状態（live、paused、stale、ended など）を表示する
+// Show the value of one variable and the condition of the value (live, paused, stale, ended and others)
 const speed = client.variables.bind(SPEED, {});
 const draw = ({ reading, condition }) => {
   show('value', reading === undefined ? '-' : String(reading.value));
@@ -186,65 +190,65 @@ await client.loadApp();
 client.connect();
 ```
 
-`style.css` と `README.md` は使わないので、消してかまいません。スクリプトがしていることは、次のとおりです。
+The screen no longer uses `style.css` and `README.md`, so you can delete them. What the script does:
 
-| 呼び出し | すること |
+| Call | What it does |
 |---|---|
-| `takeToken(window)` | URL の `#token=` を読み取って URL から消し、再読み込みに備えてタブの sessionStorage に置きます。 |
-| `createClient({ baseUrl, token })` | クライアントを作ります（`baseUrl` は、サーバーのルートにします）。 |
-| `client.variables.bind(ref, options)` | 変数 1 つの値と状態を、1 つの `state` にまとめます。 |
-| `state.subscribe(fn)`、`state.get()` | `subscribe` は変化のたびに `fn` を呼び、`get()` はいまの状態を返します。 |
-| `client.run.start(...)`、`client.run.stop()` | 実行を開始し、停止します。 |
-| `client.loadApp()`、`client.connect()` | ランチャーの機能を読み込んでから、WebSocket で接続します。 |
+| `takeToken(window)` | Reads `#token=` from the URL, removes it from the URL and keeps it in the tab's sessionStorage for reloads. |
+| `createClient({ baseUrl, token })` | Creates the client. `baseUrl` is the root of the server. |
+| `client.variables.bind(ref, options)` | Combines the value and the condition of one variable into one `state`. |
+| `state.subscribe(fn)`, `state.get()` | `subscribe` calls `fn` on every change; `get()` returns the current state. |
+| `client.run.start(...)`, `client.run.stop()` | Starts and stops a run. |
+| `client.loadApp()`, `client.connect()` | Loads the launcher's features, then connects over WebSocket. |
 
-`condition.kind` は値の状態で、コードではこの文字列を比較します。
+`condition.kind` is the condition of the value. Compare this string in your code.
 
-| `condition.kind` | 意味 |
+| `condition.kind` | Meaning |
 |---|---|
-| `unavailable` | 変数の機能が使えない（実行していない、など） |
-| `missing` | この実行にない変数 |
-| `waiting` | まだ値がない |
-| `live` | 動いている途中の値 |
-| `paused` | 止まっている時刻の値 |
-| `stale` | 古い値（理由つき） |
-| `ended` | 終わった実行の最後の値 |
+| `unavailable` | The variable feature is not available (for example, nothing is running) |
+| `missing` | The variable is not part of this run |
+| `waiting` | No value yet |
+| `live` | A value from a running simulation |
+| `paused` | The value at the time at which the simulation is paused |
+| `stale` | An old value (with a reason) |
+| `ended` | The last value of an ended run |
 
-## 手順 4: 配信して確認する
+## Step 4: Serve the screen and verify it
 
 ```sh
-vehicle-sil-gui --web my-screen simulation.live.yaml
+vehicle-sil-gui --web my-screen simulation.live.yaml   # opens a browser (add --no-browser to only print the URL); Ctrl+C stops it
 ```
 
-### 確認
+### Verify your screen
 
-ブラウザに「エンジンの回転数」の画面が開きます。
+The browser opens the "Engine speed" screen.
 
-| 操作 | 表示 |
+| Action | What the screen shows |
 |---|---|
-| 開いた直後 | `接続: open`、`Engine.engine.speed: - rpm（unavailable）` |
-| 「開始」を押す | `Engine.engine.speed: 1200 rpm（live）` |
-| 「停止」を押す | `Engine.engine.speed: 1200 rpm（ended）` |
+| Right after opening | `Connection: open`, `Engine.engine.speed: - rpm (unavailable)` |
+| Click **Start** | `Engine.engine.speed: 1200 rpm (live)` |
+| Click **Stop** | `Engine.engine.speed: 1200 rpm (ended)` |
 
-ブラウザがないときは、配信されていることを `curl` で確認します。`URL` と `BASE` は、手順 1 と同じように、今回表示された URL で設定し直します。
+Without a browser, verify with `curl` that the files are served. Set `URL` and `BASE` again from the URL printed this time, as in step 1.
 
 ```sh
-URL='<サーバーが表示した URL>'
+URL='<the URL that the server printed>'
 BASE="${URL%%/#*}"
 curl -s "$BASE/" | grep '<title>'
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/main.js"
 ```
 
 ```text
-    <title>エンジンの回転数</title>
+    <title>Engine speed</title>
 200 text/javascript; charset=utf-8
 ```
 
-値まで確認するには、API を呼びます。API にはトークンが必要で、`POST` には `Origin` も必要です。トークンをコマンドの引数に書くと、同じ PC のほかの利用者にプロセスの一覧から見えるので、ヘッダーをファイルに置いて渡します。
+To verify the value itself, call the API. The API needs the token, and a `POST` also needs the `Origin` header. A token in a command argument is visible to other users of the same computer in the process list, so put the header in a file and pass the file.
 
 ```sh
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
 
-# 実行を開始する
+# Start a run
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
   -d '{"file": "simulation.live.yaml", "disable": [], "speed": null, "start_paused": false}' \
   "$BASE/api/run" | head -c 60; echo
@@ -254,13 +258,13 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 {"session": {"id": 1, "file": "simulation.live.yaml", "disab
 ```
 
-値は WebSocket で届くので、`curl` では読めません。Node.js（22 以上）があれば、画面と同じライブラリで読めます。次の内容を `read-value.mjs` として保存し、実行します。
+Values arrive over WebSocket, so `curl` cannot read them. With Node.js (22 or later), you can read them with the same library as the screen. Save the following as `read-value.mjs` in the project directory (next to `my-screen/`) and run it there.
 
 ```js
-// 自分の画面と同じライブラリで、変数の値を 1 回読み取って表示する（Node 22 以上）。
+// Read the value of a variable once with the same library as your screen, and print it (Node 22 or later).
 import { createClient } from './my-screen/vehicle-sil-gui-client.mjs';
 
-const url = new URL(process.env.VEHICLE_SIL_GUI_URL); // サーバーが表示した URL
+const url = new URL(process.env.VEHICLE_SIL_GUI_URL); // the URL that the server printed
 const client = createClient({ baseUrl: `${url.origin}/`, token: url.hash.replace('#token=', '') });
 await client.loadApp();
 client.connect();
@@ -281,7 +285,7 @@ VEHICLE_SIL_GUI_URL="$URL" node read-value.mjs
 Engine.engine.speed = 1200 (live)
 ```
 
-終わったら、実行を停止し、トークンのファイルを消して、Ctrl+C で GUI サーバーを止めます。
+When you are done, stop the run, delete the token file, and stop the GUI server with Ctrl+C.
 
 ```sh
 curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: application/json' \
@@ -289,19 +293,19 @@ curl -s -X POST -H @token.header -H "Origin: $BASE" -H 'Content-Type: applicatio
 rm token.header
 ```
 
-### うまくいかないとき
+### Troubleshoot your screen
 
-| 症状 | 原因 | 直し方 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 値が `-`、状態が `unavailable` のまま | 実行を開始していません。 | 「開始」を押します。 |
-| 状態が `missing` | participant の名前か変数の名前が、この実行にありません。 | 手順 2 で名前を確認します。 |
-| 画面に何も表示されず、ブラウザのコンソールに CSP のエラーが出る | インラインの `<script>` や `onclick="..."` を使っています。 | スクリプトをファイルに置き、`addEventListener` か `onclick` のプロパティで登録します。 |
-| ファイルが 404 になる | 配信されない拡張子か、`.` で始まる名前、シンボリックリンクです。 | [gui.md](../gui.md) の「`--web` で配信するファイル」の表を確認します。 |
-| `curl` の `POST` が `forbidden-origin` で拒否される | `Origin` ヘッダーがないか、サーバー自身の origin と違います。 | `-H "Origin: http://127.0.0.1:<port>"` を付けます。 |
-| ファイルを直したのに、画面が変わらない | ブラウザが前のページを表示しています。 | ページを読み込み直します（GUI サーバーの再起動は不要です）。 |
+| The value stays `-` and the condition stays `unavailable` | No run has started. | Click **Start**. |
+| The condition is `missing` | The participant name or the variable name is not in this run. | Check the names as in step 2. |
+| The screen shows nothing, and the browser console shows a CSP error | The page uses inline `<script>` or `onclick="..."`. | Put the script in a file, and register handlers with `addEventListener` or the `onclick` property. |
+| A file returns 404 | Its extension is not served, its name starts with `.`, or it is a symbolic link. | See the table in "Files served with `--web`" in [gui.md](../gui.md#files-served-with---web). |
+| A `POST` with `curl` is rejected with `forbidden-origin` | The `Origin` header is missing or differs from the server's own origin. | Add `-H "Origin: http://127.0.0.1:<port>"`. |
+| The screen does not change after you edit a file | The browser shows the old page. | Reload the page. You do not need to restart the GUI server. |
 
-## 次に読むもの
+## What to read next
 
-- 値を書き込むスライダーやスイッチを作る → テンプレートの `main.js` の「Slider and lamp」と、[gui/client/README.md](../../gui/client/README.md) の「コンポーネントを作る（`bind`）」
-- TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../examples/gui_starter/README.md) の「TypeScript とフレームワークで作る」
-- 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」
+- Build sliders and switches that write values: "Slider and lamp" in the template's `index.html` and `showSlider()` in its `main.js`; also "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)
+- Build with TypeScript and a framework (React, Vue and others): "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#build-with-typescript-and-a-framework)
+- Look up the served files, the CSP, the development server and the rules to follow: "Reference for your own screen" in [gui.md](../gui.md#reference-for-your-own-screen)

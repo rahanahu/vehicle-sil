@@ -5,7 +5,7 @@ import { FakeHttp } from './testing/fake-http';
 import { FakeWebSockets } from './testing/fake-web-socket';
 import { httpExamples } from './testing/protocol-examples';
 
-/** 偽の fetch。呼ばれた URL と設定を持ち、決めた応答を返す。 */
+/** Fake fetch. Keeps the URLs and options it was called with, and returns the chosen answer. */
 function fakeFetch(answer: () => Promise<Response>) {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetch = ((url: string, init: RequestInit) => {
@@ -51,7 +51,7 @@ describe('fetchTransport', () => {
     expect(calls[1].init).toMatchObject({
       method: 'GET',
       headers: { Authorization: 'Bearer secret' },
-      // 転送に従わない（トークンをほかへ送らない）
+      // Do not follow redirects (never send the token elsewhere)
       redirect: 'error',
     });
     expect(calls[1].init.headers).not.toHaveProperty('Origin');
@@ -92,7 +92,7 @@ describe('fetchTransport', () => {
         baseUrl: 'http://127.0.0.1:1/',
         token: 't',
         timeoutMs: 1000,
-        // ヘッダーは届いたが、本文が届き終わらない
+        // The headers arrived, but the body never finishes arriving
         fetch: ((_url: string, init: RequestInit) =>
           Promise.resolve({
             ok: true,
@@ -181,7 +181,7 @@ describe('createClient', () => {
       limits: { speed_max: number; step_ms_max: number };
     };
     http.expectOne('api/app').flush(app);
-    // 応答と同じ呼び出しの中で入る（Promise が解けるのを待たない）
+    // Set within the same call as the answer (without waiting for the Promise to resolve)
     expect(client.app.get()?.instance).toBe('0123456789abcdef');
     expect(client.limits.get()).toMatchObject({
       speed_max: app.limits.speed_max,
@@ -195,7 +195,7 @@ describe('createClient', () => {
     expect(
       defaultOrigin('http://127.0.0.1:8765/gui/', { process: { versions: { node: '24.0.0' } } }),
     ).toBe('http://127.0.0.1:8765');
-    // ブラウザと Web Worker（process がない）: ブラウザが付ける。WebSocket の 2 つ目の引数を使わない
+    // Browsers and Web Workers (no process): the browser adds it. The second WebSocket argument is not used
     expect(defaultOrigin('http://127.0.0.1:8765/', {})).toBeUndefined();
     expect(defaultOrigin('http://127.0.0.1:8765/', { process: {} })).toBeUndefined();
     expect(isNode()).toBe(true);
@@ -209,7 +209,7 @@ describe('createClient', () => {
       http: http.transport,
     });
     void client.check({ file: 'a.yaml', disable: [] }).catch(() => undefined);
-    // 照合は 1 つずつ: 順番を待つのと照合とで、それぞれ check_timeout_s まで
+    // One check at a time: up to check_timeout_s for waiting its turn and up to check_timeout_s for the check
     expect(http.expectOne('api/check').request.timeoutMs).toBe(
       2 * DEFAULT_LIMITS.check_timeout_s * 1000 + DEFAULT_TIMEOUT_MS,
     );
@@ -227,7 +227,7 @@ describe('createClient', () => {
         http: new FakeHttp().transport,
       });
       client.connect();
-      client.connect(); // 二度目は何もしない
+      client.connect(); // A second call does nothing
       expect(fake.sockets).toHaveLength(1);
       fake.last().open();
       fake.last().send({

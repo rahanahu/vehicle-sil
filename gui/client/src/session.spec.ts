@@ -7,7 +7,7 @@ import { FakeHttp } from './testing/fake-http';
 import { FakeSocket, FakeWebSockets } from './testing/fake-web-socket';
 import { WebSocketExample, httpExamples, webSocketExamples } from './testing/protocol-examples';
 
-/** 試験が読むもの（セッションの写しの読める値を、呼べば値が返る形にしたもの）。 */
+/** What the tests read (the readable values of the session copy, as functions that return the value). */
 function view(client: GuiClient, http: FakeHttp) {
   const feed = client.session;
   return {
@@ -17,7 +17,7 @@ function view(client: GuiClient, http: FakeHttp) {
     rejected: () => feed.rejected.get(),
     tryAgainReason: () => client.connection.tryAgainReason.get(),
     incompatible: () => feed.incompatible.get(),
-    /** HTTP の応答の要約（サーバーの形のまま）を当てる: GET api/session の応答として。 */
+    /** Applies the summary of an HTTP answer (in the server's shape), as the answer to GET api/session. */
     adopt: (summary: unknown) => {
       void client.fetchSession().catch(() => undefined);
       http.expectOne('api/session').flush({ session: summary });
@@ -45,7 +45,7 @@ describe('SessionFeed', () => {
     vi.useRealTimers();
   });
 
-  /** 例の server の通知を、届いた順にそのまま流す。 */
+  /** Feeds the server notifications of an example as is, in the order they arrived. */
   function play(socket: FakeSocket, name: string, from = 0, to?: number) {
     const example = examples.get(name);
     if (!example) throw new Error(`no example ${name}`);
@@ -53,7 +53,7 @@ describe('SessionFeed', () => {
     vi.advanceTimersByTime(BATCH_MS);
   }
 
-  /** クライアントを作ってつなぎ、開く（HTTP は使わない）。 */
+  /** Creates a client, connects and opens (no HTTP). */
   function open(http = new FakeHttp()): { run: ReturnType<typeof view>; socket: FakeSocket } {
     const client = createClient({
       baseUrl: 'http://127.0.0.1:1/',
@@ -84,14 +84,14 @@ describe('SessionFeed', () => {
     expect(session?.phase).toBe('ended');
     expect(session && runOutcome(session)).toBe('ended');
     expect(session?.participants.map((p) => [p.name, p.state])).toContainEqual(['Engine', 'ended']);
-    // 例の ECU では Dashboard が行を書く
+    // In the example ECUs, Dashboard writes the lines
     expect(session?.logs.some((line) => line.source === 'Dashboard')).toBe(true);
     expect(session?.check?.result).toBe('passed');
   });
 
   it('keeps the check of the hello when the later summaries come without it', () => {
     const { run, socket } = open();
-    // つないだ画面は session_without_check を頼んでいる: session の要約に check の欄がない
+    // The connected screen asks for session_without_check: the session summaries have no check field
     const messages = (examples.get('ws-pass')?.server ?? []).map((m) => {
       const message = structuredClone(m) as { type: string; session?: Record<string, unknown> };
       if (message.type === 'session' && message.session) delete message.session['check'];
@@ -129,7 +129,7 @@ describe('SessionFeed', () => {
     vi.advanceTimersByTime(backoffMs(5) * 2);
     expect(fake.sockets).toHaveLength(1);
     expect(errors.map(String)).toContain('Error: a broken subscriber');
-    // 断られた後の connect() は何もしない
+    // connect() after a refusal does nothing
     client.connect();
     expect(fake.sockets).toHaveLength(1);
   });
@@ -200,7 +200,7 @@ describe('SessionFeed', () => {
     const { run, socket } = open();
     const replay = examples.get('ws-replay');
     const half = Math.floor((replay?.server.length ?? 0) / 2);
-    // 実行の途中までを受け取ってから切れる
+    // The connection drops after receiving part of the run
     play(socket, 'ws-replay', 0, half);
     const before = run.session();
     expect(before?.lastSeq).toBeGreaterThan(0);
@@ -220,9 +220,9 @@ describe('SessionFeed', () => {
         session_without_check: true,
       },
     ]);
-    // つながっても、再送を受け終えるまでは揃っていない
+    // Even when connected, not in sync until the resend has arrived
     expect(run.ready()).toBe(false);
-    // 続きの通知だけが届く（hello の要約と、from_seq からの事象）
+    // Only the continuation arrives (the hello summary, and the events from from_seq)
     again.send({
       ...(replay?.server[0] as object),
       replay: { from_seq: (before?.lastSeq ?? 0) + 1, omitted: { log: {}, events: 0 } },
@@ -291,7 +291,7 @@ describe('SessionFeed', () => {
     vi.advanceTimersByTime(1);
     expect(fake.sockets).toHaveLength(3);
 
-    // つながり直して通知が届けば、理由は消え、次の待ち時間は最初に戻る
+    // Once reconnected and a notification arrives, the reason is cleared and the next delay starts over
     fake.last().open();
     play(fake.last(), 'ws-pass', 0, 1);
     expect(run.tryAgainReason()).toBeNull();
@@ -306,7 +306,7 @@ describe('SessionFeed', () => {
     const answers = new Map((await httpExamples()).map((example) => [example.name, example]));
     const answer = (name: string) =>
       (answers.get(name)?.response as { session: Record<string, unknown> | null }).session;
-    // 新しい実行（2）の要約が先に届き、停止の応答は前の実行（1）の要約か null
+    // The new run's (2) summary arrives first; the stop's answer is the previous run's (1) summary or null
     const started = answer('run');
     if (!started) throw new Error('no summary in run.json');
     run.adopt({ ...started, id: 2 });
@@ -314,7 +314,7 @@ describe('SessionFeed', () => {
     run.adopt(null);
     expect(run.session()?.id).toBe(2);
     expect(run.session()?.launcher.running).toBe(true);
-    // 始まった実行の要約に、届けた停止が出る
+    // The summary of the run that started shows the stop that was delivered
     const stopped = (answers.get('stop')?.response as { session: { stop: string } }).session;
     expect(stopped.stop).toBe('requested');
     socket.send({ type: 'session', session: { ...stopped, id: 2 } });
@@ -340,7 +340,7 @@ describe('SessionFeed', () => {
     vi.advanceTimersByTime(BATCH_MS);
     expect(run.ready()).toBe(false);
     expect(run.notices()[0].message).toContain('unreadable message: message.session.id');
-    // 間を置いてつなぎ直し、読める hello から揃う
+    // Reconnects after a delay and gets in sync from a readable hello
     vi.advanceTimersByTime(backoffMs(1));
     const again = fake.last();
     expect(again).not.toBe(socket);
@@ -359,7 +359,7 @@ describe('SessionFeed', () => {
     expect(session?.result?.result).toBe('passed');
     expect(session?.unreadable).toEqual(['result.participants', 'result.findings']);
     expect(session?.problems.map((p) => p.code)).toContain('kept-limit');
-    // 開いていた画面に、同じ要約が session で届いても同じ
+    // The same summary arriving as session on a screen that was open changes nothing
     const hello = examples.get('ws-kept-limit')?.server[0] as { session: object };
     const live = open();
     play(live.socket, 'ws-pass', 0, 2);
@@ -390,7 +390,8 @@ describe('SessionFeed', () => {
     const session = run.session();
     expect(session?.result?.result).toBe('passed');
     expect(session?.unreadable).toEqual([]);
-    // 要約が正: 終わりの要約で、長すぎた command を省いたことが出る（読めないのではない）
+    // The summary is authoritative: the final summary shows that an overlong command was left out (it is not
+    // unreadable)
     const engine = session?.participants.find((p) => p.name === 'Engine');
     expect(engine?.omittedFields).toEqual(['command']);
     expect(engine?.state).toBe('ended');
@@ -414,7 +415,7 @@ describe('SessionFeed', () => {
     play(socket, 'ws-pass');
     const ended = run.session();
     expect(ended?.launcher.running).toBe(false);
-    // 停止の応答（実行中の要約）が、終わりの通知より遅れて届いた
+    // The stop's answer (a summary from during the run) arrived later than the end notification
     const answers = new Map((await httpExamples()).map((example) => [example.name, example]));
     const stop = (answers.get('stop')?.response as { session: Record<string, unknown> | null })
       .session;
@@ -428,7 +429,8 @@ describe('SessionFeed', () => {
     const { run, socket } = open();
     play(socket, 'ws-dropped');
     const session = run.session();
-    // ws-dropped.json の dropped の数（例を作り直すと変わるので、例から読む）
+    // The dropped counts of ws-dropped.json (read from the example, since they change when the examples are
+    // regenerated)
     const dropped = (examples.get('ws-dropped')?.server ?? []).find(
       (m) => (m as { type: string }).type === 'dropped',
     ) as { log: Record<string, number> };
@@ -445,7 +447,7 @@ describe('SessionFeed', () => {
     play(socket, 'ws-pass', 0, 10);
     expect(run.ready()).toBe(true);
     play(socket, 'ws-resync');
-    // hello から送り直されるまでは、揃っていない
+    // Not in sync until everything is sent again from hello
     expect(run.ready()).toBe(false);
     play(socket, 'ws-replay');
     expect(run.ready()).toBe(true);

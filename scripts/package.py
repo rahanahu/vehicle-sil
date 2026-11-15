@@ -232,11 +232,12 @@ def version_problems(version: str, release: bool = False) -> list[str]:
             problems.append(f"{name}: no version found (expected {want})")
         elif m.group(1) != want:
             problems.append(f"{name} says {m.group(1)}, CMakeLists.txt says {version}: make it {want}")
-    readme = (ROOT / "template" / "README.md").read_text(encoding="utf-8")
-    others = sorted(set(re.findall(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", readme)) - {version})
-    if others:
-        problems.append(f"template/README.md names version {', '.join(others)}, CMakeLists.txt says {version}: make "
-                        f"it {version}")
+    for readme in sorted((ROOT / "template").glob("README*.md")):  # English and Japanese
+        others = sorted(set(re.findall(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", readme.read_text(encoding="utf-8")))
+                        - {version})
+        if others:
+            problems.append(f"template/{readme.name} names version {', '.join(others)}, CMakeLists.txt says {version}: "
+                            f"make it {version}")
     changelog = ROOT / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
     problems += changelog_problems(text, version, release)

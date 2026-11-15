@@ -1,57 +1,59 @@
-# シミュレーションの設定ファイル（`vehicle_sil_launch`）
+# Simulation configuration file (`vehicle_sil_launch`)
 
-`vehicle_sil_launch` に渡す設定ファイルのリファレンスです。設定ファイルのキーと書き方のルール、`check`、`run`、`test`、`version` の引数と終了コードを載せています。形式とルールはまだ変わることがあります。
+[日本語](ja/simulation-config.md)
 
-設定ファイルには、participant にする実行ファイル、それらが接続するネットワーク、止める時刻を書きます。別々に作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を、1 つのシミュレーションで動かすために使います。
+This is the reference for the configuration file that you pass to `vehicle_sil_launch`. It covers the keys and syntax rules of the file, and the arguments and exit codes of `check`, `run`, `test` and `version`. The format and the rules may still change.
+
+The configuration file lists the executables that become participants, the networks they connect to and the time at which the simulation stops. Use it to run ECU executables that were built separately ([ecu-executable.md](ecu-executable.md)) in one simulation.
 
 ```sh
 vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml
 ```
 
-| 調べること | 節 |
+| To find | See |
 |---|---|
-| `check` と `run` が、設定ファイルから何を起動するか | [`check` と `run` が起動するもの](#check-と-run-が起動するもの) |
-| キーの一覧と既定の値 | [キー](#キー) |
-| `command` の書き方 | [実行ファイルのパス](#実行ファイルのパス)、[波括弧とプレースホルダー](#波括弧とプレースホルダー) |
-| ECU を 1 つ除いて動かす | [participant を無効にする](#participant-を無効にするenabled--disable--enable) |
-| ECU をデバッガーから動かす | [participant を自分で起動する](#participant-を自分で起動するmanual--manual) |
-| 実行ファイルごとに違う変数の名前をそろえる | [変数の名前と値を合わせる](#変数の名前と値を合わせるvariables) |
-| 機種ごとに実行ファイルや値を変える | [機種](#機種variants--variant)、[シナリオのパラメーター](#シナリオのパラメーターparams--param) |
-| 引数と終了コード | [引数と終了コード](#引数と終了コード) |
+| What `check` and `run` start from the configuration file | [What `check` and `run` start](#what-check-and-run-start) |
+| The list of keys and their defaults | [Keys](#keys) |
+| How to write `command` | [Executable paths](#executable-paths), [Braces and placeholders](#braces-and-placeholders) |
+| Running without one of the ECUs | [Disabling a participant](#disabling-a-participant-enabled---disable---enable) |
+| Running an ECU from a debugger | [Starting a participant yourself](#starting-a-participant-yourself-manual---manual) |
+| Aligning variable names that differ between executables | [Matching variable names and values](#matching-variable-names-and-values-variables) |
+| Changing executables or values per variant | [Variants](#variants-variants---variant), [Scenario parameters](#scenario-parameters-params---param) |
+| Arguments and exit codes | [Arguments and exit codes](#arguments-and-exit-codes) |
 
-## `check` と `run` が起動するもの
+## What `check` and `run` start
 
-| コマンド | すること |
+| Command | What it does |
 |---|---|
-| `vehicle_sil_launch check` | 設定ファイルと、各実行ファイルの `--describe` の出力を照合し、不整合を 1 回で全部表示します（[simulation-check.md](simulation-check.md)）。 |
-| `vehicle_sil_launch run` | 同じ照合をしてから、シミュレーション全体を起動し、終わりまで監視して、各 participant がどう終わったかを表示します（[simulation-run.md](simulation-run.md)）。 |
+| `vehicle_sil_launch check` | Checks the configuration file against the `--describe` output of each executable and reports every mismatch at once ([simulation-check.md](simulation-check.md)). |
+| `vehicle_sil_launch run` | Runs the same check, then starts the whole simulation, monitors it to the end and shows how each participant ended ([simulation-run.md](simulation-run.md)). |
 
-`check` はシミュレーションを始めず、registry にも接続しません。ただし、`describe: true` の実行ファイルは、1 つずつ `--describe` で起動します。`--describe` は ECU を組み立てるので、その実行ファイルのコード（ECU のコンストラクターなど）が動きます。`describe: false` の実行ファイルは起動せず、あることだけを確認します。
+`check` does not start the simulation and does not connect to the registry. It does start each `describe: true` executable, one at a time, with `--describe`. `--describe` constructs the ECU, so the code of that executable (the ECU's constructor and so on) runs. `check` does not start `describe: false` executables; it only confirms that they exist.
 
-`run` は、照合に通ったときだけ、すべての participant を起動します。
+`run` starts the participants only if the check passes.
 
 > [!WARNING]
-> 設定ファイルは、実行するコマンドの一覧です。信頼できない設定ファイルを、`check` にも `run` にも渡さないでください。
+> A configuration file is a list of commands to execute. Do not pass an untrusted configuration file to `check` or to `run`.
 
-`vehicle_sil_launch` は、SIL Kit をサブモジュールからビルドしたときだけビルドされます（YAML の読み込みに SIL Kit 付属の rapidyaml を使うため）。
+`vehicle_sil_launch` is built only when SIL Kit is built from the submodule, because it reads YAML with rapidyaml, which comes with SIL Kit.
 
-## 設定ファイル
+## The configuration file
 
-### ファイルの形式
+### File format
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 書式 | YAML です。 |
-| JSON | 最初の空白でない文字が `{` なら、JSON として読みます（内容は同じです）。 |
-| 文字コード | UTF-8 です（先頭の BOM は読み飛ばします）。 |
-| 読めない文字コード | UTF-16 のファイルと、NUL を含むファイルは読めません。 |
-| 1 つのファイルの設定の数 | 1 つです（`---` で続けた 2 つ目の文書はエラーです）。 |
-| アンカーとエイリアス（`&name`、`*name`、`<<`） | 使えないので、値は書き下してください（ファイルを読めないエラーにします）。 |
-| 大きさ | 16 MiB を超えるファイルは読みません。 |
-| ファイルの種類 | 通常のファイルでないもの（デバイスやパイプ）は読みません。 |
+| Format | YAML. |
+| JSON | If the first character that is not white space is `{`, the file is read as JSON (with the same content). |
+| Encoding | UTF-8 (a leading BOM is skipped). |
+| Unreadable encodings | UTF-16 files and files that contain NUL cannot be read. |
+| Configurations per file | One (a second document after `---` is an error). |
+| Anchors and aliases (`&name`, `*name`, `<<`) | Not supported; write the values out in full (the file is reported as unreadable). |
+| Size | Files larger than 16 MiB are not read. |
+| File type | Anything that is not a regular file (a device or a pipe) is not read. |
 
-例: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml)（CMake が実行ファイルの横、`build/<preset>/examples/ecu_main/` にコピーします）。
+Example: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml). CMake copies it next to the executables, to `build/<preset>/examples/ecu_main/`.
 
 <!-- examples/ecu_main/simulation.yaml -->
 ```yaml
@@ -73,242 +75,244 @@ participants:
     step_ms: 5
 ```
 
-### キー
+### Keys
 
-全体のキーは次のとおりです。
+Top-level keys:
 
-| キー | 必須 | 値 | 書かないとき |
+| Key | Required | Value | If omitted |
 |---|---|---|---|
-| `vehicle_sil_simulation` | はい | 形式のバージョン（今は `1`） | |
-| `stop_at_ms` | | シミュレーションを止める仮想時間（ミリ秒、1 以上 10^12 以下の整数） | participant が止めるか、`run` を Ctrl+C で止めるまで動きます |
-| `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 30000 |
-| `stop_timeout_ms` | | `run` が participant の終了を待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 10000 |
-| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下） | 127.0.0.1 の空いているポート |
-| `speed` | | 仮想時間を進める速度（0.000001 以上 1000000 以下の数か、`max`） | 最速（`max` と同じ） |
-| `time_step_ms` | | controller のタイムステップ（ミリ秒の仮想時間、1 以上 10^12 以下の整数） | 最速のときは 10 |
-| `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数） | 10（タイムステップと速度によりません） |
-| `networks` | はい | ネットワークの配列（空でもかまいません） | |
-| `participants` | はい | participant の配列（1 つ以上） | |
-| `variants` | | 機種の対応（機種の名前 → 共通の部分との差分。[機種](#機種variants--variant)） | 機種のない設定ファイルです |
-| `params` | | シナリオのパラメーターの値（名前 → 値。[シナリオのパラメーター](#シナリオのパラメーターparams--param)） | |
+| `vehicle_sil_simulation` | Yes | Format version (currently `1`) | |
+| `stop_at_ms` | | Virtual time at which the simulation stops (ms, an integer from 1 to 10^12) | The simulation runs until a participant stops it or you stop `run` with Ctrl+C |
+| `start_timeout_ms` | | How long to wait for the required participants to join (ms, an integer from 1 to 10^12) | 30000 |
+| `stop_timeout_ms` | | How long `run` waits for participants to end (ms, an integer from 1 to 10^12) | 10000 |
+| `registry_uri` | | Where `run` starts the registry (`silkit://<host>:<port>`, port from 1 to 65535) | A free port on 127.0.0.1 |
+| `speed` | | Speed at which virtual time advances (a number from 0.000001 to 1000000, or `max`) | As fast as possible (same as `max`) |
+| `time_step_ms` | | The controller's time step (ms of virtual time, an integer from 1 to 10^12) | 10 when running as fast as possible |
+| `late_tolerance_ms` | | Tolerance for lateness (ms of real time, an integer from 1 to 10^12) | 10 (independent of the time step and the speed) |
+| `networks` | Yes | Array of networks (may be empty) | |
+| `participants` | Yes | Array of participants (at least one) | |
+| `variants` | | Variants (variant name → its differences from the common part; see [Variants](#variants-variants---variant)) | The configuration file has no variants |
+| `params` | | Values of scenario parameters (name → value; see [Scenario parameters](#scenario-parameters-params---param)) | |
 
-`networks` の要素のキーは次のとおりです。ECU が使うネットワークは、すべて `networks` に書きます。
+Keys of each element of `networks` (list every network that the ECUs use):
 
-| キー | 必須 | 値 |
+| Key | Required | Value |
 |---|---|---|
-| `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前） |
-| `networks[].kind` | はい | `can`、`lin`、`ethernet` のどれか |
+| `networks[].name` | Yes | Name of the network (the name passed to the ECU's `j1939()`, `can()`, `lin_master()`, `lin_slave()` or `ethernet()`) |
+| `networks[].kind` | Yes | One of `can`, `lin` and `ethernet` |
 
-`participants` の要素のキーは次のとおりです。
+Keys of each element of `participants`:
 
-| キー | 必須 | 値 | 既定 |
+| Key | Required | Value | Default |
 |---|---|---|---|
-| `participants[].name` | はい | participant 名 | |
-| `participants[].command` | はい | 実行ファイルと、その引数の配列 | |
-| `participants[].step_ms` | | 実行ファイルが `--describe` に出力するステップ幅（ミリ秒、1 以上 10^12 以下の整数） | 照合しません |
-| `participants[].describe` | | `true` は ecu_main の実行ファイル（照合します）、`false` はそれ以外の実行ファイル（照合しません） | `true` |
-| `participants[].required` | | シミュレーションがその participant を待つか（`true` か `false`） | `true` |
-| `participants[].enabled` | | `false` の participant は無効にします（照合も起動もしません。[participant を無効にする](#participant-を無効にするenabled--disable--enable)） | `true` |
-| `participants[].manual` | | `true` の participant は、`run` が起動せず、自分で起動します（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)） | `false` |
-| `participants[].role` | | participant の用途（`ecu`、`test`、`bridge`。[テスト用の participant とブリッジ](#テスト用の-participant-とブリッジrole)） | `ecu` |
-| `participants[].variables` | | 変数の対応表（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)） | 変数は、実行ファイルの名前のまま見えます |
+| `participants[].name` | Yes | Participant name | |
+| `participants[].command` | Yes | Array of the executable and its arguments | |
+| `participants[].step_ms` | | Step size that the executable reports in its `--describe` output (ms, an integer from 1 to 10^12) | Not checked |
+| `participants[].describe` | | `true`: an ecu_main executable (checked); `false`: any other executable (not checked) | `true` |
+| `participants[].required` | | Whether the simulation waits for this participant (`true` or `false`) | `true` |
+| `participants[].enabled` | | `false` disables the participant: it is neither checked nor started (see [Disabling a participant](#disabling-a-participant-enabled---disable---enable)) | `true` |
+| `participants[].manual` | | `true`: `run` does not start the participant, and you start it yourself (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)) | `false` |
+| `participants[].role` | | What the participant is for (`ecu`, `test` or `bridge`; see [Test participants and bridges](#test-participants-and-bridges-role)) | `ecu` |
+| `participants[].variables` | | Variable map (see [Matching variable names and values](#matching-variable-names-and-values-variables)) | Variables appear under the executable's names |
 
-キーごとの補足です。
+Notes on individual keys:
 
-**`start_timeout_ms`**: `run` は、ecu_main の実行ファイルにも `--start-timeout-ms` で値を渡します（渡す値は [ecu_main の実行ファイル](#ecu_main-の実行ファイルdescribe-true)）。
+**`start_timeout_ms`**: `run` also passes a value to ecu_main executables with `--start-timeout-ms`. For the value it passes, see [ecu_main executables](#ecu_main-executables-describe-true).
 
-**`stop_timeout_ms`**: 止め方の各段階で、この時間だけ待ちます（[simulation-run.md](simulation-run.md) の「止め方」）。
+**`stop_timeout_ms`**: `run` waits this long at each stage of stopping (see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)).
 
 **`registry_uri`**
 
-| 場合 | registry の場所と、起きること |
+| Case | Where the registry is, and what happens |
 |---|---|
-| 書かない | 127.0.0.1 の空いているポートです。 |
-| 書かず、自分で起動する必須の participant がいる | `silkit://127.0.0.1:8500` です（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。 |
-| ほかの PC の participant も参加させる | `silkit://0.0.0.0:8500` のように書きます（この PC の participant には `127.0.0.1` の URI を渡します）。 |
-| ループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`）でない | 注記 `registry-on-network` を表示し、`run` が起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
+| Omitted | A free port on 127.0.0.1. |
+| Omitted, and a required participant is one that you start yourself | `silkit://127.0.0.1:8500` (see [Starting a participant yourself](#starting-a-participant-yourself-manual---manual)). |
+| Participants on other computers join too | Write an address such as `silkit://0.0.0.0:8500`. Participants on this computer get a URI with `127.0.0.1`. |
+| Not a loopback address (`127.x.x.x`, `[::1]`, `localhost`) | The check reports the note `registry-on-network`, and `run` passes the environment variable `VEHICLE_SIL_LISTEN_ON_NETWORK=1` to the participants it starts (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
 
-ほかの PC から参加させる手順は、[howto/multi-pc.md](howto/multi-pc.md) にあります。
+For the steps to let participants join from other computers, see the guide [Run on several computers](howto/multi-pc.md).
 
-**`speed`**: 実時間 1 秒あたりの仮想時間の秒数です。`1` が等速、`2` が 2 倍速、`0.5` が半分の速度です。`run --speed` で上書きできます（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。
+**`speed`**: Seconds of virtual time per second of real time. `1` is real-time speed, `2` is twice as fast and `0.5` is half speed. `run --speed` overrides it (see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)).
 
-**`time_step_ms`**: 一時停止とステップ実行の細かさ、速度を合わせる細かさです。
+**`time_step_ms`**: The granularity of pausing and stepping, and of keeping to the set speed.
 
-| 場合 | `time_step_ms` の値 |
+| Case | Value of `time_step_ms` |
 |---|---|
-| 書かず、最速で動かす | 10 です。 |
-| 書かず、最速で、`stop_at_ms` が 10 の倍数でない | `stop_at_ms` と 10 の最大公約数です。 |
-| 書かず、速度を指定した | さらに、ECU のステップ幅との最大公約数にします（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
-| 書く | `stop_at_ms` の約数にします（約数でなければエラー `value`）。 |
+| Omitted, running as fast as possible | 10. |
+| Omitted, running as fast as possible, and `stop_at_ms` is not a multiple of 10 | The greatest common divisor of `stop_at_ms` and 10. |
+| Omitted, with a set speed | As above, further reduced to the greatest common divisor with the step sizes of the ECUs (see "Time steps and ECU steps" in [simulation-run.md](simulation-run.md#time-steps-and-ecu-steps)). |
+| Written | Must divide `stop_at_ms` (otherwise the error `value`). |
 
-**`late_tolerance_ms`**: タイムステップの遅れがこの値を超えたら、遅れたタイムステップとして数えます。
+**`late_tolerance_ms`**: A time step that is late by more than this value counts as a late time step.
 
-**`participants[].name`**: 空でなく、1 行で（制御文字なし）、`-` で始まらない名前にします。`SimulationController`（vehicle-sil の controller の participant 名）は使えません。照合では、ecu_main の実行ファイルに `--name` で渡します。
+**`participants[].name`**: The name must not be empty, must fit on one line (no control characters) and must not start with `-`. `SimulationController` (the participant name of vehicle-sil's controller) is not allowed. For the check, the name is passed to ecu_main executables with `--name`.
 
-**`participants[].command`**: 引数がなければ、文字列 1 つでもかまいません（空白で分けません）。
+**`participants[].command`**: If there are no arguments, a single string is enough. The string is not split at spaces.
 
-**`participants[].step_ms`**: 書いたときだけ照合します。
+**`participants[].step_ms`**: Checked only if written.
 
-**`participants[].required`**: `false` は、`describe: false` の participant にだけ書けます。有効な participant のうち、少なくとも 1 つは `true` の participant が必要です（エラー `no-required-participant`）。
+**`participants[].required`**: `false` is allowed only for `describe: false` participants. At least one enabled participant must be `true` (otherwise the error `no-required-participant`).
 
-**`participants[].role`**: 照合だけが読み、実行の動きは変わりません。
+**`participants[].role`**: Only the check reads it. It does not change how the run behaves.
 
-**`variants`**: 機種を書いた設定ファイルは、`check` と `run` に `--variant <名前>` が必要です。
+**`variants`**: A configuration file with variants needs `--variant <name>` for `check` and `run`.
 
-**`params`**: 値は、シナリオの `${名前}` に反映されます。
+**`params`**: The values are substituted for `${name}` in the scenario.
 
-### 書き方のルール
+### Syntax rules
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 知らないキー | エラーで、近い名前があれば表示します（打ち間違いを黙って無視しません）。 |
-| 同じキーの 2 回目 | エラーです。 |
-| 整数 | 引用符なしで書きます（`"5000"` は文字列なのでエラーです）。 |
-| 真偽値 | 引用符なしの `true` か `false` です（`True`、`TRUE`、`False`、`FALSE` も読みます）。 |
-| `yes`、`on` など | 真偽値としてはエラーです。 |
+| Unknown key | An error. If a key with a close name exists, the message suggests it (typos are never silently ignored). |
+| A key written twice | An error. |
+| Integers | Write them without quotes (`"5000"` is a string, so it is an error). |
+| Booleans | `true` or `false` without quotes (`True`, `TRUE`, `False` and `FALSE` are also read). |
+| `yes`, `on` and similar | An error where a boolean is expected. |
 
-`stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri`、`speed`、`time_step_ms`、`late_tolerance_ms` は、シミュレーションを動かすときの値です。`check` は値の形（と `stop_at_ms` と `time_step_ms` の組み合わせ）だけを確認します。
+`stop_at_ms`, `start_timeout_ms`, `stop_timeout_ms`, `registry_uri`, `speed`, `time_step_ms` and `late_tolerance_ms` are values for running the simulation. `check` checks only their form (and the combination of `stop_at_ms` and `time_step_ms`).
 
-### エディターの補完
+### Editor completion
 
-JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が使えます。上の例の 1 行目がこれです。パスは、書いているファイルのディレクトリを基準にします。
+The JSON Schema is [schema/simulation.schema.json](../schema/simulation.schema.json). In an editor that uses the YAML language server, write `# yaml-language-server: $schema=<path to this file>` at the top of the file to get key completion, descriptions and shape checks. Line 1 of the example above is this line. The path is relative to the directory of the file you are editing.
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| スキーマが確認するもの | キーと値の形だけです。 |
-| `check` が確認するもの | 実行ファイルと合っているか、同じキーの 2 回目、キーの組み合わせです。 |
-| JSON で書いたファイル（最初の文字が `{`） | コメントを書けないので、エディターの設定で、ファイルとスキーマを結び付けます。 |
-| VS Code の設定 | `json.schemas` に、ファイルの名前のパターンとスキーマのパスを書きます。 |
-| `"$schema"` のキー | ファイルの中には書けません（ランチャーが、知らないキーのエラーにします）。 |
-| テンプレートのスキーマ | `schema/` にコピーが入っていて、`get_tools.py` が、ダウンロードしたツールのバージョンのスキーマで上書きします。 |
-| ツールのアーカイブのスキーマ | `schema/` にあります。 |
+| What the schema checks | Only the keys and the shape of the values. |
+| What `check` checks | Whether the file matches the executables, keys written twice and combinations of keys. |
+| A file written in JSON (first character `{`) | JSON has no comments, so associate the file with the schema in the editor's settings. |
+| VS Code settings | In `json.schemas`, write a file name pattern and the path of the schema. |
+| The `"$schema"` key | Cannot be written in the file (the launcher reports it as an unknown key). |
+| Schema in the template | `schema/` holds a copy. `get_tools.py` overwrites it with the schema of the version of the tools it downloads. |
+| Schema in the tools archive | In `schema/`. |
 
-### 実行ファイルのパス
+### Executable paths
 
-`command` の最初の要素が実行ファイルです。
+The first element of `command` is the executable.
 
-| 書き方 | 扱い |
+| Form | Handling |
 |---|---|
-| 相対パス | 設定ファイルのあるディレクトリを基準にします（コマンドを実行したディレクトリではありません）。 |
-| `..` を含むパス | 正規化しません（シンボリックリンクをまたぐ `..` は OS の解釈のまま）。 |
-| 設定ファイルのディレクトリになく、区切り（`/`、`\`）を含まない名前（`python3` など） | `PATH` から探します（`PATH` の相対のディレクトリは使いません）。 |
-| 設定ファイルのディレクトリにあっても実行できないファイル（実行の許可がないもの） | 使わず、`PATH` を探します。 |
-| 区切り | Windows でも `/` で書けます。 |
-| `\` を使うパス | YAML の単一引用符で書きます（`'C:\ecu\engine.exe'`）。 |
-| 空白や ASCII 以外の文字を含むパス | 使えます。 |
-| Windows で、パスにファイルがなく、`.exe` で終わらない | `.exe` を付けたファイルがあれば、それを使います（同じ設定ファイルを Linux と Windows で使えます）。 |
-| バッチファイル（`.bat`、`.cmd`） | エラーなので、それが起動する実行ファイルを書きます。 |
+| Relative path | Relative to the directory of the configuration file, not to the directory where you ran the command. |
+| Path that contains `..` | Not normalized (a `..` across a symbolic link is resolved as the OS resolves it). |
+| A name without a separator (`/`, `\`) that is not in the directory of the configuration file (such as `python3`) | Searched for on `PATH` (relative directories in `PATH` are not used). |
+| A file in the directory of the configuration file that cannot be executed (no execute permission) | Not used; `PATH` is searched instead. |
+| Separators | `/` works on Windows too. |
+| Paths with `\` | Write them in YAML single quotes (`'C:\ecu\engine.exe'`). |
+| Paths with spaces or non-ASCII characters | Allowed. |
+| On Windows, there is no file at the path and the path does not end in `.exe` | If a file with `.exe` added exists, it is used (so the same configuration file works on Linux and Windows). |
+| Batch files (`.bat`, `.cmd`) | An error. Write the executable that the batch file starts. |
 
-`PATH` で見つけたときは、注記（`found-on-path`）でその場所を表示します。その PC のパスなので、この注記は PC ごとに違います。バッチファイルがエラーなのは、cmd.exe を通り、引数の引用のルールが違うためです。
+When the executable is found on `PATH`, the check reports its location in the note `found-on-path`. The location is a path on that computer, so this note differs from computer to computer. Batch files are an error because they run through cmd.exe, which has different rules for quoting arguments.
 
-### 波括弧とプレースホルダー
+### Braces and placeholders
 
-`command` の中で特別なのは、英数字と `_` を `{` と `}` で囲んだ `{語}` の形だけです。ほかの波括弧は、そのまま渡します（JSON の引数 `'{"a":{"b":1}}'` は 1 バイトも変わりません）。
+In `command`, only `{word}` (letters, digits and `_` between `{` and `}`) is special. Other braces are passed as they are: the JSON argument `'{"a":{"b":1}}'` does not change by a single byte.
 
-| 書いたもの | 扱い |
+| What you write | Handling |
 |---|---|
-| `describe: false` の `command` の、実行ファイルより後の引数の `{registry_uri}` | シミュレーションの registry の URI に置き換えます。 |
-| `describe: false` の `command` の、実行ファイルより後の引数の `{name}` | participant 名に置き換えます。 |
-| `describe: true` の `command` の `{registry_uri}` と `{name}` | エラーです。 |
-| 知らない `{語}` | どちらの `command` でもエラーです。 |
-| 実行ファイルのパスの `{語}` | すべてエラーです。 |
-| `{{語}}` | `{語}` という文字列そのものを渡します（`{{name}}` は `{name}` になります）。 |
-| `{registry_uri}` のない `describe: false` の `command` | 注記を表示します（registry の場所を受け取れないかもしれないため）。 |
+| `{registry_uri}` in an argument after the executable, in a `describe: false` `command` | Replaced with the URI of the simulation's registry. |
+| `{name}` in an argument after the executable, in a `describe: false` `command` | Replaced with the participant name. |
+| `{registry_uri}` and `{name}` in a `describe: true` `command` | An error. |
+| An unknown `{word}` | An error in either kind of `command`. |
+| Any `{word}` in the executable path | An error. |
+| `{{word}}` | Passes the literal string `{word}` (`{{name}}` becomes `{name}`). |
+| A `describe: false` `command` without `{registry_uri}` | The check reports a note, because the executable may not receive the location of the registry. |
 
-- プレースホルダーは、長い引数の一部でもかまいません（例: `--uri={registry_uri}`）。
-- `{語}` をエラーにするのは、打ち間違いを見つけるためです。
-- `{{語}}` は、`describe: true` の引数と実行ファイルのパスでも同じです。
-- YAML では、`{...}` を引用符で囲みます（`"{registry_uri}"`）。
-- 囲まないと YAML のマッピングになり、エラーになります（指摘の文に直し方があります）。
-- `*` か `&` で始まる値も引用符で囲みます（囲まないとエイリアスとアンカーです）。
+- A placeholder can be part of a longer argument (for example `--uri={registry_uri}`).
+- An unknown `{word}` is an error so that typos are caught.
+- `{{word}}` works the same way in `describe: true` arguments and in the executable path.
+- In YAML, put `{...}` in quotes (`"{registry_uri}"`).
+- Without quotes, YAML reads it as a mapping, which is an error (the finding message says how to fix it).
+- Also quote a value that starts with `*` or `&`. Without quotes, it is an alias or an anchor.
 
-### ecu_main の実行ファイル（`describe: true`）
+### ecu_main executables (`describe: true`)
 
-`vehicle_sil_launch` は、`command` の引数に、次の引数を追加して起動します。`command` の引数は、`{{語}}` を `{語}` に戻したものです。
+`vehicle_sil_launch` starts the executable with the arguments of `command`, followed by the arguments below. The arguments of `command` are passed with each `{{word}}` turned back into `{word}`.
 
-| 起動 | 追加する引数 |
+| Start | Arguments added |
 |---|---|
-| 照合 | `--describe --name <participant 名>` |
-| `run` | `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` |
+| The check | `--describe --name <participant name>` |
+| `run` | `--name <participant name> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。次の 2 つの実行では、ECU が始まるまで待つ時間に上限がないので、10^12（`1000000000000`）です。始まらない participant は、ランチャーの `start_timeout_ms` が、止まる前と進んだ後に見つけます。
+`<ms>` is `start_timeout_ms + stop_timeout_ms + 10000`. It is the launcher that waits for the start and names the participants that did not join; the limit on the ECU side covers the case where the launcher has gone away. In the following 2 kinds of run, the ECU's wait for the start has no limit, so `<ms>` is 10^12 (`1000000000000`):
 
-- 自分で起動する必須の participant がいる実行。
-- `--control` と `--start-paused` で、時刻 0 のステップの前に止まる実行。
+- A run with a required participant that you start yourself.
+- A run with `--control` and `--start-paused`, which pauses before the step at time 0.
 
-`command` に書ける引数と書けないものは、次のとおりです。
+In these 2 kinds of run too, the launcher uses `start_timeout_ms` to detect a participant that does not start. In a run with a manual participant, it counts per phase, as the table in "[How `run` waits](#how-run-waits)" below shows. In a run that pauses before time 0, it counts from when the launcher starts waiting for participants until the pause, stops counting during the pause, and counts a fresh `start_timeout_ms` from when the run continues.
 
-| 書くもの | 扱い |
+What you can and cannot write in `command`:
+
+| What you write | Handling |
 |---|---|
-| `ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--help`、`-h`。`--name=X` の形も） | 書けません（エラー）。 |
-| `--no-control` | 書けます（その ECU は変数を公開しません）。 |
-| `--silkit-config <file>` | 書けます（その ECU に SIL Kit の設定ファイルを渡します）。 |
-| `required: false` | 書けません（エラー `not-required-ecu`）。 |
+| Arguments of `ecu_main` (`--describe`, `--name`, `--registry-uri`, `--local`, `--run-for-ms`, `--start-timeout-ms`, `--help`, `-h`, also in the form `--name=X`) | Not allowed (an error). |
+| `--no-control` | Allowed. The ECU does not expose its variables. |
+| `--silkit-config <file>` | Allowed. Passes a SIL Kit configuration file to the ECU. |
+| `required: false` | Not allowed (the error `not-required-ecu`). |
 
-**`--no-control`**: 照合の `--describe` にも同じ引数が渡るので、`--describe` の出力の `control` が `null` になり、`run` はその ECU の hello を待ちません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。
+**`--no-control`**: The `--describe` of the check gets the same argument, so `control` in the `--describe` output is `null`, and `run` does not wait for the ECU's hello (see "Connection to ECU variables (`control_link`)" in [simulation-run.md](simulation-run.md#connection-to-ecu-variables-control_link)).
 
-**`--silkit-config <file>`**: `command: [engine/vehicle_sil_engine_ecu, --silkit-config, engine.silkit.yaml]` のように書きます。相対パスは、設定ファイルのあるディレクトリを基準にします（participant の作業ディレクトリ）。照合の `--describe` にも渡るので、次のようなエラーは、照合で `describe-failed` として分かります（[ecu-executable.md](ecu-executable.md) の「SIL Kit の設定ファイルを渡す」）。
+**`--silkit-config <file>`**: Write it as `command: [engine/vehicle_sil_engine_ecu, --silkit-config, engine.silkit.yaml]`. A relative path is relative to the directory of the configuration file, which is the participant's working directory. The `--describe` of the check gets the argument too, so the check reports errors like these as `describe-failed` (see "Passing a SIL Kit configuration file (`--silkit-config`)" in [ecu-executable.md](ecu-executable.md#passing-a-sil-kit-configuration-file---silkit-config)):
 
-- ファイルがない。
-- SIL Kit が受け付けない。
-- participant 名と違う `ParticipantName` がある。
+- The file does not exist.
+- SIL Kit does not accept it.
+- It has a `ParticipantName` that differs from the participant name.
 
-**`required: false`**: 書けないのは、ecu_main の実行ファイルが coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を除いて動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を無効にする](#participant-を無効にするenabled--disable--enable)）。
+**`required: false`**: Not allowed, because an ecu_main executable joins as a coordinated participant, and SIL Kit does not start a coordinated participant that is not required. To run without an ECU, write `enabled: false` or pass `--disable <participant name>` (see [Disabling a participant](#disabling-a-participant-enabled---disable---enable)).
 
-### ほかの実行ファイル（`describe: false`）
+### Other executables (`describe: false`)
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 照合 | 照合しません（名前、ステップ幅、ネットワークを確認できないことを注記します）。 |
-| `step_ms` | 書いても照合しないので、注記します。 |
-| 起動 | `run` は、書いた引数（プレースホルダーを置き換えたもの）のまま起動します。 |
-| `required: true`（既定）の participant | `{registry_uri}` の registry に、participant 名で、coordinated のライフサイクルで参加する必要があります（シミュレーションはそれを待ちます）。 |
-| シミュレーションに参加しないツール（ログを取るだけのものなど） | `required: false` にします。 |
+| Check | Not checked. A note says that the name, step size and networks cannot be checked. |
+| `step_ms` | Not checked even if written; a note says so. |
+| Start | `run` starts the executable with the arguments as written (with the placeholders replaced). |
+| Participant with `required: true` (the default) | Must join the registry at `{registry_uri}` under its participant name, with the coordinated lifecycle. The simulation waits for it. |
+| A tool that does not take part in the simulation (one that only records logs, for example) | Set `required: false`. |
 
-### participant を無効にする（`enabled`、`--disable`、`--enable`）
+### Disabling a participant (`enabled`, `--disable`, `--enable`)
 
-ある ECU を除いて動かすときは、その participant に `enabled: false` を書きます。ファイルを書き換えずに組み合わせを変えるときは、`check` と `run` に次の引数を付けます。
+To run without one of the ECUs, write `enabled: false` for its participant. To change the set of participants without editing the file, pass these options to `check` and `run`:
 
-| 引数 | すること |
+| Option | What it does |
 |---|---|
-| `--disable <participant 名>` | 無効にします。 |
-| `--enable <participant 名>` | `enabled: false` のものを有効に戻します。 |
+| `--disable <participant name>` | Disables the participant. |
+| `--enable <participant name>` | Enables a participant that has `enabled: false`. |
 
-どちらも繰り返せます。コマンドラインの指定が、ファイルの `enabled` より優先します。
+Both can be repeated. The command line takes precedence over `enabled` in the file.
 
-無効にした participant の扱いは次のとおりです。
+A disabled participant is handled as follows:
 
-| 項目 | 扱い |
+| Item | Handling |
 |---|---|
-| 照合と起動 | 照合も起動もしません（`--describe` も動かしません）。 |
-| 実行ファイル | 探しません（まだない実行ファイルでもかまいません）。 |
-| シミュレーション | その participant を待ちません。 |
-| 項目の書き方 | 有効な participant と同じように確認します（キー、値の型、名前の重複、`command` の引数など）。 |
-| 項目のエラー | 残りの照合を止めません。 |
-| 同じ名前の項目 | 無効にしていてもエラーです（`--disable <名前>` がどれを指すかわからなくなるため）。 |
-| 注記 | participant ごとに `participant-disabled` を表示します（`--strict` でも失敗にしません）。 |
+| Check and start | Neither checked nor started (`--describe` does not run either). |
+| Executable | Not searched for (it need not exist yet). |
+| Simulation | Does not wait for the participant. |
+| The entry | Checked like the entry of an enabled participant (keys, value types, duplicate names, the arguments of `command` and so on). |
+| Errors in the entry | Do not stop the rest of the check. |
+| Entries with the same name | An error even when disabled, because otherwise it is unclear which one `--disable <name>` means. |
+| Note | `participant-disabled` for each participant. It does not fail the check, even with `--strict`. |
 
-- 書き方を確認するので、有効に戻したときに初めてエラーが出ることはありません。
-- `enabled` の値が真偽値でない participant は、無効にするかどうかがわからないので、照合も起動もしません（エラーなので照合は失敗します）。
-- 代わりの ECU と入れ替えるときは、別の名前にするか、設定ファイルを分けます。
-- 注記を表示するのは、「一部を無効にして通った」を「全部で通った」と読み違えないためです。
+- Because the entry is checked, enabling the participant again never brings up errors for the first time.
+- A participant whose `enabled` is not a boolean is neither checked nor started, because it is unclear whether it is disabled. It is an error, so the check fails.
+- To replace an ECU with another one, give the other one a different name, or use a separate configuration file.
+- The note keeps a result with some participants disabled from being mistaken for a result with all of them.
 
-残りの participant の照合は、次のようになります。
+The remaining participants are checked as follows:
 
-- 照合は、残りの participant の組み合わせで行います。
-- 無効にした結果として出る指摘（participant が 1 つだけになったネットワークなど）は、そのまま表示します。
-- 無効にしたことで出る警告（下の例の `single-participant` など）は警告のままなので、`--strict` を付けると失敗します（`run --strict` は何も起動しません）。
-- 有効な participant のうち、少なくとも 1 つは必須（`required: true`）でなければなりません（エラー `no-required-participant`）。
+- The check covers the remaining participants as a set.
+- Findings that result from disabling (such as a network left with only one participant) are reported as usual.
+- Warnings caused by disabling (such as `single-participant` in the example below) remain warnings, so `--strict` makes the check fail (`run --strict` starts nothing).
+- At least one enabled participant must be required (`required: true`) (otherwise the error `no-required-participant`).
 
-`--disable` と `--enable` には、設定ファイルにある participant 名を書きます。
+`--disable` and `--enable` take participant names from the configuration file.
 
-| 場合 | 扱い |
+| Case | Handling |
 |---|---|
-| 同じ名前を `--disable` と `--enable` の両方に書く | いつでも引数のエラーです（終了コード 4）。 |
-| 設定ファイルにない名前で、設定ファイルを読めてエラーがない | 引数のエラーです（終了コード 4。使える名前を並べ、合わない名前を全部挙げます）。 |
-| 設定ファイルにない名前で、設定ファイルを読めない（終了コード 3）か、エラーがある（終了コード 1） | ファイルのエラーを先に表示し、合わない名前は言いません。 |
+| The same name in both `--disable` and `--enable` | Always a usage error (exit code 4). |
+| A name not in the configuration file, and the file is readable and has no errors | A usage error (exit code 4). The message lists the valid names and every name that does not match. |
+| A name not in the configuration file, and the file is unreadable (exit code 3) or has errors (exit code 1) | The errors of the file are reported first, and the names that do not match are not mentioned. |
 
-合わない名前を言わないのは、名前を読めなかった項目のせいかもしれないためです。その間も、設定ファイルにある名前の指定は反映します。
+The names that do not match are not mentioned because an entry whose name could not be read may be the reason they do not match. The names that are in the configuration file still take effect.
 
 <!-- vehicle_sil_launch check simulation.yaml --disable Dashboard -->
 ```text
@@ -327,114 +331,114 @@ note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or 
 passed: 0 errors, 1 warning, 1 note
 ```
 
-### participant を自分で起動する（`manual`、`--manual`）
+### Starting a participant yourself (`manual`, `--manual`)
 
-ECU をデバッガーから動かすときなど、ある participant を `run` ではなく自分で起動するときは、その participant に `manual: true` を書きます。ファイルを書き換えずに、その実行だけ自分で起動するときは、`check` と `run` に `--manual <participant 名>` を付けます（繰り返せます）。`run` はその participant を起動せず、起動するコマンドを表示して、参加するのを待ちます。
+To start a participant yourself instead of through `run`, for example to run an ECU from a debugger, write `manual: true` for that participant. To start it yourself for one run only, without editing the file, pass `--manual <participant name>` to `check` and `run` (it can be repeated). `run` does not start that participant. It prints the command to start it and waits for it to join. Below, such a participant is called a manual participant.
 
-照合は、ほかの participant と同じです（`describe: true` なら `--describe` を動かします）。manual の participant ごとに、注記 `participant-manual` を表示します。
+The check is the same as for the other participants (with `describe: true`, it runs `--describe`). For each manual participant, the check reports the note `participant-manual`.
 
-引数の組み合わせのルールは次のとおりです。
+Rules for combining the options:
 
-| 場合 | 扱い |
+| Case | Handling |
 |---|---|
-| `--disable` と `--manual` に同じ名前を書く | 引数のエラーです（終了コード 4）。 |
-| 設定ファイルにない名前 | `--disable` と同じ扱いです。 |
-| 無効にした participant への `--manual` | `enabled` を変えません（無効のままです）。 |
-| 設定ファイルの `manual: true` を、コマンドラインで戻す | そのための引数はありません。 |
+| The same name in `--disable` and `--manual` | A usage error (exit code 4). |
+| A name not in the configuration file | Handled as for `--disable`. |
+| `--manual` for a disabled participant | Does not change `enabled`. The participant stays disabled. |
+| Undoing `manual: true` of the file from the command line | No option does this. |
 
-#### `run` が表示するコマンド
+#### The command `run` prints
 
-`run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を表示します（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`）。そのコマンドを、表示されたディレクトリで実行します。デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します。`--events` では、イベント `participant` の `state` が `manual` の行に、同じ内容があります。
+When `run` reaches the participant in its start order, it prints the working directory and a one-line command that starts the participant (example below). The arguments are the ones `run` uses when it starts the participant itself (`--name`, `--registry-uri` and `--start-timeout-ms` for an ecu_main executable). Run that command in the directory shown. In a debugger, set the executable, the arguments and the working directory separately. With `--events`, the `participant` event whose `state` is `manual` carries the same information.
 
-引数の引用は、貼り付けるシェルに合わせてあります。
+The arguments are quoted for the shell you paste them into:
 
-- Linux では、POSIX sh（bash、zsh）に貼る形です。
-- Windows では、コマンドプロンプト（cmd.exe）に貼る形で、実行ファイルのパスは `\` で区切ります。
-- cmd.exe の形では、C ランタイムがコマンドラインを読むルールで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。
-- cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。
-- PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を追加し、`$` と `` ` `` を含む引数を直します。
+- On Linux, for POSIX sh (bash, zsh).
+- On Windows, for the Command Prompt (cmd.exe), with `\` as the separator in the executable path.
+- In the cmd.exe form, the arguments are quoted by the rules the C runtime uses to read a command line, and arguments that contain `&` `|` `<` `>` `^` are also enclosed in `"`.
+- cmd.exe expands `%...%` even inside `"`, so edit arguments that contain `%` before you paste them.
+- To paste into PowerShell, add `&` before the quoted executable, and edit arguments that contain `$` or `` ` ``.
 
-`registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` のエラーです（`registry_uri` に別のポートを書きます）。
+If `registry_uri` is not written, a run with a required manual participant starts the registry at `silkit://127.0.0.1:8500`. The command is the same in every run, so you can set up the debugger configuration once and reuse it. If another program uses that port, `run` fails with a `setup` error; write another port in `registry_uri`.
 
-#### ループバックでない `registry_uri` のとき
+#### With a non-loopback `registry_uri`
 
-`registry_uri` がループバックのアドレスでないとき、`run` は、コマンドの前の行に「with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment」と書きます。注記 `participant-manual` にも、同じ環境変数のことを書きます。
+If `registry_uri` is not a loopback address, `run` writes "with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment" on the line before the command. The note `participant-manual` also mentions this environment variable.
 
-| 起動する PC | `--registry-uri` | `VEHICLE_SIL_LISTEN_ON_NETWORK=1` |
+| Computer you start it on | `--registry-uri` | `VEHICLE_SIL_LISTEN_ON_NETWORK=1` |
 |---|---|---|
-| ランチャーと同じ PC | 表示されたコマンドのままです。 | 設定して起動します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
-| ほかの PC | `registry at` の次の行（`from other computers, join at ...`）の URI に変えます。 | 必要ありません。 |
+| The same computer as the launcher | As in the printed command. | Set it when you start the participant (see "Listen addresses" in [simulation-run.md](simulation-run.md#listen-addresses)). |
+| Another computer | Change it to the URI on the line after `registry at` (`from other computers, join at ...`). | Not needed. |
 
-注記 `participant-manual` の文は、起動する PC を区別せずに、この環境変数を設定するように言います。`run` の `from other computers, join at ...` の行は、ほかの PC では必要ないと言います。ほかの PC で起動するときは、`run` の行のとおり、設定しません（手順は [howto/multi-pc.md](howto/multi-pc.md)）。
+The text of the note `participant-manual` tells you to set this environment variable, whichever computer you start the participant on. The `from other computers, join at ...` line of `run` says that other computers do not need it. When you start the participant on another computer, follow the line of `run` and do not set the variable (for the steps, see the guide [Run on several computers](howto/multi-pc.md)).
 
-#### 待ち方
+#### How `run` waits
 
-manual の必須の participant がいる実行では、開始の時間の上限を 3 つの区間に分けます。
+In a run with a required manual participant, the time limit for the start is split into 3 phases.
 
-| 区間 | 上限 |
+| Phase | Limit |
 |---|---|
-| 1. 参加するまで | `run` が起動した participant は `start_timeout_ms` で、manual の participant には上限がありません。 |
-| 2. 全員が参加した後、manual の participant がすべて最初のステップの準備を終える（ReadyToRun）まで | 上限はありません（デバッガーで止めていてもかまいません）。 |
-| 3. その後、全員が最初のステップに着くまで | `start_timeout_ms` です。 |
+| 1. Until the participants join | `start_timeout_ms` for the participants that `run` starts. No limit for manual participants. |
+| 2. After all have joined, until every manual participant has prepared its first step (ReadyToRun) | No limit (a manual participant may be stopped in a debugger). |
+| 3. After that, until all participants reach the first step | `start_timeout_ms`. |
 
-- 区間 1 で、`run` が起動した participant が `start_timeout_ms` の間に参加しなければ、manual のいない実行と同じく `not-joined` です。
-- manual でない必須の participant がそろうと、`waiting for <名前> to join (manual): ...` の行を 1 回表示します。
-- 区間 3 で、`run` が起動した participant が初期化で固まれば、manual のいない実行と同じく `simulation-start` のエラーです。
-- どの区間でも、Ctrl+C、`stop` のコマンド、Control Server の `Stop` で止まります（終了コード 130）。
-- `required: false` の manual の participant は、待ちません（コマンドを表示するだけです）。
+- In phase 1, if a participant that `run` starts does not join within `start_timeout_ms`, the result is `not-joined`, as in a run without manual participants.
+- When all required participants that are not manual have joined, `run` prints the line `waiting for <name> to join (manual): ...` once.
+- In phase 3, if a participant that `run` started hangs during initialization, the result is a `simulation-start` error, as in a run without manual participants.
+- In every phase, Ctrl+C, the `stop` command and a `Stop` call through the Control Server stop the run (exit code 130).
+- `run` does not wait for a manual participant with `required: false`. It only prints the command.
 
-`--timeout-ms` は、manual の必須の participant がいる実行では、`run` が participant を待ち始めた時点から数えます（参加を待つ時間、開始を待つ時間、実行の時間の合計です）。始まる前に過ぎると `timeout` のエラーで、何を待っていたか（参加していない participant か、最初のステップに着いていない participant）をメッセージに挙げます。`manual: true` を書いた設定ファイルを CI で動かすときは、`--timeout-ms` を付けると、誰も起動しなくても終わります。
+In a run with a required manual participant, `--timeout-ms` counts from the moment `run` starts to wait for the participants. It covers the wait for them to join, the wait for the start and the run itself. If it runs out before the start, the result is a `timeout` error, and the message names what `run` was waiting for: participants that have not joined, or participants that have not reached the first step. To run a configuration file with `manual: true` in CI, pass `--timeout-ms`, so that the run ends even if nobody starts the participant.
 
-参加した manual の participant が、始まる前に終わる（デバッガーで止めて起動し直すなど）と、開始は失敗します（`simulation-start`）。その participant はこの実行には参加し直せないので、ランチャーも起動し直します。
+If a manual participant that has joined ends before the start (for example, you stop it in a debugger and start it again), the start fails (`simulation-start`). That participant cannot join this run again, so start the launcher again too.
 
-待っている間に、設定ファイルにない名前の participant がシミュレーションの開始を待っていると、次の行を 1 回表示します。`--name` の打ち間違いなどで起き、2 秒 ServicesCreated のままか、Error の participant が対象です。
+While `run` waits, if a participant whose name is not in the configuration file is waiting for the simulation to start, `run` prints the following line once. A mistyped `--name` is a typical cause. The line is printed for a participant that has stayed in ServicesCreated for 2 seconds, or that is in the Error state.
 
-`participant '<名前>' joined the simulation, but this run has no participant of that name (did you mean '<近い名前>'?): it waits for the simulation's start, which only the participants of the file get; ...`
+`participant '<name>' joined the simulation, but this run has no participant of that name (did you mean '<close name>'?): it waits for the simulation's start, which only the participants of the file get; ...`
 
-その participant は始まりません。`run` は、設定ファイルの名前の participant を待ち続けます。設定ファイルにない participant でも、自分で動く（autonomous の）もの（実時間の Peer、ブリッジ）は、シミュレーションの参加者として扱い、何も表示しません。
+That participant does not start. `run` keeps waiting for the participants named in the configuration file. Participants that are not in the file but run on their own (autonomous participants: real-time `Peer`s, bridges) count as participants of the simulation, and `run` prints nothing about them.
 
-#### 実行中
+#### During the run
 
-監視することは、ほかの必須の participant と同じです。違いは次のとおりです。
+`run` monitors a manual participant as it monitors the other required participants, with these differences:
 
-| 項目 | manual の participant |
+| Item | Manual participant |
 |---|---|
-| 失敗の検出 | `run` はそのプロセスを見ていないので、シミュレーションから抜けたこと（接続が切れた、Error の状態）で検出します（`participant-failed`）。 |
-| 出力 | 起動した場所（端末、デバッガー）に出力されます。 |
-| デバッガーで止めている間 | 仮想時間が進みません。 |
-| 速度を指定しているとき | 止めている間を遅れとして数えます（`behind-real-time`）。 |
-| `--timeout-ms` | 止めている間も数えます。 |
+| Detecting a failure | `run` does not watch the process; it detects that the participant has left the simulation (the connection was lost, or the participant is in the Error state) and reports `participant-failed`. |
+| Output | Goes where you started the participant (a terminal, a debugger). |
+| While it is stopped in a debugger | Virtual time does not advance. |
+| With a set speed | The time it is stopped counts as lateness (`behind-real-time`). |
+| `--timeout-ms` | Also counts the time it is stopped. |
 
-#### 止め方
+#### How to stop
 
-`run` は、manual の participant のプロセスに、停止の要求も強制終了も送信しません。
+`run` sends neither a stop request nor a kill to the process of a manual participant.
 
-| 場合 | 起きること |
+| Case | What happens |
 |---|---|
-| シミュレーションが終わった | ecu_main の実行ファイルは、自分で終わります。 |
-| シミュレーションが始まらなかった（中断、ほかの participant の失敗） | 参加していた manual の participant に SIL Kit の abort を送信します（ecu_main の実行ファイルは、開始の失敗として終わります）。 |
-| どちらの場合も | 参加した manual の participant がシミュレーションを去るのを `stop_timeout_ms` まで待ってから、registry を閉じます。 |
-| 去らない（デバッガーで止めているなど） | そう表示して終わります（エラーにはしません）。 |
-| `run` が強制終了された（SIGKILL、クラッシュ、Windows でコンソールを閉じた） | 自分で起動した participant は残ることがあるので、自分で終わらせます。 |
+| The simulation ended | An ecu_main executable ends by itself. |
+| The simulation did not start (an abort, a failure of another participant) | `run` sends a SIL Kit abort to the manual participants that had joined. An ecu_main executable ends with a start failure. |
+| In both cases | `run` waits up to `stop_timeout_ms` for the joined manual participants to leave the simulation, then closes the registry. |
+| A participant does not leave (it is stopped in a debugger, for example) | `run` says so and ends. This is not an error. |
+| `run` was killed (SIGKILL, a crash, the console closed on Windows) | Participants that you started yourself may remain. End them yourself. |
 
-- 去るのを待つ間は、Ctrl+C か `stop` のコマンドをもう 1 回送信すると、待つのを切り上げます。
-- `run` が強制終了されたのが始まる前なら、残った participant は開始を待ち続けます。
-- participant をデバッガーで止めたままでも、`run` は止められます（Ctrl+C、`stop` のコマンド）。
-- そのとき `run` は、上の待ちの後、結果を表示して終わります。
-- 止めたままの participant は残るので、自分で続行させるか、終わらせます。
+- While `run` waits for the participants to leave, a second Ctrl+C or `stop` command cuts the wait short.
+- If `run` was killed before the start, the remaining participants keep waiting for the start.
+- You can stop `run` (Ctrl+C, the `stop` command) while a participant is stopped in a debugger.
+- `run` then waits as described above, prints the result and ends.
+- The stopped participant remains. Continue it yourself, or end it.
 
-#### 結果
+#### Result
 
-| 出力 | manual の participant |
+| Output | Manual participant |
 |---|---|
-| participant の表の `ended` | `started by you (manual)`（参加した）か `not joined (manual)` です。 |
-| JSON の `participants[].manual` | `true` です。 |
-| JSON の `ended` | `"not_started"` です。 |
-| JSON の `exit_code` | `null` です。 |
+| `ended` in the participant table | `started by you (manual)` (joined) or `not joined (manual)`. |
+| `participants[].manual` in JSON | `true`. |
+| `ended` in JSON | `"not_started"`. |
+| `exit_code` in JSON | `null`. |
 
-#### 例
+#### Example
 
-[examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml) の Engine を自分で起動します。`run` は、標準エラーに次の 2 行を書きます（`<dir>` は例のディレクトリです。Windows では、パスが `\` で区切られ、実行ファイルの名前に `.exe` が付きます）。2 行目の `[vehicle_sil_launch]` の後が、実行するコマンドです。
+Start Engine of [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml) yourself. `run` writes these 2 lines to stderr. `<dir>` is the directory of the example; on Windows, the paths use `\` and the executable name ends in `.exe`. The command to run is the part of line 2 after `[vehicle_sil_launch]`.
 
 <!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->
 ```text
@@ -442,7 +446,7 @@ manual の必須の participant がいる実行では、開始の時間の上限
 [vehicle_sil_launch]   <dir>/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000
 ```
 
-そのコマンドで Engine を起動すると、シミュレーションが始まります。結果は次のとおりです。
+When you start Engine with that command, the simulation starts. The result:
 
 <!-- vehicle_sil_launch run simulation.yaml --manual Engine -->
 ```text
@@ -466,119 +470,119 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 1 note
 ```
 
-### テスト用の participant とブリッジ（`role`）
+### Test participants and bridges (`role`)
 
-`role` は、participant の用途を照合に伝えます。照合のルールと表示だけが使い、`run` は、どの値でも同じに起動し、同じに参加させます（`--describe` の JSON と、シミュレーションの通信には含まれません）。
+`role` tells the check what a participant is for. Only the rules and the output of the check use it. `run` starts every participant and lets it join in the same way, whatever the value. The role appears neither in the `--describe` JSON nor in the simulation's communication.
 
-| 値 | 意味 | 照合で変わること |
+| Value | Meaning | What changes in the check |
 |---|---|---|
-| `ecu`（既定） | 車両の ECU | なし |
-| `test` | テスト用の participant（受信するだけの spy、ECU に送信するツールなど） | ネットワークの ECU として数えません（`single-participant` は、spy を追加しても消えません）。 |
-| `bridge` | ネットワークを実機のバスに中継する participant（[bridges.md](bridges.md)） | 下の警告で、ブリッジとして扱います。 |
+| `ecu` (default) | An ECU of the vehicle | Nothing |
+| `test` | A test participant (a spy that only receives, a tool that sends to the ECUs and so on) | It does not count as an ECU on the network (adding a spy does not make `single-participant` go away). |
+| `bridge` | A participant that relays a network to a real bus ([bridges.md](bridges.md)) | It is treated as a bridge in the warning below. |
 
-`role: test` の participant が、J1939 のノードを `--describe` に出力していて、ブリッジがいるかもしれないネットワークにいると、警告 `test-participant-talks-on-bridged-network` です。
+If a `role: test` participant reports a J1939 node in its `--describe` output and is on a network that may have a bridge, the check reports the warning `test-participant-talks-on-bridged-network`.
 
-照合がブリッジとして扱う participant は、次のとおりです。
+The check treats these participants as bridges:
 
-| 設定ファイル | ブリッジとして扱うもの |
+| Configuration file | Treated as a bridge |
 |---|---|
-| `role: bridge` の participant がいる | その participant だけです。 |
-| `role: bridge` で `describe: true` | `--describe` に出力したネットワークだけを中継するとみなします。 |
-| `role: bridge` で `describe: false` | どのネットワークを中継するかが照合にはわからないので、どのネットワークも中継するかもしれないとみなします。 |
-| `role: bridge` の participant が 1 つもない | `role` を書いていない `describe: false` の participant を「ブリッジかもしれない」とみなします（警告の文もそう言い分けます）。 |
+| Has a `role: bridge` participant | Only that participant. |
+| `role: bridge` with `describe: true` | The check assumes that it relays only the networks in its `--describe` output. |
+| `role: bridge` with `describe: false` | The check cannot tell which networks it relays, so it assumes that it may relay any network. |
+| Has no `role: bridge` participant | The check treats each `describe: false` participant without `role` as "may be a bridge" (the warning text makes the same distinction). |
 
-ブリッジでないツールには `role: ecu` か `role: test` を書くと、ブリッジかもしれないとはみなしません。
+If you write `role: ecu` or `role: test` for a tool that is not a bridge, the check no longer treats it as a possible bridge.
 
-警告の理由は次のとおりです。ブリッジは、SIL Kit の側で送信されたものを実機のバスに送信します。そのため、J1939 のノードを持つテスト用の participant の送信、とくにアドレスの要求（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを無効にする（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送信する participant は、`--describe` の出力からはわからないので、警告しません。
+The reason for the warning: a bridge sends what is sent on the SIL Kit side to the real bus. So the transmissions of a test participant with a J1939 node, in particular its address claim (Address Claimed), also go out on the real bus, and the participant competes for its address with a real ECU that has the same address. To fix this, either make the participant only receive on that network (create no J1939 node), or disable the bridge in the runs that use the participant (`--disable <bridge>`, or `enabled: false` in a variant). The `--describe` output does not show that a participant sends raw CAN, so the check does not warn about such participants.
 
-そのほかのルールは次のとおりです。
+Other rules:
 
-- 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
-- `check --json` では、`participants[].role` に出力されます。
-- 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
+- In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
+- `check --json` writes the role to `participants[].role`.
+- A variant (`variants`) cannot change it, as with `describe` and `required`.
 
-### 変数の名前と値を合わせる（`variables`）
+### Matching variable names and values (`variables`)
 
-同じ役目の ECU でも、実行ファイルによって変数の名前、単位、値の表し方が違うことがあります（他人の ECU、古いバージョン、機種ごとの違い）。`variables` に対応を書くと、シミュレーションの側（シナリオ、`check --json`、Control API とそれを使う GUI）からは、どの実行ファイルも同じ名前と値で見えます。実行ファイルは変えません。名前を ECU の側でそろえられるなら、そのほうが簡単です。対応表は、そろえられないもののためにあります。
+ECUs that do the same job can still differ from executable to executable in variable names, units and the way values are represented: someone else's ECU, an older version, differences between variants. If you write the mapping in `variables`, every executable shows the same names and values to the simulation side (scenarios, `check --json`, the Control API and the GUI that uses it). The executables do not change. If you can align the names in the ECUs, that is simpler; the variable map is for what you cannot align.
 
 ```yaml
 participants:
   - name: Engine
     command: [engine/engine_small]
     variables:
-      engine.throttle: throttle_pct                        # 名前を替える
-      engine.speed: { from: rpm_x10, scale: 0.1, unit: rpm }   # 値を一次式で変える
-      engine.gear: { from: gear_raw, map: { P: 0, R: 1, N: 2, D: 3 } }   # 値に名前を付ける
-      engine.turbo: { absent: true }                       # この実行ファイルにはない
+      engine.throttle: throttle_pct                        # rename
+      engine.speed: { from: rpm_x10, scale: 0.1, unit: rpm }   # convert the value linearly
+      engine.gear: { from: gear_raw, map: { P: 0, R: 1, N: 2, D: 3 } }   # name the values
+      engine.turbo: { absent: true }                       # this executable does not have it
 ```
 
-キーは、シミュレーションで使う名前です。値は次の 4 つの形のどれかです。1 つの変数に書ける形は 1 つで、ここにないキーはエラーです。
+The key is the name used in the simulation. The value takes one of the 4 forms below. Each variable takes one form, and any key that the table does not list is an error.
 
-| 形 | 意味 | 書ける変数 |
+| Form | Meaning | Variable types |
 |---|---|---|
-| `<実行ファイルの変数名>`（文字列） | 名前だけを替えます（`{ from: <名前> }` と同じです）。 | |
-| `{ from, scale, offset }` | 見える値 = 実行ファイルの値 × `scale` + `offset` | 整数か実数 |
-| `{ from, map: { <名前>: <値>, ... } }` | 実行ファイルの値（整数）に名前を付けます。 | 整数か列挙 |
-| `{ absent: true }` | この実行ファイルには、その変数がありません。 | |
+| `<variable name in the executable>` (a string) | Renames the variable and nothing else (same as `{ from: <name> }`). | |
+| `{ from, scale, offset }` | Visible value = value in the executable × `scale` + `offset` | Integer or real |
+| `{ from, map: { <name>: <value>, ... } }` | Gives names to the (integer) values of the executable. | Integer or enum |
+| `{ absent: true }` | This executable does not have the variable. | |
 
-- `scale` は 0 以外の数（書かなければ 1）、`offset` は数（書かなければ 0）です。
-- `map` では、1 つの値に付けられる名前は 1 つです。
-- `absent: true` は、ほかのキーと一緒には書けません。
-- `from` のある形には、`unit`（見える値の単位）も書けます。
+- `scale` is a number other than 0 (1 if omitted). `offset` is a number (0 if omitted).
+- In `map`, one value can have only one name.
+- `absent: true` cannot be combined with other keys.
+- The forms with `from` can also have `unit` (the unit of the visible value).
 
-#### 変数の見え方
+#### How variables appear
 
-| 項目 | 見え方 |
+| Item | How it appears |
 |---|---|
-| 名前 | 対応を書いた変数は、キーの名前でだけ見えます（実行ファイルの名前では読み書きできません）。 |
-| 並び | 実行ファイルが宣言した順のままです。 |
-| 入力、出力、パラメーターの別 | 変わりません。 |
-| `scale`、`offset` の型 | 実数になります。 |
-| `scale`、`offset` の範囲（`min`、`max`）と増減の幅（`step`） | 見える値に換算します（`scale` が負なら、範囲の両端が入れ替わります）。 |
-| `scale`、`offset` の単位 | `unit` に書いたもので、書かなければ空です（実行ファイルの単位は、換算した後の値には当てはまりません）。 |
-| `map` の型 | 列挙になり、項目は `map` に書いたものだけです。 |
-| `map` の数 | 実行ファイルの値のままです。 |
-| `absent: true` | どこにも見えません。 |
+| Name | A mapped variable is visible only under the name of its key. It cannot be read or written under the executable's name. |
+| Order | The order in which the executable declared the variables. |
+| Input, output or parameter | Unchanged. |
+| Type with `scale`, `offset` | Real. |
+| Range (`min`, `max`) and increment (`step`) with `scale`, `offset` | Converted to the visible value (a negative `scale` swaps the ends of the range). |
+| Unit with `scale`, `offset` | The one written in `unit`, or empty if omitted (the executable's unit does not apply to the converted value). |
+| Type with `map` | Enum, with only the items written in `map`. |
+| Numbers with `map` | The executable's values, unchanged. |
+| `absent: true` | Not visible anywhere. |
 
-`map` を使うと、実行ファイルによって数が違っても、シナリオに名前で書けば（`engine.gear: D`）同じシナリオが使えます。
+With `map`, a scenario that writes names (`engine.gear: D`) works for every executable, even when the executables use different numbers.
 
-`absent: true` の変数を使うシナリオの手順は、飛ばします（[scenario.md](scenario.md) の「機種とパラメーター」）。対応も `absent` も書いていない変数が実行ファイルになければ、シナリオの照合でエラーになります。
+Scenario steps that use an `absent: true` variable are skipped (see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters)). If an executable lacks a variable that has neither a mapping nor `absent`, the check of the scenario reports an error.
 
-#### 書き込み
+#### Writes
 
-`scale`、`offset` の変数への書き込みは、逆に換算します（実行ファイルの値 = (書いた値 − `offset`) ÷ `scale`）。
+A write to a variable with `scale`, `offset` is converted back: value in the executable = (written value − `offset`) ÷ `scale`.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 実行ファイルの変数が整数 | 最も近い整数に丸めます（ちょうど半分は 0 から遠いほうへ: 2.5 は 3、−2.5 は −3）。 |
-| 範囲の外の値 | 実行ファイルに渡す前に拒否します。 |
-| 範囲の判定 | 換算した後の実行ファイルの値で決めます（シナリオの照合も同じ決め方です）。 |
-| 一覧に表示される範囲の両端 | 有効数字 15 桁に丸めた値です。 |
-| `map` にない値 | 書けません。 |
+| The executable's variable is an integer | Rounded to the nearest integer (exact halves away from 0: 2.5 becomes 3, −2.5 becomes −3). |
+| Values outside the range | Rejected before they reach the executable. |
+| Range check | Decided on the converted value in the executable (the check of a scenario decides the same way). |
+| Ends of the range shown in lists | Rounded to 15 significant digits. |
+| Values not in `map` | Cannot be written. |
 
-丸めるので、書いた値と読み戻した値は、丸めの分だけ違うことがあります。シナリオで比べるときは `near` と `tolerance` を使います。
+Because of the rounding, the value you read back can differ from the value you wrote by the rounding error. To compare such values in a scenario, use `near` and `tolerance`.
 
-#### 対応の照合
+#### Checking the map
 
-照合（`check`、`run` の最初）は、対応の全部を、実行ファイルの `--describe` の出力と比べます。比べるのは、`from` の変数があるか、形が型に合うか、`map` の値を変数が取れるか、名前がほかの変数と重ならないかです（指摘は [simulation-check.md](simulation-check.md) の `variable-map-*`）。合わない対応が 1 つでもあれば、`run` は何も起動しません。
+The check (`check`, and the start of `run`) compares the whole map with the `--describe` output of the executable. It checks that the `from` variable exists, that the form fits the type, that the variable can take the values in `map`, and that the name does not collide with other variables (findings `variable-map-*` in [simulation-check.md](simulation-check.md)). If any mapping does not match, `run` starts nothing.
 
-`check --json` の `participants[].variables` は対応を反映した後の変数で、`participants[].variable_map` に両方の名前が出力されます。
+In `check --json`, `participants[].variables` holds the variables after the mapping, and `participants[].variable_map` gives both names.
 
-`describe: false` の participant にも `variables` は書けますが、実行の前には比べられません（注記 `variable-map-not-checked`）。対応は、その participant の Control Agent が接続したときに反映します。合わなかった対応は、次のように扱います。
+A `describe: false` participant can also have `variables`, but they cannot be compared before the run (note `variable-map-not-checked`). The map is applied when the Control Agent of that participant connects. Mappings that do not match are handled as follows:
 
-| 項目 | 扱い |
+| Item | Handling |
 |---|---|
-| 反映 | 合わなかった対応は反映しません。 |
-| 通知 | そのときに、実行の行（`[vehicle_sil_launch] participant ...: variables: ...`、イベントでは `log`）で通知します。 |
-| 実行の指摘 | 終わりに、`variable-map-not-applied`（エラー）にします。 |
-| 読み出し | その実行の間、合わなかった対応の変数は、実行ファイルの名前と値のまま読めます。 |
-| 書き込み | その対応の名前（キーと `from`）への書き込みは拒否します。 |
+| Applying | Mappings that do not match are not applied. |
+| Notification | At that moment, a line of the run reports it (`[vehicle_sil_launch] participant '<name>': variables: <n> of its mappings do not fit ...`; with events, a `log` event). |
+| Run finding | At the end, `variable-map-not-applied` (an error). |
+| Reads | For the rest of that run, the variables of mappings that do not match can be read under the executable's names, with the executable's values. |
+| Writes | Writes to the names of that mapping (the key and `from`) are rejected. |
 
-書き込みを拒否するのは、共通の名前のつもりで書いた値が、別の変数や換算なしの値として反映されるのを防ぐためです。
+Writes are rejected so that a value meant for the common name is not applied to another variable, or without the conversion.
 
-### 機種（`variants`、`--variant`）
+### Variants (`variants`, `--variant`)
 
-実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた設定を、照合し、実行します。全部の機種を順に実行するのは `test` です（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを使えます。
+When the executables or variable maps differ by variant, write the common part in `participants` and the differences of each variant in `variants`. `check` and `run` apply the differences of the variant selected with `--variant <name>` on top of the common part, then check and run the result. `test` runs all variants in turn (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)). Scenarios use only the common names, so the same scenario works for every variant.
 
 ```yaml
 participants:
@@ -590,87 +594,87 @@ participants:
     command: [./dashboard]
 params: { idle_rpm: 800 }
 variants:
-  small: {}                           # 共通の部分のまま
+  small: {}                           # the common part as is
   medium:
     participants:
       Engine:
-        command: [./engine_medium]                   # 実行ファイルを替える
-        variables: { engine.turbo: turbo_bar }       # 対応を重ねる
-      Dashboard: { enabled: false }                  # この機種にはいない
-    params: { idle_rpm: 650 }                        # パラメーターを替える
+        command: [./engine_medium]                   # replace the executable
+        variables: { engine.turbo: turbo_bar }       # lay a mapping over the common ones
+      Dashboard: { enabled: false }                  # not in this variant
+    params: { idle_rpm: 650 }                        # change a parameter
 ```
 
-| キー | 値 |
+| Key | Value |
 |---|---|
-| `variants.<機種>` | その機種の差分 |
-| `variants.<機種>.participants.<participant>` | 共通の部分の participant の、この機種での違い |
-| `…<participant>.command` | 実行ファイルと引数（共通の `command` の全体を置き換えます） |
-| `…<participant>.variables` | 変数の対応表（共通の `variables` に、対応 1 つずつ重ねます） |
-| `…<participant>.enabled` | `true` か `false`（共通の `enabled` を置き換えます） |
-| `variants.<機種>.params` | パラメーター（共通の `params` に、名前ごとに重ねます） |
+| `variants.<variant>` | The differences of that variant |
+| `variants.<variant>.participants.<participant>` | How a participant of the common part differs in this variant |
+| `…<participant>.command` | Executable and arguments (replaces the whole common `command`) |
+| `…<participant>.variables` | Variable map (merged into the common `variables`, one mapping at a time) |
+| `…<participant>.enabled` | `true` or `false` (replaces the common `enabled`) |
+| `variants.<variant>.params` | Parameters (merged into the common `params`, name by name) |
 
-- `variants.<機種>` が `{}`（か、値なし）なら、共通の部分のままです。
-- 機種の名前は、空でなく、1 行で、`-` で始まらない名前にします。
-- `variants.<機種>.participants` のキーは participant 名で、`participants` にある名前だけを書けます（エラー `variant-participant`）。
-- `…<participant>.command` の書き方とルールは、`participants[].command` と同じです。
-- `…<participant>.variables` では、同じ名前（キー）の対応は置き換え、ない名前は追加します。
+- If `variants.<variant>` is `{}` (or has no value), the variant is the common part as is.
+- A variant name must not be empty, must fit on one line and must not start with `-`.
+- The keys of `variants.<variant>.participants` are participant names. Only names in `participants` are allowed (the error `variant-participant`).
+- `…<participant>.command` follows the same syntax and rules as `participants[].command`.
+- In `…<participant>.variables`, a mapping with the same name (key) replaces the common one, and a new name is added.
 
-機種で変えられるのは、この 4 つ（`command`、`variables`、`enabled`、`params`）だけです。ほかのキーはエラーです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required`、`role` などは、どの機種でも同じです。
+A variant can change only these 4 keys: `command`, `variables`, `enabled` and `params`. Any other key is an error (`unknown-key`). Networks, `step_ms`, `describe`, `required`, `role` and the rest are the same in every variant.
 
-| したいこと | 書き方 |
+| Goal | How to write it |
 |---|---|
-| ある機種にだけ participant を置く | `participants` に `enabled: false` で書き、その機種で `enabled: true` にします。 |
-| 共通の対応を、ある機種で使わない | 同じ名前に、その機種の対応を書きます（`engine.speed: engine.speed` は、名前も値もそのままです）。 |
+| Have a participant in one variant only | Write it in `participants` with `enabled: false`, and set `enabled: true` in that variant. |
+| Stop using a common mapping in one variant | Write a mapping of that variant for the same name (`engine.speed: engine.speed` keeps the name and the value unchanged). |
 
-下の行の書き方を使うのは、対応を共通の部分より減らすことができないためです。
+The second row is needed because a variant cannot have fewer mappings than the common part.
 
-`--variant` のルールは次のとおりです。
+Rules for `--variant`:
 
-| 場合 | 扱い |
+| Case | Handling |
 |---|---|
-| 機種を書いた設定ファイルで `--variant` を省く | 引数のエラーです（終了コード 4。メッセージに機種の一覧が出ます）。 |
-| 機種のどれでもない名前の `--variant` | 引数のエラーです。 |
-| 機種のない設定ファイルへの `--variant` | 引数のエラーです。 |
+| `--variant` omitted for a configuration file with variants | A usage error (exit code 4; the message lists the variants). |
+| `--variant` with a name that is not a variant | A usage error. |
+| `--variant` for a configuration file without variants | A usage error. |
 
-- 既定の機種はありません。
-- 上の 2 つのエラーは、設定ファイルの文面にほかのエラーがあっても、先に表示します。
-- このとき、共通の部分だけを機種の代わりに照合することはしません（メッセージに、ファイルにもエラーがあることを追加します）。
-- 機種のない設定ファイルへの `--variant` のエラーは、`--disable` と同じで、文面にエラーがある間は言いません（`variants` を読めなかったせいかもしれないため）。
+- There is no default variant.
+- The first 2 errors above are reported first, even if the text of the configuration file has other errors.
+- In that case, the check does not check the common part alone in place of a variant (the message adds that the file has errors too).
+- The error for `--variant` with a configuration file without variants is, as with `--disable`, not reported while the text has errors (the reason may be a `variants` that could not be read).
 
-そのほかのルールは次のとおりです。
+Other rules:
 
-- 読むときには、選んでいない機種も含めて、全部の機種の形を確認します。
-- 実行ファイルとの照合は、選んだ機種だけです。
-- `--disable`、`--enable`、`--manual` は、機種を重ねた後に反映します。
-- `check --json` には、`variant`（選んだ機種）と `variants`（全部の名前）が出力されます。
-- `check --json` の `participants` は、機種を重ねた後のものです。
+- When the file is read, the form of every variant is checked, including the variants that are not selected.
+- Only the selected variant is checked against the executables.
+- `--disable`, `--enable` and `--manual` apply after the variant is applied.
+- `check --json` includes `variant` (the selected variant) and `variants` (all names).
+- `participants` in `check --json` shows the participants after the variant is applied.
 
-### シナリオのパラメーター（`params`、`--param`）
+### Scenario parameters (`params`, `--param`)
 
-シナリオの中の数（しきい値、待ち時間、設定する値）を機種ごとに替えるときは、シナリオに `${名前}` と書き、値を `params` に書きます。
+To change numbers in a scenario (thresholds, wait times, values to set) by variant, write `${name}` in the scenario and the value in `params`.
 
-| 項目 | ルール |
+| Item | Rule |
 |---|---|
-| 値 | 数、`true`・`false`、文字列のどれかです（1 つの値。配列やマッピングは書けません）。 |
-| 名前 | 英数字と `_` です（数字で始めない）。 |
+| Value | A number, `true`/`false` or a string (a single value; no arrays or mappings). |
+| Name | Letters, digits and `_`, not starting with a digit. |
 
-値は、後のものが前のものを置き換えます。順は次のとおりです。
+A later value replaces an earlier one, in this order:
 
-| 順 | 値を書く場所 |
+| Order | Where the value is written |
 |---|---|
-| 1 | シナリオの `params`（既定） |
-| 2 | 設定ファイルの `params` |
-| 3 | 機種の `params` |
-| 4 | 引数の `--param <名前>=<値>` |
+| 1 | `params` of the scenario (the defaults) |
+| 2 | `params` of the configuration file |
+| 3 | `params` of the variant |
+| 4 | The option `--param <name>=<value>` |
 
-- `--param` は、`--scenario` と一緒にだけ使えます。
-- シナリオが使っていない名前の `--param` は、引数のエラーです（終了コード 4。打ち間違いを黙って無視しません）。
-- いくつものシナリオを実行する `test` では、どのシナリオも使っていない名前だけがエラーです。
-- 設定ファイルと機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの設定ファイルで、いくつものシナリオを実行するため）。
+- `--param` is allowed only with `--scenario`.
+- `--param` with a name that the scenario does not use is a usage error (exit code 4; typos are never silently ignored).
+- In `test`, which runs several scenarios, only a name that no scenario uses is an error.
+- `params` of the configuration file and of the variants may contain names that the scenario does not use, because one configuration file runs several scenarios.
 
-書き方とエラーは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
+For the syntax and the errors, see "Variants and parameters" in [scenario.md](scenario.md#variants-and-parameters).
 
-## 引数と終了コード
+## Arguments and exit codes
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
@@ -689,133 +693,133 @@ vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... 
 vehicle_sil_launch version [--json]
 ```
 
-`test` は、機種ごとにシナリオを 1 つずつ実行して、全部の結果を表にします（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。
+`test` runs each scenario once for each variant and shows all results in one table (see "Running several scenarios (`vehicle_sil_launch test`)" in [simulation-run.md](simulation-run.md#running-several-scenarios-vehicle_sil_launch-test)).
 
-### 引数
+### Arguments
 
-どのコマンドで使えるかは、上の使い方のとおりです。次の表の「条件」には、それ以外の条件を書いています。
+The usage above shows which commands accept each option. The Condition column of the table gives any other conditions.
 
-| 引数 | 条件 | 意味 |
+| Option | Condition | Meaning |
 |---|---|---|
-| `--json` | | 結果を JSON で書きます。 |
-| `--events` | `run` だけ | 経過と結果をイベントとして書きます（[プログラムから使う](simulation-events.md)。`--json` と一緒には使えません）。 |
-| `--events-stall-ms <ms>` | `--events` を付けた `run` だけ | イベントの書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱います（1000 以上 86400000 以下の整数。既定は 30000）。 |
-| `--stdin-commands` | `run` だけ | 標準入力からコマンドを読みます（標準入力の終わりも、停止の要求です）。 |
-| `--start-paused` | `--stdin-commands` か `--control` を付けた `run` だけ | 全員がそろったら仮想時間 0 で止まり、`resume` か `step` のコマンドを待ちます。 |
-| `--control <address>` | `run` だけ、Control Server を持つビルドだけ | Control API（gRPC）の Server を立てます（[control-api.md](control-api.md) の「ランチャーに接続する」）。 |
-| `--control-credentials <file>` | `--control` だけ | トークンと役割のファイル（1 行に `<role> <name> <token>`）で、あれば、どの呼び出しにもトークンが必要です。 |
-| `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ | サーバーの証明書チェーンと秘密鍵（PEM）で、2 つ一緒に付けると TLS になります。 |
-| `--control-audit-log <file>` | `--control` だけ | 誰が何を変えたかを追記します。 |
-| `--scenario <file>` | | シナリオのファイルです（[scenario.md](scenario.md)）。 |
-| `--variant <name>` | | 設定ファイルの機種を選びます（[機種](#機種variants--variant)）。 |
-| `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
-| `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
-| `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
-| `--speed <speed>` | `run` だけ | 設定ファイルの `speed` を上書きします（数か `max`。[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。 |
-| `--strict` | | 警告があっても失敗にします（注記では失敗にしません）。 |
-| `--log-dir <dir>` | `run` だけ | participant ごとの出力のファイルを置くディレクトリです。 |
-| `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
-| `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
-| `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
-| `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
-| `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
-| `--` | | これより後はファイル名です（`-` で始まる名前のとき）。 |
-| `--help`、`-h` | | 使い方を標準出力に書いて 0 で終わります（`--` より前のどこにあっても）。 |
-| `--version` | | `version` と同じです（`--` より前のどこにあっても）。 |
+| `--json` | | Writes the result as JSON. |
+| `--events` | `run` only | Writes the progress and the result as events ([Programmatic use](simulation-events.md); not with `--json`). |
+| `--events-stall-ms <ms>` | `run` with `--events` only | If writing events makes no progress at all for this long, the reader is treated as gone (an integer from 1000 to 86400000; default 30000). |
+| `--stdin-commands` | `run` only | Reads commands from stdin (the end of stdin is also a stop request). |
+| `--start-paused` | `run` with `--stdin-commands` or `--control` only | When all participants have joined, pauses at virtual time 0 and waits for the `resume` or `step` command. |
+| `--control <address>` | `run` only, and only in builds with the Control Server | Starts a Control API (gRPC) server (see "Connect to the launcher" in [control-api.md](control-api.md#connect-to-the-launcher)). |
+| `--control-credentials <file>` | `--control` only | A file of tokens and roles (one `<role> <name> <token>` per line). With it, every call needs a token. |
+| `--control-tls-cert <file>`, `--control-tls-key <file>` | `--control` only | The server's certificate chain and private key (PEM). Passing both turns on TLS. |
+| `--control-audit-log <file>` | `--control` only | Appends a record of who changed what. |
+| `--scenario <file>` | | The scenario file ([scenario.md](scenario.md)). |
+| `--variant <name>` | | Selects a variant of the configuration file (see [Variants](#variants-variants---variant)). |
+| `--param <name>=<value>` | Only with `--scenario` | The value of the scenario parameter `${name}` (see [Scenario parameters](#scenario-parameters-params---param)). |
+| `--scenarios <dir or files>` | `test` only | The scenarios to run. |
+| `--fail-fast` | `test` only | Runs nothing after the first run that fails. |
+| `--speed <speed>` | `run` only | Overrides `speed` in the configuration file (a number or `max`; see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed)). |
+| `--strict` | | Fails on warnings too (not on notes). |
+| `--log-dir <dir>` | `run` only | Directory for the output files, one per participant. |
+| `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
+| `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
+| `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
+| `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
+| `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
+| `--` | | Everything after it is the file name (for names that start with `-`). |
+| `--help`, `-h` | | Writes the usage to stdout and exits with 0 (anywhere before `--`). |
+| `--version` | | Same as `version` (anywhere before `--`). |
 
-引数ごとの補足です。
+Notes on individual options:
 
-| 引数 | 補足 |
+| Option | Notes |
 |---|---|
-| `--events-stall-ms` | `result` を書き終えるのを待つ時間の上限でもあります（[読む側が遅いとき](simulation-events.md#読む側が遅いとき読まないとき)）。 |
-| `--start-paused` | `--control` があれば、時刻 0 のステップの前で止まります。 |
-| `--control` | `<address>` は、ポート番号（127.0.0.1 で待ち受ける。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。 |
-| `--control` | ループバックでないアドレスには、TLS と認証情報が必要です。 |
-| `--scenario` | `check` では照合だけ、`run` では照合してから実行します。 |
-| `--scenario` | シナリオが終わるとシミュレーションを止め、手順が失敗していれば、実行は失敗です。 |
-| `--scenario` | `--start-paused` と一緒には使えません。 |
-| `--scenario` | `--control` と一緒なら、クライアントは読むだけです（[scenario.md](scenario.md) の「実行中に変数を見る」）。 |
-| `--variant` | 機種を書いた設定ファイルには、必ず必要です。 |
-| `--variant` | 機種のない設定ファイルには付けられません。 |
-| `--variant` | `test` では、実行する機種を絞ります（繰り返せる。なければ全部の機種）。 |
-| `--param` | 繰り返せます（同じ名前は 1 回だけ）。 |
-| `--param` | `test` では、その名前のパラメーターがあるシナリオにだけ反映されます（どのシナリオにもなければ引数のエラー）。 |
-| `--scenarios` | ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）か、ファイル（書いた順に）です。 |
-| `--scenarios` | 後ろにいくつでも並べられ、繰り返せます。 |
-| `--scenarios` | 設定ファイルは、`--scenarios` より前か、`--` の後に書きます。 |
-| `--timeout-ms` | 一時停止している時間も数えます。 |
-| `--timeout-ms` | `--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から数えます。 |
-| `--timeout-ms` | manual の必須の participant がいる実行では、participant を待ち始めた時点から数えます。 |
-| `--timeout-ms` | 超えたら、中断してエラーにします。 |
-| `--manual` | `run` は起動せず、コマンドを表示して待ちます。 |
+| `--events-stall-ms` | Also limits the wait for the `result` event to be written (see "Slow readers and readers that stop reading" in [simulation-events.md](simulation-events.md#slow-readers-and-readers-that-stop-reading)). |
+| `--start-paused` | With `--control`, pauses before the step at time 0. |
+| `--control` | `<address>` is a port number (listens on 127.0.0.1; 0 picks a free port), `<host>:<port>` or `unix:<path>`. |
+| `--control` | A non-loopback address needs TLS and credentials. |
+| `--scenario` | `check` only checks; `run` checks, then runs. |
+| `--scenario` | When the scenario ends, the simulation stops. If a step failed, the run fails. |
+| `--scenario` | Cannot be used with `--start-paused`. |
+| `--scenario` | With `--control`, clients can only read (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)). |
+| `--variant` | Always required for a configuration file with variants. |
+| `--variant` | Not allowed for a configuration file without variants. |
+| `--variant` | In `test`, limits the variants to run (can be repeated; without it, all variants run). |
+| `--param` | Can be repeated (each name once). |
+| `--param` | In `test`, applies only to the scenarios that have a parameter of that name (if no scenario has it, a usage error). |
+| `--scenarios` | A directory (the `.yaml`, `.yml` and `.json` files directly in it, in name order) or files (in the order written). |
+| `--scenarios` | Takes any number of paths after it, and can be repeated. |
+| `--scenarios` | Write the configuration file before `--scenarios` or after `--`. |
+| `--timeout-ms` | Also counts the time the run is paused. |
+| `--timeout-ms` | With `--control` and `--start-paused`, counts from the pause before the step at time 0. |
+| `--timeout-ms` | In a run with a required manual participant, counts from the moment `run` starts to wait for the participants. |
+| `--timeout-ms` | When it runs out, the run is aborted with an error. |
+| `--manual` | `run` does not start the participant; it prints the command and waits. |
 
-Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
+On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 
-### 終了コード
+### Exit codes
 
-| 終了コード | 意味 |
+| Exit code | Meaning |
 |---|---|
-| 0 | エラーがない |
-| 1 | エラーがある |
-| 3 | 設定ファイルを読めない |
-| 4 | 引数のエラー |
-| 130 | `run` か `test` が中断された |
+| 0 | No errors |
+| 1 | Errors |
+| 3 | The configuration file cannot be read |
+| 4 | Usage error |
+| 130 | `run` or `test` was interrupted |
 
-終了コードごとの条件は次のとおりです。
+When each exit code occurs:
 
-| 終了コード | 場合 |
+| Exit code | Case |
 |---|---|
-| 0 | 警告と注記だけなら 0 です（`--strict` では、警告もないこと）。 |
-| 0 | `run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わったときです。 |
-| 1 | `--strict` では、警告があるときも 1 です。 |
-| 1 | `run` では、照合のエラー（何も起動しない）か、実行のエラー（participant が失敗した、そろわなかった、止めても終わらなかったなど）です。 |
-| 1 | `test` では、失敗した組が 1 つ以上ある、中断されていないのに実行しなかった組がある、`--strict` で実行した組が 1 つもない、のどれかです。 |
-| 1 | `--scenario` のシナリオのファイルがないときは、`check` でも `run` でも 1 です（設定ファイルがないときの 3 とは違います）。 |
-| 3 | 設定ファイルがない、文法のエラー、知らない形式のバージョンなどです。 |
-| 3 | `run` で registry や controller を用意できないときも 3 です。 |
-| 3 | 結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です。 |
-| 4 | エラーと使い方を標準エラーに書きます（対象の引数は下の表）。 |
-| 130 | Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` などです。 |
+| 0 | With only warnings and notes, the exit code is 0 (with `--strict`, there must be no warnings either). |
+| 0 | For `run`, when the simulation ended normally and every required participant exited with 0. |
+| 1 | With `--strict`, warnings also give 1. |
+| 1 | For `run`, an error of the check (nothing is started) or an error of the run (a participant failed, the participants did not all join, a participant did not end when stopped, and so on). |
+| 1 | For `test`: at least one run failed, a run did not take place although `test` was not interrupted, or, with `--strict`, no run took place at all. |
+| 1 | If the scenario file of `--scenario` does not exist, the exit code is 1 for both `check` and `run` (unlike a missing configuration file, which gives 3). |
+| 3 | The configuration file does not exist, a syntax error, an unknown format version and so on. |
+| 3 | Also when `run` cannot set up the registry or the controller. |
+| 3 | Also when the result cannot be written to stdout, and on an unexpected failure of `vehicle_sil_launch` itself. |
+| 4 | The error and the usage go to stderr (the table below lists the cases). |
+| 130 | Ctrl+C, `{"command":"stop"}`, the end of stdin, a closed stdout, `Stop` from a Control Server client and so on. |
 
-想定外の失敗（終了コード 3）では、標準エラーに理由を書きます。`--json` では、そのコマンドの形の JSON に、`code` が `internal` のエラーを書きます。
+On an unexpected failure (exit code 3), the reason goes to stderr. With `--json`, the command's usual JSON holds an error whose `code` is `internal`.
 
-終了コード 4 になる引数は次のとおりです。
+The following give exit code 4:
 
-| 対象 | 引数のエラー |
+| Applies to | Usage error |
 |---|---|
-| どのコマンドでも | 知らないコマンドや引数 |
-| どのコマンドでも | 設定ファイルの名前がない、2 つ以上のファイル |
-| どのコマンドでも | 同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます） |
-| どのコマンドでも | 値のない `--describe-timeout-ms` |
-| `check` | `--events`、`--stdin-commands` |
-| `check` | `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*` |
-| `run` | `--json` と `--events` を一緒に付ける |
-| `run` | `--events` なしの `--events-stall-ms` と、範囲の外の値 |
-| `run` | `--stdin-commands` も `--control` もない `--start-paused` |
-| `run` | 数でも `max` でもない `--speed` |
-| `run` | `--start-paused` と一緒の `--scenario` |
-| `--control` | `--control` なしの `--control-credentials` など |
-| `--control` | Control Server を持たないビルドの `--control` |
-| `--control` | `--control` の値のエラー |
-| `--control` | 読めない `--control-*` のファイル |
-| `--control` | 認証情報が 1 件もない `--control-credentials` のファイル |
-| `--control` | 片方だけの `--control-tls-cert` と `--control-tls-key` |
-| `--control` | TLS と認証情報のない、ループバックでない `--control` |
-| `version` | `--json` 以外の引数 |
-| participant の指定 | 設定ファイルにない participant 名の `--disable`、`--enable`、`--manual` |
-| participant の指定 | 同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual` |
-| 機種とパラメーター | 機種を書いた設定ファイルで `--variant` がない、機種のどれでもない名前の `--variant` |
-| 機種とパラメーター | 形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param` |
-| `test` | `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ |
-| `test` | `test` に付けた `run` だけの引数と `--scenario` |
-| `test` | `test` に渡した設定ファイルの、有効で `manual: true` の participant |
+| Every command | An unknown command or option |
+| Every command | No configuration file name, or 2 or more files |
+| Every command | An option given twice (`--disable` and `--enable` can be repeated) |
+| Every command | `--describe-timeout-ms` without a value |
+| `check` | `--events`, `--stdin-commands` |
+| `check` | `--log-dir`, `--timeout-ms`, `--speed`, `--start-paused`, `--control` and `--control-*` |
+| `run` | `--json` and `--events` together |
+| `run` | `--events-stall-ms` without `--events`, or with a value out of range |
+| `run` | `--start-paused` with neither `--stdin-commands` nor `--control` |
+| `run` | `--speed` that is neither a number nor `max` |
+| `run` | `--scenario` together with `--start-paused` |
+| `--control` | `--control-credentials` and the like without `--control` |
+| `--control` | `--control` in a build without the Control Server |
+| `--control` | An invalid value of `--control` |
+| `--control` | A `--control-*` file that cannot be read |
+| `--control` | A `--control-credentials` file with no credentials in it |
+| `--control` | Only one of `--control-tls-cert` and `--control-tls-key` |
+| `--control` | A non-loopback `--control` without TLS and credentials |
+| `version` | Any option other than `--json` |
+| Participant options | `--disable`, `--enable` or `--manual` with a participant name that is not in the configuration file |
+| Participant options | `--disable` and `--enable` with the same name, or `--disable` and `--manual` with the same name |
+| Variants and parameters | No `--variant` for a configuration file with variants, or `--variant` with a name that is not a variant |
+| Variants and parameters | A malformed `--param`, `--param` without `--scenario`, or `--param` with a name that is not in the scenario |
+| `test` | No `--scenarios`, a `--scenarios` path that does not exist, or a directory with no scenario files |
+| `test` | Options for `run` only, and `--scenario`, given to `test` |
+| `test` | An enabled participant with `manual: true` in the configuration file given to `test` |
 
-## 関連するドキュメント
+## See also
 
-| 調べること | ドキュメント |
+| To find | See |
 |---|---|
-| ECU の実行ファイルの引数と `--describe` の JSON | [ecu-executable.md](ecu-executable.md) |
-| 照合の順序と指摘のコード | [simulation-check.md](simulation-check.md) |
-| 実行、止め方、結果 | [simulation-run.md](simulation-run.md) |
-| プログラムから `run` を使う（イベント、標準入力のコマンド） | [simulation-events.md](simulation-events.md) |
-| 設定ファイルを書いて ECU を動かす手順 | [複数の ECU をつないで動かす](howto/integrate-ecus.md) |
+| The arguments of ECU executables and the `--describe` JSON | [ecu-executable.md](ecu-executable.md) |
+| The check order and the finding codes | [simulation-check.md](simulation-check.md) |
+| Running, stopping and results | [simulation-run.md](simulation-run.md) |
+| Using `run` from a program (events, stdin commands) | [simulation-events.md](simulation-events.md) |
+| Steps to write a configuration file and run ECUs | [Integrate and run several ECUs](howto/integrate-ecus.md) |

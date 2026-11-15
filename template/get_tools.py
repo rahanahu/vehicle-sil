@@ -86,8 +86,9 @@ def download(url: str, to: Path) -> None:
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise Failure(f"{url} does not exist (HTTP 404): vehicle-sil v{VERSION} may not be published yet, or has "
-                          f"no tools for this platform; see {RELEASE_PAGE.format(version=VERSION)}. Until it is, "
-                          "build vehicle-sil from its sources (README.md of vehicle-sil)") from None
+                          f"no tools for this platform; see {RELEASE_PAGE.format(version=VERSION)}. If you already "
+                          f"have the file {to.name} (for example from a colleague), pass it with --archive FILE; "
+                          "otherwise build vehicle-sil from its sources (README.md of vehicle-sil)") from None
         raise Failure(f"cannot download {url} (HTTP {e.code} {e.reason}): try again later, or download the file in "
                       "a browser and pass it with --archive") from None
     except (OSError, http.client.HTTPException) as e:  # URLError is an OSError; IncompleteRead is neither

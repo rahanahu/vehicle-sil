@@ -1,13 +1,22 @@
-// クライアントのライブラリを、npm で入れられる .tgz にする（npm には公開しない。配布物に付ける）。
-// gui/web で `npm run pack:client`（gui/web の node_modules の esbuild と TypeScript を借りる。依存を足さない）。
+// Makes the client library a .tgz that npm can install (not published to npm; it ships with the release).
+// Run `npm run pack:client` in gui/web (it borrows esbuild and TypeScript from gui/web/node_modules; no new dependency).
 //
 //   node ../client/pack.mjs [--out <dir>] [--version <x.y.z>]
 //
-// 中身: dist/index.js（1 つにまとめた ESM）、types/（.d.ts）、package.json（exports）、README.md、LICENSE。
-// 作った後に確かめる: 入れた形で Node から import でき、examples/gui_starter/README.md の TypeScript の例が、
-// 型の解決 nodenext と bundler の両方で型の検査を通る。終了コード: 0 できた、1 失敗、2 使い方の誤り。
+// Contents: dist/index.js (one ESM bundle), types/ (.d.ts), package.json (exports), README.md, README.ja.md, LICENSE.
+// Checked after it is made: Node imports the installed package, and the TypeScript example of
+// examples/gui_starter/README.md (and of README.ja.md) type-checks with the module resolutions nodenext and bundler.
+// Exit codes: 0 made, 1 failed, 2 usage error.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,8 +31,8 @@ const USAGE = `usage: node gui/client/pack.mjs [--out <dir>] [--version <x.y.z>]
 
 Makes the client library an npm package: <out>/vehicle-sil-gui-client-<version>.tgz (default out:
 build/gui-client; default version: that of gui/server/pyproject.toml), then installs it there and checks it:
-Node imports it, and the TypeScript example of examples/gui_starter/README.md type-checks against it with the
-module resolutions nodenext and bundler. Uses esbuild and TypeScript from gui/web/node_modules (npm ci there).
+Node imports it, and the TypeScript example of examples/gui_starter/README.md (and of README.ja.md) type-checks
+against it with the module resolutions nodenext and bundler. Uses esbuild and TypeScript from gui/web/node_modules (npm ci there).
 Exit codes: 0 made, 1 failed (the message says where), 2 usage error.`;
 
 function usage(message) {
@@ -95,12 +104,19 @@ function addExtensions(directory) {
   }
 }
 
-/** The ```ts example of the starter's README: what a TypeScript screen writes first. */
-function readmeExample() {
-  const readme = readFileSync(join(REPOSITORY, 'examples', 'gui_starter', 'README.md'), 'utf8');
-  const match = /```ts\n([\s\S]*?)```/.exec(readme);
-  if (!match) fail('examples/gui_starter/README.md has no ```ts example to check the types with');
-  return match[1];
+/** The ```ts example of the starter's README, English and Japanese: what a TypeScript screen writes first. */
+function readmeExamples() {
+  const examples = [];
+  for (const name of ['README.md', 'README.ja.md']) {
+    const path = join(REPOSITORY, 'examples', 'gui_starter', name);
+    if (!existsSync(path)) continue;
+    const match = /```ts\n([\s\S]*?)```/.exec(readFileSync(path, 'utf8'));
+    if (!match)
+      fail(`examples/gui_starter/${name} has no \`\`\`ts example to check the types with`);
+    examples.push(match[1]);
+  }
+  if (examples.length === 0) fail('examples/gui_starter/README.md is missing');
+  return examples;
 }
 
 /** Installs the package as a user would (node_modules/@vehicle-sil/gui-client) and uses it. */
@@ -108,7 +124,7 @@ function check(packageDir, checkDir, tsc) {
   rmSync(checkDir, { recursive: true, force: true });
   cpSync(packageDir, join(checkDir, 'node_modules', ...NAME.split('/')), { recursive: true });
   writeFileSync(join(checkDir, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-  writeFileSync(join(checkDir, 'main.ts'), `export {};\n${readmeExample()}`);
+  const examples = readmeExamples();
   const base = {
     strict: true,
     noEmit: true,
@@ -126,7 +142,10 @@ function check(packageDir, checkDir, tsc) {
       config,
       JSON.stringify({ compilerOptions: { ...base, ...settings }, files: ['main.ts'] }),
     );
-    node(tsc, ['-p', config], checkDir);
+    for (const example of examples) {
+      writeFileSync(join(checkDir, 'main.ts'), `export {};\n${example}`);
+      node(tsc, ['-p', config], checkDir);
+    }
   }
   const probe =
     `const m = await import('${NAME}');` +
@@ -174,11 +193,13 @@ function main() {
     exports: { '.': { types: './types/index.d.ts', default: './dist/index.js' } },
     types: './types/index.d.ts',
     sideEffects: false,
-    files: ['dist', 'types'],
+    files: ['dist', 'types', 'README.ja.md'],
     engines: { node: '>=22' },
   };
   writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   cpSync(join(CLIENT, 'README.md'), join(packageDir, 'README.md'));
+  // README.md links to the Japanese edition, so it goes along.
+  cpSync(join(CLIENT, 'README.ja.md'), join(packageDir, 'README.ja.md'));
   cpSync(join(REPOSITORY, 'LICENSE'), join(packageDir, 'LICENSE'));
 
   const checkDir = join(args.out, 'check');
@@ -204,6 +225,7 @@ function main() {
   for (const needed of [
     'package.json',
     'README.md',
+    'README.ja.md',
     'LICENSE',
     'dist/index.js',
     'types/index.d.ts',
