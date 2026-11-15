@@ -971,9 +971,8 @@ void ScenarioEngine::fail_grid(const Write& write, const control::OperationResul
                                const std::string& did_not, const std::string& hint)
 {
     // What became of every write of the request, and which of them is the reason, if that can
-    // be told (failed_write(): the only one of the participant's command, or the one whose name
-    // the reason begins with). The ECU has applied the writes of its command before the one it
-    // rejected.
+    // be told (failed_write(): the only one of the participant's command, or the one the result
+    // points at). The ECU has applied the writes of its command before the one it rejected.
     TimelineFailure failure = failed_write(write, result, target);
     // The writes of the command that the participant refused.
     std::vector<const ScenarioWrite*> command;
@@ -996,6 +995,9 @@ void ScenarioEngine::fail_grid(const Write& write, const control::OperationResul
                   value_text(named->value, &v) + " at " + ms_text(write.at) + " ms, ";
         // Beyond its range, if that is what the agent says (not for a value that happens to be
         // outside while the write failed of something else: no link, no room, a setter).
+        // This find("out of range") is the one place left that reads a reason's text to learn
+        // what kind of refusal it is: a result has no field for the kind yet (a later revision
+        // of the control messages can add one; then compare that field here).
         const double number = detail::number_of(named->value);
         const bool above = v.max && number > *v.max;
         const bool below = v.min && number < *v.min;
@@ -1210,23 +1212,6 @@ TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::opti
     return out;
 }
 
-std::optional<std::size_t> ScenarioEngine::named_write(const std::vector<ScenarioWrite>& writes, const std::vector<std::size_t>& command,
-                                                       const std::string& reason) const
-{
-    // The agent says "<name>: <why>" and the hub's variable map "<name> (the executable's
-    // <name>): <why>" (a result has no status per write).
-    for (const std::size_t i : command)
-    {
-        const std::string& name = scenario_.variables[writes[i].variable].name;
-        if (reason.compare(0, name.size(), name) == 0 &&
-            (reason.compare(name.size(), 2, ": ") == 0 || reason.compare(name.size(), 18, " (the executable's ") == 0))
-        {
-            return i;
-        }
-    }
-    return std::nullopt;
-}
-
 TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::OperationResult* result,
                                              const control::TargetResult& failed) const
 {
@@ -1252,7 +1237,8 @@ TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::
                 command.push_back(i);
             }
         }
-        const std::optional<std::size_t> named = named_write(write.writes, command, target.reason);
+        // Which of them took effect and which one the reason is about come as positions in that
+        // command (control::TargetResult): the reason's text is not read for them.
         const auto all = [&](std::optional<bool> applied) {
             for (const std::size_t i : command)
             {
@@ -1273,21 +1259,15 @@ TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::
             break;
         case control::TargetStatus::Rejected:
             // The ECU applies the writes of a command one after the other and stops at the one
-            // whose setter throws: the ones before it are applied. Without its name (an agent
-            // that does not say; a parameter after the first step) only a command of one write
-            // is known.
-            if (named)
+            // whose setter throws: the ones before it are applied. Not known when the result
+            // does not say how many (a transport of its own that leaves the number out, for a
+            // command of several writes).
+            if (target.applied_writes && *target.applied_writes <= command.size())
             {
-                bool before = true;
-                for (const std::size_t i : command)
+                for (std::size_t k = 0; k < command.size(); ++k)
                 {
-                    before = before && i != *named;
-                    out.writes[i].applied = before;
+                    out.writes[command[k]].applied = k < *target.applied_writes;
                 }
-            }
-            else if (command.size() == 1)
-            {
-                all(false);
             }
             break;
         case control::TargetStatus::Sent:
@@ -1298,8 +1278,10 @@ TimelineFailure ScenarioEngine::failed_write(const Write& write, const control::
         }
         if (target.peer == failed.peer)
         {
-            // The reason: the write the result names, or the only one there is.
-            out.write = named ? named : command.size() == 1 ? std::optional<std::size_t>(command.front()) : std::nullopt;
+            // The reason: the write the result points at, or the only one there is.
+            out.write = target.failed_write && *target.failed_write < command.size()
+                            ? std::optional<std::size_t>(command[*target.failed_write])
+                            : command.size() == 1 ? std::optional<std::size_t>(command.front()) : std::nullopt;
         }
     }
     return out;

@@ -218,7 +218,7 @@
               "network_map": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -316,7 +316,7 @@
               "network_map": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             }
           ],
@@ -857,7 +857,7 @@
                 "network_map": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -955,7 +955,7 @@
                 "network_map": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               }
             ],
@@ -1131,7 +1131,7 @@
               "network_map": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1229,7 +1229,7 @@
               "network_map": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             }
           ],
@@ -1514,7 +1514,7 @@
                 "network_map": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1612,7 +1612,7 @@
                 "network_map": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               }
             ],

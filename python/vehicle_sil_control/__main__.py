@@ -26,11 +26,18 @@ def _fmt_ms(ns_value) -> str:
     return "-" if ns_value is None else f"{ns_value / 1e6:g} ms"
 
 
-def _print_operation(op: Operation) -> None:
+def _print_operation(op: Operation, names=()) -> None:
+    """names: the variables written to each peer, in the order of the request (they tell which of
+    several writes took effect)."""
     for t in op.targets:
         extra = f" at {_fmt_ms(t.applied_at)}" if t.applied_at is not None else ""
         reason = f" ({t.reason})" if t.reason else ""
-        print(f"seq {op.seq} {t.peer}: {t.status}{extra}{reason}")
+        writes = ""
+        if len(names) > 1 and t.applied_writes is not None and t.status in ("rejected", "invalid"):
+            writes = f", {t.applied_writes} of {len(names)} writes took effect"
+            if t.failed_write is not None and t.failed_write < len(names):
+                writes += f", refused: {names[t.failed_write]}"
+        print(f"seq {op.seq} {t.peer}: {t.status}{extra}{reason}{writes}")
 
 
 def _print_time(t) -> None:
@@ -114,7 +121,7 @@ def main(argv=None) -> int:
                 seq = c.write({args.peer: variables}, at=at, late="apply_next" if args.apply_late else "reject")
                 print(f"seq {seq}")
                 if args.wait != "none":
-                    _print_operation(c.wait(seq, until=args.wait))
+                    _print_operation(c.wait(seq, until=args.wait), list(variables))
             elif args.command == "time":
                 _print_time(c.sim.time())
             elif args.command == "pause":
