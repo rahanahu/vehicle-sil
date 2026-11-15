@@ -36,15 +36,16 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 同じ `.tgz` は、リリースのページにもあります。`build/` はリポジトリの直下のもので、Git では追跡しません。
 
 - **1 つにまとめたファイル**: ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、記録を再生するランチャーを相手に動かして確認します。
-- **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.` だけです（`testing` と `internal` は入りません）。
+- **パッケージ**: 中身は、1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE です（作り方は `pack.mjs`）。バージョンは GUI サーバーと同じです。型はブラウザの型（`lib` の `DOM`）を使います。エントリーポイントは `.` と `./timeline` です（`testing` と `internal` は入りません）。
 
 ## エントリーポイント
 
-| エントリーポイント     | 名前                               | 中身                                                         |
-| ---------------------- | ---------------------------------- | ------------------------------------------------------------ |
-| `src/index.ts`         | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ     |
-| `src/testing/index.ts` | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）   |
-| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない |
+| エントリーポイント                                                                                               | 名前                               | 中身                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                                                                                                   | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ                                                                                                                |
+| `src/testing/index.ts`                                                                                           | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）                                                                                                              |
+| `src/internal.ts`                                                                                                | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない                                                                                                            |
+| `../timeline/vehicle-sil-timeline.js`（パッケージでは `export {}` を足した `timeline/vehicle-sil-timeline.mjs`） | `@vehicle-sil/gui-client/timeline` | 要素 `<vehicle-sil-timeline>` と型。import すると要素を定義します（[docs/ja/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」） |
 
 - `testing` にあるのは、偽の WebSocket（`FakeWebSockets`）、偽の HTTP（`FakeHttp`）、`gui/protocol/examples/` の読み込み、要約から `SessionView` を作る `sessionViewFrom` です。
 - `internal` にあるのは、内部のクラス、要約を反映する関数、読み取りの関数です。テストのために公開していて、予告なく変わり、消えます。

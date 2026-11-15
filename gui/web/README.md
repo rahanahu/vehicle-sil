@@ -36,22 +36,23 @@ The same commands are meant to work on Windows. Use the Windows build of Node.js
 
 Run these in `gui/web/`. Each reports success or failure through its exit code.
 
-| Command                 | What it does                                                                                       |
-| ----------------------- | -------------------------------------------------------------------------------------------------- |
-| `npm ci`                | Installs exactly what `package-lock.json` lists                                                    |
-| `npm start`             | Starts the development server (http://127.0.0.1:4200)                                              |
-| `npm run build`         | Production build (output in `dist/browser/`, license notices in `dist/3rdpartylicenses.txt`)       |
-| `npm test`              | Runs the unit tests (Vitest, jsdom) once and exits                                                 |
-| `npm run test:client`   | Type check and unit tests of the client library (`../client`) (Vitest, Node; no Angular, no DOM)   |
-| `npm run test:timeline` | Unit tests of the timeline page (`../timeline/viewer.js`) (Node's test runner; no DOM)             |
-| `npm run build:client`  | Bundles the client library into one ESM file                                                       |
-| `npm run pack:client`   | Packs the client library as a typed npm package                                                    |
-| `npm run lint`          | ESLint (angular-eslint). Warnings also fail                                                        |
-| `npm run format:check`  | Checks Prettier formatting (`../client` and `../timeline` too; settings in `../.prettierrc`)       |
-| `npm run e2e`           | Playwright. The GUI server serves `dist/browser/` and the API from the same origin                 |
-| `npm run e2e:dev`       | Playwright. Through the development server and its proxy (WebSocket too)                           |
-| `npm run e2e:real`      | Playwright. With the real launcher and the ecu_main example ECUs built next to it (`e2e/real/`)    |
-| `npm run i18n:extract`  | Writes the text to translate to `build/i18n/messages.json` (`build/` at the top of the repository) |
+| Command                   | What it does                                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm ci`                  | Installs exactly what `package-lock.json` lists                                                                                                                    |
+| `npm start`               | Starts the development server (http://127.0.0.1:4200)                                                                                                              |
+| `npm run build`           | Production build (output in `dist/browser/`, license notices in `dist/3rdpartylicenses.txt`)                                                                       |
+| `npm test`                | Runs the unit tests (Vitest, jsdom) once and exits                                                                                                                 |
+| `npm run test:client`     | Type check and unit tests of the client library (`../client`) (Vitest, Node; no Angular, no DOM)                                                                   |
+| `npm run test:timeline`   | Unit tests of the timeline element (`../timeline/viewer.js`) (Node's test runner; no DOM), after checking that `../timeline/vehicle-sil-timeline.js` is up to date |
+| `npm run bundle:timeline` | Makes `../timeline/vehicle-sil-timeline.js` from `messages.js`, `timeline.css` and `viewer.js`                                                                     |
+| `npm run build:client`    | Bundles the client library into one ESM file                                                                                                                       |
+| `npm run pack:client`     | Packs the client library as a typed npm package                                                                                                                    |
+| `npm run lint`            | ESLint (angular-eslint). Warnings also fail                                                                                                                        |
+| `npm run format:check`    | Checks Prettier formatting (`../client` and `../timeline` too; settings in `../.prettierrc`)                                                                       |
+| `npm run e2e`             | Playwright. The GUI server serves `dist/browser/` and the API from the same origin                                                                                 |
+| `npm run e2e:dev`         | Playwright. Through the development server and its proxy (WebSocket too)                                                                                           |
+| `npm run e2e:real`        | Playwright. With the real launcher and the ecu_main example ECUs built next to it (`e2e/real/`)                                                                    |
+| `npm run i18n:extract`    | Writes the text to translate to `build/i18n/messages.json` (`build/` at the top of the repository)                                                                 |
 
 - `npm start` forwards `/api/` and `/ws` to the GUI server (127.0.0.1:8765) (`proxy.conf.mjs`; the port comes from the environment variable `GUI_PORT`).
 - `npm run build:client` writes `../../build/gui-client/vehicle-sil-gui-client.mjs`. It uses the esbuild that comes with the Angular build tools.

@@ -63,6 +63,10 @@ Both only draw the `state` that `client.variables.bind(ref, options)` returns. T
 
 If you keep moving the slider before the server has received the previous write, the library keeps only the last value and sends that. You can build your own widgets (switch, number input, choice) the same way (see "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)).
 
+## The timeline
+
+The **Timeline** section shows the timeline of the last scenario run that recorded one, with the element `<vehicle-sil-timeline>`. `index.html` loads the element from the GUI server (`<script src="/timeline/vehicle-sil-timeline.js">`), and `main.js` gives it the run's file (`src`) and the token. The element's attributes, properties and events are in "Putting a timeline on your own screen" in [docs/gui.md](../../docs/gui.md#putting-a-timeline-on-your-own-screen).
+
 ## Make it your own screen
 
 Copy the template to another directory and build your screen there.

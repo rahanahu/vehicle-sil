@@ -63,6 +63,10 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 スライダーを続けて動かしても、サーバーが前の書き込みを受け取るまでは、最後の値だけを覚えて送ります。自分のコンポーネント（スイッチ、数値の入力、選択肢）も同じ形で作れます（[gui/client/README.md](../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」）。
 
+## 時間の軸
+
+「Timeline」の欄は、時間の軸を記録した最後のシナリオの実行を、要素 `<vehicle-sil-timeline>` で出します。`index.html` が要素を GUI サーバーから読み（`<script src="/timeline/vehicle-sil-timeline.js">`）、`main.js` が実行のファイル（`src`）とトークンを渡します。要素の属性、プロパティ、事象は、[docs/ja/gui.md](../../docs/ja/gui.md#自分の画面に時間の軸を置く) の「自分の画面に時間の軸を置く」にあります。
+
 ## 自分の画面にする
 
 自分の画面は、別のディレクトリにコピーして作ります。

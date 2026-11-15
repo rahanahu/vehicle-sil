@@ -3,7 +3,8 @@
 
 Steps, in order: npm ci, npm run format:check, npm run lint (gui/web, gui/client and gui/timeline), npm test, npm run
 test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
-DOM), npm run test:timeline (the timeline page gui/timeline: the unit tests of viewer.js on Node, no DOM),
+DOM), npm run test:timeline (the timeline element gui/timeline: whether vehicle-sil-timeline.js is what its sources
+make, then the unit tests of viewer.js on Node, no DOM),
 i18n (npm run i18n:extract, then the
 extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
 message, a message not translated yet ("target": null), a changed source and a broken target fail; obsolete
