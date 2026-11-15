@@ -530,13 +530,14 @@ throttle.close();
 
 ## 関連するドキュメント
 
-| 知りたいこと                                                             | ドキュメント                                                           |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| 自分の画面を作り、GUI サーバーに配信させる手順                           | [自分の画面を作る](../../docs/ja/howto/gui-screen.md)                  |
-| サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証） | [gui/protocol](../protocol/README.ja.md)                               |
-| ライブラリが肩代わりしないルール                                         | [docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」       |
-| 自分の画面の出発点にするファイル                                         | 画面のテンプレート [examples/gui_starter](../../examples/gui_starter/) |
-| 画面を使わずに Node から使う例                                           | [examples/gui_client](../../examples/gui_client/)                      |
+| 知りたいこと                                                               | ドキュメント                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| GUI に自分のコードを足す道（カスタムパネル、自分の画面、ツール）の使い分け | [docs/ja/gui.md](../../docs/ja/gui.md#自分の画面を作る) の「自分の画面を作る」 |
+| 自分の画面を作り、GUI サーバーに配信させる手順                             | [自分の画面を作る](../../docs/ja/howto/gui-screen.md)                          |
+| サーバーの API（HTTP と WebSocket の形、バージョンと互換のルール、認証）   | [gui/protocol](../protocol/README.ja.md)                                       |
+| ライブラリが肩代わりしないルール                                           | [docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」               |
+| 自分の画面の出発点にするファイル                                           | 画面のテンプレート [examples/gui_starter](../../examples/gui_starter/)         |
+| 画面を使わずに Node から使う例                                             | [examples/gui_client](../../examples/gui_client/)                              |
 
 `examples/gui_client` は、リポジトリにだけあります（ビルド済みのツールのアーカイブに入っているのは、`gui_starter/` と `client/` です）。
 

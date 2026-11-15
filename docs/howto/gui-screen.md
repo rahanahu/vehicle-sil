@@ -4,6 +4,8 @@
 
 In this guide you copy the screen template (`gui_starter`), rewrite it into a screen that shows one ECU variable, and have the GUI server (`vehicle-sil-gui`) serve it. The screen needs no build and no Node.js; step 4 uses Node.js only to read the value through the API. Each "Verify" section also shows how to verify with `curl`, without a browser.
 
+Your own screen replaces the sample screens. To keep them and add a part for your ECU, write a custom panel instead; "Build your own screen" in [gui.md](../gui.md#build-your-own-screen) compares the ways.
+
 ## Prerequisites
 
 | Requirement | Details |
@@ -309,3 +311,4 @@ rm token.header
 - Build sliders and switches that write values: "Slider and lamp" in the template's `index.html` and `showSlider()` in its `main.js`; also "Build widgets (`bind`)" in [gui/client/README.md](../../gui/client/README.md#build-widgets-bind)
 - Build with TypeScript and a framework (React, Vue and others): "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../../examples/gui_starter/README.md#build-with-typescript-and-a-framework)
 - Look up the served files, the CSP, the development server and the rules to follow: "Reference for your own screen" in [gui.md](../gui.md#reference-for-your-own-screen)
+- Keep the sample screens and add a part to them: "Custom panels" in [gui.md](../gui.md#custom-panels)

@@ -4,6 +4,8 @@
 
 画面のテンプレート（`gui_starter`）をコピーし、ECU の変数を 1 つ表示する画面に書き換えて、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面を作るのに、ビルドも Node.js も使いません（手順 4 で値を API から確認するときだけ、Node.js を使います）。各手順の「確認」には、ブラウザがなくても `curl` でできる方法も書いてあります。
 
+自分の画面は、サンプルの画面と置き換わります。サンプルの画面を残して自分の ECU の部品を足すなら、代わりにカスタムパネルを書きます。3 つの道を比べた表は、[gui.md](../gui.md#自分の画面を作る) の「自分の画面を作る」にあります。
+
 ## 前提
 
 | 必要なもの | 条件 |
@@ -309,3 +311,4 @@ rm token.header
 - 値を書き込むスライダーやスイッチを作る → テンプレートの `index.html` の「Slider and lamp」と、それを動かす `main.js` の `showSlider()`、[gui/client/README.md](../../../gui/client/README.ja.md) の「コンポーネントを作る（`bind`）」
 - TypeScript とフレームワーク（React、Vue など）で作る → [examples/gui_starter/README.md](../../../examples/gui_starter/README.ja.md) の「TypeScript とフレームワークで作る」
 - 配信されるファイル、CSP、開発サーバー、守るルールを調べる → [gui.md](../gui.md) の「自分の画面のリファレンス」
+- サンプルの画面を残して部品を足す → [gui.md](../gui.md#カスタムパネル) の「カスタムパネル」

@@ -56,7 +56,7 @@ vehicle-sil/
 ├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外部のインターフェースの抽象、フィルター、ループを防ぐ MAC の表、Linux の TAP デバイスと packet ソケット、実行時に読み込む pcap のライブラリ（Npcap、libpcap）（SIL Kit に依存しない）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコルのコンポーネント（parts/）、型付きメッセージ（codec/）
 ├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てるクラス Ecu（変数の宣言と、ECU の構成を表す describe() とその JSON を含む。SIL Kit に依存しない）
-├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バスと仮想 LIN バスの上で ECU を仮想時間で実行する LocalBench（SIL Kit に依存しない）
+├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バス、仮想 LIN バス、イーサネットの仮想ネットワークの上で ECU を仮想時間で実行する LocalBench（SIL Kit に依存しない）
 ├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 のテストの記録と故障注入（SIL Kit に依存しない）
 ├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノード、Control Agent（監視の出力を含む）の組み立てと実行。Ecu の実装
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）

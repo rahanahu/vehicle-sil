@@ -532,6 +532,7 @@ The unit tests feed the examples in `gui/protocol/examples/` instead of building
 
 | To find                                                                                        | Document                                                                                      |
 | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Which way to add your own code to the GUI: a custom panel, your own screen or a tool           | "Build your own screen" in [docs/gui.md](../../docs/gui.md#build-your-own-screen)             |
 | How to build your own screen and have the GUI server serve it                                  | [Build your own screen for the browser GUI](../../docs/howto/gui-screen.md)                   |
 | The server API (HTTP and WebSocket shapes, versioning and compatibility rules, authentication) | [gui/protocol](../protocol/README.md)                                                         |
 | The rules the library does not enforce for you                                                 | "Rules for building a screen" in [docs/gui.md](../../docs/gui.md#rules-for-building-a-screen) |
