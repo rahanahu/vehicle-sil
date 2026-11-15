@@ -834,3 +834,30 @@ test('in Japanese, the words of a refused file, a failed write and the read-out 
   }
   assert.equal(T.writeWords({ at: 5, writes: [] }).heading, 'Writes for 5 ms');
 });
+
+test('the types (vehicle-sil-timeline.d.ts) name every option of the element, and nothing else', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'viewer.js'), 'utf8');
+  const block = (name) => {
+    const start = source.indexOf(`const ${name} = {`);
+    return source.slice(start, source.indexOf('\n  };', start));
+  };
+  const options = [...block('OPTIONS').matchAll(/^\s+'?[\w-]+'?: \['(\w+)'/gm)].map((m) => m[1]);
+  const properties = [...block('PROPERTIES').matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]);
+  assert.ok(options.length >= 10 && properties.length >= 5, 'OPTIONS and PROPERTIES are read');
+  const types = fs.readFileSync(path.join(__dirname, '..', 'vehicle-sil-timeline.d.ts'), 'utf8');
+  const element = types.slice(
+    types.indexOf('export interface VehicleSilTimelineElement'),
+    types.indexOf('  addEventListener<'),
+  );
+  const typed = [...element.matchAll(/^ {2}(\w+)(?:\(\))?: /gm)].map((m) => m[1]);
+  assert.deepEqual(typed.sort(), [...options, ...properties, 'reload'].sort());
+  // The parts of hide: the type, the element's check and the CSS name the same words
+  const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
+  const parts = [...union.matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'timeline.css'), 'utf8');
+  assert.deepEqual(
+    [...css.matchAll(/\[hide~='(\w+)'\]/g)].map((m) => m[1]).sort(),
+    [...parts].sort(),
+  );
+  assert.match(source, new RegExp(`const PARTS = \\[${parts.map((p) => `'${p}'`).join(', ')}\\]`));
+});

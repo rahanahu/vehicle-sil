@@ -111,6 +111,10 @@
 :host([compact]) {
   font-size: 12px;
 }
+/* while src loads, the file shown before is dimmed */
+:host([aria-busy='true']) #view {
+  opacity: 0.6;
+}
 /* hide="<parts>": the parts a screen does without */
 :host([hide~='header']) #head,
 :host([hide~='summary']) #summary,

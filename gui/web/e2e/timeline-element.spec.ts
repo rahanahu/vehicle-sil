@@ -28,7 +28,7 @@ async function serve(
   answer?: (
     path: string,
     headers: Record<string, string>,
-  ) => { status: number; body: string } | null,
+  ) => { status: number; body: string; headers?: Record<string, string> } | null,
 ): Promise<string[]> {
   const problems: string[] = [];
   page.on('console', (m) => {
@@ -58,7 +58,12 @@ async function serve(
       ],
     };
     if (own) {
-      await route.fulfill({ status: own.status, body: own.body, contentType: 'application/json' });
+      await route.fulfill({
+        status: own.status,
+        body: own.body,
+        contentType: 'application/json',
+        headers: own.headers,
+      });
       return;
     }
     let file = files[pathname];
@@ -238,6 +243,18 @@ test('timeline element: properties set from outside change what it shows, and ar
   await expect(el.locator('#cursor-time')).toHaveText('Cursor 150 ms');
   await expect(el.locator('#cursor-steps')).toHaveText('#4 wave (passed)');
   expect(await page.evaluate(() => document.querySelector('vehicle-sil-timeline')!.from)).toBe(100);
+  // A value set again applies again, also as an attribute; one side of the view keeps the other where it is
+  await page.evaluate(() => document.getElementById('t')!.setAttribute('cursor', '150'));
+  await el.locator('#chart').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(el.locator('#cursor-time')).not.toHaveText('Cursor 150 ms');
+  await page.evaluate(() => document.getElementById('t')!.setAttribute('cursor', '150'));
+  await expect(el.locator('#cursor-time')).toHaveText('Cursor 150 ms');
+  await set(page, 't', { from: 120 });
+  await expect(range).toHaveText(/^Showing 120 ms to 200 ms of /);
+  await el.getByRole('button', { name: 'Zoom out' }).click();
+  await set(page, 't', { from: 130 });
+  await expect(range).toHaveText(/^Showing 130 ms to 240 ms of /);
   await set(page, 't', { step: 2 });
   await expect(el.getByTestId('steps-table').locator('tr.selected td').first()).toHaveText('#2');
   await expect(range).not.toHaveText(/^Showing 100 ms to 200 ms/);
@@ -288,8 +305,12 @@ test('timeline element: properties set from outside change what it shows, and ar
   await set(page, 't', { lang: 'en' });
   await expect(el.getByRole('button', { name: 'Everything' })).toBeVisible();
 
-  // Nothing of this was told back as the user's doing
-  expect((await events(page)).map(([, type]) => type)).toEqual(['load']);
+  // Only what the user did (the arrow key, Zoom out) was told; nothing set from outside
+  expect((await events(page)).map(([, type]) => type)).toEqual([
+    'load',
+    'cursorchange',
+    'viewchange',
+  ]);
   expect(problems).toEqual([]);
 });
 
@@ -303,6 +324,8 @@ test('timeline element: src with a token and headers; data before src; errors sa
     RECORD,
     '',
     (path, headers) => {
+      if (path === '/api/timeline/9')
+        return { status: 404, body: '{"error":{"code":"no-timeline","message":"run 9 has none"}}' };
       if (path !== '/api/timeline/1') return null;
       asked.push(headers);
       if (headers['authorization'] !== 'Bearer secret')
@@ -350,16 +373,42 @@ test('timeline element: src with a token and headers; data before src; errors sa
   await page.evaluate(() => document.querySelector('vehicle-sil-timeline')!.reload());
   await expect.poll(() => asked.length).toBe(before + 1);
 
+  // The name shown changes without loading the file again
+  await set(page, 't', { fileName: 'shown.json' });
+  await expect(el.locator('#facts')).toContainText('shown.json');
+  expect(asked.length).toBe(before + 1);
+  await set(page, 't', { fileName: '' });
+
+  // After a refused src, another language says the refusal again: the file before does not come back
+  const told = (await events(page)).length;
+  await set(page, 't', { src: '/api/timeline/9' });
+  await expect(el.getByRole('alert')).toContainText('HTTP 404: run 9 has none');
+  await set(page, 't', { lang: 'ja' });
+  await expect(el.getByRole('alert')).toContainText('を読み込めませんでした');
+  await expect(el.locator('#view')).toBeHidden();
+  await set(page, 't', { lang: 'en' });
+  await expect(el.getByRole('alert')).toContainText('could not be loaded');
+  expect((await events(page)).slice(told).map(([, type]) => type)).toEqual(['error']);
+  await set(page, 't', { src: '/api/timeline/1' });
+  await expect(el.getByRole('heading', { level: 1 })).toHaveText('an ECU refuses a write');
+
   // A file it cannot read, and an address on another server
   await set(page, 't', { data: '{"vehicle_sil_timeline": 2}', fileName: 'next.json' });
   await expect(el.getByRole('alert')).toContainText('"next.json" is timeline format 2');
   await expect(el.locator('#view')).toBeHidden();
+  // The same file refused in another language, and not told again
+  const refused = (await events(page)).length;
+  await set(page, 't', { lang: 'ja' });
+  await expect(el.getByRole('alert')).toContainText('「next.json」');
+  await set(page, 't', { lang: 'en' });
+  await expect(el.getByRole('alert')).toContainText('"next.json" is timeline format 2');
+  expect((await events(page)).length).toBe(refused);
   await set(page, 't', { data: null, fileName: '', src: 'http://elsewhere.test/a.json' });
   await expect(el.getByRole('alert')).toContainText(
     "src must name a file on this page's own server (http://element.test)",
   );
-  // The browser reports the refused request itself
-  expect(problems.filter((p) => !/status of 401/.test(p))).toEqual([]);
+  // The browser reports the refused requests itself
+  expect(problems.filter((p) => !/status of 40[14]/.test(p))).toEqual([]);
 });
 
 test("timeline element: the page's CSS does not reach in, its CSS does not leak out, and colours can be set", async ({
@@ -446,6 +495,107 @@ test('timeline element: an older load that answers late is not shown over a newe
   await expect.poll(() => answered).toBe(true);
   await page.waitForTimeout(200);
   await expect(el.getByTestId('failure')).toBeVisible();
+  expect((await events(page)).map(([, type]) => type)).toEqual(['load']);
+  expect(problems).toEqual([]);
+});
+
+test('timeline element: a src that redirects is not followed, and the token and headers stay home', async ({
+  page,
+}) => {
+  const elsewhere: string[] = [];
+  const problems = await serve(
+    page,
+    `<vehicle-sil-timeline id="t"></vehicle-sil-timeline>`,
+    RECORD,
+    '',
+    (path) =>
+      path === '/moved.json'
+        ? { status: 302, body: '', headers: { Location: 'http://elsewhere.test/run.json' } }
+        : null,
+  );
+  await page.route('http://elsewhere.test/**', async (route) => {
+    elsewhere.push(`${route.request().method()} ${JSON.stringify(route.request().headers())}`);
+    await route.fulfill({
+      body: readFileSync(join(REFERENCES, 'motions.timeline.json')),
+      headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' },
+    });
+  });
+  await page.goto(`${ORIGIN}/test.html`);
+  const el = page.locator('#t');
+  await set(page, 't', { token: 'secret', headers: { 'X-Key': 'mine' }, src: '/moved.json' });
+  await expect(el.getByRole('alert')).toContainText(
+    'answered with a redirect, and the element does not follow redirects',
+  );
+  await expect(el.getByTestId('passed')).toHaveCount(0);
+  expect(elsewhere).toEqual([]);
+  expect((await events(page)).at(-1)!.slice(1)).toEqual([
+    'error',
+    { message: expect.stringContaining('redirect'), status: null },
+  ]);
+  expect(problems).toEqual([]);
+});
+
+test('timeline element: settings it cannot use are said: in the console, and names that match no lane', async ({
+  page,
+}) => {
+  const problems = await serve(
+    page,
+    `<vehicle-sil-timeline id="t" src="data/motions.timeline.json" cursor="12ms" hide="help,tables nothing"
+       theme="blue"></vehicle-sil-timeline>`,
+  );
+  await page.goto(`${ORIGIN}/test.html`);
+  const el = page.locator('#t');
+  await expect(el.locator('#chart .lane').first()).toBeVisible();
+  // hide takes commas too: it is written again with spaces, which its CSS reads
+  await expect(el).toHaveAttribute('hide', 'help tables nothing');
+  await expect(el.locator('#help')).toBeHidden();
+  await set(page, 't', { from: 200, to: 100 });
+  await set(page, 't', { cursor: 'abc' });
+  await set(page, 't', { cursor: 'abc' }); // said once
+  await set(page, 't', { variables: ['Door.mode', 'door.lamp', 'Nothing.*'] });
+  await expect(el.locator('#chart-note')).toHaveText(
+    'No variable of this file matches door.lamp, Nothing.* (the variables option), so it has no lane. ' +
+      'The file has Body.level, Door.lamp, Door.ratio, Door.level, Door.mode, ….',
+  );
+  await expect(lanes(el)).toHaveText(['Door.mode']);
+  await set(page, 't', { variables: null });
+  await expect(el.locator('#chart-note')).toBeHidden();
+  expect(problems).toEqual([
+    '<vehicle-sil-timeline>: cursor="12ms" is not a number, so it is ignored. Write a number, such as 120.',
+    '<vehicle-sil-timeline>: theme="blue" is not light, dark or auto, so the colours follow the browser (auto).',
+    '<vehicle-sil-timeline>: hide has "nothing", which is not a part, so it is ignored. ' +
+      'The parts: header, summary, toolbar, help, steps, readout, legend, tables.',
+    '<vehicle-sil-timeline>: from (200) is not before to (100), so the view does not change. ' +
+      'Give from a smaller number than to.',
+    '<vehicle-sil-timeline>: cursor="abc" is not a number, so it is ignored. Write a number, such as 120.',
+  ]);
+});
+
+test('timeline element: moved while it loads, it loads again and shows the file once', async ({
+  page,
+}) => {
+  const problems = await serve(page, `<div id="a"></div><div id="b"></div>`, RECORD);
+  await page.route(`${ORIGIN}/slow.json`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route
+      .fulfill({ body: readFileSync(join(REFERENCES, 'motions.timeline.json')) })
+      .catch(() => undefined); // the element stopped the first request
+  });
+  await page.goto(`${ORIGIN}/test.html`);
+  await page.evaluate(() => {
+    const el = document.createElement('vehicle-sil-timeline');
+    el.id = 't';
+    el.addEventListener('load', () =>
+      (window as unknown as { __events: unknown[] }).__events.push(['t', 'load', null]),
+    );
+    el.src = 'slow.json';
+    document.getElementById('a')!.append(el);
+  });
+  await expect(page.locator('#t')).toHaveAttribute('aria-busy', 'true');
+  await page.evaluate(() => document.getElementById('b')!.append(document.getElementById('t')!));
+  await expect(page.locator('#t').getByTestId('passed')).toBeVisible();
+  await expect(page.locator('#t')).not.toHaveAttribute('aria-busy', 'true');
+  await page.waitForTimeout(400);
   expect((await events(page)).map(([, type]) => type)).toEqual(['load']);
   expect(problems).toEqual([]);
 });

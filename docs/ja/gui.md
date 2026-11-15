@@ -1088,7 +1088,7 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 
 ### 自分の画面に時間の軸を置く
 
-要素 `<vehicle-sil-timeline>` は、時間の軸のファイルを自分の画面に描きます。手順と値の図、失敗、表を、時間の軸のページと同じに出します。標準のカスタム要素なので、素の HTML、Angular、React、ほかのフレームワークのどれでも使えます。スクリプトを 1 つ読み、タグを 1 つ置きます。
+要素 `<vehicle-sil-timeline>` は、時間の軸のファイルを自分の画面に描きます。手順と値の図、失敗、表を、時間の軸のページと同じに出します。標準のカスタム要素なので、素の HTML でもフレームワークでも使えます（試験で確かめている手本は下の Angular。React は「[React で使う](#react-で使う)」）。スクリプトを 1 つ読み、タグを 1 つ置きます。
 
 ```html
 <script src="/timeline/vehicle-sil-timeline.js"></script>
@@ -1104,10 +1104,11 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 
 - GUI サーバーの実行: `src` は、`/` とセッションの要約の `scenario.timeline_url`（ライブラリでは `timelineUrl`）です。`examples/gui_starter/main.js` のとおりです。
 - トークン: 要素は、プロパティの `token`、なければ GUI の画面がタブに持つトークン（ライブラリの `takeToken` がそこに置きます）を、`Authorization: Bearer` で送ります。トークンがないとサーバーは 401 を返し、要素がそう言います。
-- `src` は、ページと同じサーバー（同じ出どころ）を指す必要があり、転送は断ります。ほかの所のファイルは、自分で取得して `data` に渡します。
-- 要素は GUI サーバーの CSP の下で動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
+- `src` は、ページと同じサーバー（同じ出どころ）を指す必要があります。要素は転送をたどりません（トークンとヘッダーを別のアドレスへ送らないため）。転送されたときは、そう言います。ほかの所のファイルは、自分で取得して `data` に渡します。
+- 要素は、インラインのスタイルを許さない CSP（`style-src 'self'`。GUI サーバーのものはこれより緩い）の下でも動きます。CSS は `<style>` の要素ではなく、組み立てたスタイルシート（constructable stylesheet）で入れます。
+- `src` を読んでいる間、要素は `aria-busy="true"` を持ち、前に出していたファイルを薄く出します。
 
-下の設定は、どれも要素を置いた後に変えられます。同時に変えたものは、まとめて 1 回で描き直します。単純な設定は、属性（ケバブケース）とプロパティ（キャメルケース）の両方です。オブジェクトはプロパティだけです。
+下の設定は、どれも要素を置いた後に変えられます。同時に変えたものは、まとめて 1 回で描き直します。単純な設定は、属性（ケバブケース）とプロパティ（キャメルケース）の両方です。オブジェクトはプロパティだけです。使えない値（数でない数、知らない `hide` の語や `theme`、`to` より前でない `from`）は使わず、ブラウザーのコンソールに警告を出します。`variables` の名前のうち、どの変数にも当たらないものは、図の上に出します。
 
 | 属性 | プロパティ | 型 | 既定 | 働き |
 |---|---|---|---|---|
@@ -1117,13 +1118,13 @@ uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation
 | | `token` | 文字列 | タブにある GUI のトークン | `src` と一緒に送るトークン。ページのマークアップに出ないように、プロパティだけです |
 | | `headers` | オブジェクト | `null` | `src` と一緒に送る、ほかのリクエストヘッダー（値は文字列）。自分のサーバーの後ろにあるファイル用 |
 | `lang` | `lang` | `en`、`ja`、または `messages` の言語 | ブラウザーの言語、なければ `en` | 文の言語 |
-| | `messages` | オブジェクト | `null` | 足す・変える文: `{ <言語>: { <キー>: <文か関数> } }`。キーは `gui/timeline/messages.js` のもの。ここの言語は `lang` に書けます。ない文は英語で出します |
+| | `messages` | オブジェクト | `null` | 足す・変える文: `{ <言語>: { <キー>: <文か関数> } }`。キーは `VehicleSilTimeline.MESSAGES.en` のもの（スクリプトを読むと `globalThis` にあります。元は `gui/timeline/messages.js`）。ここの言語は `lang` に書けます。ない文は英語で出します |
 | `cursor` | `cursor` | 数（ms） | なし | カーソルの時刻 |
 | `step` | `step` | 数 | なし | 選んだ手順（その `index`）。図と表で印を付け、そこを出します |
 | `from`、`to` | `from`、`to` | 数（ms） | 失敗の前後、なければ実行の全体 | 出す範囲 |
 | `variables` | `variables` | コンマか空白で区切った名前。文字列の配列 | 全部 | 描くレーンとその順: 変数の名前か、`*` で終わる頭の部分。ないときは、シナリオの入力が先、その後にほかのもの |
 | | `labels` | オブジェクト | `null` | 変数の名前ごとのラベル。レーンの名前の上に出します |
-| `hide` | `hide` | 空白で区切った語 | なし | 出さない部分: `header`、`summary`、`toolbar`、`help`、`steps`（手順のレーン）、`readout`、`legend`、`tables` |
+| `hide` | `hide` | 空白（かコンマ）で区切った語 | なし | 出さない部分: `header`、`summary`、`toolbar`、`help`、`steps`（手順のレーン）、`readout`、`legend`、`tables` |
 | `compact` | `compact` | 真偽（属性があれば真） | 偽 | 狭い所向け: レーンの見出しを狭く、数のレーンを低く、文字を小さく |
 | `theme` | `theme` | `light`、`dark`、`auto` | `auto` | 色。`auto` はブラウザーの明るい・暗いの設定に従います |
 
@@ -1174,8 +1175,51 @@ export class RunTimeline {
 }
 ```
 
-- npm パッケージは、要素を ES モジュールで渡します。代わりに素のスクリプト（`client/vehicle-sil-timeline.js`）を import すると、Angular のビルドが「ES モジュールでない」と警告します。`gui/web/angular.json` のように、そのパスを `allowedCommonJsDependencies` に足します。
-- React 19 と Vue は、カスタム要素にプロパティをそのまま渡します。それより前の React では、`data`、`labels` などのオブジェクトは `ref` で設定します。
+- npm パッケージは、要素を ES モジュールで渡します。代わりに素のスクリプト（`client/vehicle-sil-timeline.js`）を import すると、Angular のビルドが「ES モジュールでない」と警告します。import するモジュールを `allowedCommonJsDependencies` に足します（`gui/web/angular.json` は `@vehicle-sil/gui-client/timeline` を足しています）。
+
+#### React で使う
+
+React のどの版でも言えること: 要素を `ref` で取り、effect の中で、オブジェクトのプロパティ（`data`、`labels`、`messages`、`headers`、`token`）と真偽の `compact` を設定し、事象のリスナーを付けます。文字列の属性（`src`、`lang`、`hide`、`variables`、`theme`、`cursor`、`from`、`to`、`step`）は JSX に書けます。リポジトリの試験は React を動かしていません。下は書き方の型で、試験で確かめた例ではありません。
+
+```tsx
+import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+export function RunTimeline(props: { src: string; onCursor: (ms: number | null) => void }) {
+  const ref = useRef<VehicleSilTimelineElement>(null);
+  const { onCursor } = props;
+  useEffect(() => {
+    const timeline = ref.current;
+    if (!timeline) return;
+    timeline.labels = { 'Engine.engine.speed': 'Speed' };
+    timeline.compact = true;
+    const listener = (e: Event) =>
+      onCursor((e as CustomEvent<{ cursor: number | null }>).detail.cursor);
+    timeline.addEventListener('cursorchange', listener);
+    return () => timeline.removeEventListener('cursorchange', listener);
+  }, [onCursor]);
+  return <vehicle-sil-timeline ref={ref} src={props.src} hide="help" />;
+}
+```
+
+TypeScript では、自分のプロジェクトの `.d.ts` に次のような宣言を置くと、JSX がタグを知ります（これもリポジトリの試験では動かしていません）。
+
+```ts
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'vehicle-sil-timeline': DetailedHTMLProps<
+        HTMLAttributes<VehicleSilTimelineElement>,
+        VehicleSilTimelineElement
+      > & { src?: string; hide?: string; variables?: string; theme?: string };
+    }
+  }
+}
+```
 
 ### 画面のテンプレート（`gui_starter`）
 

@@ -1080,7 +1080,7 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
 
 ### Putting a timeline on your own screen
 
-The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your own: the chart of the steps and values, the failure and the tables, as the timeline page shows them. It is a standard custom element, so it works in plain HTML, Angular, React and other frameworks. Load one script and place one tag:
+The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your own: the chart of the steps and values, the failure and the tables, as the timeline page shows them. It is a standard custom element, so it works in plain HTML and in frameworks (Angular below is the tested model; for React, see "[In React](#in-react)"). Load one script and place one tag:
 
 ```html
 <script src="/timeline/vehicle-sil-timeline.js"></script>
@@ -1096,10 +1096,11 @@ The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your o
 
 - The run of a GUI server: `src` is `/` and `scenario.timeline_url` of the session summary (`timelineUrl` in the library), as in `examples/gui_starter/main.js`.
 - Token: the element sends its `token` property, else the token that the GUI's screens keep in the tab (`takeToken` of the library keeps it there), with `Authorization: Bearer`. Without a token the server answers 401, and the element says so.
-- `src` must be on the page's own server (the same origin), and a redirect is refused. For a file from elsewhere, fetch it yourself and give it to `data`.
-- The element works under the CSP of the GUI server: its CSS is a constructable style sheet, not a `<style>` element.
+- `src` must be on the page's own server (the same origin). The element does not follow a redirect, so that the token and the headers do not go to another address: it says that the address redirected. For a file from elsewhere, fetch it yourself and give it to `data`.
+- The element works even under a CSP that allows no inline style (`style-src 'self'`; the GUI server's is less strict): its CSS is a constructable style sheet, not a `<style>` element.
+- While it loads `src`, the element has `aria-busy="true"` and dims the file shown before.
 
-Every option below can be changed after the element is on the page. The element redraws once for the changes made together. A simple option is both an attribute (kebab-case) and a property (camelCase); objects are properties only.
+Every option below can be changed after the element is on the page. The element redraws once for the changes made together. A simple option is both an attribute (kebab-case) and a property (camelCase); objects are properties only. A value it cannot use is ignored with a warning in the browser's console (a number that is not one, a word of `hide` or a `theme` it does not know, `from` not before `to`), and the names of `variables` that match no variable are said above the chart.
 
 | Attribute | Property | Type | Default | What it does |
 |---|---|---|---|---|
@@ -1109,13 +1110,13 @@ Every option below can be changed after the element is on the page. The element 
 | | `token` | string | The GUI's token of the tab | The token sent with `src`. A property only, so that it stays out of the page's markup |
 | | `headers` | object | `null` | More request headers sent with `src` (string values), for a file behind your own server |
 | `lang` | `lang` | `en`, `ja` or a language of `messages` | The browser's language, else `en` | The language of the texts |
-| | `messages` | object | `null` | Texts to add or change: `{ <language>: { <key>: <text or function> } }`, with the keys of `gui/timeline/messages.js`. A language here can be named in `lang`. A key it lacks comes in English |
+| | `messages` | object | `null` | Texts to add or change: `{ <language>: { <key>: <text or function> } }`, with the keys of `VehicleSilTimeline.MESSAGES.en` (on `globalThis` once the script is loaded; the source is `gui/timeline/messages.js`). A language here can be named in `lang`. A key it lacks comes in English |
 | `cursor` | `cursor` | number (ms) | none | The cursor time |
 | `step` | `step` | number | none | The chosen step (its `index`): marked on the chart and in the table, and shown |
 | `from`, `to` | `from`, `to` | number (ms) | Around the failure, else the whole run | The part of the run shown |
 | `variables` | `variables` | Names separated by commas or spaces; an array of strings | All | The lanes to draw, in this order: a variable name, or a prefix ending in `*`. Without it, the inputs of the scenario come first, then the others |
 | | `labels` | object | `null` | A label for a variable, by its name, shown in its lane above the name |
-| `hide` | `hide` | Words separated by spaces | none | The parts to leave out: `header`, `summary`, `toolbar`, `help`, `steps` (the lane of the steps), `readout`, `legend`, `tables` |
+| `hide` | `hide` | Words separated by spaces (or commas) | none | The parts to leave out: `header`, `summary`, `toolbar`, `help`, `steps` (the lane of the steps), `readout`, `legend`, `tables` |
 | `compact` | `compact` | boolean (the attribute is present) | off | Narrower lane heads, lower number lanes and smaller text, for a small box |
 | `theme` | `theme` | `light`, `dark`, `auto` | `auto` | The colours; `auto` follows the browser's light or dark setting |
 
@@ -1166,8 +1167,51 @@ export class RunTimeline {
 }
 ```
 
-- The npm package gives the element as an ES module. If you import the plain script instead (`client/vehicle-sil-timeline.js`), the Angular build warns that it is not an ES module: add its path to `allowedCommonJsDependencies`, as `gui/web/angular.json` does.
-- React 19 and Vue pass properties to custom elements as they are. In older React, set `data`, `labels` and the other objects through a `ref`.
+- The npm package gives the element as an ES module. If you import the plain script instead (`client/vehicle-sil-timeline.js`), the Angular build warns that it is not an ES module: add the module you import to `allowedCommonJsDependencies`, as `gui/web/angular.json` does with `@vehicle-sil/gui-client/timeline`.
+
+#### In React
+
+What holds for every React version: get the element with a `ref`, and in an effect set the object properties (`data`, `labels`, `messages`, `headers`, `token`), the boolean `compact`, and add the event listeners. String attributes (`src`, `lang`, `hide`, `variables`, `theme`, `cursor`, `from`, `to`, `step`) can be written in JSX. The repository's tests do not run React: the lines below are the pattern, not a tested example.
+
+```tsx
+import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+export function RunTimeline(props: { src: string; onCursor: (ms: number | null) => void }) {
+  const ref = useRef<VehicleSilTimelineElement>(null);
+  const { onCursor } = props;
+  useEffect(() => {
+    const timeline = ref.current;
+    if (!timeline) return;
+    timeline.labels = { 'Engine.engine.speed': 'Speed' };
+    timeline.compact = true;
+    const listener = (e: Event) =>
+      onCursor((e as CustomEvent<{ cursor: number | null }>).detail.cursor);
+    timeline.addEventListener('cursorchange', listener);
+    return () => timeline.removeEventListener('cursorchange', listener);
+  }, [onCursor]);
+  return <vehicle-sil-timeline ref={ref} src={props.src} hide="help" />;
+}
+```
+
+With TypeScript, JSX knows the tag after a declaration such as this one in a `.d.ts` of your project (also not run by the repository's tests):
+
+```ts
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'vehicle-sil-timeline': DetailedHTMLProps<
+        HTMLAttributes<VehicleSilTimelineElement>,
+        VehicleSilTimelineElement
+      > & { src?: string; hide?: string; variables?: string; theme?: string };
+    }
+  }
+}
+```
 
 ### Screen template (`gui_starter`)
 

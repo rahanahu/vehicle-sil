@@ -203,6 +203,8 @@
     // --- the chart
     'chart.inputs': 'Inputs: what the scenario sent (and saw)',
     'chart.others': 'Outputs and other variables: what the scenario saw',
+    'chart.noMatch': ({ names, have }) =>
+      `No variable of this file matches ${names} (the variables option), so it has no lane. The file has ${have}.`,
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
     'chart.virtualTime': 'Virtual time',
     'chart.cursor': ({ at }) => `Cursor ${at}`,
@@ -272,6 +274,9 @@
       `src must name a file on this page's own server (${origin}), and ${other} is another one, so the file ` +
       'was not loaded. Fetch the file yourself and give it with the data property.',
     'load.failed': ({ url, error }) => `${url} could not be loaded (${error}). Check the address.`,
+    'load.redirected': ({ url }) =>
+      `${url} answered with a redirect, and the element does not follow redirects (the token and the headers ` +
+      'must not go to another address). Give src the address that the file is at.',
     'load.unauthorized':
       'HTTP 401: the server did not accept the token. Give the element the token of the GUI server (its token ' +
       'property), or open this screen from the GUI server: its screens keep the token in the tab, where the ' +
@@ -294,6 +299,17 @@
       'GUI\'s "Timeline" link (a middle click or "Open link in new tab" does not pass the token on), or add ' +
       '"#token=<token>" from the address the GUI server printed to the end of this page\'s address.',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
+
+    // --- a value of an option that the element cannot use (in the browser's console)
+    'warn.number': ({ name, value }) =>
+      `<vehicle-sil-timeline>: ${name}="${value}" is not a number, so it is ignored. Write a number, such as 120.`,
+    'warn.range': ({ from, to }) =>
+      `<vehicle-sil-timeline>: from (${from}) is not before to (${to}), so the view does not change. ` +
+      'Give from a smaller number than to.',
+    'warn.hide': ({ value, known }) =>
+      `<vehicle-sil-timeline>: hide has "${value}", which is not a part, so it is ignored. The parts: ${known}.`,
+    'warn.theme': ({ value }) =>
+      `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the browser (auto).`,
   };
 
   const ja = {
@@ -488,6 +504,8 @@
     // --- 図
     'chart.inputs': '入力: シナリオが送った値（と見た値）',
     'chart.others': '出力とほかの変数: シナリオが見た値',
+    'chart.noMatch': ({ names, have }) =>
+      `${names} に当たる変数がこのファイルにないので（variables の設定）、そのレーンはありません。ファイルの変数: ${have}。`,
     'chart.showing': ({ from, to, start, end }) =>
       `${start} から ${end} のうち、${from} から ${to} を表示`,
     'chart.virtualTime': '仮想時刻',
@@ -558,6 +576,9 @@
       '読みませんでした。ファイルを自分で取得して、data のプロパティで渡してください。',
     'load.failed': ({ url, error }) =>
       `${url} を読み込めませんでした（${error}）。アドレスを確かめてください。`,
+    'load.redirected': ({ url }) =>
+      `${url} は転送で答えました。要素は転送をたどりません（トークンとヘッダーを別のアドレスへ送らないため）。` +
+      'src には、ファイルのあるアドレスを書いてください。',
     'load.unauthorized':
       'HTTP 401: サーバーがトークンを受け付けませんでした。GUI サーバーのトークンを要素に渡すか（token のプロパティ）、' +
       'この画面を GUI サーバーから開いてください。GUI サーバーの画面はトークンをタブに持ち、要素はそれを使います。',
@@ -579,6 +600,17 @@
       '開いてください（中ボタンや「新しいタブで開く」では、トークンが渡りません）。または、GUI サーバーが表示した' +
       'アドレスの「#token=<トークン>」を、このページのアドレスの末尾に付けてください。',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
+
+    // --- 要素が使えない設定の値（ブラウザーのコンソールに）
+    'warn.number': ({ name, value }) =>
+      `<vehicle-sil-timeline>: ${name}="${value}" は数でないので、使いません。120 のような数を書いてください。`,
+    'warn.range': ({ from, to }) =>
+      `<vehicle-sil-timeline>: from（${from}）が to（${to}）より前でないので、出す範囲を変えません。` +
+      'from には to より小さい数を書いてください。',
+    'warn.hide': ({ value, known }) =>
+      `<vehicle-sil-timeline>: hide の「${value}」は部分の名前でないので、使いません。部分: ${known}。`,
+    'warn.theme': ({ value }) =>
+      `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はブラウザーに従います（auto）。`,
   };
 
   const MESSAGES = { en, ja };

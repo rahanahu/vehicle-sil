@@ -208,6 +208,8 @@
     // --- the chart
     'chart.inputs': 'Inputs: what the scenario sent (and saw)',
     'chart.others': 'Outputs and other variables: what the scenario saw',
+    'chart.noMatch': ({ names, have }) =>
+      `No variable of this file matches ${names} (the variables option), so it has no lane. The file has ${have}.`,
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
     'chart.virtualTime': 'Virtual time',
     'chart.cursor': ({ at }) => `Cursor ${at}`,
@@ -277,6 +279,9 @@
       `src must name a file on this page's own server (${origin}), and ${other} is another one, so the file ` +
       'was not loaded. Fetch the file yourself and give it with the data property.',
     'load.failed': ({ url, error }) => `${url} could not be loaded (${error}). Check the address.`,
+    'load.redirected': ({ url }) =>
+      `${url} answered with a redirect, and the element does not follow redirects (the token and the headers ` +
+      'must not go to another address). Give src the address that the file is at.',
     'load.unauthorized':
       'HTTP 401: the server did not accept the token. Give the element the token of the GUI server (its token ' +
       'property), or open this screen from the GUI server: its screens keep the token in the tab, where the ' +
@@ -299,6 +304,17 @@
       'GUI\'s "Timeline" link (a middle click or "Open link in new tab" does not pass the token on), or add ' +
       '"#token=<token>" from the address the GUI server printed to the end of this page\'s address.',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
+
+    // --- a value of an option that the element cannot use (in the browser's console)
+    'warn.number': ({ name, value }) =>
+      `<vehicle-sil-timeline>: ${name}="${value}" is not a number, so it is ignored. Write a number, such as 120.`,
+    'warn.range': ({ from, to }) =>
+      `<vehicle-sil-timeline>: from (${from}) is not before to (${to}), so the view does not change. ` +
+      'Give from a smaller number than to.',
+    'warn.hide': ({ value, known }) =>
+      `<vehicle-sil-timeline>: hide has "${value}", which is not a part, so it is ignored. The parts: ${known}.`,
+    'warn.theme': ({ value }) =>
+      `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the browser (auto).`,
   };
 
   const ja = {
@@ -493,6 +509,8 @@
     // --- 図
     'chart.inputs': '入力: シナリオが送った値（と見た値）',
     'chart.others': '出力とほかの変数: シナリオが見た値',
+    'chart.noMatch': ({ names, have }) =>
+      `${names} に当たる変数がこのファイルにないので（variables の設定）、そのレーンはありません。ファイルの変数: ${have}。`,
     'chart.showing': ({ from, to, start, end }) =>
       `${start} から ${end} のうち、${from} から ${to} を表示`,
     'chart.virtualTime': '仮想時刻',
@@ -563,6 +581,9 @@
       '読みませんでした。ファイルを自分で取得して、data のプロパティで渡してください。',
     'load.failed': ({ url, error }) =>
       `${url} を読み込めませんでした（${error}）。アドレスを確かめてください。`,
+    'load.redirected': ({ url }) =>
+      `${url} は転送で答えました。要素は転送をたどりません（トークンとヘッダーを別のアドレスへ送らないため）。` +
+      'src には、ファイルのあるアドレスを書いてください。',
     'load.unauthorized':
       'HTTP 401: サーバーがトークンを受け付けませんでした。GUI サーバーのトークンを要素に渡すか（token のプロパティ）、' +
       'この画面を GUI サーバーから開いてください。GUI サーバーの画面はトークンをタブに持ち、要素はそれを使います。',
@@ -584,6 +605,17 @@
       '開いてください（中ボタンや「新しいタブで開く」では、トークンが渡りません）。または、GUI サーバーが表示した' +
       'アドレスの「#token=<トークン>」を、このページのアドレスの末尾に付けてください。',
     'load.http': ({ status, message }) => `HTTP ${status}${message ? `: ${message}` : ''}`,
+
+    // --- 要素が使えない設定の値（ブラウザーのコンソールに）
+    'warn.number': ({ name, value }) =>
+      `<vehicle-sil-timeline>: ${name}="${value}" は数でないので、使いません。120 のような数を書いてください。`,
+    'warn.range': ({ from, to }) =>
+      `<vehicle-sil-timeline>: from（${from}）が to（${to}）より前でないので、出す範囲を変えません。` +
+      'from には to より小さい数を書いてください。',
+    'warn.hide': ({ value, known }) =>
+      `<vehicle-sil-timeline>: hide の「${value}」は部分の名前でないので、使いません。部分: ${known}。`,
+    'warn.theme': ({ value }) =>
+      `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はブラウザーに従います（auto）。`,
   };
 
   const MESSAGES = { en, ja };
@@ -706,6 +738,10 @@
 }
 :host([compact]) {
   font-size: 12px;
+}
+/* while src loads, the file shown before is dimmed */
+:host([aria-busy='true']) #view {
+  opacity: 0.6;
 }
 /* hide="<parts>": the parts a screen does without */
 :host([hide~='header']) #head,
@@ -2413,8 +2449,19 @@ tr.selected td {
     );
   }
 
-  /** Says why a file cannot be shown. The element then shows no file, so that nothing in it is taken for this one. */
-  function showError(message, status) {
+  /**
+   * Says why a file cannot be shown. The element then shows no file, so that nothing in it is taken for this one.
+   * keep: the input is what could not be read (it is read again, and refused again, in another language); otherwise
+   * nothing is kept to show, and the message (a function: say(), in the language of the moment) is said again when
+   * the language changes. again: the same refusal in another language, which is not told again.
+   */
+  function showError(say, status, keep, again) {
+    const message = typeof say === 'function' ? say() : say;
+    current.error = keep ? null : { say, status };
+    if (!keep) {
+      current.input = null;
+      current.inputName = null;
+    }
     const box = $('error');
     box.replaceChildren(h('strong', { text: t('page.cannotShow') }), message);
     box.hidden = false;
@@ -2424,10 +2471,11 @@ tr.selected td {
     $('view').hidden = true;
     $('title').textContent = t('page.title');
     $('facts').replaceChildren();
-    emit('error', { message, status: status ?? null }, true);
+    if (!again) emit('error', { message, status: status ?? null }, true);
   }
 
   function clearError() {
+    current.error = null;
     $('error').hidden = true;
   }
 
@@ -2438,7 +2486,7 @@ tr.selected td {
   function load(input, name, again) {
     const read = readTimeline(input, name);
     if (read.error) {
-      showError(read.error);
+      showError(read.error, null, true, again);
       return;
     }
     clearError();
@@ -2917,23 +2965,28 @@ tr.selected td {
   /**
    * The lanes of the variables to draw, in order: with the variables property, those it names (a name, or a
    * prefix ending in '*') in its order, else the inputs of the scenario first. groups: whether to head the two
-   * groups (only without the property).
+   * groups (only without the property). missing: the entries of the property that match no variable of the file.
    */
   function lanesToDraw(m) {
     const visible = (v) => !state.hidden.has(v.participant);
     const wanted = current.options.variables;
-    if (!wanted)
-      return { inputs: m.inputs.filter(visible), others: m.others.filter(visible), groups: true };
-    const all = [...m.inputs, ...m.others].filter(visible);
+    if (!wanted) {
+      const inputs = m.inputs.filter(visible);
+      return { inputs, others: m.others.filter(visible), groups: true, missing: [] };
+    }
+    const every = [...m.inputs, ...m.others];
+    const all = every.filter(visible);
     const chosen = [];
+    const missing = [];
     for (const pattern of wanted) {
       const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
+      const matches = (v) => (prefix !== null ? v.name.startsWith(prefix) : v.name === pattern);
+      if (!every.some(matches)) missing.push(pattern);
       for (const v of all) {
-        if (chosen.includes(v)) continue;
-        if (prefix !== null ? v.name.startsWith(prefix) : v.name === pattern) chosen.push(v);
+        if (!chosen.includes(v) && matches(v)) chosen.push(v);
       }
     }
-    return { inputs: chosen, others: [], groups: false };
+    return { inputs: chosen, others: [], groups: false, missing };
   }
 
   function renderChart() {
@@ -2945,7 +2998,17 @@ tr.selected td {
     state.lanes = [];
     const chart = $('chart');
     const children = [axisLane(scale), stepLane(m, scale)];
-    const { inputs, others, groups } = lanesToDraw(m);
+    const { inputs, others, groups, missing } = lanesToDraw(m);
+    // A name of the variables property that matches nothing is said, not dropped in silence.
+    const note = $('chart-note');
+    const names = [...m.inputs, ...m.others].map((v) => v.name);
+    note.hidden = missing.length === 0;
+    note.textContent = missing.length
+      ? t('chart.noMatch', {
+          names: missing.join(', '),
+          have: names.slice(0, 5).join(', ') + (names.length > 5 ? ', …' : ''),
+        })
+      : '';
     if (inputs.length) {
       if (groups) children.push(h('div', { class: 'group', text: t('chart.inputs') }));
       children.push(...inputs.map((v) => variableLane(m, v, scale)));
@@ -3772,18 +3835,18 @@ tr.selected td {
     if (element.abort) element.abort.abort();
     element.abort = null;
     if (location.protocol === 'file:') {
-      showError(t('load.fileProtocol'));
+      showError(() => t('load.fileProtocol'));
       return;
     }
     let url;
     try {
       url = new URL(src, document.baseURI);
     } catch {
-      showError(t('load.notAddress', { src }));
+      showError(() => t('load.notAddress', { src }));
       return;
     }
     if (url.origin !== location.origin) {
-      showError(t('load.otherOrigin', { origin: location.origin, other: url.origin }));
+      showError(() => t('load.otherOrigin', { origin: location.origin, other: url.origin }));
       return;
     }
     const o = element.options;
@@ -3792,35 +3855,45 @@ tr.selected td {
     for (const [k, v] of Object.entries(isObject(o.headers) ? o.headers : {}))
       if (typeof v === 'string') headers[k] = v;
     if (token) headers.Authorization = `Bearer ${token}`;
-    let name = o.fileName || url.pathname.split('/').pop() || url.pathname;
+    let name = url.pathname.split('/').pop() || url.pathname;
     const abort = typeof AbortController === 'function' ? new AbortController() : null;
     element.abort = abort;
+    element.host.setAttribute('aria-busy', 'true');
     const fresh = () => {
       if (element.abort === abort) element.abort = null; // this load is over
-      return seq === element.loads;
+      if (seq !== element.loads) return false;
+      element.host.removeAttribute('aria-busy');
+      return true;
     };
-    // A redirect could lead to another origin: the file must come from this address itself.
+    // A redirect could lead to another origin with the token and the headers: the file must come from this address
+    // itself. 'manual' does not follow it, and says that it was one (an opaque answer).
     fetch(url, {
       credentials: 'same-origin',
-      redirect: 'error',
+      redirect: 'manual',
       headers,
       signal: abort ? abort.signal : undefined,
     })
       .then(
         bound((r) => {
+          if (r.type === 'opaqueredirect') {
+            throw Object.assign(new Error(), {
+              say: () => t('load.redirected', { url: url.href }),
+            });
+          }
           if (r.status === 401) {
             // Said alone: the address is right, and the token is what to change.
-            throw Object.assign(new Error(t('load.unauthorized')), { whole: true, status: 401 });
+            throw Object.assign(new Error(), { say: () => t('load.unauthorized'), status: 401 });
           }
           if (!r.ok) {
             return r.text().then(
               bound((body) => {
-                const message = t('load.http', { status: r.status, message: serverMessage(body) });
-                throw Object.assign(new Error(message), { status: r.status });
+                const said = serverMessage(body);
+                const say = () => t('load.http', { status: r.status, message: said });
+                throw Object.assign(new Error(), { say, status: r.status });
               }),
             );
           }
-          name = o.fileName || fileName(r.headers.get('Content-Disposition')) || name;
+          name = fileName(r.headers.get('Content-Disposition')) || name;
           return r.text();
         }),
       )
@@ -3828,15 +3901,19 @@ tr.selected td {
         bound((text) => {
           if (!fresh()) return;
           element.input = text;
-          element.inputName = name;
-          load(text, name);
+          element.srcName = name;
+          element.inputName = o.fileName || name;
+          load(text, element.inputName);
         }),
         bound((e) => {
           if (!fresh() || (e && e.name === 'AbortError')) return;
-          showError(
-            e.whole ? e.message : t('load.failed', { url: url.href, error: e.message }),
-            e.status,
-          );
+          // 401 and a redirect are said alone (the address is right); other HTTP errors and a failed request
+          // within load.failed (the address may be wrong).
+          const alone = e.say && (e.status === 401 || !e.status);
+          const say = alone
+            ? e.say
+            : () => t('load.failed', { url: url.href, error: e.say ? e.say() : e.message });
+          showError(say, e.status);
         }),
       );
   }
@@ -3865,11 +3942,17 @@ tr.selected td {
     );
   }
 
+  /** Stops a load under way: its answer is dropped. */
+  function stopLoad(element) {
+    element.loads++;
+    if (element.abort) element.abort.abort();
+    element.abort = null;
+    element.host.removeAttribute('aria-busy');
+  }
+
   /** Shows nothing: no file is given. */
   function clear() {
-    current.loads++;
-    if (current.abort) current.abort.abort();
-    current.abort = null;
+    stopLoad(current);
     current.input = null;
     current.inputName = null;
     state.model = null;
@@ -3912,6 +3995,7 @@ tr.selected td {
           h('span', { id: 'participants', class: 'toolbar' }),
         ),
         h('p', { id: 'help', class: 'muted small', 'data-text': 'page.help' }),
+        h('p', { id: 'chart-note', class: 'note small', role: 'status', hidden: true }),
         h('div', { id: 'chart', tabindex: '0', 'data-label': 'page.chartLabel' }),
         h('div', { id: 'tables' }),
       ),
@@ -4003,16 +4087,48 @@ tr.selected td {
    */
   const OPTIONS = {
     src: ['src', 'string', 'source'],
-    'file-name': ['fileName', 'string', 'source'],
+    'file-name': ['fileName', 'string', 'name'],
     cursor: ['cursor', 'number', 'cursor'],
     step: ['step', 'number', 'step'],
-    from: ['from', 'number', 'view'],
-    to: ['to', 'number', 'view'],
+    from: ['from', 'number', 'from'],
+    to: ['to', 'number', 'to'],
     variables: ['variables', 'list', 'chart'],
     hide: ['hide', 'string', 'none'],
     compact: ['compact', 'boolean', 'chart'],
     theme: ['theme', 'string', 'none'],
   };
+  /** The words of hide and the values of theme that timeline.css reads. */
+  const PARTS = ['header', 'summary', 'toolbar', 'help', 'steps', 'readout', 'legend', 'tables'];
+  const THEMES = ['light', 'dark', 'auto'];
+
+  /**
+   * Says once in the browser's console, for each element and value, that a value of an option cannot be used: it
+   * is not an error of the file (the event error), but a mistake that the screen's author should see.
+   */
+  function warn(c, key, args) {
+    const said = `${key} ${JSON.stringify(args)}`;
+    if (c.warned.has(said)) return;
+    c.warned.add(said);
+    console.warn(text(c.language, key, args, c.options.messages));
+  }
+
+  /** Checks a value given to an option (an attribute or a property), and warns about one it cannot use. */
+  function check(c, property, value) {
+    if (['cursor', 'step', 'from', 'to'].includes(property)) {
+      if (value !== null && value !== undefined && value !== '' && number(value) === null)
+        warn(c, 'warn.number', { name: property, value: String(value) });
+      const { from, to } = c.options;
+      if ((property === 'from' || property === 'to') && isNum(from) && isNum(to) && from >= to)
+        warn(c, 'warn.range', { from, to });
+    } else if (property === 'hide') {
+      for (const word of list(value) ?? [])
+        if (!PARTS.includes(word)) warn(c, 'warn.hide', { value: word, known: PARTS.join(', ') });
+    } else if (property === 'theme') {
+      if (value !== null && value !== undefined && !THEMES.includes(String(value)))
+        warn(c, 'warn.theme', { value: String(value) });
+    }
+  }
+
   /** The options that are properties only (objects, and the token, which has no place in the page's markup). */
   const PROPERTIES = {
     data: 'source',
@@ -4058,6 +4174,12 @@ tr.selected td {
         /** What is shown (the text or the object, and its name), to draw it again in another language. */
         input: null,
         inputName: null,
+        /** The name the server gave the file of src. */
+        srcName: null,
+        /** The refusal shown ({ say, status }), said again in another language. */
+        error: null,
+        /** The values already warned about (see warn). */
+        warned: new Set(),
         changes: new Set(['source', 'language']),
         scheduled: false,
       };
@@ -4084,8 +4206,7 @@ tr.selected td {
       // A load under way stops, and starts again when the element is put back (a framework may move it).
       const c = this.#c;
       if (c.abort) {
-        c.abort.abort();
-        c.abort = null;
+        stopLoad(c);
         c.changes.add('source');
       }
     }
@@ -4093,11 +4214,19 @@ tr.selected td {
     attributeChangedCallback(name, before, after) {
       if (name === 'lang') return this.#change('language');
       const [property, kind, what] = OPTIONS[name];
-      const o = this.#c.options;
+      const c = this.#c;
+      const o = c.options;
+      if (name === 'hide' && after !== null && after.includes(',')) {
+        // timeline.css reads words separated by spaces; commas are taken as for variables
+        this.setAttribute('hide', (list(after) ?? []).join(' '));
+        return;
+      }
       if (kind === 'number') o[property] = number(after);
       else if (kind === 'list') o[property] = list(after);
       else if (kind === 'boolean') o[property] = after !== null;
-      this.#change(what, before !== after || what === 'source');
+      check(c, property, after);
+      // A number set again applies again: the user may have moved the cursor or the view since.
+      this.#change(what, before !== after || what === 'source' || kind === 'number');
     }
 
     /** Redraws what a change needs, once for all the changes made at the same time. */
@@ -4131,8 +4260,7 @@ tr.selected td {
         if (what.has('language')) translate();
         if (what.has('source')) {
           if (o.data !== null && o.data !== undefined) {
-            c.loads++;
-            if (c.abort) c.abort.abort();
+            stopLoad(c);
             c.input = o.data;
             c.inputName = this.fileName || null;
             load(o.data, c.inputName);
@@ -4143,12 +4271,25 @@ tr.selected td {
           }
         } else if (what.has('language') && c.input !== null) {
           load(c.input, c.inputName, true);
+        } else if (what.has('language') && c.error) {
+          showError(c.error.say, c.error.status, false, true);
         } else if (what.has('chart') && state.model) {
           renderChart();
         }
+        if (what.has('name') && !what.has('source') && state.model) {
+          // Only the name shown changes: the file is not loaded again.
+          c.inputName = this.fileName || (o.data === null ? c.srcName : null);
+          state.file = c.inputName;
+          renderHeader(state.model);
+        }
         if (!state.model) return;
         if (what.has('step')) showStep(stepOf(o.step) ?? null);
-        if (what.has('view')) setView([o.from ?? state.view[0], o.to ?? state.view[1]]);
+        if (what.has('from') || what.has('to')) {
+          // A side not given now stays where the view is (the user may have moved it).
+          const from = what.has('from') && o.from !== null ? o.from : state.view[0];
+          const to = what.has('to') && o.to !== null ? o.to : state.view[1];
+          setView([from, to]);
+        }
         if (what.has('cursor')) {
           state.cursor = o.cursor;
           updateCursor();
@@ -4209,6 +4350,7 @@ tr.selected td {
         : this.#c.state.cursor;
     }
     set cursor(v) {
+      check(this.#c, 'cursor', v);
       this.#c.options.cursor = number(v);
       this.#change('cursor');
     }
@@ -4218,26 +4360,29 @@ tr.selected td {
         : this.#c.state.step;
     }
     set step(v) {
+      check(this.#c, 'step', v);
       this.#c.options.step = number(v);
       this.#change('step');
     }
     get from() {
-      return this.#c.changes.has('view') || !this.#c.state.view
+      return this.#c.changes.has('from') || !this.#c.state.view
         ? this.#c.options.from
         : this.#c.state.view[0];
     }
     set from(v) {
       this.#c.options.from = number(v);
-      this.#change('view');
+      check(this.#c, 'from', v);
+      this.#change('from');
     }
     get to() {
-      return this.#c.changes.has('view') || !this.#c.state.view
+      return this.#c.changes.has('to') || !this.#c.state.view
         ? this.#c.options.to
         : this.#c.state.view[1];
     }
     set to(v) {
       this.#c.options.to = number(v);
-      this.#change('view');
+      check(this.#c, 'to', v);
+      this.#change('to');
     }
 
     // --- the options that are properties only

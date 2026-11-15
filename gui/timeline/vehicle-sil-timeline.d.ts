@@ -65,12 +65,12 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   variables: string[] | null;
   /** A label for a variable, by its name, shown in its lane. */
   labels: Record<string, string> | null;
-  /** The parts to leave out, separated by spaces (attribute hide). */
+  /** The parts to leave out: words of VehicleSilTimelinePart separated by spaces (attribute hide). */
   hide: string;
   /** Smaller lanes for a small box (attribute compact). */
   compact: boolean;
   /** 'light', 'dark', or 'auto' (the browser's setting; attribute theme). */
-  theme: 'light' | 'dark' | 'auto' | string;
+  theme: 'light' | 'dark' | 'auto';
   /** Words that the page adds or changes; a language here can be named in lang. */
   messages: VehicleSilTimelineMessages | null;
   /** Loads src again. */
