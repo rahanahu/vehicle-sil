@@ -4,7 +4,7 @@
 //
 // Times are simulation times in nanoseconds since the start of the simulation (T = 0).
 // The contract of the operations is described in docs/internals/control.md ("Control Agent" and
-// "Control Server の中核").
+// "Control Server core").
 syntax = "proto3";
 
 package vehicle_sil.control.v1;

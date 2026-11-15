@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from conftest import CONTROL_FEATURES, Client, gui_server, is_ended, is_synced, is_variables, run_async
+from conftest import (CONTROL_FEATURES, REPOSITORY, Client, gui_server, is_ended, is_synced, is_variables, manual_pages,
+                      run_async)
 
 from vehicle_sil_gui import recording
 from vehicle_sil_gui.launcher import Launcher, check_command, run_command
@@ -305,12 +306,15 @@ def test_the_yaml_is_safe_for_any_name_and_value() -> None:
 
 
 def test_the_example_of_the_docs_is_what_the_server_writes() -> None:
-    docs = (Path(__file__).resolve().parents[3] / "docs" / "gui.md").read_text(encoding="utf-8")
-    section = docs.split("### 操作をシナリオとして保存する", 1)[1]
-    block = section.split("```yaml\n", 1)[1].split("```", 1)[0]
     text, _, _ = scenario_yaml([(0, 1, "Engine", "engine.throttle", 40.0), (350, 2, "Engine", "engine.throttle", 12.5)],
                                "recorded from simulation.yaml (run 3)", {}, 0, 1000)
-    assert block == text, "docs/gui.md: write the example as scenario_yaml writes it"
+    for page in manual_pages("docs/gui.md"):
+        name = page.relative_to(REPOSITORY).as_posix()
+        # The example is the YAML block that begins as the scenarios the server writes do.
+        blocks = page.read_text(encoding="utf-8").split("```yaml\n")[1:]
+        block = next((b.split("```", 1)[0] for b in blocks if b.startswith("# Written by vehicle-sil-gui:")), None)
+        assert block == text, f"{name}: write the example (```yaml, # Written by vehicle-sil-gui: ...) as " \
+                              "scenario_yaml writes it"
 
 
 def test_the_record_is_bounded_and_waits_for_late_results() -> None:

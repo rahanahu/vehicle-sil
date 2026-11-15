@@ -1,11 +1,11 @@
-// 試験のための、要約から SessionView を作る関数。本番のコードからは import しない。
+// For tests: builds a SessionView from a summary. Do not import it from production code.
 import { LauncherEvent, SessionSummary } from '../protocol';
 import { SessionView, applyEvents, applySummary, sessionFromSummary } from '../session-state';
 
 /**
- * サーバーの要約（hello の要約）から、セッションの写し（SessionView）を作る。続けて渡した要約は WebSocket の
- * `session` の通知として、事象は `event` の通知として、順に当てる（ライブラリが通知を当てるのと同じ）。自分の部品の
- * 試験で、表示する状態を作るときに使う。
+ * Builds a session copy (SessionView) from a server summary (the summary in hello). Summaries passed after it are
+ * applied in order as WebSocket `session` notifications, and events as `event` notifications (just as the library
+ * applies notifications). Use it in the tests of your own widgets to build the state they display.
  */
 export function sessionViewFrom(
   summary: SessionSummary,

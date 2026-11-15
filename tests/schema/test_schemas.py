@@ -7,8 +7,10 @@ launcher's readers say (libs/launch/src/config.cpp, scenario.cpp), no more.
 Without the launcher (the files only):
   - the schemas are JSON Schemas, and every $ref in them leads somewhere;
   - every configuration and scenario of examples/, template/ and the GUI server's tests, and every one a document
-    shows (docs/, the READMEs), is valid; the samples below are valid or not as they say;
-  - every key of the schemas is in the document of its file (docs/simulation-config.md, docs/scenario.md);
+    shows (docs/, the READMEs; the English and the Japanese pages), is valid; the samples below are valid or not as
+    they say;
+  - every key of the schemas is in the document of its file (docs/simulation-config.md, docs/scenario.md, and their
+    Japanese pages in docs/ja/);
   - the copies in template/schema/ are the files they are copies of, and the first line of each YAML file of examples/
     and template/ names the schema of its kind (# yaml-language-server: $schema=<relative path>);
   - the timeline files of tests/launch/timeline/ (what the scenario's engine writes for `run --timeline`) are valid
@@ -219,8 +221,22 @@ def kind_of(data) -> str | None:
 
 
 def documents() -> list[Path]:
-    return sorted([*(ROOT / "docs").rglob("*.md"), ROOT / "README.md", ROOT / "template" / "README.md",
-                   *(ROOT / "examples").rglob("README.md")])
+    """Every page of the manual, English and Japanese (docs/ja/, README.ja.md)."""
+    return sorted([*(ROOT / "docs").rglob("*.md"), *ROOT.glob("README*.md"), *(ROOT / "template").glob("README*.md"),
+                   *(ROOT / "examples").rglob("README*.md")])
+
+
+def english_name(path: Path) -> str:
+    """The path of a page relative to ROOT, the Japanese page named as its English page."""
+    name = path.relative_to(ROOT).as_posix()
+    if name.startswith("docs/ja/"):
+        return "docs/" + name[len("docs/ja/"):]
+    return name[:-len("README.ja.md")] + "README.md" if name.endswith("README.ja.md") else name
+
+
+def pages(document: str) -> list[Path]:
+    """The English page docs/<document> and its Japanese page, those that exist."""
+    return [p for p in (ROOT / "docs" / document, ROOT / "docs" / "ja" / document) if p.is_file()]
 
 
 def yaml_blocks(path: Path) -> list[tuple[int, str, str]]:
@@ -240,7 +256,7 @@ def yaml_blocks(path: Path) -> list[tuple[int, str, str]]:
 
 
 # The blocks of the documents that show a mistake the schema finds (the document says what the launcher says of it).
-# The key is "<document>:<the line before the block>".
+# The key is "<document>:<the line before the block>", the document named as its English page.
 MISTAKES_IN_DOCUMENTS = {
     "docs/simulation-check.md:<!-- two-engines.yaml -->": ["participants/2: "],  # a key written wrongly
     "docs/scenario.md:<!-- throttle_mistakes.yaml -->": ["steps/4: "],  # near without tolerance
@@ -739,12 +755,13 @@ class SchemaFiles(unittest.TestCase):
                     continue
                 seen[kind] += 1
                 said = problems(schema if whole else without_required(schema), data)
-                expected = MISTAKES_IN_DOCUMENTS.get(f"{name}:{before}")
+                key = f"{english_name(path)}:{before}"
+                expected = MISTAKES_IN_DOCUMENTS.get(key)
                 if expected is None:
                     self.assertEqual(said, [], f"{name}:{line}: the YAML block is not valid for schema/{kind}.schema."
                                                "json: correct the block, or the schema if the launcher reads it")
                 else:
-                    found.add(f"{name}:{before}")
+                    found.add(key)
                     for start in expected:
                         self.assertTrue(any(s.startswith(start) for s in said),
                                         f"{name}:{line}: the schema should find the mistake at {start!r}; it says {said}")
@@ -763,37 +780,42 @@ class SchemaFiles(unittest.TestCase):
                     self.assertEqual(said, [], f"{what}: the schema should accept\n{text}")
 
     def test_every_key_is_in_its_document(self):
-        def code_spans(document: str) -> set[str]:
-            text = (ROOT / "docs" / document).read_text(encoding="utf-8")
-            return set(re.findall(r"`([^`\n]+)`", text))
+        def code_spans(path: Path) -> set[str]:
+            return set(re.findall(r"`([^`\n]+)`", path.read_text(encoding="utf-8")))
 
-        spans = code_spans("simulation-config.md")
-        words = {word for span in spans for word in re.findall(r"[A-Za-z_]+", span)}
+        config_pages, scenario_pages = pages("simulation-config.md"), pages("scenario.md")
+        self.assertTrue(config_pages and scenario_pages, "docs/simulation-config.md and docs/scenario.md are missing")
         mappings = simulation_mappings()
-        for key in keys_of(mappings["top"]):
-            self.assertIn(key, spans, f"docs/simulation-config.md has no `{key}` (the table of the keys)")
-        for key in keys_of(mappings["network"]):
-            self.assertIn(f"networks[].{key}", spans, "docs/simulation-config.md: the table of the keys")
-        for key in keys_of(mappings["participant"]):
-            self.assertIn(f"participants[].{key}", spans, "docs/simulation-config.md: the table of the keys")
-        for key in keys_of(mappings["variant participant"]):
-            self.assertIn(f"…<participant>.{key}", spans, "docs/simulation-config.md: the table of the variants")
-        for key in keys_of(mappings["variant"]):
-            self.assertTrue(any(s.startswith("variants.<") and s.endswith(f".{key}") or
-                                s.startswith("variants.<") and f".{key}." in s for s in spans),
-                            f"docs/simulation-config.md has no `variants.<機種>.{key}`")
-        for key in keys_of(mappings["variable"]):
-            self.assertIn(key, words, f"docs/simulation-config.md does not name the key {key} of a variable mapping")
+        for path in config_pages:
+            doc = path.relative_to(ROOT).as_posix()
+            spans = code_spans(path)
+            words = {word for span in spans for word in re.findall(r"[A-Za-z_]+", span)}
+            for key in keys_of(mappings["top"]):
+                self.assertIn(key, spans, f"{doc} has no `{key}` (the table of the keys)")
+            for key in keys_of(mappings["network"]):
+                self.assertIn(f"networks[].{key}", spans, f"{doc}: the table of the keys")
+            for key in keys_of(mappings["participant"]):
+                self.assertIn(f"participants[].{key}", spans, f"{doc}: the table of the keys")
+            for key in keys_of(mappings["variant participant"]):
+                self.assertIn(f"…<participant>.{key}", spans, f"{doc}: the table of the variants")
+            for key in keys_of(mappings["variant"]):
+                self.assertTrue(any(s.startswith("variants.<") and s.endswith(f".{key}") or
+                                    s.startswith("variants.<") and f".{key}." in s for s in spans),
+                                f"{doc} has no `variants.<variant>.{key}` (the table of the variants)")
+            for key in keys_of(mappings["variable"]):
+                self.assertIn(key, words, f"{doc} does not name the key {key} of a variable mapping")
 
-        spans = code_spans("scenario.md")
-        words = {word for span in spans for word in re.findall(r"[A-Za-z_]+", span)}
-        for where, mapping in scenario_mappings().items():
-            for key in keys_of(mapping):
-                if where in ("top", "step"):
-                    self.assertTrue(any(s == key or s.startswith(key + ":") for s in spans),
-                                    f"docs/scenario.md has no `{key}` (the tables of ファイルの形式)")
-                else:
-                    self.assertIn(key, words, f"docs/scenario.md does not name the key {key} ({where})")
+        for path in scenario_pages:
+            doc = path.relative_to(ROOT).as_posix()
+            spans = code_spans(path)
+            words = {word for span in spans for word in re.findall(r"[A-Za-z_]+", span)}
+            for where, mapping in scenario_mappings().items():
+                for key in keys_of(mapping):
+                    if where in ("top", "step"):
+                        self.assertTrue(any(s == key or s.startswith(key + ":") for s in spans),
+                                        f"{doc} has no `{key}` (the tables of the file format)")
+                    else:
+                        self.assertIn(key, words, f"{doc} does not name the key {key} ({where})")
 
     def test_the_copies_of_the_template_are_the_schemas(self):
         for copy_path, source in TEMPLATE_COPIES.items():
