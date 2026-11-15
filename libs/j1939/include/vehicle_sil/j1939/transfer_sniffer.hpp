@@ -128,6 +128,10 @@ enum class SniffSecondAnnouncement : std::uint8_t
     ///   acknowledged it, and the announced transfer starts.
     /// - the receiver acknowledges or aborts the running transfer: the announced transfer
     ///   starts when that one ends, unless the announcement is older than timeout + grace then.
+    /// - the running transfer times out: the announced transfer starts, as an announcement
+    ///   without a running transfer does (the receiver may have ended the running one without
+    ///   a frame long ago). If nobody answers it, it is reported as TimedOut in its turn.
+    /// A transfer started this way counts its time from its announcement.
     KeepRunning,
     /// The new announcement replaces the running transfer (which ends as Replaced).
     Replace,
@@ -263,7 +267,7 @@ private:
     [[nodiscard]] bool expired(const Session& session, SimTime time) const noexcept;
     void time_out(Session& session);
     [[nodiscard]] static Announcement announcement(const SniffFrame& frame) noexcept;
-    void start(const Announcement& announcement, bool broadcast);
+    Session* start(const Announcement& announcement, bool broadcast); ///< nullptr: no free place
     void end(Session& session, SniffEnd how, SimTime time, std::uint8_t reason = 0);
     void report(const Session& session, SniffEnd how, SimTime time, std::uint8_t reason);
     void pass_on_what_the_handler_threw();

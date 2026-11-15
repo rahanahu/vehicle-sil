@@ -564,6 +564,49 @@ TEST_CASE(sniffer_follows_the_next_transfer_when_the_senders_address_changes_han
     }
 }
 
+TEST_CASE(sniffer_follows_the_new_owners_transfer_announced_just_before_the_old_one_times_out)
+{
+    // As above, but the new owner announces shortly before the sniffer gives the old transfer
+    // up, and the receiver's clear-to-send comes shortly after. The receiver ended the old
+    // transfer long ago and takes the announcement; the sniffer must not lose that message.
+    const std::uint64_t first = 0x8000'0000'FE00'0001u;
+    const Bytes message = payload(14, 100);
+    Rig rig(10);
+    std::vector<std::pair<int, J1939Frame>> script;
+    script.emplace_back(0, address_claimed(kA, first));
+    script.emplace_back(20, rts(kA, kB, 30, kPgn));
+    add(script, 45, dts(kA, kB, payload(30), 1, 2)); // the last frame of the old transfer
+    script.emplace_back(60, address_claimed(kA, first - 1));
+    script.emplace_back(1540, rts(kA, kB, 14, kOther)); // 1495 ms later; answered at 1550 ms
+    add(script, 1560, dts(kA, kB, message, 1, 2));
+    play(rig, script, 5000);
+
+    std::erase_if(rig.receiver.messages, [](const Seen& m) { return m.pgn == kPgnAddressClaim; });
+    CHECK_EQ(rig.receiver.messages.size(), 1u);
+    CHECK(rig.receiver.messages[0].data == message);
+    CHECK_EQ(rig.receiver.ends.size(), 2u);
+    CHECK(rig.receiver.ends[0].result == TransferResult::Cancelled);
+    CHECK(rig.receiver.ends[1].result == TransferResult::Completed);
+
+    for (const SimDuration step : {1ms, 10ms, 100ms})
+    {
+        Listener listener;
+        listener.replay(rig.trace, at(5s), step);
+        CHECK(listener.messages == rig.receiver.messages);
+        CHECK_EQ(listener.ends.size(), 2u);
+        CHECK(listener.ends[0].end == SniffEnd::TimedOut);
+        CHECK_EQ(listener.ends[0].pgn, kPgn);
+        CHECK(listener.ends[0].time == at(45ms + 1250ms));
+        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK_EQ(listener.ends[1].pgn, kOther);
+        CHECK(listener.ends[1].time == rig.receiver.ends[1].time);
+        CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_control, 0u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_data, 0u);
+        CHECK_EQ(listener.sniffer.active(), 0u);
+    }
+}
+
 TEST_CASE(sniffer_follows_an_announcement_between_the_last_packet_and_the_acknowledgement)
 {
     // The sender announces another group right after its last packet. The receiver has the
