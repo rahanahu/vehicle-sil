@@ -37,8 +37,10 @@ namespace vehicle_sil::control::wire {
 ///   revision or an older one, every size has to be exactly what the reader reads, and bytes left
 ///   over are ErrorCode::Malformed.
 /// - What a reader must not skip (a new enumerator, a field whose meaning changes) is
-///   ErrorCode::Malformed for it: the writer looks at the revision of the other side (the hub at
-///   the header of the hello, the agent at the header of a probe for it) and does not send it.
+///   ErrorCode::Malformed for it, so a writer must not send it to an older side. The revision of
+///   the other side arrives in the header (the agent's in its hello, the hub's in a probe:
+///   Header::revision), but nothing reads it yet: whoever raises kRevision and adds such a thing
+///   makes the transport keep that revision and look at it before sending.
 /// - A new kind that the other side may ignore changes neither the version nor the revision.
 ///
 /// Version 1 (vehicle-sil 0.1.0) had no sizes and no revision; it is not read any more.
