@@ -967,6 +967,7 @@ The comments at the top of the files are not in the guide's blocks. The line num
 | `simulation.yaml` | The engine and this ECU (`check` reports `unknown-network`) |
 | `simulation.two-buses.yaml` | `VehicleCAN` added to `networks` |
 | `simulation.fixed.yaml` | The dashboard ECU replaced with the one of `examples/ecu_main` |
+| `simulation.network-names.yaml` | `simulation.yaml` with `network_names` on the dashboard ECU |
 | `scenarios/engine_speed.yaml` | Scenario |
 
 - Build: with `VEHICLE_SIL_BUILD_EXAMPLES`, the executable and the YAML files go to `build/<preset>/examples/integrate_ecus/`. The engine and the rebuilt dashboard ECU are used from the neighboring `examples/ecu_main/` through relative paths.
@@ -976,7 +977,7 @@ What `launch_docs.integrate_ecus` (`tests/launch/integrate_ecus.cmake`) compares
 
 - The files with the guide's blocks
 - The keys of the `--describe` and `check --json` excerpts
-- `check` of the 3 configuration files, `--disable Dashboard`
+- `check` of the 4 configuration files, `--disable Dashboard`
 - The result of `run` and the output of the dashboard ECU
 - `run` with a scenario
 
@@ -1829,7 +1830,7 @@ Rules:
 - Keep no queue for `traffic`: no state that overflows while nobody takes anything out.
 - The counts are the values of "the last step that started before the end time", so that the output does not depend on whether later samples arrived.
 - Find the counters by the names that the Agent reported (`PeerInfo::sources`), and do not count those that a map applies to.
-- Do not state the line as ratios (a participant that only receives is normal). `delivered` is `false` only when the counts alone settle it.
+- Do not state the line as ratios (a participant that only receives is normal). `delivered` is `false` only when the counts alone settle it: every participant of the run that may be on the network is counted, so an unplaced participant (`RunTraffic::unplaced`: the launcher knows none of its networks) makes it `null`, and the line then gives numbers, not `nothing sent`.
 - Do not change the samples passed to the scenario (everything that the tap received after the scenario started, from the Agents of that moment; no limit; `RunSamples::scenario_begins()`).
 
 Tests:
@@ -2102,7 +2103,7 @@ Like `control-server`, `scenario-control` is printed only by builds that have it
 Rules:
 
 - Calls are rejected in one place, before the body of the RPC.
-- Do not add a path from client calls that operates the run's tap (`RunSamples`), writes or guard.
+- Do not add a path by which a client call operates the run's tap (`RunSamples`), the writes or the guard.
 - Do not add anything that waits to the Hub's subscriptions or tap.
 
 Tests:

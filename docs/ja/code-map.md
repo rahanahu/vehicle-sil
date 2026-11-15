@@ -967,6 +967,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `simulation.yaml` | エンジンとこの ECU（`check` が `unknown-network` を報告する） |
 | `simulation.two-buses.yaml` | `networks` に `VehicleCAN` を追加したもの |
 | `simulation.fixed.yaml` | 表示の ECU を、`examples/ecu_main` のものに差し替えたもの |
+| `simulation.network-names.yaml` | `simulation.yaml` の表示の ECU に `network_names` を足したもの |
 | `scenarios/engine_speed.yaml` | シナリオ |
 
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと、作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います。
@@ -976,7 +977,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 - ファイルとガイドのブロック
 - `--describe` と `check --json` の抜粋のキー
-- 3 つの設定ファイルの `check`、`--disable Dashboard`
+- 4 つの設定ファイルの `check`、`--disable Dashboard`
 - `run` の結果と、表示の ECU の出力
 - シナリオつきの `run`
 
@@ -1829,7 +1830,7 @@ flowchart TD
 - `traffic` のために列を持ちません（誰も取り出さない間にあふれる状態を作らない）。
 - 数は「終わりの時刻より前に始まった最後のステップ」の値で、それ以後のサンプルが届いたかどうかで出力が変わらないようにします。
 - 数の出力は、Agent が申告した名前（`PeerInfo::sources`）で探し、対応が当たっているものは数えません。
-- 行は割合で言いません（受けるだけの participant がいるのは正常なので）。`delivered` の `false` は、数だけで言い切れるときだけです。
+- 行は割合で言いません（受けるだけの participant がいるのは正常なので）。`delivered` の `false` は、数だけで言い切れるときだけです。そのネットワークにいるかもしれない participant を全員数えている必要があるので、居場所のわからない participant（`RunTraffic::unplaced`。ランチャーがどのネットワークにいるかを 1 つも知らないもの）がいれば `null` にし、行も `nothing sent` と言わずに数で言います。
 - シナリオに渡すサンプルを変えません（シナリオが始まった後に tap が受け取った、始まったときの Agent のものを全部。上限なし。`RunSamples::scenario_begins()`）。
 
 テスト:

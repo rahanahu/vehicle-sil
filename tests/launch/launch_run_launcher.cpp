@@ -5496,6 +5496,7 @@ void traffic(const Options& o)
     for (int again = 0; again < 3; ++again)
     {
         const Captured next = launch(o, {"run", "simulation.yaml"}, example);
+        expect_code(next, 0, "run simulation.yaml again");
         expect_text(next.standard_output, first.standard_output, "the output of the example, run again");
     }
     const auto with_names = [](const std::string& more_networks, const std::string& engine, const std::string& dashboard) {
@@ -5544,7 +5545,9 @@ void traffic(const Options& o)
 
     // What a machine reads: delivered where the listener heard, not where the buses are apart.
     const auto delivered = [&](const char* file) {
-        const std::string out = launch(o, {"run", file, "--json"}, example).standard_output;
+        const Captured run = launch(o, {"run", file, "--json"}, example);
+        expect_code(run, 0, std::string("run ") + file + " --json");
+        const std::string& out = run.standard_output;
         std::string all;
         for (auto at = out.find("        \"delivered\": "); at != std::string::npos; at = out.find("        \"delivered\": ", at + 1))
         {
@@ -5562,9 +5565,11 @@ void traffic(const Options& o)
     const Captured none = launch(o, {"run", "sim.yaml"}, alone);
     expect_code(none, 0, "run without a network");
     expect_text(traffic_part(none.standard_output), "traffic: no network in use\n", "the traffic without a network");
-    require(contains(launch(o, {"run", "sim.yaml", "--json"}, alone).standard_output,
-                     "  \"traffic\": {\n    \"before_ms\": 100,\n    \"networks\": []\n  },\n"),
-            "the JSON's traffic without a network");
+    const Captured none_json = launch(o, {"run", "sim.yaml", "--json"}, alone);
+    expect_code(none_json, 0, "run without a network --json");
+    require(contains(none_json.standard_output,
+                     "  \"traffic\": {\n    \"before_ms\": 100,\n    \"unplaced\": [],\n    \"networks\": []\n  },\n"),
+            "the JSON's traffic without a network:\n" + none_json.standard_output);
 
     // ECUs that declare no variable (the launcher does not wait for the hello of such a one), one
     // that uses the bus in another way, one without --describe whose counters the file maps, one
@@ -5607,10 +5612,13 @@ void traffic(const Options& o)
                 "the traffic of ECUs that are counted and not counted");
     for (int again = 0; again < 3; ++again)
     {
-        expect_text(launch(o, {"run", "sim.yaml"}, mixed).standard_output, mix.standard_output,
-                    "the output with ECUs that declare no variable, run again");
+        const Captured next = launch(o, {"run", "sim.yaml"}, mixed);
+        expect_code(next, 0, "run with ECUs that are counted and not counted, again");
+        expect_text(next.standard_output, mix.standard_output, "the output with ECUs that declare no variable, run again");
     }
-    const std::string json = launch(o, {"run", "sim.yaml", "--json"}, mixed).standard_output;
+    const Captured mix_json = launch(o, {"run", "sim.yaml", "--json"}, mixed);
+    expect_code(mix_json, 0, "run with ECUs that are counted and not counted --json");
+    const std::string& json = mix_json.standard_output;
     const auto from = json.find("  \"traffic\": {\n");
     const auto to = json.find("  \"findings\": [");
     require(from != std::string::npos && to != std::string::npos && from < to, "the JSON has no traffic before the findings:\n" + json);
@@ -5624,6 +5632,7 @@ void traffic(const Options& o)
     expect_text(json.substr(from, to - from),
                 "  \"traffic\": {\n"
                 "    \"before_ms\": 200,\n"
+                "    \"unplaced\": [],\n"
                 "    \"networks\": [\n"
                 "      {\n"
                 "        \"name\": \"BUS\",\n"
@@ -5664,8 +5673,39 @@ void traffic(const Options& o)
                 "traffic: BUS: not counted (no participant known to be on it) (steps before 100 ms)\n"
                 "\n"
                 "network  participant  sent  received\n"
-                "BUS      -               -         -  no participant known to be on it\n",
+                "BUS      -               -         -  no participant known to be on it\n"
+                "-        Door            -         -  unplaced: its networks are not known\n"
+                "-        Tool            -         -  unplaced: its networks are not known\n",
                 "the traffic of a network with participants the launcher knows nothing of");
+
+    // A sender that nobody counted heard, and a bridge that the launcher knows on no network (no
+    // --describe, no control agent) and that hears the bus as raw CAN: the frames may have
+    // arrived, so the result does not say they did not. Without the bridge, it does.
+    write_file(mixed / "Bridge.behaviour", "hear BUS\n");
+    write_file(mixed / "bridged.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks:\n  - { name: BUS, kind: can }\n"
+                                       "participants:\n  - name: A\n    command: [" + ecu(o) + "]\n"
+                                       "  - name: Bridge\n    command: [" + ecu(o) +
+                                       ", --registry-uri, \"{registry_uri}\", --name, \"{name}\", --no-control]\n"
+                                       "    describe: false\n");
+    const Captured bridged = launch(o, {"run", "bridged.yaml"}, mixed);
+    expect_code(bridged, 0, "run with a bridge");
+    expect_text(traffic_part(bridged.standard_output),
+                "traffic: BUS: 1 participant sent, 0 received (1 counted, 1 unplaced) (steps before 200 ms)\n"
+                "\n"
+                "network  participant  sent  received\n"
+                "BUS      A              19         0\n"
+                "-        Bridge          -         -  unplaced: its networks are not known\n",
+                "the traffic with a bridge the launcher knows on no network");
+    const Captured bridged_json = launch(o, {"run", "bridged.yaml", "--json"}, mixed);
+    expect_code(bridged_json, 0, "run with a bridge --json");
+    require(contains(bridged_json.standard_output, "    \"unplaced\": [\n      \"Bridge\"\n    ],\n") &&
+                contains(bridged_json.standard_output, "        \"delivered\": null,\n"),
+            "the JSON's traffic with a bridge:\n" + bridged_json.standard_output);
+    const Captured alone_json = launch(o, {"run", "bridged.yaml", "--json", "--disable", "Bridge"}, mixed);
+    expect_code(alone_json, 0, "run without the bridge --json");
+    require(contains(alone_json.standard_output, "    \"unplaced\": [],\n") &&
+                contains(alone_json.standard_output, "        \"delivered\": false,\n"),
+            "the JSON's traffic without the bridge:\n" + alone_json.standard_output);
 
     // A run that did not start has none.
     const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"

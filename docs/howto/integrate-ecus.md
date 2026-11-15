@@ -221,7 +221,7 @@ The `error` line names 2 fixes, because it cannot know which bus `VehicleCAN` is
 
 The second fix makes `check` pass, but the 2 ECUs end up on separate buses and do not communicate (see "[If you add the name to `networks`](#if-you-add-the-name-to-networks)" below).
 
-This guide takes the agreed name instead of a mapping: in step 4, the author of the dashboard ECU changes the name in the code. With the mapping instead, `check` passes with the current executable, the participant table shows `J1939_CAN <- VehicleCAN (j1939 0x28)` for `Dashboard`, and you can skip step 4.
+This guide takes the agreed name instead of a mapping: in step 4, the author of the dashboard ECU changes the name in the code. With the mapping instead, `check` passes with the current executable, the participant table shows `J1939_CAN <- VehicleCAN (j1939 0x28)` for `Dashboard`, and you can skip step 4 (see "[If the ECU cannot be rebuilt](#if-the-ecu-cannot-be-rebuilt)" below).
 
 ### If you add the name to `networks`
 
@@ -278,6 +278,40 @@ Look up each finding by the code at the end of its line. The table lists the com
 | `[describe-failed]`, `[describe-output]`, `[describe-timeout]` | The ECU does not respond correctly to `--describe`. | Go to step 4. For a tool not built with `ecu_main()`, write `describe: false`. |
 | `[describe-version]`, `[describe-unknown-value]` | The ECU and `vehicle_sil_launch` use different vehicle-sil versions. | Update whichever one the finding names as older. |
 | `[version-mismatch]`, `[control-link-version]` | The ECU was built with a different vehicle-sil version from `vehicle_sil_launch`. | Ask the ECU author to rebuild the ECU with the same vehicle-sil version. |
+
+### If the ECU cannot be rebuilt
+
+If the author cannot rebuild the dashboard ECU in time, map its name in the configuration file instead of step 4. `simulation.network-names.yaml` is `simulation.yaml` with one line added to the participant `Dashboard`. In `network_names`, the key is the simulation's name and the value is the executable's name:
+
+<!-- examples/integrate_ecus/simulation.network-names.yaml: the participant Dashboard -->
+```yaml
+  - name: Dashboard
+    command: [dashboard_v1/vehicle_sil_dashboard_v1_ecu]
+    step_ms: 5
+    network_names: { J1939_CAN: VehicleCAN }
+```
+
+```sh
+vehicle_sil_launch check simulation.network-names.yaml
+```
+
+The check passes with the executable as first handed over, and both ECUs are on `J1939_CAN`. `J1939_CAN <- VehicleCAN` in the participant table shows the mapping. The exit code is 0.
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.network-names.yaml -->
+```text
+simulation.network-names.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN <- VehicleCAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+Every configuration file that uses this executable needs the same line. When an ECU rebuilt under the agreed name arrives, replace the executable and remove the line.
 
 ## Step 4: Ask ECU authors to fix what the configuration cannot
 

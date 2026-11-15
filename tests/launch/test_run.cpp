@@ -830,6 +830,7 @@ TEST_CASE(the_json_report)
                "  ],\n"
                "  \"traffic\": {\n"
                "    \"before_ms\": 1000,\n"
+               "    \"unplaced\": [],\n"
                "    \"networks\": [\n"
                "      {\n"
                "        \"name\": \"J1939_CAN\",\n"
@@ -907,8 +908,8 @@ TEST_CASE(the_json_report)
     CHECK(format_run_json(report_of(passed_run())).find("  ],\n  \"traffic\": null,\n  \"findings\": [") != std::string::npos);
     RunOutcome quiet = passed_run();
     quiet.traffic = RunTraffic{990, {}};
-    CHECK(format_run_json(report_of(quiet)).find("  \"traffic\": {\n    \"before_ms\": 990,\n    \"networks\": []\n  },\n") !=
-          std::string::npos);
+    CHECK(format_run_json(report_of(quiet)).find("  \"traffic\": {\n    \"before_ms\": 990,\n    \"unplaced\": [],\n"
+                                                "    \"networks\": []\n  },\n") != std::string::npos);
     check_text(std::string(traffic_not_counted_name(TrafficNotCounted::None)) + "," +
                    traffic_not_counted_name(TrafficNotCounted::NoControlLink) + "," +
                    traffic_not_counted_name(TrafficNotCounted::Restarted) + "," +
@@ -932,6 +933,10 @@ TEST_CASE(the_json_report)
           std::string::npos);
     CHECK(networks.find("        \"name\": \"C\",\n        \"kind\": \"lin\",\n        \"counted\": 0,\n        \"senders\": 0,\n"
                         "        \"receivers\": 0,\n        \"delivered\": null,\n        \"participants\": []\n") != std::string::npos);
+    // The participants of the run that the launcher knows on no network, by name.
+    heard.traffic->unplaced = {"Bridge", "Tool"};
+    CHECK(format_run_json(report_of(heard)).find("    \"before_ms\": 1000,\n    \"unplaced\": [\n      \"Bridge\",\n"
+                                                 "      \"Tool\"\n    ],\n    \"networks\": [\n") != std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));
     CHECK(late.find("  \"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 10,\n    \"ecu_step_ms\": 10,\n"

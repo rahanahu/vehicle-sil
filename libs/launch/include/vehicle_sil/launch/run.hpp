@@ -220,16 +220,21 @@ struct TrafficNetwork
     std::string name;
     std::string kind; ///< "can", "lin", "ethernet"
     std::vector<TrafficParticipant> participants{}; ///< in the order of the configuration; may be empty
-    /// How many of them were counted, and how many of those had sent and had received a frame.
+    /// How many participants of the run may be on it without the launcher knowing
+    /// (RunTraffic::unplaced).
+    std::size_t unplaced = 0;
+    /// How many of `participants` were counted, and how many of those had sent and had received a frame.
     [[nodiscard]] std::size_t counted() const;
     [[nodiscard]] std::size_t senders() const;
     [[nodiscard]] std::size_t receivers() const;
     /// Whether what was sent arrived, as far as the counters say. true: a counted participant
     /// sent, and another counted participant received (a participant's own frames are not in its
-    /// frames_received). false: a counted participant sent, every participant known to be on the
-    /// network is counted, and none but the sender itself received. Empty (cannot be said):
-    /// nobody is counted, nobody sent, or nobody else that is counted received while a
-    /// participant on the network is not counted (it may have).
+    /// frames_received). false: a counted participant sent, no counted participant received,
+    /// every participant known to be on the network is counted, and no participant of the run is
+    /// unplaced. Empty (cannot be said): nobody is counted, nobody sent, the one sender is the
+    /// one receiver (it heard someone the launcher does not count), or no counted participant
+    /// received while one on the network is not counted or one of the run is unplaced (it may
+    /// have).
     [[nodiscard]] std::optional<bool> delivered() const;
 };
 
@@ -244,6 +249,10 @@ struct RunTraffic
 {
     std::int64_t before_ms = 0; ///< the run's end (RunTiming::sim_ms)
     std::vector<TrafficNetwork> per_network{}; ///< in the order of the configuration
+    /// The participants of the run whose networks the launcher does not know (`describe: false`,
+    /// and no control agent with J1939 counters for a network of the configuration: a bridge, a
+    /// tool), in the order of the configuration. Any of them may be on any network.
+    std::vector<std::string> unplaced{};
 };
 
 /// What a run saw.

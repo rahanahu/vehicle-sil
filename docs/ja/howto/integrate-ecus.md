@@ -221,7 +221,7 @@ failed: 1 error, 1 warning, 0 notes
 
 2 つ目の直し方では `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。
 
-このガイドでは、対応を書かずに、決めた名前にそろえます。手順 4 で、表示の ECU を作った人がコードの名前を変えます。対応を書く場合は、いまの実行ファイルのまま `check` が通り、participant の表の `Dashboard` の行は `J1939_CAN <- VehicleCAN (j1939 0x28)` になります。手順 4 は要りません。
+このガイドでは、対応を書かずに、決めた名前にそろえます。手順 4 で、表示の ECU を作った人がコードの名前を変えます。対応を書く場合は、いまの実行ファイルのまま `check` が通り、participant の表の `Dashboard` の行は `J1939_CAN <- VehicleCAN (j1939 0x28)` になります。手順 4 は要りません（下の「[ビルドし直せないとき](#ビルドし直せないとき)」）。
 
 ### `networks` に名前を追加した場合
 
@@ -278,6 +278,40 @@ passed: 0 errors, 2 warnings, 0 notes
 | `[describe-failed]`、`[describe-output]`、`[describe-timeout]` | ECU が `--describe` に正しく応答しません。 | 手順 4 です。`ecu_main()` で作っていないツールなら、`describe: false` を書きます。 |
 | `[describe-version]`、`[describe-unknown-value]` | ECU と `vehicle_sil_launch` で、vehicle-sil のバージョンが違います。 | 指摘の文にある古いほうを、新しくします。 |
 | `[version-mismatch]`、`[control-link-version]` | ECU をビルドした vehicle-sil のバージョンが、`vehicle_sil_launch` と違います。 | 同じバージョンの vehicle-sil で、ECU をビルドし直してもらいます。 |
+
+### ビルドし直せないとき
+
+表示の ECU を作った人が間に合うようにビルドし直せないときは、手順 4 の代わりに、設定ファイルで名前を対応させます。`simulation.network-names.yaml` は、`simulation.yaml` の participant `Dashboard` に 1 行を足したものです。`network_names` のキーはシミュレーションでの名前、値は実行ファイルの名前です。
+
+<!-- examples/integrate_ecus/simulation.network-names.yaml: the participant Dashboard -->
+```yaml
+  - name: Dashboard
+    command: [dashboard_v1/vehicle_sil_dashboard_v1_ecu]
+    step_ms: 5
+    network_names: { J1939_CAN: VehicleCAN }
+```
+
+```sh
+vehicle_sil_launch check simulation.network-names.yaml
+```
+
+最初に受け取った実行ファイルのまま照合が通り、2 つの ECU は `J1939_CAN` に乗ります。participant の表の `J1939_CAN <- VehicleCAN` が対応を示します。終了コードは 0 です。
+
+<!-- integrate ECUs: vehicle_sil_launch check simulation.network-names.yaml -->
+```text
+simulation.network-names.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN <- VehicleCAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+passed: 0 errors, 0 warnings, 0 notes
+```
+
+この実行ファイルを使う設定ファイルには、どれにも同じ行が要ります。決めた名前でビルドし直した ECU が届いたら、実行ファイルを差し替えて、この行を消します。
 
 ## 手順 4: 設定ファイルでは直せない不整合を依頼する
 
