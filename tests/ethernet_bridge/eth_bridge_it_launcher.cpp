@@ -4,8 +4,8 @@
 // with fake links (fake_link_factory.cpp: --interface fake0 is a wire with a device that answers):
 //   echo-roundtrip     registry + bridge + SIL Kit peer (eth_bridge_it_peer --mode ask). The peer
 //                      checks every answer; the launcher checks the bridge's start line and its
-//                      statistics (forwarded counts, the one frame of another EtherType filtered,
-//                      no problem counted, no warning).
+//                      statistics (forwarded counts, every answer counted as from a device, the
+//                      one frame of another EtherType filtered, no problem counted, no warning).
 //   list-interfaces    --list-interfaces prints the factory's list: exit 0.
 //   list-interfaces-json  --list-interfaces --json of the real executable on Linux (packet without
 //                      --backend; lo is not usable), of a backend of another OS (exit 3 with the
@@ -33,6 +33,15 @@
 // pcap library in place of the installed one (--pcap-bridge; tests/eth_link/fake_pcap), with
 // --backend npcap on Windows and --backend pcap on Linux:
 //   pcap-roundtrip     as echo-roundtrip, through the fake library's device that answers.
+//   pcap-own-address   as pcap-roundtrip on fake-self, where the answers come from the adapter's own
+//                      address (this computer, not a device): forwarded, but ext_from_devices stays
+//                      0. Linux only: the pcap link reads its own address from libpcap's list there;
+//                      on Windows it asks the OS, which does not know the fake adapter (skipped).
+//   pcap-nothing       fake1, where nothing answers, with --stats-every-ms 100 and the peer in
+//                      --mode send: the bridge prints its statistics line while it runs, a line only
+//                      where it changed, and the one with every frame sent out has
+//                      ext_from_devices=0. The lines while running are the only ones checked, so
+//                      that the bridge can be ended as on Windows (no stop request).
 //   pcap-list          --list-interfaces prints the library's devices: exit 0.
 //   pcap-list-json     --list-interfaces --json without --backend: the default is the pcap
 //                      backend, stdout is one JSON object with the library's devices: exit 0.
@@ -117,7 +126,7 @@ const char* const kNetwork = "ETH_IT";
 const char* const kParticipant = "EthernetBridge";
 
 /// Every key of the statistics line, in its order.
-const char* const kStatisticsKeys[] = {"silkit_to_ext", "ext_to_silkit", "own_tx_dropped", "loop_suspected", "mac_unguarded",
+const char* const kStatisticsKeys[] = {"silkit_to_ext", "ext_to_silkit", "ext_from_devices", "own_tx_dropped", "loop_suspected", "mac_unguarded",
                                        "filtered_to_ext", "filtered_from_ext", "oversize", "malformed", "ext_overruns",
                                        "ext_queue_full", "ext_tx_failures", "silkit_tx_failures",
                                        "ext_checksum_incomplete"};
@@ -208,8 +217,12 @@ void use_fake_pcap(const Options& options, const std::string& name)
 #endif
 }
 
-/// `bridge` with `backend` on the device 'fake0', which answers; `link`: how the start line names it.
-int run_echo(const Options& options, const fs::path& bridgeExecutable, const std::string& backend, const std::string& link)
+/// `bridge` with `backend` on the device `interface_name`, which answers; `link`: how the start line
+/// names it. `answerer`: the address the answers come from; `fromDevice`: whether that is a device
+/// (false: the adapter's own address, this computer).
+int run_echo(const Options& options, const fs::path& bridgeExecutable, const std::string& backend, const std::string& link,
+             const std::string& interface_name = "fake0", const std::string& answerer = "02:00:00:00:00:02",
+             bool fromDevice = true)
 {
     RegistryProcess registry(options.registry, options.workDir);
     log("registry listening on " + registry.uri());
@@ -217,10 +230,11 @@ int run_echo(const Options& options, const fs::path& bridgeExecutable, const std
     const fs::path bridgeLog = options.workDir / "bridge.log";
     const fs::path peerLog = options.workDir / "peer.log";
     const auto deadline = std::chrono::steady_clock::now() + options.timeout;
-    ChildProcess bridge(bridgeExecutable, bridge_args(registry.uri(), "fake0", {"--ethertype", "0x88b5"}, backend), bridgeLog);
+    ChildProcess bridge(bridgeExecutable, bridge_args(registry.uri(), interface_name, {"--ethertype", "0x88b5"}, backend), bridgeLog);
     ChildProcess peer(options.peer,
                       {"--registry-uri", registry.uri(), "--network", kNetwork, "--bridge", kParticipant, "--mode", "ask",
-                       "--timeout-ms", std::to_string(std::max<std::chrono::milliseconds>(options.timeout - 15s, 5s).count())},
+                       "--device-mac", answerer, "--timeout-ms",
+                       std::to_string(std::max<std::chrono::milliseconds>(options.timeout - 15s, 5s).count())},
                       peerLog);
 
     const auto peerCode = wait_or_kill(peer, deadline);
@@ -236,6 +250,7 @@ int run_echo(const Options& options, const fs::path& bridgeExecutable, const std
     ok = expect(bridgeText.find(startLine) != std::string::npos, "bridge printed '" + startLine + "'") && ok;
     ok = expect(bridgeText.find("warning:") == std::string::npos, "bridge printed no warning") && ok;
 #ifdef _WIN32
+    (void)fromDevice;
     log("bridge statistics not checked on Windows (the launcher cannot stop it gracefully)");
 #else
     ok = expect(bridgeCode == 0, "bridge exit code " + exit_code_text(bridgeCode) + ", expected 0") && ok;
@@ -243,12 +258,21 @@ int run_echo(const Options& options, const fs::path& bridgeExecutable, const std
     ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
     ok = expect(sent && stat(bridgeText, "silkit_to_ext") == sent, "bridge silkit_to_ext == sent") && ok;
     ok = expect(sent && stat(bridgeText, "ext_to_silkit") == sent, "bridge ext_to_silkit == sent (one answer per frame)") && ok;
+    if (fromDevice)
+    {
+        ok = expect(sent && stat(bridgeText, "ext_from_devices") == sent, "bridge ext_from_devices == sent (every answer from the device)") && ok;
+    }
+    else
+    {
+        ok = expect(stat(bridgeText, "ext_from_devices") == std::optional<unsigned long long>(0),
+                    "bridge ext_from_devices == 0 (every answer from the adapter's own address)") && ok;
+    }
     ok = expect(stat(bridgeText, "filtered_to_ext") == std::optional<unsigned long long>(1),
                 "bridge filtered_to_ext == 1 (the frame of another EtherType)") && ok;
     for (const char* key : kStatisticsKeys)
     {
         const std::string name = key;
-        if (name != "silkit_to_ext" && name != "ext_to_silkit" && name != "filtered_to_ext")
+        if (name != "silkit_to_ext" && name != "ext_to_silkit" && name != "ext_from_devices" && name != "filtered_to_ext")
         {
             ok = expect(stat(bridgeText, name) == std::optional<unsigned long long>(0), "bridge " + name + " == 0") && ok;
         }
@@ -483,6 +507,92 @@ int run_stop_request(const Options& options)
         dump_log(registry.log_file());
     }
     log("bridge output:\n" + text);
+    return ok ? 0 : 1;
+}
+
+/// The statistics lines a bridge printed while it ran (before "stopping"), without the tag.
+std::vector<std::string> running_statistics(const std::string& raw)
+{
+    std::string text = raw;
+    std::erase(text, '\r');
+    std::vector<std::string> lines;
+    std::size_t at = 0;
+    while (at < text.size())
+    {
+        const auto end = std::min(text.find('\n', at), text.size());
+        const std::string line = text.substr(at, end - at);
+        at = end + 1;
+        if (line == "[eth-bridge] stopping")
+        {
+            break;
+        }
+        if (line.starts_with("[eth-bridge] stats "))
+        {
+            lines.push_back(line.substr(std::string("[eth-bridge] ").size()));
+        }
+    }
+    return lines;
+}
+
+int run_pcap_nothing(const Options& options)
+{
+    use_fake_pcap(options, "vehicle_sil_fake_pcap");
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    StoppableBridge bridge(options.pcapBridge,
+                           bridge_args(registry.uri(), "fake1", {"--ethertype", "0x88b5", "--stats-every-ms", "100"}, kPcapBackend));
+    const fs::path peerLog = options.workDir / "peer.log";
+    ChildProcess peer(options.peer,
+                      {"--registry-uri", registry.uri(), "--network", kNetwork, "--bridge", kParticipant, "--mode", "send",
+                       "--timeout-ms", std::to_string(std::max<std::chrono::milliseconds>(options.timeout - 15s, 5s).count())},
+                      peerLog);
+    const auto peerCode = wait_or_kill(peer, deadline);
+    const auto sent = stat(read_text(peerLog), "sent");
+    // The line that has every frame the peer sent going out: the bridge prints it once the count
+    // changed, at its next interval.
+    std::string complete;
+    while (sent && std::chrono::steady_clock::now() < deadline && !bridge.process().poll())
+    {
+        const auto lines = running_statistics(bridge.lines());
+        if (!lines.empty() && stat(lines.back(), "silkit_to_ext") == sent)
+        {
+            complete = lines.back();
+            break;
+        }
+        std::this_thread::sleep_for(20ms);
+    }
+    bridge.process().kill_tree();
+    const std::string text = bridge.all_lines();
+    const auto lines = running_statistics(text);
+
+    bool ok = expect(peerCode == 0, "peer exit code " + exit_code_text(peerCode) + ", expected 0 (no frame came back)");
+    ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
+    ok = expect(!complete.empty(), "bridge printed a statistics line with silkit_to_ext == sent while running") && ok;
+    ok = expect(stat(complete, "ext_from_devices") == std::optional<unsigned long long>(0), "that line has ext_from_devices=0") && ok;
+    ok = expect(stat(complete, "ext_to_silkit") == std::optional<unsigned long long>(0), "that line has ext_to_silkit=0") && ok;
+    bool changedEachTime = true;
+    for (std::size_t i = 1; i < lines.size(); ++i)
+    {
+        changedEachTime = changedEachTime && lines[i] != lines[i - 1];
+    }
+    ok = expect(changedEachTime, "bridge printed a statistics line while running only where it changed") && ok;
+    for (const auto& line : lines)
+    {
+        // Every key, in the documented order.
+        std::string keys = "stats";
+        for (const char* key : kStatisticsKeys)
+        {
+            keys += std::string(" ") + key + "=";
+        }
+        ok = expect(std::regex_replace(line, std::regex("=[0-9]+"), "=") == keys, "'" + line + "' has every key in order") && ok;
+    }
+    if (!ok)
+    {
+        dump_log(registry.log_file());
+    }
+    log("bridge output:\n" + text);
+    dump_log(peerLog);
     return ok ? 0 : 1;
 }
 
@@ -731,6 +841,21 @@ int main(int argc, char** argv)
         {
             use_fake_pcap(options, "vehicle_sil_fake_pcap");
             result = run_echo(options, options.pcapBridge, kPcapBackend, kPcapLink);
+        }
+        else if (options.scenario == "pcap-own-address")
+        {
+#ifdef __linux__
+            use_fake_pcap(options, "vehicle_sil_fake_pcap");
+            result = run_echo(options, options.pcapBridge, kPcapBackend, "pcap 'fake-self' (network interface through libpcap)",
+                              "fake-self", "02:00:00:00:00:f2", false);
+#else
+            throw Skip("the pcap link reads its own address from the list of devices on Linux only; on Windows it asks the OS, "
+                       "which does not know the fake adapter");
+#endif
+        }
+        else if (options.scenario == "pcap-nothing")
+        {
+            result = run_pcap_nothing(options);
         }
         else if (options.scenario == "pcap-list")
         {

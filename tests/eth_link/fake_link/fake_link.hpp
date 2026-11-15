@@ -72,6 +72,8 @@ public:
     void set_echo_own(bool echo);
     /// What promiscuous() says (nullopt, the default: the link has no such mode).
     void set_promiscuous(std::optional<bool> promiscuous) { promiscuous_.store(promiscuous ? (*promiscuous ? 1 : 0) : -1); }
+    /// What own_address() says (nullopt, the default: the link cannot tell).
+    void set_own_address(std::optional<eth_link::MacAddress> address) { own_address_.store(address); }
     /// transmit() throws std::runtime_error (a link that breaks its contract).
     void set_transmit_throws(bool throws);
     /// A frame that reaches this link only (a device in front of this interface alone).
@@ -108,6 +110,7 @@ public:
         const int now = promiscuous_.load();
         return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
     }
+    [[nodiscard]] std::optional<eth_link::MacAddress> own_address() const noexcept override { return own_address_.load(); }
 
 private:
     friend class FakeSegment;
@@ -144,6 +147,7 @@ private:
     eth_link::TransmitResult transmit_result_ = eth_link::TransmitResult::Ok;
     std::atomic<bool> echo_own_{false};
     std::atomic<int> promiscuous_{-1};
+    eth_link::AtomicMacAddress own_address_;
     bool transmit_throws_ = false;
     std::uint64_t overruns_at_stop_ = 0;
     int start_calls_ = 0;

@@ -79,6 +79,12 @@ std::optional<InterfaceState> interface_state(const std::string& name)
     if (::ioctl(control.get(), SIOCGIFHWADDR, &hardware) == 0)
     {
         state.link_type = hardware.ifr_hwaddr.sa_family;
+        if (state.link_type == ARPHRD_ETHER)
+        {
+            MacAddress address;
+            std::memcpy(address.bytes.data(), hardware.ifr_hwaddr.sa_data, address.bytes.size());
+            state.hardware_address = address;
+        }
     }
     return state;
 }
@@ -108,6 +114,11 @@ std::string executable_path()
 
 LinuxLink::LinuxLink(std::string name) : name_(std::move(name)) {}
 
+std::optional<MacAddress> LinuxLink::own_address() const noexcept
+{
+    return own_address_.load();
+}
+
 std::uint64_t LinuxLink::take_overruns(int) noexcept
 {
     return 0;
@@ -132,6 +143,8 @@ void LinuxLink::start(EventHandler handler)
         throw LinkError(LinkErrorKind::Other, "cannot start the link on '" + name_ + "' (eventfd): " + error_text(errno) + ".");
     }
     interface_index_ = ::if_nametoindex(name_.c_str());
+    const auto state = interface_state(name_);
+    own_address_.store(state ? state->hardware_address : std::nullopt);
     handler_ = std::move(handler);
     buffer_.assign(kReadBufferBytes, 0);
     reported_state_ = LinkState::Unknown;

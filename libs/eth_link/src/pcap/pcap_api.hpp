@@ -5,7 +5,7 @@
 // import library, and ships neither.
 //
 // The declarations below are vehicle-sil's own, written against the library's documented binary
-// interface (function names, argument types, the three structures the link reads, the numbers
+// interface (function names, argument types, the four structures the link reads, the numbers
 // of the results). They are checked against a real libpcap by the test ethernet_bridge.netns.pcap
 // on Linux, and against a fake library that is built from these same declarations everywhere
 // (tests/eth_link/fake_pcap). Against a real Npcap they are not checked by a test.
@@ -13,10 +13,14 @@
 
 #include "pcap_errors.hpp"
 
+#include "vehicle_sil/eth_link/mac_address.hpp"
+
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,8 +29,24 @@ namespace vehicle_sil::eth_link::detail {
 
 /// An open capture (the library's pcap_t). Only ever a pointer.
 struct PcapHandle;
-/// An address of a device in the library's list. Not read.
-struct PcapAddress;
+/// One address of a device in the library's list (the library's pcap_addr). The addresses are
+/// the OS's struct sockaddr, of the OS's families; the link reads only the one below.
+struct PcapAddress
+{
+    PcapAddress* next;
+    const void* address; ///< may be null
+    const void* netmask;
+    const void* broadcast;
+    const void* destination;
+};
+
+/// Linux: libpcap lists the link layer address of an interface as a struct sockaddr_ll, of the
+/// family AF_PACKET (17), with the length of the address in byte 11 and the address from byte 12
+/// on. pcap_loader_posix.cpp checks these numbers against the OS's own on Linux. Npcap lists no
+/// link layer addresses (the loader for Windows asks the OS for them: PcapConnectionName).
+inline constexpr unsigned kPcapPacketFamily = 17;
+inline constexpr std::size_t kPcapPacketAddressLengthAt = 11;
+inline constexpr std::size_t kPcapPacketAddressAt = 12;
 
 /// One entry of the library's device list (the library's pcap_if_t).
 struct PcapInterface
@@ -70,6 +90,7 @@ struct PcapStatistics
 #if defined(_WIN64) || (defined(__linux__) && defined(__x86_64__))
 static_assert(sizeof(PcapPacketHeader) == 2 * sizeof(long) + 8);
 static_assert(sizeof(PcapInterface) == 40);
+static_assert(sizeof(PcapAddress) == 40);
 #endif
 
 /// Room for the text a function writes on failure (the library asks for 256 bytes).
@@ -173,6 +194,8 @@ struct PcapConnectionName
 {
     std::string id;
     std::string name;
+    /// The adapter's MAC address, where it has one of 6 bytes.
+    std::optional<MacAddress> hardware_address{};
 };
 
 /// The loaded library. Unloaded with the last owner.

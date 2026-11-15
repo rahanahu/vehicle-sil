@@ -43,6 +43,13 @@ struct EthernetBridgeStatistics
 {
     std::uint64_t silkit_to_ext = 0;      ///< Frames from SIL Kit sent to the external link.
     std::uint64_t ext_to_silkit = 0;      ///< Frames from the external link handed to SIL Kit.
+    /// Frames from the external link whose source is a device outside: not the link's own
+    /// address (eth_link::ExternalLink::own_address(): what this computer sends there), and not
+    /// an address of the SIL Kit side (--src-mac, and with the MAC guard the sources of the frames
+    /// sent out). Counted before the filter: a device that answers counts even where the filter
+    /// does not let its frames in. Not counted: frames shorter than a header or longer than the
+    /// maximum, and frames before the SIL Kit controller is activated.
+    std::uint64_t ext_from_devices = 0;
     std::uint64_t own_tx_dropped = 0;     ///< The bridge's own frames that came back from the link.
     std::uint64_t loop_suspected = 0;     ///< Frames whose source MAC is on both sides.
     /// Frames forwarded without the check against loops: their source did not fit in the MAC table.
@@ -62,8 +69,9 @@ struct EthernetBridgeStatistics
     std::uint64_t ext_checksum_incomplete = 0;
 };
 
-/// One line "stats silkit_to_ext=N ext_to_silkit=N ..." with every counter. The key names are
-/// part of the bridge's documented output (docs/ethernet-bridge.md); tests parse them.
+/// One line "stats silkit_to_ext=N ext_to_silkit=N ext_from_devices=N ..." with every counter, in
+/// the order of EthernetBridgeStatistics. The keys and their order are part of the bridge's
+/// documented output (docs/ethernet-bridge.md): vehicle_sil_launch and tests read the line.
 [[nodiscard]] std::string format_statistics(const EthernetBridgeStatistics& statistics);
 
 /// What the bridge knows about the link at one moment (EthernetBridge::health()).
@@ -157,6 +165,9 @@ public:
     [[nodiscard]] std::vector<std::string> take_warnings();
     [[nodiscard]] std::string last_error() const;
     [[nodiscard]] const eth_link::FrameFilter& filter() const noexcept { return filter_; }
+    /// The link's own address as start() learned it (eth_link::ExternalLink::own_address()):
+    /// frames from it do not count in ext_from_devices. nullopt: the link cannot tell (then they do).
+    [[nodiscard]] std::optional<eth_link::MacAddress> own_address() const noexcept { return own_address_.load(); }
 
 private:
     void on_silkit_frame(const SilKit::Services::Ethernet::EthernetFrameEvent& event);
@@ -167,6 +178,8 @@ private:
     /// coming back. Today: whether the link echoes its transmissions at all. (A link that echoes
     /// could keep a record of the frames sent and match them here, to find a second bridge.)
     [[nodiscard]] bool is_own_frame_coming_back(std::span<const std::uint8_t> frame) const noexcept;
+    /// Whether `source` is one of the SIL Kit side's addresses of the filter (--src-mac).
+    [[nodiscard]] bool is_listed_silkit_address(const eth_link::MacAddress& source) const noexcept;
     /// Undoes start(): removes the SIL Kit frame handler, stops the link if it was started,
     /// removes the transmit handler and deactivates the controller if it was activated.
     void teardown(bool external_started, bool silkit_activated) noexcept;
@@ -194,9 +207,13 @@ private:
     bool watch_for_sent_frames_ = false; // set by start() before the link starts
     std::atomic<std::uint64_t> last_sent_mark_{0}; ///< 0: nothing sent yet
     std::atomic<bool> sent_frame_came_back_{false};
+    /// Set by start() once the link has started, before the controller is activated: the link's
+    /// receive thread reads it only for frames it forwards, which come after the activation.
+    eth_link::AtomicMacAddress own_address_;
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};
     std::atomic<std::uint64_t> ext_to_silkit_{0};
+    std::atomic<std::uint64_t> ext_from_devices_{0};
     std::atomic<std::uint64_t> own_tx_dropped_{0};
     std::atomic<std::uint64_t> loop_suspected_{0};
     std::atomic<std::uint64_t> mac_unguarded_{0};

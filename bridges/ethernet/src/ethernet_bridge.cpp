@@ -97,6 +97,7 @@ std::string format_statistics(const EthernetBridgeStatistics& s)
     const std::pair<const char*, std::uint64_t> fields[] = {
         {"silkit_to_ext", s.silkit_to_ext},
         {"ext_to_silkit", s.ext_to_silkit},
+        {"ext_from_devices", s.ext_from_devices},
         {"own_tx_dropped", s.own_tx_dropped},
         {"loop_suspected", s.loop_suspected},
         {"mac_unguarded", s.mac_unguarded},
@@ -210,6 +211,9 @@ void EthernetBridge::start()
         // The link first, so that frames arriving from SIL Kit can be sent right away.
         external_.start([this](const eth_link::LinkEvent& event) { on_external_event(event); });
         externalStarted = true;
+        // The link knows its address once it has opened the interface. Frames before this are
+        // not counted anyway: the controller is not activated yet.
+        own_address_.store(external_.own_address());
         frame_handler_ = silkit_.AddFrameHandler(
             [this](ethernet::IEthernetController*, const ethernet::EthernetFrameEvent& event) { on_silkit_frame(event); },
             static_cast<SilKit::Services::DirectionMask>(SilKit::Services::TransmitDirection::RX));
@@ -459,9 +463,9 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
         set_last_error("dropped a frame from the external link shorter than an Ethernet header");
         return;
     }
+    const auto source = *eth_link::source_of(frame);
     if (table_)
     {
-        const auto source = *eth_link::source_of(frame);
         const auto check = table_->on_external_source(source, verdict == FrameVerdict::Pass);
         if (check.table_full)
         {
@@ -489,6 +493,13 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
         {
             mac_unguarded_.fetch_add(1);
         }
+    }
+    // From a device outside: not from this computer (the link's own address), not from the SIL
+    // Kit side (the table let it through; without the table, not a --src-mac address). Before
+    // the filter: an answer counts even where the filter keeps it out of SIL Kit.
+    if (!own_address_.is(source) && (table_ || !is_listed_silkit_address(source)))
+    {
+        ext_from_devices_.fetch_add(1);
     }
     if (verdict == FrameVerdict::Filtered)
     {
@@ -530,11 +541,18 @@ bool EthernetBridge::is_own_frame_coming_back(std::span<const std::uint8_t> /*fr
     return link_echoes_;
 }
 
+bool EthernetBridge::is_listed_silkit_address(const eth_link::MacAddress& source) const noexcept
+{
+    const auto& listed = filter_.options().silkit_macs;
+    return std::find(listed.begin(), listed.end(), source) != listed.end();
+}
+
 EthernetBridgeStatistics EthernetBridge::statistics() const noexcept
 {
     EthernetBridgeStatistics s;
     s.silkit_to_ext = silkit_to_ext_.load();
     s.ext_to_silkit = ext_to_silkit_.load();
+    s.ext_from_devices = ext_from_devices_.load();
     s.own_tx_dropped = own_tx_dropped_.load();
     s.loop_suspected = loop_suspected_.load();
     s.mac_unguarded = mac_unguarded_.load();

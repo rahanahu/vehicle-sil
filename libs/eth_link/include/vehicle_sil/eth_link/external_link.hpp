@@ -5,6 +5,8 @@
 // end of the payload, without the frame check sequence. No SIL Kit.
 #pragma once
 
+#include "vehicle_sil/eth_link/mac_address.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -158,6 +160,11 @@ public:
     /// own address and to group addresses (false), as start() set it up. nullopt: the link has no
     /// such setting (a TAP device, a fake), or start() has not opened the interface yet.
     [[nodiscard]] virtual std::optional<bool> promiscuous() const noexcept { return std::nullopt; }
+    /// The MAC address of the interface start() opened: what this computer itself sends there
+    /// comes from it. Set before the link reports its first event, and fixed until stop().
+    /// nullopt: the link cannot tell, or start() has not opened the interface yet. A link that
+    /// wraps another passes the wrapped link's answer on.
+    [[nodiscard]] virtual std::optional<MacAddress> own_address() const noexcept { return std::nullopt; }
 };
 
 } // namespace vehicle_sil::eth_link

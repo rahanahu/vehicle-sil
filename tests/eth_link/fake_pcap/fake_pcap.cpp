@@ -28,6 +28,14 @@
 //                    never gets readable); the frames are there for whoever reads
 //   fake-refuses     cannot be opened in promiscuous mode: pcap_activate() fails with -11 (this
 //                    user may not), pcap_open() fails with the same text; without it, it opens
+//   fake-self        answers every frame sent on it as fake0 does, but from the adapter's own
+//                    address 02:00:00:00:00:f2: what this computer's own OS sends on an adapter
+//                    with no device behind it
+//
+// fake0, fake1 and fake-self have a link layer address in the list, as libpcap lists it on Linux
+// (a struct sockaddr_ll of the family AF_PACKET, 17): 02:00:00:00:00:f0, 02:00:00:00:00:f1 and
+// 02:00:00:00:00:f2, other than the device's 02:00:00:00:00:02. They are listed on Windows too,
+// where the pcap link does not read them (Npcap lists no link layer addresses).
 //
 // On every device, a frame one capture sends arrives at the other captures open on the device.
 //
@@ -63,6 +71,7 @@
 #define FAKE_PCAP_EXPORT extern "C" __attribute__((visibility("default")))
 #endif
 
+using vehicle_sil::eth_link::detail::PcapAddress;
 using vehicle_sil::eth_link::detail::PcapHandle;
 using vehicle_sil::eth_link::detail::PcapInterface;
 using vehicle_sil::eth_link::detail::PcapPacketHeader;
@@ -149,6 +158,9 @@ struct Device
     bool read_fails = false;
     bool quiet = false;
     unsigned drops_per_send = 0;
+    /// The last byte of the adapter's own address 02:00:00:00:00:xx in the list; 0: none listed.
+    std::uint8_t own_address = 0;
+    bool answers_from_itself = false; ///< answers as `answers`, from the adapter's own address
 
     // What happened, for fake_pcap_get().
     unsigned dropped = 0;
@@ -172,8 +184,12 @@ std::vector<Device>& devices()
             made.push_back(device);
             return made.back();
         };
-        add("fake0", "Fake Ethernet adapter with a device that answers").answers = true;
-        add("fake1", "Fake Ethernet adapter");
+        {
+            Device& answering = add("fake0", "Fake Ethernet adapter with a device that answers");
+            answering.answers = true;
+            answering.own_address = 0xf0;
+        }
+        add("fake1", "Fake Ethernet adapter").own_address = 0xf1;
         add("fake-echo", "Fake Ethernet adapter that returns what is sent").echoes = true;
         add("fake-wifi", "Fake wireless adapter").flags = kUp | kWireless;
         {
@@ -199,6 +215,11 @@ std::vector<Device>& devices()
         add("fake-drops", "Fake Ethernet adapter that drops frames").drops_per_send = 3;
         add("fake-quiet", "Fake Ethernet adapter that does not tell when frames arrive").quiet = true;
         add("fake-refuses", "Fake Ethernet adapter that cannot be opened in promiscuous mode").refuses_promisc = true;
+        {
+            Device& self = add("fake-self", "Fake Ethernet adapter where only this computer answers");
+            self.answers_from_itself = true;
+            self.own_address = 0xf2;
+        }
         return made;
     }();
     return list;
@@ -322,6 +343,19 @@ FAKE_PCAP_EXPORT int pcap_findalldevs(PcapInterface** list, char*)
         entry->name = duplicate(device.name);
         entry->description = duplicate(device.description);
         entry->flags = device.flags;
+        if (device.own_address != 0)
+        {
+            // A struct sockaddr_ll as Linux lays it out (pcap_api.hpp): the family, the length of
+            // the address in byte 11, the address from byte 12 on.
+            auto* const address = static_cast<std::uint8_t*>(std::calloc(1, 20));
+            const unsigned short family = vehicle_sil::eth_link::detail::kPcapPacketFamily;
+            std::memcpy(address, &family, sizeof(family));
+            address[vehicle_sil::eth_link::detail::kPcapPacketAddressLengthAt] = 6;
+            const std::uint8_t own[6] = {0x02, 0x00, 0x00, 0x00, 0x00, device.own_address};
+            std::memcpy(address + vehicle_sil::eth_link::detail::kPcapPacketAddressAt, own, sizeof(own));
+            entry->addresses = static_cast<PcapAddress*>(std::calloc(1, sizeof(PcapAddress)));
+            entry->addresses->address = address;
+        }
         *next = entry;
         next = &entry->next;
     }
@@ -334,6 +368,13 @@ FAKE_PCAP_EXPORT void pcap_freealldevs(PcapInterface* list)
     while (list != nullptr)
     {
         PcapInterface* const next = list->next;
+        while (list->addresses != nullptr)
+        {
+            PcapAddress* const following = list->addresses->next;
+            std::free(const_cast<void*>(list->addresses->address));
+            std::free(list->addresses);
+            list->addresses = following;
+        }
         std::free(list->name);
         std::free(list->description);
         std::free(list);
@@ -507,14 +548,15 @@ FAKE_PCAP_EXPORT int pcap_sendpacket(PcapHandle* handle, const unsigned char* by
             deliver(*open, frame);
         }
     }
-    if (device.answers && frame.size() >= 14)
+    if ((device.answers || device.answers_from_itself) && frame.size() >= 14)
     {
         Bytes answer = frame;
-        const std::uint8_t deviceMac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
+        const std::uint8_t from[6] = {0x02, 0x00, 0x00, 0x00, 0x00,
+                                      device.answers_from_itself ? device.own_address : std::uint8_t{0x02}};
         for (std::size_t i = 0; i < 6; ++i)
         {
             answer[i] = frame[6 + i];
-            answer[6 + i] = deviceMac[i];
+            answer[6 + i] = from[i];
         }
         for (std::size_t i = 14; i < answer.size(); ++i)
         {

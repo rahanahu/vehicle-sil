@@ -4,7 +4,10 @@
 #                                monitor loop, the order of stopping and the exit code.
 #                                Platform independent (the Windows console handling is inside).
 #                                describe_json(): what a bridge writes for --describe.
-add_library(vehicle_sil_bridge_runtime STATIC src/describe.cpp src/run_bridge.cpp src/registry_failure.cpp)
+#                                NothingCameHint: when a bridge says that nothing came back
+#                                from the bus it sends to.
+add_library(vehicle_sil_bridge_runtime STATIC src/describe.cpp src/nothing_came_hint.cpp src/run_bridge.cpp
+  src/registry_failure.cpp)
 add_library(vehicle_sil::bridge_runtime ALIAS vehicle_sil_bridge_runtime)
 set_target_properties(vehicle_sil_bridge_runtime PROPERTIES EXPORT_NAME bridge_runtime)
 target_include_directories(vehicle_sil_bridge_runtime PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

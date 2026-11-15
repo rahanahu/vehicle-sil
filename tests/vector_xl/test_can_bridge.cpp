@@ -8,6 +8,7 @@
 
 #include "vehicle_sil/vector_xl/can_bridge.hpp"
 
+#include <chrono>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -410,9 +411,18 @@ TEST_CASE(bridge_forwards_nothing_after_stop)
     CHECK(controller.sent().empty());
 }
 
+TEST_CASE(bridge_nothing_came_warning_names_the_channel)
+{
+    CHECK(vehicle_sil::vector_xl::nothing_came_warning("XL 'Virtual Channel 1'", std::chrono::seconds(10)) ==
+          "nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a "
+          "device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the "
+          "channel it is on.");
+}
+
 TEST_CASE(bridge_statistics_line_names_every_counter)
 {
-    // The key names are documented output that the launcher parses.
+    // The keys and their order are documented output that vehicle_sil_launch reads
+    // (docs/bridges.md, "Statistics"): a change here is a change of that agreement.
     vehicle_sil::vector_xl::CanBridgeStatistics s;
     s.silkit_to_external = 1;
     s.external_to_silkit = 2;

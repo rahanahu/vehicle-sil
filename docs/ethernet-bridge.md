@@ -55,7 +55,7 @@ Step 4 prints the following. If the OS sent frames to the TAP device, `ext_to_si
 
 ```
 [eth-bridge] stopping
-[eth-bridge] stats silkit_to_ext=0 ext_to_silkit=6 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
+[eth-bridge] stats silkit_to_ext=0 ext_to_silkit=6 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
 [eth-bridge] stopped
 ```
 
@@ -103,6 +103,7 @@ vehicle_sil_ethernet_bridge --describe --network <name> [--backend <backend>] --
 | `--name <name>` | Participant name (default `EthernetBridge`). |
 | `--participant <name>` | The same as `--name` (give one of them). |
 | `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |
+| `--stats-every-ms <ms>` | Also prints the statistics line while the bridge runs: at the first interval, then at each interval where a count changed (100–3600000). Without it, the line comes once, when the bridge stops (see "[Statistics](#statistics)"). |
 | `--describe` | Writes what the bridge is as JSON to stdout and exits (see "[Starting from a configuration file](#starting-from-a-configuration-file)"). |
 | `--backend <tap\|packet\|npcap\|pcap>` | How the external interface is opened (default: `packet` on Linux, `npcap` on Windows; see "[Backends](#backends)"). |
 | `--interface <name>` | The interface to connect to (required; the bridge never picks "the first one found"). |
@@ -243,6 +244,7 @@ The startup line shows what is connected to what, what may pass, and the state o
 |---|---|---|
 | Warning | `[eth-bridge] warning: <text>` | At most once a second |
 | Health line (see "[Health lines](#health-lines)") | `[eth-bridge] interface <name>: ...` | At most once a second |
+| Statistics line, with `--stats-every-ms` (see "[Statistics](#statistics)") | `[eth-bridge] stats silkit_to_ext=<n> ...` | At the first interval, then at each interval where a count changed |
 
 ### Stopping
 
@@ -297,6 +299,21 @@ The first is for `--no-promiscuous`, the second for an interface that refused pr
 The reason for the warning: without promiscuous mode, an interface passes on only frames to its own address and to group addresses, and the SIL Kit devices have addresses other than the interface's. The warning also appears when you do not expect responses (when you only send frames out), so the text is conditional.
 
 A frame also counts when its destination was not yet known as a MAC address of the SIL Kit side at the time the bridge received it (including frames received before the bridge's first transmission). The bridge remembers the destination of such a frame (not a group address), and if it later sends a frame with that address as the source, the frame to that address counts as received. The bridge remembers up to 32 such destinations and ignores the rest (those do not count as received). The limit exists because the bridge also receives the frames that this computer's OS sends from the same interface: many destination addresses therefore do not prove that the interface passes frames regardless of their destination.
+
+### Hint when nothing comes from a device
+
+With a backend that can put frames on a physical adapter (`packet`, `npcap`, `pcap`), if no frame has come from a device there 10 seconds after the bridge sent its first frame out (`ext_from_devices` is still 0, see "[Statistics](#statistics)"), the bridge prints a hint as a warning, once. A cable that is not plugged in, a device that is switched off, and the wrong adapter all look like this, and sending succeeds all the same: a Hyper-V `vEthernet` adapter, for example, stays connected without a cable on its physical NIC.
+
+```
+nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (frames from this computer's own address 00:15:5d:01:02:03 do not count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
+nothing has come from a device on packet 'enp3s0' (network interface) in the 10 s since the bridge first sent a frame there (the bridge does not know this adapter's own address, so frames this computer sends there would count): if a device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.
+```
+
+- The first text is for an adapter whose own MAC address the bridge knows, the second for one whose address it does not know. Frames from the adapter's own address are what this computer itself sends there (ARP, IPv6): they arrive whether a device is there or not, so they do not count. The bridge learns the address from the backend: `packet` from the kernel, `pcap` from libpcap's list of interfaces, `npcap` from Windows (the adapter's physical address).
+- The time counts from the first frame sent out. A frame from a device that came earlier keeps the hint back as well, and once a frame from a device has come, there is no hint.
+- The hint also appears when no answer is expected (when you only send frames out), so the text is conditional.
+- `tap` has no hint: the TAP device stays in this computer.
+- The Vector XL CAN bridge gives the same hint for its channel (see [bridges.md](bridges.md#statistics)).
 
 ## Backends
 
@@ -679,16 +696,17 @@ The third is the message on an OS that is neither Linux nor Windows. There, `--l
 
 ## Statistics
 
-`format_statistics()` puts all the counts on one line. This page defines the key names and their order, and the tests parse them.
+`format_statistics()` puts all the counts on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. The bridge prints the line when it stops, and with `--stats-every-ms <ms>` also while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line (a script of yours, for example), and the tests hold them.
 
 ```
-stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
+stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
 ```
 
 | Key | Counts | Problem |
 |---|---|---|
 | `silkit_to_ext` | Frames sent from SIL Kit to the outside | — |
 | `ext_to_silkit` | Frames passed from the outside to SIL Kit (where `SendFrame()` returned) | — |
+| `ext_from_devices` | Frames from the outside whose source is a device: not the adapter's own address, and not an address of the SIL Kit side. Counted before the filter | — |
 | `own_tx_dropped` | Frames the bridge sent that came back from the external link (only with an external link that echoes its own transmissions) | — |
 | `loop_suspected` | Frames whose source address is on both sides | Yes |
 | `mac_unguarded` | Frames that did not fit in the MAC table and were passed without the loop check | Yes |
@@ -704,6 +722,8 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 - When a key marked Yes in the Problem column increases, a health line appears (`problems_grew()`). The forwarded counts, the filter counts and `own_tx_dropped` are not problems.
 - Frames in `silkit_tx_failures` that SIL Kit confirmed it could not send are also counted in `ext_to_silkit`, at the time they were passed on.
 - `ext_checksum_incomplete` counts frames sent by the OS of the same computer, with `packet` (see "[Talking to the network stack of the same computer](#talking-to-the-network-stack-of-the-same-computer)"). They are also counted in `ext_to_silkit`.
+- `ext_from_devices` tells whether anything outside answers. Not counted: frames from the adapter's own MAC address (this computer's own frames; the bridge knows the address as "[Hint when nothing comes from a device](#hint-when-nothing-comes-from-a-device)" says; where it does not, they count), frames from an address of the SIL Kit side (the `--src-mac` addresses, and with the MAC rules the sources of the frames the bridge sent out: the frames that `own_tx_dropped` and `loop_suspected` count), frames shorter than a header or longer than the maximum, and frames before the SIL Kit controller is activated. A frame from a device counts even where the filter keeps it out of SIL Kit (it is also in `filtered_from_ext`).
+- With `--no-mac-guard`, only the `--src-mac` addresses tell the SIL Kit side. A frame that the bridge sent out and that comes back from an external link that echoes its own transmissions then counts in `ext_from_devices`. None of the external links of vehicle-sil echo.
 
 ## Health lines
 
@@ -878,6 +898,7 @@ For the source locations, see "Ethernet Bridge" in [code-map.md](code-map.md#eth
 | `transmit(frame)` | Sends one frame. The result is `Ok`, `QueueFull` (not sent because the transmit queue was full) or `Failed` (another error; the reason is in `last_error()`). Reads the frame only during the call. Does not block |
 | `echoes_own_transmissions()` | Whether frames sent with `transmit()` come back to the handler as received frames. Does not change during the lifetime of the external link. The bridge reads it in `start()` and adapts its loop prevention (see "[Loop prevention](#loop-prevention-macsidetable)") |
 | `describe()` | The string for the startup line: kind, name, physical or virtual (for example `tap 'vsil0' (TAP device in this computer)`, `packet 'enp3s0' (network interface)`) |
+| `own_address()` | The MAC address of the interface that `start()` opened, or `nullopt` where the external link cannot tell (the default). Set before the first event and fixed until `stop()`. The bridge reads it in `start()`: frames from it do not count in `ext_from_devices`. An external link that wraps another passes the wrapped one's answer on |
 
 ### Threads and locks
 
@@ -963,7 +984,7 @@ The fake external link for tests is `tests/eth_link/fake_link` (`FakeLink`, and 
 | Direction | Order |
 |---|---|
 | SIL Kit to the outside | Length (`malformed`, `oversize`) → filter (`filtered_to_ext`) → MAC rules (`loop_suspected`) → `transmit()` |
-| Outside to SIL Kit | Length (`malformed`, `oversize`) → MAC rules (`own_tx_dropped`, `loop_suspected`) → filter (`filtered_from_ext`) → `SendFrame()` |
+| Outside to SIL Kit | Length (`malformed`, `oversize`) → MAC rules (`own_tx_dropped`, `loop_suspected`) → from a device (`ext_from_devices`) → filter (`filtered_from_ext`) → `SendFrame()` |
 
 For frames from the outside, the MAC rules apply before the filter, so that echoes of the bridge's own frames and frames from addresses on both sides are counted as such even if the filter would not pass them.
 
@@ -983,7 +1004,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 `packet` (veth pair):
 
 - Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
-- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
+- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side. It counts in `ext_from_devices`, unless its source is the interface's own address (the kernel's answer to `SIOCGIFHWADDR`).
 - Frames that the bridge sends do not come back to the bridge.
 - Promiscuous mode with `--promiscuous` raises the promiscuity of the interface only while the bridge runs. The default and `--no-promiscuous` are not checked on the real kernel here (the unit tests cover how the bridge chooses the mode).
 - Health lines for the link going up and down.
@@ -994,7 +1015,7 @@ The tests `ethernet_bridge.netns.*` verify the following against the real execut
 
 - Loading the library, and the shape of the functions and structures that the bridge uses.
 - Untagged frames, frames with 1 VLAN tag and frames with 2 tags pass in both directions with their tags.
-- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side.
+- A frame that another socket on the same interface sends is received by a peer on the SIL Kit side. It counts in `ext_from_devices`, unless its source is the interface's own address (from libpcap's list of interfaces).
 - Frames that the bridge sends do not come back to the bridge.
 - `--promiscuous`, `--list-interfaces`, and health lines for the link going up and down.
 - The messages when the interface cannot be opened (missing, not Ethernet, down, privileges dropped).
@@ -1018,6 +1039,7 @@ Verified against the fake pcap library `tests/eth_link/fake_pcap`. The fake is a
 - With the Npcap way of opening, the bridge's own transmissions do not come back even on a device that echoes sent frames, and frames that other handles on the same device send are received.
 - A loop of 2 bridges connected to the same device is stopped, whatever order the copies arrive in. Even with `--no-mac-guard`, the bridge's own frames do not come back into SIL Kit.
 - A library without `pcap_open` is refused as Npcap.
+- Answers from a device count in `ext_from_devices`; answers from the adapter's own address are forwarded but do not count (Linux only: on Windows the own address comes from the OS, which does not know the fake adapter). With `--stats-every-ms`, the statistics line comes while the bridge runs, and again only where it changed.
 - On Windows, the DLLs that the fake library uses are only those in the fake library's directory or the system directory (tests `eth_link.fake_pcap_imports.*`). The bridge has DLLs searched for only in these 2 places, so the fake library links the compiler runtime statically.
 
 ### Verified (Windows, real Npcap, manual)
@@ -1052,6 +1074,7 @@ Windows:
 - Whether there is an Npcap or adapter that accepts the option against echoes but still echoes the bridge's own transmissions.
 - The confirmation prompt that Windows with a desktop shows for Npcap installed for administrators only.
 - Whether transmit congestion is ever counted in `ext_queue_full` with the real Npcap (it did not occur in the checks).
+- The adapter's own address from Windows with the real Npcap, and whether `ext_from_devices` stays 0 on a `vEthernet` adapter whose physical NIC has no cable (that the frames of the host's OS there come from the address of the `vEthernet` adapter), and how Npcap's option against the bridge's own transmissions bears on it. The hint when nothing comes from a device is verified only in unit tests, with the time given by the test.
 
 Linux:
 
@@ -1099,6 +1122,8 @@ Run them with `ctest -R '^(eth_link|ethernet_bridge)\.'`. Except for the namespa
 - They check a full MAC table, `stop()` in the middle of forwarding, lost frames, `Fault`, warnings, and starting and stopping.
 - `ethernet_bridge.silkit_*` checks the real SIL Kit side with an in-process registry (on a free port) and 2 participants.
 - `ethernet_bridge.app_*` checks the promiscuous mode hint with a replaced clock, without waiting 5 seconds.
+- They check what counts in `ext_from_devices`: frames from devices, also those the filter keeps out, and not frames from the adapter's own address, from the SIL Kit side, back from an echoing link, or too short; with `--no-mac-guard`, by the `--src-mac` addresses.
+- The rule of the hint when nothing comes from a device (`bridge_runtime.nothing_came_hint_*`) and the statistics line while running (`bridge_runtime.run_bridge_*`) are checked with the time given by the test.
 
 ### `ethernet_bridge.integration.*`
 
@@ -1112,11 +1137,12 @@ These tests run, as processes, the executable linked with a fake external link (
 - `eth_link.pcap_*` checks the messages of both Npcap and libpcap, on every OS.
 - The ways of opening, Npcap's `pcap_open()` and libpcap's `pcap_create()`, are both checked on every OS.
 - The fake library (`tests/eth_link/fake_pcap`) is a shared library with functions of the same names as the real one, loaded at run time.
-- In the fake library, `fake0` is a device that responds. There are also devices that cannot be opened, cannot send, cannot be read, drop frames, are wireless, and echo what they send.
+- In the fake library, `fake0` is a device that responds. There are also devices that cannot be opened, cannot send, cannot be read, drop frames, are wireless, and echo what they send, and `fake-self`, where the answers come from the adapter's own address.
 - There are 2 versions that lack one function each (an old version, and a version without `pcap_open`).
 - `ethernet_bridge.integration.pcap-*` uses an executable with the same content as the installed one, except that the library location is changed to the fake library (`vehicle_sil_ethernet_bridge_on_fake_pcap`).
 - `ethernet_bridge.integration.pcap-*` checks round trips and statistics, the list, the messages when the library is missing or old (3, before connecting to SIL Kit), a missing device (3) and a read failure (1).
 - `pcap-describe` checks that `--describe` answers without the library.
+- `pcap-roundtrip` and `echo-roundtrip` check that every answer of the device counts in `ext_from_devices`. `pcap-own-address` checks that answers from the adapter's own address are forwarded and do not count (Linux only). `pcap-nothing` sends to a device where nothing answers, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `ext_from_devices=0`.
 - `pcap-promiscuous` checks the default on a device that accepts promiscuous mode and on one that refuses it (the warning and the startup line), `--no-promiscuous`, `--promiscuous` on the one that refuses it (exit code 3), and both options together (exit code 4).
 - `pcap-launcher` writes a configuration file with the bridge (`role: bridge`, `required: false`) and an ECU on its network (`eth_bridge_it_ecu.cpp`), with `registry_uri` on port 0. It checks that `check` passes without a finding and lists the bridge on the network, that the ECU's frames go out through the bridge and the device's answers come back to the ECU (a scenario expects them), and that the bridge ends with exit code 0 when the run ends.
 

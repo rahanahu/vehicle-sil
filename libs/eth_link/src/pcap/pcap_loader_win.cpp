@@ -173,7 +173,8 @@ public:
 
     [[nodiscard]] std::unique_ptr<PcapInterfaceWatch> make_watch(const std::string&) const override { return nullptr; }
 
-    /// The names Windows shows for the network connections ("Ethernet 2"), by adapter identifier.
+    /// The names Windows shows for the network connections ("Ethernet 2") and their MAC addresses, by
+    /// adapter identifier.
     [[nodiscard]] std::vector<PcapConnectionName> connection_names() const override
     {
         std::vector<PcapConnectionName> names;
@@ -195,7 +196,14 @@ public:
         {
             if (adapter->AdapterName != nullptr)
             {
-                names.push_back({adapter->AdapterName, narrow(adapter->FriendlyName)});
+                PcapConnectionName name{adapter->AdapterName, narrow(adapter->FriendlyName)};
+                if (adapter->PhysicalAddressLength == 6)
+                {
+                    MacAddress address;
+                    std::copy_n(adapter->PhysicalAddress, address.bytes.size(), address.bytes.begin());
+                    name.hardware_address = address;
+                }
+                names.push_back(std::move(name));
             }
         }
         return names;

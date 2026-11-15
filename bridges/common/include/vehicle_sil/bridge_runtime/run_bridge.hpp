@@ -34,10 +34,13 @@ public:
     /// Called once per health interval (RunBridgeOptions::health_interval): the monitor line to
     /// print, or nullopt when there is nothing new to say.
     [[nodiscard]] virtual std::optional<std::string> health_line() = 0;
+    /// The statistics line as it is now ("stats key=N ..."). Asked once per statistics interval
+    /// (RunBridgeOptions::statistics_interval), only where one is given.
+    [[nodiscard]] virtual std::string statistics_line() = 0;
     /// Stops forwarding in both directions. Once it returns, final_statistics() is final.
     virtual void stop() noexcept = 0;
     /// The lines printed after stop() and before the SIL Kit participant stops: the statistics
-    /// line, then e.g. "last error: ...".
+    /// line (statistics_line()), then e.g. "last error: ...".
     [[nodiscard]] virtual std::vector<std::string> final_statistics() = 0;
 };
 
@@ -72,6 +75,10 @@ struct RunBridgeOptions
     std::string ready_line;
     /// How often hooks.health_line() is asked.
     std::chrono::milliseconds health_interval{1000};
+    /// How often hooks.statistics_line() is asked while the bridge runs (--stats-every-ms). The
+    /// first line is printed at the first interval, then a line only where it differs from the
+    /// one printed before. Unset: the statistics only once, at the end (final_statistics()).
+    std::optional<std::chrono::milliseconds> statistics_interval;
     /// How often the loop looks at the participant, the fault and the warnings.
     std::chrono::milliseconds poll_interval{50};
     /// While the participant is still starting this long, the loop says once what it waits for.

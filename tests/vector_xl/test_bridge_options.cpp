@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -192,6 +193,32 @@ TEST_CASE(options_name_describe_and_start_timeout)
     CHECK(described.network == std::string("VehicleCAN"));
     CHECK(usage_error({"--describe", "--xl-target", "virtual"}));
     CHECK(usage_error({"--describe", "--list-channels"}));
+}
+
+TEST_CASE(options_stats_every_is_how_often_the_statistics_line_comes_while_running)
+{
+    const auto args = [](std::string_view every) {
+        return std::vector<std::string_view>{"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1",
+                                             "--stats-every-ms", every};
+    };
+    CHECK(!parse({"--registry-uri", "silkit://h:1", "--xl-target", "virtual", "--xl-channel", "1"}).statistics_interval);
+    CHECK(parse(args("1000")).statistics_interval == std::chrono::milliseconds(1000));
+    CHECK(parse(args("100")).statistics_interval == std::chrono::milliseconds(100));
+    CHECK(parse(args("3600000")).statistics_interval == std::chrono::milliseconds(3600000));
+    for (const std::string_view bad : {"99", "3600001", "0", "-1", "1s", ""})
+    {
+        std::string message;
+        try
+        {
+            (void)parse(args(bad));
+        }
+        catch (const BridgeUsageError& e)
+        {
+            message = e.what();
+        }
+        CHECK(message == "--stats-every-ms must be between 100 and 3600000, got: " + std::string(bad));
+    }
+    CHECK(bridge_usage().find("--stats-every-ms <ms>") != std::string::npos);
 }
 
 TEST_CASE(options_json_is_for_list_channels_only)

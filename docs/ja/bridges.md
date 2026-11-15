@@ -77,7 +77,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels [--json]
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
 vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
@@ -93,6 +93,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `--name <name>` | participant の名前です（既定 `VectorXlBridge`）。 |
 | `--participant <name>` | `--name` と同じです（どちらか 1 つを書きます）。 |
 | `--start-timeout-ms <ms>` | SIL Kit で participant が Running になるのを待つ上限です（1〜10^12、既定 15000）。なれなければ終了コード 3 で終わります。 |
+| `--stats-every-ms <ms>` | 動いている間にも統計の行を出します。最初の間隔で 1 回、その後は数が変わった間隔ごとに出します（100〜3600000）。指定しなければ、終わるときに 1 回だけです（「[統計](#統計)」）。 |
 | `--describe` | ブリッジが何かを JSON で標準出力に書いて終わります（「[設定ファイルから起こす](#設定ファイルから起こす)」を参照）。 |
 | `--rx-queue-size <n>` | XL の受信キューの容量です（2 のべき乗、16〜32768、既定 16384）。 |
 | `--tx-timeout-ms <ms>` | バスが詰まっているあいだ、新しいフレームを捨てます（100〜60000。「[バスに出たフレームの数え方（送信レシート）](#バスに出たフレームの数え方送信レシート)」）。 |
@@ -219,6 +220,8 @@ Windows でコンソールのウィンドウを閉じたとき（ログオフ、
 - 止める順（止める直前に出た警告、統計の順に、SIL Kit の participant の停止より先に出力する）
 - 終了コード
 - コンソールを閉じたときの 4 秒
+- 動いている間の統計の行（`--stats-every-ms`。`BridgeHooks::statistics_line()`、`RunBridgeOptions::statistics_interval`）
+- 送り先のバスの機器から何も来ないと言う時点（`NothingCameHint`、`nothing_came_hint.hpp`）。最初に外部へ送信してから 10 秒で 1 回。機器からフレームが来ていれば言わない。そのフレームを、イーサネットのブリッジは `ext_from_devices` に、このブリッジは `xl_to_silkit` に数える（「[統計](#統計)」）
 
 ## エラーメッセージ
 
@@ -281,7 +284,12 @@ registry に接続できないときは、接続しようとしたアドレス�
 
 ## 統計
 
-統計値は、終了時に `stats` で始まる 1 行で出力します。キーは次の順に並びます。
+統計値は、終了時に 1 行で出力します。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。`--stats-every-ms <ms>` を指定すれば、動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラムのためにこのドキュメントが定め、テストが守ります。
+
+```
+stats silkit_to_xl=0 xl_to_silkit=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 xl_rejected=0 xl_queue_full=0 xl_tx_failures=0 silkit_tx_failures=0 xl_tx_dropped=0 xl_tx_unsent=0
+```
+
 
 | キー | 数えるもの |
 |---|---|
@@ -297,6 +305,14 @@ registry に接続できないときは、接続しようとしたアドレス�
 | `silkit_tx_failures` | `ICanController::SendFrame` が例外を投げたフレーム |
 | `xl_tx_dropped` | バスが詰まっているあいだ、`--tx-timeout-ms` によって捨てたフレーム |
 | `xl_tx_unsent` | XL に渡したのに、バスに出ないまま失われたフレーム（止めるとき、チャネルを有効にし直したとき） |
+
+`xl_to_silkit` に数えるのは、バスのほかのノードからのフレームだけです。自分の送信のレシートは `own_tx_dropped` です。ブリッジがチャンネルへフレームを送信し、最初の送信から 10 秒たってもバスからフレームが 1 つも来ないとき（`xl_to_silkit` が 0 のまま）、ブリッジはヒントを 1 回だけ警告します。
+
+```
+nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
+```
+
+それより前にバスから来たフレームも、ヒントを止めます。レスポンスを待たない使い方（送信するだけ）でも出るので、文は条件つきです。イーサネットのブリッジも同じヒントを出します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
 
 ## 物理 CAN と仮想時間
 
@@ -501,6 +517,7 @@ XL バックエンドは 2 つに分かれます。
 - フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレーム、コントローラーのエラー状態の問い合わせ、デバイスの喪失を模擬します。
 - フェイクは、XL の次の制約も模擬します: 送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。
+- `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`xl_to_silkit=0` であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
 
 ### 確認したこと（Windows 11、Vector Virtual CAN と VN5620）
 

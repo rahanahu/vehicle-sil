@@ -177,6 +177,20 @@ TEST_CASE(app_start_line_of_a_tap_says_nothing_about_promiscuous_mode)
                "device in this computer): SIL Kit MAC 02:00:00:00:00:01 only, both ways; MAC guard on; Ctrl+C to stop");
 }
 
+TEST_CASE(app_nothing_came_warning_names_the_adapter_and_its_own_address)
+{
+    CHECK_TEXT(nothing_came_warning("npcap 'vEthernet (A)' (network adapter through Npcap)",
+                                    vehicle_sil::eth_link::parse_mac_address("00:15:5d:01:02:03"), 10s),
+               "nothing has come from a device on npcap 'vEthernet (A)' (network adapter through Npcap) in the 10 s since the "
+               "bridge first sent a frame there (frames from this computer's own address 00:15:5d:01:02:03 do not count): if a "
+               "device is meant to answer, check that it is on, its cable, and that this is the adapter it is on.");
+    CHECK_TEXT(nothing_came_warning("pcap 'enp3s0' (network interface through libpcap)", std::nullopt, 10s),
+               "nothing has come from a device on pcap 'enp3s0' (network interface through libpcap) in the 10 s since the "
+               "bridge first sent a frame there (the bridge does not know this adapter's own address, so frames this computer "
+               "sends there would count): if a device is meant to answer, check that it is on, its cable, and that this is "
+               "the adapter it is on.");
+}
+
 TEST_CASE(app_promiscuous_hint_warns_once_when_nothing_answers_the_silkit_side)
 {
     Hinted h;
@@ -320,6 +334,11 @@ TEST_CASE(app_promiscuous_hint_passes_the_link_through_and_starts_over)
     Hinted h;
     CHECK_TEXT(h.hint.describe(), "fake 'enp3s0' (virtual)");
     CHECK(!h.hint.echoes_own_transmissions());
+    CHECK(!h.hint.own_address().has_value());
+    // The wrapped link's own address: without it the bridge would count this computer's frames
+    // as frames from devices.
+    h.link.set_own_address(vehicle_sil::eth_link::parse_mac_address("02:00:00:00:00:f0"));
+    CHECK(h.hint.own_address() == vehicle_sil::eth_link::parse_mac_address("02:00:00:00:00:f0"));
     h.send(kDevice, kEcu);
     CHECK_EQ(h.link.transmitted().size(), std::size_t{1});
     h.hint.stop();

@@ -173,6 +173,8 @@ public:
         const int now = promiscuous_.load();
         return now < 0 ? std::nullopt : std::optional<bool>(now != 0);
     }
+    /// The device's MAC address as the list of devices told it when start() opened it.
+    [[nodiscard]] std::optional<MacAddress> own_address() const noexcept override { return own_address_.load(); }
 
 private:
     /// Opens `device` for sending and receiving without blocking, in promiscuous mode as
@@ -222,6 +224,7 @@ private:
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
     /// What open() set up: 1 promiscuous, 0 not, -1 not opened yet.
     std::atomic<int> promiscuous_{-1};
+    AtomicMacAddress own_address_; // set by start() before the receive thread starts
     std::atomic<bool> faulted_{false};
     EventHandler handler_;
     std::thread thread_;
@@ -387,6 +390,7 @@ void PcapLink::start(EventHandler handler)
     auto waiter = library_->make_waiter(handle);
     watch_ = library_->make_watch(device.name);
     reported_state_ = LinkState::Unknown;
+    own_address_.store(device.hardware_address);
 
     {
         const std::lock_guard lock(text_mutex_);
@@ -742,6 +746,36 @@ std::string PcapLibrary::version() const
     return trimmed(pcap_text(api_.lib_version()));
 }
 
+namespace {
+
+/// The link layer address among a device's addresses in the library's list (Linux: a
+/// struct sockaddr_ll of 6 bytes), or nullopt. Elsewhere the list is not read for it: the families
+/// and their layout are the OS's own, and Npcap lists none.
+std::optional<MacAddress> hardware_address_in([[maybe_unused]] const PcapAddress* addresses) noexcept
+{
+#ifdef __linux__
+    for (const PcapAddress* entry = addresses; entry != nullptr; entry = entry->next)
+    {
+        const auto* const bytes = static_cast<const std::uint8_t*>(entry->address);
+        if (bytes == nullptr)
+        {
+            continue;
+        }
+        unsigned short family = 0;
+        std::memcpy(&family, bytes, sizeof(family));
+        if (family == kPcapPacketFamily && bytes[kPcapPacketAddressLengthAt] == 6)
+        {
+            MacAddress address;
+            std::memcpy(address.bytes.data(), bytes + kPcapPacketAddressAt, address.bytes.size());
+            return address;
+        }
+    }
+#endif
+    return std::nullopt;
+}
+
+} // namespace
+
 std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
 {
     const PcapApi& api = library.api();
@@ -762,6 +796,7 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
         device.name = entry->name;
         device.description = pcap_text(entry->description);
         device.flags = entry->flags;
+        device.hardware_address = hardware_address_in(entry->addresses);
         devices.push_back(std::move(device));
     }
     if (list != nullptr)
@@ -777,6 +812,10 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
             if (!id.empty() && same_ignoring_case(id, without_braces(connection.id)))
             {
                 device.connection = connection.name;
+                if (connection.hardware_address)
+                {
+                    device.hardware_address = connection.hardware_address;
+                }
                 break;
             }
         }

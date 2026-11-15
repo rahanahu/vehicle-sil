@@ -53,12 +53,13 @@ private:
     int fd_ = -1;
 };
 
-/// The interface's flags (IFF_UP, IFF_RUNNING, ...) and link type (ARPHRD_*), or nullopt if there
-/// is no interface `name`.
+/// The interface's flags (IFF_UP, IFF_RUNNING, ...), link type (ARPHRD_*) and, on an Ethernet
+/// interface, its MAC address; or nullopt if there is no interface `name`.
 struct InterfaceState
 {
     unsigned flags = 0;
     unsigned link_type = 0;
+    std::optional<MacAddress> hardware_address;
 };
 [[nodiscard]] std::optional<InterfaceState> interface_state(const std::string& name);
 /// The names of this computer's interfaces.
@@ -76,6 +77,8 @@ public:
     /// test ethernet_bridge.netns.* holds this against the kernel).
     [[nodiscard]] bool echoes_own_transmissions() const noexcept final { return false; }
     [[nodiscard]] std::string last_error() const final;
+    /// The interface's MAC address as start() found it (SIOCGIFHWADDR).
+    [[nodiscard]] std::optional<MacAddress> own_address() const noexcept final;
 
 protected:
     explicit LinuxLink(std::string name);
@@ -137,6 +140,7 @@ private:
     Fd wake_; // eventfd: written to end the receive thread
     unsigned interface_index_ = 0;
     std::atomic<bool> faulted_{false};
+    AtomicMacAddress own_address_; // set by start() before the receive thread starts
     EventHandler handler_;
     std::thread thread_;
     LinkState reported_state_ = LinkState::Unknown; // receive thread only

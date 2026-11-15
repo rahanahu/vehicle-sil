@@ -172,7 +172,7 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
                std::string("vehicle_sil_fake_pcap") + kSuffix);
     CHECK_TEXT(fake.library->version(), "fake pcap version 1.0 (TEST ONLY)");
     const auto devices = pcap_devices(*fake.library);
-    CHECK_EQ(devices.size(), std::size_t{14});
+    CHECK_EQ(devices.size(), std::size_t{15});
     CHECK_TEXT(devices.at(0).name, "fake0");
     CHECK_TEXT(devices.at(0).description, "Fake Ethernet adapter with a device that answers");
     CHECK_EQ(devices.at(0).flags, kPcapIfUp | kPcapIfRunning | kPcapIfConnected);
@@ -188,6 +188,29 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
     CHECK_TEXT(list.substr(0, head.size()), head);
     CHECK(list.find("  --interface fake-wifi       up, connected, wireless  (Fake wireless adapter)\n") != std::string::npos);
     CHECK(list.find("  --interface fake-down       down  (Fake Ethernet adapter that is down)\n") != std::string::npos);
+}
+
+TEST_CASE(pcap_link_knows_its_own_address_from_the_list_on_linux)
+{
+    const Fake fake;
+    const auto devices = pcap_devices(*fake.library);
+    const auto link = fake.link("fake1");
+    CHECK(!link->own_address().has_value()); // not opened yet
+    Recorder recorder;
+    link->start(recorder.handler());
+#ifdef __linux__
+    // libpcap lists the link layer address of an interface (AF_PACKET).
+    CHECK(devices.at(0).hardware_address == parse_mac_address("02:00:00:00:00:f0"));
+    CHECK(devices.at(1).hardware_address == parse_mac_address("02:00:00:00:00:f1"));
+    CHECK(!devices.at(2).hardware_address.has_value()); // fake-echo lists none
+    CHECK(link->own_address() == parse_mac_address("02:00:00:00:00:f1"));
+#else
+    // Npcap lists no link layer address: the list is not read for one (the OS tells it on
+    // Windows, by the connection's identifier, which a fake device does not have).
+    CHECK(!devices.at(1).hardware_address.has_value());
+    CHECK(!link->own_address().has_value());
+#endif
+    link->stop();
 }
 
 TEST_CASE(pcap_library_that_is_not_there_is_library_missing)

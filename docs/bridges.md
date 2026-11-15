@@ -77,7 +77,7 @@ If something goes wrong, find the symptom in this table.
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels [--json]
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
 vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
@@ -93,6 +93,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `--name <name>` | Participant name (default `VectorXlBridge`). |
 | `--participant <name>` | The same as `--name` (give one of them). |
 | `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |
+| `--stats-every-ms <ms>` | Also prints the statistics line while the bridge runs: at the first interval, then at each interval where a count changed (100–3600000). Without it, the line comes once, when the bridge ends (see "[Statistics](#statistics)"). |
 | `--describe` | Writes what the bridge is as JSON to stdout and exits (see "[Starting from a configuration file](#starting-from-a-configuration-file)"). |
 | `--rx-queue-size <n>` | Size of the XL receive queue (a power of two, 16–32768, default 16384). |
 | `--tx-timeout-ms <ms>` | Drops new frames while the bus is congested (100–60000; see "[Counting frames on the bus (transmit receipts)](#counting-frames-on-the-bus-transmit-receipts)"). |
@@ -219,6 +220,8 @@ The bridge executables share the following through `run_bridge()` (`vehicle_sil:
 - The stop sequence (warnings raised just before the stop, then the statistics, are printed before the SIL Kit participant is stopped)
 - The exit codes
 - The 4-second wait when the console window is closed
+- The statistics line while running (`--stats-every-ms`; `BridgeHooks::statistics_line()`, `RunBridgeOptions::statistics_interval`)
+- When to say that nothing came from a device on the bus the bridge sends to (`NothingCameHint`, `nothing_came_hint.hpp`): 10 seconds after the first frame sent out, once, unless a frame from a device has come. The Ethernet bridge counts those frames in `ext_from_devices`, this bridge in `xl_to_silkit` (see "[Statistics](#statistics)")
 
 ## Error messages
 
@@ -281,7 +284,12 @@ The bridges (`vehicle_sil_vector_xl_bridge`, `vehicle_sil_ethernet_bridge`) and 
 
 ## Statistics
 
-When the bridge ends, it prints the statistics on one line that starts with `stats`. The keys come in this order:
+When the bridge ends, it prints the statistics on one line: `stats`, then one ` <key>=<count>` for each key of the table below, in its order. With `--stats-every-ms <ms>` it also prints the line while it runs: at the first interval, then at each interval where a count changed. The counts are totals since the start, each read on its own (one line need not show one instant). The keys and their order are fixed by this page for programs that read the line, and the tests hold them.
+
+```
+stats silkit_to_xl=0 xl_to_silkit=0 own_tx_dropped=0 error_frames=0 overruns=0 silkit_rejected=0 xl_rejected=0 xl_queue_full=0 xl_tx_failures=0 silkit_tx_failures=0 xl_tx_dropped=0 xl_tx_unsent=0
+```
+
 
 | Key | Counts |
 |---|---|
@@ -297,6 +305,14 @@ When the bridge ends, it prints the statistics on one line that starts with `sta
 | `silkit_tx_failures` | Frames for which `ICanController::SendFrame` threw an exception |
 | `xl_tx_dropped` | Frames dropped by `--tx-timeout-ms` while the bus was congested |
 | `xl_tx_unsent` | Frames handed to XL that were lost without going out on the bus (on stop, or when the channel was reactivated) |
+
+`xl_to_silkit` counts only frames from other nodes on the bus: the receipts of the bridge's own transmissions are in `own_tx_dropped`. If the bridge has sent frames to the channel and not one frame has come from the bus 10 seconds after the first (`xl_to_silkit` is still 0), it prints a hint as a warning, once:
+
+```
+nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the bridge first sent a frame there: if a device is meant to answer, check that it is on, its cable and termination, the bit rate, and that this is the channel it is on.
+```
+
+A frame from the bus that came earlier keeps the hint back as well. The hint also appears when no answer is expected (when the bridge only sends), so the text is conditional. The Ethernet bridge gives the same hint (see "Hint when nothing comes from a device" in [ethernet-bridge.md](ethernet-bridge.md#hint-when-nothing-comes-from-a-device)).
 
 ## Physical CAN and virtual time
 
@@ -501,6 +517,7 @@ The XL backend has 2 parts.
 - The fake simulates a bus per channel, transmit receipts, init access, receive queue overflows, error frames, error state queries of the controller and loss of the device.
 - The fake also simulates these XL constraints: transmit receipt settings and the bit rate need init access, the transmit DLC is 0–8, the receive queue holds 1 fewer than the given size, and receiving returns one event per call.
 - The conversions in `xl_backend_vector.cpp` (the mapping of functions, constants and struct members) are not covered by automated tests.
+- The `no-answers` scenario of `tests/vector_xl/xl_bridge_it_launcher` sends to a channel with no node behind it, with `--stats-every-ms 100`: the statistics line comes while the bridge runs, only where it changed, with every key in order, and `xl_to_silkit=0`. The hint when nothing came is checked in unit tests only (`bridge_runtime.nothing_came_hint_*`), with the time given by the test.
 
 ### Verified (Windows 11, Vector Virtual CAN and VN5620)
 
