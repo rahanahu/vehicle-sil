@@ -1095,6 +1095,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `tests/scripts/test_run_gui.py` | `scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言 |
 | `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: GitHub Actions の job の Summary に書く中身、書かないとき |
 | `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: 英語のページと日本語のページの対（見出し、コードブロック、リンク）、英語版がまだないページ |
+| `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: 要約に出す、落ちたテストの出力の行（先頭の行と、その先の FAIL や Error を含む行） |
 | `tests/template/test_get_tools.py` | `package.py template`、`version` |
 
 - `ctest -R`: `^template\.get_tools`、`^scripts\.`
