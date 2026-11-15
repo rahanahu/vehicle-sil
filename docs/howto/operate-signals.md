@@ -193,6 +193,7 @@ Take your time: terminal 1 stays paused at time 0 until you run `step` or `resum
 | Advance 500 ms and pause | `uv run python -m vehicle_sil_control step 500` |
 | Show the variables and their values | `uv run python -m vehicle_sil_control show Engine` |
 | Write a value out of range and see the result | `uv run python -m vehicle_sil_control set Engine engine.throttle=150 --wait done` |
+| Write two variables, the second one an output | `uv run python -m vehicle_sil_control set Engine engine.throttle=30 engine.speed=5 --wait done` |
 | Resume | `uv run python -m vehicle_sil_control resume` |
 
 ### Verify the commands
@@ -236,6 +237,14 @@ A value out of range does not cause an error. The result is `invalid`.
 ```text
 seq 1794666759502164
 seq 1794666759502164 Engine: invalid (engine.throttle: 150 is out of range)
+```
+
+When you write several variables, the line ends with how many of them took effect and which one was refused. Here the check refuses the second write (an output), so none takes effect:
+
+<!-- vehicle_sil_control set Engine engine.throttle=30 engine.speed=5 --wait done -->
+```text
+seq 1794666759502165
+seq 1794666759502165 Engine: invalid (engine.speed: an output is not writable), 0 of 2 writes took effect, refused: engine.speed
 ```
 
 <!-- vehicle_sil_control resume -->
@@ -418,7 +427,7 @@ The 6 main values of `status`:
 | `applied` | The write was applied (`applied_at` is the time of the step in which it was applied). |
 | `late` | The write missed the step at the time you gave. |
 | `invalid` | The checks of name, type, range and writability rejected the write. A write to a destination that is not connected also gets this value. |
-| `rejected` | The ECU's setter rejected the write. The reason starts with the name of that variable. In a write of several variables, the variables before it are already applied (see "When a write is applied" in [control-api.md](../control-api.md#when-a-write-is-applied)). |
+| `rejected` | The ECU's setter rejected the write. In a write of several variables, the variables before it are already applied: `applied_writes` says how many, and `failed_write` is the position of the refused one (see "When a write is applied" in [control-api.md](../control-api.md#when-a-write-is-applied)). |
 | `unknown` | It is not known whether the write was applied. |
 
 3 rules apply when you wait:

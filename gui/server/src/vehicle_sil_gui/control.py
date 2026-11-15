@@ -187,6 +187,15 @@ def check_address(address: object) -> str:
     return address
 
 
+def _count(target, name: str) -> int | None:
+    """An optional count of a TargetResult: None when the server did not set it, and with stubs older than the
+    field (VEHICLE_SIL_CONTROL_STUBS made from an earlier proto file)."""
+    try:
+        return getattr(target, name) if target.HasField(name) else None
+    except ValueError:
+        return None
+
+
 class _TooOld(Exception):
     """The control server has no GetSnapshot."""
 
@@ -425,7 +434,7 @@ class GrpcSource:
             if status == "unspecified":
                 status = "unknown"
             targets.append(TargetInfo(t.peer, status, t.applied_at_ns if t.HasField("applied_at_ns") else None,
-                                      t.late, t.reason))
+                                      t.late, t.reason, _count(t, "applied_writes"), _count(t, "failed_write")))
         return OperationInfo(o.seq, o.done, targets)
 
     # ------------------------------------------------------------ the reader thread

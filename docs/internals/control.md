@@ -334,7 +334,7 @@ With the state, each peer's result says which of its writes took effect and whic
 | Rejected | The position of the write whose setter threw (the writes before it took effect) | The same position |
 | Sent, Queued, Disconnected, Unknown | empty | empty |
 
-- A command that the Agent received before its first step and that writes a Parameter at a later step is Rejected with nothing applied and no setter called: `applied_writes` is 0, and `failed_write` is empty unless the command has only one write. (A command that writes a Parameter and arrives after the first step is Invalid at once.)
+- A command that the Agent received before its first step and that writes a Parameter at a later step is Rejected with nothing applied and no setter called, and the Agent says 0 for it, as it does when the first setter throws. So for a command that writes a Parameter and has two or more writes, a 0 from the Agent gives `applied_writes` 0 and an empty `failed_write`: the Hub cannot tell the two apart. (A command that writes a Parameter and arrives after the first step is Invalid at once.)
 - A number from the Agent that is `n` or larger is not believed (a Rejected command has a write that did not take effect): both are empty.
 - An Agent that does not say the numbers (a transport of its own that leaves them out): both are 0 for a command of one write, and empty otherwise. The Hub never reads a `reason` to find a write.
 - Callers tell which writes took effect from these numbers, not from `reason` (the launcher's scenario does: `ScenarioEngine::failed_write()`).

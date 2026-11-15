@@ -334,7 +334,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 | Rejected | setter が例外を投げた書き込みの位置（それより前の書き込みは反映済み） | 同じ位置 |
 | Sent、Queued、Disconnected、Unknown | 空 | 空 |
 
-- Agent が最初のステップの前に受け取り、後のステップで Parameter を書くコマンドは、何も反映せず、setter も呼ばずに Rejected になります。`applied_writes` は 0 で、`failed_write` は、書き込みが 1 つだけのコマンドでなければ空です（最初のステップの後に届いた、Parameter を書くコマンドは、すぐに Invalid になります）。
+- Agent が最初のステップの前に受け取り、後のステップで Parameter を書くコマンドは、何も反映せず、setter も呼ばずに Rejected になります。Agent はこのときも、最初の setter が例外を投げたときと同じく 0 を返します。そのため、Parameter を書き、書き込みが 2 つ以上のコマンドで Agent が 0 を返すと、`applied_writes` は 0、`failed_write` は空です（Hub にはどちらか区別できません）。最初のステップの後に届いた、Parameter を書くコマンドは、すぐに Invalid になります。
 - Agent が返した数が `n` 以上のときは信じません（Rejected のコマンドには、反映されなかった書き込みがあるはずです）。どちらも空です。
 - 数を返さない Agent（数を省く独自のトランスポート）では、書き込みが 1 つのコマンドならどちらも 0、そうでなければ空です。Hub は、書き込みを探すために `reason` を読みません。
 - 呼び出す側は、どの書き込みが反映されたかを、`reason` ではなく、この数で判断します（ランチャーのシナリオはそうしています: `ScenarioEngine::failed_write()`）。

@@ -319,7 +319,14 @@ A command with several writes for one ECU (one `set` of a scenario with several 
 | A check fails when the Agent receives the command (name, type, range, writability): `invalid` | None of the command's writes. |
 | A setter throws in the ECU step: `rejected` | The writes before it in the command are already applied and stay applied. That write and the ones after it are not applied. |
 
-The reason of a `rejected` result starts with the name of the variable whose setter threw (`level: a setter threw: ...`), so you can tell which writes were applied. A setter cannot be undone, so the Agent does not roll the earlier writes back. If a group of values must be applied together or not at all, check them in one setter, or validate them in the ECU before using them.
+Each ECU's result says which writes took effect. The ECU's writes are those of the request for it, in the order you gave them, counted from 0:
+
+| Field (gRPC `TargetResult`, Python `Target`) | Meaning |
+|---|---|
+| `applied_writes` | How many took effect, from the first. `applied`: all of them. `rejected`: the position of the write whose setter threw. `invalid`, `late`, `cancelled`, `busy`: 0. |
+| `failed_write` | The position of the write that `reason` is about: the one that failed the check (`invalid`) or whose setter threw (`rejected`). |
+
+Either is empty (gRPC: not set, Python: `None`) when it is not known: while the write is open, for `unknown`, and in the cases that the comments of `TargetResult` in `control.proto` list. Use these fields, not `reason`, to tell which writes took effect: `reason` is text for people. A setter cannot be undone, so the Agent does not roll the earlier writes back. If a group of values must be applied together or not at all, check them in one setter, or validate them in the ECU before using them.
 
 | How you write | Writes the ECU receives |
 |---|---|
