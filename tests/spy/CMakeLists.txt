@@ -6,7 +6,7 @@
 vehicle_sil_add_j1939_codec(vehicle_sil_spy_cal_messages cal_messages.yaml)
 vehicle_sil_add_harness_tests(vehicle_sil_spy_tests
   PREFIX j1939_spy LABELS unit j1939 TIMEOUT 60
-  SOURCES test_spy.cpp test_spy_watch.cpp
+  SOURCES test_spy.cpp test_spy_watch.cpp test_spy_analysis.cpp
   LINK vehicle_sil::spy vehicle_sil::local vehicle_sil::simulation vehicle_sil_codec_test_messages
        vehicle_sil_spy_cal_messages)
 target_include_directories(vehicle_sil_spy_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/j1939)
@@ -35,11 +35,12 @@ else()
     PASS_REGULAR_EXPRESSION "a signal of M is named like an item the watch publishes")
 endif()
 
-# The example of the guide is guide_example.hpp and cal_messages.yaml (the English page; the
-# Japanese page has the same blocks, which scripts/check-docs.py checks).
+# The examples of the guide are guide_example.hpp, guide_analysis.hpp and cal_messages.yaml (the
+# English page; the Japanese page has the same blocks, which scripts/check-docs.py checks).
 add_test(NAME j1939_spy.guide_example_is_the_guides
          COMMAND ${CMAKE_COMMAND} -DDOC=${VEHICLE_SIL_TESTED_DOCS}/j1939-guide.md
                  -DEXAMPLE=${CMAKE_CURRENT_SOURCE_DIR}/guide_example.hpp
+                 -DANALYSIS=${CMAKE_CURRENT_SOURCE_DIR}/guide_analysis.hpp
                  -DMESSAGES=${CMAKE_CURRENT_SOURCE_DIR}/cal_messages.yaml
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/guide_example.cmake)
 set_tests_properties(j1939_spy.guide_example_is_the_guides PROPERTIES LABELS "unit;j1939" TIMEOUT 60)

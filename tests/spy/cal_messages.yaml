@@ -16,3 +16,4 @@ messages:
     signals:
       - {name: address, start_bit: 8, length: 16}
       - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+      - {name: value, start_bit: 32, length: 16, scale: 0.1, unit: V}

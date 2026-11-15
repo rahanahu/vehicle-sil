@@ -915,7 +915,7 @@ What the other ECUs receive and send, their transmit acknowledgements, and the t
 
 `vehicle_sil::spy::Spy` turns what the ECU hears into variables (header `vehicle_sil/spy/spy.hpp`; link the target `vehicle_sil::spy`). For a message with a type (see "Data layout (Codec)"), `watch<M>()` writes each signal and when the message came, with no code of your own. For anything else, write what to watch in a watcher class and add it to the `Spy`.
 
-The example watches two messages of a made-up calibration protocol (a tool writes a value to the ECU 0x21, which answers) and every Proprietary A message of 0x21. The messages are defined in YAML, and `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` in CMake turns them into `cal_messages.hpp` (link `cal_messages` and `vehicle_sil::spy`; the code below includes `cal_messages.hpp` and `vehicle_sil/spy/watch.hpp`). The tests build and run the two blocks below (`tests/spy/cal_messages.yaml`, `tests/spy/guide_example.hpp`) and check that this guide shows them unchanged. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
+The example watches two messages of a made-up calibration protocol (a tool writes a value to the ECU 0x21, which answers with the address and the value it now holds) and every Proprietary A message of 0x21. The messages are defined in YAML, and `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` in CMake turns them into `cal_messages.hpp` (link `cal_messages` and `vehicle_sil::spy`; the code below includes `cal_messages.hpp` and `vehicle_sil/spy/watch.hpp`). The tests build and run the two blocks below (`tests/spy/cal_messages.yaml`, `tests/spy/guide_example.hpp`) and check that this guide shows them unchanged. A `main()` with `ecu_main` is in [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp). `tests/j1939/test_j1939_silkit.cpp` tests that a listen-only participant does not change the communication of the other ECUs.
 
 <!-- tests/spy/cal_messages.yaml -->
 
@@ -935,6 +935,7 @@ messages:
     signals:
       - {name: address, start_bit: 8, length: 16}
       - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+      - {name: value, start_bit: 32, length: 16, scale: 0.1, unit: V}
 ```
 
 <!-- tests/spy/guide_example.hpp -->
@@ -973,6 +974,40 @@ private: vehicle_sil::spy::Spy spy_;
 ```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
+
+To judge a conversation between other ECUs (did each request get its answer, how soon, with the right values), write the analysis in a watcher. Its handler gets the messages in the order heard and turns them into types with `M::decode()`, its members keep the state, `on_step` finds what did not come in time, and its variables carry the verdict for `expect` in a scenario and for the GUI. A message that came over a connection or a BAM reaches the same handler in the same form. The example below uses the declarations of the one above. It checks each `Write` of the tool 0xF9 against the `WriteAnswer` of the ECU 0x21, which repeats the address and the value it now holds. The tests run it for an answer that matches, no answer, a different value, an answer that came over a connection and a second Write before the answer.
+
+<!-- tests/spy/guide_analysis.hpp -->
+
+```cpp
+class WriteCheck {                  // judges each Write of the tool 0xF9 to the ECU 0x21 by the ECU's WriteAnswer
+public:
+    WriteCheck(vehicle_sil::spy::Scope& s, vehicle_sil::SimDuration limit) : limit_(limit) {
+        s.on_message(cal::kPgn, [this](const j1939::Message& m) {          // in the order heard; also long messages
+            if (const auto w = cal::Write::decode(m.data); w && m.source == 0xF9 && m.destination == 0x21) {
+                if (asked_) { ++no_answer_; }                               // a new Write before the answer
+                asked_ = w; asked_at_ = m.time;
+            } else if (const auto a = cal::WriteAnswer::decode(m.data); a && asked_ && m.source == 0x21 && m.destination == 0xF9) {
+                ++answered_; answer_ms_ = (m.time - asked_at_) / 1ms;
+                if (a->address.raw() != asked_->address.raw() || a->value.raw() != asked_->value.raw()) { ++mismatches_; }
+                asked_.reset();
+            }
+        });
+        s.on_step([this](vehicle_sil::SimTime now) {                        // every step, after its messages
+            if (asked_ && now - asked_at_ > limit_) { ++no_answer_; asked_.reset(); }
+        });
+        s.output("answered", &answered_); s.output("no_answer", &no_answer_); s.output("mismatches", &mismatches_);
+        s.output("answer_ms", &answer_ms_, {.unit = "ms", .description = "Time to the latest answer (-1: none yet)"});
+    }
+private:
+    vehicle_sil::SimDuration limit_;
+    std::optional<cal::Write> asked_{};             // the Write waiting for its answer
+    vehicle_sil::SimTime asked_at_{};
+    std::int64_t answered_ = 0, no_answer_ = 0, mismatches_ = 0, answer_ms_ = -1;
+};
+```
+
+Add it in `CalSpy`'s constructor with `spy_.add<WriteCheck>("check", 200ms);`. A scenario then checks the verdict like any variable: `expect: { CalSpy.check.no_answer: 0, CalSpy.check.mismatches: 0 }` and `expect: { CalSpy.check.answer_ms: { le: 50 } }`.
 
 | How it receives | Use | What it sees |
 |---|---|---|
