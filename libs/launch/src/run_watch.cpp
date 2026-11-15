@@ -88,7 +88,7 @@ void RunWatch::note_timing(SimulationController& controller)
     t.late_ms = ceil_ms(s.current_lateness);
 }
 
-int RunWatch::watch(SimulationController& controller)
+RunWatch::Watched RunWatch::watch(SimulationController& controller)
 {
     WatchOptions watch;
     watch.poll = ctx_.options.poll;
@@ -206,6 +206,13 @@ int RunWatch::watch(SimulationController& controller)
     {
         out_.say(line);
     }
+    return Watched{watched, forScenario};
+}
+
+int RunWatch::settle(SimulationController& controller, const Watched& over)
+{
+    const WatchResult& watched = over.result;
+    const bool forScenario = over.for_scenario;
     scenario_.finish(controller, watched, forScenario, outcome_);
     note_timing(controller);
     // The run's end is known: what the participants' steps before it said of the networks. The

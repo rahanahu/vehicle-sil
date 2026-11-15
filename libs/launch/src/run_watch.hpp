@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // The watch of a run's simulation while it runs: a stop request, a participant that failed,
-// --timeout-ms, the scenario's end; and what is noted when it is over. Internal.
+// --timeout-ms, the scenario's end; and, called after it, what is settled when it is over.
+// Internal.
 #pragma once
 
 #include "run_context.hpp"
@@ -13,17 +14,18 @@
 #include "run_start.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/core/simulation_watch.hpp"
 
 namespace vehicle_sil::launch::detail {
 
-/// Watches the simulation from its start to its end.
+/// Watches the simulation from its start to its end (watch()), then settles what is known when it
+/// is over (settle(), which the run calls right after).
 ///
 /// Threads and locks: the main thread only; no lock of its own, and no state but what it says of
 /// a simulation that stands still (StandStill). What it reads of
 /// other threads is atomic (RunScenario::over(), the hold's times of RunStart) or the
-/// controller's. It ends the time commands (TimeCommands::detach()) once the simulation is over.
-/// When the simulation is over, it asks the run's samples (RunSamples, which keeps itself) for
-/// the traffic of the result.
+/// controller's. settle() ends the time commands (TimeCommands::detach()) once the simulation is
+/// over, and asks the run's samples (RunSamples, which keeps itself) for the traffic of the result.
 class RunWatch
 {
 public:
@@ -34,10 +36,21 @@ public:
     {
     }
 
-    /// Watches until the simulation is over (stopping or aborting it if it has to), and notes in
-    /// the outcome how it ended. Returns the stop requests that had come when it had ended (one
-    /// from then on comes while the participants end).
-    [[nodiscard]] int watch(SimulationController& controller);
+    /// How the watch ended.
+    struct Watched
+    {
+        WatchResult result;
+        bool for_scenario = false; ///< the scenario was over: the watch stopped the simulation for it
+    };
+
+    /// Watches until the simulation is over (stopping or aborting it if it has to).
+    [[nodiscard]] Watched watch(SimulationController& controller);
+
+    /// The simulation that `over` watched is over: ends the scenario, notes its timing and
+    /// traffic, ends the time commands, and notes in the outcome how it ended. Returns the stop
+    /// requests that had come when it had ended (one from then on comes while the participants
+    /// end).
+    [[nodiscard]] int settle(SimulationController& controller, const Watched& over);
 
 private:
     /// The simulation is over: how its time went. The gate's numbers stopped when the run ended

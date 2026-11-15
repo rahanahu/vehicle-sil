@@ -851,7 +851,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
 | この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
-| 仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
+| 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
 | `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ） | `tools/launch/control_server.cpp` |
 
@@ -1813,6 +1813,7 @@ flowchart TD
 |---|---|
 | 読み方と照合 | `libs/launch/src/scenario.cpp`（ファイル、パラメーター、variant、手順）、`scenario_values.cpp`（変数と値）、`scenario_waves.cpp`（波形と点）、`scenario_inputs.cpp`（`inputs` と dither）。クラス `Reader` は `scenario_reader.hpp` |
 | 手順を進める処理 | `libs/launch/src/scenario_run.cpp` |
+| 手順が失敗した理由: 満たさなかった条件と、反映されなかった書き込み。メッセージと記録（`failed.conditions[]`、`failed.writes[]`）の両方 | `libs/launch/src/scenario_failure.cpp`（`unmet()`、`unmet_values()`、`failed_write()`、`applied_text()`、`during()`） |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/launch/src/scenario_shapes.cpp` |
 | `points` の CSV ファイル | 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
@@ -1894,7 +1895,7 @@ flowchart TD
 | 内容 | 場所 |
 |---|---|
 | 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
-| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`） |
+| 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身。書く内容は `scenario_failure.cpp` が作る）、`close_record()`（記録の終わり `recorded_to_ms`） |
 | ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/json/include/vehicle_sil/json/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
@@ -1980,7 +1981,7 @@ flowchart TD
 | ネットワークの `senders`、`receivers`、`delivered` | `TrafficNetwork` の関数 |
 | hello のスキーマから、ネットワーク名と数の出力の位置を取り出す | `traffic_schema()` |
 | 誰がどのネットワークにいるか | `traffic_plan()`（`seen_networks()` から） |
-| 終わりに読む所 | `run_watch.cpp` の `RunWatch::watch()`（`RunSamples::finish()`） |
+| 終わりに読む所 | `run_watch.cpp` の `RunWatch::settle()`（`RunSamples::finish()`）。`Runner::run()` が `RunWatch::watch()` の後に呼ぶ |
 | 文と JSON | `run_format.cpp` の `traffic_text()` と `write_run_json()` |
 
 合わせて直すドキュメント:

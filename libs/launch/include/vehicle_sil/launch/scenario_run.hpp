@@ -360,6 +360,13 @@ private:
     void fail(std::size_t step, SimTime at, std::string code, std::string message, TimelineFailure failure = {});
     void finish(ScenarioStatus status);
     [[nodiscard]] bool unusable(std::size_t step, SimTime time);
+    /// Once the scenario is over: closes the record (see the class comment).
+    void close_record();
+    [[nodiscard]] SimTime judge_time(const std::vector<ScenarioWrite>& writes, SimTime at) const;
+    [[nodiscard]] SimTime next_tick_after(SimTime t) const;
+
+    // Why a step failed, for its message and the record (scenario_failure.cpp).
+
     /// The conditions of `step` that the values do not meet ("" if none); with `since`, only those
     /// whose latest sample is at or after it are judged.
     [[nodiscard]] std::string unmet(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
@@ -376,12 +383,8 @@ private:
     /// For the message of that failure: which writes of the participant's command took effect
     /// ("; ..."); empty for a command of one write.
     [[nodiscard]] std::string applied_text(const TimelineFailure& failure, const std::string& peer) const;
-    /// Once the scenario is over: closes the record (see the class comment).
-    void close_record();
     /// The time of the watch beside a ramp or a wave, for the messages: "from 40 ms to 120 ms, ...".
     [[nodiscard]] std::string during(std::size_t step, const Watch& watch) const;
-    [[nodiscard]] SimTime judge_time(const std::vector<ScenarioWrite>& writes, SimTime at) const;
-    [[nodiscard]] SimTime next_tick_after(SimTime t) const;
 
     const Scenario& scenario_;
     SimDuration tick_;
