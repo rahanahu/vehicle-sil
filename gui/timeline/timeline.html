@@ -1,0 +1,744 @@
+<!doctype html>
+<!--
+  The timeline page of vehicle-sil: open it in a browser and drop a timeline file on it (the JSON that
+  "vehicle_sil_launch run <configuration> --scenario <scenario> --timeline <file>" writes). viewer.js does the work;
+  see the comment at its top for the ways the data can come in.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Scenario timeline</title>
+    <style>
+      :root {
+        --bg: #f7f7f5;
+        --panel: #ffffff;
+        --fg: #1b1d20;
+        --muted: #5c636b;
+        --border: #d7dadd;
+        --grid: #e9ebed;
+        --sent: #1f5fc4;
+        --seen: #0b7c70;
+        --base: #8a5cc2;
+        --ok: #1b7a39;
+        --ok-fill: rgba(27, 122, 57, 0.12);
+        --bad: #c42525;
+        --bad-fill: rgba(196, 37, 37, 0.13);
+        --bad-bg: #fdf0ef;
+        --warn: #995400;
+        --warn-fill: rgba(214, 138, 0, 0.16);
+        --warn-bg: #fdf6e8;
+        --ok-bg: #eef7f0;
+        --neutral: #737a83;
+        --neutral-fill: rgba(115, 122, 131, 0.14);
+        --unrecorded: rgba(110, 110, 110, 0.1);
+        --true: #1f5fc4;
+        --e0: #dfe6f3;
+        --e1: #e7dff3;
+        --e2: #dff0ea;
+        --cursor: #3b3f45;
+        --selection: rgba(31, 95, 196, 0.15);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #131518;
+          --panel: #1b1e22;
+          --fg: #e4e6e9;
+          --muted: #9aa1aa;
+          --border: #343940;
+          --grid: #262a2f;
+          --sent: #79a8ff;
+          --seen: #3cc4b1;
+          --base: #b89af0;
+          --ok: #5cc97c;
+          --ok-fill: rgba(92, 201, 124, 0.14);
+          --bad: #ff6f6f;
+          --bad-fill: rgba(255, 111, 111, 0.16);
+          --bad-bg: #2c1a1b;
+          --warn: #f0b04a;
+          --warn-fill: rgba(240, 176, 74, 0.16);
+          --warn-bg: #2a2317;
+          --ok-bg: #18261c;
+          --neutral: #8d949d;
+          --neutral-fill: rgba(141, 148, 157, 0.16);
+          --unrecorded: rgba(160, 160, 160, 0.08);
+          --true: #79a8ff;
+          --e0: #263248;
+          --e1: #33284a;
+          --e2: #1f3a33;
+          --cursor: #c9cdd2;
+          --selection: rgba(121, 168, 255, 0.18);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.45 system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      code,
+      .message {
+        font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        font-size: 0.92em;
+      }
+      main {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      h1 {
+        font-size: 1.35rem;
+        margin: 0 0 6px;
+        overflow-wrap: anywhere;
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin: 0 0 4px;
+      }
+      h3 {
+        font-size: 0.95rem;
+        margin: 10px 0 4px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .small {
+        font-size: 0.85rem;
+      }
+      .top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .top > div:first-child {
+        min-width: 0;
+        flex: 1 1 320px;
+      }
+      #facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        align-items: center;
+      }
+      .fact {
+        overflow-wrap: anywhere;
+      }
+      button {
+        font: inherit;
+        color: var(--fg);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--muted);
+      }
+      button:focus-visible,
+      #chart:focus-visible {
+        outline: 2px solid var(--sent);
+        outline-offset: 2px;
+      }
+      button.link {
+        border: none;
+        background: none;
+        padding: 0;
+        color: var(--sent);
+        text-decoration: underline;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0 8px;
+        border-radius: 10px;
+        font-weight: 600;
+        border: 1px solid currentColor;
+      }
+      .st-passed {
+        color: var(--ok);
+      }
+      .st-failed {
+        color: var(--bad);
+      }
+      .st-incomplete,
+      .st-unfinished {
+        color: var(--warn);
+      }
+      .st-not_run,
+      .st-skipped,
+      .st-unknown {
+        color: var(--neutral);
+      }
+      .banner {
+        border: 1px solid var(--border);
+        border-left-width: 5px;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 0 0 10px;
+        background: var(--panel);
+        overflow-wrap: anywhere;
+      }
+      .banner.bad {
+        border-color: var(--bad);
+        background: var(--bad-bg);
+      }
+      .banner.bad h2 {
+        color: var(--bad);
+      }
+      .banner.ok {
+        border-color: var(--ok);
+        background: var(--ok-bg);
+      }
+      .banner.ok h2 {
+        color: var(--ok);
+      }
+      .banner.warn {
+        border-color: var(--warn);
+        background: var(--warn-bg);
+      }
+      .banner p {
+        margin: 4px 0;
+      }
+      .banner ul {
+        margin: 2px 0;
+        padding-left: 20px;
+      }
+      .message {
+        white-space: pre-wrap;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px !important;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 3px 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      th {
+        font-weight: 600;
+        color: var(--muted);
+      }
+      td.num {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      table.writes {
+        width: auto;
+        max-width: 100%;
+        background: var(--panel);
+      }
+      tr.cause td {
+        font-weight: 600;
+      }
+      tr.failed-row td {
+        background: var(--bad-fill);
+      }
+      .applied-true {
+        color: var(--ok);
+      }
+      .applied-false {
+        color: var(--bad);
+      }
+      .applied-null {
+        color: var(--warn);
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      details {
+        margin: 12px 0;
+      }
+      summary {
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        align-items: center;
+        margin: 8px 0;
+      }
+      #range {
+        margin-right: auto;
+      }
+      .chip {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #chart {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+      }
+      .lane {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        border-bottom: 1px solid var(--grid);
+      }
+      .lane-head {
+        padding: 4px 8px;
+        border-right: 1px solid var(--grid);
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .lane.failing .lane-head {
+        box-shadow: inset 4px 0 0 var(--bad);
+      }
+      .lane-plot {
+        min-width: 0;
+        overflow: hidden;
+      }
+      .lane.axis {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--panel);
+      }
+      .group {
+        padding: 4px 8px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        color: var(--muted);
+        background: var(--bg);
+        border-bottom: 1px solid var(--grid);
+      }
+      @media (max-width: 719px) {
+        .lane {
+          grid-template-columns: 1fr;
+        }
+        .lane-head {
+          border-right: none;
+        }
+      }
+      .var-name {
+        font-weight: 600;
+      }
+      .var-name.failing {
+        color: var(--bad);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 10px;
+        align-items: center;
+      }
+      .key::before {
+        content: '';
+        display: inline-block;
+        width: 14px;
+        height: 0;
+        margin-right: 4px;
+        vertical-align: middle;
+        border-top: 2px solid var(--sent);
+      }
+      .key.seen::before {
+        border-top: 1.5px solid var(--seen);
+      }
+      .key.base::before {
+        border-top: 1.5px dashed var(--base);
+      }
+      .key.not-applied::before {
+        border-top: 2px dashed var(--bad);
+      }
+      .key.not-known::before {
+        border-top: 2px dotted var(--warn);
+      }
+      .key.held::before {
+        border-top: 4px solid var(--neutral);
+      }
+      .readout {
+        color: var(--fg);
+        font-variant-numeric: tabular-nums;
+        min-height: 1.45em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .note {
+        color: var(--warn);
+      }
+      #load {
+        border: 2px dashed var(--border);
+        border-radius: 8px;
+        padding: 40px 16px;
+        text-align: center;
+        background: var(--panel);
+      }
+      body.dragging #load,
+      body.dragging #chart {
+        border-color: var(--sent);
+      }
+      #error {
+        border: 1px solid var(--bad);
+        border-left-width: 5px;
+        border-radius: 6px;
+        background: var(--bad-bg);
+        padding: 10px 14px;
+        margin: 0 0 12px;
+        overflow-wrap: anywhere;
+      }
+      /* the chart */
+      svg.plot {
+        display: block;
+        touch-action: none;
+        cursor: crosshair;
+        user-select: none;
+      }
+      svg text {
+        fill: var(--fg);
+        font-size: 11px;
+        font-family: system-ui, sans-serif;
+      }
+      .tick {
+        stroke: var(--muted);
+      }
+      .tick-label,
+      .range-label,
+      .empty-label {
+        fill: var(--muted);
+      }
+      .range-label,
+      .tick-label,
+      .state-label,
+      .mark text {
+        paint-order: stroke;
+        stroke: var(--panel);
+        stroke-width: 3px;
+        stroke-linejoin: round;
+      }
+      .unrecorded {
+        fill: var(--unrecorded);
+      }
+      .dropped {
+        fill: var(--warn-fill);
+        stroke: var(--warn);
+        stroke-dasharray: 3 3;
+      }
+      .cursor {
+        stroke: var(--cursor);
+        stroke-width: 1;
+        pointer-events: none;
+      }
+      .selection {
+        fill: var(--selection);
+      }
+      .fail-line {
+        stroke: var(--bad);
+        stroke-width: 1.5;
+        stroke-dasharray: 5 3;
+        pointer-events: none;
+      }
+      .step .bar {
+        fill: var(--neutral-fill);
+        stroke: currentColor;
+      }
+      .step.st-passed .bar {
+        fill: var(--ok-fill);
+      }
+      .step.st-failed .bar {
+        fill: var(--bad-fill);
+        stroke-width: 2;
+      }
+      .step.st-unfinished .bar {
+        fill: var(--warn-fill);
+        stroke-dasharray: 4 2;
+      }
+      .step .marker {
+        fill: currentColor;
+      }
+      .step .skipped {
+        fill: none;
+        stroke: currentColor;
+        stroke-dasharray: 2 2;
+      }
+      .step .open {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+      }
+      .step .decided {
+        stroke: currentColor;
+        stroke-width: 2;
+      }
+      .step .limit {
+        stroke: currentColor;
+        stroke-width: 1;
+      }
+      .step.st-unknown {
+        color: var(--fg);
+      }
+      .step-label {
+        font-weight: 600;
+      }
+      .series {
+        fill: none;
+        stroke-width: 2;
+        stroke-linejoin: round;
+      }
+      .series.sent {
+        stroke: var(--sent);
+      }
+      .series.seen {
+        stroke: var(--seen);
+        stroke-width: 1.25;
+      }
+      .series.held {
+        stroke: var(--neutral);
+        stroke-width: 4;
+        opacity: 0.6;
+      }
+      .series.not-applied {
+        stroke: var(--bad);
+        stroke-dasharray: 4 3;
+        stroke-width: 1.5;
+      }
+      .series.not-known {
+        stroke: var(--warn);
+        stroke-dasharray: 1 3;
+        stroke-linecap: round;
+        stroke-width: 2;
+      }
+      .series.base {
+        stroke: var(--base);
+        stroke-width: 1;
+        stroke-dasharray: 4 2;
+      }
+      .pt.sent {
+        fill: var(--sent);
+      }
+      .pt.seen {
+        fill: var(--seen);
+      }
+      .pt.not-applied {
+        fill: var(--panel);
+        stroke: var(--bad);
+        stroke-width: 1.5;
+      }
+      .pt.not-known {
+        fill: var(--panel);
+        stroke: var(--warn);
+        stroke-width: 1.5;
+      }
+      .state {
+        stroke: var(--panel);
+        stroke-width: 0.5;
+      }
+      .state.v-true {
+        fill: var(--true);
+        opacity: 0.75;
+      }
+      .state.v-false {
+        fill: var(--grid);
+      }
+      .state.v-null,
+      .state.v-mixed {
+        fill: var(--neutral-fill);
+      }
+      .state.v-e0 {
+        fill: var(--e0);
+      }
+      .state.v-e1 {
+        fill: var(--e1);
+      }
+      .state.v-e2 {
+        fill: var(--e2);
+      }
+      .state.not-applied {
+        fill: var(--bad-fill);
+        stroke: var(--bad);
+        stroke-width: 1.5;
+        stroke-dasharray: 4 3;
+      }
+      .state.not-known {
+        fill: var(--warn-fill);
+        stroke: var(--warn);
+        stroke-width: 1.5;
+        stroke-dasharray: 1.5 2.5;
+      }
+      .state.held {
+        fill: var(--neutral);
+        opacity: 0.6;
+        stroke: none;
+      }
+      .state-label {
+        pointer-events: none;
+      }
+      .band .allowed {
+        fill: var(--neutral-fill);
+      }
+      .band.ok .allowed {
+        fill: var(--ok-fill);
+      }
+      .band.bad .allowed {
+        fill: var(--bad-fill);
+      }
+      .band .threshold {
+        stroke: var(--neutral);
+        stroke-dasharray: 5 3;
+      }
+      .band.ok .threshold {
+        stroke: var(--ok);
+      }
+      .band.bad .threshold {
+        stroke: var(--bad);
+      }
+      .band .threshold.limit {
+        stroke-width: 0.75;
+        stroke-dasharray: 2 3;
+      }
+      .band .expect-box {
+        fill: none;
+        stroke: var(--neutral);
+        stroke-width: 1.5;
+      }
+      .band.ok .expect-box {
+        stroke: var(--ok);
+      }
+      .band.bad .expect-box {
+        stroke: var(--bad);
+        stroke-width: 2;
+      }
+      .expect-label {
+        font-size: 10px;
+      }
+      .mark circle {
+        fill: var(--bad);
+        stroke: var(--panel);
+        stroke-width: 1.5;
+      }
+      .mark text {
+        font-weight: 700;
+        pointer-events: none;
+      }
+      .mark.bad text {
+        fill: var(--bad);
+      }
+      .mark.ok text {
+        fill: var(--ok);
+      }
+      .mark.warn text {
+        fill: var(--warn);
+      }
+      .mark.write rect {
+        fill: var(--panel);
+        stroke-width: 1.5;
+      }
+      .mark.write.ok rect {
+        stroke: var(--ok);
+      }
+      .mark.write.bad rect {
+        stroke: var(--bad);
+      }
+      .mark.write.warn rect {
+        stroke: var(--warn);
+      }
+      .mark.write.cause rect {
+        stroke-width: 3;
+      }
+      .mark .glyph {
+        font-size: 10px;
+      }
+      .line-mark rect,
+      .line-mark path {
+        fill: var(--neutral-fill);
+        stroke: var(--neutral);
+      }
+      .line-mark.line-set path {
+        fill: var(--sent);
+        stroke: none;
+      }
+      .line-mark.line-dither rect {
+        fill: none;
+        stroke: var(--base);
+        stroke-dasharray: 2 2;
+      }
+      .line-mark.line-dither path {
+        fill: none;
+        stroke: var(--base);
+      }
+      .line-mark.line-unknown line {
+        stroke: var(--fg);
+      }
+      .line-mark text {
+        font-size: 9px;
+        fill: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <div>
+          <h1 id="title">Scenario timeline</h1>
+          <div id="facts" class="small"></div>
+        </div>
+        <button id="open" type="button">Open a file</button>
+        <input id="file" type="file" accept=".json,application/json" hidden />
+      </header>
+      <div id="error" role="alert" hidden></div>
+      <section id="load">
+        <p><strong>Drop a timeline file here</strong>, or choose one with <em>Open a file</em>.</p>
+        <p class="muted small">
+          A timeline file is the JSON that
+          <code
+            >vehicle_sil_launch run &lt;configuration&gt; --scenario &lt;scenario&gt; --timeline
+            &lt;file&gt;</code
+          >
+          writes. Nothing leaves this computer: the page reads the file in the browser.
+        </p>
+        <noscript><p>This page needs JavaScript (viewer.js next to it).</p></noscript>
+      </section>
+      <section id="view" hidden>
+        <div id="summary"></div>
+        <div class="toolbar small">
+          <span id="range" class="muted"></span>
+          <button id="show-failure" type="button">Show the failure</button>
+          <button id="show-all" type="button">Whole run</button>
+          <button id="zoom-out" type="button">Zoom out</button>
+          <span id="participants" class="toolbar"></span>
+        </div>
+        <p class="muted small">
+          Steps: a bar from start to end, a tick where the result was decided, a thin line on to a
+          wait's limit. Shaded: the values a condition allows (green: it held; red: it did not;
+          grey: not decided by it). Red dashed line: the failure. Grey on the right: after the end
+          of the record. Sent values: red dashed where the ECU did not apply them, orange dotted
+          where that is not known, and a thick grey line for the value the ECU kept where the file
+          says that value was applied. Drag across the chart to zoom in, double-click for the whole
+          run; hover (or focus the chart and use the arrow keys, + and - to zoom) for the values at
+          a time.
+        </p>
+        <div
+          id="chart"
+          tabindex="0"
+          aria-label="The scenario's steps and variables over virtual time. The tables below hold the same contents."
+        ></div>
+        <div id="tables"></div>
+      </section>
+    </main>
+    <script type="application/json" id="timeline-data"></script>
+    <script src="viewer.js"></script>
+  </body>
+</html>

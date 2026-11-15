@@ -1170,6 +1170,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 | ライブラリのテスト | `verify-web.py` の `client` の手順 |
 | ライブラリを 1 つにまとめる | `verify-web.py` の `bundle` の手順 |
 | パッケージ | `verify-web.py` の `package` の手順 |
+| 時間の軸のページ `gui/timeline` の単体テスト | `verify-web.py` の `timeline` の手順（ブラウザのテストは `--e2e-grep 'timeline page'`） |
 | 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
 
 サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。

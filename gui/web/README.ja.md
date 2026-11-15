@@ -36,26 +36,27 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 `gui/web/` で実行します。どれも終了コードで成否を返します。
 
-| コマンド               | 内容                                                                                                 |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりにインストールする                                                       |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）を起動する                                                      |
-| `npm run build`        | 本番のビルド（出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`）               |
-| `npm test`             | 単体テスト（Vitest、jsdom）を 1 回実行して終わる                                                     |
-| `npm run test:client`  | クライアントのライブラリ（`../client`）の型の検査と単体テスト（Vitest、Node。Angular も DOM もなし） |
-| `npm run build:client` | クライアントのライブラリを 1 つの ESM のファイルにまとめる                                           |
-| `npm run pack:client`  | クライアントのライブラリを、型つきの npm のパッケージにする                                          |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                           |
-| `npm run format:check` | Prettier の書式の検査（`../client` も。設定は `../.prettierrc`）                                     |
-| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する                           |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                           |
-| `npm run e2e:real`     | Playwright。本物のランチャーと、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）         |
-| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す                   |
+| コマンド                | 内容                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `npm ci`                | `package-lock.json` のとおりにインストールする                                                       |
+| `npm start`             | 開発サーバー（http://127.0.0.1:4200）を起動する                                                      |
+| `npm run build`         | 本番のビルド（出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`）               |
+| `npm test`              | 単体テスト（Vitest、jsdom）を 1 回実行して終わる                                                     |
+| `npm run test:client`   | クライアントのライブラリ（`../client`）の型の検査と単体テスト（Vitest、Node。Angular も DOM もなし） |
+| `npm run test:timeline` | 時間の軸のページ（`../timeline/viewer.js`）の単体テスト（Node のテストランナー。DOM なし）           |
+| `npm run build:client`  | クライアントのライブラリを 1 つの ESM のファイルにまとめる                                           |
+| `npm run pack:client`   | クライアントのライブラリを、型つきの npm のパッケージにする                                          |
+| `npm run lint`          | ESLint（angular-eslint）。警告も失敗にする                                                           |
+| `npm run format:check`  | Prettier の書式の検査（`../client` と `../timeline` も。設定は `../.prettierrc`）                    |
+| `npm run e2e`           | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する                           |
+| `npm run e2e:dev`       | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                           |
+| `npm run e2e:real`      | Playwright。本物のランチャーと、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）         |
+| `npm run i18n:extract`  | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す                   |
 
 - `npm start` は、`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送します（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）。
 - `npm run build:client` の出力は `../../build/gui-client/vehicle-sil-gui-client.mjs` です。esbuild は、Angular のビルドのツールが持っているものを使います。
 - `npm run pack:client` の出力は `../../build/gui-client/vehicle-sil-gui-client-<version>.tgz` です。作った後に、インストールして確認します（`../client/pack.mjs`）。
-- `npm run lint` は、`../client` も、その `eslint.config.js` で検査します。
+- `npm run lint` は、`../client` と `../timeline` も、それぞれの `eslint.config.js` で検査します（angular-eslint ではなく素の ESLint）。
 - `npm run e2e` と `npm run e2e:real` の前に、`npm run build` が必要です。
 - `npm run e2e:real` は、ランチャーを環境変数 `VEHICLE_SIL_GUI_LAUNCHER` で受け取ります。
 - 翻訳ファイルとの比較と更新は、`scripts/verify-web.py` で行います（下の「国際化」）。
