@@ -573,9 +573,10 @@ passed: 0 errors, 1 warning, 1 note
 
 シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU が変数の接続で送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です（[ECU の変数との接続](#ecu-の変数との接続control_link)）。
 
-- `traffic:` の行は、設定ファイルのネットワークごとに、数えた participant のうち、フレームを 1 つ以上送ったものの数と、1 つ以上受けたものの数です（`J1939_CAN: 1 participant sent, 1 received (2 counted)`）。上の最初の例は、Engine が送り、Dashboard が受けています。Dashboard は受けるだけで何も送らないので、送ったのは 1、受けたのも 1 で、これで正常です。割合ではないので、2 つの数が `counted` と同じである必要はありません。届いていないのは、送った participant がいるのに `0 received` のネットワークです。
-- 数えなかった participant がいれば、括弧の中に `1 not counted` と続けます。誰も送っていないネットワークは `nothing sent (2 counted)`、数えた participant が 1 つもないネットワーク（LIN、イーサネット、生の CAN として使うネットワークなど）は `not counted (3 participants)`、誰がいるかをランチャーが知らないネットワークは `not counted (no participant known to be on it)` です。設定ファイルにネットワークが 1 つもないときは、`traffic: no network in use` の 1 行だけです。
-- 表は、ネットワークと participant ごとの 1 行です。ネットワークの名前は、シミュレーションでの名前です（`network_names` で替えた後の名前）。載る participant は、ランチャーがそのネットワークにいると知っているものだけです（`--describe` がそのネットワークを言うもの。`describe: false` では、変数がそのネットワークの数を持つもの）。変数の接続のない `describe: false` の participant（ブリッジ、ほかのツール）は、フレームを出していても載りません。誰も載らないネットワークは、participant が `-` の 1 行になります。
+- `traffic:` の行は、設定ファイルのネットワークごとに、数えた participant のうち、フレームを 1 つ以上送ったものの数と、1 つ以上受けたものの数です（`J1939_CAN: 1 participant sent, 1 received (2 counted)`）。上の最初の例は、Engine が送り、Dashboard が受けています。Dashboard は受けるだけで何も送らないので、送ったのは 1、受けたのも 1 で、これで正常です。割合ではないので、2 つの数が `counted` と同じである必要はありません。届いていないのは、送った participant がいるのに `0 received` で、括弧の中が `counted` だけのネットワークです。
+- 数えなかった participant がいれば、括弧の中に `1 not counted` と続けます。誰も送らず誰も受けておらず、全員を数えたネットワークは `nothing sent (2 counted)` です。そうでなければ、誰も送っていないネットワークも数で言います（`0 participants sent, 1 received (1 counted, 1 not counted)`）。数えた participant が 1 つもないネットワーク（LIN、イーサネット、生の CAN として使うネットワークなど）は `not counted (3 participants)`、誰がいるかをランチャーが知らないネットワークは `not counted (no participant known to be on it)` です。設定ファイルにネットワークが 1 つもないときは、`traffic: no network in use` の 1 行だけです。
+- ランチャーがどのネットワークにいるかを 1 つも知らない participant（`describe: false` で、変数の接続が設定ファイルのネットワークの数を持たないもの。ブリッジ、ほかのツール）は、居場所がわからない（unplaced）participant です。どのネットワークにいるかもしれないので、どのネットワークの括弧にも `1 unplaced` と続け、表には、ネットワークが `-` で右に `unplaced: its networks are not known` の行を足します。
+- 表は、ネットワークと participant ごとの 1 行です。ネットワークの名前は、シミュレーションでの名前です（`network_names` で替えた後の名前）。載る participant は、ランチャーがそのネットワークにいると知っているものだけです（`--describe` がそのネットワークを言うもの。`describe: false` では、変数がそのネットワークの数を持つもの）。変数の接続のない `describe: false` の participant（ブリッジ、ほかのツール）は、フレームを出していても、ネットワークの下には載りません（上の、居場所がわからない participant です）。誰も載らないネットワークは、participant が `-` の 1 行になります。
 - 数え方: 各 participant の「実行が終わった仮想時刻（行の `steps before <ms> ms`、JSON の `before_ms`）より前に始まった最後のステップ」の値です。その時刻以後のステップの値は、実行が終わるまでに届くことも届かないこともあるので、使いません。
 - `sent` は、そのステップより前に、ポートが送信として受け付けたフレームの数です（バスに出た数ではありません。Address Claimed も入ります）。`received` は、ポートから受け取った、ほかの participant の J1939 のフレームの数です（同じ participant の別のノードのものと、J1939 でないフレームは入りません）。
 - 数えなかった participant は、数が `-` で、行の右に理由があります。
@@ -774,8 +775,9 @@ passed: 0 errors, 1 warning, 1 note
 | キー | 値 |
 |---|---|
 | `before_ms` | 実行が終わった仮想時刻（`timing.sim_ms`）。数は、これより前に始まったステップのものです |
+| `unplaced` | 実行にいて居場所がわからない participant の名前（ランチャーがどのネットワークにいるかを 1 つも知らないもの。「[ネットワークの送受信](#ネットワークの送受信traffic)」）。設定ファイルの順。いなければ `[]` |
 | `networks[]` | 設定ファイルのネットワークの全部（その順）。`name`（シミュレーションでの名前）、`kind`、`counted`（数えた participant の数）、`senders`（そのうち 1 つ以上送ったものの数）、`receivers`（そのうち 1 つ以上受けたものの数）、`delivered`（下） |
-| `networks[].delivered` | 送ったフレームが届いたか。`true`: 数えた participant が送り、数えた別の participant が受けた。`false`: 数えた participant が送ったのに、送った本人のほかに受けたものがない（そのネットワークにいるとわかっている participant は全部数えている）。`null`: わからない（数えた participant がいない、誰も送っていない、または、数えたほかの participant は受けていないが、数えなかった participant がそのネットワークにいる） |
+| `networks[].delivered` | 送ったフレームが届いたか。`true`: 数えた participant が送り、数えた別の participant が受けた。`false`: 数えた participant が送ったのに、数えた participant が誰も受けていない（そのネットワークにいるとわかっている participant は全部数えていて、`unplaced` が空）。`null`: わからない（数えた participant がいない、誰も送っていない、ただ 1 つの送り手がただ 1 つの受け手（ランチャーが数えない participant のフレームを受けた）、または、数えた participant が誰も受けていないが、数えなかった participant がそのネットワークにいるか `unplaced` が空でない） |
 | `networks[].participants[]` | 設定ファイルの順（誰がいるかわからないネットワークは `[]`）。`name`、`counted`、`not_counted`（数えたときは `null`。ほかは「[ネットワークの送受信](#ネットワークの送受信traffic)」の表の文字列）、`virtual_time`（仮想時間で動いているか。変数の接続がつながらなかったときは `null`）、`at_ms`（数を読んだステップの時刻）、`frames_sent`、`frames_received`（数えなかったときは、この 3 つは `null`） |
 
 届いたかどうかをプログラムで判断するときは、ネットワークごとの `delivered` を見ます（`false` が「送ったのに届いていない」。`null` は判断できないので、届いたとも届いていないとも読みません）。participant ごとには `not_counted` と `frames_received` を見ます。`delivered` は数だけで決めています。participant は自分が送ったフレームを受信に数えないので、送った本人でない participant の受信が 1 以上なら、誰かのフレームが届いています。ただし、それが誰のフレームかは数からはわかりません（数えなかった participant やブリッジのフレームかもしれません）。
@@ -847,6 +849,7 @@ passed: 0 errors, 1 warning, 1 note
   ],
   "traffic": {
     "before_ms": 1000,
+    "unplaced": [],
     "networks": [
       {
         "name": "J1939_CAN",

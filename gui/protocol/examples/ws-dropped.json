@@ -448,6 +448,9 @@
           ],
           "traffic": {
             "before_ms": 1000,
+            "unplaced": [
+              "Logger"
+            ],
             "networks": [
               {
                 "name": "J1939_CAN",

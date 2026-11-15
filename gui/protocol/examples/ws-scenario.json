@@ -953,6 +953,9 @@
           ],
           "traffic": {
             "before_ms": 101,
+            "unplaced": [
+              "Logger"
+            ],
             "networks": [
               {
                 "name": "J1939_CAN",
@@ -1751,6 +1754,9 @@
           ],
           "traffic": {
             "before_ms": 101,
+            "unplaced": [
+              "Logger"
+            ],
             "networks": [
               {
                 "name": "J1939_CAN",

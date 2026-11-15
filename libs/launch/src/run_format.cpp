@@ -277,12 +277,15 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         const std::size_t counted = network.counted();
         const std::size_t others = network.participants.size() - counted;
         const std::string in_all = " (" + std::to_string(counted) + " counted" +
-                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) + ")";
+                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) +
+                                   (network.unplaced > 0 ? ", " + std::to_string(network.unplaced) + " unplaced" : std::string{}) + ")";
+        // "nothing sent" only when everyone who may be on it is counted and nobody received.
+        const bool silent = network.senders() == 0 && others == 0 && network.unplaced == 0 && network.receivers() == 0;
         // Who sent and who received, not a share: a participant that only listens is as it should be.
         line += (line.empty() ? "" : "; ") + network.name + ": " +
                 (network.participants.empty() ? "not counted (no participant known to be on it)"
                  : counted == 0               ? "not counted (" + participants(others) + ")"
-                 : network.senders() == 0     ? "nothing sent" + in_all
+                 : silent                     ? "nothing sent" + in_all
                                               : participants(network.senders()) + " sent, " +
                                                     std::to_string(network.receivers()) + " received" + in_all);
         for (const TrafficParticipant& p : network.participants)
@@ -299,6 +302,10 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         {
             rows.push_back({network.name, "-", "-", "-", "no participant known to be on it"});
         }
+    }
+    for (const std::string& name : traffic.unplaced)
+    {
+        rows.push_back({"-", name, "-", "-", "unplaced: its networks are not known"});
     }
     // The numbers to the right.
     for (const std::size_t column : {std::size_t{2}, std::size_t{3}})
@@ -508,6 +515,12 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
         const RunTraffic& traffic = *report.run->traffic;
         w.begin_object("traffic");
         w.integer("before_ms", traffic.before_ms);
+        w.begin_array("unplaced");
+        for (const std::string& name : traffic.unplaced)
+        {
+            w.string({}, name);
+        }
+        w.end_array();
         w.begin_array("networks");
         for (const TrafficNetwork& network : traffic.per_network)
         {

@@ -1321,6 +1321,7 @@
           ],
           "traffic": {
             "before_ms": 50,
+            "unplaced": [],
             "networks": [
               {
                 "name": "J1939_CAN",
@@ -2081,6 +2082,7 @@
           ],
           "traffic": {
             "before_ms": 50,
+            "unplaced": [],
             "networks": [
               {
                 "name": "J1939_CAN",

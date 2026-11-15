@@ -79,10 +79,16 @@ std::string said(const TrafficParticipant& p)
 std::string said(const RunTraffic& traffic)
 {
     std::string out = "before " + std::to_string(traffic.before_ms) + "\n";
+    for (const std::string& name : traffic.unplaced)
+    {
+        out += "unplaced " + name + "\n";
+    }
     for (const TrafficNetwork& network : traffic.per_network)
     {
         const std::optional<bool> delivered = network.delivered();
-        out += network.name + " (" + network.kind + ") counted " + std::to_string(network.counted()) + " senders " +
+        out += network.name + " (" + network.kind + ")" +
+               (network.unplaced > 0 ? " unplaced " + std::to_string(network.unplaced) : std::string{}) + " counted " +
+               std::to_string(network.counted()) + " senders " +
                std::to_string(network.senders()) + " receivers " + std::to_string(network.receivers()) + " delivered " +
                (!delivered ? "?" : *delivered ? "yes" : "no") + "\n";
         for (const TrafficParticipant& p : network.participants)
@@ -325,8 +331,8 @@ TEST_CASE(a_network_says_whether_what_was_sent_arrived_as_far_as_the_counters_te
         return TrafficParticipant{name, TrafficNotCounted::None, true, at(90ms), sent, received};
     };
     const TrafficParticipant other{"Tool", TrafficNotCounted::NoCounters, true};
-    const auto of = [](std::vector<TrafficParticipant> participants) {
-        const TrafficNetwork network{"BUS", "can", std::move(participants)};
+    const auto of = [](std::vector<TrafficParticipant> participants, std::size_t unplaced = 0) {
+        const TrafficNetwork network{"BUS", "can", std::move(participants), unplaced};
         const std::optional<bool> delivered = network.delivered();
         return std::to_string(network.counted()) + " " + std::to_string(network.senders()) + " " +
                std::to_string(network.receivers()) + " " + (!delivered ? "?" : *delivered ? "yes" : "no");
@@ -338,17 +344,22 @@ TEST_CASE(a_network_says_whether_what_was_sent_arrived_as_far_as_the_counters_te
     // Sent, and nobody else received.
     check_text(of({counted("Engine", 11, 0)}), "1 1 0 no");
     check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 0)}), "2 1 0 no");
-    // A participant's own frames are not in what it received: the one sender that is the one
-    // receiver heard someone the launcher does not know of, and nobody known heard it.
-    check_text(of({counted("Engine", 11, 3), counted("Dashboard", 0, 0)}), "2 1 1 no");
     // Cannot be said: nobody sent, nobody is counted, nobody is known, or one that is not counted may have received.
     check_text(of({counted("A", 0, 0), counted("B", 0, 4)}), "2 0 1 ?");
     check_text(of({other}), "0 0 0 ?");
     check_text(of({}), "0 0 0 ?");
     check_text(of({counted("Engine", 11, 0), other}), "1 1 0 ?");
     check_text(of({counted("Engine", 11, 3), other}), "1 1 1 ?");
-    // One that is not counted does not take away what the counted ones show.
+    // A participant's own frames are not in what it received: the one sender that is the one
+    // receiver heard someone the launcher does not count, who may have heard it.
+    check_text(of({counted("Engine", 11, 3), counted("Dashboard", 0, 0)}), "2 1 1 ?");
+    check_text(of({counted("Engine", 11, 3)}), "1 1 1 ?");
+    // A participant of the run that the launcher knows on no network (a bridge) may be on this one.
+    check_text(of({counted("Engine", 11, 0)}, 1), "1 1 0 ?");
+    check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 0)}, 2), "2 1 0 ?");
+    // One that is not counted, or unplaced, does not take away what the counted ones show.
     check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 11), other}), "2 1 1 yes");
+    check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 11)}, 1), "2 1 1 yes");
 }
 
 TEST_CASE(every_network_of_the_file_is_there_with_who_is_known_to_be_on_it)
@@ -365,18 +376,60 @@ TEST_CASE(every_network_of_the_file_is_there_with_who_is_known_to_be_on_it)
     // Without --describe: where its agent has counters (also of a network that is not in the file).
     fed.hello(1, TrafficSchema{true, {TrafficColumns{"SECOND", 1, 0, false}, TrafficColumns{"ELSEWHERE", 1, 0, false}}});
     fed.put(1, sample(0ms, 3, 4), 0ms);
-    check_text(said(fed.finish(10)), "before 10\nFIRST (can) counted 1 senders 1 receivers 1 delivered no\n"
+    // Quiet (without --describe and without a control agent) may be on any of them.
+    check_text(said(fed.finish(10)), "before 10\nunplaced Quiet\n"
+                                     "FIRST (can) unplaced 1 counted 1 senders 1 receivers 1 delivered ?\n"
                                      "  Described counted at 0 sent 2 received 1\n"
-                                     "UNUSED (lin) counted 0 senders 0 receivers 0 delivered ?\n"
-                                     "SECOND (can) counted 1 senders 1 receivers 1 delivered ?\n"
+                                     "UNUSED (lin) unplaced 1 counted 0 senders 0 receivers 0 delivered ?\n"
+                                     "SECOND (can) unplaced 1 counted 1 senders 1 receivers 1 delivered ?\n"
                                      "  Described no-counters at - sent - received -\n"
                                      "  Tool counted at 0 sent 4 received 3\n");
     // Nobody is known to be on a network of the file (participants without --describe and
     // without a control agent): it is there all the same. No network in the file: none.
     Fed unknown(TrafficPlan{{{"BUS", "can"}}, {{"Tool", true, false, {}}}});
-    check_text(said(unknown.finish(10)), "before 10\nBUS (can) counted 0 senders 0 receivers 0 delivered ?\n");
+    check_text(said(unknown.finish(10)), "before 10\nunplaced Tool\nBUS (can) unplaced 1 counted 0 senders 0 receivers 0 delivered ?\n");
     Fed none(TrafficPlan{{}, {{"Tool", true, false, {}}}});
     CHECK(none.finish(10).per_network.empty());
+}
+
+TEST_CASE(a_participant_known_on_no_network_keeps_a_network_from_saying_nothing_arrived)
+{
+    // A counted sender that nobody counted heard, and a bridge without --describe and without a
+    // control agent: the frames may have reached the bridge.
+    TrafficPlan plan;
+    plan.buses = {{"BUS", "can"}};
+    plan.participants = {{"Engine", true, true, {"BUS"}}, {"Bridge", true, false, {}}};
+    Fed bridged(plan);
+    bridged.hello(0, counters("BUS"));
+    bridged.put(0, sample(0ms, 0, 11), 0ms);
+    check_text(said(bridged.finish(10)), "before 10\nunplaced Bridge\n"
+                                         "BUS (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
+                                         "  Engine counted at 0 sent 11 received 0\n");
+    // Without the bridge in the run (disabled), nothing arrived.
+    plan.participants.at(1).in_run = false;
+    Fed alone(plan);
+    alone.hello(0, counters("BUS"));
+    alone.put(0, sample(0ms, 0, 11), 0ms);
+    check_text(said(alone.finish(10)), "before 10\nBUS (can) counted 1 senders 1 receivers 0 delivered no\n"
+                                       "  Engine counted at 0 sent 11 received 0\n");
+    // A control agent with counters only of a network that is not in the file places it nowhere;
+    // with counters of a network of the file, it is placed there and counted.
+    plan.participants.at(1).in_run = true;
+    Fed elsewhere(plan);
+    elsewhere.hello(0, counters("BUS"));
+    elsewhere.put(0, sample(0ms, 0, 11), 0ms);
+    elsewhere.hello(1, counters("ELSEWHERE"));
+    check_text(said(elsewhere.finish(10)), "before 10\nunplaced Bridge\n"
+                                           "BUS (can) unplaced 1 counted 1 senders 1 receivers 0 delivered ?\n"
+                                           "  Engine counted at 0 sent 11 received 0\n");
+    Fed placed(plan);
+    placed.hello(0, counters("BUS"));
+    placed.put(0, sample(0ms, 0, 11), 0ms);
+    placed.hello(1, counters("BUS"));
+    placed.put(1, sample(0ms, 0, 0), 0ms);
+    check_text(said(placed.finish(10)), "before 10\nBUS (can) counted 2 senders 1 receivers 0 delivered no\n"
+                                        "  Engine counted at 0 sent 11 received 0\n"
+                                        "  Bridge counted at 0 sent 0 received 0\n");
 }
 
 TEST_CASE(the_counters_of_a_hello_are_found_by_the_names_the_agent_announced)
@@ -498,6 +551,29 @@ TEST_CASE(the_traffic_for_people_is_a_line_and_a_table)
                "B        P6              -         -  not counted: no sample before the end\n"
                "One      P7              -         -  not counted: no J1939 counters\n"
                "Nobody   -               -         -  no participant known to be on it\n");
+
+    // "nothing sent" only when everyone who may be on the network is counted and nobody received:
+    // otherwise the numbers.
+    const TrafficParticipant listener{"Listener", TrafficNotCounted::None, true, at(990ms), 0, 76};
+    const TrafficParticipant quiet{"Q", TrafficNotCounted::None, true, at(990ms), 0, 0};
+    traffic.per_network = {TrafficNetwork{"Raw", "can", {listener, not_counted("P0", TrafficNotCounted::NoCounters)}},
+                           TrafficNetwork{"Heard", "can", {listener}}, TrafficNetwork{"Quiet", "can", {quiet}}};
+    const std::string text = launch::detail::traffic_text(traffic);
+    check_text(text.substr(0, text.find('\n') + 1),
+               "traffic: Raw: 0 participants sent, 1 received (1 counted, 1 not counted); Heard: 0 participants sent, 1 received "
+               "(1 counted); Quiet: nothing sent (1 counted) (steps before 1000 ms)\n");
+
+    // A participant of the run that the launcher knows on no network: counted in every network's
+    // parentheses, and a row of its own.
+    traffic.unplaced = {"Bridge"};
+    traffic.per_network = {TrafficNetwork{"J1939_CAN", "can", {engine}, 1}, TrafficNetwork{"Quiet", "can", {quiet}, 1}};
+    check_text(launch::detail::traffic_text(traffic),
+               "traffic: J1939_CAN: 1 participant sent, 0 received (1 counted, 1 unplaced); Quiet: 0 participants sent, "
+               "0 received (1 counted, 1 unplaced) (steps before 1000 ms)\n\n"
+               "network    participant  sent  received\n"
+               "J1939_CAN  Engine       1234         0\n"
+               "Quiet      Q               0         0\n"
+               "-          Bridge          -         -  unplaced: its networks are not known\n");
 }
 
 namespace {

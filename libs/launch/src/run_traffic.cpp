@@ -66,8 +66,13 @@ std::optional<bool> TrafficNetwork::delivered() const
     {
         return true;
     }
-    // Nobody else that is counted received. One that is not counted may have.
-    return counted() < participants.size() ? std::nullopt : std::optional<bool>(false);
+    if (got == 1)
+    {
+        return std::nullopt; // the one sender heard someone the launcher does not count
+    }
+    // No counted participant received. One that is not counted, or one of the run that the
+    // launcher does not know to be on any network, may have.
+    return counted() < participants.size() || unplaced > 0 ? std::nullopt : std::optional<bool>(false);
 }
 
 namespace detail {
@@ -279,9 +284,24 @@ RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>
 {
     RunTraffic out;
     out.before_ms = end_ms;
+    // Of a participant without --describe whose agent has no counters for a network of the file,
+    // the launcher knows no network: it may be on any of them.
+    for (std::size_t i = 0; i < plan.participants.size(); ++i)
+    {
+        const TrafficPlan::Participant& p = plan.participants[i];
+        const TrafficSeen& c = seen[i];
+        const bool placed = p.described || (c.hello && std::any_of(plan.buses.begin(), plan.buses.end(), [&c](const TrafficPlan::Network& n) {
+                                                return std::any_of(c.schema.counters.begin(), c.schema.counters.end(),
+                                                                   [&n](const TrafficColumns& columns) { return columns.network == n.name; });
+                                            }));
+        if (p.in_run && !placed)
+        {
+            out.unplaced.push_back(p.name);
+        }
+    }
     for (const TrafficPlan::Network& network : plan.buses)
     {
-        TrafficNetwork counted{network.name, network.kind, {}};
+        TrafficNetwork counted{network.name, network.kind, {}, out.unplaced.size()};
         for (std::size_t i = 0; i < plan.participants.size(); ++i)
         {
             const TrafficPlan::Participant& p = plan.participants[i];
