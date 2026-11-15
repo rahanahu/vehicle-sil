@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../../schema/simulation.schema.json
+# simulation.yaml with the dashboard ECU that its author built again under the agreed name for the
+# bus (the guide docs/howto/integrate-ecus.md).
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [../ecu_main/engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+  - name: Dashboard
+    command: [../ecu_main/dashboard/vehicle_sil_dashboard_ecu]
+    step_ms: 5

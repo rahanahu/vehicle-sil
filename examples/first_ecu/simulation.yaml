@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../../schema/simulation.schema.json
+# The template's simulation.yaml (template/simulation.yaml) after the guide docs/howto/first-ecu.md:
+# the template's two ECUs and the Cooler of this directory. The paths in command are the ones of the
+# template's project (bin/). The test template.first_ecu puts this file next to that bin/. It has as
+# many lines of comments as the template's file, so that the line numbers in the output are the guide's.
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [bin/engine_ecu]
+    step_ms: 10
+  - name: Dashboard
+    command: [bin/dashboard_ecu]
+    step_ms: 5
+  - name: Cooler
+    command: [bin/cooler_ecu]
+    step_ms: 100

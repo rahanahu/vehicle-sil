@@ -5,9 +5,10 @@ import { FakeWebSockets } from './testing/fake-web-socket';
 import { BoundVariable, VariableBinding } from './variable-binding';
 import { VariableRef } from './variables';
 
-// 書き込みの様子（client.variables.bind の writeStatus と pending）の遷移を、順序を作って確かめる: 送った →
-// 受け取られた → 確定、の間に、送る前に断る入力（reject）、次の値、実行の替わり目、つなぎ直しが挟まっても、
-// 「送った値」が残らず、次の書き込みが送られること。サーバーの通知は偽の WebSocket で、api/write は偽の HTTP で答える。
+// Checks the write status transitions (writeStatus and pending of client.variables.bind) by building orderings: sent →
+// received → settled, with an input refused before sending (reject), a next value, a change of run or a reconnect in
+// between, no "value sent" is left behind and the next write is sent. Server notifications come from a fake WebSocket,
+// and api/write is answered by fake HTTP.
 
 const OFFSET: VariableRef = { peer: 'Engine', name: 'engine.offset' };
 
@@ -66,7 +67,7 @@ const operation = (seq: number, state: string, done: boolean) => ({
   done,
   peers: peers(state),
 });
-/** 要約の operations の 1 件。 */
+/** One entry of operations in a summary. */
 const listed = (seq: number, state: string, done: boolean) => ({
   seq,
   state,
@@ -82,7 +83,7 @@ describe('the writes of a bound variable', () => {
   let fake: FakeWebSockets;
   let http: FakeHttp;
   let bound: VariableBinding;
-  /** 購読者に最後に届いた様子（まだ届いていなければ、つないだときの様子）。 */
+  /** The last status delivered to the subscriber (if none yet, the status when bound). */
   let told: BoundVariable;
 
   beforeEach(async () => {
@@ -118,10 +119,10 @@ describe('the writes of a bound variable', () => {
     await vi.advanceTimersByTimeAsync(BATCH_MS);
   }
 
-  /** Promise の続き（書き込みの確定）を済ませる。 */
+  /** Runs the Promise continuations (the writes settling). */
   const turn = () => vi.advanceTimersByTimeAsync(0);
 
-  /** まだ答えていない api/write を取り出す。 */
+  /** Takes an api/write not answered yet. */
   const requests = (): FakeRequest[] => {
     const found = http.requests.filter((r) => r.request.path === 'api/write');
     for (const request of found) http.requests.splice(http.requests.indexOf(request), 1);
@@ -133,8 +134,9 @@ describe('the writes of a bound variable', () => {
     ];
 
   /**
-   * いまの様子。読む前に、購読者に届いている様子が同じであることを確かめる: get() は読むたびに作り直すので、
-   * 知らせの漏れ（購読している画面だけが古い様子のまま残る）は、get() だけを見ていては見つからない。
+   * The current status. Before reading, checks that the subscriber got the same status: get() rebuilds on every read,
+   * so a missed notification (only the subscribed screen stuck with a stale status) cannot be found by looking at
+   * get() alone.
    */
   const now = () => {
     const before = told;
@@ -144,13 +146,13 @@ describe('the writes of a bound variable', () => {
   };
   const status = () => now().writeStatus;
   const pending = () => now().pending;
-  /** 試験の本文は、移す前の形（writes.write(ref, value)）のまま: 同じ変数の bind を通す。 */
+  /** The test bodies keep their pre-move form (writes.write(ref, value)): goes through a bind of the same variable. */
   const writes = {
     write: (_ref: VariableRef, value: number) => bound.write(value),
     reject: (_ref: VariableRef, message: string) => bound.reject(message),
   };
 
-  /** 次の書き込みが、覚えられずにすぐ送られる（前の書き込みで止まっていない）。 */
+  /** The next write is sent at once instead of held (not stuck behind the previous write). */
   function expectNextIsSent(value: number) {
     writes.write(OFFSET, value);
     const sent = requests();
@@ -170,7 +172,7 @@ describe('the writes of a bound variable', () => {
     expect(pending()).toBeNull();
   });
 
-  // 順序 A: 受け付けられて結果を待つ間に、送る前に断る入力をする
+  // Ordering A: an input refused before sending, while accepted and waiting for the result
   for (const [result, state] of [
     ['applied', 'applied'],
     ['failed', 'late'],
@@ -180,12 +182,12 @@ describe('the writes of a bound variable', () => {
       requests()[0].flush({ session_id: 1, operation: 4 });
       await deliver(operation(4, 'queued', false));
       writes.reject(OFFSET, 'not a number');
-      // 入力の誤りは、待っている書き込みに触れない: 送った値はまだ出す
+      // The input error does not touch the waiting write: the value sent is still shown
       expect(status()).toEqual({ kind: 'invalid', message: 'not a number' });
       expect(pending()).toBe(50);
       await deliver(operation(4, state, true));
       expect(pending()).toBeNull();
-      // 様子の欄は、最後の操作（断った入力）のまま
+      // The status field stays at the last action (the refused input)
       expect(status()).toEqual({ kind: 'invalid', message: 'not a number' });
       const next = expectNextIsSent(60);
       expect(status()).toEqual({ kind: 'sending' });
@@ -197,7 +199,8 @@ describe('the writes of a bound variable', () => {
     });
   }
 
-  // 順序 B: 送っている途中（サーバーの答えの前）に、送る前に断る入力をし、その後で書き込みが断られる
+  // Ordering B: an input refused before sending while sending (before the server's answer), and then the write is
+  // refused
   for (const [name, answer] of [
     ['refused (409)', { status: 409, statusText: 'Conflict' }],
     ['not answered in time (504)', { status: 504, statusText: 'Gateway Timeout' }],
@@ -231,7 +234,7 @@ describe('the writes of a bound variable', () => {
     const [second] = requests();
     expect(valueOf(second)).toBe(60);
     expect(status()).toEqual({ kind: 'sending' });
-    // 先の書き込みの結果は、後の書き込みの様子と送った値に触れない
+    // The result of the earlier write does not touch the later write's status or value sent
     await deliver(operation(4, 'applied', true));
     expect(status()).toEqual({ kind: 'sending' });
     expect(pending()).toBe(60);
@@ -256,7 +259,7 @@ describe('the writes of a bound variable', () => {
   it('shows the result of the older write only while no newer one was sent', async () => {
     writes.write(OFFSET, 50);
     requests()[0].flush({ session_id: 1, operation: 4 });
-    writes.write(OFFSET, 60); // 4 は受け取られているので、すぐ送る
+    writes.write(OFFSET, 60); // 4 has been received, so this is sent at once
     const [second] = requests();
     await deliver(operation(4, 'late', true));
     expect(status()).toEqual({ kind: 'sending' });
@@ -270,7 +273,7 @@ describe('the writes of a bound variable', () => {
   it('starts empty in the next run, and an answer of the run before does not touch it', async () => {
     writes.write(OFFSET, 50);
     const [first] = requests();
-    writes.write(OFFSET, 60); // 覚えた値: 次の実行には送らない
+    writes.write(OFFSET, 60); // A held value: not sent to the next run
     await deliver(hello(2));
     expect(status()).toEqual({ kind: 'idle' });
     expect(pending()).toBeNull();
@@ -294,14 +297,14 @@ describe('the writes of a bound variable', () => {
   });
 
   it('keeps waiting for its own open write after a reconnection with many operations after it', async () => {
-    // 止まっている間の書き込み: 進めるまで確定しない
+    // A write while paused: does not settle until time advances
     writes.write(OFFSET, 50);
     requests()[0].flush({ session_id: 1, operation: 1 });
     await deliver(operation(1, 'queued', false));
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 間に 39 件の操作が続いた: 要約は、未確定の 1 と、最後の 32 件。境目は 9
+    // 39 operations followed meanwhile: the summary has the unsettled 1 and the last 32. The boundary is 9
     const kept = [listed(1, 'queued', false)];
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     await deliver(
@@ -320,7 +323,7 @@ describe('the writes of a bound variable', () => {
     socket().fail();
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
-    // 切れている間に 1 は確定し、要約から外れた（一覧になく、境目より古い）
+    // While disconnected, 1 settled and left the summary (not in the list and older than the boundary)
     const kept = [];
     for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
     await deliver(

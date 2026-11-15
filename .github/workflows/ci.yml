@@ -1,7 +1,7 @@
 # Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one with the thread
 # sanitizer, one with the control server, and one of them also
 # with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
-# runs (AGENTS.md, "検証とスクリプト"); on failure, its logs (build/logs) are kept as an artifact.
+# runs (AGENTS.md, "Verification and scripts"); on failure, its logs (build/logs) are kept as an artifact.
 # The scripts also write their summary to the job's summary on the run's page (scripts/job_summary.py); a failure
 # there names the artifact of its logs (VEHICLE_SIL_LOG_ARTIFACT).
 # Security: read-only token, no secrets, actions pinned by commit hash (the tag in the comment).
@@ -369,7 +369,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Links in the documents
-        run: python3 scripts/check-docs.py
+        run: python3 scripts/check-docs.py --require-english
       - name: Python checks
         run: python3 scripts/verify-python.py --tag ci
       - if: failure()

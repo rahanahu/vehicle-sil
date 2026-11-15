@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# The first scenario of the guide docs/howto/scenario-tests.md: step on the throttle, wait for the
+# engine to speed up, and see that the speed stays. The guide shows this file without these comments
+# (the lines of its outputs are counted without them); the test launch_run.scenario_guide compares.
+vehicle_sil_scenario: 1
+name: throttle up
+steps:
+  - set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - expect: { Engine.engine.speed: { near: 1800, tolerance: 50 } }
+    hold_for_ms: 100

@@ -6,7 +6,7 @@ an enormous document), nesting is limited (MAX_DEPTH), so is the number of nodes
 Whether a variable exists and whether a widget fits it is checked by the screen against the run's variables
 (it knows them; this server does not when no run is going).
 
-Format version 1 (gui/protocol/dashboard.schema.json, docs/gui.md "ダッシュボードのファイル"):
+Format version 1 (gui/protocol/dashboard.schema.json, "Dashboard files" in docs/gui.md):
 
     vehicle_sil_dashboard: 1
     title: Engine bench                      # optional

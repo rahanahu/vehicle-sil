@@ -1,5 +1,5 @@
-// セッション（ランチャーの 1 回の run）の状態を、サーバーの要約とランチャーの事象から組み立てる純粋な関数。
-// セッションの写し（session.ts の SessionFeed）が使い、利用者はできた状態を読める値で読む。
+// Pure functions that build the state of a session (one run of the launcher) from the server's summary and the
+// launcher's events. The session copy (SessionFeed in session.ts) uses them; users read the result as readable values.
 import {
   CheckResult,
   CONTROL_EVENT,
@@ -22,114 +22,127 @@ import {
   TimeReport,
 } from './protocol';
 
-/** 出どころ（participant かランチャー）ごとに覚えておくログの行の数。サーバーが覚える数と同じ。 */
+/** Log lines kept per source (participant or launcher). The same number the server keeps. */
 export const MAX_LOG_LINES_PER_SOURCE = 2000;
-/** 全体で覚えておくログの行の数。超えたら、いちばん多く持っている出どころの古い行から落とす。 */
+/** Log lines kept in total. Beyond this, the oldest lines of the source holding the most are dropped. */
 export const MAX_LOG_LINES = 20_000;
-/** 覚えておくサーバーの知らせの数。超えた分は数だけ数える。 */
+/** Server notices kept. Beyond this, only the number is counted. */
 export const MAX_PROBLEMS = 200;
-/** 覚えておく実行の所見の数。 */
+/** Findings of the run kept. */
 export const MAX_FINDINGS = 500;
 
-/** 1 つのログの行。 */
+/** One log line. */
 export interface LogLine {
-  /** 事象の seq。落ちた行の印は、その位置の前の行の seq + 0.5（印は seq が同じこともある）。 */
+  /** seq of the event. A marker for dropped lines has the seq of the line before it + 0.5 (markers may share a seq). */
   seq: number;
-  /** 画面で行を見分ける鍵（印も含めて、セッションの中で重ならない）。 */
+  /** Key the screen tells lines apart by (unique within the session, markers included). */
   key: string;
-  /** participant の名前か `vehicle_sil_launch`。 */
+  /** The participant name, or `vehicle_sil_launch`. */
   source: string;
   line: string;
-  /** 落ちた行の印（「ここで N 行が落ちた」）のときだけ。launcher: ランチャーが書けなかった行（log_dropped）。 */
+  /**
+   * Only on a marker for dropped lines ("N lines were dropped here"). launcher: lines the launcher could not write
+   * (log_dropped).
+   */
   gap?: { count: number; atLeast: boolean; launcher?: boolean };
 }
 
-/** 出どころごとのログの数。 */
+/** Log counts per source. */
 export interface LogSource {
-  /** いま持っている行の数（落ちた行の印は数えない）。 */
+  /** Lines held now (markers for dropped lines not counted). */
   lines: number;
-  /** 落とした古い行の数（サーバーが覚えていなかった分と、画面が上限で落とした分）。 */
+  /** Old lines dropped (those the server no longer kept, and those the screen dropped at its limit). */
   dropped: number;
 }
 
-/** 実行中の participant の様子。 */
+/** State of a participant during the run. */
 export interface ParticipantView {
   name: string;
-  /** 最後に届いた状態。まだ何も届いていなければ null。 */
+  /** The last state received. null if nothing has arrived yet. */
   state: ParticipantState | null;
   required: boolean | null;
   pid: number | null;
   exitCode: number | null;
   signal: string | null;
   /**
-   * ランチャーが失敗と決めた理由（failed の事象の reason。プロセスが終わる前にも届く）。後で ended が来ても残る。
-   * 失敗と決めていなければ null。
+   * Why the launcher decided the participant failed (reason of the failed event; may arrive before the process ends).
+   * Kept even if ended arrives later. null unless it was decided to have failed.
    */
   failure: string | null;
-  /** 起動できなかった理由（not_started）か、失敗の所見の文（failed）。英語のまま。 */
+  /** Why it could not be started (not_started), or the text of the failure finding (failed). In English, unchanged. */
   message: string | null;
-  /** ランチャーが止まるよう求めた（stop_requested、結果の ended が stopped）。止めた後の終わり方は失敗の色にしない。 */
+  /**
+   * The launcher asked it to stop (stop_requested; ended in the result is stopped). How it ends after that is not
+   * colored as a failure.
+   */
   stopRequested: boolean;
-  /** 要約に入りきらず、サーバーが省いた欄の名前（その後の事象が届けば空）。 */
+  /** Names of fields the server left out because the summary was full (empty once a later event arrives). */
   omittedFields: readonly string[];
-  /** 変数を読み書きする口のつながり方（control_link の事象、または結果の control_link）。まだわからなければ null。 */
+  /**
+   * State of the connection to the ECU's variables (the control_link event, or control_link of the result). null while
+   * unknown.
+   */
   controlLink: ControlLink | null;
-  /** 利用者が起動する participant（照合の結果の manual、または manual の事象）。 */
+  /** A participant the user starts (manual of the check result, or the manual event). */
   manual: boolean;
-  /** manual: 起動するコマンドの 1 行（ランチャーのまま）。届いていなければ null。 */
+  /** manual: the command line that starts it (as the launcher wrote it). null if it has not arrived. */
   commandLine: string | null;
-  /** manual: そのコマンドを実行するディレクトリ。届いていなければ null。 */
+  /** manual: the directory to run that command in. null if it has not arrived. */
   workingDirectory: string | null;
   /**
-   * manual: 起動するときに設定する環境変数（名前と値。ランチャーのまま）。設定するものがなければ空。
-   * registry がループバックのアドレスでないとき、`VEHICLE_SIL_LISTEN_ON_NETWORK` が `1` で入る。
+   * manual: environment variables to set when starting it (names and values, as the launcher wrote them). Empty if
+   * there are none. When the registry is not on a loopback address, it includes `VEHICLE_SIL_LISTEN_ON_NETWORK` with
+   * `1`.
    */
   environment: Readonly<Record<string, string>>;
 }
 
-/** ランチャーのプロセスの様子（サーバーが見ている）。 */
+/** State of the launcher process (as the server sees it). */
 export interface LauncherView {
-  /** 動いているか。結果が届いた後も、終わるまでは true。止められるかはこれで決める。 */
+  /** Whether it is running. Stays true after the result arrives, until it exits. Decides whether it can be stopped. */
   running: boolean;
   exitCode: number | null;
-  /** 終わらせたシグナルの番号（POSIX だけ）。 */
+  /** Number of the signal that ended it (POSIX only). */
   signal: number | null;
-  /** 動いているのに、何も書いてこない秒数（サーバーが心拍で見ている）。書いていれば null。 */
+  /**
+   * Seconds it has been running without writing anything (the server watches with a heartbeat). null while it writes.
+   */
   silentSeconds: number | null;
 }
 
 /**
- * 仮想時間とその進み方（最後の time の事象、または要約の time）。古いランチャーが書かない欄は null。
- * 時刻の操作に要るもの（いま押せるか、など）は TimeControl（time.ts）が、これから作る。
+ * Virtual time and how it advances (the last time event, or time of the summary). Fields an older launcher does not
+ * write are null. TimeControl (time.ts) derives from this what the time controls need (whether they can be used now
+ * and so on).
  */
 export interface TimeView {
   simMs: number;
-  /** いまの速さ（数か 'max'。書いていなければ null）。 */
+  /** The current speed (a number or 'max'; null if not written). */
   speed: Speed;
-  /** 一時停止しているか（書いていなければ null）。 */
+  /** Whether it is paused (null if not written). */
   paused: boolean | null;
-  /** 直近 1 秒ほどの実際の速さ（一時停止中や動き始めは null）。 */
+  /** Actual speed over roughly the last second (null while paused and when starting to move). */
   actualSpeed: number | null;
-  /** 遅れた刻みの数。 */
+  /** Number of late time steps. */
   lateSteps: number | null;
-  /** 最大の遅れ（ミリ秒）。 */
+  /** Max lateness (ms). */
   maxLateMs: number | null;
-  /** ずれの合計（ミリ秒）。 */
+  /** Total slip (ms). */
   slippedMs: number | null;
-  /** いま期限を過ぎて始まっていない刻みの遅れ（ミリ秒）。 */
+  /** Lateness of a time step that is past its deadline and has not started yet (ms). */
   lateMs: number | null;
 }
 
-/** 最後に届いた command の事象（stop も含む）。 */
+/** The last command event received (stop included). */
 export interface CommandView {
-  /** 命令の名前（読めなかった行は null）。 */
+  /** Name of the command (null for an unreadable line). */
   name: string | null;
   accepted: boolean;
-  /** 受け付けなかった理由（英語のまま）。 */
+  /** Why it was not accepted (in English, unchanged). */
   message: string | null;
-  /** 受け付けた step の、実際に進む仮想時間（ミリ秒）。 */
+  /** For an accepted step, the virtual time it actually advances (ms). */
   ms: number | null;
-  /** その事象の seq（わからなければ -1）。新しい答えか、前と同じ答えが要約で届き直したのかを見分ける。 */
+  /** seq of that event (-1 if unknown). Tells a new answer from the same answer arriving again in a summary. */
   seq: number;
 }
 
@@ -156,20 +169,23 @@ function commandView(command: CommandReport, seq: number): CommandView {
   };
 }
 
-/** シナリオの実行の経過（要約の scenario、scenario_step の事象、照合と結果の scenario から）。 */
+/**
+ * Progress of a scenario run (from scenario of the summary, scenario_step events, and scenario of the check and the
+ * result).
+ */
 export interface ScenarioView {
-  /** シナリオのファイル（root からの相対）。 */
+  /** The scenario file (relative to root). */
   file: string;
   name: string | null;
-  /** 手順の数（照合の結果から。まだなければ null）。 */
+  /** Number of steps (from the check result; null until then). */
   stepCount: number | null;
-  /** 届いた手順（index の順。手順ごとに最後の状態）。結果の後は全部の手順。 */
+  /** Steps received (in index order, the last state of each step). After the result, every step. */
   steps: readonly ScenarioStep[];
-  /** 上限を超えて、サーバーが覚えていない手順の数。 */
+  /** Number of steps beyond the limit that the server did not keep. */
   stepsOmitted: number;
-  /** シナリオの結果（passed、failed、incomplete、not_run）。結果がまだなら null。 */
+  /** Result of the scenario (passed, failed, incomplete, not_run). null until there is a result. */
   status: ScenarioStatus | null;
-  /** シナリオが終わった仮想時刻。 */
+  /** Virtual time at which the scenario ended. */
   overAtMs: number | null;
 }
 
@@ -185,7 +201,7 @@ function scenarioView(summary: SummaryScenario): ScenarioView {
   };
 }
 
-/** 手順を 1 つ当てる（同じ index は置き換える。index の順に並べる）。 */
+/** Applies one step (replacing one with the same index; kept in index order). */
 function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
   const i = steps.findIndex((s) => s.index >= step.index);
   if (i < 0) return [...steps, step];
@@ -193,77 +209,85 @@ function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly 
   return [...steps.slice(0, i), step, ...steps.slice(i)];
 }
 
-/** 1 つのセッション（ランチャーの 1 回の run）の、画面から見た状態。 */
+/** State of one session (one run of the launcher), as the screen sees it. */
 export interface SessionView {
-  /** サーバーが付けたセッションの番号。 */
+  /** Session number the server assigned. */
   id: number;
-  /** 最後に受け取った事象の seq（まだなければ -1）。再接続のとき、この次から再送を頼む。 */
+  /** seq of the last event received (-1 if none). On reconnect, the resend is requested from the next one. */
   lastSeq: number;
-  /** 構成ファイル（root からの相対）。 */
+  /** The configuration file (relative to root). */
   file: string;
-  /** 外した participant。 */
+  /** Participants left out. */
   disable: readonly string[];
-  /** 画面から利用者が起動すると指定した participant（構成ファイルの manual: true は check にある）。 */
+  /**
+   * Participants the user chose on the screen to start themselves (manual: true in the configuration file is in check).
+   */
   manual: readonly string[];
-  /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
+  /** Speed given at the start (null means as in the configuration file). The current speed is time.speed. */
   speed: Speed;
-  /** 止めた状態で始めたか。 */
+  /** Whether the run started paused. */
   startPaused: boolean;
   phase: Phase | null;
-  /** 最後に届いた、知っている段階の位置（知らない段階が来ても、段階を戻さないため）。 */
+  /** Position of the last known phase received (so an unknown phase never moves the phase backwards). */
   phaseRank: number;
   check: CheckResult | null;
   participants: readonly ParticipantView[];
-  /** ログの行（seq の順）。 */
+  /** Log lines (in seq order). */
   logs: readonly LogLine[];
-  /** 出どころごとの、持っている行と落とした行の数。 */
+  /** Per source, the number of lines held and dropped. */
   logSources: Readonly<Record<string, LogSource>>;
-  /** 実行中に決まった所見（照合の所見は check の中）。 */
+  /** Findings decided during the run (the check's findings are in check). */
   findings: readonly Finding[];
-  /** 最後に届いた事象の t_ms（ランチャーの開始からの実時間）。 */
+  /** t_ms of the last event received (real time since the launcher started). */
   elapsedMs: number;
-  /** 仮想時刻（time の事象が来たときだけ）。 */
+  /** Virtual time (only once a time event has arrived). */
   simMs: number | null;
-  /** 最後の time の、要約に入りきらずサーバーが省いた欄の名前（その後の事象が届けば空）。 */
+  /**
+   * Names of the fields of the last time that the server left out because the summary was full (empty once a later
+   * event arrives).
+   */
   timeOmittedFields: readonly string[];
-  /** 仮想時間とその進み方（time の事象が来てから）。 */
+  /** Virtual time and how it advances (once a time event has arrived). */
   time: TimeView | null;
-  /** 停止を頼んだ回数（1 で「止めています」、2 で「待たずに止める」を頼んだ後）。 */
+  /** Number of stop requests (1: "stopping"; 2: after "stop without waiting" was requested). */
   stopRequests: number;
-  /** 最後に届いた command の事象（受け付けたか、理由）。 */
+  /** The last command event received (whether it was accepted, and why not). */
   lastCommand: CommandView | null;
   result: RunResult | null;
   launcher: LauncherView;
-  /** サーバーが気づいたこと（英語のまま出す）。 */
+  /** What the server noticed (shown in English, unchanged). */
   problems: readonly ServerProblem[];
-  /** 上限を超えて覚えていないサーバーの知らせの数。 */
+  /** Number of server notices beyond the limit that were not kept. */
   problemsOmitted: number;
   /**
-   * 読めなかった部分の名前（要約の `result.participants`、事象の `finding.code` など）。画面はここに挙がった部分を
-   * 「一部を表示できません」と出す。
+   * Names of the parts that could not be read (`result.participants` of the summary, `finding.code` of an event and so
+   * on). The screen shows "some parts cannot be displayed" for the parts listed here.
    */
   unreadable: readonly string[];
-  /** seq が前の事象より後でなかったので当てなかった事象の数（サーバーの再送と重なったか、seq が戻った）。 */
+  /**
+   * Events not applied because their seq was not after the previous event's (overlap with the server's resend, or seq
+   * went back).
+   */
   staleEvents: number;
-  /** サーバーが送らなかった行の印（dropped）を置いた数（印の鍵に使う）。 */
+  /** Number of markers placed for lines the server did not send (dropped); used for the markers' keys. */
   droppedMarks: number;
-  /** シナリオの経過（シナリオのない実行では null）。 */
+  /** Progress of the scenario (null for a run without a scenario). */
   scenario: ScenarioView | null;
 }
 
-/** 実行がいまどうなっているか（状態の帯と結果の表示が使う）。 */
+/** Where the run stands now (used by the status bar and the result display). */
 export type RunOutcome =
-  /** 動いていて、止めるよう頼んでいない。 */
+  /** Running, with no stop requested. */
   | 'running'
-  /** 止めるよう頼んだ（participant の終わりを待っている）。 */
+  /** A stop was requested (waiting for the participants to end). */
   | 'stopping'
-  /** 待たずに止めるよう頼んだ。 */
+  /** A stop without waiting was requested. */
   | 'forcing'
-  /** 結果は出たが、ランチャーはまだ動いている（終わるのを待っている）。 */
+  /** There is a result, but the launcher is still running (waiting for it to exit). */
   | 'finishing'
-  /** ランチャーが結果を出して終わった。 */
+  /** The launcher printed a result and exited. */
   | 'ended'
-  /** ランチャーが結果を出さずに終わった。 */
+  /** The launcher exited without a result. */
   | 'crashed';
 
 export function runOutcome(session: SessionView): RunOutcome {
@@ -275,7 +299,7 @@ export function runOutcome(session: SessionView): RunOutcome {
   return session.result ? 'ended' : 'crashed';
 }
 
-/** サーバーの要約からセッションを作る（hello、新しいセッション）。ログは続く再送で届く。 */
+/** Builds a session from the server's summary (hello, a new session). The log arrives in the resend that follows. */
 export function sessionFromSummary(summary: SessionSummary): SessionView {
   const blank: SessionView = {
     id: summary.id,
@@ -311,8 +335,8 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
 }
 
 /**
- * 送られなかったログの行（dropped）を数え、その出どころのログの今の位置に「ここで N 行が落ちた」の印を置く。
- * 再送の前（not-kept）なら、再送される行の前に入る。
+ * Counts log lines that were not sent (dropped) and places an "N lines were dropped here" marker at the current
+ * position of that source's log. Before the resend (not-kept), it goes before the lines being resent.
  */
 export function addDropped(session: SessionView, dropped: Dropped): SessionView {
   const counts = Object.entries(dropped.log).filter(([, count]) => count > 0);
@@ -335,7 +359,7 @@ export function addDropped(session: SessionView, dropped: Dropped): SessionView 
 
 const STOP_REQUESTS: Record<string, number> = { none: 0, requested: 1, forced: 2 };
 
-/** 停止の依頼を回数にする（知らない値は、頼んだものとして 1）。 */
+/** Turns the stop request into a count (an unknown value counts as requested: 1). */
 function stopRequestsOf(stop: StopRequest): number {
   return STOP_REQUESTS[stop] ?? 1;
 }
@@ -350,14 +374,16 @@ function launcherOf(summary: SessionSummary): LauncherView {
 }
 
 /**
- * 要約を当てる。ログは手元のまま。
+ * Applies a summary. The local log is kept.
  *
- * - force（WebSocket の hello と session）: 事象と同じ順で届くので、届いた時点の正としてすべて取る。
- * - force でない（HTTP の応答）: 通知との順が決まらない。ランチャーが動いているかと停止の依頼は取るが、同じ実行で
- *   終わったランチャーを「動いている」に戻さない。サーバーの知らせは、手元より少なくないときだけ取る（サーバーは
- *   足すだけなので、少ない要約は古い）。段階、照合、participant、所見、結果、仮想時刻は、要約が手元の事象より
- *   新しいときだけ取る。ただし controlOnly（WebSocket がつながっていて、同じものが通知で届く）なら取らない
- *   （所見が通知と重なって 2 つ並ばないように）。
+ * - force (WebSocket hello and session): arrives in the same order as events, so everything is taken as correct at
+ *   the time it arrives.
+ * - Without force (an HTTP answer): its order relative to notifications is unknown. Whether the launcher runs and the
+ *   stop requests are taken, but a launcher that has ended in the same run is never set back to running. Server
+ *   notices are taken only when there are no fewer than held locally (the server only adds, so a summary with fewer is
+ *   old). Phase, check, participants, findings, result and virtual time are taken only when the summary is newer than
+ *   the local events, and not at all with controlOnly (the WebSocket is connected and the same things arrive in
+ *   notifications), so findings do not appear twice, once from the summary and once from a notification.
  */
 export function applySummary(
   session: SessionView,
@@ -399,7 +425,7 @@ export function applySummary(
     signal: p.signal,
     failure: p.reason,
     message: p.message,
-    // 止めるよう求めたことは、後の状態（ended など）の要約でも残す
+    // A stop the launcher asked for is kept even in summaries of later states (ended and so on)
     stopRequested:
       p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
@@ -426,7 +452,8 @@ export function applySummary(
     result,
     check,
     scenario: summary.scenario ? scenarioView(summary.scenario) : next.scenario,
-    // 必須か、外したかは照合の結果にある（並びも構成ファイルの順に）。結果があれば、終わり方（止めたか）も結果から
+    // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
+    // file). If there is a result, how it ended (stopped or not) comes from the result too
     participants: withResult(check ? mergeCheck(participants, check) : participants, result),
   };
 }
@@ -435,7 +462,7 @@ function union(a: readonly string[], b: readonly string[]): readonly string[] {
   return b.every((name) => a.includes(name)) ? a : [...new Set([...a, ...b])];
 }
 
-/** 出どころの一覧に、まだ行のない出どころを足す（選べるように）。 */
+/** Adds sources that have no lines yet to the list of sources (so they can be selected). */
 function withSources(
   sources: Readonly<Record<string, LogSource>>,
   names: readonly string[],
@@ -447,7 +474,10 @@ function withSources(
   return next;
 }
 
-/** サーバーの知らせを足す（後の要約にも同じものが入り、そちらで置き換わる）。上限を超えたら数だけ数える。 */
+/**
+ * Adds a server notice (later summaries carry the same one and replace it). Beyond the limit, only the number is
+ * counted.
+ */
 export function addProblem(session: SessionView, problem: ServerProblem): SessionView {
   if (session.problems.length >= MAX_PROBLEMS) {
     return { ...session, problemsOmitted: session.problemsOmitted + 1 };
@@ -455,15 +485,15 @@ export function addProblem(session: SessionView, problem: ServerProblem): Sessio
   return { ...session, problems: [...session.problems, problem] };
 }
 
-/** 段階の位置（知らない段階は -1）。 */
+/** Position of the phase (-1 for an unknown phase). */
 export function phaseIndex(phase: Phase | null): number {
   return phase === null ? -1 : (PHASES as readonly string[]).indexOf(phase);
 }
 
 /**
- * 事象をまとめて当てる。同じ seq か、それより前の事象は当てない（再送の重なり。つなぎ直す前に受けていた分）。
- * countStale なら（再送ではない事象）、当てなかった数を staleEvents に数える（seq が戻った）。
- * ログの配列は 1 回のまとまりで 1 回だけ作り直す（届くたびに写さない）。
+ * Applies a batch of events. Events with the same or an earlier seq are not applied (overlap with the resend: what
+ * arrived before the reconnect). With countStale (events that are not a resend), those not applied are counted in
+ * staleEvents (seq went back). The log array is rebuilt once per batch (not copied for every event).
  */
 export function applyEvents(
   session: SessionView,
@@ -485,7 +515,7 @@ export function applyEvents(
   if (countStale && stale > 0) next = { ...next, staleEvents: next.staleEvents + stale };
   if (logs.length === 0) return next;
   next = appendLogs(next, logs);
-  // ランチャーが書けなかった行（log_dropped）は、その出どころの落とした行に数える
+  // Lines the launcher could not write (log_dropped) count as dropped lines of that source
   const gaps = logs.filter((line) => line.gap?.launcher);
   if (gaps.length === 0) return next;
   const sources = { ...next.logSources };
@@ -497,8 +527,9 @@ export function applyEvents(
 }
 
 /**
- * ログの行を足し、出どころごとの上限と全体の上限を超えた分を、古い行から落とす。落ちた行の印は行に数えず、
- * 落とす行より前にある印は一緒に落とす（その位置はもう見えないため）。
+ * Adds log lines and drops the oldest lines beyond the per-source limit and the total limit. Markers for dropped lines
+ * do not count as lines, and markers before the lines being dropped go with them (their position is no longer
+ * visible).
  */
 function appendLogs(session: SessionView, added: readonly LogLine[]): SessionView {
   const sources: Record<string, LogSource> = {};
@@ -508,7 +539,7 @@ function appendLogs(session: SessionView, added: readonly LogLine[]): SessionVie
     const counts = (sources[line.source] ??= { lines: 0, dropped: 0 });
     if (!line.gap) counts.lines++;
   }
-  // 落とす数を出どころごとに決める
+  // Decide how many lines to drop from each source
   const drop = new Map<string, number>();
   const take = (source: string, count: number) => {
     sources[source].lines -= count;
@@ -549,14 +580,15 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
   };
   switch (event.event) {
     case 'phase': {
-      // 段階は戻らない（要約で先の段階を知っているとき、再送の古い事象で戻さない）。
-      // 知らない段階はそのまま出すが、後に来る知っている段階の比べ先は、最後に知っていた段階
+      // The phase never goes back (when a summary already showed a later phase, an old resent event does not move it
+      // back). An unknown phase is shown as is, but a known phase that comes later is compared with the last known
+      // phase
       const index = phaseIndex(event.phase);
       if (index < 0) return { ...next, phase: event.phase };
       return index >= next.phaseRank ? { ...next, phase: event.phase, phaseRank: index } : next;
     }
     case 'check': {
-      // 読めなかった照合（null）は当てない（読めない部分として出ている）
+      // A check that could not be read (null) is not applied (it is reported as an unreadable part)
       if (!event.check) return next;
       const found = event.check.scenario;
       return {
@@ -570,7 +602,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       };
     }
     case 'scenario_step':
-      // シナリオの実行の要約（scenario）が先に届いている。なければ当てない
+      // The scenario run's summary (scenario) has arrived first. Without it, nothing is applied
       return next.scenario
         ? {
             ...next,
@@ -593,7 +625,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       logs.push({ seq: event.seq, key: String(event.seq), source: event.source, line: event.line });
       return next;
     case 'log_dropped':
-      // 落ちた位置に印を置く（ここで N 行が落ちた）。印の seq はこの事象の seq
+      // Place a marker where the lines were dropped ("N lines were dropped here"). The marker's seq is this event's seq
       for (const [source, count] of Object.entries(event.sources)) {
         if (count > 0) {
           logs.push({
@@ -607,7 +639,8 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       }
       return next;
     case 'finding':
-      // 再送は所見を送り直さない（要約が持つ）ので、届いた所見はそのまま足す（同じ文が 2 回出ることもある）
+      // The resend does not resend findings (the summary holds them), so a finding received is added as is (the same
+      // text may appear twice)
       return next.findings.length >= MAX_FINDINGS
         ? next
         : { ...next, findings: [...next.findings, event.finding] };
@@ -640,7 +673,10 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
   }
 }
 
-/** 照合の結果から participant の並び（構成ファイルの順）と、必須かを決める。届いている状態は残す。 */
+/**
+ * Decides the order of participants (that of the configuration file) and whether each is required from the check
+ * result. Keeps the states received.
+ */
 function mergeCheck(
   current: readonly ParticipantView[],
   check: CheckResult,
@@ -669,7 +705,7 @@ function updateParticipant(
   const updated: ParticipantView = {
     ...(known ?? blankParticipant(event.name)),
     state: event.state,
-    // 事象はそのまま届く（省くのは要約だけ）
+    // Events arrive whole (only the summary leaves fields out)
     omittedFields: [],
   };
   if (event.pid !== null) updated.pid = event.pid;
@@ -677,7 +713,7 @@ function updateParticipant(
   if (event.state === 'stop_requested') updated.stopRequested = true;
   if (event.message) updated.message = event.message;
   if (event.state === 'manual') updated.manual = true;
-  // manual の事象だけが持つ（後の joined などには欄がないので、前のものを残す）
+  // Only the manual event carries these (later events such as joined lack the fields, so keep the earlier values)
   if (typeof event.command_line === 'string') updated.commandLine = event.command_line;
   if (typeof event.working_directory === 'string')
     updated.workingDirectory = event.working_directory;
@@ -696,7 +732,10 @@ function withResult(
   return result ? mergeResult(participants, result) : participants;
 }
 
-/** 最後の結果の、participant の終わり方を映す（事象を取りこぼしていても、結果だけで完結する）。 */
+/**
+ * Reflects how each participant ended from the final result (complete from the result alone, even if events were
+ * missed).
+ */
 function mergeResult(
   current: readonly ParticipantView[],
   result: RunResult,
@@ -719,8 +758,9 @@ function mergeResult(
       exitCode: p.exit_code,
       signal: p.signal,
       stopRequested: base.stopRequested || p.ended === 'stopped',
-      // 事象で知った口（変数の数など）を残し、なければ結果の状態だけ
-      // 結果のほうが新しい（遅れて届いたメッセージの数を持つ）。結果になければ、事象で知ったもの
+      // Keep what the events told about the connection (number of variables and so on); without it, only the result's
+      // state. The result is newer (it has the count of messages that arrived late). What the result lacks comes from
+      // the events
       controlLink: p.control_link ?? base.controlLink,
       manual: base.manual || p.manual,
     };
