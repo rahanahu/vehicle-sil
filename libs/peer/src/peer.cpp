@@ -486,11 +486,25 @@ std::vector<UnusedJ1939Node> Peer::unused_j1939_nodes() const
                 used = true;
                 break;
             }
-            unused.reason = c->network->node_count() == 0 ? UnusedJ1939Node::Reason::NoNodes
-                                                          : UnusedJ1939Node::Reason::NoNodeAtFrom;
             for (std::size_t n = 0; n < c->network->node_count(); ++n)
             {
                 unused.coded_addresses.push_back(c->network->node(n).coded_address());
+            }
+            // Before the entries close, add_node() gives an entry to its node or throws: a node that
+            // the entry is for, but that did not take it, came after they closed.
+            const auto& coded = unused.coded_addresses;
+            const auto from = entry.node.from;
+            if (coded.empty())
+            {
+                unused.reason = UnusedJ1939Node::Reason::NoNodes;
+            }
+            else if (!from || std::find(coded.begin(), coded.end(), *from) != coded.end())
+            {
+                unused.reason = UnusedJ1939Node::Reason::AddedAfterFirstStep;
+            }
+            else
+            {
+                unused.reason = UnusedJ1939Node::Reason::NoNodeAtFrom;
             }
             break;
         }
@@ -691,7 +705,14 @@ namespace detail {
 
 void set_virtual_time_end(Peer& peer, SimTime end) { peer.set_end(end); }
 
-void require_j1939_nodes_taken(const Peer& peer) { peer.require_j1939_nodes_taken(); }
+void require_j1939_nodes_taken(const Peer& peer)
+{
+    // A started peer: its start() says so, and its nodes belong to its step thread now.
+    if (!peer.started_)
+    {
+        peer.require_j1939_nodes_taken();
+    }
+}
 
 void set_network_check(Peer& peer,
                        std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check)
@@ -1102,6 +1123,29 @@ void Peer::require_j1939_nodes_taken() const
                         " in the code there; its nodes there: " + nodes;
                 break;
             }
+            case UnusedJ1939Node::Reason::AddedAfterFirstStep:
+            {
+                const auto many = u.coded_addresses.size() > 1;
+                if (u.entry.node.from)
+                {
+                    list += "the node at " + j1939::coded_address_text(*u.entry.node.from) + " in the code there";
+                }
+                else
+                {
+                    std::string nodes;
+                    for (const j1939::Address a : u.coded_addresses)
+                    {
+                        nodes += (nodes.empty() ? "" : ", ") + j1939::coded_address_text(a);
+                    }
+                    list += (many ? "the nodes there (" : "the node there (") + nodes + " in the code)";
+                }
+                list += many && !u.entry.node.from
+                            ? " were added after the network's first step, so they keep the values in their code (add "
+                              "them before that step)"
+                            : " was added after the network's first step, so it keeps the values in its code (add it "
+                              "before that step)";
+                break;
+            }
             }
         }
         throw std::invalid_argument("vehicle_sil::Peer \"" + options_.participant +
@@ -1247,6 +1291,12 @@ namespace {
 /// joins every thread, then rethrows the controller's exception, else the first of a peer.
 void start_peers(SimulationController* controller, const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
 {
+    // Before anything starts: a peer whose start() refuses its j1939_nodes would leave the others
+    // and the controller waiting until their timeout, whose error would hide the refusal.
+    for (const Peer* peer : peers)
+    {
+        detail::require_j1939_nodes_taken(*peer);
+    }
     std::vector<std::exception_ptr> errors(peers.size());
     std::vector<std::thread> starters;
     struct Joiner

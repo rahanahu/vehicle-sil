@@ -55,9 +55,9 @@ void set_virtual_time_end(Peer& peer, SimTime end);
 void set_network_check(Peer& peer,
                        std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
 
-/// For vehicle_sil::Simulation only, which starts several peers together: what start() of `peer`
-/// would throw for the entries of PeerOptions::j1939_nodes that no node took, thrown before any
-/// peer is started (std::invalid_argument).
+/// What start() of `peer` would throw for the entries of PeerOptions::j1939_nodes that no node took
+/// (std::invalid_argument); nothing for a started peer. start_together() calls it for every peer
+/// before it starts any.
 void require_j1939_nodes_taken(const Peer& peer);
 
 /// The kind of the network that the code of `peer` names `network`, if it has one.
@@ -82,6 +82,11 @@ struct UnusedJ1939Node
         NoNetwork,    ///< the ECU has no J1939 network with that name in the simulation
         NoNodes,      ///< that network of the ECU has no node
         NoNodeAtFrom, ///< no node of the ECU on that network has the address `from` in its code
+        /// The node that the entry is for (the one at `from` in the code; without `from`, the
+        /// network's node) was added after the network's first step (j1939::Network::
+        /// close_node_overrides()), so it keeps the values in its code. Only a caller that steps
+        /// the peer itself before start() (host()) gets there.
+        AddedAfterFirstStep,
     };
     /// A J1939 network of the ECU: its name in the simulation and the name its code gives it (the
     /// same without an entry of PeerOptions::network_names).

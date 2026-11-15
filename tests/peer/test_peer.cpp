@@ -1320,6 +1320,69 @@ TEST_CASE(peer_refuses_to_start_with_j1939_nodes_that_no_node_took)
     CHECK_EQ(peer.unused_j1939_nodes().size(), 2u);
 }
 
+TEST_CASE(peer_says_that_the_node_of_a_j1939_nodes_entry_came_after_the_first_step)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Engine2";
+    o.registry_uri = registry.uri;
+    can::ManualRealTimeClock clock;
+    o.virtual_time = std::nullopt;
+    o.real_time_clock = &clock;
+    o.j1939_nodes = {node_entry("VehicleCAN", 0x00, 0x01), node_entry("BodyCAN", std::nullopt, 0x05),
+                     node_entry("VehicleCAN", 0x10, 0x11)};
+    Peer peer(o);
+    // On ports of the caller's, which a step before start() may use (SIL Kit ports refuse it).
+    j1939::Network& vehicle = peer.j1939("VehicleCAN", std::make_unique<FakeRealTimePort>());
+    j1939::Network& body = peer.j1939("BodyCAN", std::make_unique<FakeRealTimePort>());
+    // The caller steps the peer itself before start(): the first step ends the time of the
+    // entries, and the nodes added after it keep the values in their code.
+    peer.host().step(SimTime{});
+    CHECK_EQ(vehicle.add_node({0x00, engine_name()}).address(), 0x00);
+    CHECK_EQ(body.add_node({0x20, engine_name()}).address(), 0x20);
+    const auto unused = peer.unused_j1939_nodes();
+    using Reason = vehicle_sil::UnusedJ1939Node::Reason;
+    CHECK_EQ(unused.size(), 3u);
+    CHECK(unused.at(0).reason == Reason::AddedAfterFirstStep);
+    CHECK((unused.at(0).coded_addresses == std::vector<j1939::Address>{0x00}));
+    CHECK(unused.at(1).reason == Reason::AddedAfterFirstStep);
+    CHECK((unused.at(1).coded_addresses == std::vector<j1939::Address>{0x20}));
+    CHECK(unused.at(2).reason == Reason::NoNodeAtFrom);
+    CHECK((unused.at(2).coded_addresses == std::vector<j1939::Address>{0x00}));
+    same_text(refusal([&] { peer.start(); }),
+              "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+              "(VehicleCAN=from:0x00,address:0x01: the node at 0x00 in the code there was added after the network's "
+              "first step, so it keeps the values in its code (add it before that step); BodyCAN=address:0x05: the "
+              "node there (0x20 in the code) was added after the network's first step, so it keeps the values in its "
+              "code (add it before that step); VehicleCAN=from:0x10,address:0x11: no node at 0x10 in the code there; "
+              "its nodes there: 0x00): correct or remove them; nodes added after start() keep the values in their code");
+}
+
+TEST_CASE(peer_start_together_refuses_j1939_nodes_that_no_node_took_before_it_starts_a_peer)
+{
+    // Started first, Engine1 and the controller would wait for Engine2 until their timeout, and the
+    // controller's timeout would hide why Engine2 did not start.
+    InProcessRegistry registry;
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Engine1", "Engine2"};
+    control.stop_at = 1s;
+    SimulationController controller(control);
+    Peer engine1(coordinated("Engine1", registry.uri, 10ms));
+    PeerOptions o = coordinated("Engine2", registry.uri, 10ms);
+    o.j1939_nodes = {node_entry("VehicleCAN", 0x10, 0x01)};
+    Peer engine2(o);
+    engine1.j1939("VehicleCAN").add_node({0x00, engine_name()});
+    engine2.j1939("VehicleCAN").add_node({0x00, engine_name()});
+    same_text(refusal([&] { start_together(controller, {&engine1, &engine2}, 5s); }),
+              "vehicle_sil::Peer \"Engine2\": PeerOptions::j1939_nodes has entries that no node took "
+              "(VehicleCAN=from:0x10,address:0x01: no node at 0x10 in the code there; its nodes there: 0x00): correct "
+              "or remove them; nodes added after start() keep the values in their code");
+    // Nothing was started: both can still be set up.
+    CHECK_EQ(engine1.j1939("BodyCAN").node_count(), 0u);
+    CHECK_EQ(engine2.j1939("BodyCAN").node_count(), 0u);
+}
+
 TEST_CASE(peer_refuses_j1939_nodes_that_cannot_stand_and_what_add_node_refuses)
 {
     InProcessRegistry registry;

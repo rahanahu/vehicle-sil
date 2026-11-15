@@ -450,7 +450,7 @@ install_engine(sim.add_ecu("Engine2", 10ms), ...);   // 0x01、identity number 2
 
 `run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。`controller` が `true` のときは、Error で離脱した participant を失敗にします。Error 以外で離脱した participant が数秒のうちに simulation を終えなければ、それも失敗です。`controller` が `false` のときに失敗にするのは、このプロセスの ECU の失敗だけです。
 
-`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。`Peer` では、同じ行を `PeerOptions::j1939_nodes`（その ECU の行の並び）に書きます。どのノードにも当たらなかった行があると、`Peer::start()` が何も始めずに `std::invalid_argument` を投げます（先に `Peer::unused_j1939_nodes()` で、行ごとの理由を得られます）。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
+`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。`Peer` では、同じ行を `PeerOptions::j1939_nodes`（その ECU の行の並び）に書きます。どのノードにも当たらなかった行があると、`Peer::start()` が何も始めずに `std::invalid_argument` を投げます（先に `Peer::unused_j1939_nodes()` で、行ごとの理由を得られます）。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`。どれかの `Peer` にそういう行があると、どれも始めずに、その `Peer` の `start()` と同じ文で投げます）。`start()` の前に `host()` から自分でステップを回すプログラムでは、行が当たるのは最初のステップまでに足したノードだけです。
 
 ## 試験する
 

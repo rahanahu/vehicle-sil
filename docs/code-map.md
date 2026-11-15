@@ -115,7 +115,7 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 ### `peer` / `testkit`
 
 `Peer` をプロセス内のレジストリで動かす試験（J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立ての誤り、失敗の報告）と、試験キットの試験（アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果）。
-`peer.*j1939_nodes*` は、`PeerOptions::j1939_nodes`（付け替えた名前のネットワークと外から渡したポートのネットワークに当たること、`start()` の後に足したノードに当たらないこと、どのノードにも当たらなかった行の理由と `start()` の文、コードが渡した `node_overrides` を断ること）を確かめる。
+`peer.*j1939_nodes*` は、`PeerOptions::j1939_nodes`（付け替えた名前のネットワークと外から渡したポートのネットワークに当たること、`start()` の後に足したノードに当たらないこと、どのノードにも当たらなかった行の理由と `start()` の文（`host()` で回した最初のステップの後に足したノードの場合も）、`start_together` がどの `Peer` も始めずに同じ文で断ること、コードが渡した `node_overrides` を断ること）を確かめる。
 `ecu_api.*` は、利用者が書く形の ECU（`examples/j1939/ecu_pair`、道具箱と `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確かめる試験）を仮想バスで動かす。
 `param_service.*` は、`examples/j1939/param_service` の独自プロトコルを仮想バスで動かし（正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中の部品の破棄）、`param_service.boundary` は例が公開 API だけを使うことを、`param_service.demo` は例の実行を確かめる。
 `ecu_api.*` と `param_service.*` のラベルは `testkit` で、`peer.*`、`testkit.*`、`ecu_api.*`、`param_service.*` には `unit` と `j1939` のラベルも付く。
