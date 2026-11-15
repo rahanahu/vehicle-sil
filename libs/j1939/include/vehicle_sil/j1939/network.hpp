@@ -849,9 +849,10 @@ public:
     /// is the step time, which does.
     [[nodiscard]] SimTime event_time() const noexcept;
 
-    /// Sets the Observer that watches this network (nullptr: none), replacing the previous one
-    /// (an observer watching another network leaves it). Only outside a step and not from an
-    /// observer (std::logic_error); after the network failed, anywhere. See Observer.
+    /// Sets the Observer that watches this network (nullptr: none; an observer watching another
+    /// network leaves it). A Network has one Observer: std::logic_error if it already has
+    /// another (set_observer(nullptr) first). Only outside a step and not from an observer
+    /// (std::logic_error); after the network failed, anywhere. See Observer.
     void set_observer(Observer* observer);
     [[nodiscard]] Observer* observer() const noexcept { return observer_; }
 

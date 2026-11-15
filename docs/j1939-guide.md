@@ -819,6 +819,8 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 | `testkit::J1939Events` | Watch send requests, frames put on the bus, ends of transfers and address changes |
 | `testkit::FrameLog` | Watch the frames on the bus |
 
+A network has one `J1939Events` and a tap one `FrameLog`: creating a second one on the same network or tap is a `std::logic_error`, so share the first one with the helpers that need it.
+
 The recording and fault injection tools (`testkit::J1939Events`, `FrameLog`, `faults`) are in `vehicle_sil::testkit`. Link it to use them (`vehicle_sil::simulation` does not link it).
 
 `LocalBench` functions take names:
