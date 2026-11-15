@@ -692,6 +692,7 @@ Main classes and functions:
 | The lists of network kinds and uses, `kNetworkKinds` and `kNetworkUses` | `ecu/describe.hpp` |
 | The contract between ECU executables and the launcher (arguments, exit codes, `kMaxMillis`) | `ecu/executable.hpp` |
 | The functions that write and read the value of the argument `--j1939-node`, `J1939NodeOverride` | `ecu/j1939_node_argument.hpp` |
+| The names of a `Peer`'s monitoring outputs (`peer.*`, `j1939.<network>.*`), which `Peer` registers and the launcher reads | `ecu/monitor_names.hpp` |
 | `BusConnection`, `GatedCanPort`, `GatedLinPort` and `GatedEthPort` for disconnecting from the bus (`ecu.connected`) | `ecu/detail/bus_connection.hpp` |
 
 - Tests: `tests/ecu`, `tests/simulation` (`test_disconnect.cpp`)
