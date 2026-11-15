@@ -246,10 +246,11 @@ public:
                 throw std::runtime_error(
                     "the registry cannot listen at " + listen + ": " + one_line(e.what()) +
                     (ctx_.config.registry_uri ? " (does another registry run there? choose another port in registry_uri, or "
-                                            "leave it out for a free port)"
+                                            "port 0 for a free one)"
                      : fixed ? " (a run with a participant you start yourself (manual) listens there if the file has no "
                                "registry_uri, so that its command stays the same; does another registry run there? write "
-                               "another port in registry_uri)"
+                               "another port in registry_uri, or port 0 for a free one: the command then changes from run "
+                               "to run)"
                              : ""));
             }
             out_.event([&uri](EventStream& e) { e.registry(uri); });

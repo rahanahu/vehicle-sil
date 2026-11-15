@@ -26,7 +26,7 @@ void network(const Options& o)
     const auto config = [&o](const std::string& host) {
         return "vehicle_sil_simulation: 1\n"
                "stop_at_ms: 1000\n"
-               "registry_uri: silkit://" + host + ":" + std::to_string(free_port()) + "\n"
+               "registry_uri: silkit://" + host + ":0\n" // a free port, chosen by the registry
                "networks: []\n"
                "participants:\n"
                "  - name: Engine\n"
@@ -95,6 +95,10 @@ void network(const Options& o)
             "the line for other computers:\n" + run.standard_error);
     require(run.standard_error.find("from other computers") > run.standard_error.find("[vehicle_sil_launch] registry at"),
             "after the registry's line:\n" + run.standard_error);
+    // registry_uri has port 0: the lines and the commands have the port the registry took.
+    require(!contains(run.standard_error, "registry at silkit://127.0.0.1:0\n") && !contains(run.standard_error, ":0: give it") &&
+                !contains(all, "--registry-uri silkit://127.0.0.1:0 ") && contains(all, "--registry-uri silkit://127.0.0.1:"),
+            "the port the registry took, not 0:\n" + all);
     // The participant's own line (the note names the variable too).
     require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=1\n"), "the participant got the variable:\n" + all);
     require(contains(all, "not starting Hand: start it yourself (manual: true, or --manual). In the directory ") &&
@@ -176,12 +180,11 @@ std::string json_text(const std::string& line, const std::string& key)
 }
 
 /// The configuration of a part of the manual scenarios: Auto, started by the launcher, Hand,
-/// started by hand, and `more`, at a free port of its own (not 8500, the port a run with a
+/// started by hand, and `more`, at a free port of its own (port 0; not 8500, the port a run with a
 /// participant started by hand takes by default, which may be taken here).
 std::string hand_config(const Options& o, const std::string& keys, const std::string& more)
 {
-    return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:" + std::to_string(free_port()) +
-           "\n"
+    return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:0\n"
            "networks: []\n"
            "participants:\n"
            "  - name: Auto\n"
@@ -451,7 +454,7 @@ void busy_port(const Options& o)
         require(contains(run.standard_output, "error: sim.yaml: cannot set up the simulation: the registry cannot listen at " +
                                                   uri + ": ") &&
                     contains(run.standard_output, "(does another registry run there? choose another port in registry_uri, "
-                                                  "or leave it out for a free port)"),
+                                                  "or port 0 for a free one)"),
                 what + ": the setup error names the port:\n" + run.standard_output);
         require(!contains(run.standard_error, "[vehicle_sil_launch] registry at") &&
                     !contains(run.standard_error, "[vehicle_sil_launch] starting Auto"),

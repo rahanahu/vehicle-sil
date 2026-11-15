@@ -183,7 +183,7 @@ Windows では、ファイアウォールの許可が必要です（「Windows �
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `the registry cannot listen at silkit://...: ...` と表示して、終了コード 3 で終わる | そのポートを、別のプログラムか別の `run` が使っています。 | `registry_uri` のポートを変えるか、別の `run` を終了させます。 |
+| `the registry cannot listen at silkit://...: ...` と表示して、終了コード 3 で終わる | そのポートを、別のプログラムか別の `run` が使っています。 | `registry_uri` のポートを変える（0 なら空いているポート）か、別の `run` を終了させます。 |
 
 ## 手順 3: ほかの PC から参加する
 

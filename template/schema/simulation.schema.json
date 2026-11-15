@@ -28,7 +28,7 @@
     "registry_uri": {
       "type": "string",
       "pattern": "^silkit://.+:[0-9]+$",
-      "description": "Where run starts the registry of the simulation: silkit://<host>:<port>, with a port from 1 to 65535. Without it, a free port on 127.0.0.1. For participants on other computers too, an address they reach (silkit://0.0.0.0:8500); the simulation then listens on the network, where anyone who reaches this computer can join.",
+      "description": "Where run starts the registry of the simulation: silkit://<host>:<port>, with a port from 0 to 65535 (0: a free port, chosen when the run starts). Without it, a free port on 127.0.0.1. For participants on other computers too, an address they reach (silkit://0.0.0.0:8500); the simulation then listens on the network, where anyone who reaches this computer can join.",
       "examples": ["silkit://127.0.0.1:8500", "silkit://0.0.0.0:8500"]
     },
     "speed": {

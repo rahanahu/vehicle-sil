@@ -86,7 +86,7 @@ participants:
 | `stop_at_ms` | | シミュレーションを止める仮想時間（ミリ秒、1 以上 10^12 以下の整数） | participant が止めるか、`run` を Ctrl+C で止めるまで動きます |
 | `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 30000 |
 | `stop_timeout_ms` | | `run` が participant の終了を待つ時間（ミリ秒、1 以上 10^12 以下の整数） | 10000 |
-| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下） | 127.0.0.1 の空いているポート |
+| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 0 以上 65535 以下。0 は空いているポート） | 127.0.0.1 の空いているポート |
 | `speed` | | 仮想時間を進める速度（0.000001 以上 1000000 以下の数か、`max`） | 最速（`max` と同じ） |
 | `time_step_ms` | | controller のタイムステップ（ミリ秒の仮想時間、1 以上 10^12 以下の整数） | 最速のときは 10 |
 | `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数） | 10（タイムステップと速度によりません） |
@@ -129,6 +129,7 @@ participants:
 |---|---|
 | 書かない | 127.0.0.1 の空いているポートです。 |
 | 書かず、自分で起動する必須の participant がいる | `silkit://127.0.0.1:8500` です（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。 |
+| ポート 0（`silkit://127.0.0.1:0`、`silkit://0.0.0.0:0`） | 実行を始めるときに選ぶ、空いているポートです。`registry at` と `join at` の行、participant のコマンド（自分で起動する participant に出すものも）、`--events` のイベント `registry` は、そのポートです。照合の JSON の `registry_uri` は、書いたとおりです。 |
 | ほかの PC の participant も参加させる | `silkit://0.0.0.0:8500` のように書きます（この PC の participant には `127.0.0.1` の URI を渡します）。 |
 | ループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`）でない | 注記 `registry-on-network` を表示し、`run` が起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。 |
 
@@ -360,7 +361,7 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 - cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。
 - PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を追加し、`$` と `` ` `` を含む引数を直します。
 
-`registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` のエラーです（`registry_uri` に別のポートを書きます）。
+`registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` のエラーです（`registry_uri` に別のポートか、空いているポートを選ぶ 0 を書きます。0 ではコマンドが実行ごとに変わります）。
 
 #### ループバックでない `registry_uri` のとき
 
