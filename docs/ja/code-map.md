@@ -370,6 +370,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `Ecu::describe()`
 - 関数として呼んだ `ecu_main()` の引数と終了コード
 - `simulation.*j1939_nodes*`: `SilKitOptions::j1939_nodes` が名前の ECU にだけ効くこと（同じ ECU のコードを 2 つ追加する場面）、ない ECU の名前や当たらなかった行を始める前に拒否すること
+- `simulation.ecu_main_j1939_node*`: `ecu_main()` の `--j1939-node` が、行の値をノードに与えること（名前を替えたネットワークでも）、どのノードにも当たらない行のメッセージ（終了コード 3）、ステップの中で追加したノードがコードの値のままであること。値の使い方の誤りは `simulation.ecu_main_refuses_bad_command_lines`
 
 イーサネットのチャネル（`test_ethernet.cpp`）では、次のステップで受信すること、同じ時刻の順、絞り込み、1 ステップに `receive_capacity` までのフレームを落とさないこと、拒否するときの文言、`LocalBench` の参照を確認します。
 
@@ -385,6 +386,7 @@ ECU の `--describe` の出力の JSON（`to_json(EcuDescription)`）の単体�
 - `--describe` の JSON を [ecu-executable.md](ecu-executable.md) の例と、vehicle-sil のバージョンを除いてバイト単位で照合
 - `--local`
 - `vehicle_sil_sim_controller` の下の SIL Kit での 2 つの ECU
+- エンジンの 2 つのコピー、2 つ目に `--j1939-node`（`ecu_main.j1939_node`。監視の出力のアドレス）
 - 使い方、停止の要求
 
 ### `core` / `lin`
