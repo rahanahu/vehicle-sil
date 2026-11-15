@@ -976,3 +976,124 @@ TEST_CASE(control_agent_step_sink_is_set_before_the_first_step)
         CHECK(throws<std::runtime_error>([&] { agent.on_step_end(at(0ms)); }));
     }
 }
+
+TEST_CASE(control_agent_result_says_how_many_writes_were_applied)
+{
+    // "b" throws for a negative value; "p" is a parameter.
+    Agent agent;
+    double a = 0.0;
+    double b = 0.0;
+    double c = 0.0;
+    double p = 0.0;
+    agent.input("m.a", [&] { return a; }, [&](double v) { a = v; });
+    agent.input("m.b", [&] { return b; }, [&](double v) {
+        if (v < 0.0)
+        {
+            throw std::runtime_error("b cannot be negative");
+        }
+        b = v;
+    });
+    agent.input("m.c", [&] { return c; }, [&](double v) { c = v; });
+    agent.input("m.p", &p, {.parameter = true});
+    std::vector<CommandResult> results;
+    const auto step = [&](SimTime now) {
+        results.clear();
+        agent.on_step_begin(now);
+        agent.on_step_end(now);
+        agent.drain_results(results);
+    };
+    const auto queued = [&](Command command) { return agent.submit(std::move(command)).status == SubmitStatus::Queued; };
+    const auto count = [](std::uint32_t n) { return std::optional<std::uint32_t>{n}; };
+
+    // A parameter and an input in one command, due after the first step: no setter is called.
+    CHECK(queued(Command{1, {{"m.a", 9.0}, {"m.p", 2.0}}, at(10ms), LatePolicy::Reject}));
+    // Applied: all of them. The same variable twice counts twice.
+    CHECK(queued(Command{2, {{"m.a", 1.0}, {"m.c", 2.0}, {"m.a", 3.0}}, SimTime{}, LatePolicy::Reject}));
+    step(SimTime{});
+    CHECK_EQ(results.size(), std::size_t{1});
+    CHECK(results[0].status == CommandStatus::Applied);
+    CHECK(results[0].applied_writes == count(3));
+    CHECK_EQ(a, 3.0);
+    step(at(10ms));
+    CHECK_EQ(results.size(), std::size_t{1});
+    CHECK(results[0].status == CommandStatus::Rejected);
+    CHECK(results[0].applied_writes == count(0));
+    CHECK_EQ(a, 3.0);
+
+    // A setter that throws: the position of its write, which is the number applied before it.
+    CHECK(queued(Command{3, {{"m.a", 4.0}, {"m.c", 5.0}, {"m.b", -1.0}, {"m.a", 6.0}}, at(20ms), LatePolicy::Reject}));
+    step(at(20ms));
+    CHECK(results[0].status == CommandStatus::Rejected);
+    CHECK(results[0].applied_writes == count(2));
+    CHECK_EQ(a, 4.0);
+    CHECK_EQ(c, 5.0);
+    CHECK(queued(Command{4, {{"m.b", -1.0}, {"m.a", 6.0}}, at(30ms), LatePolicy::Reject}));
+    step(at(30ms));
+    CHECK(results[0].applied_writes == count(0));
+    // The same variable twice, the second time with the value its setter refuses: the position,
+    // which the name alone could not tell.
+    CHECK(queued(Command{5, {{"m.b", 1.0}, {"m.a", 7.0}, {"m.b", -1.0}}, at(40ms), LatePolicy::Reject}));
+    step(at(40ms));
+    CHECK(results[0].status == CommandStatus::Rejected);
+    CHECK(results[0].applied_writes == count(2));
+    CHECK_EQ(b, 1.0);
+
+    // Late (refused) and cancelled: none. Applied late: all.
+    CHECK(queued(Command{6, {{"m.a", 8.0}, {"m.c", 8.0}}, at(40ms), LatePolicy::Reject}));
+    CHECK(queued(Command{7, {{"m.a", 9.0}, {"m.c", 9.0}}, at(40ms), LatePolicy::ApplyNext}));
+    CHECK(queued(Command{8, {{"m.a", 0.0}}, at(900ms), LatePolicy::Reject}));
+    step(at(50ms));
+    CHECK_EQ(results.size(), std::size_t{2});
+    CHECK(results[0].status == CommandStatus::Late);
+    CHECK(results[0].applied_writes == count(0));
+    CHECK(results[1].status == CommandStatus::Applied);
+    CHECK(results[1].late);
+    CHECK(results[1].applied_writes == count(2));
+    agent.finish();
+    results.clear();
+    agent.drain_results(results);
+    CHECK_EQ(results.size(), std::size_t{1});
+    CHECK(results[0].status == CommandStatus::Cancelled);
+    CHECK(results[0].applied_writes == count(0));
+}
+
+TEST_CASE(control_agent_submit_says_which_write_it_refused)
+{
+    Fixture f;
+    const auto position = [](std::uint32_t n) { return std::optional<std::uint32_t>{n}; };
+    const auto submit = [&](std::vector<Write> writes) { return f.agent.submit(Command{++f.seq, std::move(writes), std::nullopt}); };
+
+    SubmitResult r = submit({{"engine.coolant", 300.0}});
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(r.failed_write == position(0));
+    r = submit({{"engine.coolant", 90.0}, {"engine.trim", std::int64_t{1}}, {"nope", 1.0}, {"engine.trim", 1.5}});
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(r.failed_write == position(2)); // the first one that is refused
+    // The same variable twice, the second time out of range: its position, not the first one's.
+    r = submit({{"engine.coolant", 90.0}, {"engine.trim", std::int64_t{1}}, {"engine.coolant", 300.0}});
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(r.failed_write == position(2));
+    CHECK(r.reason.rfind("engine.coolant: ", 0) == 0);
+
+    // A refusal that is about no single write, and no refusal: nothing.
+    r = submit({});
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(!r.failed_write);
+    r = submit({{"engine.coolant", 90.0}, {"engine.trim", std::int64_t{1}}});
+    CHECK(r.status == SubmitStatus::Queued);
+    CHECK(!r.failed_write);
+    f.step(SimTime{});
+    r = submit({{"engine.coolant", 91.0}, {"vehicle.mass", 1600.0}}); // a parameter after the first step
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(!r.failed_write);
+    f.agent.finish();
+    r = submit({{"engine.coolant", 92.0}});
+    CHECK(r.status == SubmitStatus::Invalid);
+    CHECK(!r.failed_write);
+
+    Fixture busy(AgentOptions{.max_pending = 1});
+    CHECK(busy.write("engine.trim", std::int64_t{1}).status == SubmitStatus::Queued);
+    r = busy.write("engine.trim", std::int64_t{2});
+    CHECK(r.status == SubmitStatus::Busy);
+    CHECK(!r.failed_write);
+}

@@ -170,6 +170,7 @@ Types for the shapes that `gui/protocol` defines, and the parsers to use when yo
 | List of configuration files                                | `ConfigList`, `ConfigFile`                                                                                                                                                                                                      |
 | Error shape                                                | `ServerProblem`                                                                                                                                                                                                                 |
 | Findings                                                   | `Finding`, `Severity`                                                                                                                                                                                                           |
+| The launcher's keys and traffic                            | `FromLauncher`, `LauncherFields`, `RunTraffic`, `TrafficNetwork`, `TrafficParticipant`, `TrafficUnplaced`, `ParticipantRole`                                                                                                    |
 | Participants you start yourself (`manual`)                 | `FEATURE_MANUAL`                                                                                                                                                                                                                |
 | `SessionView.scenario` of the session copy                 | `ScenarioView`                                                                                                                                                                                                                  |
 
@@ -218,12 +219,22 @@ Every state is a `Readable` (a read-only value).
 - A timeout is not a rejection: no response came. For a start, the server may have started the run; the session copy (WebSocket) shows whether it did, and `client.run.error` says so.
 - Redirects are not followed.
 
+### The launcher's keys (`raw`)
+
+The check result, the run result, findings and launcher events come from the launcher, and the library passes on every key of them. The typed fields (for example `traffic` of the run result, `participants[].log`, and `role` of a check participant) follow the launcher's format versions (`vehicle_sil_check`, `vehicle_sil_run`, `vehicle_sil_events`), not the version of this library. Every object read from the launcher also has `raw`: the launcher's object as it arrived, with the keys the types do not name. `raw` is read-only and not enumerable (`JSON.stringify` and spreading leave it out). Its values are unchecked JSON: check their type, and show them as text, never as HTML.
+
+```ts
+const result = client.session.session.get()?.result; // RunResult | null
+for (const network of result?.traffic?.networks ?? []) console.log(network.name, network.delivered);
+const strict = result?.raw?.['strict']; // a key without a typed field: unknown
+```
+
 ### Handling unreadable notifications
 
 The library parses each part separately.
 
 - If part of a summary or an event cannot be read, the library uses the readable parts and adds the names of the unreadable parts to `SessionView.unreadable`.
-- Unknown notifications and events pass through without changing the state (`client.connection.onBatch` receives everything, before parsing).
+- Unknown notifications and events pass through without changing the state, and `onMessages` does not get them (`client.connection.onBatch` receives everything, before parsing: read an event that the library does not know there).
 - A notification that is not valid JSON raises a notice, and the library receives everything again from `hello`.
 
 ### Use from Node, or replace the transport
