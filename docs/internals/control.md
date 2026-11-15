@@ -439,7 +439,7 @@ Every message starts with the format version, `kVersion` (2). Both sides write `
   - The last byte of the header is the revision of the writer (`kRevision`).
   - A new field goes at the end of its element, or at the end of the message if it belongs to the message, and `kRevision` goes up by one.
   - The decoder skips what it does not know (the rest of an element, the rest of a message, flag bits) only when the writer's revision is newer than its own. From a writer of the same or an older revision, every size must be exactly what the decoder reads, and extra bytes are an error.
-  - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer looks at the other side's revision before it sends one.
+  - A value that must not be skipped (an unknown enumerator) is an error from any revision. A writer must not send one to an older side. The other side's revision arrives in the header, but nothing reads it yet: whoever raises `kRevision` and adds such a value makes the transport keep that revision and check it before sending.
 - A result says how many writes of a command were applied (`CommandResult::applied_writes`), and a refusal says which write it is about (`SubmitResult::failed_write`); either can be empty (not said).
 - Adding a kind that the other side can safely ignore changes neither the version nor the revision: an unknown kind is counted as an unreadable message and dropped (the answer to the last word was added this way).
 
