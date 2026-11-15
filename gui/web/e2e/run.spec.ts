@@ -211,7 +211,7 @@ test('how each participant is linked to its variables, a trouble in words', asyn
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('control-Engine')).toContainText('hello が来なかった');
-  await expect(page.getByTestId('control-Dashboard')).toContainText('形式の版 2 が違う');
+  await expect(page.getByTestId('control-Dashboard')).toContainText('形式の版 1 が違う');
   await expect(page.getByTestId('control-Gauge')).toContainText('読み書きの口を出していない');
   await expect(page.getByTestId('control-Logger')).toContainText('変数: なし');
   await expect(result(page, session).getByTestId('finding').first()).toContainText(

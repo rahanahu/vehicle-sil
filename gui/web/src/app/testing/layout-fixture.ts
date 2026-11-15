@@ -214,7 +214,7 @@ export class LayoutFixture {
       message: null,
       stopRequested: false,
       omittedFields: ['environment_with_a_very_long_field_name_that_does_not_break', 'command'],
-      controlLink: { state: 'version_mismatch', variables: null, version: 2, late_messages: null },
+      controlLink: { state: 'version_mismatch', variables: null, version: 1, late_messages: null },
       manual: false,
       commandLine: null,
       workingDirectory: null,
