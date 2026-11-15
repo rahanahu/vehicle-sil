@@ -5205,6 +5205,18 @@ public:
         return status;
     }
 
+    /// For a failure's message: whether it still runs (or how it ended) and what it has written so far.
+    std::string report(const std::string& who)
+    {
+        const auto status = process_->wait_for(0ms);
+        const std::lock_guard lock(mutex_);
+        return "--- " + who + " (started by hand): " +
+               (status ? "ended with exit code " + std::to_string(status->code) +
+                             (status->signal ? " (" + vehicle_sil::process::signal_name(*status->signal) + ")" : "")
+                       : std::string("still runs")) +
+               "; its output:\n" + output_;
+    }
+
 private:
     void suspend(bool stop)
     {
@@ -5846,7 +5858,12 @@ void manual_stranger(const Options& o)
     std::this_thread::sleep_for(1500ms);
     ByHand byHand(hand.line, hand.directory);
     const auto [status, out] = live.finish_unchecked();
-    require(status && status->code == 0, "the run with Hand ends with 0:\n" + out_of(out) + "--- stderr ---\n" + live.err());
+    // When the virtual time stands still, whether the stranger still runs tells whether the others
+    // wait for it (SIL Kit adds every participant with virtual time to the synchronisation when it
+    // is discovered, and takes it out only when it leaves).
+    require(status && status->code == 0, "the run with Hand ends with 0:\n" + out_of(out) + "--- stderr ---\n" + live.err() +
+                                             stranger.report("hand (the mistyped name)") + sender.report("Sender") +
+                                             byHand.report("Hand"));
     const std::string all = live.err();
     require(all.find(line) == all.rfind(line), "said once:\n" + all);
     require(!contains(all, "'Sender'"), "nothing of the autonomous participant:\n" + all);
