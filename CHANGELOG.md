@@ -4,7 +4,7 @@ Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](htt
 
 The version comes from `project(vehicle_sil VERSION ...)` in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-15
 
 The first version.
 
@@ -41,6 +41,8 @@ Breaking changes: none (the first version).
 - **Format version of the ECU self-description** (`--describe`): it is raised only when the meaning of a key changes or a key is removed. When only values were added, ECUs and launchers of different versions can be mixed. A value the launcher does not know is the error `describe-unknown-value`, for that ECU only.
 - `run --events`: a run that ends by `--timeout-ms` or by the failure of a participant while paused also emits a last `time` with `paused` false (the same as the other ways of ending).
 - `run --events`: when a `step` or `run_until` that was accepted before the start finishes quickly, the first `time` (`sim_ms` 0) does not have `paused: true`.
+- **Findings in text output**: each finding of `check`, `run` and `test` ends with its code (`… [single-participant]`). `unknown-network` names other networks of the same kind that may be the same bus, and says that the ECU's author must change the name, because the configuration cannot rename a network.
+- **A run that stands still before the first step** (`--start-paused` with `--control`) may stand still for any time; its ECUs do not give up waiting for the start.
 
 #### Scenarios
 
@@ -55,6 +57,7 @@ Breaking changes: none (the first version).
 - **A run that plays a scenario** also accepts Control API clients (`run --scenario` with `--control`). A client can only read, wait and stop; calls that write and calls that move time are refused.
 - `vehicle_sil_launch run --control unix:<path>` ends with exit code 4 when the path is too long, and gives the length and the limit.
 - **The time answer of the Control API** does not have both `ended` and `paused` true at the moment the run ends.
+- **A control port that is taken**: a second `vehicle_sil_launch run --control <port>` on a port another launcher listens on ends with exit code 3 instead of sharing the port.
 
 #### Browser GUI
 
@@ -80,10 +83,12 @@ Breaking changes: none (the first version).
 - **Preset `linux-gcc-control`**: a GCC Debug build with the Control Server (gRPC from the PC if present, otherwise a fixed version through FetchContent).
 - **CMake option `VEHICLE_SIL_STATIC`**: links SIL Kit and the C++ runtime library statically into the ECU executables, so that each can be distributed as a single file (default OFF).
 - **Configuring** (`cmake --preset …`) prints in one line the SIL Kit commit that is built, the patches applied and the location of the copy.
+- `template/get_tools.py` fetches the prebuilt tools of the template's version and checks them against `SHA256SUMS`. When the release has no archive for this PC, it says to pass a file you already have with `--archive <file>`, or to build vehicle-sil from its sources.
 
-### Removed
+#### Documentation
 
-- **The standalone Control Server** that existed during development (`vehicle_sil_control_server`) is not part of this version. Connect to the Control API with `vehicle_sil_launch run --control`, and add an ECU that the launcher does not start to the same run with `manual` on the participant (or `run --manual <name>`).
+- **The manual is in English**, with a Japanese edition (`README.ja.md`, `docs/ja/`). The guides go step by step, with a check after each step and a troubleshooting table: a first ECU, integrating ECUs, scenario tests, operating signals, your own GUI screen, and design choices. The examples they use are in the repository (`examples/first_ecu`, `examples/integrate_ecus`, `examples/scenario_tests`, `examples/launch_control`), and tests run them against the guides.
+- **Comments in the code handed to users** are in English: the GUI client library (including its type declarations), the screen template `examples/gui_starter` and the client examples `examples/gui_client`.
 
 ### Fixed
 
