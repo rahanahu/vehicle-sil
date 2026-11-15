@@ -26,9 +26,9 @@
 //   connect_speed               --speed 2 over the file's speed 1: connect-not-real-time; with
 //                               --strict nothing starts; --start-paused: connect-start-paused, and
 //                               it runs after a resume (which is no connect-time-changed).
-//   connect_time_changed        paused while it runs, then a speed and a resume: one warning
-//                               connect-time-changed, about the pause; with --strict, a speed
-//                               command fails the run.
+//   connect_time_changed        paused while it runs, then a speed, a resume and a stop: one
+//                               warning connect-time-changed, about the pause; with --strict, a
+//                               speed command (written at once) fails the run after its end.
 #include "launch_run_support.hpp"
 
 #include <regex>
@@ -341,18 +341,21 @@ void connect_speed(const Options& base)
 void connect_time_changed(const Options& base)
 {
     const Options o = connect_options(base);
-    // Both networks connected, as connect_roundtrip: the check has no finding, so --strict fails on this one only.
-    const fs::path dir = connect_dir(o, "time_changed", "stop_at_ms: 1000\n", talker(o), {{"Talker", "talk CAN"}});
     const std::string code = "\"code\":\"connect-time-changed\"";
+    // Both networks connected, as connect_roundtrip: the check has no finding, so --strict fails on this one only.
+    // No stop_at_ms: the commands do not have to come within a time of the run; a stop ends it.
     {
+        const fs::path dir = connect_dir(o, "time_changed", "", talker(o), {{"Talker", "talk CAN"}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1",
                            "sim.yaml"});
         live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
         live.write("{\"command\":\"pause\"}\n");
         const std::string paused = live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
         live.write("{\"command\":\"speed\",\"value\":2}\n{\"command\":\"resume\"}\n");
+        live.wait_for({"\"event\":\"time\"", "\"speed\":2,", "\"paused\":false,"});
+        live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish();
-        require(status && status->code == 0, "a warning only: exit code " + code_text(status) + "\n" + out_of(lines));
+        require(status && status->code == 130, "stopped by a command: exit code " + code_text(status) + "\n" + out_of(lines));
         // One finding, about the first command, at the time it came (not after where it stood still).
         const std::vector<std::string> found = events_with(lines, {"\"event\":\"finding\"", code});
         require(found.size() == 1, "one finding connect-time-changed:\n" + out_of(lines));
@@ -362,14 +365,15 @@ void connect_time_changed(const Options& base)
                                                         "stood still while the devices there went on in real time"));
         require(named && std::stoll(match[1].str()) <= std::stoll(value_of(paused, "sim_ms")),
                 "the finding names the pause and when it came:\n" + found[0] + "\n" + paused);
-        require(contains(lines.back(), "\"simulation\":\"reached_stop_at\"") && contains(lines.back(), "\"result\":\"passed\"") &&
-                    contains(lines.back(), "\"errors\":0,\"warnings\":1,\"notes\":0"),
-                "it ran to its end and passed, with this warning only:\n" + lines.back());
+        require(contains(lines.back(), "\"errors\":0,\"warnings\":1,"), "this warning only, no error:\n" + lines.back());
     }
-    // With --strict the warning fails the run (after it, not before: the command came while it ran).
+    // With --strict the warning fails the run, after it has run to its end. The speed is written at
+    // once: a command before the simulation starts is kept and counts as well, so it cannot come too
+    // late; stop_at_ms leaves room for a slow reader all the same.
+    const fs::path dir = connect_dir(o, "time_changed_strict", "stop_at_ms: " + std::to_string(scaled_timeout(10s).count()) + "\n",
+                                     talker(o), {{"Talker", "talk CAN"}});
     Live live(o, dir, {"run", "--events", "--strict", "--stdin-commands", "--connect", "ETH_EXT=fake0", "--connect",
                        "CAN=virtual:1", "sim.yaml"});
-    live.wait_for({"\"event\":\"phase\"", "\"phase\":\"running\""});
     live.write("{\"command\":\"speed\",\"value\":\"max\"}\n");
     const auto [status, lines] = live.finish();
     require(status && status->code == 1, "--strict: exit code " + code_text(status) + "\n" + out_of(lines));
