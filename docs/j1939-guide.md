@@ -766,7 +766,7 @@ install_engine(sim.add_ecu("Engine2", 10ms), ...);   // 0x01, identity number 2
 
 - A line picks a node by the network (the simulation's name; for a network renamed with `network_names`, the new name) and the node's address in the code (`from`; without it, the only node of that ECU on that network). It can change `address` (254 only for a node whose NAME is arbitrary address capable), `identity_number`, `function_instance` and `ecu_instance`.
 - Unlike `network_names`, it is written per ECU: the same lines for every ECU would put 2 ECUs of the same network on the same address again.
-- It applies only to nodes added by the start. Nodes added after the start keep the values of the code.
+- It applies only to nodes added before the start. Nodes added after the start keep the values of the code.
 - Only that node changes. Other ECUs that have this node's address or whole NAME in their code do not change.
 - `std::invalid_argument` is thrown for: an empty network name, a value out of range, 2 lines with the same network and `from`, a line without `from` together with another line for the same network (by `add_ecu()`); a line that cannot be applied (a NAME field for a node without a NAME, 254 for a NAME that is not arbitrary address capable), a line that would apply to a second node (by `add_node()`); the name of an ECU that this simulation does not have, a line that applied to no node (by `run()` and `run_for()`, which then start nothing).
 - The in-process virtual bus (`Simulation()`) does not have this option.
@@ -787,7 +787,7 @@ Use `Peer` directly in these cases (see "Peer" in [internals/execution.md](inter
 - To run as one participant in a separate process
 - To embed a Control Agent
 
-`Peer` is also an `Ecu`, so the same functions work with it, as in `install_engine(peer, model)`. To split ECUs into separate participants, make them `Coordinated` and start them with a `SimulationController` (in one process, `start_together`). In `Peer`, write the same lines in `PeerOptions::j1939_nodes` (the list of lines of that ECU). If a line applies to no node, `Peer::start()` throws `std::invalid_argument` and starts nothing (`Peer::unused_j1939_nodes()` gives the reason for each line beforehand). With `start_together`, if any `Peer` has such a line, it starts none of them and throws with the same message as that `Peer`'s `start()`. In a program that runs steps itself through `host()` before `start()`, the lines apply only to nodes added by the first step.
+`Peer` is also an `Ecu`, so the same functions work with it, as in `install_engine(peer, model)`. To split ECUs into separate participants, make them `Coordinated` and start them with a `SimulationController` (in one process, `start_together`). In `Peer`, write the same lines in `PeerOptions::j1939_nodes` (the list of lines of that ECU). If a line applies to no node, `Peer::start()` throws `std::invalid_argument` and starts nothing (`Peer::unused_j1939_nodes()` gives the reason for each line beforehand). With `start_together`, if any `Peer` has such a line, it starts none of them and throws with the same message as that `Peer`'s `start()`. In a program that runs steps itself through `host()` before `start()`, the lines apply only to nodes added before the first step.
 
 ## Test an ECU
 
