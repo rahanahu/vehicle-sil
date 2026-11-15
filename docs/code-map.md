@@ -309,7 +309,7 @@ Typed messages (`j1939_codec.*`):
 `Spy` (`j1939_spy.*`), on an ECU of `LocalBench`:
 
 - The names and values of the watchers' variables, and the order in which watchers are called
-- The getters and the time of `Scope::now()` come after the handlers
+- Getters run after the handlers of their step, and what `Scope::now()` returns in a handler and in a getter
 - The destruction order (the handlers are removed, then the watchers are destroyed, and the `Listener` last), watchers added by a watcher, `Scope::on_step`
 - If a `Spy` that wrote variables is destroyed before its ECU, the next step stops (on the virtual bus and on SIL Kit)
 - The breakdown and the sum of the missed-traffic variables, and the error messages
