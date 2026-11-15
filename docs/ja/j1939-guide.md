@@ -916,7 +916,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラーは、追加した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer`、`on_frame`: `Listener` の同じ名前の口にハンドラーを追加します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
   - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を書きます。形は `ecu.output()` と同じです。
-  - `on_step(fn)`: ECU のステップごとに、そのステップの時刻で `fn` を呼びます。そのステップのハンドラーの後、変数の標本の前です。時間が過ぎたことで決まること（来なくなった回数を数えるなど）に使います。結果はステップ幅の粒で変わります。ハンドラーと同じく、見張りのメンバーを書き換えるだけにします。
+  - `on_step(fn)`: ECU のステップごとに、そのステップの時刻で `fn` を呼びます。そのステップのハンドラーの後、変数の標本の前です。時間が過ぎたことで決まること（来なくなった回数を数えるなど）に使います。結果はステップ幅の粒で変わります。ハンドラーと同じく、見張りのメンバーを書き換えるだけにします。全部の見張りの関数は、`Spy` を作った時点で登録される 1 つの `Ecu::on_step` の関数から呼ばれます。アプリが `Spy` を作る前に足した `ecu.on_step()` の関数の後、作った後に足した関数（`Spy` をメンバーに持つクラスのコンストラクターの本体で足した関数など）の前です。`fn` が投げると、その後ろに登録した関数はそのステップでは呼ばれず、`ecu.on_step()` の関数が投げたときと同じにステップが止まります。
 
     ```cpp
     s.on_step([this](vehicle_sil::SimTime now) {           // count once when nothing came for 100 ms
@@ -931,7 +931,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 
   | 変数 | 数えるもの |
   |---|---|
-  | `spy.missed` | 下の 8 つの和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、パケットの欠け・重なり・順の違いや空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です（見えないものは下） |
+  | `spy.missed` | 下の 8 つの和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、途中のパケットの欠け（欠けた後に、後ろのパケットが来た場合）・重なり・順の違いや空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です。どの転送も最後まで来た、とは言えません（見えないものは下） |
   | `spy.no_session` | 空きがなくて追わなかった接続（同時に追える数は `ListenerOptions::sniffer.sessions`、既定 32） |
   | `spy.incomplete` | パケットを見逃した接続 |
   | `spy.replaced` | 終わる前に告知し直された接続 |
@@ -942,6 +942,7 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
   | `spy.transport_bam_dropped` | `Network` が組み立ての途中で捨てた BAM（パケットの欠け、重なり、順の違い） |
 
   - 見えないもの: スパイの ECU をバスから外した間（`ecu.connected` が false）に来たフレームは、`Network` の手前で捨てられ、どこにも数えられません。`Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）も入れません。
+  - 最後まで来なかった転送も見えません。末尾のパケットが来なかった BAM と接続は時間切れになり、送り手が止めたのか、パケットを聞きこぼしたのかは見分けられません。BAM の時間切れは `Network::statistics()` の `transport_timeouts` に数えますが、この participant のノードの時間切れも数えるので、和には入れません。ほかの ECU どうしの接続は `sniffer_statistics()` の `timed_out` に数えます。最後のパケットが来る前に、同じ送り手の次の告知で置き換わった BAM は、どこにも数えません。
   - 前置きは `SpyOptions::statistics_as`（既定 `"spy"`）で変えられます。空にすると書きません。
 - 寿命: 書いた変数は取り消せないので、変数を書く `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。変数を書いた `Spy` を ECU より先に壊すと、その ECU の次のステップが、変数を読む前に `std::logic_error`（「vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ...」）で止まります。`Spy` は壊れるとき、見張りごとに（`add()` が後に返ったものから）ハンドラーと `on_step` の関数を外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
 - 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。`Listener` をほかのコードと分けるときは、自分で作った `Listener` を `Spy(ecu, network, listener)` に渡します。その `Listener` に `Spy` を 2 つ置くときは、2 つ目の `SpyOptions::statistics_as` を `""` にします。

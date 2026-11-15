@@ -259,7 +259,10 @@ void Spy::publish_statistics()
     {
         ecu_.output(p + ".missed", [this] { return as_variable(missed()); },
                     {.description = "What the Spy's Listener missed: the sum of the eight " + p +
-                                    ".* counters beside it (0: nothing missed while the ECU was on its buses)"});
+                                    ".* counters beside it (0: while the ECU was on its buses, no frame was "
+                                    "dropped and no transfer was lost for a packet that was repeated, out of "
+                                    "order or missing before a later one came; a transfer whose last packets "
+                                    "never came is not counted)"});
         made_one();
         ecu_.output(p + ".no_session", [&sniffer] { return as_variable(sniffer.no_session); },
                     {.description = "Connections between other ECUs not followed: no free place "

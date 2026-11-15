@@ -163,9 +163,14 @@ public:
     /// the step's handlers and before its variables are sampled. For what follows from time
     /// passing (e.g. counting that something stopped coming); the result depends on the ECU's
     /// step size. The functions of all watchers run in the order they were registered, from
-    /// the Spy's one Ecu::on_step() function. The same conditions as on_message(); the Spy
-    /// removes it with the handlers. Like a handler, it only reads and updates the watcher's
-    /// members (it allocates nothing).
+    /// the Spy's one Ecu::on_step() function. That function takes its place when the Spy is
+    /// made: the watchers' functions run after the functions the application gave to
+    /// Ecu::on_step() before it made the Spy, and before those it gave later (e.g. in the body
+    /// of the constructor of a class that has the Spy as a member). If `fn` throws, the
+    /// functions registered after it do not run in that step, and the exception leaves the
+    /// step as one thrown by an Ecu::on_step() function does. The same conditions as
+    /// on_message(); the Spy removes it with the handlers. Like a handler, it only reads and
+    /// updates the watcher's members (it allocates nothing).
     void on_step(std::function<void(SimTime now)> fn);
 
     /// The time of the ECU's latest step whose functions ran (SimTime{} before the first step).
@@ -196,8 +201,9 @@ private:
 /// only grow):
 /// - "spy.missed": the sum of the eight below. While it is 0, the Network dropped no frame it
 ///   received, no broadcast or connection that the Network or the Listener followed was lost
-///   for a missing, repeated or out-of-order packet or for lack of a place, and every message
-///   handed to the watchers has the receiver's bytes.
+///   for a packet that was repeated, out of order or missing before a later one came, or for
+///   lack of a place, and every message handed to the watchers has the receiver's bytes. It
+///   does not say that every transfer came to its end (see "Not seen by it").
 /// - "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
 ///   "spy.conflicting_packets": the Listener's j1939::SnifferStatistics of the same names.
 /// - "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped": the
@@ -207,9 +213,16 @@ private:
 ///   group, too large, malformed, no free session).
 /// Not seen by it: frames that came while the ECU was off its buses ("ecu.connected" false:
 /// they are dropped before the Network and counted nowhere), NetworkStatistics::frames_ignored
-/// (11-bit frames among them, so it grows on any bus that also carries 11-bit frames), and
+/// (11-bit frames among them, so it grows on any bus that also carries 11-bit frames),
 /// connections whose announcement came before the Listener heard the bus
-/// (SnifferStatistics::orphan_data).
+/// (SnifferStatistics::orphan_data), and transfers of which the end never came:
+/// - a broadcast or a connection whose last packets did not come. It times out, and whether
+///   the sender stopped or the packets were missed cannot be told. Broadcasts are counted in
+///   NetworkStatistics::transport_timeouts, which is not in the sum because it also counts the
+///   timeouts of this participant's own nodes; connections between other ECUs are counted in
+///   SnifferStatistics::timed_out.
+/// - a broadcast that the same sender's next announcement replaced before its last packet
+///   came. It is counted nowhere.
 ///
 /// Lifetime. Make the Spy a member of the ECU's class (the class ecu_main() or Simulation::add()
 /// makes), so that it lives as long as the ECU: the variables it and its watchers publish
