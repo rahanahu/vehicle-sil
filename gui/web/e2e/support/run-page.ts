@@ -74,8 +74,23 @@ export function chosenFile(page: Page, language: Language = 'ja') {
     .locator('.mat-mdc-select-value-text');
 }
 
+/**
+ * 画面がサーバーと揃うまで待つ（つながって、再送の知らせが全部届いた）。前の実行の結果の欄は、揃うときに描かれて、
+ * その下の構成ファイルの欄を押し下げる。開いた選択肢の一覧は欄といっしょに画面の外へ動き、押せなくなるので、
+ * 開く前に揃うのを待つ。
+ */
+export async function inSync(page: Page, language: Language = 'ja'): Promise<void> {
+  await expect(page.getByTestId('connection')).toHaveText('', { timeout: scaled(10_000) });
+  // 開始のボタンと理由（揃うまでは「サーバーと揃うまで」）は同じ部品が描く
+  await expect(startButton(page)).toBeVisible();
+  await expect(
+    page.getByTestId('blocked').filter({ hasText: WORDS[language].syncing }),
+  ).toHaveCount(0);
+}
+
 /** 構成ファイルを選び、その照合の結果が出るまで待つ。 */
 export async function choose(page: Page, file: string, language: Language = 'ja'): Promise<void> {
+  await inSync(page, language);
   const select = page.getByRole('combobox', { name: WORDS[language].configFile });
   await expect(select).toBeEnabled();
   if ((await chosenFile(page, language).textContent())?.trim() !== file) {
@@ -152,7 +167,5 @@ export async function stopIfRunning(page: Page, language: Language = 'ja'): Prom
   await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true', {
     timeout: RUN_TIMEOUT,
   });
-  await expect(
-    page.getByTestId('blocked').filter({ hasText: WORDS[language].syncing }),
-  ).toHaveCount(0);
+  await inSync(page, language);
 }
