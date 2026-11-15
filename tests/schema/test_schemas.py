@@ -892,7 +892,7 @@ class TimelineSchema(unittest.TestCase):
             "a line without its variable": lambda d: d["lines"][0].pop("variable"),
             "a line whose step is a text": lambda d: d["lines"][0].update(step="1"),
             "a shape without its type": lambda d: d["lines"][-1].update(shape={"to": 1}),
-            "writes that are no positions": lambda d: d["steps"][0].update(writes=["0"]),
+            "step lines that are no positions": lambda d: d["steps"][0].update(lines=["0"]),
             "columns that are no names": lambda d: d["series"][0].update(columns=[0, 1, 2]),
             "writes of a failed step without their variable": lambda d: failed_step(d)["failed"].update(
                 writes=[{"at_ms": 20, "value": 13, "point": 2, "applied": False}]),
@@ -910,7 +910,7 @@ class TimelineSchema(unittest.TestCase):
             "a kind of line and a base_source it does not know": lambda d: d["lines"][0].update(kind="hold", base_source="given"),
             "a key of a shape it does not know": lambda d: d["lines"][-1]["shape"].update(steepness=2),
             # A launcher without the feature timeline-lines writes the same format without them.
-            "no lines and no writes": lambda d: (d.pop("lines"), [step.pop("writes") for step in d["steps"]]),
+            "no lines, in the file and in the steps": lambda d: (d.pop("lines"), [step.pop("lines") for step in d["steps"]]),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
             "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
             # A dither: a line of no step and without an end, and the columns of its input's points.

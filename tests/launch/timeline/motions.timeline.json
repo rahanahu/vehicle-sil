@@ -118,7 +118,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
-      "writes": [0, 1],
+      "lines": [0, 1],
       "watch": null,
       "failed": null
     },
@@ -133,7 +133,7 @@
       "end_ms": 20,
       "code": null,
       "message": null,
-      "writes": [],
+      "lines": [],
       "watch": {
         "mode": "at",
         "from_ms": 20,
@@ -163,7 +163,7 @@
       "end_ms": 120,
       "code": null,
       "message": null,
-      "writes": [2, 3],
+      "lines": [2, 3],
       "watch": {
         "mode": "during",
         "from_ms": 20,
@@ -202,7 +202,7 @@
       "end_ms": 220,
       "code": null,
       "message": null,
-      "writes": [4, 5],
+      "lines": [4, 5],
       "watch": null,
       "failed": null
     },
@@ -217,7 +217,7 @@
       "end_ms": 280,
       "code": null,
       "message": null,
-      "writes": [6],
+      "lines": [6],
       "watch": null,
       "failed": null
     },
@@ -232,7 +232,7 @@
       "end_ms": 340,
       "code": null,
       "message": null,
-      "writes": [],
+      "lines": [],
       "watch": {
         "mode": "always",
         "from_ms": 290,

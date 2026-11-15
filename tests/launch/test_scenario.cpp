@@ -2732,7 +2732,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
                                       "    expect: { Body.body.speed: { le: 60 } }\n"
                                       "  - at_ms: 25\n"
                                       "    ramp: { Door.level: { from: 1, to: 9, over_ms: 30 } }\n";
-    const auto lines_of = [](const std::string& timeline) { return part(timeline, "  \"lines\": [", "  \"findings\""); };
+    const auto lines_of = [](const std::string& timeline) { return part(timeline, "  \"lines\": [\n", "  \"findings\""); };
     for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
     {
         const std::string made = timeline_of(ahead, tick);
@@ -2743,7 +2743,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
                    "      \"base_source\": \"written\",\n      \"shape\": null,\n      \"text\": \"Body.level = 10\"\n    }\n  ],\n",
                    "the lines with another step");
         // (The step's own list follows the lines of the file.)
-        CHECK(made.find("      \"writes\": [0],\n") != std::string::npos && made.find("      \"writes\": [1],\n") == std::string::npos);
+        CHECK(made.find("      \"lines\": [0],\n") != std::string::npos && made.find("      \"lines\": [1],\n") == std::string::npos);
     }
     // The watch beside the ramp goes to the step of Door that applies the end value (88 ms), past
     // the step's end (85 ms); the last step passed at 150 ms, and that is where the file ends.
@@ -3474,7 +3474,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
     // from: the step ("written"), the line, or a sample.
     const auto lines_of = [](const std::string& timeline) {
         // "<kind> <variable> <from>-<to> base=<base> <source>" per line of the file's lines.
-        std::istringstream in(part(timeline, "  \"lines\": [", "  \"findings\""));
+        std::istringstream in(part(timeline, "  \"lines\": [\n", "  \"findings\""));
         std::string out;
         const auto value = [](const std::string& line) {
             std::string text = line.substr(line.find(": ") + 2);
@@ -3516,7 +3516,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
     CHECK(made.find("      \"shape\": {\n        \"type\": \"lag\",\n        \"to\": 1,\n        \"tau_ms\": 20,\n"
                     "        \"for_ms\": 40\n      },\n"
                     "      \"text\": \"Door.ratio lag from 0.25 to 1 tau 20 ms for 40 ms\"") != std::string::npos);
-    CHECK(made.find("      \"writes\": [1, 2],\n") != std::string::npos && made.find("      \"writes\": [3, 4, 5],\n") != std::string::npos);
+    CHECK(made.find("      \"lines\": [1, 2],\n") != std::string::npos && made.find("      \"lines\": [3, 4, 5],\n") != std::string::npos);
 
     // The file has what happened: a line of which no write was sent is not in it, and not in the
     // writes of its step. A set that its agent refuses at once (sent: its point is in the series,
@@ -3530,19 +3530,19 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
                                             10ms, {}, loose);
     CHECK(refused.find("    \"status\": \"failed\",") != std::string::npos);
     check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n");
-    const auto writes_of = [](const std::string& timeline) {
+    const auto step_lines_of = [](const std::string& timeline) {
         std::istringstream in(timeline);
         std::string out;
         for (std::string line; std::getline(in, line);)
         {
-            if (line.rfind("      \"writes\": ", 0) == 0)
+            if (line.rfind("      \"lines\": ", 0) == 0)
             {
-                out += line.substr(16) + " ";
+                out += line.substr(15) + " ";
             }
         }
         return out;
     };
-    check_text(writes_of(refused), "[0], [], ");
+    check_text(step_lines_of(refused), "[0], [], ");
     // One step moves three variables. The second finds no base (the scenario has not written it
     // and no sample is there at 0 ms): the first was sent and is a line, the second and the third
     // (which names its base) were not and are not. Whatever the controller's step.
@@ -3556,7 +3556,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
         check_text(lines_of(part_sent), "Door.lamp set 0-0 base=true written\n"
                                         "Door.ratio ramp 0-20 base=0 written\n",
                    "the lines of a step that sent a part of its writes");
-        check_text(writes_of(part_sent), "[0], [1], [], ");
+        check_text(step_lines_of(part_sent), "[0], [1], [], ");
         CHECK(part_sent.find("      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
                              "      \"points\": []\n") != std::string::npos);
     }
@@ -3568,7 +3568,7 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
     input.scenario = &s;
     input.run = &run;
     const std::string none = format_timeline_json(input);
-    CHECK(none.find("  \"lines\": [],\n") != std::string::npos && none.find("      \"writes\": [],\n") != std::string::npos);
+    CHECK(none.find("\n  \"lines\": [],\n") != std::string::npos && none.find("      \"lines\": [],\n") != std::string::npos);
 }
 
 TEST_CASE(timeline_line_after_a_motion_that_returns_to_a_sample_starts_from_that_sample_too)
@@ -3587,7 +3587,7 @@ TEST_CASE(timeline_line_after_a_motion_that_returns_to_a_sample_starts_from_that
             w.ecus[1].last_level = 20;
             w.ecus[1].own_level = std::pair{at(30ms), std::int64_t{60}};
         });
-        std::istringstream in(part(made, "  \"lines\": [", "  \"findings\""));
+        std::istringstream in(part(made, "  \"lines\": [\n", "  \"findings\""));
         std::string out;
         for (std::string line; std::getline(in, line);)
         {
@@ -4203,7 +4203,7 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
 {
     const auto lines_of = [](const std::string& timeline) {
         // "<variable> <kind> line <line> step <step> <from>-<to> <text>" per line of the file's lines.
-        std::istringstream in(part(timeline, "  \"lines\": [", "  \"findings\""));
+        std::istringstream in(part(timeline, "  \"lines\": [\n", "  \"findings\""));
         std::string out;
         for (std::string line; std::getline(in, line);)
         {
@@ -4221,14 +4221,14 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
         }
         return out;
     };
-    const auto writes_of = [](const std::string& timeline) {
+    const auto step_lines_of = [](const std::string& timeline) {
         std::istringstream in(timeline);
         std::string out;
         for (std::string line; std::getline(in, line);)
         {
-            if (line.rfind("      \"writes\": ", 0) == 0)
+            if (line.rfind("      \"lines\": ", 0) == 0)
             {
-                out += line.substr(16) + " ";
+                out += line.substr(15) + " ";
             }
         }
         return out;
@@ -4269,7 +4269,7 @@ TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_wer
                                "Body.ratio dither line 7 step 1 60-null Body.ratio noise amplitude 0.05 hold 10 ms seed 12345678901234567\n"
                                "Body.level dither line 16 step 5 90-null Body.level none\n");
     // The steps' writes are the places of their lines; a dither step's are its dithers' lines.
-    check_text(writes_of(made), "[5], [0], [4], [2, 3], [6], [], ");
+    check_text(step_lines_of(made), "[5], [0], [4], [2, 3], [6], [], ");
     // A dither line has no base; its shape is what the text has, with the parameters put in (a
     // seed keeps every digit); none has no shape.
     CHECK(made.find("      \"kind\": \"dither\",\n      \"line\": 7,\n      \"step\": 1,\n      \"from_ms\": 60,\n      \"to_ms\": null,\n"

@@ -455,9 +455,9 @@ void write_lines(JsonWriter& w, const TimelineInput& input)
 }
 
 /// Of a step: where its lines are in "lines".
-void write_step_writes(JsonWriter& w, const TimelineInput& input, std::size_t step)
+void write_step_lines(JsonWriter& w, const TimelineInput& input, std::size_t step)
 {
-    w.begin_array_on_one_line("writes");
+    w.begin_array_on_one_line("lines");
     if (input.record != nullptr)
     {
         const auto& all = input.record->lines();
@@ -901,7 +901,7 @@ std::string format_timeline_json(const TimelineInput& input)
     {
         w.begin_object();
         detail::write_scenario_step_members(w, run.steps[i]);
-        write_step_writes(w, input, i);
+        write_step_lines(w, input, i);
         write_watch(w, scenario, scenario.steps[i], run.steps[i],
                     input.record != nullptr ? input.record->watches()[i] : std::nullopt);
         write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt, input.record);

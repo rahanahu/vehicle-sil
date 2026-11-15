@@ -1012,7 +1012,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `tick_ms` | The controller's time step |
 | `scenario` | `file`, `name`, `status` and `over_at_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
 | `variables[]` | The variables that the scenario uses, in order of first use: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it) |
-| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `writes`, `watch` and `failed` |
+| `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json`, plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
 | `lines[]` | The line of each input: the values and motions that steps placed (see "Input lines" below) |
 | `findings[]` | The check and run findings whose `code` starts with `scenario-` (the same form as in `run --json`). The finding `control-link-late-values`, which says that ECU values arrived later than guaranteed, appears with its `code` only (in a run with this finding, the record can differ from run to run). Other findings, such as the real-time speed finding `behind-real-time`, are left out |
@@ -1020,7 +1020,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` and `status` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version.
 
-The `writes` of a step is an array of the positions (from 0) in `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write. Launchers with `timeline-lines` in `features` of `vehicle_sil_launch version --json` write `lines` and `writes`.
+The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write. Launchers with `timeline-lines` in `features` of `vehicle_sil_launch version --json` write the top-level `lines[]` and the `lines` of each step.
 
 The `watch` of a step is the condition that the step checks (`null` for a step without a condition).
 
@@ -1194,9 +1194,9 @@ Each variable that the scenario writes has one line. When a step's time comes, t
   | `base`, `base_source` | `null` |
   | `shape` | The waveform of the dither. `null` for `none` (removed) |
 
-  A dither line comes after the lines that steps placed at that time, in the order in which the first writes were sent. The `writes` of a `dither` step are the positions of the dither lines that the step placed. A dither that no write ever carried (on an input that never got a base, or replaced by the next step before any write) does not become a line.
+  A dither line comes after the lines that steps placed at that time, in the order in which the first writes were sent. The `lines` of a `dither` step are the positions of the dither lines that the step placed. A dither that no write ever carried (on an input that never got a base, or replaced by the next step before any write) does not become a line.
 - The `shape` of `points` holds the number of points (`points`) and `interpolate`. For points read from a CSV file, it also holds `file`, `value`, `time` and `time_unit` as written (the column names only; the point values are in the series).
-- The file holds only lines whose `from_ms` is at or before `recorded_to_ms` and **for which at least one write was sent** (the file records what happened). If the scenario failed before the first write of a line, the line is left out, and it is not in the step's `writes` either. Examples: a `ramp` after a refused `set` of an earlier step at the same time; when one step moves several variables and the start value of one is not found, that variable and the variables written after it. A refused write was sent, so its line is included (as with the series points).
+- The file holds only lines whose `from_ms` is at or before `recorded_to_ms` and **for which at least one write was sent** (the file records what happened). If the scenario failed before the first write of a line, the line is left out, and it is not in the step's `lines` either. Examples: a `ramp` after a refused `set` of an earlier step at the same time; when one step moves several variables and the start value of one is not found, that variable and the variables written after it. A refused write was sent, so its line is included (as with the series points).
 - In a run where the scenario did not start, `lines` is empty.
 
 ### End of the record (`recorded_to_ms`)

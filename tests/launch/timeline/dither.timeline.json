@@ -66,7 +66,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
-      "writes": [0],
+      "lines": [0],
       "watch": null,
       "failed": null
     },
@@ -81,7 +81,7 @@
       "end_ms": 30,
       "code": null,
       "message": null,
-      "writes": [2],
+      "lines": [2],
       "watch": null,
       "failed": null
     },
@@ -96,7 +96,7 @@
       "end_ms": 83,
       "code": null,
       "message": null,
-      "writes": [4],
+      "lines": [4],
       "watch": null,
       "failed": null
     },
@@ -111,7 +111,7 @@
       "end_ms": 120,
       "code": null,
       "message": null,
-      "writes": [5],
+      "lines": [5],
       "watch": null,
       "failed": null
     },
@@ -126,7 +126,7 @@
       "end_ms": 150,
       "code": null,
       "message": null,
-      "writes": [7],
+      "lines": [7],
       "watch": null,
       "failed": null
     },
@@ -141,7 +141,7 @@
       "end_ms": 150,
       "code": null,
       "message": null,
-      "writes": [6],
+      "lines": [6],
       "watch": null,
       "failed": null
     },
@@ -156,7 +156,7 @@
       "end_ms": 200,
       "code": null,
       "message": null,
-      "writes": [],
+      "lines": [],
       "watch": {
         "mode": "at",
         "from_ms": 200,
