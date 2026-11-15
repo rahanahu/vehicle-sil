@@ -1273,6 +1273,7 @@
                 "senders": 1,
                 "receivers": 1,
                 "delivered": true,
+                "unplaced": [],
                 "participants": [
                   {
                     "name": "Engine",

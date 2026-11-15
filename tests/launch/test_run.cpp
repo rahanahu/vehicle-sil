@@ -839,6 +839,7 @@ TEST_CASE(the_json_report)
                "        \"senders\": 1,\n"
                "        \"receivers\": 0,\n"
                "        \"delivered\": null,\n"
+               "        \"unplaced\": [],\n"
                "        \"participants\": [\n"
                "          {\n"
                "            \"name\": \"Engine\",\n"
@@ -932,11 +933,25 @@ TEST_CASE(the_json_report)
     CHECK(networks.find("        \"counted\": 1,\n        \"senders\": 1,\n        \"receivers\": 0,\n        \"delivered\": false,\n") !=
           std::string::npos);
     CHECK(networks.find("        \"name\": \"C\",\n        \"kind\": \"lin\",\n        \"counted\": 0,\n        \"senders\": 0,\n"
-                        "        \"receivers\": 0,\n        \"delivered\": null,\n        \"participants\": []\n") != std::string::npos);
-    // The participants of the run that the launcher knows on no network, by name.
-    heard.traffic->unplaced = {"Bridge", "Tool"};
-    CHECK(format_run_json(report_of(heard)).find("    \"before_ms\": 1000,\n    \"unplaced\": [\n      \"Bridge\",\n"
-                                                 "      \"Tool\"\n    ],\n    \"networks\": [\n") != std::string::npos);
+                        "        \"receivers\": 0,\n        \"delivered\": null,\n        \"unplaced\": [],\n        \"participants\": []\n") !=
+          std::string::npos);
+    // The participants of the run that the launcher knows on no network, and per network those
+    // that may be on it, each with the reason.
+    const TrafficUnplaced bridge{"Bridge", TrafficUnplacedReason::NoControlLink};
+    const TrafficUnplaced tool{"Tool", TrafficUnplacedReason::NoCounters};
+    heard.traffic->unplaced = {bridge, tool};
+    heard.traffic->per_network.at(2).unplaced = {bridge, tool, {"Gateway", TrafficUnplacedReason::NoCounters}};
+    const std::string unplaced = format_run_json(report_of(heard));
+    const auto entry = [](const std::string& indent, const std::string& name, const std::string& reason) {
+        return indent + "{\n" + indent + "  \"participant\": \"" + name + "\",\n" + indent + "  \"reason\": \"" + reason +
+               "\"\n" + indent + "}";
+    };
+    CHECK(unplaced.find("    \"before_ms\": 1000,\n    \"unplaced\": [\n" + entry("      ", "Bridge", "no-control-link") + ",\n" +
+                        entry("      ", "Tool", "no-counters") + "\n    ],\n    \"networks\": [\n") != std::string::npos);
+    CHECK(unplaced.find("        \"delivered\": null,\n        \"unplaced\": [\n" +
+                        entry("          ", "Bridge", "no-control-link") + ",\n" + entry("          ", "Tool", "no-counters") +
+                        ",\n" + entry("          ", "Gateway", "no-counters") + "\n        ],\n        \"participants\": []\n") !=
+          std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));
     CHECK(late.find("  \"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 10,\n    \"ecu_step_ms\": 10,\n"

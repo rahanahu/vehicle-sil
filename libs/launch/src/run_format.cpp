@@ -269,6 +269,14 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         }
         return {};
     };
+    const auto unplaced = [](const TrafficUnplaced& p) -> std::string {
+        switch (p.reason)
+        {
+        case TrafficUnplacedReason::NoControlLink: return "unplaced: no control link";
+        case TrafficUnplacedReason::NoCounters: return "unplaced: no J1939 counters";
+        }
+        return {};
+    };
     const auto participants = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " participant" : " participants"); };
     std::string line;
     std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
@@ -276,14 +284,15 @@ std::string detail::traffic_text(const RunTraffic& traffic)
     {
         const std::size_t counted = network.counted();
         const std::size_t others = network.participants.size() - counted;
+        const std::string may_be =
+            network.unplaced.empty() ? std::string{} : ", " + std::to_string(network.unplaced.size()) + " unplaced";
         const std::string in_all = " (" + std::to_string(counted) + " counted" +
-                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) +
-                                   (network.unplaced > 0 ? ", " + std::to_string(network.unplaced) + " unplaced" : std::string{}) + ")";
+                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) + may_be + ")";
         // "nothing sent" only when everyone who may be on it is counted and nobody received.
-        const bool silent = network.senders() == 0 && others == 0 && network.unplaced == 0 && network.receivers() == 0;
+        const bool silent = network.senders() == 0 && others == 0 && network.unplaced.empty() && network.receivers() == 0;
         // Who sent and who received, not a share: a participant that only listens is as it should be.
         line += (line.empty() ? "" : "; ") + network.name + ": " +
-                (network.participants.empty() ? "not counted (no participant known to be on it)"
+                (network.participants.empty() ? "not counted (no participant known to be on it" + may_be + ")"
                  : counted == 0               ? "not counted (" + participants(others) + ")"
                  : silent                     ? "nothing sent" + in_all
                                               : participants(network.senders()) + " sent, " +
@@ -302,10 +311,19 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         {
             rows.push_back({network.name, "-", "-", "-", "no participant known to be on it"});
         }
+        // One that its counters place on another network gets a row here; one that is known on
+        // no network gets one row after the networks.
+        for (const TrafficUnplaced& p : network.unplaced)
+        {
+            if (std::find(traffic.unplaced.begin(), traffic.unplaced.end(), p) == traffic.unplaced.end())
+            {
+                rows.push_back({network.name, p.name, "-", "-", unplaced(p)});
+            }
+        }
     }
-    for (const std::string& name : traffic.unplaced)
+    for (const TrafficUnplaced& p : traffic.unplaced)
     {
-        rows.push_back({"-", name, "-", "-", "unplaced: its networks are not known"});
+        rows.push_back({"-", p.name, "-", "-", unplaced(p)});
     }
     // The numbers to the right.
     for (const std::size_t column : {std::size_t{2}, std::size_t{3}})
@@ -515,12 +533,18 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
         const RunTraffic& traffic = *report.run->traffic;
         w.begin_object("traffic");
         w.integer("before_ms", traffic.before_ms);
-        w.begin_array("unplaced");
-        for (const std::string& name : traffic.unplaced)
-        {
-            w.string({}, name);
-        }
-        w.end_array();
+        const auto unplaced = [&w](const std::vector<TrafficUnplaced>& all) {
+            w.begin_array("unplaced");
+            for (const TrafficUnplaced& p : all)
+            {
+                w.begin_object();
+                w.string("participant", p.name);
+                w.string("reason", traffic_unplaced_reason_name(p.reason));
+                w.end_object();
+            }
+            w.end_array();
+        };
+        unplaced(traffic.unplaced);
         w.begin_array("networks");
         for (const TrafficNetwork& network : traffic.per_network)
         {
@@ -538,6 +562,7 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
             {
                 w.null("delivered");
             }
+            unplaced(network.unplaced);
             w.begin_array("participants");
             for (const TrafficParticipant& p : network.participants)
             {
