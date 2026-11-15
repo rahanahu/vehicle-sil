@@ -552,6 +552,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `RealTimeClock`、`ManualRealTimeClock` | `step/real_time_clock.hpp` |
 | `TimeDomain`、`Wakeup` | `step/time_domain.hpp` |
 | `SinkRef` | `step/sink_ref.hpp` |
+| `OverflowCollector`（バスごとに別名: `can::OverflowCollector`、`eth::OverflowCollector`） | `step/overflow_collector.hpp` |
 
 - テスト: `tests/step`
 - `ctest -R`: `^step\.`
