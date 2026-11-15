@@ -97,7 +97,7 @@
 | `step-mismatch` | エラー | `step_ms` が、`--describe` の出力のステップ幅と違います（実時間で、ステップ幅のない ECU も）。 | `step_ms` を指摘の文の値に直すか、削除します。 |
 | `unknown-network` | エラー | ECU が、`networks` にないネットワークを使います。 | 1 つのバスのつもりなら、指摘の文が言う `network_names` の行をその participant に書き、別のバスなら `networks` に追加します。 |
 | `kind-mismatch` | エラー | ECU が、ネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使います。`network_names` で名前を替えたネットワークは、指摘の文に両方の名前を書きます: `'VehicleCAN' ('J1939_CAN' in the executable)`。 | `networks` の `kind` か、ECU の側のネットワークを直します。 |
-| `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。指摘の文が、書く `j1939_nodes` の行か、このファイルでは変えられないこと（実行ファイルが `--j1939-node` を受け取れない）を言います。 |
+| `address-conflict` | エラー | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けません。 | ノードごとに別のアドレスにします。指摘の文が、書く `j1939_nodes` の行か、このファイルでは変えられないこと（実行ファイルが `--j1939-node` を受け取れない、またはコードが 1 つのアドレスに 2 つのノードを置く）を言います。 |
 | `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移ります。 | どのノードがどのアドレスにいるかを決めたいなら、ノードごとに別のアドレスにします（指摘の文が、書く `j1939_nodes` の行を言います）。 |
 | `name-conflict` | エラー | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じです。 | ノードごとに別の NAME にします。`j1939_nodes` で、片方の identity number を変えます（指摘の文が、書く行を言います）。 |
 | `lin-masters` | エラー | 1 つの LIN のネットワークに master が 2 つ以上あります（同じ participant の 2 回も）。 | master を 1 つにします（ほかを slave にするか、`lin_master()` を 1 回だけ呼びます）。 |
@@ -153,6 +153,7 @@
 | `describe-unknown-value` | 指摘の文は、キーと値、知っている値、両方の vehicle-sil のバージョンを言います。 |
 | `describe-unknown-value` | その participant だけのエラーで、ほかの participant は照合を続けます。 |
 | `address-conflict` | 重大度の条件は、下の「J1939 のアドレスの重なり」にあります。 |
+| `address-conflict`、`address-shared`、`name-conflict` | 1 つのネットワークの所見の直し方は、互いに違う空きのアドレスと identity number を勧めます。全部を一度に書けます。そのノードの `j1939_nodes` の行がすでにあれば（何も変えない行も）、直し方は、その行のほかの設定を残して値を書く形です。 |
 | `test-participant-talks-on-bridged-network` | ブリッジとして扱うのは `role: bridge` の participant で、1 つもなければ、`role` を書いていない `describe: false` の participant です。 |
 | `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの要求（Address Claimed）が、実機のバスに出ます。 |
 | `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
@@ -163,7 +164,7 @@
 | `network-map-unknown` | この行が原因の指摘は出しません。値に近い名前の実行ファイルのネットワーク（近い名前がなければ、キーと同じ種類のもの）の `unknown-network` と、キーのネットワークの `unused-network`、`single-participant`、`lin-no-master` です。ほかのネットワークの指摘は出ます。 |
 | `network-map-unsupported` | ほかのルールは、対応を当てた名前で続けます。 |
 | `j1939-node-ambiguous`、`j1939-node-indistinct` | 直す人が違います。`j1939-node-ambiguous` は設定ファイルで直せます（`from` を足す）。`j1939-node-indistinct` は ECU のコードでしか直せません。`from` は同じアドレスのノードを見分けられないためです。 |
-| `j1939-node-*`（ノードに当たらない行のもの） | その participant のそのネットワークのノードは、`address-conflict`、`address-shared`、`name-conflict` に入れません（ファイルが意図した値がわからないため）。そこにいるほかの participant どうしの競合は、今までどおり出します。participant の `network_names` がそのネットワークから遠ざけている行（`network-map-unknown` が言う）には、`j1939-node-unknown` を出しません。 |
+| `j1939-node-*`（ノードに当たらない行のもの） | その participant のそのネットワークのノードは、`address-conflict`、`address-shared`、`name-conflict` に入れません（ファイルが意図した値がわからないため）。そこにいるほかの participant どうしの競合は、今までどおり出します。participant の `network_names` がそのネットワークから遠ざけている行（`network-map-unknown` が言う）と、実行ファイルの J1939 のネットワークが 1 つだけで、名前を替えておらず、その名前が `networks` にないとき（`unknown-network` が `network_names` の行を足すように言う）には、`j1939-node-unknown` を出しません。 |
 | `j1939-node-unsupported` | ほかの規則は、行が与えるはずの値で見ます（照合が自分で当てます）。実行ファイルを作り直した後に残る指摘と同じものが出ます。その participant には `j1939-node-changed` を出しません。 |
 | `j1939-node-changed` | 変わるノードごとに、コードの値と新しい値を並べます。照合は、古い値に頼っているものを見られません。古いアドレスをコードに書いているほかの ECU（宛先や、送り手の見分け）、古い NAME の全体で探すほかの ECU、ECU 自身のコードの定数（フィルター、送るデータの中の値）です。全部の行がコードと同じ値になる participant と、無効にした participant には出しません。コードで空いているアドレスを取るノードには、アドレスについての文を付けません。 |
 | `network-map-not-checked` | 指摘の文は、その実行で `run` が追加する引数を書きます。引数は、選んだ機種と `--disable` を当てた後の設定で決まり、追加する引数のない participant には出しません。`run` は `--map-network` を追加するので、ecu_main でない実行ファイルは、起動のときに引数のエラーで終わります。 |

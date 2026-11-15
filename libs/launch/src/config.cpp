@@ -1272,18 +1272,36 @@ private:
 
     // --- a participant's J1939 nodes ---
 
-    /// An unquoted whole number from 0 to `max`, in decimal or as 0x.. in hexadecimal (a lower case
-    /// x, as YAML reads a number: 0X10 is a text there); empty if the value is not one.
+    /// An unquoted whole number from 0 to `max`, written as YAML 1.2 (the core schema, as the schema's
+    /// editors read it) writes an integer: decimal with an optional sign (010 is ten), 0o.. in octal,
+    /// 0x.. in hexadecimal (a lower case x and o: 0X10 is a text there, as are 1_0 and 0b11); empty
+    /// if the value is not one.
     std::optional<std::uint32_t> j1939_number(ryml::id_type node, std::uint32_t max) const
     {
         if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
         {
             return std::nullopt;
         }
-        const std::string text = detail::to_string(tree_.val(node));
-        if (text.size() > 1 && text[1] == 'X')
+        std::string text = detail::to_string(tree_.val(node));
+        if (text.size() > 1 && (text[1] == 'X' || text[1] == 'O'))
         {
             return std::nullopt;
+        }
+        if (text.size() > 2 && text[0] == '0' && text[1] == 'o')
+        {
+            std::uint64_t octal = 0;
+            const char* end = text.data() + text.size();
+            const auto [ptr, ec] = std::from_chars(text.data() + 2, end, octal, 8);
+            return ec == std::errc{} && ptr == end && octal <= max ? std::optional(static_cast<std::uint32_t>(octal))
+                                                                   : std::nullopt;
+        }
+        if (text.size() > 1 && text[0] == '+')
+        {
+            if (!std::all_of(text.begin() + 1, text.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; }))
+            {
+                return std::nullopt; // +0x10 is a text in YAML
+            }
+            text.erase(0, 1);
         }
         std::int64_t value = 0;
         if (read_integer(text, value))
@@ -1587,12 +1605,15 @@ private:
             }
         }
         // The entries of each network together: one entry for each node. The entries of a variant
-        // alone first (laying them over the common ones keeps the last of two for one node).
+        // alone first (laying them over the common ones keeps the last of two for one node); a
+        // network where they clash is not looked at again with the common ones (one finding).
+        std::vector<std::string> said;
         const auto clashes = [&](const std::vector<J1939NodeEntry>& entries, bool mixed) {
             std::vector<std::string> networks;
             for (const J1939NodeEntry& entry : entries)
             {
-                if (std::find(networks.begin(), networks.end(), entry.network) == networks.end())
+                if (std::find(networks.begin(), networks.end(), entry.network) == networks.end() &&
+                    std::find(said.begin(), said.end(), entry.network) == said.end())
                 {
                     networks.push_back(entry.network);
                 }
@@ -1614,6 +1635,7 @@ private:
                 {
                     continue;
                 }
+                said.push_back(network);
                 const J1939NodeEntry& a = *on[clash->first];
                 const J1939NodeEntry& b = *on[clash->second];
                 const std::string variantNote =

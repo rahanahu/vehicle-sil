@@ -9,6 +9,7 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -2211,6 +2212,111 @@ std::string only(const std::string& findings, const std::string& part)
     return out;
 }
 
+/// The entries of the participant's j1939_nodes: "<network>=<settings>@<line> " each.
+std::string nodes_of(const ParticipantConfig& p)
+{
+    std::string out;
+    for (const J1939NodeEntry& e : p.j1939_nodes)
+    {
+        out += e.network + "=" + j1939::format_node_override(e.node) + "@" + std::to_string(e.line) + " ";
+    }
+    return out;
+}
+
+/// Reads "key: value, key: value" of a fix into `entry` (numbers as written: 0x01, 254, 2).
+void read_settings(const std::string& text, J1939NodeEntry& entry)
+{
+    std::istringstream in(text);
+    for (std::string item; std::getline(in, item, ',');)
+    {
+        item.erase(0, item.find_first_not_of(' '));
+        const std::size_t colon = item.find(": ");
+        const std::string key = item.substr(0, colon);
+        const std::string value = item.substr(colon + 2);
+        if (key == "network")
+        {
+            entry.network = value;
+            continue;
+        }
+        const auto number = static_cast<std::uint32_t>(std::stoul(value, nullptr, 0));
+        if (key == "from")
+        {
+            entry.node.from = static_cast<j1939::Address>(number);
+        }
+        else if (key == "address")
+        {
+            entry.node.address = static_cast<j1939::Address>(number);
+        }
+        else if (key == "identity_number")
+        {
+            entry.node.identity_number = number;
+        }
+        else
+        {
+            throw unit::Failure("a setting that the fixes do not write: " + key);
+        }
+    }
+}
+
+/// Writes every fix that address-conflict, address-shared and name-conflict of `s` give into its
+/// configuration, all at once, as a person or an agent would: "write under participant 'P':
+/// j1939_nodes: [{ ... }]" adds that entry (on lines 100, 101, ...), "set ... in the entry of
+/// j1939_nodes on line N (participant 'P'), keeping its other settings" changes that entry. The
+/// number of fixes written.
+std::size_t write_fixes(Setup& s)
+{
+    const auto entries_of = [&s](const std::string& message, std::size_t at) -> std::vector<J1939NodeEntry>& {
+        const std::size_t start = message.find('\'', at) + 1;
+        const std::string who = message.substr(start, message.find('\'', start) - start);
+        for (ParticipantConfig& p : s.config.participants)
+        {
+            if (p.name == who)
+            {
+                return p.j1939_nodes;
+            }
+        }
+        throw unit::Failure("a fix for a participant that is not there: " + who);
+    };
+    std::size_t written = 0;
+    for (const Finding& f : check_participants(s.config, s.results, "1.0.0"))
+    {
+        if (f.code != "address-conflict" && f.code != "address-shared" && f.code != "name-conflict")
+        {
+            continue;
+        }
+        const std::string& m = f.message;
+        const std::string add = "write under participant '";
+        const std::string set = "to do it in this file, set ";
+        const std::string in = " in the entry of j1939_nodes on line ";
+        if (const std::size_t at = m.find(add); at != std::string::npos)
+        {
+            const std::size_t open = m.find("[{ ", at) + 3;
+            J1939NodeEntry entry;
+            entry.line = 100 + written;
+            read_settings(m.substr(open, m.find(" }]", open) - open), entry);
+            entries_of(m, at + add.size() - 1).push_back(entry);
+        }
+        else if (const std::size_t from = m.find(set); from != std::string::npos)
+        {
+            const std::size_t middle = m.find(in, from);
+            const std::size_t line = std::stoul(m.substr(middle + in.size()));
+            std::vector<J1939NodeEntry>& entries = entries_of(m, m.find("(participant ", middle) + 12);
+            const auto it = std::find_if(entries.begin(), entries.end(), [line](const J1939NodeEntry& e) { return e.line == line; });
+            CHECK(it != entries.end());
+            if (it != entries.end())
+            {
+                read_settings(m.substr(from + set.size(), middle - from - set.size()), *it);
+            }
+        }
+        else
+        {
+            continue;
+        }
+        ++written;
+    }
+    return written;
+}
+
 } // namespace
 
 TEST_CASE(j1939_nodes_apply_before_the_address_and_name_rules)
@@ -2238,14 +2344,15 @@ TEST_CASE(j1939_nodes_apply_before_the_address_and_name_rules)
     check_text(two_engines({{"J1939_CAN", change(std::nullopt, 0x01)}}).check(),
                note + relied + end +
                    "E 3 name-conflict: network 'J1939_CAN': Engine and Engine2 (set by j1939_nodes, line 14) have the "
-                   "same J1939 NAME 0x00000000FE000001: each node needs its own NAME; to do it in this file, change the "
-                   "entry of j1939_nodes on line 14 (participant 'Engine2') to identity_number: 2\n");
+                   "same J1939 NAME 0x00000000FE000001: each node needs its own NAME; to do it in this file, set "
+                   "identity_number: 2 in the entry of j1939_nodes on line 14 (participant 'Engine2'), keeping its other "
+                   "settings\n");
     // Onto another participant's address: that is the conflict now.
     check_text(only(two_engines({{"J1939_CAN", change(0x00, 0x28, 2)}}).check(), "E "),
                "E 3 address-conflict: network 'J1939_CAN': Dashboard and Engine2 (set by j1939_nodes, line 14) both ask "
                "for the address 0x28 (40), and Dashboard has no NAME, so it does not take part in the address claim and "
-               "keeps sending from that address: give each node its own address; to do it in this file, change the "
-               "entry of j1939_nodes on line 14 (participant 'Engine2') to address: 0x01\n");
+               "keeps sending from that address: give each node its own address; to do it in this file, set address: 0x01 "
+               "in the entry of j1939_nodes on line 14 (participant 'Engine2'), keeping its other settings\n");
     // With network_names: the entry names the simulation's network, the executable has its own name.
     Setup renamed = two_engines({{"J1939_CAN", change(std::nullopt, 0x01, 2)}});
     renamed.config.participants[2].network_names = {NetworkName{"J1939_CAN", "ENGINE_CAN", 13}};
@@ -2311,6 +2418,21 @@ TEST_CASE(a_j1939_nodes_entry_that_takes_no_node_says_which_nodes_there_are)
                "executable's code puts at 0x10 on 'J1939_CAN', but the executable has no node at that address there "
                "(its nodes there: 0x00, 0x21; " + later + "). from is the address in the executable's code (the one the "
                "table shows without j1939_nodes), not the new address: write from: with one of them\n");
+    // Nodes that share an address in the code cannot be named with from.
+    const J1939NodeDescription anyA = node(j1939::kNullAddress, kArbitraryBit | 1);
+    const J1939NodeDescription anyB = node(j1939::kNullAddress, kArbitraryBit | 2);
+    check_text(findings({on_j1939("J1939_CAN", {anyA, anyB})}, "J1939_CAN", change(0x10, 0x01)),
+               "E 14 j1939-node-unknown: participant 'Gateway': j1939_nodes (line 14) changes the node that the "
+               "executable's code puts at 0x10 on 'J1939_CAN', but the executable has no node at that address there "
+               "(its nodes there: any (254); " + later + "). from is the address in the executable's code (the one the "
+               "table shows without j1939_nodes), not the new address. The 2 nodes at any (254) cannot be told apart, "
+               "so this file cannot change them: remove the entry\n");
+    check_text(findings({on_j1939("J1939_CAN", {anyA, node(0x00, kEngineName), anyB})}, "J1939_CAN", change(0x10, 0x01)),
+               "E 14 j1939-node-unknown: participant 'Gateway': j1939_nodes (line 14) changes the node that the "
+               "executable's code puts at 0x10 on 'J1939_CAN', but the executable has no node at that address there "
+               "(its nodes there: any (254), 0x00; " + later + "). from is the address in the executable's code (the one "
+               "the table shows without j1939_nodes), not the new address: write from: 0x00 (the 2 nodes at any (254) "
+               "cannot be told apart, and this file cannot change them)\n");
     // No node on the network, with or without from.
     const std::string none = "E 14 j1939-node-unknown: participant 'Gateway': j1939_nodes (line 14) changes a node on "
                              "'J1939_CAN', but the executable has no node there (" + later +
@@ -2398,6 +2520,21 @@ TEST_CASE(one_mistake_in_j1939_nodes_is_one_finding)
                "E 13 network-map-unknown: participant 'Engine2': network_names says that 'J1939_CAN' is the executable's "
                "network 'ENGINE_CAM', but the executable has no network of that name (its networks: 'ENGINE_CAN' "
                "(j1939)): correct the value (did you mean 'ENGINE_CAN'?), or remove the line\n");
+    // D: no line of network_names at all, and the executable's only J1939 network has a name that is
+    // not in networks: unknown-network says to add the line, the entry does not say it again.
+    Setup d = two_engines({{"J1939_CAN", change(std::nullopt, 0x01, 2)}});
+    d.results[2].ecu->description.networks[0].name = "ENGINE_CAN";
+    const std::string missing = d.check();
+    CHECK(only(missing, "j1939-node").empty());
+    CHECK(only(missing, "E ").find("E 12 unknown-network: participant 'Engine2': the executable uses the network "
+                                   "'ENGINE_CAN' (j1939), which is not in networks") == 0);
+    CHECK(only(missing, "E ").find("add network_names: { J1939_CAN: ENGINE_CAN } to the participant 'Engine2'") !=
+          std::string::npos);
+    CHECK(only(missing, "E ").find('\n') == only(missing, "E ").size() - 1);
+    // Written as it says, the entry takes its node.
+    d.config.participants[2].network_names = {NetworkName{"J1939_CAN", "ENGINE_CAN", 13}};
+    check_text(only(d.check(), "E "), "");
+    CHECK(!only(d.check(), "N 14 j1939-node-changed").empty());
 }
 
 TEST_CASE(j1939_nodes_need_an_executable_that_takes_them)
@@ -2470,6 +2607,77 @@ TEST_CASE(the_address_and_name_rules_say_how_to_fix_it_in_this_file)
     // Only the executables that take j1939_nodes can be the example; the last of them in the file.
     authors.results[2].ecu->description.features.clear();
     CHECK(authors.check().find("write under participant 'Engine': j1939_nodes: [{ network: J1939_CAN, address: 0x03 }]") !=
+          std::string::npos);
+}
+
+TEST_CASE(the_fixes_of_the_address_and_name_rules_can_all_be_written_at_once)
+{
+    // Two copies each of two ECUs (Engine: NAME identity number 1 at 0x00; Brake: identity number 2
+    // at 0x0B). The two fixes suggest different addresses and identity numbers: Engine2 cannot take
+    // identity number 2 (Brake's NAME), Brake2 neither 0x01 nor 3 (the first fix's).
+    Setup four = two_engines();
+    four.described(participant("Brake", 16), taking_nodes(ecu("Brake", 10ms, {on_j1939("J1939_CAN", {node(0x0B, kEngineName + 1)})})));
+    four.described(participant("Brake2", 18), taking_nodes(ecu("Brake2", 10ms, {on_j1939("J1939_CAN", {node(0x0B, kEngineName + 1)})})));
+    const std::string before = four.check();
+    CHECK(before.find("write under participant 'Engine2': j1939_nodes: [{ network: J1939_CAN, address: 0x01, "
+                      "identity_number: 3 }]") != std::string::npos);
+    CHECK(before.find("write under participant 'Brake2': j1939_nodes: [{ network: J1939_CAN, address: 0x02, "
+                      "identity_number: 4 }]") != std::string::npos);
+    CHECK(write_fixes(four) == 2);
+    check_text(only(four.check(), "E ") + only(four.check(), "W "), "");
+
+    // Two copies of an ECU with two nodes: one finding for each node, each with its own address.
+    Setup pairs = two_engines();
+    pairs.results[0].ecu->description.networks[0].nodes.push_back(node(0x21, kEngineName + 7));
+    pairs.results[2].ecu->description.networks[0].nodes.push_back(node(0x21, kEngineName + 7));
+    CHECK(write_fixes(pairs) == 2);
+    check_text(only(pairs.check(), "E ") + only(pairs.check(), "W "), "");
+    check_text(nodes_of(pairs.config.participants[2]),
+               "J1939_CAN=from:0x00,address:0x01,identity_number:2@100 J1939_CAN=from:0x21,address:0x02,identity_number:9@101 ");
+
+    // An entry that changes nothing for the node: the fix changes it (a second entry for the node
+    // would be j1939-node-duplicate). With from, without from, and without from where the
+    // participant has two nodes (the fix adds from).
+    for (const auto& kept : {change(0x00, std::nullopt), change(std::nullopt, std::nullopt)})
+    {
+        Setup idle = two_engines({{"J1939_CAN", kept}});
+        check_text(only(idle.check(), "E "),
+                   "E 3 name-conflict: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME "
+                   "0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal "
+                   "NAME loses the address claim): each node needs its own NAME; to do it in this file, set address: "
+                   "0x01, identity_number: 2 in the entry of j1939_nodes on line 14 (participant 'Engine2'), keeping its "
+                   "other settings\n");
+        CHECK(write_fixes(idle) == 1);
+        check_text(only(idle.check(), "E "), "");
+        CHECK(idle.config.participants[2].j1939_nodes.size() == 1);
+    }
+    Setup bare = two_engines({{"J1939_CAN", change(std::nullopt, std::nullopt)}});
+    bare.results[2].ecu->description.networks[0].nodes.push_back(node(0x30, kEngineName + 7));
+    CHECK(only(bare.check(), "E ").find("set from: 0x00, address: 0x01, identity_number: 2 in the entry of j1939_nodes on "
+                                        "line 14 (participant 'Engine2')") != std::string::npos);
+    CHECK(write_fixes(bare) == 1);
+    check_text(only(bare.check(), "E "), "");
+
+    // The address of an entry whose participant is not counted (describe: false) is not suggested.
+    Setup door = two_engines();
+    door.unchecked("Door", 16);
+    door.config.participants[3].j1939_nodes = {J1939NodeEntry{{"J1939_CAN", change(std::nullopt, 0x01)}, 18}};
+    CHECK(door.check().find("j1939_nodes: [{ network: J1939_CAN, address: 0x02, identity_number: 2 }]") != std::string::npos);
+}
+
+TEST_CASE(a_node_that_shares_its_address_in_the_code_is_not_the_example_of_a_fix)
+{
+    // Engine2's code puts two nodes at 0x00: from cannot pick one, so the fix is for Engine.
+    Setup s = two_engines();
+    s.results[2].ecu->description.networks[0].nodes.push_back(node(0x00, kEngineName + 7));
+    CHECK(only(s.check(), "name-conflict").find("write under participant 'Engine': j1939_nodes: [{ network: J1939_CAN, "
+                                                "address: 0x01, identity_number: 2 }]") != std::string::npos);
+    // Engine does not take j1939_nodes: this file cannot change them.
+    s.results[0].ecu->description.features.clear();
+    CHECK(only(s.check(), "name-conflict").find(
+              "each node needs its own NAME; this file cannot change them, as j1939_nodes tells a participant's nodes "
+              "apart by their addresses in the code, and the code of each executable here that takes j1939_nodes puts "
+              "another of its nodes at the same address: have the author of one of them change it in its code\n") !=
           std::string::npos);
 }
 

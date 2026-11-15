@@ -674,7 +674,7 @@ Keys of an entry:
 | `function_instance` | | The function instance field of the NAME, 0..31 |
 | `ecu_instance` | | The ECU instance field of the NAME, 0..7 |
 
-- Write numbers without quotes, in decimal or in hexadecimal with a lower-case `0x` (`0x01`; YAML reads `0X01` as text). A value out of its range is the error `value`; nothing is cut to the width of the field.
+- Write numbers without quotes, as YAML 1.2 writes an integer: in decimal (`010` is ten), or in hexadecimal with a lower-case `0x` (`0x01`; YAML reads `0X01` as text, and also `1_0` and `0b11`). A value out of its range is the error `value`; nothing is cut to the width of the field.
 - `from` is the address in the executable's code: the address that the table of `check` shows for the node without `j1939_nodes`. It is not the new address. With 2 or more nodes of the executable on the network, every entry needs `from` (otherwise the error `j1939-node-ambiguous`).
 - An entry without `from` follows the executable's only node there, also when the ECU's author changes that node's address in the code. To point at a fixed address, write `from`.
 - Write one entry for each node (the error `j1939-node-duplicate` for 2 entries with the same `network` and `from`, and for an entry without `from` beside another entry for the same network).

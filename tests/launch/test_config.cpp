@@ -1755,7 +1755,11 @@ TEST_CASE(j1939_nodes_are_read_with_an_optional_from_and_hexadecimal_numbers)
         "  - name: Gateway\n"                                                                    // 16
         "    command: gateway\n"                                                                 // 17
         "    j1939_nodes: [{ network: VehicleCAN, from: 0xfe, address: 0, identity_number: 0, function_instance: 0, "
-        "ecu_instance: 0 }, { network: BodyCAN, from: 0x21 }]\n"));                              // 18
+        "ecu_instance: 0 }, { network: BodyCAN, from: 0x21 }]\n"                                 // 18
+        // YAML 1.2 integers, as the schema's editors read them: 010 is ten, +1 one, 0o10 eight.
+        "  - name: Door\n"                                                                       // 19
+        "    command: door\n"                                                                    // 20
+        "    j1939_nodes: [{ network: VehicleCAN, from: 010, address: +1, identity_number: 0o10 }]\n")); // 21
     check_text(lines(r.findings), "");
     const ParticipantConfig& engine = r.config->participants[0];
     const ParticipantConfig& gateway = r.config->participants[1];
@@ -1771,6 +1775,7 @@ TEST_CASE(j1939_nodes_are_read_with_an_optional_from_and_hexadecimal_numbers)
     check_text(words(j1939_node_arguments(gateway)),
                "[--j1939-node][VehicleCAN=from:254,address:0x00,identity_number:0,function_instance:0,ecu_instance:0]");
     CHECK(j1939_node_arguments(r.config->participants[0]).size() == 4);
+    check_text(nodes_text(r.config->participants[2]), "VehicleCAN=from:0x0A,address:0x01,identity_number:8@21 ");
 }
 
 TEST_CASE(j1939_nodes_of_the_wrong_form_are_errors_and_the_participant_is_not_checked)
@@ -1795,7 +1800,11 @@ TEST_CASE(j1939_nodes_of_the_wrong_form_are_errors_and_the_participant_is_not_ch
                                                    "      - { network: VehicleCAN, from: 0X10 }\n"               // 24
                                                    "      - { network: [VehicleCAN], address: 1 }\n"             // 25
                                                    "      - { network: BodyCAN, address: 1 }\n"                  // 26
-                                                   "  - name: C\n"                                               // 27
+                                                   "      - { network: BodyCAN, address: 0b11 }\n"               // 27
+                                                   "      - { network: BodyCAN, address: 1_0 }\n"                // 28
+                                                   "      - { network: BodyCAN, address: +0x10 }\n"              // 29
+                                                   "      - { network: BodyCAN, address: 0O10 }\n"               // 30
+                                                   "  - name: C\n"                                               // 31
                                                    "    command: c\n"));
     const std::string form = "{ network: VehicleCAN, from: 0x00, address: 0x01, identity_number: 2 }";
     const std::string comma = "(run passes --j1939-node <network>=<settings>, which is split at the first '='): a network "
@@ -1828,7 +1837,16 @@ TEST_CASE(j1939_nodes_of_the_wrong_form_are_errors_and_the_participant_is_not_ch
                "a number from 0 to 254 (decimal, or 0x.. in hexadecimal; 254: a node that takes any free address), not "
                "'0X10'\n"
                "E 25 value: participant 'B': j1939_nodes: network must be the simulation's name of the node's CAN network "
-               "(a name in networks), not a list\n");
+               "(a name in networks), not a list\n"
+               // Texts in YAML 1.2, as for the schema.
+               "E 27 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '0b11'\n"
+               "E 28 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '1_0'\n"
+               "E 29 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '+0x10'\n"
+               "E 30 value: participant 'B': j1939_nodes: address must be the node's new address, a number from 0 to 254 "
+               "(decimal, or 0x.. in hexadecimal; 254: any free address), not '0O10'\n");
     CHECK(r.findings[3].participant == "B" && r.findings[4].network == "a=b" && r.findings[7].network == "VehicleCAN");
     // Neither described nor started with values the file does not mean; the next entry is.
     CHECK(!r.config->participants[0].valid && !r.config->participants[1].valid && r.config->participants[2].valid);
@@ -1888,7 +1906,13 @@ TEST_CASE(j1939_nodes_have_one_entry_per_node)
                                            "      Gateway:\n"                                                // 25
                                            "        j1939_nodes:\n"                                          // 26
                                            "          - { network: BodyCAN, from: 0x10, address: 0x11 }\n"   // 27
-                                           "          - { network: BodyCAN, from: 16, address: 0x12 }\n");   // 28
+                                           "          - { network: BodyCAN, from: 16, address: 0x12 }\n"     // 28
+                                           "  mixed:\n"                                                      // 29
+                                           "    participants:\n"                                             // 30
+                                           "      Gateway:\n"                                                // 31
+                                           "        j1939_nodes:\n"                                          // 32
+                                           "          - { network: BodyCAN, address: 0x01 }\n"               // 33
+                                           "          - { network: BodyCAN, from: 0x00, identity_number: 2 }\n"); // 34
     EnabledOverrides choice;
     choice.variant = "plain";
     const ConfigRead plain = read_config(file, choice);
@@ -1907,7 +1931,11 @@ TEST_CASE(j1939_nodes_have_one_entry_per_node)
         "of a variant replaces the common entry only if both have the same network and the same from (or both have no "
         "from)\n"
         "E 28 j1939-node-duplicate: variant 'twice': participant 'Gateway': j1939_nodes has two entries (lines 27 and 28) "
-        "for the node that the executable's code puts at 0x10 on 'BodyCAN': write its settings in one entry\n";
+        "for the node that the executable's code puts at 0x10 on 'BodyCAN': write its settings in one entry\n"
+        // The variant's own entries clash: said once, not again with the common ones laid under them.
+        "E 34 j1939-node-duplicate: variant 'mixed': participant 'Gateway': j1939_nodes has an entry without from (line "
+        "33) for 'BodyCAN', which stands for the only node of the executable there, and another entry for that network "
+        "(line 34): give every entry of this network a from (the address in the executable's code)\n";
     check_text(lines(plain.findings), findings);
     CHECK(!plain.config->participants[0].valid && plain.config->participants[1].valid);
     choice.variant = "other";
