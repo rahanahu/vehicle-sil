@@ -221,6 +221,7 @@ For the files that are served, CSP, the token, development servers and the rules
 | Reading and writing ECU variables | A launcher with a Control Server (`control-server` in `features`; built with `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see [control-api.md](control-api.md)), and Python gRPC for the GUI server (`grpcio`, `protobuf`; `uv sync` installs them) |
 | A simulation to run | A configuration file and the ECU executables it lists (the launcher starts them for check and run) |
 | Screens | A build of the sample screens (the output of `npm run build` in `gui/web`) or a build of your own screen (`--web`) |
+| Browser | A desktop browser: a current Chromium-based one (Chrome, Edge), which the tests use; Firefox should work too. The features that the screens and the timeline use need Chrome or Edge 123 or later (`light-dark()`), or Firefox 121 or later (`:has()`) |
 
 - The prebuilt tools (see "[Quick start](../README.md#quick-start)" in the README) contain everything except Python: a launcher with a Control Server, the GUI server, the built screens and the gRPC stubs. You need only Python 3.11 or later; if you have uv, uv installs Python and the packages too.
 - If either requirement for reading and writing variables is missing, everything else still works. Only the variables show **Not available**, with the reason.
@@ -996,6 +997,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | Other | None | WebAssembly, Workers from `blob:` URLs, form submission, frames, Service Workers |
 
 - Approaches that build templates at runtime (Vue builds that compile templates at runtime, for example) do not work; compile at build time.
+- A `<form>` works if its `submit` handler calls `preventDefault()` (nothing is sent to a URL). It is the simple way to send a field on Enter: the browser does not submit on the Enter that confirms an input-method (IME) conversion, which a `keydown` handler for Enter would take as a send unless it checks `isComposing`.
 - Install with npm what you used to load from a CDN, and include it in the build.
 - If your build embeds fonts into CSS, configure it to write them to files.
 - The screen cannot be put in a frame (neither inside another page nor in an `<iframe>` of your own screen; every response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`).
