@@ -1,0 +1,1254 @@
+# Browser GUI (`vehicle-sil-gui`)
+
+[日本語](ja/gui.md)
+
+`vehicle-sil-gui` is a tool that starts a simulation from the browser and reads and writes ECU variables with sliders, graphs and other widgets. This page has a guide to using the GUI, and a reference for its arguments, its security and the features of its screens.
+
+| Goal | Section |
+|---|---|
+| Watch and change values in the browser | "[Use the GUI](#use-the-gui)" |
+| Build your own screen and have the GUI server serve it | The guide [Build your own screen for the browser GUI](howto/gui-screen.md) |
+| Look up the arguments, the exit codes and how the GUI stops | "[Arguments and exit codes](#arguments-and-exit-codes)", "[Stopping and exiting](#stopping-and-exiting)" |
+| See what the GUI protects against, and what it does not | "[Security](#security)" |
+| Describe the layout of the Variables screen in a file | "[Dashboard files](#dashboard-files)" |
+| Look up the rules that apply to your own screen | "[Reference for your own screen](#reference-for-your-own-screen)" |
+| Develop the GUI itself | "[Development](#development)" |
+
+## Structure
+
+The GUI server (Python) starts `vehicle_sil_launch` on the same computer and relays its progress and the ECU variables to the screen over HTTP and WebSocket. The launcher runs the simulation; the GUI only shows it. For tests and AI agents, the official interfaces remain `vehicle_sil_launch` and the Control API.
+
+```mermaid
+flowchart LR
+  yours["Your own screen"] --> lib["Client library"]
+  sample["Sample screens"] --> lib
+  lib --> server["GUI server"]
+  tool["Tool without a screen"] --> server
+  server --> launcher["vehicle_sil_launch"]
+  launcher --> ecu["ECU"]
+```
+
+Arrows point in the direction of the calls. The GUI is also an SDK for building your own screens. It has 4 parts:
+
+| Part | Location | Role |
+|---|---|---|
+| GUI server | `gui/server` (the command is `vehicle-sil-gui`) | Starts the launcher, provides the API, and serves the screens' static files. |
+| Server API | [gui/protocol](../gui/protocol/README.md) | Defines the HTTP and WebSocket shapes, the versioning and compatibility rules, and authentication. Usable from any language. |
+| Client library | [gui/client](../gui/client/README.md) (`@vehicle-sil/gui-client`) | A TypeScript library for the connection, run and time control, and ECU variables. It does not depend on any framework. |
+| Sample screens | `gui/web` (Angular) | A reference implementation built only on the 3 parts above. The GUI server serves it unless you give `--web`. |
+
+The library talks to the GUI server over HTTP and WebSocket ([gui/protocol](../gui/protocol/README.md) is the specification). The GUI server talks to the launcher through the launcher's stdin and stdout and through the Control Server (gRPC).
+
+## Use the GUI
+
+How to start a simulation, read and write variables, pause and step time, and run a scenario, using the sample screens.
+
+### Prerequisites
+
+| Requirement | Details |
+|---|---|
+| Template project | Complete step 1 of [Create your first ECU](howto/first-ecu.md): build the ECUs and add the tools' `bin` to `PATH`. |
+| Python | 3.11 or later. If you have [uv](https://docs.astral.sh/uv/), uv installs Python and the packages. |
+| Browser | A browser on the same computer as the GUI server. |
+
+Run the commands in the template project's directory (the one that contains `simulation.yaml`). If you build and use the repository instead, use the values in the right column:
+
+| | Template project | Repository (after "[Quick start](../README.md#quick-start)" in the README) |
+|---|---|---|
+| Directory to run in | The one that contains `simulation.yaml` | The root of the repository |
+| Command to start | `vehicle-sil-gui simulation.live.yaml` | `scripts/run-gui.py` |
+| Configuration file used | `simulation.live.yaml` | `build/<preset>/examples/ecu_main/simulation.live.yaml` |
+
+`simulation.live.yaml` is a configuration file that runs the same 2 ECUs as `simulation.yaml`, without `stop_at_ms` and with `speed: 1`. It runs until you stop it, so you can watch values on the screen while you change them.
+
+### Overview
+
+| Step | What you do | What you see |
+|---|---|---|
+| 1 | Start the GUI server | The Run screen in the browser, and the check result |
+| 2 | Start the simulation | The state **Running** and the ECU log |
+| 3 | Watch and write variables | Sliders and graphs on the Variables screen |
+| 4 | Pause time and advance one step at a time | The virtual time standing still, and how far it advanced |
+| 5 | Stop the run and exit | The result **Interrupted** |
+| 6 | Run a scenario | A table with the result of each scenario step |
+
+"Step 1" to "Step 6" are the parts of this guide; anywhere else on this page, a "step" is a simulation step. The screen uses the same terms as this page, and text in bold is exactly what the screen shows.
+
+### Step 1: Start the GUI server
+
+```sh
+vehicle-sil-gui simulation.live.yaml
+```
+
+#### Verify the GUI server
+
+The terminal prints one URL line, and the browser opens.
+
+```text
+http://127.0.0.1:34457/#token=<token that changes on every start>
+vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
+```
+
+The browser shows the Run screen, with `simulation.live.yaml` selected under **Configuration file**. The GUI checks the selected configuration file at once, so the **Check** card shows **✓ Check: Passed (errors: 0, warnings: 0, notes: 0)** and the participants `Engine` and `Dashboard`.
+
+#### Troubleshoot the GUI server
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `vehicle-sil-gui` is not found | The tools' `bin` is not on `PATH`. | Run the `export PATH=...` line that `get_tools.py` printed. |
+| The browser does not open | The environment cannot start a browser, or the browser cannot open a temporary file. | Paste the printed URL into the browser, including everything after `#token=`. |
+| It ends with exit code 2 | An argument error, or the launcher, the Python packages or the port cannot be used. | Follow the printed message (see "[Arguments and exit codes](#arguments-and-exit-codes)"). |
+| A browser on another computer cannot open it | The GUI server listens on 127.0.0.1 only. | Use SSH port forwarding (see [Run on several computers](howto/multi-pc.md)). |
+
+### Step 2: Start the simulation
+
+Click **Start** at the top of the Run screen.
+
+#### Verify the start
+
+| Where to look | What it shows |
+|---|---|
+| The status bar at the top | **● Running**, with the phases going through **Check**, **Start**, **Join** and **Run** in that order. |
+| **Participant status** | `Engine` and `Dashboard` show **● Joined** and **Variables: connected (18)**. |
+| **Log** | Lines from `Dashboard` (such as `t=500 ms engine speed 1200 rpm (5 messages)`) keep coming. |
+
+#### Troubleshoot the start
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| **Start** cannot be clicked | The check has errors. | Read the text under **Findings**, fix the configuration file or the ECU, and click **Check again** (see [simulation-check.md](simulation-check.md)). |
+| The run ends after about 1 second | `simulation.yaml` (`stop_at_ms: 1000`) is selected. | Select `simulation.live.yaml` under **Configuration file**. |
+| **Variables: connected** does not appear | The launcher or the ECU does not support reading and writing variables. | Check "Reading and writing ECU variables" in "[Requirements](#requirements)". |
+
+### Step 3: Watch and write variables
+
+Open **Variables** in the navigation. The template has a dashboard file (`simulation.live.dashboard.yaml`), so the screen shows the throttle of `Engine` (`Engine.engine.throttle`) as a slider and the engine speed (`Engine.engine.speed`) as a graph. Move the **Throttle** slider from 20 % to 40 %.
+
+#### Verify the variables
+
+Below the slider, the virtual time at which the write was applied appears, such as **✓ Applied in the step at 6.600 s**, and **Engine speed** rises from 1200 rpm to 1600 rpm. **Value at 8.870 s** below a value is the virtual time of the step in which that value was read.
+
+![The Variables screen of the browser GUI. After the throttle is moved from 20 % to 60 %, the engine speed graph rises from 1200 rpm to 2000 rpm](ja/images/gui-variables.png)
+
+#### Troubleshoot the variables
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| A reason appears instead of the variables | There is no run, or the setup cannot read and write variables. | Start a run as in step 2. If the reason still appears, check "[Requirements](#requirements)". |
+| A slider or switch cannot be operated | Output variables, ended runs, disconnected ECUs and similar cannot be written. | Read the reason shown in the widget (see "[Behavior common to all widgets](#behavior-common-to-all-widgets)"). |
+| The variable you look for is missing | Variables that are not in the dashboard file, and monitoring variables, appear at the end or in collapsed sections. | Enter part of the variable's name in **Filter by name** at the top. |
+
+### Step 4: Pause time and advance one step at a time
+
+1. Go back to the Run screen and click **‖ Pause** in the status bar.
+2. In the **Time** card, enter `100` in **Step by (ms)** and click **Step**.
+3. Click **▶ Resume**.
+
+#### Verify pausing and stepping
+
+| After | What it shows |
+|---|---|
+| Pause | The state in the status bar and in the **Time** card becomes **Paused**, and **Virtual time** stands still. |
+| Step | **Virtual time** advances by 100 ms (for example, from 10.175 s to 10.275 s), and the card shows "The last step advanced 100 ms (the launcher rounds a step up to whole time steps)." |
+| Resume | The state returns to **Running**, and **Virtual time** advances. |
+
+You can write on the Variables screen while paused. A write is applied in the next step, so it stays **Accepted** until you step or resume. To set a value before the first step, select **Start paused** before you start (see "[Time control](#time-control)").
+
+### Step 5: Stop the run and exit
+
+Click **Stop** to stop the simulation, then press Ctrl+C in the terminal to exit the GUI server.
+
+#### Verify the stop
+
+The **Result** card shows **■ Interrupted** and **How it ended: Stopped**. A run that you stop is not a failure; its result is **Interrupted**. After Ctrl+C, `vehicle-sil-gui` exits with exit code 0. If you press Ctrl+C during a run, the GUI server stops the simulation first, then exits (see "[Stopping and exiting](#stopping-and-exiting)").
+
+### Step 6: Run a scenario
+
+A scenario ([scenario.md](scenario.md)) is a file that sets variables in a fixed sequence of steps and checks the results. The screen lists the scenarios in `scenarios/` next to the configuration file.
+
+1. Start the GUI with `vehicle-sil-gui simulation.yaml` (if it is still running, select `simulation.yaml` under **Configuration file**).
+2. Select `throttle_step.yaml` under **Scenario**.
+3. Click **Start**.
+
+#### Verify the scenario run
+
+| Where to look | What it shows |
+|---|---|
+| The **Check** card (before the start) | "The scenario scenarios/throttle_step.yaml was checked too (steps: 6)." |
+| The **Result** card | **✓ Passed** and **How it ended: The scenario ended** |
+| The **Scenario** card | **✓ The scenario passed**, and a table of the scenario steps with their line, state and virtual time (for example, `set Engine.engine.throttle = 50` with **✓ Passed** and **0 ms**) |
+
+While a scenario runs, you cannot write variables. For the detailed rules, see "[Scenarios](#scenarios)".
+
+### What to read next
+
+- Decide the layout of the Variables screen → "[Dashboard files](#dashboard-files)"
+- Save what you did in the GUI as a scenario file → "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"
+- Build your own screen → [Build your own screen for the browser GUI](howto/gui-screen.md)
+
+## Build your own screen
+
+Build your own screen with the client library in any framework you like, and have the GUI server serve the built static files with `--web`. The screen opens from the same origin as the GUI server, so the server's security checks (token, `Host`, `Origin`, CSP) apply to it as they are.
+
+The guide [Build your own screen for the browser GUI](howto/gui-screen.md) has the steps. Where to start, depending on how you build:
+
+| How you build | What you use | Where to start |
+|---|---|---|
+| Plain JavaScript, no build step | The library bundled into one file (`vehicle-sil-gui-client.mjs`) | Copy the screen template (`gui_starter`) (the guide above). |
+| TypeScript and any framework (React, Vue, Svelte and others) | The library package (`.tgz`) | "Build with TypeScript and a framework" in [examples/gui_starter/README.md](../examples/gui_starter/README.md#build-with-typescript-and-a-framework) |
+| Angular | The package above, and the widgets and wrappers of the sample screens | "[Copy the sample widgets](#copy-the-sample-widgets)" |
+| A tool without a screen (driving tests, recording) | The library, or the server API | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
+
+For the files that are served, CSP, the token, development servers and the rules that the library does not enforce for you, see "[Reference for your own screen](#reference-for-your-own-screen)".
+
+## Requirements
+
+| Feature | Requirement |
+|---|---|
+| Starting the GUI server | Python 3.11 or later and [uv](https://docs.astral.sh/uv/) |
+| Checking and running a simulation | A `vehicle_sil_launch` whose `features` in `version --json` include `events` and `stdin-commands` (`run --events`, `run --stdin-commands`; see [simulation-events.md](simulation-events.md)) |
+| Time control | `speed`, `start-paused` and `time-commands` in `features` (with a launcher that lacks them, the screen does not show those controls) |
+| Reading and writing ECU variables | A launcher with a Control Server (`control-server` in `features`; built with `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see [control-api.md](control-api.md)), and Python gRPC for the GUI server (`grpcio`, `protobuf`; `uv sync` installs them) |
+| A simulation to run | A configuration file and the ECU executables it lists (the launcher starts them for check and run) |
+| Screens | A build of the sample screens (the output of `npm run build` in `gui/web`) or a build of your own screen (`--web`) |
+
+- The prebuilt tools (see "[Quick start](../README.md#quick-start)" in the README) contain everything except Python: a launcher with a Control Server, the GUI server, the built screens and the gRPC stubs. You need only Python 3.11 or later; if you have uv, uv installs Python and the packages too.
+- If either requirement for reading and writing variables is missing, everything else still works. Only the variables show **Not available**, with the reason.
+- Using the screens needs no Node.js. Building them does (see [gui/web/README.md](../gui/web/README.md)).
+
+## Arguments and exit codes
+
+```sh
+vehicle-sil-gui [options] [<configuration file>]
+```
+
+| Argument | Meaning |
+|---|---|
+| `<configuration file>` | The file selected at first (under `--root`) |
+| `--root <dir>` | The range of files the screen can choose from. Default: the directory of the given configuration file, otherwise the current directory |
+| `--port <n>` | The port to listen on (127.0.0.1). The default 0 picks a free port. 80 cannot be used (browsers drop the port from `Host`) |
+| `--no-browser` | Do not open the browser |
+| `--launcher <path>` | The path of `vehicle_sil_launch` (a path that ends in `.py` is run with this Python) |
+| `--web <dir>` | Serve your own screen: its build output directory (must contain `index.html`). Default: the sample screens (see "[Files served with `--web`](#files-served-with---web)") |
+| `--dev-origin <origin>` | Also accept requests from the screen's development server (`ng serve`, Vite and others; only of the form `http://127.0.0.1:<port>`) (see "[Use a development server](#use-a-development-server)") |
+| `--json` | Print `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` on one line instead of the URL (when a tool starts the GUI) |
+| `--stop-timeout <seconds>` | On exit, how long to wait for a running simulation to stop (default 10). After that, the launcher is stopped |
+| `--check-timeout <seconds>` | The time limit of a check (including `--describe` of each ECU) (default 120). After that, the check is stopped |
+| `--silent-after <seconds>` | If the running launcher prints nothing (not even a heartbeat) for longer than this, notify the screen (default 5; 1 or more) |
+| `--no-variables` | Do not start the launcher's Control Server (no reading or writing of ECU variables) |
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Stopped (Ctrl+C, SIGTERM) |
+| 1 | Failure while running |
+| 2 | Argument error, or the launcher or the port cannot be used |
+
+### What happens at startup
+
+- The GUI server prints `http://127.0.0.1:<port>/#token=<...>` on one line and opens it in the browser.
+- It does not pass the URL to the browser directly. It has the browser open a temporary file that only you can read (a page that only redirects to the URL; deleted after 30 seconds or when the server exits).
+- If the browser cannot open that file (a browser that cannot read the temporary directory, for example), or no browser opens, paste the printed URL into a browser.
+- Ctrl+C stops the server. A running simulation is stopped first.
+- When you select a configuration file on the screen, the launcher checks it with `--describe` of each ECU, and the screen shows the `--describe` output of each participant (step size, networks, number of variables).
+- Relative executable paths in the configuration file are relative to the directory that contains the configuration file (the launcher's rule).
+- If you start without `--web` and there is no build of the sample screens (`npm run build` in `gui/web`), the server shows a page with the build instructions.
+
+### How the launcher is found
+
+The GUI server looks for the launcher in `--launcher <path>`, the environment variable `VEHICLE_SIL_LAUNCH`, and `PATH`, in that order.
+
+| Situation | What happens |
+|---|---|
+| The launcher found on `PATH` is in the current directory | The server does not use it and exits with exit code 2. |
+| The launcher lacks `events` or `stdin-commands` in `features` | The server prints what is missing and exits with exit code 2. |
+
+The server refuses a launcher in the current directory because Windows searches the current directory before `PATH`: starting the GUI in a folder you received from someone would run whatever program is in it. To use that launcher, name it with `--launcher`.
+
+### Start script in the prebuilt tools
+
+With the prebuilt tools, add their `bin` to `PATH` and start the GUI in the directory of the configuration file, as in `vehicle-sil-gui simulation.yaml`. `bin/vehicle-sil-gui` (`bin\vehicle-sil-gui.cmd` in the Windows command prompt) does the following:
+
+| What it does | Details |
+|---|---|
+| Passes the launcher | Passes the tools' `vehicle_sil_launch` to the GUI server in the environment variable `VEHICLE_SIL_LAUNCH`. |
+| Passes the gRPC stubs | Passes the tools' stubs in the environment variable `VEHICLE_SIL_CONTROL_STUBS`. |
+| Installs the packages and starts | With `uv run`, installs the packages in `python/requirements.txt` (versions and hashes pinned) and starts the server (from the second time on, from uv's cache). |
+| Chooses Python | uv chooses a version for which the pinned packages have wheels (from 3.11 up to the tested version in `.python-version`), and downloads it if needed. |
+
+- Packages are never built from source.
+- Without uv, install the packages into a virtual environment of Python 3.11 or later with `python -m pip install --require-hashes -r <tools>/python/requirements.txt`, and name that Python in the environment variable `VEHICLE_SIL_PYTHON`. If something is missing, the script says so and exits with exit code 2.
+- The GUI server's Python does not load modules from the current directory (`python -P`).
+
+### Start from the repository
+
+Run `uv sync` at the root of the repository, then start the GUI with the launcher you built, given with `--launcher`. The example uses the built ECU example (`build/<preset>/examples/ecu_main/`; CMake copies the configuration file next to the executables). When it reaches `stop_at_ms` (1000 ms in the example), the screen shows the result.
+
+```sh
+uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
+  build/<preset>/examples/ecu_main/simulation.yaml
+```
+
+`scripts/run-gui.py` does this start in one command. It looks under `build/` for a launcher with a Control Server and starts the GUI server with the example's `simulation.live.yaml` next to it. It does not build anything.
+
+```sh
+scripts/run-gui.py
+```
+
+| Situation | What `scripts/run-gui.py` does |
+|---|---|
+| The launcher, the example, the screen build or uv is missing | Prints the command that makes it and exits with exit code 1. |
+| A file given with `--launcher` or as the configuration file does not exist | Argument error (exit code 2). |
+| `--launcher` names a launcher outside `build/` (one from extracted tools, for example) | There is no example next to it, so give the configuration file too. |
+| With `--dry-run` | Prints only what it found and the command it would run. |
+
+- The printed commands are meant to be run at the root of the repository. When you call the script from another directory, the first line says where to run them.
+- On Windows, Ctrl+C stops everything. If only this script's process is ended (ended from a tool, or with End task), the GUI server and the running simulation remain. To stop it from a tool, stop the whole process tree (`taskkill /T /PID <pid>`).
+
+## Stopping and exiting
+
+| Action | What happens |
+|---|---|
+| **Stop** on the screen | Sends `stop` to the launcher's stdin; the launcher stops in order. |
+| **Stop without waiting** on the screen | Sends `stop` once more; the launcher stops without waiting for the participants to exit. |
+| The server exits (Ctrl+C, SIGTERM, terminal closed) | Stops a check at once, and closes the launcher's stdin so that the launcher stops in order. |
+| A second Ctrl+C | Skips the waits. |
+| The server is killed | The launcher sees the end of stdin and stops by itself. |
+
+- A launcher that does not read stdin stops neither with **Stop** nor with **Stop without waiting**. In that case, stop the server.
+- When the server exits and the launcher has not stopped within `--stop-timeout`, the server sends SIGTERM (on Windows, Ctrl+Break) to the launcher's process group and kills the group 5 seconds later (on Windows, `taskkill /T /F`). Exiting takes at most about `--stop-timeout` plus 20 seconds.
+- The server can stop only the launcher and what is in the launcher's process group. Cleaning up the participants is the launcher's job (the launcher starts the participants in a process group of their own).
+- If the launcher has exited but a process it started still holds its output open, the server waits 2 seconds, then ends the run and notifies the screen. That process may still be running.
+
+## Security
+
+The GUI server can start processes (the launcher starts the commands in the configuration file). It is therefore built on the assumption that only you use it, on your own computer, and protects itself as follows.
+
+- **Listen address**: it listens on 127.0.0.1 only. Other computers cannot open it (to view it through SSH port forwarding, see [howto/multi-pc.md](howto/multi-pc.md); forward to the same port number). It accepts `Host` only as `127.0.0.1:<port>` (not `localhost`: a browser may connect to `::1` first, and another program can listen there).
+- **Token**: the server creates a new token on every start. The token is only in the printed URL, after `#token=`, and the screen removes it from the URL once it has read it. The API and WebSocket do not answer without the token. Do not give the URL to anyone.
+- **Other web pages**: the server rejects requests from other web pages (`Host` and `Origin` checks; CORS is not allowed).
+- **Configuration files**: the screen can use only configuration files under `--root`. Paths that lead outside it, and symbolic links that point out of the root, are rejected when checked (this cannot stop someone from swapping a link inside the root after the check, but anyone who can write to the root can put a configuration file there directly). The server builds the launcher's arguments in a fixed form and accepts no arbitrary command.
+- **ECU variables**: the server reads and writes them through the launcher's Control Server (a free port on 127.0.0.1).
+  - For each run, the server creates a new token and passes it to the launcher in a file that only you can read (`vehicle-sil-gui-control-*.txt` in the temporary directory; mode 0600 on POSIX).
+  - The file is deleted after the launcher has read it (when the Control Server starts listening), and again when the run ends.
+  - This token appears nowhere in the launcher's arguments, in events, in notifications to the screen or in error messages. Other processes on the same computer cannot use the Control Server without it.
+  - The GUI server connects only to the `127.0.0.1:<port>` that the launcher reported.
+  - Writes from the screen pass the same checks as the rest of the API (token, `Host`, `Origin`), and only values whose type and range fit reach writable variables in the variable list.
+- **Scenarios**: the server passes to the launcher only scenarios in its list (`.yaml` / `.yml` in `scenarios` next to the configuration file). `..`, absolute paths, NUL, names that are too long, names that start with `.`, and symbolic links (files, and `scenarios` and the directories above it) are not listed and are rejected if requested. For a scenario to save, the server only returns the YAML as a string; it writes no file.
+- **Dashboard files and custom panels**: the server reads and serves dashboard files (`.dashboard.yaml` next to the configuration file) and custom panels (`.js` / `.mjs` in `panels/`) only from inside the root, as for configuration files. Dashboard files are read with YAML's safe loader, with limits on size, nesting and number of values, and aliases (`*name`) are not allowed. Panels are served from the same origin, so the CSP (`script-src 'self'`) is not relaxed. Panel module URLs carry a random value created at each start instead of the token (see "[Custom panels](#custom-panels)").
+- **Screen files**: the server serves only the files in the directory the person who started it named (`--web`; otherwise the sample screens) (see "[Files served with `--web`](#files-served-with---web)"). That screen runs on the same origin with the token and can do everything the GUI can. Give `--web` only screens you trust (as with the root, read what you received from others first).
+- **Concurrent runs**: one server runs one run at a time. If several starts are requested at the same time, only one starts. Two servers can run two runs.
+
+What it cannot protect against:
+
+- **Other users of the same computer.** Anyone who can see the printed URL (the terminal, the `--json` output, logs of tools that read it) can see the token. Anyone with the token can set `Host` and `Origin` freely outside a browser, and so can use the whole API. The server does not put the token on the browser's command line (other users can sometimes read process arguments), but it does not protect what the terminal shows. Even without the token, someone who keeps WebSocket connections open can keep the screen from connecting (up to 16 unauthenticated connections are allowed and the oldest is closed when they overflow, so the screen gets through after a few tries, but it cannot outpace the rate at which the other side opens connections).
+- **The contents of the root.** What is in the root runs as soon as you open it on the screen. The Run screen checks the selected configuration file at once, and the check starts each ECU executable with `--describe`. The Variables screen loads the modules in `panels:` of the dashboard file, and panels run inside the screen with the token (they can start a run, and so run the commands in the configuration files in the root). Anyone who can write to the root can run commands with the rights of the person using the GUI. Do not make an untrusted repository or directory the root (for something you received from others, first read the configuration files, `panels:` of `*.dashboard.yaml`, and the contents of `panels/`). Do not make a place that others can write to (a shared directory, somewhere under `/tmp` and so on) the root either.
+- **Browser extensions.** Extensions can read the screen and its `sessionStorage` (which holds the token).
+- Programs that run with the same user's rights can do anything anyway, so they are out of scope.
+
+## Time control
+
+The launcher advances time; the GUI only passes commands and shows the results. What the commands mean and how lateness is counted follow the launcher's rules (see "Running at a set speed (`speed`)" in [simulation-run.md](simulation-run.md#running-at-a-set-speed-speed) and "Stdin commands (`run --stdin-commands`)" in [simulation-events.md](simulation-events.md#stdin-commands-run---stdin-commands)).
+
+| When | Where on the screen | What you can do |
+|---|---|---|
+| Before the start | The **Configuration file** card | Choose the speed (**As configured**, **Fastest**, **Real time**, **Factor**) and **Start paused**. |
+| During the run | The status bar | Click **Pause** and **Resume**. |
+| During the run | The **Time** card | See the virtual time, the current speed, the actual speed and whether the run is paused; step (enter milliseconds) and change the speed. |
+| After the end | The **Result** card | See how time went (speed, virtual time, real time taken, actual speed, time paused, lateness when the speed was paced). |
+
+- If the launcher's `features` lack `speed`, `start-paused` or `time-commands`, the screen does not show the matching control (with a launcher that has only `speed`, the **Time** card is view-only). Whether time commands are accepted is decided by the launcher of the running run (its `version --json` at the start).
+- A screen opened midway, and other tabs, show the same time state (the server's summary holds the last `time` and `command` events).
+- The findings `behind-real-time` and `coarse-time-step` appear among the result's findings, like any other finding.
+
+### Start paused
+
+- A run started paused stops at virtual time 0 once all participants have joined, and waits for resume or step.
+- The speed of the previous run stays selected, but **Start paused** is not carried over from the previous run (so a run never starts paused without you noticing).
+- In a run that can read and write variables (the launcher has a Control Server), the run holds before the first step (before the step at time 0 runs) (a launcher rule; see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)). Variables written meanwhile are applied in the step at time 0.
+- While held before the first step, the launcher writes no `time` events, but it accepts resume and step (`beforeStart` in the library's `client.time.state`).
+- When started with `--no-variables`, and with a launcher without a Control Server, the run holds after the step at time 0.
+
+### Pause, resume and step
+
+- **Pause** and **Resume** are separate buttons. From the start until the result, they are always in the same place, after **Start** and **Stop**. **Start** and **Stop** do not move, and after a stop is requested they stay in place, disabled.
+- The button that cannot be used is disabled (a button in one position never changes its meaning while you press it).
+- In a very narrow window, the buttons show only their symbols (‖ and ▶) (screen readers still get the names).
+- Stepping works only while paused. During a step, the run counts as paused, as in the launcher, so you can resume or step.
+- For a step, the screen shows the amount the run actually advances, rounded up by the launcher to a multiple of the time step.
+- Until the launcher answers a command (a `command` event arrives), the screen sends no next command (so a double click does not step twice).
+- If no answer comes within 5 seconds (a launcher that does not read its input), the screen stops waiting, enables the controls again and says that no answer came (the bar's button descriptions give the same reason).
+- Once the simulation has begun to end (phase **Stop**), time control is not available.
+- When the launcher does not accept a command, the screen shows the reason.
+
+### Lateness display
+
+While the run is paced at a numeric speed (not as fast as possible), the screen shows the number of late steps, the maximum lateness, the total slip and the current lateness.
+
+- Only when a step was later than the tolerance (`late_tolerance_ms`) does the screen say so in text, not only in color (in the status bar and the **Time** card; this stays even if you switch to **Fastest** later).
+- The current lateness (`late_ms`) is shown only as a number and does not trigger the text. Small values within the tolerance come and go with every step synchronization (a step that stalls beyond the tolerance is counted as late by the launcher right away).
+- Screen readers announce lateness in one place only, the status bar, and only once, when lateness appears (not every time the count changes).
+
+### Time control API
+
+| Request | What it does |
+|---|---|
+| `speed` and `start_paused` of `POST api/run` | The launcher's `--speed` and `--start-paused` |
+| `POST api/time` `{"command": "pause"}`, `{"command": "resume"}` | Pause, resume |
+| `POST api/time` `{"command": "step", "ms": <ms>}` | Step (only while paused; the launcher rounds up to a multiple of the time step) |
+| `POST api/time` `{"command": "speed", "value": <number or "max">}` | Change the speed (a pause stays a pause) |
+
+`api/time` passes the same checks as the rest of the API (token, `Host`, `Origin`, JSON body). The server writes the command as one line to the launcher's stdin and returns at once, without waiting for the launcher's answer (so a request never hangs on a stuck launcher; even with a launcher that does not read its input, it returns within about 2 seconds). Whether the command was accepted arrives in the launcher's `command` event. For the shapes and the error `code`s, see [gui/protocol/README.md](../gui/protocol/README.md).
+
+## Scenarios
+
+Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU variables in a fixed sequence of steps and checks the results) from the screen. The **Configuration file** card shows the **Scenario** field only when the launcher's `features` have `scenario`.
+
+| Item | Details |
+|---|---|
+| Location | The list shows the `.yaml` and `.yml` files in `scenarios` next to the configuration file (for `simulation.yaml`, `scenarios/` in the same directory). |
+| Check | When you select a scenario, the check also covers it (`check --scenario`). Scenario errors appear as findings with the scenario file and line. |
+| Run | When you start with a scenario selected, the launcher runs the scenario from time 0 to its end, then stops the simulation. |
+| Result | The **Scenario** card shows the overall result and a table of the scenario steps (line, step, state, the virtual time at which the result was decided, the reason for a failure), and **How it ended** in the **Result** card is **The scenario ended**. |
+| Variables | While a scenario runs, variables cannot be written (so that the scenario result does not change; the server also rejects writes with `scenario-running`). |
+
+- Scenario files elsewhere cannot be selected (see "[Security](#security)").
+- The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened midway shows the same table.
+- A scenario cannot start paused (**Start paused** is disabled).
+- Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin, so they are separate from the time calls that the Control Server refuses while a scenario runs.
+- If the launcher's `features` have `scenario-control`, the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without it, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
+- The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
+
+### Save your actions as a scenario
+
+In a run without a scenario that can read and write variables, the **Save as a scenario** card shows how many writes were applied in this run. Click **Save this run's writes as a scenario** to save the scenario YAML through the browser (file name `<configuration file name>-run<run number>.yaml`; the browser decides where). You can save after the run has ended too, until the next run starts.
+
+```yaml
+# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
+# screen and tool that used it) that were applied, each at the time of the step it was applied at.
+# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).
+# This scenario ends at its last step (350 ms): the launcher stops the simulation there.
+# The recorded run went on to 1000 ms.
+# To keep it running after the last step, add a step at the end, such as
+#   - expect: { Engine.ecu.connected: true }
+#     hold_for_ms: 650
+# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).
+vehicle_sil_scenario: 1
+name: "recorded from simulation.yaml (run 3)"
+steps:
+  - at_ms: 0
+    set:
+      Engine.engine.throttle: 40.0
+  - at_ms: 350
+    set:
+      Engine.engine.throttle: 12.5
+```
+
+| Item | Details |
+|---|---|
+| Included | Every write that went through the GUI server in this run and was applied. |
+| Not included | Pauses and steps, writes that were not applied, checking steps (`expect`, `wait_until`), and writes made directly to the Control Server, not through the GUI server. |
+| Form of the steps | Only a `set` per virtual time of the step it was applied in (`at_ms`); writes are not merged into a `ramp`. |
+| Limit | Up to 2000 values are recorded per run. |
+
+- Writes from other screens (other people) that have the same GUI server open, and writes from tools that use `api/write` (such as `examples/gui_client/variables.mjs` in the repository), are included too. They are not separated by screen or by person.
+- The launcher stops the simulation when the scenario's last step is done. So a saved file, when run, stops at the time of the last `set` (even if the recorded run went on longer). To keep it running after that, add an `expect` step with `hold_for_ms` at the end, as in the example in the comments at the top of the file (the comments also give the time the recorded run reached).
+- Put the saved file in `scenarios/`, and it passes the check as is and can be run from **Scenario** (ECUs have different step times, so the same writes may become separate steps per ECU).
+- Add checking steps in an editor.
+- Variables of a participant whose name contains `.` cannot be addressed in a scenario (everything up to the first `.` is the participant name), so they are left out. The card shows how many were left out, and the comments at the top of the file say why.
+- The server API is `GET api/recording` (see "Recording actions (`api/recording`)" in [gui/protocol/README.md](../gui/protocol/README.md#recording-actions-apirecording)); in the library, `client.recording()`.
+
+## ECU variables
+
+The GUI reads and writes the variables that ECUs declare (see "ECU variables" in [control-api.md](control-api.md#ecu-variables)) through the GUI server. The launcher's Control Server holds the values; the GUI server only relays them. Between the screen and the GUI server, value subscriptions (watch) and value notifications go over WebSocket, and writes over HTTP. Between the GUI server and the launcher, gRPC with a per-run token is used.
+
+| Item | Details |
+|---|---|
+| Start | If the launcher has a Control Server, the GUI server starts the run with `--control 0 --control-credentials <file>` and connects to the address that the launcher's `control_server` event reports. |
+| State | The state of the variable feature (`off`, `connecting`, `ready`, `failed`, `ended`) and its reason arrive in `variables` of the summary and in the `variables` notification. |
+| List | The variables of each participant (name, type, role, unit, range, value increment, description, enum items, whether writable). |
+| Values | When the screen watches selected variables, their last values arrive at the chosen period (20 ms or more). |
+| Writes | Sent to `POST api/write` with the id of the target run (`session`). |
+| After the end | The state becomes `ended`, and the last values read remain (until the next run starts). |
+
+- **If the connection fails**: whether the server cannot connect or the connection drops, the run continues. Only the variables become `connecting` or `failed`; after a disconnection, the server reconnects automatically.
+- **How values are read**: the GUI server reads from the launcher only the values of watched participants, at the requested rate (a fast simulation does not increase the amount read). It keeps only the last set of values and no history (history is on the screen's side; the library keeps it in a ring buffer). A screen that receives slowly gets the last values at the moment it can receive (stale values are not queued).
+- **Values at the paused time**: when `paused` of a `values` notification is true, the notification holds the values of every step that started before `sim_ms`, and none of a step after `sim_ms`.
+  - The GUI server reads time and values from the launcher's Control Server in one call (`GetSnapshot`; see "Read time and values together (`snapshot()`)" in [control-api.md](control-api.md#read-time-and-values-together-snapshot)), and sets `paused` to true only when the flag in that response (`consistent`) is true (a notification that the run paused is not enough).
+  - The values of a step that starts exactly at `sim_ms` may arrive later while paused; in that case, another notification for the same time arrives.
+  - While the run runs, `paused` is false. For the assumptions and limits, see "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables).
+  - With an older launcher that has no `GetSnapshot`, the variable feature is `failed` (with a reason).
+- **Checks on writes**: the server rejects a write whose `session` does not belong to the running run (`session-changed`; so a write sent while one run ends and the next starts is not written to the next run). A run that is running a scenario cannot be written either (`scenario-running`). The server checks type and range against the variable list before passing the write to the launcher.
+- **Results of writes**: results (operations) reach every screen as queued (`queued`), applied (`applied`, with the time of the step), too late (`late`), refused by the ECU (`rejected`, `invalid`) and so on. Results are never dropped. An operation with no result by the end of the run is completed as `unknown`.
+
+| To find | See |
+|---|---|
+| Shapes of notifications and requests, limits | "ECU variables" in [gui/protocol/README.md](../gui/protocol/README.md#ecu-variables) |
+| The library API (including `bind` for building widgets) | "ECU variables" in [gui/client/README.md](../gui/client/README.md#ecu-variables) |
+| A working example | `examples/gui_client/variables.mjs` in the repository |
+| The Angular wrapper | `EcuVariables` (`gui/web/src/app/core/session/ecu-variables.ts`) |
+
+`EcuVariables` provides `session`, `status`, `reason`, `peers`, `operations`, `find(ref)`, `peerConnected(peer)`, `watch()` that ends automatically when its component is destroyed, `open()` that also ends automatically, and `write()`.
+
+## The sample screens
+
+An Angular app in `gui/web`. It is built only on the client library and its Angular wrapper (`gui/web/src/app/core/session/`, a thin layer that only turns the library's `Readable` into signals). When started without `--web`, the GUI server serves it. You can use it as it is, or copy its widgets into an Angular screen of your own (see "[Copy the sample widgets](#copy-the-sample-widgets)"). For the rules for developing the screens, see [gui/web/README.md](../gui/web/README.md).
+
+"The Variables screen and widgets", "Dashboard files" and "Custom panels" are features of the sample screens. Your own screen does not get them automatically.
+
+### Features
+
+| Feature | Details |
+|---|---|
+| Select a configuration file | Select the file given at startup, or a `.yaml` / `.yml` under `--root`, from a list. |
+| See the check result | See the findings and the participant table, and check again with participants disabled (`--disable`). |
+| Start a participant yourself | The equivalent of `--manual`, for running an ECU from a debugger and similar (see "Starting a participant yourself" below). |
+| Start and stop a run | Choose to stop in order or to stop without waiting. |
+| Follow the run | See the phase, the state and exit code of each participant, the log, the findings and the result. |
+| Control time | Start at a chosen speed, start paused, pause, resume, step and change the speed, and see the virtual time, the current speed, the actual speed and the lateness behind real time (see "[Time control](#time-control)"). |
+| See the connection to the Control Server | See, for each participant, the state of the connection that reads and writes variables (the launcher's `control-links`). |
+| See and write ECU variables | The Variables screen lists the variables of the current run by ECU, each with a widget that fits its type, and can filter them by name (see "[The Variables screen and widgets](#the-variables-screen-and-widgets)"). |
+| Describe the layout of the variables in a file | Write `<name>.dashboard.yaml` next to the configuration file, and the Variables screen lays them out as written (see "[Dashboard files](#dashboard-files)"). |
+| Place widgets you wrote yourself | Place custom elements on the dashboard (see "[Custom panels](#custom-panels)"). |
+| Select and run a scenario | Select a `.yaml` from `scenarios` next to the configuration file: the check also covers the scenario, the run advances the step table, and the screen shows the result at the end (see "[Scenarios](#scenarios)"). |
+| Save your actions as a scenario | Save the values you wrote in the GUI that were applied as scenario YAML through the browser (see "[Save your actions as a scenario](#save-your-actions-as-a-scenario)"). |
+| Reopen the screen, open it in another tab | See the state of the same run. |
+| Switch the language | The screen is in English or Japanese. It follows the browser's language (English if the browser prefers neither), and the language menu in the toolbar changes it (the browser remembers the choice). |
+
+The server API and the client library can read and write ECU variables in the same way. Text that the launcher and the ECUs print (findings, logs) appears as they print it, whatever the screen language.
+
+### The Run screen
+
+- **Findings**: the screen has no rules per code. It shows each finding's code and text as they are, ordered by severity (error, warning, note; an unknown severity counts as an error) (findings that the launcher adds later appear as they are too).
+- **Participant failure**: when the launcher reports a participant as failed (`failed`), the screen shows the failure at once, even before the process ends.
+- **Interrupted**: a run that you stopped shows as **Interrupted**, not in the failure color.
+- **Connection to the Control Server**: the state is one of: connected, no hello received, different format version, variables declared but the API not exposed, none. States that cannot read or write show ⚠ and text, not only color.
+- **When the launcher falls silent**: if the launcher stops writing even its heartbeat every second (for 5 seconds by default; `--silent-after`), the status bar says it may be stuck.
+- **Dropped log lines**: log lines that the launcher could not write because its reader was slow (`log_dropped`) appear at their position as the number of lines dropped.
+- **Abnormal launcher exit**: if the launcher exits without a result, the screen shows the abnormal exit, the exit code and the lines the launcher wrote to stderr (the first 20 and the last 30). Participants that did not report their end show **Unknown** (the launcher ended first, so the screen cannot know what happened to them).
+- **Amount of log**: the log shows the last 2000 lines (up to 1 MiB) of each participant. For older lines, only the number of dropped lines is shown.
+
+### Starting a participant yourself
+
+Available only when the launcher's `features` have `manual-participants`. For the rules, see "Starting a participant yourself (`manual`, `--manual`)" in [simulation-config.md](simulation-config.md#starting-a-participant-yourself-manual---manual).
+
+| Step | What you do | What the screen shows |
+|---|---|---|
+| 1 | Select **Start it yourself** in the check table, then start | The launcher does not start that participant. **Participant status** shows the command to start it and its directory. |
+| 2 | Run the command shown | **Joined (started by you)**. |
+
+- You can select and copy the command; there is also a copy button. The simulation waits until the participant joins.
+- If the registry is not on a loopback address, the environment variables to set (`VEHICLE_SIL_LISTEN_ON_NETWORK` with the value `1`) also appear above the command, with name and value shown separately. How to set them depends on the shell or IDE, so copy `name=value` with each variable's button and set it the way your tool does (the command's button does not copy the variables).
+- A participant with `manual: true` in the configuration file starts out as **Start it yourself** (the screen cannot change that back).
+- If you stop before it joins, the simulation does not start, and the screen shows **Did not join (start it yourself)**.
+- The launcher does not end participants that you started yourself. If the launcher reports that one remains after the end, the screen shows that.
+
+### The Variables screen and widgets
+
+**Variables** in the navigation is the screen that lays out the variables of the current run as widgets.
+
+| Situation | Layout |
+|---|---|
+| A dashboard file exists next to the configuration file | As the file says (see "[Dashboard files](#dashboard-files)"). |
+| No dashboard file | Variables grouped by ECU, each with its default widget (the automatic dashboard). |
+| No run, or variables cannot be read and written | The screen shows the reason (a launcher without a Control Server, a GUI server without gRPC, cannot connect). |
+
+- The configuration file is the one of the current run or the last run. Without a run, it is the one given at startup.
+- The field at the top filters by name (it shows the variables for which every space-separated word is contained in the ECU name or the variable name).
+- While a run started paused waits before the first step, you can still write from widgets (parameters included; applied in the step at time 0; resume on the Run screen).
+
+#### Monitoring variables
+
+Variables that the ECU did not declare are grouped, per ECU, in a collapsed section after the application's variables (**<ECU> monitoring**). These are the variables vehicle-sil adds, and the monitoring variables that the ECU executable adds itself (`peer.` ones such as `peer.steps`, and `j1939.<network>.` for J1939 statistics; see "Peer monitoring" under "Control Agent" in [internals/control.md](internals/control.md#peer-monitoring)).
+
+- While collapsed, the section creates no widgets and receives no values.
+- The name filter also searches collapsed sections, and opens them to show matching widgets.
+- One place decides what counts as monitoring: `isMonitoring` in `dashboard-spec.ts`. For variables in the run's check result (`participants[].variables[].builtin` of `check --json`), that decides. For variables not there (monitoring variables added during the run), and with older launchers that do not write `builtin`, the name prefix decides (`ecu.`, `peer.`, `j1939.`).
+
+#### Bus connection (`ecu.connected`)
+
+The input `ecu.connected`, which every ECU has, becomes the **Connect to the bus** switch in the ECU's heading (the name screen readers read is **Connect <ECU> to the bus**). While it is false, the ECU is disconnected from all its buses and its steps keep running (see "Disconnecting from the bus (`ecu.connected`)" under "The `Ecu` class" in [internals/execution.md](internals/execution.md#disconnecting-from-the-bus-ecuconnected)).
+
+- While disconnected, the section has a line beside it, and the switch has a symbol (⚠) and text.
+- In a dashboard file, the switch goes in the heading of a section laid out with `auto:` (one per section; the switch of a second ECU in it appears as a switch widget).
+- With `variable: Engine.ecu.connected`, you can place it as a switch widget like any other variable.
+
+#### Widget kinds
+
+| Widget | Kind (`WidgetKind`) | Details |
+|---|---|---|
+| Value display | `value` | The last value and its unit. Enums show the item name; bools show **On** or **Off** |
+| Number input | `number` | A writable number. Enter a value and press Enter or click **Write**. Integers and ranges are checked before sending; if the value does not fit, it is not sent and the reason appears |
+| Slider | `slider` | A writable number with a set range (`min` and `max`). It does not write while you drag; it writes when you release it (with the keyboard, on each key press). It cannot be moved for a variable without a range, or while there is no value yet (before the first step, for example) |
+| Switch | `switch` | A writable bool. Writes as soon as you click it |
+| Lamp | `lamp` | A read-only bool. Shows whether it is lit by fill and text (**On**, **Off**) as well as color |
+| Select | `select` | A writable enum. Writes only when you open the list and select an item (arrow keys or typing on the closed list do not write) |
+| Graph | `graph` | A number over time (the horizontal axis is the virtual time of the step in which the value was read). Also shows the last value and its unit. The client library keeps the history; the graph draws the last 600 points while visible |
+
+#### Default widgets
+
+One function (`defaultWidget` in `gui/web/src/app/widgets/dashboard-spec.ts`) picks the widget from the variable's type, range, enum items, and whether it is writable (`writable`: `role` is `input` or `parameter`).
+
+| Type | Writable | Read-only |
+|---|---|---|
+| `bool` | Switch | Lamp |
+| `enum` (with items) | Select | Value display (item name) |
+| `integer`, `real` (with `min` and `max`, and `min` < `max`) | Slider | Graph |
+| `integer`, `real` (no range, or only one end) | Number input | Graph |
+| Unknown type, `enum` without items | Value display | Value display |
+
+A `parameter` gets a writing widget, but it can be written only before the first step; after that, the widget shows the reason and stops accepting input.
+
+#### Behavior common to all widgets
+
+**Value condition**: below the value, text says which time the value belongs to (with a symbol, not only color).
+
+| Condition | What it shows |
+|---|---|
+| Running | The time of the step in which the value was read |
+| Paused | **Value at … s (paused)** (a value whose `paused` is true in the library) |
+| No value yet | **No value yet** |
+| A variable the current run does not have | **Not a variable of this run** |
+| The connection between the screen and the server dropped, the server is reconnecting to the launcher, the ECU is disconnected, or reading values keeps failing | The value stays, marked **Stale value** with the reason |
+| The run ended | **Last value of the ended run** |
+
+When reading values keeps failing (the Control Server does not answer before its deadline, for example), the server's variable state stays `ready` and `reason` holds the reason. The Variables screen then also shows that reason at the top, as the server words it (not localized).
+
+**Write status**: shown in this order.
+
+| Status | Meaning |
+|---|---|
+| Sent | Waiting for the server's response. |
+| Accepted | Waiting for the ECU to apply it in a step (while paused, it waits here). |
+| Applied | Shows the time of that step. |
+| Failed | Depending on the `kind` of the library's `WriteError` (the server refused it, it was not applied, no answer came (unknown whether it was applied), the connection was closed), the widget announces it through an `alert` for screen readers and shows the read value again. |
+
+**A write that got no answer is not resent automatically** (to avoid writing twice; check the value, then write again).
+
+**When writing is not possible**: in these cases, the controls are disabled and the reason is shown: a read-only variable, no run, the variable feature unavailable, the run ended, the connection between the screen and the server dropped, the ECU not connected, a parameter after the first step.
+
+**Writes do not pile up**:
+
+- If the next value comes while the server has not yet received the previous write (a dragged slider or repeated keys), it is kept instead of sent; once the previous write is received, only the last value is sent.
+- Before sending, the widget checks again that the run is the same and the variable is still writable; if not, it does not send and says so.
+- The status shown is that of the last action (the last write sent, or an input refused before sending).
+- An input refused before sending (not a number, out of range) does not affect the write being sent or the writes waiting for results.
+- The display of the sent value disappears when the last write sent completes, whatever the status display shows.
+
+**One write state per variable, per run**:
+
+- The write state belongs to the variable, not the widget. Placing the same variable in 2 widgets does not send twice, and in-flight and failure notices survive when filtering recreates the widgets.
+- When the run changes, the previous run's state and sent value disappear.
+- A write is sent to the run current at that moment (`session` of `api/write`). If the run changes before the write reaches the server, it is not written to the next run.
+
+**Keeping the load down**: widgets watch values only while they are visible on the screen (and a little beyond). Even with hundreds of variables laid out, only the visible widgets receive values.
+
+**Operation**: everything can be operated with the keyboard. For screen readers, a widget is a group named after the variable, and its controls are also named after the variable (a slider reads its value with the unit). Values that change quickly do not get `aria-live`. Widgets are laid out at their own width and hold together from a 360 px window up to full screen.
+
+#### Dashboard data
+
+The screen receives "which variable, with which widget, where" as one plain object (`DashboardSpec`) and draws it (`DashboardView`).
+
+| Function that builds it | From |
+|---|---|
+| `autoDashboard` | The variable list (the automatic dashboard) |
+| `fileDashboard` | The dashboard file shape checked by the server, and the variable list |
+
+Besides widgets, a section can hold custom panels (`{ panel, label, options, variables }`). `title` is the title shown at the top of the screen; `modules` are the URLs of the modules that define the panels.
+
+```ts
+const spec: DashboardSpec = {
+  sections: [
+    {
+      title: 'Engine',
+      items: [
+        { peer: 'Engine', name: 'engine.throttle', widget: 'slider', options: { step: 5 } },
+        { peer: 'Engine', name: 'engine.speed', widget: 'graph', label: 'Engine speed' },
+      ],
+    },
+    { title: 'Engine monitoring', collapsed: true, items: [{ peer: 'Engine', name: 'peer.steps', widget: 'graph' }] },
+  ],
+};
+```
+
+Placement follows the order of the sections (`sections`) and of the widgets in each section (`items`). The arrangement (number of columns) follows the screen width. Without `label`, the widget shows the variable name. A section with `collapsed: true` starts collapsed.
+
+Settings per widget go in `options` (a plain object). Each widget accepts its own fields (`WIDGET_OPTIONS`).
+
+| Widget | Settings |
+|---|---|
+| Slider | `step`: the increment (a positive number; if omitted, the declared increment, otherwise 1 for integers and 1/100 of the range for reals) |
+| Graph | `points`: the number of points recorded and drawn (an integer of 2 or more; default 600) |
+
+Before drawing, the screen checks that the widget kind fits the variable (`checkItem`; all at once, `checkDashboard`). If it does not fit, the screen shows the reason and the fix in that place and draws the other widgets.
+
+| Widget | Variables it can show |
+|---|---|
+| Value display | Any |
+| Lamp | `bool` |
+| Graph | `integer`, `real`, `bool` |
+| Switch | Writable `bool` |
+| Select | Writable `enum` (with items) |
+| Slider | Writable `integer`, `real` (with a range) |
+| Number input | Writable `integer`, `real` |
+
+Unknown widget kinds, settings a widget does not know, and settings with values that do not fit also show in their place. For a variable the current run does not have, the widget shows **Not a variable of this run** without checking.
+
+#### Add a widget
+
+The widgets are in `gui/web/src/app/widgets/`, and all of them use only the library's public API and the Angular wrapper. The value condition, whether the variable can be written, and write handling (the non-visual parts of "Behavior common to all widgets" above) are in the library's `client.variables.bind`. `bindVariable` (`variable-binding.ts`) only turns that into signals, tells it whether the widget is visible (IntersectionObserver), and turns values into screen text. You can build your own widgets the same way.
+
+1. Create the component (`ChangeDetectionStrategy.OnPush`) with the inputs `ref` (`VariableRef`), `label` and `options` (settings).
+2. Call `bindVariable(this.ref)` in a field initializer (`variable-binding.ts`).
+3. Wrap the template in `<app-variable-frame [variable]="variable" [label]="label()" [writable]="true">` (`variable-frame.ts`; shows the name, role, value condition, write status, and why it cannot be written). Give the controls `[attr.aria-labelledby]="variable.id + '-name'"`.
+4. Add it to `WidgetKind` in `dashboard-spec.ts` and to `WIDGETS` in `widgets.ts` (so dashboard data can use it). To make it a default, also change `defaultWidget` and the table above.
+
+The `VariableBinding` that `bindVariable` returns holds the following as signals (their contents are the fields of the library's `BoundVariable`).
+
+| Signal | Contents |
+|---|---|
+| `info` | The variable definition |
+| `reading` | The last value |
+| `condition` | The value condition |
+| `block` | Why it cannot be written |
+| `write(value)`, `writeStatus`, `pending` | Writing, and its status |
+
+- Values are watched only while the widget is visible.
+- For a history, use `bindVariable(this.ref, { history: 600 })`.
+- One component may call `bindVariable` any number of times (a widget that draws 2 variables, for example).
+- A widget that needs a range uses `bindVariable(this.ref, { needsRange: true })`; one that moves from the current value uses `needsValue: true`. While the condition is not met, `block` holds the reason (`no-range`, `no-value`).
+- The value display (`value-widget.ts`) is the smallest model; for a writing widget, the switch (`switch-widget.ts`) is the model.
+
+### Time control wrapper
+
+The time state and commands live in one service for the whole app (built on the client library's `TimeControl`). Components only read its signals and keep no time state of their own (every component sees the same state).
+
+`ServerInfo` (`gui/web/src/app/core/session/server-info.ts`):
+
+| Member | Contents |
+|---|---|
+| `app` | The response of `GET api/app` |
+| `features` | What the launcher can do |
+| `has(name)` | Whether it has that feature |
+| `limits` | The speed range and the step limit |
+
+`SimulationTime` (`gui/web/src/app/core/session/simulation-time.ts`):
+
+| Signal | Contents |
+|---|---|
+| `supported` | Whether the launcher has time commands |
+| `time` | The last `time` event (`null` if none yet) |
+| `simMs`, `speed`, `paused`, `actualSpeed` | The fields of `time` (`null` for fields that older launchers do not write) |
+| `paced` | Whether the speed is numeric (whether lateness is counted) |
+| `lateness`, `behind` | The lateness figures, and whether the run fell behind real time (a step was later than the tolerance) |
+| `lastCommand` | The last `command` event (`name`, `accepted`, `message`, `ms`) |
+| `controllable` | Whether time commands mean anything now |
+| `beforeStart` | Whether the run is held before the first step, waiting for resume or step |
+| `canPause`, `canResume`, `canStep` | Whether the control may be used now |
+| `stepping` | Whether a step is in progress (the launcher counts it as paused) |
+| `sending` | A command that was sent and whose answer (`command` event) has not been seen yet |
+| `error`, `errorFromServer` | Why the last command failed, and whether that text came from the server |
+
+- The fields of `time` are `simMs`, `speed`, `paused`, `actualSpeed`, `lateSteps`, `maxLateMs`, `slippedMs` and `lateMs`.
+- `controllable` is true when the launcher supports time commands, the phase is running, a `time` event has arrived, there is no result yet, and no stop has been requested (the same conditions as the server's). It is also true during `beforeStart`.
+- `beforeStart` is true in a run started paused when the launcher has the API for reading and writing variables. Then `time` is still `null`, and `canResume` and `canStep` are true.
+- `canPause`, `canResume` and `canStep` are true when `controllable` is true and no answer to an earlier command is pending. Which of them is true depends on whether the run is paused or a step is in progress.
+- `sending` clears when the answer arrives, the launcher exits, the run changes, the server rejects the command, or the summary after a reconnection holds the answer. If no answer comes within 5 seconds (`ANSWER_TIMEOUT_MS`), it stops waiting.
+- `error` is the server's text, not localized, when the server rejected the command, and the screen's own text when no answer came.
+
+The commands are `pause()`, `resume()`, `step(ms)` and `setSpeed(value)` (all go through `send(command)`). While an answer to an earlier command is pending, and when there is no run, they do not send and return `{sent: false, reason: 'waiting' | 'no-session'}` (`{sent: true}` when sent). Check whether a control may be used with `canPause` and the others before sending.
+
+To add a control to the status bar, place an element with the attribute `runStatusActions` inside `<app-run-status>` (it appears after **Start** and **Stop** and before **Stop without waiting**; **Start** and **Stop** do not move).
+
+### Copy the sample widgets
+
+To build your own screen in Angular, you can copy the sample widgets (switch, slider, graph and others) and the wrappers they depend on into your project. The widgets and wrappers do not depend on the screens (`run/`, `variables/`) or the app shell (`app.ts`, routing, navigation) (`gui/web/eslint.config.js` restricts the direction of imports).
+
+| What to copy | Contents |
+|---|---|
+| `gui/web/src/app/widgets/` | The widgets, their building blocks, the dashboard, and the host for custom panels |
+| `gui/web/src/app/core/session/` | The wrappers that turn the library's `Readable` into signals, and the place that creates the client (`gui-client.ts`) |
+| `gui/web/src/app/core/auth/` | The token (`AuthToken`, built on `takeToken`) and the interceptor that adds the token to API requests |
+| `gui/web/src/app/core/format/measure-pipe.ts` | Formatting of numbers with units |
+
+- The building blocks in `widgets/` are `variable-binding.ts` (turns the library's `client.variables.bind` into signals) and `variable-frame.ts`; the dashboard is the data and the component that draws it (`dashboard-spec.ts`, `dashboard-view.ts`); the host for custom panels is `panel-host.ts`.
+- The wrappers in `core/session/` are `ServerConnection`, `ServerInfo`, `SimulationTime`, `RunCommands` and `EcuVariables`.
+- Do not copy `*.spec.ts` (the test helpers `@vehicle-sil/gui-client/testing` are not in the package).
+- No test copies them into an empty Angular project and builds it.
+
+Dependencies:
+
+| Dependency | Details |
+|---|---|
+| `@vehicle-sil/gui-client` | The package in "[Get the library](#get-the-library)" |
+| Angular | `@angular/core`, `@angular/common`, `@angular/common/http` (the same version as the sample; they use signals and the new control flow, and run without zone.js) |
+| RxJS | Used only inside the HTTP and connection wrappers. |
+| Angular Material | `button`, `form-field`, `input`, `select`, `slider`, `slide-toggle` and their theme (Material 3 `mat.theme`; the widgets read the CSS variables `--mat-sys-*`) |
+| CSS variables for spacing | `--app-space-1` to `--app-space-4` (`:root` in `gui/web/src/styles.css`; put them in the global styles of your project) |
+| `@angular/localize` | The widgets' text is Japanese marked with `$localize` and template `i18n` markers. |
+
+If you do not translate, adding `@angular/localize/init` to the polyfills is enough, and the text shows in Japanese. To add translations, follow how the sample loads them in `src/locale/` and `core/i18n/`.
+
+Setup needed in your project:
+
+- `provideHttpClient(withInterceptors([authInterceptor]))` (adds the token to API requests), and `provideAppInitializer(() => void inject(AuthToken))`, which reads the token before routing rewrites the URL (the same as the sample's `app.config.ts`).
+- `GUI_CLIENT` (`gui-client.ts`) creates one client from the page's `document.baseURI` and `AuthToken` (put `<base href="/">` in `index.html`, as the sample does). To use a client created elsewhere, replace `GUI_CLIENT` with `useValue`.
+- Lay out widgets with `<app-dashboard-view [spec]="spec" />`. `spec` is `autoDashboard(...)`, built from the variable list, or a `DashboardSpec` you write (see "[Dashboard data](#dashboard-data)"). To place widgets one by one, use the individual components (`<app-slider-widget [ref]="..." />` and others; see the `WIDGETS` table).
+
+### Dashboard files
+
+A feature of the sample screens (your own screen does not get it automatically; it can read the file's contents with `client.dashboard(file)` and use them).
+
+Put `<configuration file name without extension>.dashboard.yaml` (for `simulation.yaml`, `simulation.dashboard.yaml`) next to the configuration file, and the Variables screen lays out the variables as it says. Write it by hand or have an AI write it. For an example, see [examples/ecu_main/simulation.dashboard.yaml](../examples/ecu_main/simulation.dashboard.yaml).
+
+```yaml
+vehicle_sil_dashboard: 1
+title: Engine and dashboard            # optional: the title at the top of the screen
+panels: [panels/rpm-bar.js]            # optional: custom panel modules
+sections:
+  - title: Engine
+    items:
+      - variable: Engine.engine.throttle # <participant>.<variable name>
+        widget: slider                   # optional: the default widget if omitted
+        label: Throttle                  # optional: the variable name if omitted
+        options: { step: 5 }             # optional: settings of the widget
+      - panel: rpm-bar                   # custom panel (the custom element's name)
+        variables: [Engine.engine.speed]
+        options: { max: 4000 }
+      - auto: Engine                     # the remaining variables of Engine
+  - title: Dashboard
+    collapsed: true                      # optional: start collapsed
+    items:
+      - auto: Dashboard
+```
+
+| Key | Details |
+|---|---|
+| `vehicle_sil_dashboard` | The format version. Currently `1` |
+| `title` | The title shown at the top of the screen (optional) |
+| `panels` | Modules that define custom panels: `.js` / `.mjs` in `panels/` next to the file (optional; up to 16) |
+| `sections` | The list of sections. A section has `title`, `items` and `collapsed` (optional) |
+| `variable` of `items` | Shows a variable in a widget. The value is `<participant>.<variable name>` |
+| `panel` of `items` | Places a custom panel (see "[Custom panels](#custom-panels)") |
+| `auto` of `items` | Lays out, in that place and with default widgets, the variables of that participant that are not written elsewhere in the file |
+
+Each item has exactly one of `variable`, `panel` and `auto`. Unknown keys, values of the wrong type, and a second occurrence of the same key are errors.
+
+| Item | Keys allowed with it |
+|---|---|
+| `variable` | `widget` (a kind from "[Widget kinds](#widget-kinds)"; the default widget if omitted), `label`, `options` (the settings in "[Dashboard data](#dashboard-data)") |
+| `panel` | `label`, `variables` (a list of `<participant>.<variable name>`), `options` (defined by the panel) |
+| `auto` | None |
+
+- In `<participant>.<variable name>`, everything up to the first `.` is the participant name (the same notation as in scenarios).
+- "Elsewhere in the file" for `auto` means `variable` items and the `variables` of panels. The key saves you from listing every variable. Monitoring variables go in a collapsed section after that section. For a participant the current run does not have, the reason appears in that place.
+- **Errors**: when the GUI server reads the file, it returns YAML errors and shape errors with the file's line and column, the location in the data, and how to fix them. The screen shows the list of errors and lays out the variables automatically.
+- **Checking against the variables**: the screen checks whether each variable exists and whether its widget fits, against the current variable list, and shows the reason in the place of a widget that does not fit (the rest is drawn). A variable the current run does not have shows **Not a variable of this run**. Even before a run starts, you can see the widgets laid out as the file says.
+- **Reloading**: the screen reads the file again whenever the run changes. To see a change at once, click **Reload** on the screen. After changing a panel module, reload the page (a browser cannot replace a custom element once it is defined).
+- **Editor completion**: the JSON Schema is [gui/protocol/dashboard.schema.json](../gui/protocol/dashboard.schema.json). In an editor that uses the YAML language server, write `# yaml-language-server: $schema=<path to that file>` at the top of the file to get completion and validation.
+- **Limits**: 256 KiB, 16 levels of nesting, 50000 values, 200 sections, 2000 items in total (use `auto` when you have more), 1024 characters per value. YAML aliases (`&name` and `*name`), tags (`!!python/...` and others) and a second document (`---`) are not allowed.
+- **Saving**: you cannot rearrange widgets on the screen and save the layout (edit the file instead).
+- The server API is `GET api/dashboard?file=<configuration file>` (see "Dashboard files" in [gui/protocol/README.md](../gui/protocol/README.md#dashboard-files)); in the library, `client.dashboard(file)`.
+
+### Custom panels
+
+A feature of the sample screens (used from dashboard files).
+
+You can place screen components that you wrote yourself on the dashboard. A panel is an ES module that defines a custom element. Put it in `panels/` next to the configuration file and list it under `panels:` in the dashboard file (only listed modules are loaded). For an example, see [examples/ecu_main/panels/rpm-bar.js](../examples/ecu_main/panels/rpm-bar.js) (plain JavaScript; shows the engine speed as a bar).
+
+The screen loads all the modules in `panels:`, then creates an element with the name in `panel:`, sets the following properties, and inserts it into the page (they are usable in `connectedCallback`).
+
+| Property | Contents |
+|---|---|
+| `client` | The client library's `GuiClient` ([gui/client/README.md](../gui/client/README.md)) |
+| `options` | The item's `options` (a plain object) |
+| `variables` | The item's `variables` (`[{peer, name}]`) |
+
+- The panel can use `client` without importing anything itself. Read values with `client.variables.watch(...)` and write with `client.variables.write(...)`.
+- When the element leaves the page (the screen changed, the section was collapsed, the filter hid it), `close()` the watch in `disconnectedCallback`.
+- If a module cannot be loaded, no element named in `panel:` is defined, or the element cannot be created, the reason appears in that place (the other widgets are drawn).
+- If a panel of the same name from another configuration file was loaded earlier, this file's module fails to define it, and the earlier definition is used. A notice appears in that place in that case too (reload the page to draw it with this file's modules).
+- Errors inside a panel appear in the console of the browser's developer tools.
+- A module can be up to 1 MiB. It can import other modules with relative paths.
+- The GUI server serves only `.js` / `.mjs` in directories named `panels` under the root (in any location, except where `panels` or a directory above it is a symbolic link).
+
+**Trust**: a panel is trusted as code that you put on your own computer.
+
+- A panel runs in the same page as the screen, with a client that holds the token, and can do everything the GUI can: start a run (run the commands in configuration files in the root), stop it, control time, write variables.
+- Opening the Variables screen is enough to load panels, so do not make an untrusted repository the root (see "[Security](#security)").
+- The names of the loaded modules appear in the line "Laid out from the dashboard file …" on the Variables screen.
+- The GUI server serves only `.js` / `.mjs` in directories named `panels` under `--root` (it does not serve `..`, links that point out of `panels`, a `panels` that is a link, names that start with `.`, or other extensions).
+- Panels are served from the same origin, so the CSP (`script-src 'self'`) stays as it is, and inline scripts and `eval` cannot be used.
+
+**How panels are served**: a browser cannot add an `Authorization` header to a module import, so the module URL (`panels/<key>/...`) carries `<key>`, a random value created at each start. `<key>` is a different value from the token and appears only in the response of `api/dashboard`, which needs the token. Someone who learns it can read panel modules only (not use the API).
+
+## Reference for your own screen
+
+The rules that apply to your own screen served with `--web`. For the steps to build one, see the guide [Build your own screen for the browser GUI](howto/gui-screen.md).
+
+| To find | See |
+|---|---|
+| Getting the library file or package | "[Get the library](#get-the-library)" |
+| Which files are served and which are not | "[Files served with `--web`](#files-served-with---web)" |
+| What a screen cannot use (inline scripts, CDNs and others) | "[CSP restrictions](#csp-restrictions)" |
+| Handling the token | "[Receiving the token](#receiving-the-token)" |
+| Working with a development server such as Vite | "[Use a development server](#use-a-development-server)" |
+| Building sliders and lamps | "[Build a variable widget](#build-a-variable-widget)" |
+| Rules that the library does not enforce for you | "[Rules for building a screen](#rules-for-building-a-screen)" |
+| Using the API without a screen | "[Use from tools without a screen](#use-from-tools-without-a-screen)" |
+
+### Get the library
+
+| Form | Location in the prebuilt tools | Command to build it in the repository (run in `gui/web`) |
+|---|---|---|
+| Bundled file (`vehicle-sil-gui-client.mjs`) | `client/` and `gui_starter/` | `npm run build:client` (creates `build/gui-client/vehicle-sil-gui-client.mjs`) |
+| npm package (`vehicle-sil-gui-client-<version>.tgz`) | `client/` (the releases page has the same file) | `npm run pack:client` (creates `build/gui-client/vehicle-sil-gui-client-<version>.tgz`) |
+
+- **Bundled file**: put it in your screen's directory and import it with a relative path (it loads in the browser and in Node 22 or later).
+- **Package**: run `npm install <that .tgz>` in your project, then import it as `@vehicle-sil/gui-client` (`npm install <its URL>` also works). It is not published to the npm registry.
+  - It contains the bundled ESM (`dist/index.js`), the types (`types/`), a `package.json` with `exports`, the README and the LICENSE, and has no dependencies. Its version is the same as the GUI server's.
+  - Its types use the browser types (`DOM` in `lib`: `WebSocket` and others).
+  - Before it finishes, `npm run pack:client` installs the package it built, imports it from Node, and type-checks the TypeScript example in the screen template's README with both `nodenext` and `bundler` module resolution.
+  - `--out <dir>` changes the output location and `--version <version>` the version (`node gui/client/pack.mjs --help`).
+- The public API is the list in "Public API" in [gui/client/README.md](../gui/client/README.md#public-api).
+
+### Files served with `--web`
+
+`--web` takes the build output directory of your screen (`dist/` or similar). Without `--web`, the server serves the sample screens.
+
+| Directory given | What happens |
+|---|---|
+| Has no `index.html` (a file that is not a symbolic link) | The server says what to pass and exits with exit code 2. |
+| Has `package.json` or `node_modules` (the project itself, not its build output) | The same: exit code 2. |
+
+**Trust**: screen files can be read without the token (a browser cannot add the token when it loads pages and scripts). Other processes on the same computer can read them too, so do not put secrets in the build output. Do not give `--web` a place that others can write to (a shared directory, somewhere under `/tmp` and so on): a script placed there runs as your screen, with the token.
+
+**Files served**: only files inside that directory are served, and their type is decided by the extension.
+
+| What | What happens |
+|---|---|
+| Files with the extension `.html`, `.js`, `.mjs`, `.css`, `.json`, `.map`, `.webmanifest`, `.txt`, `.svg`, `.ico`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.woff`, `.woff2`, `.ttf` or `.otf` | Served. |
+| Other extensions, `..` and absolute paths, names that start with `.` (hidden files, and anything in hidden directories) | Not served: 404. |
+| Symbolic links (also those pointing inside the directory) and junctions, other names of the same file (Windows short names and others) | Not served: 404. |
+| Files larger than 64 MiB | A 404 that says so, plus one line on stderr (split the file in the build, or leave out source maps). |
+| Compressed files next to them (`.gz`, `.br`) | Not used. |
+
+After opening a file, the server checks again that it is the same file it checked (a file swapped for a link after the check is not read).
+
+**Paths without an extension**: paths such as `/settings/foo` are for the screen's routing (a single-page screen).
+
+| Request | Response |
+|---|---|
+| The browser loads a page (address entered, link, reload) | `index.html`. |
+| A request that is not a page load (`fetch` and others) | 404 (so that if you build an API URL under a screen path by mistake, you get no page instead of JSON). |
+| A path with an extension, and no such file | 404. |
+
+- Whether a request is a page load is decided by `Sec-Fetch-Mode: navigate`, or, for browsers that do not send it, by `text/html` in `Accept`.
+- Files without an extension are not served, even if they exist.
+- `api/`, `ws` and `panels/` directly under the root are the server API, so screen paths cannot use them.
+
+**Cache and Service Workers**: screen files get `Cache-Control: no-cache` (the browser revalidates every time, so after a rebuild, reloading the page shows the new files). Service Workers cannot be registered (requests with `Service-Worker: script` get 404). A registered Service Worker would keep showing an old screen even from a server started later on the same port, and that screen would receive the new token.
+
+**`baseUrl`**: set the client's `baseUrl` to the server root (`createClient({ baseUrl: new URL('/', location.href).href, ... })`). On a page without `<base href="/">`, `document.baseURI` is the current screen path (such as `/settings/foo`), and the API URL would become `/settings/api/app` (the sample screens have `<base href="/">`, so they use `document.baseURI`).
+
+### CSP restrictions
+
+Your own screen gets the same security checks as the sample screens (see "[Security](#security)"). The API and WebSocket do not answer without the token, `Host` and `Origin` are checked, and requests from other origins (CORS) get no answer. Screen files carry this CSP:
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+```
+
+| What | Allowed | Not allowed |
+|---|---|---|
+| Scripts | Loaded from files | Inline `<script>`, attributes such as `onclick="..."`, `eval` and `new Function` |
+| Other locations (CDNs and others) | None | Loading scripts, styles, fonts and images, and connecting |
+| Styles | Files, `<style>`, the `style` attribute | None |
+| Images | Same origin and `data:` URLs | `blob:` URLs |
+| Fonts | Same origin | `data:` fonts |
+| Other | None | WebAssembly, Workers from `blob:` URLs, form submission, frames, Service Workers |
+
+- Approaches that build templates at runtime (Vue builds that compile templates at runtime, for example) do not work; compile at build time.
+- Install with npm what you used to load from a CDN, and include it in the build.
+- If your build embeds fonts into CSS, configure it to write them to files.
+- The screen cannot be put in a frame (neither inside another page nor in an `<iframe>` of your own screen; every response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'`).
+- There is no way to change the CSP. If your screen cannot work within these limits, open an issue that says what you need.
+
+### Receiving the token
+
+| Stage | What happens |
+|---|---|
+| Server start | The token, created on every start, is appended after `#` in the printed URL (`http://127.0.0.1:<port>/#token=<token>`). |
+| The screen's first code | `takeToken(window)` reads `#token=` from the URL, removes it from the URL at once, stores it in the tab's sessionStorage (key `TOKEN_STORAGE_KEY`), and returns it. |
+| Reload | `takeToken(window)` returns the token from sessionStorage. |
+| Creating the client | Pass the token to `createClient({ token })`; the library sends it as `Authorization: Bearer` for the API and in the first message for the WebSocket. |
+| Token rejected (the server was restarted, for example) | `client.session.rejected` becomes true (WebSocket), and HTTP requests are rejected with an `HttpError` of status 401. |
+
+- The part of a URL after `#` is not sent to the server and does not appear in access logs.
+- `history.replaceState` removes it from the URL, and it also disappears from the tab's back and forward history. The browser's browsing history may still keep the URL you opened.
+- If neither the URL nor sessionStorage has a token, `takeToken` returns `null`, so the screen tells the user to open the URL the server printed.
+- When the screen's router rewrites the URL, `#token=` is lost, so call `takeToken` before routing starts.
+- Do not put the token in a URL query, in logs or on the screen.
+- If the token is rejected, open the screen again from the new URL the server printed.
+
+### Use a development server
+
+While you build a screen, serve it from your own development server (Vite or similar, which updates the screen when you save) and forward only the API (`api/` and `ws`) to the GUI server. With `--dev-origin`, the GUI server also accepts requests from the development server (the development server's `Host` and `Origin`). Make the development server listen on `127.0.0.1` (`--dev-origin` accepts only the form `http://127.0.0.1:<port>`).
+
+```js
+// vite.config.js
+const gui = 'http://127.0.0.1:8765'; // --port of the GUI server
+export default {
+  server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api/': { target: gui },
+      '^/ws$': { target: gui, ws: true },
+    },
+  },
+};
+```
+
+```sh
+uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation.yaml
+```
+
+The command above is the form for the repository. With the prebuilt tools, leave out `uv run`: `vehicle-sil-gui --port 8765 ...`.
+
+- The GUI server prints the URL through the development server (`http://127.0.0.1:5173/#token=...`) to stderr (`dev_url` with `--json`) and opens it in the browser.
+- If another program (including one of another user on the same computer) listens on the development server's port before the development server does, that page receives the token. Start the GUI server only after the development server has started listening with `strictPort`, and check that the page that opened is your own development server's.
+- Pages served by the development server do not get the GUI server's CSP, so for the final check, build the screen and try it with `--web`.
+- Developing the sample screens (`ng serve`) works the same way (`gui/web/proxy.conf.mjs`).
+
+### Build a variable widget
+
+The logic of a widget that shows and writes one variable, such as a slider, a switch or a lamp, is in the library's `client.variables.bind(ref, options)`. It does not depend on any framework, so a widget on your own screen only draws the returned `state` (a `Readable`) and calls `write(value)`.
+
+| Field of `state` | Contents | Values to compare in code |
+|---|---|---|
+| `info`, `reading` | The variable definition, and the last value (with the time it belongs to) | None |
+| `condition` | The value condition | `condition.kind`: `unavailable`, `missing`, `waiting`, `live`, `paused`, `stale`, `ended` |
+| `block` | Why it cannot be written now (`null` if it can) | `read-only`, `disconnected`, `ended`, `not-ready`, `missing`, `peer-disconnected`, `parameter`, `scenario`, `no-range`, `no-value` |
+| `writeStatus`, `pending` | The status of the last write, and the value sent and waiting for its result | `writeStatus.kind`: `idle`, `sending`, `queued`, `applied` and others |
+
+The meanings of `condition.kind` are below. For the meanings of the values of `block` and `writeStatus` and the detailed rules, see "Build widgets (`bind`)" in [gui/client/README.md](../gui/client/README.md#build-widgets-bind).
+
+| `condition.kind` | Meaning |
+|---|---|
+| `unavailable` | The variable feature is not available (not running, for example) |
+| `missing` | A variable this run does not have |
+| `waiting` | No value yet |
+| `live` | A value while the simulation runs |
+| `paused` | A value at the paused time |
+| `stale` | A stale value (with a reason) |
+| `ended` | The last value of a run that ended |
+
+- Writes are combined into one per variable and per run. However many places `bind` the same variable, nothing is sent twice, and every place sees the same state.
+- Of the values that come before the server has received the previous write, only the last is kept and sent afterward.
+- A write that got no answer is never resent automatically.
+- On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
+- The working models are the slider and the lamp of the screen template (`gui_starter/main.js`). The widgets of the sample screens (Angular) also use this API, turned into signals (see "[Add a widget](#add-a-widget)").
+
+### Screen template (`gui_starter`)
+
+[examples/gui_starter](../examples/gui_starter/) is the smallest screen without a build step, using only the library (plain HTML, ES modules and the bundled library file). In the prebuilt tools, it is in `gui_starter/`.
+
+- It connects, checks a configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp built with `client.variables.bind`.
+- Its README explains how to use it.
+- `scripts/verify-gui.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server.
+
+### Use from tools without a screen
+
+[examples/gui_client](../examples/gui_client/) in the repository has single-file examples in plain JavaScript that call the API without a screen (Node 22 or later). They are not included in the prebuilt tools archive.
+
+| File | Contents |
+|---|---|
+| `run.mjs` | Written with only the standard `fetch` and `WebSocket`, without the library. |
+| `run-with-library.mjs` | Uses the bundled library file. |
+| `variables.mjs` | Reads and writes ECU variables with the library. |
+
+- `run.mjs` and `run-with-library.mjs` check, start a run, read the events, wait for the end, and return an exit code from the result.
+- `variables.mjs` starts paused, writes one value before the first step, advances and pauses, and checks the value at the paused time (exit code 0 if it is as expected).
+- The URL is passed in an environment variable (as an argument, the token would be visible to other users in the process list).
+
+  ```sh
+  VEHICLE_SIL_GUI_URL='<URL the server printed>' node examples/gui_client/run.mjs simulation.yaml
+  ```
+
+- They run outside a browser, so they send the server's own origin as `Origin`.
+
+### Rules for building a screen
+
+The library does not enforce these rules for you. The sample screens follow them; do the same on your own screen.
+
+| Rule | If you do not |
+|---|---|
+| Do not send fields for features missing from the launcher's `features` in check and start requests | The server rejects the request with 400. |
+| Before writing, check whether the variable can be written | The server rejects the write (`refused` of `WriteError`), but you cannot show in advance that it is disabled. |
+| Check whether a value is stale, and show it | A stale value looks like the current value. |
+| Tell monitoring variables apart from the variables the ECU declared | Monitoring variables get mixed in with the application's variables. |
+| Find out over HTTP why a handshake was rejected | The browser cannot see the reason. |
+
+**Check and start requests**:
+
+- Do not send fields for features that the launcher's `features` (`client.app.get()?.launcher.features`) lack.
+
+  | Field | `features` needed |
+  |---|---|
+  | `manual` | `manual-participants` |
+  | `speed` | `speed` |
+  | `start_paused` | `start-paused` |
+  | `scenario` | `scenario` |
+
+- Do not put a name from `disable` into `manual` (the server rejects it with 400).
+- If a scenario is selected, set `start_paused` to false (a scenario cannot start paused).
+- Send a check only after the response to the previous check (the server runs checks one at a time).
+
+**Whether a variable can be written**: if you build your widgets with `client.variables.bind`, `block` of `state` checks these rules. A screen that calls `write` directly checks them itself.
+
+- A variable whose `writable` is false (`output`) cannot be written.
+- A `parameter` can be written only before the first step (`beforeStart` of `client.time.state`).
+- A run that is running a scenario (the session copy has `scenario`, and the launcher is running) cannot be written.
+- A participant not connected to the Control Server (`peers[].connected` of `client.variables.state` is false) cannot be written either.
+
+**Whether a value is stale**: `condition` of `bind`'s `state` reports `stale` with the reason. A screen that uses `watch` directly checks this itself.
+
+- When `client.variables.state` is `ready` and has a `reason`, reading values keeps failing (the values are the last ones read).
+- Values of a participant that is not connected are stale too.
+
+**Monitoring variables**: decide which variables the ECU did not declare (`ecu.connected`, `peer.`, `j1939.<network>.`) by `participants[].variables[].builtin` in the check result. Where there is no `builtin` (monitoring variables added during the run, older launchers), decide by the name prefix (`ecu.`, `peer.`, `j1939.`).
+
+**Why a handshake was rejected**: when the WebSocket handshake is rejected, the browser cannot see the reason. When `client.connection.failures` grows, call `client.loadApp()` again: the HTTP response (its error text) gives the reason.
+
+**A participant you started yourself is still running**: currently, the only sign that a participant remains after the run is a line of text in the launcher's log (the `vehicle_sil_launch` lines). There is no machine-readable field for it.
+
+## Known limitations
+
+| What | Limitation |
+|---|---|
+| Rearranging widgets | You cannot rearrange widgets on the Variables screen and save the result. Write the layout in a dashboard file. |
+| Variable values | The last value at the time the GUI server read it, not a record of every value (in a fast simulation, the values in between do not arrive). |
+| Values that remain after the end | The last values read. If the launcher closes the Control Server early, they may be slightly older than the values at the end. |
+| A GUI server installed outside the repository | The optional dependency `vehicle-sil-gui[variables]` (grpcio, protobuf) alone is not enough for variables. |
+| Older launchers (no `paused` in the `time` event) | They report virtual time only at the start (0) and on reaching `stop_at_ms`, so the screen does not show the 0 while the run runs. |
+| Windows | Only starting and checking are verified (`scripts/package.py verify`). |
+
+- **gRPC stubs**: reading and writing variables assumes the `vehicle-sil-gui` of the prebuilt tools (which bundles the stubs), or a GUI server run inside the repository (`uv run vehicle-sil-gui` after `uv sync`). The reason: the gRPC stubs are generated from the repository's `proto/` with `grpcio-tools` (or, failing that, the ones that `python -m vehicle_sil_control.generate` made are used).
+  - With a GUI server installed outside the repository, generate the stubs yourself and pass them in `VEHICLE_SIL_CONTROL_STUBS` (as with `PYTHONPATH`, the GUI server loads the code placed there; name only a directory of your own).
+  - The stubs are not in the Python package (`vehicle-sil-gui`); they are in the prebuilt tools.
+- **Windows**: how a running launcher is stopped (Ctrl+Break, `taskkill`) and the permissions of the temporary files have not been verified in practice. When you close the console, Windows ends the processes in about 5 seconds, so the server exits without waiting for `--stop-timeout` (the launcher sees the end of stdin).
+
+## Development
+
+Directories and tests for developing the GUI itself.
+
+| Part | Location |
+|---|---|
+| GUI server | `gui/server` (Python package `vehicle_sil_gui`, a member of the uv workspace) |
+| Sample screens | `gui/web` |
+| Client library | `gui/client` (the screens use the server through it) |
+| Server API reference | `gui/protocol` (README and examples) |
+
+### Running the tests
+
+`scripts/verify-gui.py` runs everything. For the server only, add `--skip-web`.
+
+| Test | What runs it |
+|---|---|
+| Server tests | `scripts/verify-gui.py` |
+| Screen tests | `scripts/verify-web.py` (`verify-gui.py` calls it) |
+| A test that runs the minimal example `examples/gui_client/` with the replay launcher | `scripts/verify-gui.py` |
+| Library tests | The `client` stage of `verify-web.py` |
+| Bundling the library into one file | The `bundle` stage of `verify-web.py` |
+| Package | The `package` stage of `verify-web.py` |
+| Serving the screen template `examples/gui_starter` with `--web` and running it in a browser | The end-to-end test `starter.spec.ts` |
+
+The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map.md](code-map.md#timeouts-and-the-scale-factor)).
+
+### The replay launcher
+
+Instead of the launcher, the tests use a launcher that replays recordings of the real launcher's output (`gui/server/tests/replay_launcher.py`).
+
+| Item | Details |
+|---|---|
+| Recordings (`gui/server/tests/recordings/`) | For the configuration files in `gui/server/tests/configs/`, run with the real launcher and the ECUs of the ecu_main example: the event lines, stderr, the exit code, `check --json`, `version --json`, and where the commands that the tests write (stop, time commands) come. |
+| Choosing a recording | When there are several recordings for the same arguments, the commands that arrive choose the recording. |
+| Arguments or commands without a recording (including a command that comes later than in the recording) | The replay launcher writes to stderr what to record and exits; that test fails. |
+| What the real launcher cannot be made to do (broken lines, abnormal exit, lateness, not reading, not stopping and so on) | A `# replay-fault:` line in the configuration file (or `REPLAY_FAULT`) changes the recording as it is replayed. |
+
+- That a command without a recording arrived is checked by the server tests' `gui_server` and by the end-to-end tests' startup code, which look at whether the report file written by the replay launcher is empty.
+- By default, the replay launcher stands in for a launcher without a Control Server (variables show **Not available**).
+- Variable tests add `control-server` to `REPLAY_FEATURES` and have it start a fake Control Server (`gui/server/tests/fake_control.py`; gRPC). The `--describe` output of the variables is replaced to match how the fake Control Server produces values. `REPLAY_VARIABLES=more` adds variables that cover every widget kind.
+- The GUI server's source of variables (`Source` in `vehicle_sil_gui/source.py`) can be replaced; the ordering tests (`test_variable_units.py`) use a source that answers as scripted.
+- You can also run the GUI with the replay launcher.
+
+  ```sh
+  uv run vehicle-sil-gui --launcher gui/server/tests/replay_launcher.py gui/server/tests/configs/simulation.yaml
+  ```
+
+### Compare recordings with the real launcher
+
+To check that the recordings match the real launcher, run:
+
+```sh
+python3 gui/server/tests/record_launcher.py --launcher build/<preset>/tools/launch/vehicle_sil_launch --compare
+```
+
+- It runs on Linux and uses the ECUs of the ecu_main example built next to the launcher. CI also runs it in linux-gcc-release.
+- With a launcher built without a Control Server, it skips the cases that need one, compares the features of `version --json` without that feature, and says so.
+- A case whose run fell behind real time (on a heavily loaded computer) is recorded again up to 3 times, and the summary line says so.
+
+| What is compared | Details |
+|---|---|
+| Order of events | Times, logs, and the number and position of log_dropped are excluded. |
+| Values the launcher decides | Finding codes, whether commands were accepted and their `ms`, participant states and exit codes, `result` / `simulation` / `interrupted_by` of the result and its finding codes, the check result and its finding codes, the states of scenario steps, the features of `version --json` |
+| Keys and types | The keys and types of every kind of event, and of every object and array element in them |
+| Other | The commands written, the exit code, whether there is stderr output |
+
+- In the order of events, participant events among other events may come in any order relative to each other. The order of the states of one participant is compared.
+- When recording, it also checks that the real lines begin with `event`, `seq` and `t_ms`, that `seq` increases by 1 from 0, and that `t_ms` never goes back.
+
+### Re-record
+
+When the launcher changes, record again the cases that `--compare` points out.
+
+```sh
+python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <case>...
+```
+
+- Without cases, it records all of them. Local paths, user names, host names and tokens are replaced with fixed markers; if any remain, the recording is not written.
+- Read what changed with `git diff gui/server/tests/recordings`.
+
+| What changed | What to do |
+|---|---|
+| Times (`gap_ms`, `sim_ms` of `time`), the number of time and log lines, times in log text (`t=… ms` of Dashboard) | These may change with every recording. |
+| Order of events, keys, types, finding codes, whether commands were accepted, exit codes | The launcher's behavior changed. Where the GUI uses it, fix the GUI. |
+
+- Record again also when you change a configuration file (a recording is paired with the contents of its configuration file; if they differ, a test fails and tells you).
+- When a test uses new arguments or commands, add a case to `CASES` in `record_launcher.py` and record it.
+
+### Verify with the real launcher
+
+`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch` (or the environment variable `VEHICLE_SIL_GUI_LAUNCHER`) runs the following tests with the ECUs of the ecu_main example built next to that launcher. Without a launcher, these show as "skipped" and are left out.
+
+| Test | What it checks |
+|---|---|
+| `gui/server/tests/test_real_launcher.py` | That the recordings match the current real output (`record_launcher.py --compare` above) |
+| `test_real_variables.py` (with a launcher that has a Control Server) | Reading and writing variables, that a saved scenario passes the real check and runs, and the example `examples/gui_client/variables.mjs` |
+| Screen end-to-end tests (`gui/web/e2e/real/`) | That writing the Engine throttle on the Variables screen changes the engine speed, that the example dashboard file's layout is followed, and that the custom panel shows the engine speed |
+
+If the launcher's `features` have `scenario-control`, the screen end-to-end tests also check that values are visible while a scenario runs, that writing widgets show the reason and do not write, and that pause, resume and stop work.
+
+## See also
+
+| Document | Contents |
+|---|---|
+| [Build your own screen for the browser GUI](howto/gui-screen.md) | How to build a screen that shows one variable, starting from the screen template |
+| [gui/client/README.md](../gui/client/README.md) | The client library API |
+| [gui/protocol/README.md](../gui/protocol/README.md) | The server's HTTP and WebSocket API |
+| [gui/web/README.md](../gui/web/README.md) | Developing the sample screens |
+| [examples/gui_starter/README.md](../examples/gui_starter/README.md) | How to use the screen template |
+| [simulation-run.md](simulation-run.md) | The launcher's `run` and its terms |
+| [control-api.md](control-api.md) | ECU variables and the Control API |
+| [scenario.md](scenario.md) | How to write scenario files |
