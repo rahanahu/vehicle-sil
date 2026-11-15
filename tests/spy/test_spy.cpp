@@ -811,7 +811,7 @@ TEST_CASE(spy_changes_nothing_on_the_bus_and_sends_nothing)
     }
 }
 
-// The example of docs/j1939-guide.md ("聞くだけの participant"), as written there but main().
+// The example of docs/j1939-guide.md ("Listen-only participants"), as written there but main().
 namespace guide {
 
 namespace j1939 = vehicle_sil::j1939;
@@ -821,23 +821,23 @@ namespace cal {
 inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
 }
 
-class BlockWatch {                                   // 見張り: Scope& と自分の設定を取る。継がない、Listener を作らない
+class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
 public:
     BlockWatch(vehicle_sil::spy::Scope& s, j1939::Address from) {
-        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // 登録は Scope が持つ（解除を書かなくてよい）
-            if (m.source != from || m.time < latest_) { return; }        // 渡る順は前後しうる。新しさは時刻で比べる
+        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // the Scope keeps the registration (no removal to write)
+            if (m.source != from || m.time < latest_) { return; }        // the order of delivery can vary: compare times to find the newest
             latest_ = m.time; ++count_; bytes_ = static_cast<int>(m.data.size());
         });
-        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // "block.count" になる
+        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // becomes "block.count"
     }
 private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0;
 };
 
 class CalSpy {
 public:
-    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // ノードなし: 何も送らない
-        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count、block.bytes
-    }                                                                               // spy.missed と内訳は Spy が出す
+    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
+    }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
 
