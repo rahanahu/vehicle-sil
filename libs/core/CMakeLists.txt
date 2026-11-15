@@ -5,6 +5,7 @@ add_library(vehicle_sil_core STATIC
   src/bind_host.cpp
   src/deadline_waiter.cpp
   src/failure_check.cpp
+  src/participant_configuration.cpp
   src/participant_runtime.cpp
   src/simulation_controller.cpp
   src/simulation_watch.cpp

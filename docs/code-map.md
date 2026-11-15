@@ -532,6 +532,7 @@ Each entry gives, in this order, a table of the main classes and functions (head
 | Name | Location |
 |---|---|
 | `ParticipantRuntime` | `vehicle_sil/core/participant_runtime.hpp` |
+| `default_participant_configuration()`, `merged_participant_configuration()` | `core/participant_configuration.hpp` |
 | `SimulationController`, `StartWindow` | `core/simulation_controller.hpp` |
 | `TickScheduler` | `core/tick_scheduler.hpp` |
 | `bind_host()` | `core/bind_host.hpp` |
@@ -1482,7 +1483,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 
 Where to change:
 
-- `default_participant_configuration()` and related functions in `libs/core/src/participant_runtime.cpp` (the listen address, TCP on Windows, TCP for the registry on every OS)
+- `default_participant_configuration()` and related functions in `libs/core/src/participant_configuration.cpp` (the listen address, TCP on Windows, TCP for the registry on every OS)
 - `merged_participant_configuration()`, which overlays a given configuration, and `--silkit-config` of ecu_main
 - Users of the defaults: the controller in `libs/launch/src/run.cpp`, and the lines addressed to other computers
 - Users of the defaults: the environment variables in `run_participants.cpp`, `environment` of the manual command

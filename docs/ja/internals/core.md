@@ -186,7 +186,7 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 
 ### 設定を渡さないとき
 
-`ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
+`ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_configuration.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
 
 | 条件 | 変えるキー |
 |---|---|
@@ -300,7 +300,7 @@ TCP だけにするのは、次の理由です。SIL Kit の registry は、TCP 
 
 - `name_in_use_wait` の既定は 5000 ms です。`PeerOptions` にも同じものがあります。`Simulation` は `start_timeout` を超えない値にします。
 - 作り直すのは、同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い PC、ネットワーク越し）。
-- 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `SilKit::ProtocolError` です。
+- 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `NameInUseError`（`SilKit::ProtocolError` の一種）です。
 - ほかの失敗は、すぐに投げます。
 - SIL Kit の participant を自分で作るプログラム（テストの生の Agent など）も、この関数を使えます。
 

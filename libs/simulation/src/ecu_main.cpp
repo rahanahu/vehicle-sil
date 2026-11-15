@@ -1010,23 +1010,29 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         {
             throw; // a bad name or step (std::invalid_argument is a logic_error)
         }
+        catch (const NameInUseError& e)
+        {
+            if (!c.registry_uri)
+            {
+                throw;
+            }
+            // The registry was reached and refused the name: the message says so itself
+            // (create_participant()).
+            throw std::runtime_error("cannot join the simulation at " + in_quotes(*c.registry_uri) + ": " + e.what());
+        }
         catch (const std::exception& e)
         {
             if (!c.registry_uri)
             {
                 throw;
             }
-            // SIL Kit: the participant connects to the registry here. A name in use is said by the
-            // message itself (create_participant()): the registry was reached.
-            const std::string what = e.what();
+            // SIL Kit: the participant connects to the registry here.
             throw std::runtime_error(
-                "cannot join the simulation at " + in_quotes(*c.registry_uri) + ": " + what +
-                (what.find("the registry refused the name") != std::string::npos
-                     ? std::string{}
-                     : " (check that vehicle_sil_launch run (or the registry) is started first and waits for the "
-                       "participants; that the URI has the address of the computer it runs on (127.0.0.1 on this one) and "
-                       "the port of its registry_uri, e.g. silkit://192.0.2.10:8500; that a firewall there lets this "
-                       "computer in; and that no other participant there is named " + in_quotes(name) + ")"));
+                "cannot join the simulation at " + in_quotes(*c.registry_uri) + ": " + e.what() +
+                " (check that vehicle_sil_launch run (or the registry) is started first and waits for the "
+                "participants; that the URI has the address of the computer it runs on (127.0.0.1 on this one) and "
+                "the port of its registry_uri, e.g. silkit://192.0.2.10:8500; that a firewall there lets this "
+                "computer in; and that no other participant there is named " + in_quotes(name) + ")");
         }
         if (stop_on_signal)
         {
