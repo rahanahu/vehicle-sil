@@ -14,7 +14,7 @@
 //   run_start.*          RunStart, RunStartWindow, StartShared   the wait, the start window, the limits
 //   run_start_limit.hpp  StartLimit       when the start is given up
 //   run_close.hpp        close_within()   the wait for the end of the SIL Kit objects, with a limit
-//   run_watch.*          RunWatch         the watch of the running simulation
+//   run_watch.*          RunWatch         the watch of the running simulation, then what is settled at its end
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
 //   timeline.cpp         TimelineRecord, format_timeline_json()   run --timeline: what the scenario's
@@ -318,7 +318,8 @@ public:
             {
                 ran = true;
                 scenario_.start(*controller, outcome_);
-                interrupts_at_end_ = watch_.watch(*controller);
+                const RunWatch::Watched watched = watch_.watch(*controller);
+                interrupts_at_end_ = watch_.settle(*controller, watched);
                 control_.note_late_values(outcome_, *transport);
                 control_.note_late_maps(outcome_);
             }
@@ -328,7 +329,7 @@ public:
         ctx_.commands.detach();
         if (!ran)
         {
-            // As RunWatch::watch() does: an interrupt from here on comes while the participants end (a stop
+            // As RunWatch::settle() does: an interrupt from here on comes while the participants end (a stop
             // accepted before the detach counts as one of the run).
             interrupts_at_end_ = ctx_.interrupts();
         }

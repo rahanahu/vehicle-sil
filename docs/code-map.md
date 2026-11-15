@@ -851,7 +851,7 @@ Implementation:
 | The overall flow of `run` | `src/run.cpp` |
 | The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |
 | This computer's addresses (the URI shown to other computers) | `src/host_addresses.cpp` |
-| `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
+| The watch of the running simulation (`RunWatch::watch()`), what is settled when it is over (`RunWatch::settle()`: the scenario's end, the timing, the traffic, how the simulation ended), and `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
 | The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `tools/launch/control_server.cpp` |
 
@@ -1813,6 +1813,7 @@ Where to change:
 |---|---|
 | Reading and checking | `libs/launch/src/scenario.cpp` (the file, parameters, variants, steps), `scenario_values.cpp` (variables and values), `scenario_waves.cpp` (waves and points), `scenario_inputs.cpp` (`inputs` and dithers). The class `Reader` is in `scenario_reader.hpp` |
 | Advancing the steps | `libs/launch/src/scenario_run.cpp` |
+| Why a step failed: the conditions not met and the writes not applied, in the message and in the record (`failed.conditions[]`, `failed.writes[]`) | `libs/launch/src/scenario_failure.cpp` (`unmet()`, `unmet_values()`, `failed_write()`, `applied_text()`, `during()`) |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
 | Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
@@ -1894,7 +1895,7 @@ Where to change:
 | What | Location |
 |---|---|
 | The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
-| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed), `close_record()` (the end of the record, `recorded_to_ms`) |
+| Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed; what it says comes from `scenario_failure.cpp`), `close_record()` (the end of the record, `recorded_to_ms`) |
 | The file format | `format_timeline_json()` in `timeline.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/json/include/vehicle_sil/json/json_writer.hpp` |
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
@@ -1980,7 +1981,7 @@ Where to change:
 | `senders`, `receivers` and `delivered` of a network | The functions of `TrafficNetwork` |
 | The network names and the positions of the counters, from the schema of the hello | `traffic_schema()` |
 | Who is on which network | `traffic_plan()` (from `seen_networks()`) |
-| Reading at the end | `RunWatch::watch()` in `run_watch.cpp` (`RunSamples::finish()`) |
+| Reading at the end | `RunWatch::settle()` in `run_watch.cpp` (`RunSamples::finish()`), which `Runner::run()` calls after `RunWatch::watch()` |
 | The text and the JSON | `traffic_text()` and `write_run_json()` in `run_format.cpp` |
 
 Documentation to update:
