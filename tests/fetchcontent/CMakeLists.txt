@@ -33,6 +33,7 @@ if(TARGET vehicle_sil_launch)
     COMMAND ${CMAKE_COMMAND}
             -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
             -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/template
+            -DDOCS=${VEHICLE_SIL_TESTED_DOCS}
             -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
             -DC_COMPILER=${CMAKE_C_COMPILER}
             -DCXX_COMPILER=${CMAKE_CXX_COMPILER}

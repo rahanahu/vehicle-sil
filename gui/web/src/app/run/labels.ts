@@ -170,7 +170,7 @@ export const LATE_ANNOUNCEMENT = $localize`実時間に遅れました。`;
 export const WAITING_TEXT = $localize`送った命令へのランチャーの答えを待っています。`;
 
 /**
- * 変数を読み書きする口のつながり方の 1 文。trouble: この実行では変数を読み書きできない（ランチャーが警告を出す）。
+ * ECU の変数との接続の状態の 1 文。trouble: この実行では変数を読み書きできない（ランチャーが警告を出す）。
  * 知らない状態は、そのまま出す。
  */
 export function controlLabel(link: ControlLink): { text: string; trouble: boolean } {

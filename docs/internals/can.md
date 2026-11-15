@@ -1,194 +1,593 @@
-# CAN の共通基盤
+# CAN foundation
 
-vehicle-sil 自体を直す人と、CAN の上に自分のプロトコルを作る人向けです。ポート、ホスト、ドライバー、仮想バス、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator の契約を扱います。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
+[日本語](../ja/internals/can.md)
 
-`vehicle_sil::can` と `vehicle_sil::can_silkit` は、J1939 スタック（`vehicle_sil::j1939`）の土台です。CAN の 11 ビットと 29 ビットのフレームを扱い、J1939 以外のプロトコルも載せられます。API はまだ変わることがあります。
+This page specifies the CAN port, host, drivers, virtual bus, SIL Kit port, bus timing and the simple CAN Network Simulator: how they behave, and the guarantees and limits the implementation keeps. It also gives the contract of the interfaces (`Port`, `Steppable`) that you implement to build your own protocol on CAN.
 
-- `vehicle_sil::can` は SIL Kit と Vector XL に依存しません。SIL Kit をリンクしない単体テストの実行ファイルをビルドすることで、毎回確かめます。
-- ステップを回す仕組み（ホスト、ドライバー、時計、時間の領域）は、バスの種類によらない `vehicle_sil::step` にあります。`vehicle_sil::can` の `Host` はその上に作ってあり、`StepDriver`、`RealTimeDriver`、`RealTimeClock`、`TimeDomain` などは `vehicle_sil::step` のものの別名です（どちらの名前でも同じ型です）。
-- 時刻はすべて `SimTime` です。プロトコル処理はスレッドを持たず、時計を読みません。仮想時間では SIL Kit または `StepDriver` の時刻、実時間では `RealTimeDriver` の時計（開始からの経過時間）です。
-
-## 値の型
-
-- `Frame` はクラシック CAN のデータフレームです（RTR、CAN FD、CAN XL は表しません）。`length` はバイト数（0〜8）で、DLC の符号ではありません。比較は ID、形式（11 ビット / 29 ビット）、`length` までのデータで行います。
-- `TimedFrame` は時刻付きのフレームです。受信ではバックエンドが付けた時刻、送信では送るステップの時刻です。
-
-## ポートの契約（`Port`）
-
-- `release_before(now, sink)` は、時刻が `now` より前の受信フレームを、時刻順、同じ時刻なら到着順に渡します。同じ時刻のフレームを並べ替えません。最終的な順序はプロトコル処理が決めます。時刻がちょうど `now` のフレームは次の呼び出しで渡します。
-- 自分が送ったフレームは受信しません（エコーと送信の確認はポートで捨てます）。
-- `send()` は同期の結果を返します。`Accepted`（受け付けた）、`QueueFull`（送信キューが満杯。後のステップで出し直せる）、`Failed`（送れないフレーム、バックエンドの誤り）です。
-- `send()` の後にフレームがどうなったか（送信された、バックエンドが捨てた）をバックエンドが知るときは、後から事象（`PortEvent`）で知らせます。`release_events_before(now, sink)` は、時刻が `now` より前の事象を、時刻順、同じ時刻なら到着順に渡します。既定の実装は事象を出しません。
-- `release_before()`、`release_events_before()`、`send()` は、ドライバーのスレッドだけから呼びます。
-- ポートは時刻の領域を持ちます。`Virtual`（仮想時間。仮想バス、時刻同期ありの SIL Kit）と `RealTime`（実時間ドライバーの時計。時刻同期なしの SIL Kit、Vector XL）です。
-- `RealTime` のポートは、受けたフレームと事象に、ドライバーと共有する時計で到着時刻を付けます（下の「実時間での駆動」）。到着のたびに `set_wakeup()` で渡された関数を到着時刻付きで呼び、ドライバーを起こします。`Virtual` のポートは `set_wakeup()` を無視します。
-
-## ポートの事象（`PortEvent`）
-
-自分が送ったフレームについて、`send()` の同期の結果の後に分かったことです。
-
-| 種類 | 意味 | 時刻 |
-|---|---|---|
-| `TransmitCompleted` | フレームが送信された | バスを模擬するバックエンドでは送信の終わり。それ以外ではバックエンドが送信を確認した時刻 |
-| `TransmitFailed` | `send()` が受け付けたフレームを、バックエンドが送らなかった（送信キューの満杯、取り消し、バスから切り離されている） | バックエンドが知らせた時刻 |
-| `ReceiveOverflow` | 受け箱が満杯で受信フレームを捨てた。`count` は捨てた数（0 は数が分からない分を含む） | 捨てたフレームのうち最も早い時刻 |
-| `BusStateChanged` | コントローラーのエラー状態が `bus_state`（`ErrorActive`、`ErrorPassive`、`BusOff`）になった | 変わった時刻 |
-| `ErrorFrame` | バスでエラーフレームを見た | 見た時刻 |
-
-- 送信の事象は CAN 識別子（`id`）と、分かれば送ったときの `TimedFrame::time`（`send_time`）を持ちます。同じ識別子のフレームは `send_time` で見分けます。データは持ちません。
-- `ReceiveOverflow` は、捨てたフレームごとには出しません。ポートが次に事象を渡すまでに捨てた数を、1 つの事象にまとめます。この事象は事象の受け箱の枠を使わないので、受け箱が満杯でも届き、送信の事象を押し出しません。
-- バックエンドが知り得ない種類は出しません（報告なし）。
-
-| バックエンド | 出す事象 |
+| Section | Contents |
 |---|---|
-| 仮想バス | タイミングありなら `TransmitCompleted`。`ReceiveOverflow`。故障注入と通信断の `TransmitFailed`。注入した任意の事象 |
-| `SilKitCanPort` | SIL Kit の送信確認から `TransmitCompleted` と `TransmitFailed`。SIL Kit のエラー状態の通知から `BusStateChanged`（ネットワークシミュレーターが出す。SIL Kit の簡易シミュレーションは出さない）。`ReceiveOverflow` |
-| `ExternalPortAdapter`（Vector XL） | `ErrorFrame`。外部ポートのあふれは数の分からない `ReceiveOverflow`。バス状態と送信の結果は出さない |
+| [Value types](#value-types) | `Frame`, `TimedFrame` |
+| [The port contract (`Port`)](#the-port-contract-port) | Receive order, the result of `send()`, time domains |
+| [Port events (`PortEvent`)](#port-events-portevent) | Transmit results, overflows, bus state notifications, and which backend emits which |
+| [The `Steppable` contract](#the-steppable-contract) | The call order and rules to follow when you build a protocol stack |
+| [The host (`Host`)](#the-host-host) | Phases of one step, failed state, `post()`, time domain |
+| [Driving in virtual time](#driving-in-virtual-time) | `StepDriver`, `bind_host()` |
+| [Driving in real time (`RealTimeDriver`)](#driving-in-real-time-realtimedriver) | When a step runs, arrival times, shutdown order |
+| [Virtual bus (`VirtualCanBus`)](#virtual-bus-virtualcanbus) | With and without timing, fault injection, disconnection |
+| [Observing raw frames (`TapPort`)](#observing-raw-frames-tapport) | What is reported and in what order, listener constraints |
+| [SIL Kit port (`SilKitCanPort`)](#sil-kit-port-silkitcanport) | Start and close, times, transmit acknowledgements, options |
+| [Bus timing (`CanBusModel`)](#bus-timing-canbusmodel) | Transmission time, arbitration, what is not simulated |
+| [Simple CAN Network Simulator](#simple-can-network-simulator-vehicle_silcan_netsim-vehicle_sil_can_bus_simulator) | Timing and determinism, bit rate, controller modes, configuration, known limitations |
 
-- `Host` は、ステップの段階 2 で、そのステップのフレームより先に事象を `Steppable::on_port_event()` に渡します。`on_port_event()` は記録だけにします。送信はしません（送信は `flush()` で行います）。
-- J1939 スタックは、事象を `NetworkStatistics`（`frames_transmitted`、`transmit_failures`、`port_receive_overflows`、`port_overflow_events`、`bus_state_changes`、`error_frames`）に数え、最新のバス状態を `Network::bus_state()` に保つだけです。プロトコルの処理には使いません（バスオフでも動作を変えません）。
-- 種類はこれから増えることがあります。`Steppable` は知らない種類を無視します。
+`vehicle_sil::can` and `vehicle_sil::can_silkit` are the foundation of the J1939 stack (`vehicle_sil::j1939`). They handle 11-bit and 29-bit CAN frames and can carry protocols other than J1939. The API is not stable yet.
 
-## `Steppable` の契約
+`vehicle_sil::can` does not depend on SIL Kit or Vector XL. Every build verifies this by building a unit test executable that does not link SIL Kit.
 
-CAN の上にプロトコルスタックを作るときの拡張点です。J1939 の `Network` はこの契約で作っています。
+The machinery that runs steps (host, drivers, clocks, time domains) is in `vehicle_sil::step`, which does not depend on the kind of bus. The `Host` of `vehicle_sil::can` is built on it. `StepDriver`, `RealTimeDriver`, `RealTimeClock`, `TimeDomain` and the like are aliases of the `vehicle_sil::step` types (both names give the same type).
 
-- ホストは 1 ステップに、`begin(now)`、ポートの事象ごとの `on_port_event()`、フレームごとの `receive()`、`process()`、（アプリの処理の後に）`flush(port)` の順で呼びます。最初のステップの前に `start(step_size)` を 1 回呼びます。
-- `now` は呼び出しごとに増えます。`Steppable` はスレッドを持たず、時計を読みません。時刻は `now` と、フレームと事象の時刻だけです。呼び出しは常に 1 つのスレッド（ドライバーのスレッド）からで、ロックは要りません。
-- `receive()` と `on_port_event()` では記録だけにします。処理は `process()` で、送信は `flush()` でポートに出します。
-- `receive()` に渡るフレームの時刻は `now` より前です。同じ時刻の、別の送信者のフレームの順序はバックエンドによって違うので、`Steppable` が決まった規則で並べます。
-- `start()` は、そのプロトコルが動けないステップ幅なら例外を投げます（ホストが失敗状態になります）。実時間では、ドライバーの `max_idle` がステップ幅として渡ります。
-- `next_deadline()` は、何も届かなくてもステップが要る最も早い時刻（タイマーの期限）を返します。実時間のドライバーはそれまで眠ります。タイマーのない仕事（`QueueFull` で残したフレーム、1 ステップの上限で繰り越したフレーム）は含めません。それらは実時間ではドライバーの `max_idle` の後のステップで出ます。ステップの後も過去の期限を返し続けるのは契約違反です（手動の時計では次のステップを 1 ns 後に 1 回回すだけですが、壁時計ではステップを回し続けます）。
-- 例外を投げると、ホストは失敗状態になり、以後のステップはすべて失敗します。
+All times are `SimTime`. Protocol processing has no threads of its own and does not read a clock. In virtual time, the time is that of SIL Kit or of `StepDriver`; in real time, it is the clock of `RealTimeDriver` (the time elapsed since start).
 
-## ホスト（`Host`）
+## Value types
 
-- `vehicle_sil::step::Host` は、ステップの参加者（`step::Member`）を登録順に持ち、段階ごとに進めます。`Member` は 1 つのチャネルのプロトコル処理とそのポートの組で、`begin(now)`、`receive(now)`（ポートから `now` より前のものを受け取る）、`process()`、`flush()`、`start(step_size)`、`next_deadline()`、`time_domain()`、`set_wakeup()` を持ちます。バスの種類を知りません。
-- `vehicle_sil::can::Host` は `step::Host` の派生で、`add(Steppable&, Port&)` で渡された組を中で `Member` にします（`receive(now)` は、ポートの事象を `on_port_event()` に、フレームを `receive()` に渡します）。組の入れ物はホストが持ちますが、`Steppable` とポートは持ちません。以下は CAN の組で見た契約です。
-- 1 つの participant（またはテストのループ）の、プロトコル処理（`Steppable`）とポートの組を登録順に持ちます。1 ステップは、全部の組に対して段階ごとに進めます。(1) `begin(now)`、(2) ポートが渡す事象の `on_port_event()` とフレームの `receive()`、(3) `process()`、(4) アプリの処理を 1 回、(5) `flush(port)`。
-- ステップの時刻は前のステップより大きくなければなりません。
-- `step()` から例外が出ると（プロトコル処理、アプリ、ポートのどれからでも、使い方の誤りでも）、ホストは失敗状態になり、例外を呼び出し元に返します。以後の `step()` はすべて `std::logic_error` です。回復するには作り直します。
-- 登録は最初のステップの前だけです。ホストは `Steppable` とポートを所有しません。起こし方が設定された後の登録では、ホストがポートの `set_wakeup()` を呼びます。それが例外を投げると、組は登録されずに例外が返ります（同じ組をもう一度登録できます）。
-- ステップ幅: `set_step_size()` で受け取ったステップ幅を、最初のステップの `begin()` の前に、各 `Steppable` の `start()` に登録順で 1 回渡します（設定がなければ値なし）。`StepDriver::add()`、`bind_host()`、`RealTimeDriver` が設定します。`start()` が例外を投げると、ホストは失敗状態になります（そのプロトコルが動けないステップ幅の構成エラー）。
-- `post(fn)`: ステップの外（別のスレッド、SIL Kit の他のハンドラ）からプロトコルスタックに処理を渡します。どのスレッドからでも呼べます。`fn` は次のステップの段階 4 の最初（アプリの処理の前）に、渡された順でドライバーのスレッドで実行します。ステップの中で渡した処理は次のステップです。`fn` の例外はアプリの例外と同じくホストを失敗させ、失敗したホストに渡した処理は実行しません。仮想時間でも使えますが、どのステップで実行されるかは `post()` を呼んだ時点で決まるので、決定的に扱いたいデータは受け箱（`StepInbox`）で受けてステップの中で処理します。
-- 時間の領域: 1 つのホストのポートは同じ領域でなければなりません。ドライバーは自分の領域を要求します（`StepDriver` と `bind_host()` は `Virtual`、`RealTimeDriver` は `RealTime`）。混在は登録の時点で `std::logic_error` です（例: Vector XL のポートを SIL Kit の時刻同期で回すホストに入れる）。
-- `next_deadline()` は全 `Steppable` の `next_deadline()` の最小です。
+- `Frame` is a classical CAN data frame (it does not represent RTR, CAN FD or CAN XL).
+  - `length` is the number of bytes (0–8), not the DLC code.
+  - Frames compare equal by ID, format (11-bit / 29-bit) and the data up to `length`.
+- `TimedFrame` is a frame with a time. For a received frame, it is the time the backend gave it; for a frame to send, it is the time of the step that sends it.
 
-## 仮想時間での駆動
+## The port contract (`Port`)
 
-- `StepDriver`（`vehicle_sil::step`）は、SIL Kit を使わずに複数のホストを仮想時間で進めます。各ホストのステップ幅は別々でよく、ステップは（開始時刻、登録順）の順に実行します。SIL Kit の時刻同期が許す順序の 1 つです。
-- テストのループでの終了の順序: そのホストを進める `StepDriver` を使うのをやめる → プロトコル処理とホストを破棄 → ポート（仮想バスが所有）を破棄。
-- SIL Kit では `bind_host(runtime, host)` を使います。`ParticipantRuntime` のステップハンドラから `host.step(now)` を呼びます。仮想時間を使わない `ParticipantRuntime` には結び付けられません。本体は `vehicle_sil::core` の `vehicle_sil::bind_host()`（`step::Host` を受ける）で、`vehicle_sil::can::bind_host` は同じ関数です。
+### Receiving
 
-## 実時間での駆動（`RealTimeDriver`）
+- `release_before(now, sink)` passes the received frames whose time is before `now`, in time order, and in arrival order for equal times.
+- The port does not reorder frames with the same time. The protocol processing decides their final order.
+- A frame whose time is exactly `now` is passed on the next call.
+- A port does not receive the frames it sent itself (the port drops echoes and transmit acknowledgements).
 
-- `RealTimeDriver` と時計は `vehicle_sil::step` のもので、どの `step::Host` も回せます。時刻同期なしの SIL Kit や Vector XL のポートを持つホストを、壁時計で回します。participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコルスタックにはロックがなく、触るのはこのスレッドだけです。アプリはホストの `post()` とアプリの処理で関わります。
-- 時計（`RealTimeClock`）は差し替えられます。製品では `SteadyRealTimeClock`（生成時からの経過時間）、試験では `ManualRealTimeClock`（`advance_to()` で進めるとドライバーを起こす）を使います。ドライバーとホストのポートは同じ時計を使います。
-- 登録（`Host::add()`、`set_application()`）は `start()` の前に済ませます。`start()` の直後に、ドライバーのスレッドで最初のステップが回ります。
-- ステップを回すのは、開始の直後、ポートへの到着や `post()` のとき、ホストの `next_deadline()` の 1 ns 後（期限より後で発火するタイムアウトのため）、前のステップから `max_idle`（既定 10 ms）が過ぎたときです。
-- ステップの時刻は時計の値ですが、前のステップより少なくとも 1 ns 後、起こした到着の時刻より少なくとも 1 ns 後にします。時計が進んでいなくても、届いたフレームは次のステップで必ず渡ります。
-- 到着時刻（`RealTimeReceiver`）: ロックの中で、時計の値、前回渡した `now`、前の到着時刻 + 1 ns の最大を付けます。処理済みのステップより前の時刻にはならず、到着の順も保たれます。
-- ステップが例外を投げると、スレッドは止まり、`failed()` と `error()` で理由が分かります（ホストも失敗状態）。
-- `wait_idle(timeout)` は、スレッドがやることなく眠るまで待ちます。`ManualRealTimeClock` と組み合わせると、`advance_to()` の後に、その時刻までのステップが終わったことを確かめられます。
-- 終了の順序: `RealTimeDriver` を止める（`stop()` か破棄。ホストとポートから起こしを外し、スレッドを join する）→ ポートを閉じる → プロトコルスタックとホストを破棄 → `ParticipantRuntime`（またはドライバー）を破棄。`stop()` をステップの中から呼んだ場合は、スレッドに終わるよう伝えるだけで、join は後の `stop()` で行います。
-- 決定論はありません。壁時計の試験では、到着と順序だけを確かめます。
+### Transmitting
 
-## 仮想バス（`VirtualCanBus`）
+`send()` returns a synchronous result.
 
-- `attach()` が、バス上の 1 つの CAN コントローラーにあたるポートを作ります。
-- タイミングなし（既定）: 時刻 t で送ったフレームは、他の全ポートに時刻 t のまま届きます。調停と送信時間はありません。
-- タイミングあり（`VirtualCanBusOptions::timing`）: フレームは下の「バスのタイミング」の規則でバスに出て、送信の終わりの時刻で他のポートに届きます。送ったポートには同じ時刻の `TransmitCompleted` が届きます。ポートごとの送信キュー（`transmit_queue_capacity`、既定 64）が満杯なら `send()` は `QueueFull` です。数えるのは、送って、バスを決めた時点でまだ始まっていないフレームです（`Host` は送る前に同じステップの受信を取り出すので、ステップの時刻の状態です）。バスは遅れて決めます。どれかのポートが `now` より前のフレームか事象を取り出すとき、`now` より前に始まる送信をすべて決めます。
-- すでに決まった時刻より古いフレームは送れません（`std::logic_error`）。タイミングなしでは受信側がすでに受け取った時刻、タイミングありでは決めたバスの時刻です。ホストを時刻順に進めなかったことを示します。`StepDriver` は常に時刻順に進めます。
-- 各ポートの受け箱は容量が固定です。入らないフレームは捨てて数えます（`overflows()`）。仮想バスではあふれも決定的ですが、フレームが失われるので、テストではあふれがないことを確かめます。
-- 故障注入（試験用）: `Endpoint::set_fault_injector(f)` で、そのポートが送るフレームごとに `f` が `FaultAction` を返します。`Deliver`（通常）、`Drop`（`Accepted` を返して、バスの他のポートに届けない。送った側の Network の中のローカル折り返しは `Accepted` なので届く）、`Duplicate`（同じ時刻で 2 回届ける）、`Delay`（時刻 + 遅れで届ける。後から送ったフレームに追い越されるので、並べ替えもこれで作る。遅れは 0 より大きいこと）、`QueueFull`、`Failed`（その結果を返して届けない）です。不正なフレームは `f` を呼ぶ前に `Failed` です。`f` は送った順に 1 回ずつ呼ばれるので、決定的な関数なら結果も決定的です。タイミングありでは、`Drop` のフレームはバスを占有してからどこにも届かず（送ったポートには `TransmitCompleted` が届きます）、`Duplicate` は 2 回送信し、`Delay` は送った時刻 + 遅れからバスを争います。
-- 受け箱のあふれは `ReceiveOverflow` でも知らせます。`Endpoint::inject_event(event)` は、任意の事象（バス状態、エラーフレームなど）をその端点に積みます。`FaultAction::transmit_failed()` は、`Accepted` を返してどこにも届けず、送った側に送信時刻の `TransmitFailed` を出します（非同期の送信失敗。タイミングありでもバスを使いません）。
-- ECU 単位の通信断: `Endpoint::add_outage(from, until, direction)` は、その端点を [from, until) の間バスから切り離します。`Receive` はその間に届く時刻のフレームを受けず（`outage_dropped()`）、`Send` はその間の送信時刻のフレームをどこにも届けず、送った側に `TransmitFailed` を出します（`outage_lost()`。故障注入の関数は呼びません。タイミングありでもバスを使いません）。送信は送信時刻で判定するので、タイミングありでは、断の前に送ってバスを待っているフレームは断の間にも出ます。`Both` は両方です。フレームの時刻で決まるので、結果は決定的です。
-- 1 つのスレッドから使います。
+| Result | Meaning |
+|---|---|
+| `Accepted` | The port accepted the frame. |
+| `QueueFull` | The transmit queue is full. The frame can be sent again in a later step. |
+| `Failed` | The frame cannot be sent, or the backend reported an error. |
 
-## 生フレームの観測（`TapPort`）
+When the backend learns what happened to a frame after `send()` (it was sent, or the backend dropped it), the port reports it later as an event (`PortEvent`). `release_events_before(now, sink)` passes the events whose time is before `now`, in time order, and in arrival order for equal times. The default implementation emits no events.
 
-- `TapPort(inner, listener)` はポートを包み、すべてを `inner` に渡します。プロトコルスタックが受け取ったフレーム（`Received`、フレームの時刻）、送ったフレーム（`Sent`、送ったステップの時刻と `send()` の戻り値）、ポートの事象（`Event`、事象の時刻）を、通った順に `TapListener::on_tap()` へ知らせます。11 ビットと 29 ビットの両方をそのまま運びます。`Received` の順はポートの解放順（時刻順、同じ時刻なら到着順）で、SIL Kit のポートでは同じ時刻の別の送信者のフレームの順が実行ごとに変わりえます。実行の間で比べるときは（時刻、CAN ID）で並べ直すか、並べ替えた後の `Observer` の事象を使います。
-- 読み取り専用です。注入はしません（試験の刺激は仮想バスの端点から送ります）。例外を投げないリスナーなら、リスナーの有無で、スタックが受け取るものと送った結果は変わりません。リスナーの例外は呼び出し元に伝わり（ホストは失敗します）、受信のフレームと事象はスタックに渡す前に知らせるので、そのフレームはスタックに渡りません。リスナーの中からその `TapPort` の `send()`、`release_before()`、`release_events_before()`、`set_listener()` を呼ぶと `std::logic_error` です。
-- 時間の領域と wakeup は包んだポートのものです。包んだポートと同じく、ドライバーのスレッドから使います。リスナーは 1 つです。リスナーと `TapPort` は互いの登録を覚えており、どちらを先に破棄しても安全です。
+### Threads and time domains
 
-## SIL Kit のポート（`SilKitCanPort`）
+Call `release_before()`, `release_events_before()` and `send()` only from the driver's thread.
 
-- 生成時に、CAN コントローラーに受信（RX 方向だけ）と送信確認のハンドラを付けます（ここから届くフレームは受け箱に入ります）。コントローラーを始めるのは `start()` で、participant の CommunicationReady のハンドラーから呼びます（`runtime.add_communication_ready_handler([&port] { port.start(); })`。`Peer` は自分のポートについて呼びます）。SIL Kit が `SetBaudRate()` と `Start()` を呼ぶよう勧めている時点です: SIL Kit のスレッドの上で、最初のステップより前で、coordinated の participant では全員のサービスが見えています。そのため、ネットワークシミュレーターには、起動の順によらずビットレートと開始が届きます。autonomous の participant には、この保証がありません（まだ見つけていないシミュレーターには届かず、送り直されません）。
-- `start()` の前にステップが来ると（`release_before()` か `send()`）、`std::logic_error` です（「... before start(): the controller is not started ...」。何を呼ぶかを言います）。SIL Kit の簡易シミュレーションは、始めていないコントローラーの送信を、送信の確認なしに捨てるためです。`start()` は、`close()` の後と 2 回目には何もしません。
-- `close()` はハンドラを外し、（始めていれば）コントローラーを止め、受け箱を空にします。`close()` から戻った後は、SIL Kit がポートを呼びません。
-- 受信のコールバックは、SIL Kit のタイムスタンプ（送信側のステップ時刻）を付けて受け箱に積むだけです。クラシック CAN のデータフレーム以外は捨てて数えます。
-- 「ステップ T の時点で、T より前のフレームは全部届いている」のは、送り手が自分のステップの中で送ったフレームだけです（SIL Kit の約束の範囲。vehicle-sil のポートはステップの中で送ります）。ほかの SIL Kit のプログラムがステップの外（別のスレッド、受信のハンドラー）から送ったフレームは、どのステップで渡るかが実行ごとに変わりえます。
-- 時刻同期に参加していない送信者（Vector XL CAN Bridge など）のフレーム（仮想時間）: SIL Kit は、受け手のこの participant の今のステップの時刻を付けます。ただし、この participant の最初のステップの前に届いたフレームは `std::chrono::nanoseconds::min()` のままです。ポートはこの時刻を渡しません。時刻が負のフレームと事象には、届いた時点でのこの participant の最新のステップの時刻（最初のステップの前なら 0）を付け、次のステップで渡します。数は統計の `received_without_time` にあります。どのステップで届くかは届いた時点で決まるので、決定的ではありません。
-- 送信は `SendFrame()` です。時刻は SIL Kit が送信側のステップ時刻を付けます。SIL Kit の簡易シミュレーションには同期の結果がないので、正しいフレームは `Accepted` です。
-- `SendFrame()` の userContext には、送ったステップの時刻（`TimedFrame::time`）を目印付きで入れます（`encode_send_time()`。上位 8 ビットが目印 0xA5、下位 56 ビットが ns）。簡易 CAN Network Simulator はこれで送信時刻を知ります。SIL Kit は userContext を送信確認で送信側に返すだけで、他の受信者には渡しません。64 ビットのプラットフォームだけを対象にします。
-- 送信確認は数えて、`PortEvent` として事象の受け箱に積みます（`Transmitted` は `TransmitCompleted`、`Canceled` と `TransmitQueueFull` は `TransmitFailed`）。SIL Kit のハンドラからプロトコル処理は呼びません（簡易シミュレーションでは送信確認が `SendFrame()` の中で返るので、呼ぶと再入になります）。時刻は、簡易シミュレーションでは送ったステップの時刻、ネットワークシミュレーターでは送信の終わりです。
-- `SilKitCanPortOptions::bitrate` を設定すると、`start()` が `Start()` の前に `SetBaudRate()` で渡します。簡易シミュレーションは使いません。ネットワークシミュレーターは送信時間に使います。既定の 0 では `SetBaudRate()` を呼びません（SIL Kit の文書は、使う前に必ず設定するよう書いています。簡易シミュレーションと簡易 CAN Network Simulator では困りません。ほかのネットワークシミュレーターが、設定のないコントローラーをどう扱うかは確かめていません。そういうシミュレーターと使うときは、ビットレートを設定してください）。
-- `SilKitCanPortOptions::transmit_queue_capacity`（既定 0 = 上限なし）を設定すると、送ったが送信確認の事象をまだ渡していないフレームがその数に達したとき、`send()` が `QueueFull` を返します。プロトコル処理はフレームを残して次のステップで出し直します。ネットワークシミュレーターは自分の送信キューを超えた要求を送らずに捨てる（`TransmitQueueFull` の送信確認）ので、シミュレーターを使うときはその大きさ以下にします。`event_capacity` より大きくはできません。送信確認の来ないフレーム（開始していないコントローラーでの送信など）は枠を返さないので、統計の `outstanding` で確かめます。SIL Kit の簡易シミュレーションでは送信確認が次のステップで渡るので、上限は 1 ステップに送れる数になります。
-- SIL Kit のエラー状態の通知は `BusStateChanged` の事象にします（`NotAvailable` は出しません）。事象の受け箱に、送信確認をまだ受けていないフレームの数の空きを残せないときは、捨てて `event_overflows` に数えます（送信確認を失って `transmit_queue_capacity` の枠が減らないように）。受け箱のあふれは `ReceiveOverflow` です。
-- 実時間（`SilKitCanPortOptions::real_time_clock` を設定）: 時刻同期なしの participant のポートになり、時刻の領域は `RealTime` です。SIL Kit のタイムスタンプ（同期なしの送信者では使えない）の代わりに、時計で到着時刻を付け、到着のたびにドライバーを起こします。userContext に送信時刻は入れません（ネットワークシミュレーターは仮想時間が前提のため）。`RealTimeDriver` で回します。
-- 終了の順序: `ParticipantRuntime` を止める（実時間では `RealTimeDriver` を止める）→ ポートを `close()`（または破棄）→ プロトコル処理とホストを破棄 → `ParticipantRuntime` を破棄（コントローラーを所有しているため最後）。
-- 同じシナリオを仮想バスと SIL Kit（仮想時間）で動かすと、受信と送信のトレースがバイト単位で一致します。ステップ幅の違う participant の組み合わせを含めて、テストで確かめています。前提として、同じ時刻の別の送信者のフレームについて、ポートが渡す順序は SIL Kit では決まりません（送信者ごとの順序だけが保たれます）。そのため、プロトコル処理がそれらを決まった規則で並べ直す必要があります。テストのプロトコルは（時刻、送信者）で並べ直しています。
+Each port has a time domain.
 
-## バスのタイミング（`CanBusModel`）
+| Domain | Time | Ports | `set_wakeup()` |
+|---|---|---|---|
+| `Virtual` | Virtual time | Virtual bus, SIL Kit with time synchronization | Ignored. |
+| `RealTime` | The clock of the real-time driver | SIL Kit without time synchronization, Vector XL | On each arrival, calls the given function with the arrival time, which wakes the driver. |
 
-タイミングありの仮想バスと簡易 CAN Network Simulator は、同じバスモデルを使います。SIL Kit に依存しません。
+A `RealTime` port stamps received frames and events with their arrival time, using the clock it shares with the driver (see "Driving in real time" below).
 
-- 送信時間: スタッフビットを含めないビット数（11 ビット ID は 47 + 8 × バイト数、29 ビット ID は 67 + 8 × バイト数。3 ビットのインターミッションを含む）÷ ビットレート。ns 単位に切り上げます。実際のフレームはスタッフビットのぶん（最大 2 割ほど）長くなります。
-- 調停: バスが空いたときに、準備のできた送信キューの先頭どうしで、調停フィールドの小さいものが勝ちます。先に 11 ビットの基本 ID を比べ、同じなら 11 ビットのフレームが 29 ビットのフレームに勝ち（RTR が優性、SRR が劣性）、29 ビットどうしは拡張 ID を比べます。送信中のフレームには割り込みません。送信中に準備のできたフレームは、送信の終わりに争います。
-- 同じ ID と形式のフレームどうし（実バスでは解決しない）: 短いデータ、データのバイトの順、送信者の順（仮想バスでは `attach()` の順）で決めます。
-- 送信キューは送信者ごとの FIFO です。後ろのフレームは、調停で勝てる場合でも、前のフレームが出るまで待ちます。
-- 模擬しないもの: スタッフビット、エラーフレーム、ACK エラーと自動再送、エラー状態、リモートフレーム、CAN FD、コントローラーの送信バッファの優先度。
-- 決め方の 2 つの形（`VirtualCanBusTiming::simulator_step`）:
-  - 0（厳密）: フレームは送った時刻からバスを争います。受信の時刻は送信時刻だけで決まり、受信側のステップ幅によりません。
-  - Δ > 0: バスを Δ ごとに決めます。境界 T では、T より前に送られたフレームをキューに加え、[T, T + Δ) に始まる送信を決めます。時刻 t に送ったフレームは、t の後の最初の境界より前には始まりません。簡易 CAN Network Simulator（`SimulationStepSizeNanoseconds` = Δ）と同じ規則で、同じ送信には同じ受信の時刻を出します（テストで確かめています）。結果は Δ によって変わりますが、受信側のステップ幅にはよりません。
-- タイミングの確認は、ノードを別々のポート（別々の CAN コントローラー）に置いて行います。同じ `Network` のノードどうしはローカル折り返しで届き、バスを通りません。
+## Port events (`PortEvent`)
 
-## 簡易 CAN Network Simulator（`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`）
+A port event reports, after the fact, what happened at the port: what became of a frame the port sent (known after the synchronous result of `send()`), and the state of the receive queue and of the controller.
 
-SIL Kit の簡易シミュレーション（trivial simulation）は、調停もバスの占有も再現しません。簡易 CAN Network Simulator は、SIL Kit の Network Simulator API（experimental）で、指定したネットワークの CAN を上のバスモデルで模擬する SIL Kit の participant です。CANoe のライセンスなしで、調停、送信時間、混雑を仮想時間で再現します。
+| Kind | Meaning | Time |
+|---|---|---|
+| `TransmitCompleted` | The frame was sent. | For a backend that simulates the bus, the end of the transmission; otherwise, the time the backend confirmed the transmission |
+| `TransmitFailed` | The backend did not send a frame that `send()` had accepted (transmit queue full, cancelled, disconnected from the bus). | The time the backend reported |
+| `ReceiveOverflow` | The receive queue was full and received frames were dropped (`count` is the number dropped; it is 0 when any of the merged overflows has an unknown number, because the total is then unknown). | The earliest time among the dropped frames |
+| `BusStateChanged` | The controller's error state changed to `bus_state` (`ErrorActive`, `ErrorPassive`, `BusOff`). | The time of the change |
+| `ErrorFrame` | An error frame was seen on the bus. | The time it was seen |
 
-- そのネットワークのコントローラーは、SIL Kit が自動で詳細シミュレーションに切り替えます。各 participant のコードは変わりません。
-- 受信のフレームの時刻は送信の終わりです。送信側には、同じ時刻の TX のフレームと送信確認（`Transmitted`）を、送信側の userContext を付けて返します。コントローラーごとの送信キュー（既定 64）があふれた要求には `TransmitQueueFull` の送信確認を返し、送信しません。
-- 時刻と決定論: 時刻同期に参加し、ステップ T で、T より前に送られた要求（vehicle-sil のポートが userContext に入れた送信時刻）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。目印のない要求（vehicle-sil 以外の participant）と、最後のステップより 1 秒以上先の時刻の要求は、最後のステップの時刻で扱い、数えます。この扱いは決定的ではありません。送信を待つフレームがあるコントローラーが `Reset()` を呼ぶ実行も、決定的ではありません（どのフレームが `Transmitted` で、どれが `Canceled` かが、1 ステップぶん決まりません。下の `Reset()` の項）。
-- ビットレート: そのネットワークで最初に `SetBaudRate()` を呼んだコントローラーの値、なければ `--default-bitrate`（既定 500 kbit/s）です。後から違う値が来たら数えて警告し、使いません。vehicle-sil のポートは CommunicationReady で `SetBaudRate()` を呼ぶので、coordinated の participant（`vehicle_sil_launch run` の ECU、`Simulation`）の値は、起動の順によらず届きます。autonomous の participant と、コントローラーを作ってすぐ `SetBaudRate()` を呼ぶほかのプログラムの値は、シミュレーターを見つける前だと届きません（SIL Kit の挙動。docs/dependencies.md）。ポートにビットレートを設定しない構成と、そういう participant のために、ネットワークのビットレートは `--default-bitrate` でも指定してください。
-- コントローラーのモード: 送信を捨てる条件と、受信がモードによらないことは、SIL Kit の簡易シミュレーションと同じです。`Reset()` の取り消し（`Canceled` の送信確認）は、送信を待つフレームがあるこのシミュレーターだけのものです。
-  - モードの変更（`Start()`、`Stop()`、`Sleep()`、`Reset()`）には、次のステップで状態の変化を返します。
-  - 送信: `Started` 以外のモードを伝えてきたコントローラーがその後に送った要求は、捨てて数えます（`rejected`）。送信確認は返しません。コントローラーごとに、最初の 1 回だけ警告を出します（始め直してまた止めても、2 回目は出しません）。警告は、フレームの ID、コントローラーの番号、伝えてきたモード（stopped、asleep、reset）を言います。番号は SIL Kit がそのコントローラーに付けたもので、シミュレーターが見つけた順に、全部のネットワークを通して 1 から数えます（participant やコントローラーの名前は、Network Simulator API からは取れません）。モードを変える前に送った要求は、そのまま送信します（コントローラーが呼んだ順で決まり、スレッドのタイミングによりません）。
-  - モードを一度も伝えてこないコントローラーは、始めたものとして扱います。シミュレーターを見つける前の `Start()` は届かないためです（autonomous の participant。docs/dependencies.md）。
-  - 受信: フレームは、受信側のモードによらず、送信者以外の接続中の全コントローラーに届けます。
-  - `Reset()` は送信の要求の取り消しを伴います。そのコントローラーの、まだ送信が始まっていないフレームは、バスに出さずに捨てて数え（`rejected`）、`Canceled` の送信確認を返します。取り消しが効くのは、`Reset()` が届いた後に始まる最初のステップです（その前のステップで送信が決まったフレームは届きます）。`Reset()` と同じ時刻のシミュレーターのステップは、`Reset()` が届く前に走ることも後に走ることもあるので、そのステップで始まるはずだったフレームは、`Transmitted` のことも `Canceled` のこともあります。`Reset()` の後は、`Start()` を呼ぶまで送れません。エラー処理のリセットの求めには、何もしません（エラー状態を模擬しないため）。
-  - listen only にあたるモードは、SIL Kit の CAN コントローラーにありません。
-- CAN FD とリモートフレームの要求は捨てて数えます。
-- 受け箱（ネットワークごとに 4096 要求）があふれたら、捨てて数え、警告します。あふれた実行は決定的ではありません。
-- 設定にあっても、まだどのコントローラーも参加していないネットワークは何もしません（SIL Kit は最初のコントローラーが現れたときにフレームを配る手段を渡します）。Vector のものと共用する設定に、使わない CAN ネットワークがあってもかまいません。
-- 使っているビットレートと、それが既定値かコントローラーの設定かを、ログに出します。
-- 送信時刻の目印の上限は、最後のステップから 1 秒とステップ幅の大きいほうです。
+- A transmit event carries the CAN identifier (`id`) and, when known, the `TimedFrame::time` at which the frame was sent (`send_time`). It carries no data.
+- Frames with the same identifier are told apart by `send_time`.
+- `ReceiveOverflow` is not emitted for each dropped frame. The frames dropped until the port next releases events are counted in one event.
+- `ReceiveOverflow` does not take a slot in the event queue, so it is released even when the queue is full and never pushes out transmit events.
+- A backend does not emit a kind it cannot know about; it reports nothing for it.
+- More kinds may be added. A `Steppable` ignores kinds it does not know.
 
-設定ファイルとコマンドライン（Vector SIL Kit Network Simulator と共用）:
+### Events by backend
+
+| Backend | Events emitted |
+|---|---|
+| Virtual bus | `TransmitCompleted` (with timing), `ReceiveOverflow`, `TransmitFailed` from fault injection and disconnection, any injected event |
+| `SilKitCanPort` | `TransmitCompleted` and `TransmitFailed` from SIL Kit transmit acknowledgements, `BusStateChanged` from SIL Kit error state notifications (a network simulator sends them; SIL Kit's trivial simulation does not), `ReceiveOverflow` |
+| `ExternalPortAdapter` (Vector XL) | `ErrorFrame`, and `ReceiveOverflow` with an unknown count for overflows of the external port (no bus state and no transmit results) |
+
+### Where events are delivered
+
+In phase 2 of a step, `Host` passes the events to `Steppable::on_port_event()`, before the frames of that step. `on_port_event()` only records. It does not send (sending happens in `flush()`).
+
+The J1939 stack only counts the events in `NetworkStatistics` (`frames_transmitted`, `transmit_failures`, `port_receive_overflows`, `port_overflow_events`, `bus_state_changes`, `error_frames`) and keeps the latest bus state in `Network::bus_state()`. It does not use them in protocol processing (its behavior does not change even at bus-off).
+
+## The `Steppable` contract
+
+`Steppable` is the extension point for building a protocol stack on CAN. The J1939 `Network` is built on this contract.
+
+### Call order
+
+Before the first step, the host calls `start(step_size)` once. In each step, it calls the following, in this order.
+
+| Order | Call | What the `Steppable` does |
+|---|---|---|
+| 1 | `begin(now)` | — |
+| 2 | `on_port_event()` for each port event | Records only. |
+| 3 | `receive()` for each frame | Records only. |
+| 4 | `process()` | Processes. |
+| 5 | `flush(port)` (after the application runs) | Sends to the port. |
+
+### Rules to follow
+
+- `now` increases with each call.
+- A `Steppable` has no threads and does not read a clock. The only times it uses are `now` and the times of frames and events.
+- All calls come from one thread (the driver's thread), so no locks are needed.
+- The frames passed to `receive()` have times before `now`.
+- The order of same-time frames from different senders differs between backends, so the `Steppable` orders them by a fixed rule.
+- `start()` throws an exception if the protocol cannot work with the step size (the host enters the failed state).
+- In real time, the driver's `max_idle` is passed to `start()` as the step size.
+- If a call throws, the host enters the failed state and every later step fails.
+
+### `next_deadline()`
+
+`next_deadline()` returns the earliest time at which a step is needed even if nothing is received (a timer deadline). The real-time driver sleeps until then.
+
+It does not include work that has no timer (frames held back after `QueueFull`, frames carried over by the per-step limit). In real time, that work is sent in the step that runs after the driver's `max_idle`.
+
+An implementation that keeps returning a past deadline after the step violates this contract (with a manual clock, the driver only runs the next step once, 1 ns later; with a wall clock, it keeps running steps).
+
+## The host (`Host`)
+
+The host has 2 layers.
+
+- `vehicle_sil::step::Host` holds the step members (`step::Member`) in registration order and advances them phase by phase. It does not know the kind of bus.
+  - A `Member` is the pair of one channel's protocol processing and its port.
+  - A `Member` has `begin(now)`, `receive(now)` (takes what is before `now` from the port), `process()`, `flush()`, `start(step_size)`, `next_deadline()`, `time_domain()` and `set_wakeup()`.
+- `vehicle_sil::can::Host` derives from `step::Host`. It wraps each pair passed to `add(Steppable&, Port&)` in a `Member`.
+  - Its `receive(now)` passes port events to `on_port_event()` and frames to `receive()`.
+  - The host owns the containers of the pairs, but not the `Steppable` or the port.
+
+The rest of this section describes the contract in terms of CAN pairs.
+
+### Phases of one step
+
+The host holds, in registration order, the pairs of protocol processing (`Steppable`) and port of one participant (or of one test loop). A step advances all pairs phase by phase.
+
+| Phase | What happens |
+|---|---|
+| 1 | `begin(now)` |
+| 2 | `on_port_event()` for the events the port releases, and `receive()` for its frames |
+| 3 | `process()` |
+| 4 | The application runs once |
+| 5 | `flush(port)` |
+
+The time of a step must be greater than that of the previous step.
+
+### Failed state
+
+If an exception leaves `step()` (from the protocol processing, the application or a port, and also for a usage error), the host enters the failed state and rethrows the exception to the caller. Every later `step()` throws `std::logic_error`. To recover, create the host again.
+
+### Registration
+
+Register only before the first step. The host does not own the `Steppable` or the port.
+
+If you register after the wakeup function is set, the host calls the port's `set_wakeup()`. If that throws, the pair is not registered and the exception propagates (you can register the same pair again).
+
+### Step size
+
+Before `begin()` of the first step, the host passes the step size it received with `set_step_size()` to `start()` of each `Steppable`, once, in registration order (no value if none was set). `StepDriver::add()`, `bind_host()` and `RealTimeDriver` set it. If `start()` throws, the host enters the failed state (a configuration error: a step size the protocol cannot work with).
+
+### `post(fn)`
+
+`post(fn)` hands work to the protocol stack from outside a step (another thread, another SIL Kit handler).
+
+- You can call it from any thread.
+- `fn` runs on the driver's thread at the start of phase 4 of the next step (before the application), in the order posted.
+- Work posted during a step runs in the next step.
+- An exception from `fn` fails the host, as an exception from the application does. Work posted to a failed host does not run.
+
+`post()` also works in virtual time, but the step in which the work runs depends on when `post()` was called. Data that you want to handle deterministically should be received through `StepInbox` and processed inside the step.
+
+### Time domain of the host
+
+All ports of one host must be in the same time domain. Each driver requires its own domain (`Virtual` for `StepDriver` and `bind_host()`, `RealTime` for `RealTimeDriver`). Mixing them is a `std::logic_error` at registration (for example, adding a Vector XL port to a host driven by SIL Kit time synchronization).
+
+### `next_deadline()` of the host
+
+The host's `next_deadline()` is the minimum of the `next_deadline()` of all its `Steppable`s.
+
+## Driving in virtual time
+
+- `StepDriver` (`vehicle_sil::step`) advances several hosts in virtual time without SIL Kit.
+  - Each host can have its own step size. Steps run in order of (start time, registration order).
+  - This order is one of the orders that SIL Kit time synchronization allows.
+- Shutdown order in a test loop: stop using the `StepDriver` that advances the host → destroy the protocol processing and the host → destroy the ports (owned by the virtual bus).
+- With SIL Kit, use `bind_host(runtime, host)`: the step handler of the `ParticipantRuntime` calls `host.step(now)`.
+  - It cannot be bound to a `ParticipantRuntime` that does not use virtual time.
+  - The implementation is `vehicle_sil::bind_host()` in `vehicle_sil::core` (it takes a `step::Host`). `vehicle_sil::can::bind_host` is the same function.
+
+## Driving in real time (`RealTimeDriver`)
+
+`RealTimeDriver` and the clocks belong to `vehicle_sil::step` and can drive any `step::Host`. They drive a host whose ports are SIL Kit ports without time synchronization or Vector XL ports, by the wall clock. There is no determinism. Wall-clock tests check only arrival and order.
+
+### Threads
+
+The driver has one thread per participant. The protocol stack has no locks; only this thread accesses it. The application takes part through the host's `post()` and through its own processing in each step.
+
+If a step throws, the thread stops, and `failed()` and `error()` give the reason (the host is in the failed state too).
+
+### Clock
+
+The clock (`RealTimeClock`) is replaceable. The driver and the host's ports use the same clock.
+
+| Used for | Clock |
+|---|---|
+| Product | `SteadyRealTimeClock` (time elapsed since its creation) |
+| Tests | `ManualRealTimeClock` (advancing it with `advance_to()` wakes the driver) |
+
+`wait_idle(timeout)` waits until the thread sleeps with nothing to do. Combined with `ManualRealTimeClock`, it lets you confirm after `advance_to()` that the steps up to that time have finished.
+
+### When a step runs
+
+Finish registration (`Host::add()`, `set_application()`) before `start()`. A step runs at these points:
+
+- Right after start (the driver's thread runs the first step right after `start()`)
+- On an arrival at a port, and on `post()`
+- 1 ns after the host's `next_deadline()` (for timeouts that fire after their deadline)
+- When `max_idle` (default 10 ms) has passed since the previous step
+
+### Step time and arrival time
+
+The time of a step is the clock's value, but at least 1 ns after the previous step and at least 1 ns after the arrival that woke the driver. A received frame is always passed in the next step, even if the clock has not advanced.
+
+The arrival time (`RealTimeReceiver`) is set under a lock to the maximum of the clock's value, the `now` passed last, and the previous arrival time + 1 ns. It is never earlier than a step already processed, and the order of arrivals is preserved.
+
+### Shutdown order
+
+1. Stop the `RealTimeDriver` (`stop()` or destruction; it removes the wakeup functions from the host and the ports and joins the thread).
+2. Close the ports.
+3. Destroy the protocol stack and the host.
+4. Destroy the `ParticipantRuntime` (or the driver).
+
+If you call `stop()` from inside a step, it only tells the thread to end. A later `stop()` joins the thread.
+
+## Virtual bus (`VirtualCanBus`)
+
+`attach()` creates a port that stands for one CAN controller on the bus. Use a virtual bus from one thread.
+
+### With and without timing
+
+| Setting | How frames are handled |
+|---|---|
+| Without timing (default) | A frame sent at time t is received by every other port at time t (no arbitration and no transmission time). |
+| With timing (`VirtualCanBusOptions::timing`) | Frames go on the bus by the rules in "Bus timing" below. The other ports receive the frame at the end of its transmission, and the sending port receives a `TransmitCompleted` with the same time. |
+
+With timing, `send()` returns `QueueFull` when the port's transmit queue (`transmit_queue_capacity`, default 64) is full. The queue counts frames that were sent but whose transmission had not started when the bus was resolved (`Host` takes the step's received frames before it sends, so this is the state at the step's time).
+
+A bus with timing is resolved lazily. When any port takes frames or events before `now`, the bus resolves every transmission that starts before `now`.
+
+### When a frame can be sent
+
+A frame older than the time already resolved cannot be sent (`std::logic_error`). The resolved time is, without timing, the time the receivers have already taken, and with timing, the time up to which the bus is resolved. This error means that the hosts were not advanced in time order. `StepDriver` always advances them in time order.
+
+### Receive queue overflow
+
+The receive queue of each port has a fixed capacity. Frames that do not fit are dropped and counted (`overflows()`). Overflows are also reported with `ReceiveOverflow`. On the virtual bus, overflows are deterministic too, but frames are lost, so tests check that there is no overflow.
+
+### Fault injection (for tests)
+
+With `Endpoint::set_fault_injector(f)`, `f` returns a `FaultAction` for each frame the port sends. An invalid frame gets `Failed` before `f` is called. `f` is called once per frame, in send order, so a deterministic function gives deterministic results.
+
+| `FaultAction` | Result of `send()` and delivery | With timing |
+|---|---|---|
+| `Deliver` | As usual. | — |
+| `Drop` | Returns `Accepted` and does not deliver the frame to the other ports on the bus. | The frame occupies the bus, then is delivered nowhere (the sending port receives `TransmitCompleted`). |
+| `Duplicate` | Delivers the frame twice with the same time. | Sends the frame twice. |
+| `Delay` | Delivers the frame at its time + the delay. | The frame contends for the bus from its send time + the delay. |
+| `QueueFull`, `Failed` | Returns that result and does not deliver the frame. | — |
+| `FaultAction::transmit_failed()` | Returns `Accepted`, delivers the frame nowhere and gives the sender a `TransmitFailed` at the send time (an asynchronous transmit failure). | Does not use the bus. |
+
+- Even with `Drop`, the local loopback inside the sender's `Network` delivers the frame, because the result is `Accepted`.
+- Frames sent later overtake a `Delay` frame, so `Delay` also produces reordering.
+- The delay of `Delay` must be greater than 0.
+
+`Endpoint::inject_event(event)` queues any event (bus state, error frame and so on) on that endpoint.
+
+### Per-ECU disconnection
+
+`Endpoint::add_outage(from, until, direction)` disconnects the endpoint from the bus during [from, until). The frame times decide what is affected, so the result is deterministic.
+
+| `direction` | What happens | Counted in |
+|---|---|---|
+| `Receive` | Frames whose receive time falls in the interval are not received. | `outage_dropped()` |
+| `Send` | Frames whose send time falls in the interval are delivered nowhere, and the sender gets `TransmitFailed`. | `outage_lost()` |
+| `Both` | Both. | Both |
+
+With `Send`, the fault injection function is not called, and even with timing the frame does not use the bus. Whether a send falls in the outage is decided by its send time, so with timing, a frame sent before the outage that is waiting for the bus still goes out during the outage.
+
+## Observing raw frames (`TapPort`)
+
+`TapPort(inner, listener)` wraps a port and passes everything to `inner`. It carries both 11-bit and 29-bit frames unchanged.
+
+### What is reported, and in what order
+
+The `TapPort` reports the following 3 kinds to `TapListener::on_tap()`, in the order they pass through it.
+
+| Kind | Covers | Comes with |
+|---|---|---|
+| `Received` | Frames the protocol stack takes | The frame's time |
+| `Sent` | Frames sent | The time of the sending step and the return value of `send()` |
+| `Event` | Port events | The event's time |
+
+`Received` follows the port's release order (time order, arrival order for equal times). With the SIL Kit port, the order of same-time frames from different senders can change from run to run. To compare runs, sort by (time, CAN ID), or use the `Observer` events, which come after the reordering.
+
+### Listener constraints
+
+- The listener is read-only and injects nothing (send test stimuli from a virtual bus endpoint).
+- With a listener that does not throw, having a listener or not changes neither what the stack receives nor the results of what it sends.
+- An exception from the listener propagates to the caller, and the host fails.
+- Received frames and events are reported before they reach the stack, so a frame on which the listener threw does not reach the stack.
+- Calling `send()`, `release_before()`, `release_events_before()` or `set_listener()` of the same `TapPort` from inside the listener is a `std::logic_error`.
+- The time domain and the wakeup are those of the wrapped port.
+- Use the `TapPort` from the driver's thread, like the wrapped port.
+- There is one listener.
+- The listener and the `TapPort` each remember the registration, so either can be destroyed first.
+
+## SIL Kit port (`SilKitCanPort`)
+
+### Start (`start()`)
+
+On construction, the port attaches a receive handler (RX direction only) and a transmit acknowledgement handler to the CAN controller. Frames received from then on go into the receive queue.
+
+`start()` starts the controller. Call it from the participant's CommunicationReady handler (`runtime.add_communication_ready_handler([&port] { port.start(); })`; `Peer` calls it for its own ports). This is the point at which SIL Kit recommends calling `SetBaudRate()` and `Start()`: on a SIL Kit thread, before the first step, and, for coordinated participants, with the services of every participant visible. A network simulator therefore receives the bit rate and the start regardless of start-up order. Autonomous participants have no such guarantee (a simulator they have not discovered yet does not receive them, and they are not sent again).
+
+| Condition | What happens |
+|---|---|
+| A step comes before `start()` (`release_before()` or `send()`) | `std::logic_error` (the message "... before start(): the controller is not started ..." says what to call). |
+| `start()` after `close()` | Nothing. |
+| A second `start()` | Nothing. |
+
+A step before `start()` is an error because SIL Kit's trivial simulation drops frames sent on a controller that has not started, without a transmit acknowledgement.
+
+### Close (`close()`)
+
+`close()` removes the handlers, stops the controller (if it was started) and empties the receive queue. Once `close()` returns, SIL Kit no longer calls the port.
+
+The shutdown order:
+
+1. Stop the `ParticipantRuntime` (in real time, stop the `RealTimeDriver`).
+2. `close()` the port (or destroy it).
+3. Destroy the protocol processing and the host.
+4. Destroy the `ParticipantRuntime` (last, because it owns the controller).
+
+### Receiving through SIL Kit
+
+The receive callback only puts the frame in the receive queue with the SIL Kit timestamp (the sender's step time). Frames other than classical CAN data frames are dropped and counted.
+
+"At step T, every frame with a time before T has been received" holds only for frames that the sender sent within its own step (the range SIL Kit guarantees; vehicle-sil ports send within steps). For frames that another SIL Kit program sends outside its steps (from another thread or a receive handler), the step in which they are passed can change from run to run.
+
+### Frames from senders outside time synchronization (virtual time)
+
+For frames from a sender that does not take part in time synchronization (such as the Vector XL CAN Bridge), SIL Kit sets the time of the current step of this receiving participant. Frames received before this participant's first step, however, keep `std::chrono::nanoseconds::min()`.
+
+The port does not pass this time on. It gives frames and events with a negative time the time of this participant's latest step at the moment of reception (0 before the first step) and passes them in the next step. The statistic `received_without_time` counts them. The step in which they are passed is decided at the moment of reception, so it is not deterministic.
+
+### Transmitting through SIL Kit
+
+The port sends with `SendFrame()`. SIL Kit stamps the frame with the sender's step time. SIL Kit's trivial simulation has no synchronous result, so a valid frame gets `Accepted`.
+
+The port puts the time of the sending step (`TimedFrame::time`), with a marker, into the userContext of `SendFrame()` (`encode_send_time()`: the upper 8 bits are the marker 0xA5, the lower 56 bits are ns). The simple CAN Network Simulator learns the send time from it. SIL Kit only returns the userContext to the sender with the transmit acknowledgement and does not pass it to other receivers. Only 64-bit platforms are supported.
+
+### Transmit acknowledgements and events
+
+The port counts transmit acknowledgements and puts them in the event queue as `PortEvent`s.
+
+| SIL Kit notification | `PortEvent` |
+|---|---|
+| Transmit acknowledgement `Transmitted` | `TransmitCompleted` |
+| Transmit acknowledgement `Canceled`, `TransmitQueueFull` | `TransmitFailed` |
+| Error state notification | `BusStateChanged` (none for `NotAvailable`) |
+| Receive queue overflow | `ReceiveOverflow` |
+
+The SIL Kit handlers do not call the protocol processing (in the trivial simulation, the transmit acknowledgement comes back inside `SendFrame()`, so calling it would re-enter). The time of a transmit acknowledgement is the time of the sending step in the trivial simulation, and the end of the transmission with a network simulator.
+
+If the event queue cannot keep room for the frames whose transmit acknowledgements have not been received yet, an error state notification is dropped and counted in `event_overflows`. This keeps transmit acknowledgements from being lost, because a lost one would use up a `transmit_queue_capacity` slot.
+
+### Bit rate (`SilKitCanPortOptions::bitrate`)
+
+If you set `bitrate`, `start()` passes it with `SetBaudRate()` before `Start()`. The trivial simulation does not use it. A network simulator uses it for transmission times.
+
+With the default 0, the port does not call `SetBaudRate()`. The SIL Kit documentation says to always set it before use. This causes no problem with the trivial simulation or the simple CAN Network Simulator. How other network simulators handle a controller without a bit rate is not verified. If you use such a simulator, set the bit rate.
+
+### Transmit queue limit (`SilKitCanPortOptions::transmit_queue_capacity`)
+
+If you set `transmit_queue_capacity` (default 0 = no limit), `send()` returns `QueueFull` when the number of frames that were sent and whose transmit acknowledgement event has not been released yet reaches that number. The protocol processing keeps the frame and sends it again in the next step.
+
+- A network simulator drops requests beyond its own transmit queue without sending them (a `TransmitQueueFull` transmit acknowledgement). With a simulator, set the limit to that queue size or less.
+- The limit cannot be larger than `event_capacity`.
+- A frame that never gets a transmit acknowledgement (for example, one sent on a controller that has not started) does not give its slot back. Check the statistic `outstanding`.
+- In SIL Kit's trivial simulation, transmit acknowledgements are released in the next step, so the limit becomes the number of frames you can send in one step.
+
+### Real time (`SilKitCanPortOptions::real_time_clock`)
+
+If you set `real_time_clock`, the port belongs to a participant without time synchronization, and its time domain is `RealTime`. Drive it with `RealTimeDriver`.
+
+- Instead of the SIL Kit timestamp (unusable with unsynchronized senders), the port stamps the arrival time from the clock, and it wakes the driver on each arrival.
+- The port does not put the send time in the userContext (network simulators assume virtual time).
+
+### Consistency with the virtual bus
+
+When you run the same scenario on the virtual bus and on SIL Kit (virtual time), the receive and transmit traces match byte for byte. Tests verify this, including combinations of participants with different step sizes.
+
+This relies on one condition. With SIL Kit, the order in which the port passes same-time frames from different senders is not fixed (only the order per sender is preserved). The protocol processing must therefore reorder them by a fixed rule. The test protocol reorders them by (time, sender).
+
+## Bus timing (`CanBusModel`)
+
+The virtual bus with timing and the simple CAN Network Simulator use the same bus model. It does not depend on SIL Kit.
+
+### Transmission time
+
+The transmission time is the number of bits without stuff bits (47 + 8 × bytes for an 11-bit ID, 67 + 8 × bytes for a 29-bit ID, including the 3-bit intermission) divided by the bit rate, rounded up to whole ns. Real frames are longer by their stuff bits (up to about 20 %).
+
+### Arbitration and the transmit queue
+
+When the bus becomes idle, the heads of the ready transmit queues contend, and the one with the smallest arbitration field wins. The comparison order:
+
+1. Compare the 11-bit base IDs.
+2. If they are equal, an 11-bit frame wins over a 29-bit frame (RTR is dominant, SRR is recessive).
+3. Between 29-bit frames, compare the extended IDs.
+
+Between frames with the same ID and format (which a real bus does not resolve), the shorter data wins, then the data bytes in order decide, then the order of the senders (on the virtual bus, the order of `attach()`).
+
+A frame being transmitted is never interrupted. Frames that become ready during a transmission contend at its end.
+
+Each sender's transmit queue is a FIFO. A frame further back waits until the frames ahead of it have gone out, even if it would win arbitration.
+
+### What is not simulated
+
+Stuff bits, error frames, ACK errors and automatic retransmission, error states, remote frames, CAN FD, and the priority of the controller's transmit buffers.
+
+### When the bus is resolved (`VirtualCanBusTiming::simulator_step`)
+
+| `simulator_step` | How the bus is resolved | Receive time |
+|---|---|---|
+| 0 (exact) | A frame contends for the bus from its send time. | Decided by the send times only, independent of the receivers' step sizes. |
+| Δ > 0 | The bus is resolved every Δ. | Depends on Δ, but not on the receivers' step sizes. |
+
+With Δ > 0, at boundary T the bus adds the frames sent before T to the queues and resolves the transmissions that start in [T, T + Δ). A frame sent at time t does not start before the first boundary after t. This is the same rule as in the simple CAN Network Simulator (`SimulationStepSizeNanoseconds` = Δ), and both give the same receive times for the same transmissions (verified by tests).
+
+### Setup for verifying timing
+
+To verify timing, put the nodes on separate ports (separate CAN controllers). Nodes of the same `Network` reach each other through local loopback and do not go through the bus.
+
+## Simple CAN Network Simulator (`vehicle_sil::can_netsim`, `vehicle_sil_can_bus_simulator`)
+
+SIL Kit's trivial simulation reproduces neither arbitration nor bus occupancy. The simple CAN Network Simulator is a SIL Kit participant that uses the SIL Kit Network Simulator API (experimental) to simulate CAN on the specified networks with the bus model above. It reproduces arbitration, transmission time and congestion in virtual time, without a CANoe license.
+
+### Transmission and reception
+
+- SIL Kit automatically switches the controllers on those networks to detailed simulation, so the code of each participant does not change.
+- The time of a received frame is the end of its transmission.
+- The sender gets back the TX frame and the transmit acknowledgement (`Transmitted`) with the same time, both carrying the sender's userContext.
+- A request that overflows a controller's transmit queue (default 64) gets a `TransmitQueueFull` transmit acknowledgement and is not sent.
+- Requests for CAN FD and remote frames are dropped and counted.
+- If the request queue (4096 requests per network) overflows, requests are dropped and counted, and a warning is printed.
+- A run in which the request queue overflowed is not deterministic.
+- A network that is in the configuration but that no controller has joined yet does nothing (SIL Kit hands over the means to deliver frames when the first controller appears).
+- So a configuration shared with Vector's simulator can contain CAN networks that are not used.
+
+### Timing and determinism
+
+The simulator takes part in time synchronization. At step T, it takes in the requests sent before T (by the send time that the vehicle-sil port put in the userContext) and resolves the transmissions that start in [T, T + step size). The result depends only on the send times and the step size, not on the step sizes of the other participants or on thread timing.
+
+The following cases are not deterministic.
+
+| Case | Handling |
+|---|---|
+| Requests without a marker (from participants other than vehicle-sil), and requests whose marked time is beyond the limit (the larger of 1 s and the step size after the last step) | Treated as sent at the time of the last step, and counted. |
+| A run in which a controller with frames waiting to be sent calls `Reset()` | Which frames get `Transmitted` and which get `Canceled` is undecided for one step (see `Reset()` under "Controller modes" below). |
+
+The limit for a marked send time is the larger of 1 s and the step size, counted from the last step.
+
+### Bit rate in the simulator
+
+The bit rate of a network is the value from the first controller on that network that calls `SetBaudRate()`, or, if none does, `--default-bitrate` (default 500 kbit/s). A different value that arrives later is counted, causes a warning and is not used. The log shows the bit rate in use and whether it is the default or a controller's setting.
+
+| Calls `SetBaudRate()` | Does the simulator receive the value? |
+|---|---|
+| vehicle-sil ports of coordinated participants (the ECUs of `vehicle_sil_launch run`, `Simulation`) | Yes, regardless of start-up order (the port calls `SetBaudRate()` at CommunicationReady). |
+| Autonomous participants, and other programs that call `SetBaudRate()` right after creating the controller | Not if they call it before they discover the simulator (SIL Kit behavior; see [dependencies.md](../dependencies.md)). |
+
+Also give the network's bit rate with `--default-bitrate`, to cover ports that set no bit rate and participants whose value the simulator cannot receive.
+
+### Controller modes
+
+The conditions under which sends are dropped, and the fact that reception does not depend on the mode, are the same as in SIL Kit's trivial simulation. Cancellation by `Reset()` (`Canceled` transmit acknowledgements) of frames waiting to be sent is specific to this simulator.
+
+| Situation | What happens |
+|---|---|
+| A mode change (`Start()`, `Stop()`, `Sleep()`, `Reset()`) | The simulator returns the state change in the next step. |
+| Requests that a controller sends after it reported a mode other than `Started` | Dropped and counted (`rejected`). No transmit acknowledgement is returned. |
+| Requests sent before the mode change | Sent as usual (decided by the order of the controller's calls, not by thread timing). |
+| A controller that never reports a mode | Treated as started. |
+| Reception | A frame is delivered to every connected controller except the sender, regardless of the receiver's mode. |
+| A request to reset error handling | Nothing happens (error states are not simulated). |
+
+A controller that never reports a mode is treated as started because the simulator cannot receive a `Start()` that comes before the controller discovers the simulator (autonomous participants; see [dependencies.md](../dependencies.md)). The SIL Kit CAN controller has no mode equivalent to listen-only.
+
+#### Warning for dropped frames
+
+The simulator warns only once per controller (it does not warn again, even if the controller is restarted and stopped again). The warning gives the frame ID, the controller number and the mode the controller reported (stopped, asleep, reset). The number is the one SIL Kit gave that controller. It counts from 1 across all networks, in the order the simulator discovered the controllers (the Network Simulator API does not give the names of participants or controllers).
+
+#### `Reset()`
+
+`Reset()` cancels pending send requests. The controller's frames whose transmission has not started are dropped without going on the bus and counted (`rejected`), and each gets a `Canceled` transmit acknowledgement. The cancellation takes effect from the first step that starts after the simulator receives `Reset()` (frames whose transmission was resolved in an earlier step are delivered). The simulator's step at the same time as `Reset()` can run before or after the simulator receives `Reset()`, so a frame that would have started in that step can get either `Transmitted` or `Canceled`. After `Reset()`, the controller cannot send until it calls `Start()`.
+
+### Configuration file and command line
+
+The configuration file and the command line are shared with the Vector SIL Kit Network Simulator.
 
 ```yaml
 SchemaVersion: 1
-Description: 任意の説明
-SimulationStepSizeNanoseconds: 1000000   # 省略時 1 ms
+Description: Any description
+SimulationStepSizeNanoseconds: 1000000   # 1 ms if omitted
 SimulatedNetworks:
   - Name: CAN1
     Type: CAN
-  - Name: LIN1          # CAN 以外は模擬せず、警告する
+  - Name: LIN1          # not CAN: not simulated, with a warning
     Type: LIN
 ```
 
-- 形式は Vector SIL Kit Network Simulator の設定ファイル（`SchemaVersion: 1`、YAML か JSON）です。`Type: CAN` のネットワークだけを模擬します。ほかの種類のネットワーク、`Switches`、知らないキーは受け付けて警告します。必須の項目がない、`SchemaVersion` が 1 でない、種類が CAN、LIN、Ethernet、FlexRay のどれでもない、名前が重複している、といったファイルは使いません。
-- コマンドラインは Vector のものと同じ形です: `vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>`（短い形 `-n -u -l -c` も同じ。participant 名の既定は `NetworkSimulator`）。Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスと名前を使えます）。`-c` のファイルの中の相対パスは、実行時のカレントディレクトリから解決します。`-c` の構成には、書いていないキーに vehicle-sil の既定を足します（待ち受けるアドレス、Windows の TCP、`Experimental.TimeSynchronization.DynamicSimulationStep: false`）。`ParticipantName` が `--name` と違う、`Middleware.RegistryUri` が `--connect-uri` と違う、`DynamicSimulationStep` が `true`、のどれかなら、接続する前に準備の失敗（終了コード 3）にして、直し方を言います（[core.md](core.md) の「SIL Kit の構成の既定」）。この実行ファイルだけの設定（`--default-bitrate`、`--transmit-queue`、`--start-timeout-ms`）はコマンドラインで渡し、設定ファイルには書きません。Vector のものが同じファイルを読めるようにするためです。
-- 終了コード: 0 正常に終了、1 シミュレーション中の失敗、3 準備の失敗（設定ファイル、接続）、4 使い方の誤り。
+#### Configuration file
 
-Vector SIL Kit Network Simulator との差し替え:
-- 実行ファイルを替えるだけで済むように作っています。どちらも同じ participant 名（既定 `NetworkSimulator`）でネットワーク名の模擬を引き受けるので、各ピアのコード、設定ファイル、システムコントローラーの必須 participant の一覧は変わらない想定です。Vector のものでの動作はまだ確かめていません。Vector のものは CANoe のライセンスが要ります。
-- Vector のものは、スタッフビットを含む送信時間、相手のいない送信の ACK エラーとエラー状態、CAN FD、LIN、Ethernet、FlexRay を模擬します。簡易版はどれもしません。同じ設定でも時刻は一致しません。
-- vehicle-sil のポートは、どちらのシミュレーターでも userContext に送信時刻を入れます。Vector のものにとっては意味のない値です。Vector のものでの決定論とタイミングは確かめていません。
+The format is the configuration file of the Vector SIL Kit Network Simulator (`SchemaVersion: 1`, YAML or JSON). Only networks with `Type: CAN` are simulated. Other kinds of networks, `Switches` and unknown keys are accepted with a warning. The simulator does not use a file in which a required item is missing, `SchemaVersion` is not 1, a kind is none of CAN, LIN, Ethernet and FlexRay, or a name is duplicated.
 
-既知の制限:
-- 送信の開始は、送った時刻の後の最初のステップの境界より前になりません。その間に始まった優先度の低いフレームが先に出ることがあります（ずれは最大でステップ幅 + 1 フレーム）。
-- 送信キューがあふれたときの扱いが、タイミングありの仮想バス（`send()` が同期で `QueueFull`）と簡易版（非同期の `TransmitQueueFull` の送信確認。フレームは送られない）で違います。あふれる場面では、両者のトレースは一致しません。J1939 などのフレームを失わないために、ポートの `transmit_queue_capacity` を `--transmit-queue` 以下にします（上の「SIL Kit のポート」）。
-- 同じ時刻に別のコントローラーから同じ ID、データのフレームが出たときの順序は、各コントローラーが最初の要求を出した順（届いた順）で、決定的ではありません。受信側に届く内容は同じです。
-- 送信を起点とするプロトコルのタイマー（J1939 の T3 など）は、ポートに渡したステップの時刻から数えます。バスの待ちのぶん、実際の送信より早く数え始めます（[j1939.md](j1939.md) の「トランスポートプロトコル」の制限）。
-- Network Simulator API は SIL Kit の experimental な API です。使うのは `libs/can_netsim/src/can_bus_simulator.cpp` だけです。SIL Kit を更新したら、このシミュレーターのテストを回します。
+#### Command line
+
+The form is the same as that of Vector's simulator.
+
+```
+vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>
+```
+
+- The short forms `-n -u -l -c` work the same. The default participant name is `NetworkSimulator`.
+- On Windows, the arguments are read as UTF-8 from the wide-character command line (paths and names with non-ASCII characters work).
+- Relative paths inside the `-c` file are resolved from the current directory at run time.
+- For keys that the `-c` configuration does not set, the vehicle-sil defaults are added (the listen address, TCP on Windows, `Experimental.TimeSynchronization.DynamicSimulationStep: false`).
+- If `ParticipantName` differs from `--name`, `Middleware.RegistryUri` differs from `--connect-uri`, or `DynamicSimulationStep` is `true`, the simulator fails with a setup failure (exit code 3) before it connects, and says how to fix it (see "SIL Kit configuration defaults" in [core.md](core.md#sil-kit-configuration-defaults)).
+- Settings specific to this executable (`--default-bitrate`, `--transmit-queue`, `--start-timeout-ms`) go on the command line, not in the configuration file, so that Vector's simulator can read the same file.
+
+#### Exit codes
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Ended normally |
+| 1 | Failure during the simulation |
+| 3 | Setup failure (configuration file, connection) |
+| 4 | Usage error |
+
+### Swapping in the Vector SIL Kit Network Simulator
+
+The simulator is designed so that swapping the executable is all it takes. Both simulators take over the simulation of the named networks under the same participant name (default `NetworkSimulator`), so the code of each peer, the configuration file and the system controller's list of required participants are expected not to change. Operation with Vector's simulator is not verified yet. Vector's simulator requires a CANoe license.
+
+- Vector's simulator simulates transmission times with stuff bits, ACK errors and error states for sends that no node receives, CAN FD, LIN, Ethernet and FlexRay. The simple simulator does none of these, so the times do not match even with the same configuration.
+- vehicle-sil ports put the send time in the userContext with either simulator, but the value means nothing to Vector's simulator.
+- Determinism and timing with Vector's simulator are not verified.
+
+### Known limitations of the simple CAN Network Simulator
+
+| Limitation | Impact and workaround |
+|---|---|
+| A transmission never starts before the first step boundary after its send time. | A lower-priority frame that started in between can go out first (the shift is at most the step size + 1 frame). |
+| The virtual bus with timing (`send()` returns `QueueFull` synchronously) and the simple simulator (an asynchronous `TransmitQueueFull` transmit acknowledgement, and the frame is not sent) handle a full transmit queue differently. | When the queue overflows, the traces of the two do not match. To avoid losing J1939 or other frames, set the port's `transmit_queue_capacity` to `--transmit-queue` or less (see "SIL Kit port" above). |
+| When frames with the same ID and data come from different controllers at the same time, their order is the order in which each controller made its first request (the order the simulator received them), which is not deterministic. | The receivers receive the same content. |
+| Protocol timers that start at a send (such as J1939 T3) count from the time of the step that passed the frame to the port. | They start counting earlier than the actual transmission, by the time the frame waits for the bus (see "Transport protocol limitations" in [j1939.md](j1939.md#transport-protocol-limitations)). |
+| The Network Simulator API is an experimental SIL Kit API. | Only `libs/can_netsim/src/can_bus_simulator.cpp` uses it. When you update SIL Kit, run the tests of this simulator. |
+
+## See also
+
+- How the J1939 stack uses this foundation: [j1939.md](j1939.md)
+- How to set up participants that use the simple CAN Network Simulator: [peers.md](../peers.md)
+- The overall picture: [architecture.md](../architecture.md)
+- Where things are: [code-map.md](../code-map.md)
+- The other internals pages: "[Internals](../architecture.md#internals)" in architecture.md
