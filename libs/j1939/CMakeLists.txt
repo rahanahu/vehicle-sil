@@ -5,6 +5,7 @@ add_library(vehicle_sil_j1939 STATIC
   src/node.cpp
   src/timer_set.cpp
   src/toolbox.cpp
+  src/transfer_sniffer.cpp
   src/transport.cpp
   src/types.cpp
 )

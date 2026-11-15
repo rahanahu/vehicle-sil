@@ -281,6 +281,7 @@ What they check in the engine:
 - Real-time behavior on SIL Kit without time synchronization
 - The toolbox (reentrancy of release and destruction, destruction after the `Network`, the origin and scheduling of timers)
 - `j1939.seat_*`: the listener seat, an internal interface of the engine (what it hears, its order against the `Observer`, handlers and timers, that it is read-only, that having it or not changes no trace)
+- `j1939.sniffer_*`: `TransferSniffer`, with the rules on hand-written frames and agreement with the receiving node of an engine that got the same frames (transfers between engines, fault injection with a fixed seed); `j1939.sniffer_boundary` checks that it does not depend on `Network`
 
 Virtual bus and SIL Kit give the same result:
 
@@ -624,8 +625,11 @@ The body of `bind_host()` is in `core/bind_host.hpp`.
 | `Name` | `j1939/name.hpp` |
 | `Subscription`, `Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
+| `TransferSniffer` (follows the transfers between other ECUs from the frames; does not depend on `Network`) | `j1939/transfer_sniffer.hpp` |
 | Address Claim and Request | `src/node.cpp` |
 | Transport protocol | `src/transport.cpp` |
+| Transfer sniffer | `src/transfer_sniffer.cpp` |
+| The frame layout that the transport protocol and the sniffer both read (control bytes, timeouts, checks on the form of an announcement) | `src/transport_wire.hpp` |
 | Listener seat (internal interface) | `src/frame_seat.hpp` |
 
 - Tests: `tests/j1939`

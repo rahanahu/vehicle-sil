@@ -281,6 +281,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 時刻同期なしの SIL Kit での実時間の動作
 - ツールキット（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
 - `j1939.seat_*`: エンジンの内部の口である聞き役の席（聞こえるもの、`Observer`、ハンドラー、タイマーとの順、読み取り専用であること、席の有無で記録が変わらないこと）
+- `j1939.sniffer_*`: `TransferSniffer` の、手で書いたフレームでの決まりと、同じフレームを受けたエンジンの受信側のノードとの一致（エンジンどうしの転送、種を固定した故障注入）。`j1939.sniffer_boundary` は `Network` に依らないことを検査する
 
 仮想バスと SIL Kit の一致:
 
@@ -624,8 +625,11 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Name` | `j1939/name.hpp` |
 | `Subscription`、`Timer` | `j1939/toolbox.hpp` |
 | `Observer` | `j1939/observer.hpp` |
+| `TransferSniffer`（ほかの ECU どうしの転送をフレームから追う。`Network` に依らない） | `j1939/transfer_sniffer.hpp` |
 | Address Claim と Request | `src/node.cpp` |
 | トランスポートプロトコル | `src/transport.cpp` |
+| 盗み聞き | `src/transfer_sniffer.cpp` |
+| トランスポートプロトコルと盗み聞きの両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査） | `src/transport_wire.hpp` |
 | 聞き役の席（内部の口） | `src/frame_seat.hpp` |
 
 - テスト: `tests/j1939`
