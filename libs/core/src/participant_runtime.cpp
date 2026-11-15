@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/core/participant_runtime.hpp"
 
+#include "participant_create.hpp"
 #include "participant_runtime_checks.hpp"
 #include "participant_runtime_probe.hpp"
 
@@ -11,10 +12,12 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -87,29 +90,61 @@ bool has_finished(const PeerStatus& status) noexcept
     return status.state && is_terminal_or_stopping(*status.state);
 }
 
-std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit::Config::IParticipantConfiguration> config,
-                                                         const std::string& name, const std::string& registry_uri,
-                                                         std::chrono::milliseconds name_in_use_wait)
+namespace detail {
+
+bool is_name_in_use(std::string_view what) noexcept
+{
+    return what.find(kNameInUseText) != std::string_view::npos;
+}
+
+bool is_join_timeout(std::string_view what) noexcept
+{
+    return what.find(kJoinTimeoutText) != std::string_view::npos;
+}
+
+std::unique_ptr<SilKit::IParticipant> create_participant_retrying(const ParticipantFactory& create, const std::string& name,
+                                                                  std::chrono::milliseconds name_in_use_wait,
+                                                                  const Notice& notice)
 {
     if (name_in_use_wait < std::chrono::milliseconds::zero())
     {
         throw std::invalid_argument("name_in_use_wait must not be negative");
     }
+    // Fixed here: a join timeout (about 10 s) that is retried does not give the name more time.
     const auto give_up = std::chrono::steady_clock::now() + name_in_use_wait;
+    bool join_retried = false;
     for (;;)
     {
         try
         {
-            return SilKit::CreateParticipant(config, name, registry_uri);
+            return create();
         }
         catch (const std::exception& e)
         {
             const std::string what = e.what();
-            if (what.find("already exists in the simulation") == std::string::npos)
+            if (is_join_timeout(what))
+            {
+                // Once in all: the participant that did not reply has usually just ended, and the
+                // registry has seen its end by the time the second attempt asks.
+                if (join_retried)
+                {
+                    throw SilKit::ProtocolError(
+                        what + " (participant \"" + name +
+                        "\" timed out a second time after it was created once more: a participant that the "
+                        "registry lists does not reply; check that the participants this message names are "
+                        "running and can be reached from this computer, or end them)");
+                }
+                join_retried = true;
+                notice("participant \"" + name +
+                       "\" timed out joining the simulation and is created once more (a participant that had "
+                       "just ended was probably still on the registry's list): " +
+                       what);
+            }
+            else if (!is_name_in_use(what))
             {
                 throw;
             }
-            if (std::chrono::steady_clock::now() >= give_up)
+            else if (std::chrono::steady_clock::now() >= give_up)
             {
                 throw NameInUseError(
                     what + " (the registry refused the name \"" + name + "\" for " + std::to_string(name_in_use_wait.count()) +
@@ -120,6 +155,22 @@ std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+}
+
+} // namespace detail
+
+std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit::Config::IParticipantConfiguration> config,
+                                                         const std::string& name, const std::string& registry_uri,
+                                                         std::chrono::milliseconds name_in_use_wait)
+{
+    return detail::create_participant_retrying(
+        [&] { return SilKit::CreateParticipant(config, name, registry_uri); }, name, name_in_use_wait,
+        [](std::string_view text) {
+            // One write: output of other threads (SIL Kit's log, the ECU) does not land inside the line.
+            std::string line = "vehicle_sil: ";
+            line.append(text).push_back('\n');
+            std::cerr << line;
+        });
 }
 
 ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :

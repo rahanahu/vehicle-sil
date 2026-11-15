@@ -87,7 +87,11 @@ struct VirtualTimeOptions
 /// the name as in use ("A participant with the same name ... already exists"): the registry may not
 /// yet have seen the end of an earlier participant with this name (a process restarted at once;
 /// over a network it takes longer). After that, NameInUseError (a SilKit::ProtocolError) with SIL
-/// Kit's message, the time waited and what it may mean. Other failures are thrown at once; a negative wait is
+/// Kit's message, the time waited and what it may mean. Tried again once, after a line on
+/// std::cerr, when joining timed out waiting for replies from known participants (a participant
+/// that had just ended may still be on the registry's list, see docs/dependencies.md); a second
+/// such timeout is a SilKit::ProtocolError with SIL Kit's message and what it may mean. The join
+/// retry does not extend `name_in_use_wait`. Other failures are thrown at once; a negative wait is
 /// std::invalid_argument. ParticipantRuntime uses it; so can a program that makes its own SIL Kit
 /// participants.
 [[nodiscard]] std::unique_ptr<SilKit::IParticipant> create_participant(

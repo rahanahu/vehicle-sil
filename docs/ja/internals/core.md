@@ -305,6 +305,7 @@ TCP だけにするのは、次の理由です。SIL Kit の registry は、TCP 
 - `name_in_use_wait` の既定は 5000 ms です。`PeerOptions` にも同じものがあります。`Simulation` は `start_timeout` を超えない値にします。
 - 作り直すのは、同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い PC、ネットワーク越し）。
 - 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `NameInUseError`（`SilKit::ProtocolError` の一種）です。
+- 参加が、既知の participant の返事を待って時間切れになったら（「Timeout while waiting for replies from known participants」。[dependencies.md](../dependencies.md#sil-kit-ほかの-participant-が抜ける間に参加すると抜けた-participant-を待つ) の「SIL Kit: ほかの participant が抜ける間に参加すると、抜けた participant を待つ」）、participant を 1 回作り直し、そのことを `std::cerr` に 1 行出します。2 回目も時間切れなら、SIL Kit のメッセージに、やり直したことを書き足して `SilKit::ProtocolError` を投げます。このやり直しは全体で 1 回だけで、`name_in_use_wait` を伸ばしません。待つのは、最長で `name_in_use_wait` と、参加の時間切れ 2 回分です。
 - ほかの失敗は、すぐに投げます。
 - SIL Kit の participant を自分で作るプログラム（テストの生の Agent など）も、この関数を使えます。
 
