@@ -89,6 +89,7 @@ ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシ�
 | `simulation.two-buses.yaml` | `networks` に名前を追加しただけの設定ファイルで、`check` も `run` も成功しますが、表示の ECU は回転数を受信しません。 |
 | `simulation.fixed.yaml` | 作り直した表示の ECU に差し替えた設定ファイルです。 |
 | `simulation.network-names.yaml` | 表示の ECU をそのまま使い、`network_names` でその名前を `J1939_CAN` に対応させた設定ファイルです（ビルドし直せないとき）。 |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` に、エンジンの ECU の 2 つ目を足し、`j1939_nodes` で別の J1939 のアドレスと NAME にした設定ファイルです。 |
 | `scenarios/engine_speed.yaml` | 受信を確認するシナリオです。 |
 
 ### first_ecu

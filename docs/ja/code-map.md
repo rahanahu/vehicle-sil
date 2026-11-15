@@ -315,9 +315,11 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 壊す順（ハンドラーを外してから見張り、最後に `Listener`）、見張りから追加した見張り、`Scope::on_step`
 - 変数を書いた `Spy` が ECU より先に壊れたときに、次のステップが止まること（仮想バスと SIL Kit）
 - 聞きこぼしの変数の内訳と和、誤りの文
+- 生成した型と手で書いた型での `watch<M>()`: 信号ごとの値（整数か実数）、その状態、`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`from` と `to` の絞り、最後より古いメッセージ、同じ時刻の 2 つ、`std::int64_t` に入らない 64 ビットのカウンター（実数）、ECU が既に持つ名前（変数を 1 つも出さない）、誤りの文
+- `j1939_spy.watch_of_a_signal_named_count_does_not_build`: 見張りの項目と同じ名前の信号がビルドの誤りになること（ビルドに入らないターゲット `vehicle_sil_spy_watch_clash` を、ビルド木でビルドの道具を呼んで作る。同じ木で同時にビルドしない）。vehicle-sil がサブプロジェクトのときと、構成が複数ある生成器では登録しない（構成のときにそう出す）
 - `Spy` があってもほかの ECU の記録が変わらず、`Spy` が何も送信しないこと
 - 定常状態のステップでメモリを確保しないこと
-- 手引きの見本
+- 手引きの見本（`tests/spy/guide_example.hpp`、`guide_analysis.hpp`、`cal_messages.yaml`）。`j1939_spy.guide_example_is_the_guides`: 手引きが、このファイルをそのまま載せていること。`j1939_spy.analysis_example_judges_each_write_by_its_answer`: 解析の見本を、合う応答、応答なし、値の違う応答、接続で来た応答、応答の前の 2 つ目の Write で動かすこと
 - `j1939_spy.boundary`: `libs/spy` がエンジンの内部を使っていないこと。`j1939.sniffer_boundary` は、エンジンが `vehicle_sil::spy` を知らないことも検査する
 
 ### `peer` / `testkit`
@@ -717,7 +719,8 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 | 名前 | 場所 |
 |---|---|
-| `Spy`、`Scope`、`SpyOptions`（受信だけをする participant が、聞いたことを ECU の変数に書く。見張りは `Scope&` を取るクラス） | `spy/spy.hpp` |
+| `Spy`、`Scope`、`SpyOptions`（受信だけをする participant が、聞いたことを ECU の変数に書く。見張りは `Scope&` を取るクラス）、`WatchOptions` | `spy/spy.hpp` |
+| `Spy::watch<M>()`、`Watch<M>`（型のあるメッセージを変数に。`vehicle_sil::j1939_codec` が要る） | `spy/watch.hpp` |
 
 - テスト: `tests/spy`
 - `ctest -R`: `^j1939_spy\.`
@@ -834,7 +837,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 |---|---|
 | 照合の全体の流れ | `src/check.cpp` |
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
-| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で渡す（`seen_networks()`） | `src/check_networks.cpp` |
+| 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
@@ -1018,6 +1021,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `simulation.two-buses.yaml` | `networks` に `VehicleCAN` を追加したもの |
 | `simulation.fixed.yaml` | 表示の ECU を、`examples/ecu_main` のものに差し替えたもの |
 | `simulation.network-names.yaml` | `simulation.yaml` の表示の ECU に `network_names` を足したもの |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` に、`j1939_nodes` で変えた 2 つ目のエンジンの ECU を足したもの |
 | `scenarios/engine_speed.yaml` | シナリオ |
 
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと、作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います。
@@ -1464,6 +1468,7 @@ flowchart TD
 | ランチャー | 照合のルールと `code` | [照合のルールと `code`](#照合のルールと-code) |
 | ランチャー | 設定ファイルかシナリオのキー、スキーマ | [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) |
 | ランチャー | `network_names` | [設定ファイルの `network_names`](#設定ファイルの-network_names) |
+| ランチャー | `j1939_nodes` | [設定ファイルの `j1939_nodes`](#設定ファイルの-j1939_nodes) |
 | ランチャー | `run --events`、`--stdin-commands`、`version --json` | [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) |
 | ランチャー | 速度、一時停止、ステップ実行、遅れ | [`run` の時間](#run-の時間) |
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
@@ -1630,6 +1635,37 @@ flowchart TD
 
 - `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`）
 - `launch_run.network_names`: 名前の違う ECU が 1 つのバスで通信する、機種で対応が替わる、`manual` のコマンドとイベント、`--map-network` を受け取れない実行ファイル
+- `schema.files_and_launcher`
+
+### 設定ファイルの `j1939_nodes`
+
+`j1939_nodes` は、participant の J1939 のノードに、実行ファイルのコードと別のアドレスと NAME の欄を与えます。
+
+変える場所:
+
+- 読むコードと、設定ファイルだけで分かるエラー: `libs/launch/src/config.cpp` の `read_j1939_nodes()` と `check_j1939_nodes()`
+- 機種の行の重ね方: `lay_j1939_nodes()`、引数にするコード: `j1939_node_arguments()`（行の文字列は `ecu_executable::format_j1939_node_argument()`。`ecu_main` が読み戻します）
+- 自己申告のノードに行を当てるコード: `libs/launch/src/check_networks.cpp` の `seen_networks()`（`j1939::apply_node_overrides()` を使う）
+- 行についての指摘と、`address-conflict`、`address-shared`、`name-conflict` の直し方: `libs/launch/src/check_rules.cpp` の `check_j1939_node_entries()` と `conflict_fix()`
+- 設定ごとに要る `features` の語: `vehicle_sil/launch/config.hpp` の `kJ1939NodeSettingFeatures`（後で足す設定は、自分の語を持ちます）
+
+守ること:
+
+- ランチャーで行を当てるのは `seen_networks()` だけです。ルールは、その結果（`SeenNetwork::j1939_matches`、`unmatched_j1939_entries()`）を読み、当て直しません。
+- 照合と実行ファイルは同じ決まり（`vehicle_sil/j1939/node_override.hpp`）で当てます。`launch.j1939_nodes_match_like_the_network_does` が、同じ場面を `seen_networks()` と `j1939::Network` の両方に通します。
+- ノードに当たらない行があると、その participant のそのネットワークのノードを、アドレスと NAME のルールに入れません（`Rules::j1939_held`）。
+
+合わせて直すドキュメント:
+
+- [simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」と、キーの表、機種の表
+- [simulation-check.md](simulation-check.md) の `j1939-node-*`、`address-conflict`、`address-shared`、`name-conflict`、participant の表、JSON の `j1939_nodes`
+- [simulation-events.md](simulation-events.md) の `features` の `j1939-nodes`
+- スキーマ（`schema/simulation.schema.json` とテンプレートのコピー）
+
+テスト:
+
+- `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`、`test_j1939_nodes_match.cpp`）
+- `launch_run.j1939_nodes`: 同じ ECU の 2 つが行で通信する、行がないと照合が書く行を言う、機種で行が替わる、`manual` のコマンドとイベント、`describe: false` の participant、`--j1939-node` を受け取れない実行ファイル
 - `schema.files_and_launcher`
 
 ### イベント、標準入力のコマンド、`version --json`
@@ -1857,11 +1893,15 @@ flowchart TD
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |
 | 引数 | `tools/launch/main.cpp` |
-| ファイルを描くページ | `gui/timeline/viewer.js`（ページは `timeline.html`。「The page」より上は DOM なしで動き、単体テストが呼ぶ部分） |
-| ページの文言（英語と日本語） | `gui/timeline/messages.js`: ページが出す文言のすべてを、鍵ごとに両方の言語で（鍵は単体テストが確かめる。`viewer.js` の単語の並んだ文字列は、ページの lint が断る） |
+| ファイルを描く要素 `<vehicle-sil-timeline>` | `gui/timeline/viewer.js`（「The element」より上は DOM なしで動き、単体テストが呼ぶ部分。その下は、`enter()` がいまの要素にしたものに描く関数と、属性・プロパティ・事象を持つクラス `VehicleSilTimelineElement`）。CSS は `gui/timeline/timeline.css`（shadow root の中。`hide`、`compact`、`theme` をここで読む） |
+| 利用者が読む 1 つのファイル | `gui/timeline/vehicle-sil-timeline.js`。`gui/timeline/bundle.js` が `messages.js`、`timeline.css`、`viewer.js` から作る（`gui/web` で `npm run bundle:timeline`。古いと `npm run test:timeline` が落ちる）。型は `gui/timeline/vehicle-sil-timeline.d.ts`（手で書く。クラスと合わせる） |
+| 時間の軸のページ | `gui/timeline/timeline.html` と `page.js`: 要素 1 つと、ページが足すもの（`?src=`、`?lang=`、`#token=`、落とした・選んだファイル、埋め込んだファイル）。利用者の最小のページは `gui/timeline/example.html` |
+| 文言（英語と日本語） | `gui/timeline/messages.js`: 要素とページが出す文言のすべてを、鍵ごとに両方の言語で（鍵は単体テストが確かめる。`viewer.js` と `page.js` の単語の並んだ文字列は、lint が断る）。ページは、要素の `load.*` の文を、要素の `messages` のプロパティで自分の言い方（`pageLoad.*`）にする |
 | GUI サーバー: シナリオの実行に付ける `--timeline`、残すファイル、配るページとファイル | `gui/server/src/vehicle_sil_gui/timelines.py`、`server.py` の `_start()`、`_keep_timeline()`、`get_timeline()`、`get_timeline_page()` |
 | サンプルの画面のリンク「時間の軸」 | `gui/web/src/app/run/scenario-panel.ts` の `ScenarioPanel` と `timelinePageUrl()` |
-| 新しい種類の段、送った値の新しい状態 | `laneKind()` と `variableLane()` の分岐、状態は `pointState()` と `holdSegments()`、`timeline.html` の CSS のクラス。名前を出す代わりに描かせる値は `KNOWN` |
+| サンプルの画面の中の時間の軸（Angular の手本） | `gui/web/src/app/run/timeline-view.ts` の `TimelineView` |
+| npm パッケージとツールの圧縮ファイルの中の要素 | `gui/client/pack.mjs`（`@vehicle-sil/gui-client/timeline`）、`scripts/package.py` の `TIMELINE_ELEMENT`（`client/`） |
+| 新しい種類の段、送った値の新しい状態 | `laneKind()` と `variableLane()` の分岐、状態は `pointState()` と `holdSegments()`、`timeline.css` の CSS のクラス（その後に `npm run bundle:timeline`）。名前を出す代わりに描かせる値は `KNOWN` |
 
 合わせて直すもの:
 
@@ -1884,8 +1924,8 @@ flowchart TD
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline`（本物のランチャー）: 2 回実行して同じ、速度を変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数
 - `schema.files_and_launcher`
-- 基準のファイルと、ページの試験用のファイル `gui/timeline/tests/fixtures/`（基準のファイルにない形。`tests/schema/test_schemas.py` がスキーマに通ることを確かめる）でページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`）。
-- GUI サーバーの部分: `gui/server/tests/test_timelines.py`（機能のあるランチャーとないランチャーでの引数、トークンのあるときとないときのファイルとページ、残すファイルの数）。記録 `run-scenario-*-timeline`（`--timeline` を付けて記録したもの。`record_launcher.py --compare` が本物のランチャーと比べる）を使います。GUI のリンクから開くページは `gui/web/e2e/timeline-link.spec.ts`（`--e2e-grep 'timeline'`）。
+- 基準のファイルと、ページの試験用のファイル `gui/timeline/tests/fixtures/`（基準のファイルにない形。`tests/schema/test_schemas.py` がスキーマに通ることを確かめる）でページを確かめるもの: `gui/timeline/tests/viewer.test.js`（読み込み、モデル、配置。Node で。`gui/web` で `npm run test:timeline`）と `gui/web/e2e/timeline.spec.ts`（ブラウザで開いたページ）、`gui/web/e2e/timeline-element.spec.ts`（利用者のページの上の要素: 素の例、1 つのページに 2 つ、すべてのプロパティと事象、CSS が中に入らず外に出ないこと、インラインのスタイルを許さない CSP）。CTest にはありません。`scripts/verify-web.py` が回します（`--e2e-grep 'timeline page'`、`--e2e-grep 'timeline element'`）。
+- GUI サーバーの部分: `gui/server/tests/test_timelines.py`（機能のあるランチャーとないランチャーでの引数、トークンのあるときとないときのファイルとページ、残すファイルの数）。記録 `run-scenario-*-timeline`（`--timeline` を付けて記録したもの。`record_launcher.py --compare` が本物のランチャーと比べる）を使います。GUI のリンクから開くページと、サンプルの画面の中の要素は `gui/web/e2e/timeline-link.spec.ts`（`--e2e-grep 'timeline'`）。画面のテンプレートの中は `gui/web/e2e/starter.spec.ts`。
 
 ### シナリオをまとめて実行する
 
@@ -2025,7 +2065,7 @@ flowchart TD
 
 合わせて直すコード（`libs/ecu/include/vehicle_sil/ecu/executable.hpp`。ランチャーと `ecu_main` が同じものを使います）:
 
-- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数。`--map-network` は `network_names` から追加する。メッセージは `config.cpp` の `check_arguments()`）
+- `ecu_executable::kLauncherArguments`（設定ファイルの `command` に書けない引数。`--map-network` は `network_names` から、`--j1939-node` は `j1939_nodes` から追加する。メッセージは `config.cpp` の `check_arguments()`）
 - 終了コード、`kMaxMillis`
 
 合わせて直すドキュメント:

@@ -6,6 +6,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_core_tests
     test_communication_ready_gate.cpp
     test_deadline_waiter.cpp
     test_failure_check.cpp
+    test_participant_create.cpp
     test_participant_configuration.cpp
     test_participant_start.cpp
     test_simulation_watch.cpp
@@ -21,6 +22,9 @@ if(WIN32)
 endif()
 # The gate's arithmetic and its timer are internal to the library.
 target_include_directories(vehicle_sil_core_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/core/src)
+# The texts of SIL Kit's errors that create_participant() goes by must still be in its sources.
+target_compile_definitions(vehicle_sil_core_tests PRIVATE
+                           VEHICLE_SIL_SILKIT_SOURCE_DIR="${VEHICLE_SIL_EXTERNAL_DIR}/sil-kit")
 
 # Every SIL Kit participant configuration that the product and its tests make from a text goes
 # through vehicle-sil's defaults (loopback only for a loopback registry; TCP only on Windows); the

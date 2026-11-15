@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sun, 15 Nov 2026 18:12:25 +0900
+Subject: [PATCH] lifecycle: do not leave Error or an abort when a wait of the
+ start ends
+
+ServicesCreatedState::ServicesCreated() waits for the replies of the
+other participants and CommunicationInitializingState::
+CommunicationInitializing() waits for the pending subscriptions. Both
+give a callback that sets the next state, and the callback does not
+look at the state the participant is in when it runs.
+
+A participant can leave the state while it waits: ReportError() sets
+Error, AbortSimulation() goes on to Shutdown. When the replies or the
+subscriptions complete afterwards, the callback sets
+CommunicationInitializing (or CommunicationInitialized) over it, and the
+lifecycle goes on from there.
+
+This happens to a coordinated participant that is not among the required
+participants. When the WorkflowConfiguration and the system state
+ServicesCreated are handled in one read, the wait for the replies begins
+before the deferred ReportError() of
+LifecycleService::CheckForValidConfiguration() runs. The participant
+goes ServicesCreated, Error, CommunicationInitializing and then either
+runs the simulation as one of its participants, or, when the system
+states it would react to have passed, stays before Running for good
+and, with a TimeSyncService, keeps the virtual time of all participants
+from advancing.
+
+Let the callbacks do nothing unless the participant is still in the
+state that began the wait.
+---
+ .../orchestration/LifecycleStates.cpp         |  12 +++
+ .../orchestration/Test_LifecycleService.cpp   | 100 ++++++++++++++++++
+ 2 files changed, 112 insertions(+)
+
+diff --git a/SilKit/source/services/orchestration/LifecycleStates.cpp b/SilKit/source/services/orchestration/LifecycleStates.cpp
+index c6c00109..35e0a448 100644
+--- a/SilKit/source/services/orchestration/LifecycleStates.cpp
++++ b/SilKit/source/services/orchestration/LifecycleStates.cpp
+@@ -165,6 +165,12 @@ void ServicesCreatedState::ServicesCreated(std::string reason)
+     // subscriptions have been received.
+     _lifecycleManager->GetParticipant()->GetParticipantRepliesProcedure()->CallAfterAllParticipantsReplied(
+         [reason, this]() {
++        // The participant can leave this state while it waits for the replies (ReportError, AbortSimulation).
++        // Then it must stay where it is.
++        if (_lifecycleManager->GetCurrentState() != this)
++        {
++            return;
++        }
+         // If done, move forward to CommunicationInitializingState and call ServicesCreated
+         _lifecycleManager->SetStateAndForwardIntent(_lifecycleManager->GetCommunicationInitializingState(),
+                                                     &ILifecycleState::ServicesCreated, reason);
+@@ -207,6 +213,12 @@ void CommunicationInitializingState::CommunicationInitializing(std::string reaso
+     // Delay the next state until pending subscriptions of controllers are completed.
+     // Applies to all controllers that are included in the trait UseAsyncRegistration().
+     _lifecycleManager->AddAsyncSubscriptionsCompletionHandler([reason, this]() {
++        // The participant can leave this state while it waits for the subscriptions (ReportError,
++        // AbortSimulation). Then it must stay where it is.
++        if (_lifecycleManager->GetCurrentState() != this)
++        {
++            return;
++        }
+         // If done, move forward to CommunicationInitializedState and call CommunicationInitializing
+         _lifecycleManager->SetStateAndForwardIntent(_lifecycleManager->GetCommunicationInitializedState(),
+                                                     &ILifecycleState::CommunicationInitializing, reason);
+diff --git a/SilKit/source/services/orchestration/Test_LifecycleService.cpp b/SilKit/source/services/orchestration/Test_LifecycleService.cpp
+index e214191f..42b3916f 100644
+--- a/SilKit/source/services/orchestration/Test_LifecycleService.cpp
++++ b/SilKit/source/services/orchestration/Test_LifecycleService.cpp
+@@ -59,6 +59,35 @@ public:
+ public:
+ };
+ 
++// A participant whose replies and async subscriptions complete when the test says so
++class MockParticipantWithHeldCompletions : public MockParticipant
++{
++public:
++    struct HeldReplies : public SilKit::Core::RequestReply::IParticipantReplies
++    {
++        void CallAfterAllParticipantsReplied(std::function<void()> completionFunction) override
++        {
++            completion = std::move(completionFunction);
++        }
++
++        std::function<void()> completion;
++    };
++
++public:
++    auto GetParticipantRepliesProcedure() -> SilKit::Core::RequestReply::IParticipantReplies* override
++    {
++        return &heldReplies;
++    }
++
++    void AddAsyncSubscriptionsCompletionHandler(std::function<void()> handler) override
++    {
++        heldSubscriptionsCompletion = std::move(handler);
++    }
++
++public:
++    HeldReplies heldReplies;
++    std::function<void()> heldSubscriptionsCompletion;
++};
+ 
+ // Factory method to create a ParticipantStatus matcher that checks the state field
+ auto AParticipantStatusWithState(ParticipantState expected)
+@@ -1216,4 +1245,75 @@ TEST_F(Test_LifecycleService, error_on_not_required_coordinated)
+ 
+     EXPECT_EQ(lifecycleService.State(), ParticipantState::Error);
+ }
++
++TEST_F(Test_LifecycleService, error_while_waiting_for_replies_is_kept)
++{
++    // Goal: an error that is reported while the lifecycle waits for the replies of the other
++    // participants (ServicesCreated) is not overridden when the replies arrive
++    NiceMock<MockParticipantWithHeldCompletions> holdingParticipant;
++    LifecycleService lifecycleService(&holdingParticipant);
++    lifecycleService.SetLifecycleConfiguration(StartCoordinated());
++    MockTimeSync mockTimeSync(&holdingParticipant, &holdingParticipant.mockTimeProvider, healthCheckConfig,
++                              &lifecycleService);
++    lifecycleService.SetTimeSyncService(&mockTimeSync);
++    lifecycleService.SetServiceDescriptor(p1Id.GetServiceDescriptor());
++
++    EXPECT_CALL(holdingParticipant,
++                SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::ServicesCreated)))
++        .Times(1);
++    EXPECT_CALL(holdingParticipant, SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::Error)))
++        .Times(1);
++    EXPECT_CALL(holdingParticipant,
++                SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::CommunicationInitializing)))
++        .Times(0);
++
++    lifecycleService.StartLifecycle();
++    lifecycleService.NewSystemState(SystemState::ServicesCreated);
++    ASSERT_TRUE(holdingParticipant.heldReplies.completion);
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::ServicesCreated);
++
++    lifecycleService.ReportError("error while waiting for the replies");
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::Error);
++
++    holdingParticipant.heldReplies.completion();
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::Error);
++}
++
++TEST_F(Test_LifecycleService, error_while_waiting_for_subscriptions_is_kept)
++{
++    // Goal: an error that is reported while the lifecycle waits for the pending subscriptions
++    // (CommunicationInitializing) is not overridden when the subscriptions complete
++    NiceMock<MockParticipantWithHeldCompletions> holdingParticipant;
++    LifecycleService lifecycleService(&holdingParticipant);
++    lifecycleService.SetLifecycleConfiguration(StartCoordinated());
++    MockTimeSync mockTimeSync(&holdingParticipant, &holdingParticipant.mockTimeProvider, healthCheckConfig,
++                              &lifecycleService);
++    lifecycleService.SetTimeSyncService(&mockTimeSync);
++    lifecycleService.SetServiceDescriptor(p1Id.GetServiceDescriptor());
++
++    EXPECT_CALL(holdingParticipant,
++                SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::ServicesCreated)))
++        .Times(1);
++    EXPECT_CALL(holdingParticipant,
++                SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::CommunicationInitializing)))
++        .Times(1);
++    EXPECT_CALL(holdingParticipant, SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::Error)))
++        .Times(1);
++    EXPECT_CALL(holdingParticipant,
++                SendMsg(&lifecycleService, AParticipantStatusWithState(ParticipantState::CommunicationInitialized)))
++        .Times(0);
++
++    lifecycleService.StartLifecycle();
++    lifecycleService.NewSystemState(SystemState::ServicesCreated);
++    ASSERT_TRUE(holdingParticipant.heldReplies.completion);
++    holdingParticipant.heldReplies.completion();
++    ASSERT_TRUE(holdingParticipant.heldSubscriptionsCompletion);
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::CommunicationInitializing);
++
++    lifecycleService.ReportError("error while waiting for the subscriptions");
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::Error);
++
++    holdingParticipant.heldSubscriptionsCompletion();
++    EXPECT_EQ(lifecycleService.State(), ParticipantState::Error);
++}
+ } // namespace

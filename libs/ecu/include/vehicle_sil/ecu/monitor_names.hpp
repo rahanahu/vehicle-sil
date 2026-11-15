@@ -34,6 +34,10 @@ inline constexpr std::string_view kHeldDropped = "held_dropped";
 inline constexpr std::string_view kAddressViolations = "address_violations";
 inline constexpr std::string_view kTransportAbortsSent = "transport_aborts_sent";
 inline constexpr std::string_view kTransportAbortsReceived = "transport_aborts_received";
+inline constexpr std::string_view kTransportTimeouts = "transport_timeouts";
+inline constexpr std::string_view kTransportRejected = "transport_rejected";
+inline constexpr std::string_view kTransportBamDropped = "transport_bam_dropped";
+inline constexpr std::string_view kTransportBamReplaced = "transport_bam_replaced";
 
 /// The fields of a node of a J1939 network ("j1939.<network>.node<i>.<field>", i from 0).
 inline constexpr std::string_view kNode = "node";

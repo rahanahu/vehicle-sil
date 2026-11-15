@@ -424,6 +424,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `python/` | the GUI server (`vehicle_sil_gui`, with the built screen and the timeline page) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
+| `client/vehicle-sil-timeline.js`, `.d.ts` | the element `<vehicle-sil-timeline>`, which draws a scenario run's timeline on a screen of your own: `<script src>` it, or import it (the npm package has it as `@vehicle-sil/gui-client/timeline`); the GUI server serves it as `timeline/vehicle-sil-timeline.js` |
 | `gui_starter/` | a screen of your own to start from (plain HTML and JavaScript, the library next to it): `vehicle-sil-gui --web gui_starter simulation.yaml` |
 | `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`), and of the file that `vehicle_sil_launch run --scenario --timeline` writes (`timeline.schema.json`, for tools that read it): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
@@ -445,7 +446,9 @@ docs/gui.md, docs/control-api.md).
 
 # The timeline page (gui/timeline) that the GUI server serves under timeline/: its files, as the packaged server
 # looks for them (vehicle_sil_gui/timeline, see PAGE_FILES in gui/server/src/vehicle_sil_gui/timelines.py).
-TIMELINE_PAGE = ("timeline.html", "viewer.js", "messages.js")
+TIMELINE_PAGE = ("timeline.html", "vehicle-sil-timeline.js", "page.js")
+# The element <vehicle-sil-timeline> for screens of your own, in client/ beside the client library.
+TIMELINE_ELEMENT = ("vehicle-sil-timeline.js", "vehicle-sil-timeline.d.ts")
 
 
 def built_with(build: Path) -> str | None:
@@ -571,6 +574,8 @@ def tools_command(args: argparse.Namespace) -> int:
         (stage / "client").mkdir()
         shutil.copy2(client, stage / "client" / "vehicle-sil-gui-client.mjs")
         shutil.copy2(client_package, stage / "client" / client_package.name)
+        for name in TIMELINE_ELEMENT:
+            shutil.copy2(ROOT / "gui" / "timeline" / name, stage / "client" / name)
         shutil.copytree(ROOT / "examples" / "gui_starter", stage / "gui_starter",
                         ignore=shutil.ignore_patterns(".*"))
         shutil.copy2(client, stage / "gui_starter" / "vehicle-sil-gui-client.mjs")
@@ -853,6 +858,7 @@ def verify_command(args: argparse.Namespace) -> int:
                      *(f"python/vehicle_sil_gui/timeline/{name}" for name in TIMELINE_PAGE),
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
                      "client/vehicle-sil-gui-client.mjs", f"client/{client_package_path(version).name}",
+                     *(f"client/{name}" for name in TIMELINE_ELEMENT),
                      "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
                      "schema/dashboard.schema.json", "schema/simulation.schema.json",
                      "schema/scenario.schema.json", "schema/timeline.schema.json"] + (
@@ -979,9 +985,9 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path 
             raise StepFailed("the GUI server does not serve the built screen (no <app-root> in its page)")
         # The timeline page, without the token as the screen's files (its link: the Scenario card of a run)
         timeline = get("timeline/", token=False).decode("utf-8", "replace")
-        if 'src="viewer.js"' not in timeline or 'src="messages.js"' not in timeline:
+        if 'src="vehicle-sil-timeline.js"' not in timeline or 'src="page.js"' not in timeline:
             raise StepFailed(f"the GUI server does not serve the timeline page at timeline/: {timeline[:300]!r}")
-        for name in ("viewer.js", "messages.js"):
+        for name in ("vehicle-sil-timeline.js", "page.js"):
             if get(f"timeline/{name}", token=False) != (tools / "python" / "vehicle_sil_gui" / "timeline" /
                                                         name).read_bytes():
                 raise StepFailed(f"the GUI server does not serve the archive's timeline/{name}")

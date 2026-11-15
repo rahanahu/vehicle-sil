@@ -1,40 +1,48 @@
-// The timeline page of vehicle-sil: draws a timeline file, the JSON that
+// The timeline of vehicle-sil: draws a timeline file, the JSON that
 // `vehicle_sil_launch run <configuration> --scenario <scenario> --timeline <file>` writes.
 // The format is schema/timeline.schema.json and "Recording a scenario run on a timeline" in docs/simulation-run.md.
 //
+// It defines the custom element <vehicle-sil-timeline> (its attributes, properties and events: "Putting a timeline
+// on your own screen" in docs/gui.md, and vehicle-sil-timeline.d.ts). The element draws into its own shadow root,
+// so that the page's CSS and its own do not meet. timeline.html with page.js is the page that shows one element.
+//
 // One plain script: no framework, no build, no fonts or scripts from elsewhere. All text goes in with textContent
-// (never innerHTML), because names, units and messages come from users and ECUs.
-// The data comes in one of 3 ways, in this order:
-//   1. embedded in the page: the file's JSON as the text of the element with id "timeline-data" (a script
-//      element of type application/json, which timeline.html has empty). A tool that makes one HTML file puts
-//      it there, with '<', '>' and '&' written as \u003c, \u003e and \u0026. This script must never contain
-//      the closing tag of a script element, so that it can be put inline too;
-//   2. ?src=<url> on the page's own origin (a server that serves the page and the file). Served by the GUI server
-//      (vehicle-sil-gui), the request carries the server's token, as every screen of the server sends it;
-//   3. a file dropped on the page or chosen with "Open a file" (works when the page is opened as a file).
-// Every text the page shows comes from messages.js (English and Japanese), loaded before this script; the language
-// is ?lang= (en or ja), else the browser's, else English.
-// Everything above "The page" needs no DOM: tests/viewer.test.js runs it in Node.
+// (never innerHTML), because names, units and messages come from users and ECUs. It must never contain the closing
+// tag of a script element, so that it can be put inline too.
+// Every text it shows comes from messages.js (English and Japanese), loaded before this script; a page adds or
+// changes texts with the element's messages property. Its CSS is timeline.css. bundle.js makes the one file that
+// users load, vehicle-sil-timeline.js, from messages.js, timeline.css and this file.
+// Everything above "The element" needs no DOM: tests/viewer.test.js runs it in Node.
 (function (global) {
   'use strict';
 
   const FORMAT = 1;
-  const MESSAGES =
-    typeof module === 'object' && module.exports
-      ? require('./messages.js')
-      : global.VehicleSilTimelineMessages;
+  const MESSAGES = global.VehicleSilTimelineMessages;
   const LANGUAGES = ['en', 'ja'];
   let language = 'en';
+  /** The texts that the element being drawn adds or changes ({ <language>: { <key>: text } }), or null. */
+  let extra = null;
 
   /**
    * The language of the page: ?lang= in `search` when the page has it, else the first of the browser's languages
-   * (`preferred`, as navigator.languages) that it has, else English.
+   * (`preferred`, as navigator.languages) that it has, else English. `known`: the languages there are texts for
+   * (default: English and Japanese).
    */
-  function pickLanguage(search, preferred) {
+  function pickLanguage(search, preferred, known) {
     const asked = new URLSearchParams(search || '').get('lang');
-    for (const tag of [asked, ...(preferred || [])]) {
-      const base = typeof tag === 'string' ? tag.toLowerCase().split('-')[0] : '';
-      if (LANGUAGES.includes(base)) return base;
+    return chooseLanguage([asked, ...(preferred || [])], known);
+  }
+
+  /** The first of the language tags (as "ja-JP") that `known` has, by the whole tag or its first part; else 'en'. */
+  function chooseLanguage(tags, known) {
+    const have = known || LANGUAGES;
+    for (const tag of tags) {
+      if (typeof tag !== 'string' || tag === '') continue;
+      const lower = tag.toLowerCase();
+      const found =
+        have.find((k) => k.toLowerCase() === lower) ??
+        have.find((k) => k.toLowerCase() === lower.split('-')[0]);
+      if (found) return found;
     }
     return 'en';
   }
@@ -43,12 +51,22 @@
     language = LANGUAGES.includes(lang) ? lang : 'en';
   }
 
-  /** A text of messages.js in the page's language: a function value is called with args. */
+  /**
+   * A text in a language: the page's own texts (`more`, as the element's messages property) first, then
+   * messages.js; English when the language does not have it; a function value is called with args. Unknown: the key.
+   */
+  function text(lang, key, args, more) {
+    for (const where of [more?.[lang], MESSAGES?.[lang], more?.en, MESSAGES?.en]) {
+      const value = where ? where[key] : undefined;
+      if (value === undefined) continue;
+      return typeof value === 'function' ? value(args || {}) : value;
+    }
+    return key;
+  }
+
+  /** A text of messages.js in the language of what is being drawn. */
   function t(key, args) {
-    const own = MESSAGES && MESSAGES[language] && MESSAGES[language][key];
-    const value = own !== undefined ? own : MESSAGES && MESSAGES.en[key];
-    if (typeof value === 'function') return value(args || {});
-    return value === undefined ? key : value;
+    return text(language, key, args, extra);
   }
 
   /** A step's or the scenario's status in the page's language (an unknown one as the file writes it). */
@@ -926,9 +944,12 @@
     FORMAT,
     KNOWN,
     MESSAGES,
+    LANGUAGES,
     pickLanguage,
+    chooseLanguage,
     setLanguage,
     t,
+    text,
     statusWord,
     readTimeline,
     buildModel,
@@ -952,18 +973,19 @@
     compareText,
   };
 
-  if (typeof module === 'object' && module.exports) {
-    module.exports = api;
-    return;
-  }
   global.VehicleSilTimeline = api;
-  if (typeof document === 'undefined') return;
+  if (typeof document === 'undefined' || typeof customElements === 'undefined') return;
 
   // ---------------------------------------------------------------------------------------------------------------
-  // The page
+  // The element
+  //
+  // The drawing functions below work on the element being drawn: `current`, its `state` and its shadow `root`.
+  // Every way into them (a property, an attribute, a listener, the answer of a fetch, the observer of the size)
+  // first makes its element the current one with enter(), or is made with bound(), which does that.
 
   const SVG = 'http://www.w3.org/2000/svg';
   const LANE_NUMBER_HEIGHT = 76;
+  const COMPACT_NUMBER_HEIGHT = 44;
   const BAND_HEIGHT = 24;
   const STRIP_HEIGHT = 16;
   const STEP_ROW = 22;
@@ -975,7 +997,7 @@
       if (val === null || val === undefined || val === false) continue;
       if (k === 'class') e.className = val;
       else if (k === 'text') e.textContent = val;
-      else if (k.startsWith('on')) e.addEventListener(k.slice(2), val);
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), bound(val));
       else e.setAttribute(k, val === true ? '' : String(val));
     }
     for (const c of children.flat()) {
@@ -1002,22 +1024,69 @@
     return el;
   }
 
-  const state = {
-    model: null,
-    view: null,
-    fit: new Set(),
-    hidden: new Set(),
-    cursor: null,
-    lanes: [],
-    width: 0,
-    /** The name of the file shown (null for data embedded in the page or none). */
-    file: null,
-  };
+  /** What one element shows; the view, the cursor and the step are what its properties of the same names say. */
+  function newState() {
+    return {
+      model: null,
+      view: null,
+      fit: new Set(),
+      hidden: new Set(),
+      cursor: null,
+      /** The index of the chosen step, or null. */
+      step: null,
+      lanes: [],
+      width: 0,
+      /** The name of the file shown (null for data without a name, or none). */
+      file: null,
+    };
+  }
 
-  const $ = (id) => document.getElementById(id);
+  /** The element being drawn ({ host, root, state, options }), its state and its shadow root. */
+  let current = null;
+  let state = null;
+  let root = null;
 
-  /** Says why a file cannot be shown. The page then shows no file, so that nothing on it is taken for this one. */
-  function showError(message) {
+  /** Makes an element the one being drawn: its state, its root, its language and its texts. */
+  function enter(element) {
+    current = element;
+    state = element.state;
+    root = element.root;
+    language = element.language;
+    extra = element.options.messages;
+  }
+
+  /** fn, made to draw on the element that is current now, whenever it is called. */
+  function bound(fn) {
+    const element = current;
+    return function (...args) {
+      enter(element);
+      return fn.apply(this, args);
+    };
+  }
+
+  const $ = (id) => root.getElementById(id);
+
+  /** Tells the page around: an event on the element, unless a property set from outside caused the change. */
+  function emit(type, detail, always) {
+    if (current.quiet && !always) return;
+    current.host.dispatchEvent(
+      new CustomEvent(type, { detail, bubbles: type !== 'load' && type !== 'error' }),
+    );
+  }
+
+  /**
+   * Says why a file cannot be shown. The element then shows no file, so that nothing in it is taken for this one.
+   * keep: the input is what could not be read (it is read again, and refused again, in another language); otherwise
+   * nothing is kept to show, and the message (a function: say(), in the language of the moment) is said again when
+   * the language changes. again: the same refusal in another language, which is not told again.
+   */
+  function showError(say, status, keep, again) {
+    const message = typeof say === 'function' ? say() : say;
+    current.error = keep ? null : { say, status };
+    if (!keep) {
+      current.input = null;
+      current.inputName = null;
+    }
     const box = $('error');
     box.replaceChildren(h('strong', { text: t('page.cannotShow') }), message);
     box.hidden = false;
@@ -1025,34 +1094,61 @@
     state.file = null;
     state.lanes = [];
     $('view').hidden = true;
-    $('load').hidden = false;
     $('title').textContent = t('page.title');
     $('facts').replaceChildren();
-    document.title = t('page.title');
+    if (!again) emit('error', { message, status: status ?? null }, true);
   }
 
   function clearError() {
+    current.error = null;
     $('error').hidden = true;
   }
 
-  function load(text, name) {
-    const read = readTimeline(text, name);
+  /**
+   * Shows a file (its text or its parsed JSON). again: the same file in another language or with other texts, which
+   * keeps what the user chose (the view, the cursor, the step, the lanes); a new file starts from the properties.
+   */
+  function load(input, name, again) {
+    const read = readTimeline(input, name);
     if (read.error) {
-      showError(read.error);
+      showError(read.error, null, true, again);
       return;
     }
     clearError();
     const model = buildModel(read.timeline);
+    const before = again && state.model ? state : null;
     state.model = model;
-    state.view = initialView(model);
-    state.fit.clear();
-    state.hidden.clear();
-    state.cursor = null;
     state.file = name || null;
-    document.title = t('page.titleOf', { name: model.name ?? t('page.scenario') });
-    $('load').hidden = true;
+    if (before) {
+      setView(state.view, true);
+      state.step = model.steps.some((st) => st.index === state.step) ? state.step : null;
+    } else {
+      state.fit.clear();
+      state.hidden.clear();
+      const o = current.options;
+      state.view = initialView(model);
+      state.cursor = isNum(o.cursor) ? o.cursor : null;
+      state.step = model.steps.some((st) => st.index === o.step) ? o.step : null;
+      if (state.step !== null && isNum(stepOf(state.step)?.start_ms))
+        state.view = stepView(stepOf(state.step));
+      if (isNum(o.from) || isNum(o.to))
+        setView([o.from ?? model.domain[0], o.to ?? model.domain[1]], true);
+    }
     $('view').hidden = false;
     renderAll();
+    if (!before) {
+      emit(
+        'load',
+        {
+          file: state.file,
+          scenario: model.name ?? null,
+          status: model.status,
+          start: model.domain[0],
+          end: model.domain[1],
+        },
+        true,
+      );
+    }
   }
 
   // --- the parts that do not change with the view
@@ -1308,7 +1404,13 @@
       const canShow = isNum(st.start_ms);
       return h(
         'tr',
-        { class: st.status === 'failed' ? 'failed-row' : null },
+        {
+          class:
+            [st.status === 'failed' ? 'failed-row' : '', st.index === state.step ? 'selected' : '']
+              .filter(Boolean)
+              .join(' ') || null,
+          'data-step': st.index,
+        },
         h(
           'td',
           {},
@@ -1317,7 +1419,7 @@
                 type: 'button',
                 class: 'link',
                 title: t('step.showOnChart'),
-                onclick: () => showStep(st),
+                onclick: () => showStep(st, true),
                 text: `#${st.index}`,
               })
             : `#${st.index}`,
@@ -1420,28 +1522,46 @@
     return names.map((name) => t(`col.${name}`));
   }
 
-  function showStep(st) {
+  /** The view around a step (from its start to its end and the end of what it watches). */
+  function stepView(st) {
     const from = st.start_ms;
     const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.until_ms : null].filter(isNum);
     const to = Math.max(from, ...ends);
     const pad = Math.max((to - from) * 0.25, (state.model.tick ?? 1) * 3);
-    setView([
-      Math.max(state.model.domain[0], from - pad),
-      Math.min(state.model.domain[1], to + pad),
-    ]);
-    $('chart').scrollIntoView({ block: 'start' });
+    return [Math.max(state.model.domain[0], from - pad), Math.min(state.model.domain[1], to + pad)];
+  }
+
+  /** The step of an index, or undefined. */
+  function stepOf(index) {
+    return state.model ? state.model.steps.find((st) => st.index === index) : undefined;
+  }
+
+  /** Chooses a step (null: none): marks it on the chart and in the table, and shows it when it has a time. */
+  function showStep(st, scroll) {
+    const changed = (st ? st.index : null) !== state.step;
+    state.step = st ? st.index : null;
+    for (const row of root.querySelectorAll('tr[data-step]'))
+      row.classList.toggle('selected', Number(row.dataset.step) === state.step);
+    if (st && isNum(st.start_ms)) setView(stepView(st));
+    else renderChart();
+    if (changed) emit('stepselect', { step: state.step });
+    if (scroll) $('chart').scrollIntoView({ block: 'nearest' });
   }
 
   // --- the chart
 
-  function setView(view) {
+  /** Shows a part of the run (clamped to it). noDraw: only set it (the caller draws). */
+  function setView(view, noDraw) {
     const [d0, d1] = state.model.domain;
     let [t0, t1] = view;
     t0 = Math.max(d0, t0);
     t1 = Math.min(d1, t1);
     if (!(t1 > t0)) return;
+    const changed = !state.view || state.view[0] !== t0 || state.view[1] !== t1;
     state.view = [t0, t1];
+    if (noDraw) return;
     renderChart();
+    if (changed) emit('viewchange', { from: t0, to: t1 });
   }
 
   function renderAll() {
@@ -1453,10 +1573,45 @@
     renderChart();
   }
 
+  /** The width of a lane's plot: the chart less the column of the lane heads (as timeline.css lays them out). */
   function plotWidth() {
     const chart = $('chart');
-    const head = chart.clientWidth >= 720 ? 200 : 0;
-    return Math.max(160, chart.clientWidth - head - 2);
+    const compact = current.options.compact;
+    const head = compact
+      ? chart.clientWidth >= 480
+        ? 120
+        : 0
+      : chart.clientWidth >= 720
+        ? 200
+        : 0;
+    return Math.max(compact ? 100 : 160, chart.clientWidth - head - 2);
+  }
+
+  /**
+   * The lanes of the variables to draw, in order: with the variables property, those it names (a name, or a
+   * prefix ending in '*') in its order, else the inputs of the scenario first. groups: whether to head the two
+   * groups (only without the property). missing: the entries of the property that match no variable of the file.
+   */
+  function lanesToDraw(m) {
+    const visible = (v) => !state.hidden.has(v.participant);
+    const wanted = current.options.variables;
+    if (!wanted) {
+      const inputs = m.inputs.filter(visible);
+      return { inputs, others: m.others.filter(visible), groups: true, missing: [] };
+    }
+    const every = [...m.inputs, ...m.others];
+    const all = every.filter(visible);
+    const chosen = [];
+    const missing = [];
+    for (const pattern of wanted) {
+      const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
+      const matches = (v) => (prefix !== null ? v.name.startsWith(prefix) : v.name === pattern);
+      if (!every.some(matches)) missing.push(pattern);
+      for (const v of all) {
+        if (!chosen.includes(v) && matches(v)) chosen.push(v);
+      }
+    }
+    return { inputs: chosen, others: [], groups: false, missing };
   }
 
   function renderChart() {
@@ -1468,15 +1623,23 @@
     state.lanes = [];
     const chart = $('chart');
     const children = [axisLane(scale), stepLane(m, scale)];
-    const visible = (v) => !state.hidden.has(v.participant);
-    const inputs = m.inputs.filter(visible);
-    const others = m.others.filter(visible);
+    const { inputs, others, groups, missing } = lanesToDraw(m);
+    // A name of the variables property that matches nothing is said, not dropped in silence.
+    const note = $('chart-note');
+    const names = [...m.inputs, ...m.others].map((v) => v.name);
+    note.hidden = missing.length === 0;
+    note.textContent = missing.length
+      ? t('chart.noMatch', {
+          names: missing.join(', '),
+          have: names.slice(0, 5).join(', ') + (names.length > 5 ? ', …' : ''),
+        })
+      : '';
     if (inputs.length) {
-      children.push(h('div', { class: 'group', text: t('chart.inputs') }));
+      if (groups) children.push(h('div', { class: 'group', text: t('chart.inputs') }));
       children.push(...inputs.map((v) => variableLane(m, v, scale)));
     }
     if (others.length) {
-      children.push(h('div', { class: 'group', text: t('chart.others') }));
+      if (groups) children.push(h('div', { class: 'group', text: t('chart.others') }));
       children.push(...others.map((v) => variableLane(m, v, scale)));
     }
     chart.replaceChildren(...children);
@@ -1591,7 +1754,12 @@
     items.forEach((it, i) => {
       const y = rows[i] * STEP_ROW + 4;
       const bh = STEP_ROW - 6;
-      const g = s('g', { class: `step st-${statusClass(it.st.status)}` }, svg);
+      const chosen = it.st.index === state.step ? ' selected' : '';
+      const g = s(
+        'g',
+        { class: `step st-${statusClass(it.st.status)}${chosen}`, 'data-step': it.st.index },
+        svg,
+      );
       const x0 = scale.x(it.start);
       const x1 = scale.x(it.end);
       const point = x1 - x0 < 2;
@@ -1667,7 +1835,8 @@
     const both = v.written && v.sampled;
     const strip = v.lines.length ? STRIP_HEIGHT : 0;
     const bandCount = both ? 2 : 1;
-    const plotH = kind === 'number' ? LANE_NUMBER_HEIGHT : BAND_HEIGHT * bandCount + 8;
+    const numberHeight = current.options.compact ? COMPACT_NUMBER_HEIGHT : LANE_NUMBER_HEIGHT;
+    const plotH = kind === 'number' ? numberHeight : BAND_HEIGHT * bandCount + 8;
     const height = strip + plotH;
     const info = v.info;
     const range =
@@ -1684,6 +1853,13 @@
       .filter(Boolean)
       .join(' · ');
     const fit = defaultFit(v) !== state.fit.has(v.name);
+    const labels = current.options.labels;
+    const label =
+      labels &&
+      Object.prototype.hasOwnProperty.call(labels, v.name) &&
+      typeof labels[v.name] === 'string'
+        ? labels[v.name]
+        : null;
     const readout = h('div', { class: 'readout small' });
     const writtenEnd =
       m.recordedTo ??
@@ -1698,6 +1874,7 @@
     const head = h(
       'div',
       {},
+      label ? h('span', { class: 'var-label', text: label }) : null,
       h('code', { class: `var-name${v.failing ? ' failing' : ''}`, text: v.name }),
       h('div', { class: 'muted small', text: meta }),
       h(
@@ -1745,7 +1922,7 @@
     );
     const { lane, svg, cursor } = laneShell(head, height, scale, v.failing ? 'failing' : '');
     state.lanes[state.lanes.length - 1].readout = { el: readout, v };
-    svg.setAttribute('aria-label', t('lane.label', { name: v.name }));
+    svg.setAttribute('aria-label', t('lane.label', { name: label ?? v.name }));
     commonBack(svg, m, scale, height);
     if (strip) drawLines(svg, m, v, scale);
     const area = { y0: strip + 4, y1: height - 4 };
@@ -2168,37 +2345,55 @@
 
   // --- the cursor and zooming
 
+  /** el.addEventListener, drawing on the element that is current now. */
+  function listen(el, type, fn) {
+    el.addEventListener(type, bound(fn));
+  }
+
+  /** Moves the cursor as the user does, and says so. */
+  function moveCursor(at) {
+    if (at === state.cursor) return;
+    state.cursor = at;
+    updateCursor();
+    emit('cursorchange', { cursor: at });
+  }
+
   function attachPointer(svg, scale, height) {
     let down = null;
+    let downStep = null;
     let sel = null;
     const xOf = (e) => {
       const r = svg.getBoundingClientRect();
       return Math.min(scale.width, Math.max(0, e.clientX - r.left));
     };
-    svg.addEventListener('pointerdown', (e) => {
+    listen(svg, 'pointerdown', (e) => {
       if (e.button !== 0) return;
       down = xOf(e);
+      // A click on a step chooses it (the pointer is captured, so the click itself goes to the lane).
+      const step = e.target.closest ? e.target.closest('[data-step]') : null;
+      downStep = step ? stepOf(Number(step.dataset.step)) : null;
       svg.setPointerCapture(e.pointerId);
     });
-    svg.addEventListener('pointermove', (e) => {
+    listen(svg, 'pointermove', (e) => {
       const x = xOf(e);
-      state.cursor = scale.t(x);
-      updateCursor();
+      moveCursor(scale.t(x));
       if (down !== null && Math.abs(x - down) > 4) {
         if (!sel) sel = s('rect', { class: 'selection', y: 0, height }, svg);
         sel.setAttribute('x', Math.min(x, down));
         sel.setAttribute('width', Math.abs(x - down));
       }
     });
-    svg.addEventListener('pointerup', (e) => {
+    listen(svg, 'pointerup', (e) => {
       const x = xOf(e);
-      if (down !== null && Math.abs(x - down) > 4)
-        setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
+      const dragged = down !== null && Math.abs(x - down) > 4;
+      if (dragged) setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
+      else if (down !== null && downStep) showStep(downStep);
       down = null;
+      downStep = null;
       if (sel) sel.remove();
       sel = null;
     });
-    svg.addEventListener('dblclick', () => setView(state.model.domain));
+    listen(svg, 'dblclick', () => setView(state.model.domain));
   }
 
   function updateCursor() {
@@ -2246,88 +2441,106 @@
 
   // --- loading
 
-  function readFile(file) {
-    file.text().then(
-      (text) => load(text, file.name),
-      (e) => showError(t('load.cannotRead', { name: file.name, error: e.message })),
-    );
+  /** The key under which the GUI's screens keep the server's token in sessionStorage (takeToken of the client). */
+  const TOKEN_KEY = 'vehicle-sil-gui-token';
+
+  /** The token that the GUI's screens keep in this tab, or null. */
+  function storedToken() {
+    try {
+      return window.sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null; // the browser blocks site data
+    }
   }
 
+  /** Loads the file at src (an address on the page's own server) and shows it; an older load still under way is dropped. */
   function fromSrc(src) {
+    const element = current;
+    const seq = ++element.loads;
+    if (element.abort) element.abort.abort();
+    element.abort = null;
     if (location.protocol === 'file:') {
-      showError(t('load.fileProtocol'));
+      showError(() => t('load.fileProtocol'));
       return;
     }
     let url;
     try {
-      url = new URL(src, location.href);
+      url = new URL(src, document.baseURI);
     } catch {
-      showError(t('load.notAddress', { src }));
+      showError(() => t('load.notAddress', { src }));
       return;
     }
     if (url.origin !== location.origin) {
-      showError(t('load.otherOrigin', { origin: location.origin, other: url.origin }));
+      showError(() => t('load.otherOrigin', { origin: location.origin, other: url.origin }));
       return;
     }
-    const token = takeToken();
+    const o = element.options;
+    const token = o.token ?? storedToken();
+    const headers = {};
+    for (const [k, v] of Object.entries(isObject(o.headers) ? o.headers : {}))
+      if (typeof v === 'string') headers[k] = v;
+    if (token) headers.Authorization = `Bearer ${token}`;
     let name = url.pathname.split('/').pop() || url.pathname;
-    // A redirect could lead to another origin: the file must come from this address itself.
+    const abort = typeof AbortController === 'function' ? new AbortController() : null;
+    element.abort = abort;
+    element.host.setAttribute('aria-busy', 'true');
+    const fresh = () => {
+      if (element.abort === abort) element.abort = null; // this load is over
+      if (seq !== element.loads) return false;
+      element.host.removeAttribute('aria-busy');
+      return true;
+    };
+    // A redirect could lead to another origin with the token and the headers: the file must come from this address
+    // itself. 'manual' does not follow it, and says that it was one (an opaque answer).
     fetch(url, {
       credentials: 'same-origin',
-      redirect: 'error',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      redirect: 'manual',
+      headers,
+      signal: abort ? abort.signal : undefined,
     })
-      .then((r) => {
-        if (r.status === 401) throw new Error(t('load.unauthorized'));
-        if (!r.ok) {
-          return r.text().then((body) => {
-            throw new Error(t('load.http', { status: r.status, message: serverMessage(body) }));
-          });
-        }
-        name = fileName(r.headers.get('Content-Disposition')) || name;
-        return r.text();
-      })
       .then(
-        (text) => load(text, name),
-        (e) => showError(t('load.failed', { url: url.href, error: e.message })),
+        bound((r) => {
+          if (r.type === 'opaqueredirect') {
+            throw Object.assign(new Error(), {
+              say: () => t('load.redirected', { url: url.href }),
+            });
+          }
+          if (r.status === 401) {
+            // Said alone: the address is right, and the token is what to change.
+            throw Object.assign(new Error(), { say: () => t('load.unauthorized'), status: 401 });
+          }
+          if (!r.ok) {
+            return r.text().then(
+              bound((body) => {
+                const said = serverMessage(body);
+                const say = () => t('load.http', { status: r.status, message: said });
+                throw Object.assign(new Error(), { say, status: r.status });
+              }),
+            );
+          }
+          name = fileName(r.headers.get('Content-Disposition')) || name;
+          return r.text();
+        }),
+      )
+      .then(
+        bound((text) => {
+          if (!fresh()) return;
+          element.input = text;
+          element.srcName = name;
+          element.inputName = o.fileName || name;
+          load(text, element.inputName);
+        }),
+        bound((e) => {
+          if (!fresh() || (e && e.name === 'AbortError')) return;
+          // 401 and a redirect are said alone (the address is right); other HTTP errors and a failed request
+          // within load.failed (the address may be wrong).
+          const alone = e.say && (e.status === 401 || !e.status);
+          const say = alone
+            ? e.say
+            : () => t('load.failed', { url: url.href, error: e.say ? e.say() : e.message });
+          showError(say, e.status);
+        }),
       );
-  }
-
-  // The token of the GUI server that serves this page (vehicle-sil-gui): "#token=" in the address, taken out of it
-  // at once, else the one this tab keeps in sessionStorage. The key is the GUI's (takeToken of its client library):
-  // a tab that the GUI's "Timeline" link opens starts with a copy of the GUI tab's sessionStorage.
-  const TOKEN_KEY = 'vehicle-sil-gui-token';
-
-  function takeToken() {
-    let storage = null;
-    try {
-      storage = window.sessionStorage;
-    } catch {
-      // the browser blocks site data: the token is kept in memory only
-    }
-    const match = /(?:^#|&)token=([^&]*)/.exec(location.hash);
-    if (match) {
-      history.replaceState(history.state, '', location.pathname + location.search);
-      let token;
-      try {
-        token = decodeURIComponent(match[1]) || null;
-      } catch {
-        token = null;
-      }
-      if (token) {
-        try {
-          storage?.setItem(TOKEN_KEY, token);
-        } catch {
-          // kept in memory only
-        }
-        return token;
-      }
-    }
-    try {
-      return storage?.getItem(TOKEN_KEY) ?? null;
-    } catch {
-      return null;
-    }
   }
 
   /** The message of a GUI server's error ({"error": {"message"}}; in English, as the server writes it), or ''. */
@@ -2354,54 +2567,84 @@
     );
   }
 
-  /** The page's language, and its texts in the elements of timeline.html that name one (data-text, data-label). */
-  function translatePage() {
-    setLanguage(pickLanguage(location.search, navigator.languages ?? [navigator.language]));
-    document.documentElement.lang = language;
-    document.title = t('page.title');
-    for (const el of document.querySelectorAll('[data-text]')) fill(el, t(el.dataset.text));
-    for (const el of document.querySelectorAll('[data-label]'))
-      el.setAttribute('aria-label', t(el.dataset.label));
+  /** Stops a load under way: its answer is dropped. */
+  function stopLoad(element) {
+    element.loads++;
+    if (element.abort) element.abort.abort();
+    element.abort = null;
+    element.host.removeAttribute('aria-busy');
   }
 
-  function start() {
-    if (!MESSAGES) {
-      // The one text not in messages.js: it says that messages.js is missing (in both languages).
-      document.body.textContent =
-        // eslint-disable-next-line no-restricted-syntax
-        'messages.js is missing: put it next to timeline.html (it comes with the page). / ' +
-        'messages.js がありません。timeline.html の隣に置いてください（ページと一緒に配っています）。';
-      return;
-    }
-    translatePage();
-    $('open').addEventListener('click', () => $('file').click());
-    $('file').addEventListener('change', (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (file) readFile(file);
-      e.target.value = '';
-    });
-    document.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      document.body.classList.add('dragging');
-    });
-    document.addEventListener('dragleave', (e) => {
-      if (e.relatedTarget === null) document.body.classList.remove('dragging');
-    });
-    document.addEventListener('drop', (e) => {
-      e.preventDefault();
-      document.body.classList.remove('dragging');
-      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (file) readFile(file);
-    });
-    $('show-failure').addEventListener('click', () => setView(initialView(state.model)));
-    $('show-all').addEventListener('click', () => setView(state.model.domain));
-    $('zoom-out').addEventListener('click', () => {
+  /** Shows nothing: no file is given. */
+  function clear() {
+    stopLoad(current);
+    current.input = null;
+    current.inputName = null;
+    state.model = null;
+    state.file = null;
+    state.lanes = [];
+    clearError();
+    $('view').hidden = true;
+    $('title').textContent = t('page.title');
+    $('facts').replaceChildren();
+  }
+
+  // --- the element's parts, look and keys
+
+  /** The shadow root's contents. Texts come from messages.js (data-text, data-label) whenever the language changes. */
+  function skeleton() {
+    return [
+      h(
+        'header',
+        { id: 'head' },
+        h(
+          'div',
+          {},
+          h('h1', { id: 'title', 'data-text': 'page.title' }),
+          h('div', { id: 'facts', class: 'small' }),
+        ),
+        h('slot', { name: 'actions' }),
+      ),
+      h('div', { id: 'error', role: 'alert', hidden: true }),
+      h(
+        'section',
+        { id: 'view', hidden: true },
+        h('div', { id: 'summary' }),
+        h(
+          'div',
+          { id: 'toolbar', class: 'toolbar small' },
+          h('span', { id: 'range', class: 'muted' }),
+          h('button', { id: 'show-failure', type: 'button', 'data-text': 'page.showFailure' }),
+          h('button', { id: 'show-all', type: 'button', 'data-text': 'page.whole' }),
+          h('button', { id: 'zoom-out', type: 'button', 'data-text': 'page.zoomOut' }),
+          h('span', { id: 'participants', class: 'toolbar' }),
+        ),
+        h('p', { id: 'help', class: 'muted small', 'data-text': 'page.help' }),
+        h('p', { id: 'chart-note', class: 'note small', role: 'status', hidden: true }),
+        h('div', { id: 'chart', tabindex: '0', 'data-label': 'page.chartLabel' }),
+        h('div', { id: 'tables' }),
+      ),
+    ];
+  }
+
+  function translate() {
+    for (const el of root.querySelectorAll('[data-text]')) fill(el, t(el.dataset.text));
+    for (const el of root.querySelectorAll('[data-label]'))
+      el.setAttribute('aria-label', t(el.dataset.label));
+    if (!state.model) $('title').textContent = t('page.title');
+  }
+
+  /** The buttons and keys of the chart. */
+  function attachControls() {
+    listen($('show-failure'), 'click', () => setView(initialView(state.model)));
+    listen($('show-all'), 'click', () => setView(state.model.domain));
+    listen($('zoom-out'), 'click', () => {
       const [t0, t1] = state.view;
       const half = t1 - t0;
       setView([t0 - half / 2, t1 + half / 2]);
     });
     const chart = $('chart');
-    chart.addEventListener('keydown', (e) => {
+    listen(chart, 'keydown', (e) => {
       if (!state.model) return;
       if (e.key === '+' || e.key === '=' || e.key === '-') {
         // Zoom in or out around the cursor (or the middle of the view).
@@ -2417,27 +2660,401 @@
       const stepT =
         (state.model.tick ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);
       const t = state.cursor ?? state.view[0];
-      state.cursor = Math.min(
-        state.view[1],
-        Math.max(state.view[0], t + (e.key === 'ArrowLeft' ? -stepT : stepT)),
+      moveCursor(
+        Math.min(
+          state.view[1],
+          Math.max(state.view[0], t + (e.key === 'ArrowLeft' ? -stepT : stepT)),
+        ),
       );
-      updateCursor();
     });
     let lastWidth = 0;
-    new ResizeObserver(() => {
-      const w = chart.clientWidth;
-      if (state.model && w !== lastWidth) {
-        lastWidth = w;
-        renderChart();
-      }
-    }).observe(chart);
-
-    const embedded = $('timeline-data');
-    const src = new URLSearchParams(location.search).get('src');
-    if (embedded && embedded.textContent.trim() !== '') load(embedded.textContent, null);
-    else if (src) fromSrc(src);
+    new ResizeObserver(
+      bound(() => {
+        const w = chart.clientWidth;
+        if (state.model && w !== lastWidth) {
+          lastWidth = w;
+          renderChart();
+        }
+      }),
+    ).observe(chart);
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
-  else start();
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+  /** The style sheet of every element (timeline.css, which bundle.js puts into the one file), made once. */
+  let sheet = null;
+  function adoptStyles(shadow) {
+    const css = global.VehicleSilTimelineStyles;
+    if (typeof css !== 'string') return;
+    if ('adoptedStyleSheets' in shadow && typeof CSSStyleSheet === 'function') {
+      if (!sheet) {
+        sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+      }
+      shadow.adoptedStyleSheets = [sheet];
+    } else {
+      shadow.append(h('style', { text: css }));
+    }
+  }
+
+  const number = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const list = (v) => {
+    if (v === null || v === undefined) return null;
+    const items = (Array.isArray(v) ? v.map(String) : String(v).split(/[\s,]+/)).filter(Boolean);
+    return items.length ? items : null;
+  };
+
+  /**
+   * The simple options: attribute -> [property, kind, what a change redraws]. A string or boolean option is kept
+   * in its attribute (the property sets it); a number or a list is kept as the property (the attribute sets it).
+   */
+  const OPTIONS = {
+    src: ['src', 'string', 'source'],
+    'file-name': ['fileName', 'string', 'name'],
+    cursor: ['cursor', 'number', 'cursor'],
+    step: ['step', 'number', 'step'],
+    from: ['from', 'number', 'from'],
+    to: ['to', 'number', 'to'],
+    variables: ['variables', 'list', 'chart'],
+    hide: ['hide', 'string', 'none'],
+    compact: ['compact', 'boolean', 'chart'],
+    theme: ['theme', 'string', 'none'],
+  };
+  /** The words of hide and the values of theme that timeline.css reads. */
+  const PARTS = ['header', 'summary', 'toolbar', 'help', 'steps', 'readout', 'legend', 'tables'];
+  const THEMES = ['light', 'dark', 'auto'];
+
+  /**
+   * Says once in the browser's console, for each element and value, that a value of an option cannot be used: it
+   * is not an error of the file (the event error), but a mistake that the screen's author should see.
+   */
+  function warn(c, key, args) {
+    const said = `${key} ${JSON.stringify(args)}`;
+    if (c.warned.has(said)) return;
+    c.warned.add(said);
+    console.warn(text(c.language, key, args, c.options.messages));
+  }
+
+  /** Checks a value given to an option (an attribute or a property), and warns about one it cannot use. */
+  function check(c, property, value) {
+    if (['cursor', 'step', 'from', 'to'].includes(property)) {
+      if (value !== null && value !== undefined && value !== '' && number(value) === null)
+        warn(c, 'warn.number', { name: property, value: String(value) });
+      const { from, to } = c.options;
+      if ((property === 'from' || property === 'to') && isNum(from) && isNum(to) && from >= to)
+        warn(c, 'warn.range', { from, to });
+    } else if (property === 'hide') {
+      for (const word of list(value) ?? [])
+        if (!PARTS.includes(word)) warn(c, 'warn.hide', { value: word, known: PARTS.join(', ') });
+    } else if (property === 'theme') {
+      if (value !== null && value !== undefined && !THEMES.includes(String(value)))
+        warn(c, 'warn.theme', { value: String(value) });
+    }
+  }
+
+  /** The options that are properties only (objects, and the token, which has no place in the page's markup). */
+  const PROPERTIES = {
+    data: 'source',
+    token: 'source',
+    headers: 'source',
+    labels: 'chart',
+    messages: 'language',
+  };
+
+  class VehicleSilTimelineElement extends HTMLElement {
+    static get observedAttributes() {
+      return [...Object.keys(OPTIONS), 'lang'];
+    }
+
+    /** What the drawing functions work on (current, when this element is drawn); not part of the element's API. */
+    #c;
+
+    constructor() {
+      super();
+      const c = {
+        host: this,
+        root: this.attachShadow({ mode: 'open' }),
+        state: newState(),
+        options: {
+          cursor: null,
+          step: null,
+          from: null,
+          to: null,
+          variables: null,
+          compact: false,
+          data: null,
+          token: null,
+          headers: null,
+          labels: null,
+          messages: null,
+        },
+        language: 'en',
+        /** Whether a change comes from outside (a property or an attribute): it is not told back with an event. */
+        quiet: false,
+        /** The number of the latest load, and how to stop it: an older answer is dropped. */
+        loads: 0,
+        abort: null,
+        /** What is shown (the text or the object, and its name), to draw it again in another language. */
+        input: null,
+        inputName: null,
+        /** The name the server gave the file of src. */
+        srcName: null,
+        /** The refusal shown ({ say, status }), said again in another language. */
+        error: null,
+        /** The values already warned about (see warn). */
+        warned: new Set(),
+        changes: new Set(['source', 'language']),
+        scheduled: false,
+      };
+      this.#c = c;
+      adoptStyles(c.root);
+      c.root.append(...skeleton());
+      enter(c);
+      attachControls();
+    }
+
+    connectedCallback() {
+      // A property set before this script defined the element hides the class's accessor: set it again.
+      for (const name of [...Object.values(OPTIONS).map(([p]) => p), ...Object.keys(PROPERTIES)]) {
+        if (Object.prototype.hasOwnProperty.call(this, name)) {
+          const value = this[name];
+          delete this[name];
+          this[name] = value;
+        }
+      }
+      this.#schedule();
+    }
+
+    disconnectedCallback() {
+      // A load under way stops, and starts again when the element is put back (a framework may move it).
+      const c = this.#c;
+      if (c.abort) {
+        stopLoad(c);
+        c.changes.add('source');
+      }
+    }
+
+    attributeChangedCallback(name, before, after) {
+      if (name === 'lang') return this.#change('language');
+      const [property, kind, what] = OPTIONS[name];
+      const c = this.#c;
+      const o = c.options;
+      if (name === 'hide' && after !== null && after.includes(',')) {
+        // timeline.css reads words separated by spaces; commas are taken as for variables
+        this.setAttribute('hide', (list(after) ?? []).join(' '));
+        return;
+      }
+      if (kind === 'number') o[property] = number(after);
+      else if (kind === 'list') o[property] = list(after);
+      else if (kind === 'boolean') o[property] = after !== null;
+      check(c, property, after);
+      // A number set again applies again: the user may have moved the cursor or the view since.
+      this.#change(what, before !== after || what === 'source' || kind === 'number');
+    }
+
+    /** Redraws what a change needs, once for all the changes made at the same time. */
+    #change(what, really = true) {
+      if (!really || what === 'none') return;
+      this.#c.changes.add(what);
+      this.#schedule();
+    }
+
+    /** Draws the changes made so far, once, after the code that made them. */
+    #schedule() {
+      const c = this.#c;
+      if (c.scheduled || !this.isConnected) return;
+      c.scheduled = true;
+      queueMicrotask(() => this.#flush());
+    }
+
+    #flush() {
+      const c = this.#c;
+      c.scheduled = false;
+      if (!this.isConnected) return;
+      const what = c.changes;
+      c.changes = new Set();
+      const o = c.options;
+      const known = [...LANGUAGES, ...Object.keys(isObject(o.messages) ? o.messages : {})];
+      const navigatorLanguages = navigator.languages ?? [navigator.language];
+      c.language = chooseLanguage([this.getAttribute('lang'), ...navigatorLanguages], known);
+      c.quiet = true;
+      try {
+        enter(c);
+        if (what.has('language')) translate();
+        if (what.has('source')) {
+          if (o.data !== null && o.data !== undefined) {
+            stopLoad(c);
+            c.input = o.data;
+            c.inputName = this.fileName || null;
+            load(o.data, c.inputName);
+          } else if (this.src) {
+            fromSrc(this.src);
+          } else {
+            clear();
+          }
+        } else if (what.has('language') && c.input !== null) {
+          load(c.input, c.inputName, true);
+        } else if (what.has('language') && c.error) {
+          showError(c.error.say, c.error.status, false, true);
+        } else if (what.has('chart') && state.model) {
+          renderChart();
+        }
+        if (what.has('name') && !what.has('source') && state.model) {
+          // Only the name shown changes: the file is not loaded again.
+          c.inputName = this.fileName || (o.data === null ? c.srcName : null);
+          state.file = c.inputName;
+          renderHeader(state.model);
+        }
+        if (!state.model) return;
+        if (what.has('step')) showStep(stepOf(o.step) ?? null);
+        if (what.has('from') || what.has('to')) {
+          // A side not given now stays where the view is (the user may have moved it).
+          const from = what.has('from') && o.from !== null ? o.from : state.view[0];
+          const to = what.has('to') && o.to !== null ? o.to : state.view[1];
+          setView([from, to]);
+        }
+        if (what.has('cursor')) {
+          state.cursor = o.cursor;
+          updateCursor();
+        }
+      } finally {
+        c.quiet = false;
+      }
+    }
+
+    /** Loads src again (the file may have changed, or the token). */
+    reload() {
+      this.#change('source');
+    }
+
+    // --- the simple options
+
+    get src() {
+      return this.getAttribute('src') ?? '';
+    }
+    set src(v) {
+      this.#setOrRemove('src', v === null || v === undefined || v === '' ? null : String(v));
+    }
+    get fileName() {
+      return this.getAttribute('file-name') ?? '';
+    }
+    set fileName(v) {
+      this.#setOrRemove('file-name', v === null || v === undefined || v === '' ? null : String(v));
+    }
+    get hide() {
+      return this.getAttribute('hide') ?? '';
+    }
+    set hide(v) {
+      const words = list(v);
+      this.#setOrRemove('hide', words ? words.join(' ') : null);
+    }
+    get theme() {
+      return this.getAttribute('theme') ?? 'auto';
+    }
+    set theme(v) {
+      this.#setOrRemove('theme', v === null || v === undefined || v === '' ? null : String(v));
+    }
+    get compact() {
+      return this.hasAttribute('compact');
+    }
+    set compact(v) {
+      this.toggleAttribute('compact', Boolean(v));
+    }
+    get variables() {
+      return this.#c.options.variables ? [...this.#c.options.variables] : null;
+    }
+    set variables(v) {
+      this.#c.options.variables = list(v);
+      this.#change('chart');
+    }
+    get cursor() {
+      return this.#c.changes.has('cursor') || !this.#c.state.model
+        ? this.#c.options.cursor
+        : this.#c.state.cursor;
+    }
+    set cursor(v) {
+      check(this.#c, 'cursor', v);
+      this.#c.options.cursor = number(v);
+      this.#change('cursor');
+    }
+    get step() {
+      return this.#c.changes.has('step') || !this.#c.state.model
+        ? this.#c.options.step
+        : this.#c.state.step;
+    }
+    set step(v) {
+      check(this.#c, 'step', v);
+      this.#c.options.step = number(v);
+      this.#change('step');
+    }
+    get from() {
+      return this.#c.changes.has('from') || !this.#c.state.view
+        ? this.#c.options.from
+        : this.#c.state.view[0];
+    }
+    set from(v) {
+      this.#c.options.from = number(v);
+      check(this.#c, 'from', v);
+      this.#change('from');
+    }
+    get to() {
+      return this.#c.changes.has('to') || !this.#c.state.view
+        ? this.#c.options.to
+        : this.#c.state.view[1];
+    }
+    set to(v) {
+      this.#c.options.to = number(v);
+      check(this.#c, 'to', v);
+      this.#change('to');
+    }
+
+    // --- the options that are properties only
+
+    get data() {
+      return this.#c.options.data;
+    }
+    set data(v) {
+      this.#c.options.data = v === undefined ? null : v;
+      this.#change('source');
+    }
+    get token() {
+      return this.#c.options.token;
+    }
+    set token(v) {
+      this.#c.options.token = typeof v === 'string' && v !== '' ? v : null;
+      this.#change('source', !this.#c.options.data);
+    }
+    get headers() {
+      return this.#c.options.headers;
+    }
+    set headers(v) {
+      this.#c.options.headers = isObject(v) ? v : null;
+      this.#change('source', !this.#c.options.data);
+    }
+    get labels() {
+      return this.#c.options.labels;
+    }
+    set labels(v) {
+      this.#c.options.labels = isObject(v) ? v : null;
+      this.#change('chart');
+    }
+    get messages() {
+      return this.#c.options.messages;
+    }
+    set messages(v) {
+      this.#c.options.messages = isObject(v) ? v : null;
+      this.#change('language');
+    }
+
+    #setOrRemove(name, value) {
+      if (value === null) this.removeAttribute(name);
+      else this.setAttribute(name, value);
+    }
+  }
+
+  api.Element = VehicleSilTimelineElement;
+  if (!customElements.get('vehicle-sil-timeline'))
+    customElements.define('vehicle-sil-timeline', VehicleSilTimelineElement);
+})(globalThis);

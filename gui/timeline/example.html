@@ -1,0 +1,17 @@
+<!doctype html>
+<!--
+  The smallest page with a timeline: one script and one tag. Put vehicle-sil-timeline.js and a timeline file
+  (run.timeline.json here) next to this page, and serve the directory with a web server, for example
+  `uv run python -m http.server` (src needs a server; a page opened as a file takes the file through the data
+  property instead). docs/gui.md, "Putting a timeline on your own screen", lists the attributes, properties and events.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>A timeline</title>
+    <script src="vehicle-sil-timeline.js"></script>
+  </head>
+  <body>
+    <vehicle-sil-timeline src="run.timeline.json"></vehicle-sil-timeline>
+  </body>
+</html>

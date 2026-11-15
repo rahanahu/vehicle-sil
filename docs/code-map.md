@@ -315,9 +315,11 @@ Typed messages (`j1939_codec.*`):
 - The destruction order (the handlers are removed, then the watchers are destroyed, and the `Listener` last), watchers added by a watcher, `Scope::on_step`
 - If a `Spy` that wrote variables is destroyed before its ECU, the next step stops (on the virtual bus and on SIL Kit)
 - The breakdown and the sum of the missed-traffic variables, and the error messages
+- `watch<M>()` with generated and hand-written types: each signal (integer or real), its state, `count`, `last_ms`, `period_ms`, `size`, `invalid`, `stale`, the `from` and `to` filters, a message older than the latest one, two messages with the same time, a 64-bit counter beyond `std::int64_t` (a real number), a name the ECU has already (no variable published), and the error messages
+- `j1939_spy.watch_of_a_signal_named_count_does_not_build`: a signal named like an item of the watch is a build error (it builds a target outside the build, `vehicle_sil_spy_watch_clash`, by running the build tool in the build tree: do not build in the same tree at the same time). Not registered when vehicle-sil is a subproject or with a generator of several configurations (configure says so)
 - With a `Spy`, the records of the other ECUs do not change, and the `Spy` sends nothing
 - No memory allocation in steady-state steps
-- The example in the guide
+- The examples in the guide (`tests/spy/guide_example.hpp`, `guide_analysis.hpp`, `cal_messages.yaml`); `j1939_spy.guide_example_is_the_guides`: the guide shows these files unchanged. `j1939_spy.analysis_example_judges_each_write_by_its_answer`: the analysis example with an answer that matches, no answer, a different value, an answer over a connection and a second Write before the answer
 - `j1939_spy.boundary`: `libs/spy` does not use the engine's internals. `j1939.sniffer_boundary` also checks that the engine does not know `vehicle_sil::spy`
 
 ### `peer` / `testkit`
@@ -717,7 +719,8 @@ The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_lau
 
 | Name | Location |
 |---|---|
-| `Spy`, `Scope`, `SpyOptions` (a listen-only participant writes what it hears to ECU variables; a watcher is a class that takes a `Scope&`) | `spy/spy.hpp` |
+| `Spy`, `Scope`, `SpyOptions` (a listen-only participant writes what it hears to ECU variables; a watcher is a class that takes a `Scope&`), `WatchOptions` | `spy/spy.hpp` |
+| `Spy::watch<M>()`, `Watch<M>` (a typed message as variables; needs `vehicle_sil::j1939_codec`) | `spy/watch.hpp` |
 
 - Tests: `tests/spy`
 - `ctest -R`: `^j1939_spy\.`
@@ -834,7 +837,7 @@ Implementation:
 |---|---|
 | The overall flow of the check | `src/check.cpp` |
 | Reading the `--describe` JSON | `src/describe_read.cpp` |
-| The reported networks under the names after `network_names` of the configuration file (`seen_networks()`) | `src/check_networks.cpp` |
+| The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check output | `src/check_format.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
@@ -1018,6 +1021,7 @@ The comments at the top of the files are not in the guide's blocks. The line num
 | `simulation.two-buses.yaml` | `VehicleCAN` added to `networks` |
 | `simulation.fixed.yaml` | The dashboard ECU replaced with the one of `examples/ecu_main` |
 | `simulation.network-names.yaml` | `simulation.yaml` with `network_names` on the dashboard ECU |
+| `simulation.second-engine.yaml` | `simulation.fixed.yaml` with a second engine ECU, changed with `j1939_nodes` |
 | `scenarios/engine_speed.yaml` | Scenario |
 
 - Build: with `VEHICLE_SIL_BUILD_EXAMPLES`, the executable and the YAML files go to `build/<preset>/examples/integrate_ecus/`. The engine and the rebuilt dashboard ECU are used from the neighboring `examples/ecu_main/` through relative paths.
@@ -1464,6 +1468,7 @@ Each entry lists, in this order, where to change, the documentation to update wi
 | Launcher | Check rules and `code` | [Check rules and `code`](#check-rules-and-code) |
 | Launcher | Configuration file or scenario keys, the schemas | [Configuration file or scenario keys](#configuration-file-or-scenario-keys) |
 | Launcher | `network_names` | [`network_names` in the configuration file](#network_names-in-the-configuration-file) |
+| Launcher | `j1939_nodes` | [`j1939_nodes` in the configuration file](#j1939_nodes-in-the-configuration-file) |
 | Launcher | `run --events`, `--stdin-commands`, `version --json` | [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) |
 | Launcher | Speed, pause, stepping, lateness | [Timing of `run`](#timing-of-run) |
 | Launcher | `manual`, `--manual` | [Participants you start yourself](#participants-you-start-yourself) |
@@ -1630,6 +1635,37 @@ Tests:
 
 - `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`)
 - `launch_run.network_names`: ECUs with different names communicate on one bus, a variant changes the map, the command of `manual` and the event, an executable that cannot take `--map-network`
+- `schema.files_and_launcher`
+
+### `j1939_nodes` in the configuration file
+
+`j1939_nodes` gives a participant's J1939 nodes other addresses and NAME fields than its executable's code.
+
+Where to change:
+
+- Reading it, and the errors that the configuration file alone shows: `read_j1939_nodes()` and `check_j1939_nodes()` in `libs/launch/src/config.cpp`
+- Merging the entries of a variant: `lay_j1939_nodes()`; turning them into arguments: `j1939_node_arguments()` (the text of an entry is `ecu_executable::format_j1939_node_argument()`, which `ecu_main` reads back)
+- Applying the entries to the reported nodes: `seen_networks()` in `libs/launch/src/check_networks.cpp`, with `j1939::apply_node_overrides()`
+- The findings about the entries, and how `address-conflict`, `address-shared` and `name-conflict` say to fix them: `check_j1939_node_entries()` and `conflict_fix()` in `libs/launch/src/check_rules.cpp`
+- The `features` word that each setting needs: `kJ1939NodeSettingFeatures` in `vehicle_sil/launch/config.hpp` (a setting added later gets its own word)
+
+Rules:
+
+- `seen_networks()` is the only place that applies the entries in the launcher. The rules read the outcome (`SeenNetwork::j1939_matches`, `unmatched_j1939_entries()`) and do not match again.
+- The check and the executable apply the same rules (`vehicle_sil/j1939/node_override.hpp`). `launch.j1939_nodes_match_like_the_network_does` passes the same scenes through `seen_networks()` and a `j1939::Network`.
+- An entry that takes no node keeps that participant's nodes on that network out of the rules of the addresses and NAMEs (`Rules::j1939_held`).
+
+Documentation to update:
+
+- "[Matching J1939 addresses and NAMEs (`j1939_nodes`)](simulation-config.md#matching-j1939-addresses-and-names-j1939_nodes)", the key table and the variant table in [simulation-config.md](simulation-config.md)
+- `j1939-node-*`, `address-conflict`, `address-shared`, `name-conflict`, the participant table and `j1939_nodes` in the JSON in [simulation-check.md](simulation-check.md)
+- `j1939-nodes` in `features` in [simulation-events.md](simulation-events.md)
+- The schema (`schema/simulation.schema.json` and its copy in the template)
+
+Tests:
+
+- `^launch\.` (`test_config.cpp`, `test_check.cpp`, `test_run.cpp`, `test_j1939_nodes_match.cpp`)
+- `launch_run.j1939_nodes`: 2 copies of one ECU communicate with an entry, the check says which entry to write without one, a variant changes the entry, the command of `manual` and the event, a `describe: false` participant, an executable that cannot take `--j1939-node`
 - `schema.files_and_launcher`
 
 ### Events, stdin commands, `version --json`
@@ -1857,11 +1893,15 @@ Where to change:
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
 | The argument | `tools/launch/main.cpp` |
-| The page that draws the file | `gui/timeline/viewer.js` (`timeline.html` is the page; the part above "The page" needs no DOM and is what the unit tests call) |
-| The page's words (English and Japanese) | `gui/timeline/messages.js`: every text the page shows, by key, in both languages (the unit tests check the keys; the page's lint refuses a string of words in `viewer.js`) |
+| The element `<vehicle-sil-timeline>` that draws the file | `gui/timeline/viewer.js` (the part above "The element" needs no DOM and is what the unit tests call; below it, the drawing functions work on the element that `enter()` makes current, and the class `VehicleSilTimelineElement` with its attributes, properties and events). Its CSS is `gui/timeline/timeline.css` (in its shadow root; `hide`, `compact` and `theme` are read there) |
+| The one file that users load | `gui/timeline/vehicle-sil-timeline.js`, made by `gui/timeline/bundle.js` from `messages.js`, `timeline.css` and `viewer.js` (`npm run bundle:timeline` in `gui/web`; `npm run test:timeline` fails when it is out of date). Its types: `gui/timeline/vehicle-sil-timeline.d.ts` (by hand: keep it in step with the class) |
+| The timeline page | `gui/timeline/timeline.html` and `page.js`: one element, and what the page adds (`?src=`, `?lang=`, `#token=`, a file dropped or chosen, a file embedded). The smallest page of a user: `gui/timeline/example.html` |
+| The words (English and Japanese) | `gui/timeline/messages.js`: every text the element and the page show, by key, in both languages (the unit tests check the keys; the lint refuses a string of words in `viewer.js` and `page.js`). The page says the element's `load.*` texts in its own words (`pageLoad.*`) through the element's `messages` property |
 | The GUI server: `--timeline` for a scenario run, the files it keeps, the page and the file it serves | `gui/server/src/vehicle_sil_gui/timelines.py`, and `_start()`, `_keep_timeline()`, `get_timeline()` and `get_timeline_page()` in `server.py` |
 | The **Timeline** link of the sample screen | `ScenarioPanel` and `timelinePageUrl()` in `gui/web/src/app/run/scenario-panel.ts` |
-| A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.html`, and `KNOWN` for a value the page should draw instead of naming |
+| The timeline inside the sample screen (the model for Angular) | `TimelineView` in `gui/web/src/app/run/timeline-view.ts` |
+| The element in the npm package and the tools archive | `gui/client/pack.mjs` (`@vehicle-sil/gui-client/timeline`), `TIMELINE_ELEMENT` in `scripts/package.py` (`client/`) |
+| A new kind of lane, or a new state of a sent value | `laneKind()` and the branch in `variableLane()`, the state in `pointState()` and `holdSegments()`, a CSS class in `timeline.css` (then `npm run bundle:timeline`), and `KNOWN` for a value the page should draw instead of naming |
 
 What to update together:
 
@@ -1884,8 +1924,8 @@ Tests:
 - `launch.a_timeline_that_dropped_points_or_was_not_written_is_said`
 - `launch_run.timeline` (the real launcher): the same file from 2 runs and at another speed, a file that cannot be opened, a file that cannot be written, a failing run, runs that end at `stop_at_ms` and by `--timeout-ms`, a run that does not start, the arguments
 - `schema.files_and_launcher`
-- The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`).
-- The GUI server's part: `gui/server/tests/test_timelines.py` (the argument with and without the feature, the file and the page with and without the token, the files kept), on the recordings `run-scenario-*-timeline` (made with `--timeline`; `record_launcher.py --compare` compares them with the real launcher). The link and the page from the GUI: `gui/web/e2e/timeline-link.spec.ts` (`--e2e-grep 'timeline'`).
+- The page, on the reference files and on its fixtures `gui/timeline/tests/fixtures/` (what the references do not have; `tests/schema/test_schemas.py` holds them to the schema): `gui/timeline/tests/viewer.test.js` (reading, the model and the layout, on Node: `npm run test:timeline` in `gui/web`) and `gui/web/e2e/timeline.spec.ts` (the page in a browser), `gui/web/e2e/timeline-element.spec.ts` (the element on pages of a user: the plain example, two on a page, every property and event, CSS in and out, a policy with no inline style). Not in CTest: `scripts/verify-web.py` runs them (`--e2e-grep 'timeline page'`, `--e2e-grep 'timeline element'`).
+- The GUI server's part: `gui/server/tests/test_timelines.py` (the argument with and without the feature, the file and the page with and without the token, the files kept), on the recordings `run-scenario-*-timeline` (made with `--timeline`; `record_launcher.py --compare` compares them with the real launcher). The link and the page from the GUI, and the element inside the sample screen: `gui/web/e2e/timeline-link.spec.ts` (`--e2e-grep 'timeline'`); in the screen template: `gui/web/e2e/starter.spec.ts`.
 
 ### Running several scenarios
 
@@ -2025,7 +2065,7 @@ Where to change:
 
 Code to update (`libs/ecu/include/vehicle_sil/ecu/executable.hpp`; the launcher and `ecu_main` share it):
 
-- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file; `--map-network` comes from `network_names`, and the message is in `check_arguments()` of `config.cpp`)
+- `ecu_executable::kLauncherArguments` (the arguments that cannot be written in `command` of the configuration file; `--map-network` comes from `network_names` and `--j1939-node` from `j1939_nodes`, and the message is in `check_arguments()` of `config.cpp`)
 - Exit codes, `kMaxMillis`
 
 Documentation to update:

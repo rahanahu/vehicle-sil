@@ -436,13 +436,14 @@ When the launcher's `features` have `timeline`, the GUI server records the timel
 
 | Item | Details |
 |---|---|
-| Page | `timeline/` of the GUI server (`timeline.html`, `viewer.js` and `messages.js` of `gui/timeline`; the tools archive has them inside the GUI). The link is `timeline/?src=/api/timeline/<session id>&lang=<ja or en>`. |
-| File | `GET api/timeline/<session id>` (with the token, as every API request). The server keeps the files of the last 4 scenario runs that wrote one, in a temporary directory of its own (`vehicle-sil-gui-timelines-*`), and removes them when it stops. A run whose file is gone has no link (the page says 404 `no-timeline`). |
+| Page | `timeline/` of the GUI server (`timeline.html`, `page.js` and `vehicle-sil-timeline.js` of `gui/timeline`; the tools archive has them inside the GUI). The link is `timeline/?src=/api/timeline/<session id>&lang=<ja or en>`. The page is one element `<vehicle-sil-timeline>`, which you can also put on your own screen (see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)"). |
+| File | `GET api/timeline/<session id>` (with the token, as every API request). The server keeps the files of the last 4 scenario runs that wrote one, in a temporary directory of its own (`vehicle-sil-gui-timelines-*`), and removes them when it stops. If the file of a run is gone, the page says 404 `no-timeline`. |
 | Launcher without `timeline` | The server does not give `--timeline`, and the card has no link. |
-| Token | The link carries no token. The new tab starts with a copy of the GUI tab's `sessionStorage`, where the GUI keeps its token, and the page sends it with `Authorization: Bearer`. A page opened another way (a copied address, a bookmark, a link opened without an opener, such as with the middle button in some browsers) has no token and says so: open it again with the link. |
+| Token | The link carries no token. The new tab starts with a copy of the GUI tab's `sessionStorage`, where the GUI keeps its token, and the page sends it with `Authorization: Bearer`. A page opened another way (a copied address, a bookmark, a link opened without an opener, such as with the middle button in some browsers) has no token and says so (HTTP 401). Open it with a left click on the link, or add `#token=<token>` from the address the server printed to the end of the page's address: the page reads it, removes it from the address and loads the file. |
 
 - The files are not kept beyond the last 4 runs or after the server stops. To keep one, fetch `api/timeline/<session id>` with the token before then, or run the scenario with `vehicle_sil_launch run --scenario <scenario> --timeline <file>` yourself.
 - The server API is `scenario.timeline_url` of the summary and `GET api/timeline/<session id>` (see "Timeline of a scenario run (`api/timeline`)" in [gui/protocol/README.md](../gui/protocol/README.md#timeline-of-a-scenario-run-apitimeline)); in the library, `timelineUrl` of the session copy's `scenario`.
+- The **Scenario** card also has **Show the timeline here**, which shows the same timeline inside the card with the element (see "[Putting a timeline on your own screen](#putting-a-timeline-on-your-own-screen)").
 
 ### Save your actions as a scenario
 
@@ -1077,11 +1078,146 @@ The meanings of `condition.kind` are below. For the meanings of the values of `b
 - On a screen with many widgets, create them with `{ visible: false }` and call `setVisible()`, so that only the visible widgets receive values.
 - The working models are the slider and the lamp of the screen template (`gui_starter/main.js`). The widgets of the sample screens (Angular) also use this API, turned into signals (see "[Add a widget](#add-a-widget)").
 
+### Putting a timeline on your own screen
+
+The element `<vehicle-sil-timeline>` draws a timeline file on a screen of your own: the chart of the steps and values, the failure and the tables, as the timeline page shows them. It is a standard custom element, so it works in plain HTML and in frameworks (Angular below is the tested model; for React, see "[In React](#in-react)"). Load one script and place one tag:
+
+```html
+<script src="/timeline/vehicle-sil-timeline.js"></script>
+<vehicle-sil-timeline src="/api/timeline/3"></vehicle-sil-timeline>
+```
+
+| Where you get the element | File |
+|---|---|
+| A screen that the GUI server serves (`--web`, custom panels) | `timeline/vehicle-sil-timeline.js` of the server (served without the token, as the screen's files) |
+| Prebuilt tools | `client/vehicle-sil-timeline.js`, with its types `client/vehicle-sil-timeline.d.ts` |
+| The npm package of the client library | `import '@vehicle-sil/gui-client/timeline'` (an ES module with its types; it defines the element and exports nothing) |
+| Repository | `gui/timeline/vehicle-sil-timeline.js` and `.d.ts`. The smallest page is `gui/timeline/example.html` |
+
+- The run of a GUI server: `src` is `/` and `scenario.timeline_url` of the session summary (`timelineUrl` in the library), as in `examples/gui_starter/main.js`.
+- Token: the element sends its `token` property, else the token that the GUI's screens keep in the tab (`takeToken` of the library keeps it there), with `Authorization: Bearer`. Without a token the server answers 401, and the element says so.
+- `src` must be on the page's own server (the same origin). The element does not follow a redirect, so that the token and the headers do not go to another address: it says that the address redirected. For a file from elsewhere, fetch it yourself and give it to `data`.
+- The element works even under a CSP that allows no inline style (`style-src 'self'`; the GUI server's is less strict): its CSS is a constructable style sheet, not a `<style>` element.
+- While it loads `src`, the element has `aria-busy="true"` and dims the file shown before.
+
+Every option below can be changed after the element is on the page. The element redraws once for the changes made together. A simple option is both an attribute (kebab-case) and a property (camelCase); objects are properties only. A value it cannot use is ignored with a warning in the browser's console (a number that is not one, a word of `hide` or a `theme` it does not know, `from` not before `to`), and the names of `variables` that match no variable are said above the chart.
+
+| Attribute | Property | Type | Default | What it does |
+|---|---|---|---|---|
+| `src` | `src` | string | none | Address of a timeline file on the page's own server. A change loads it |
+| `file-name` | `fileName` | string | The name the server gives, else the last part of `src` | The name shown for the file |
+| | `data` | object or string | `null` | The file itself (its parsed JSON or its text). While it is not `null`, it is shown instead of `src` |
+| | `token` | string | The GUI's token of the tab | The token sent with `src`. A property only, so that it stays out of the page's markup |
+| | `headers` | object | `null` | More request headers sent with `src` (string values), for a file behind your own server |
+| `lang` | `lang` | `en`, `ja` or a language of `messages` | The browser's language, else `en` | The language of the texts |
+| | `messages` | object | `null` | Texts to add or change: `{ <language>: { <key>: <text or function> } }`, with the keys of `VehicleSilTimeline.MESSAGES.en` (on `globalThis` once the script is loaded; the source is `gui/timeline/messages.js`). A language here can be named in `lang`. A key it lacks comes in English |
+| `cursor` | `cursor` | number (ms) | none | The cursor time |
+| `step` | `step` | number | none | The chosen step (its `index`): marked on the chart and in the table, and shown |
+| `from`, `to` | `from`, `to` | number (ms) | Around the failure, else the whole run | The part of the run shown |
+| `variables` | `variables` | Names separated by commas or spaces; an array of strings | All | The lanes to draw, in this order: a variable name, or a prefix ending in `*`. Without it, the inputs of the scenario come first, then the others |
+| | `labels` | object | `null` | A label for a variable, by its name, shown in its lane above the name |
+| `hide` | `hide` | Words separated by spaces (or commas) | none | The parts to leave out: `header`, `summary`, `toolbar`, `help`, `steps` (the lane of the steps), `readout`, `legend`, `tables` |
+| `compact` | `compact` | boolean (the attribute is present) | off | Narrower lane heads, lower number lanes and smaller text, for a small box |
+| `theme` | `theme` | `light`, `dark`, `auto` | `auto` | The colours; `auto` follows the browser's light or dark setting |
+
+The getters of `cursor`, `step`, `from` and `to` return what the element shows now, also after the user has changed it. The method `reload()` loads `src` again.
+
+| Event | When | `detail` |
+|---|---|---|
+| `load` | A file is shown | `{ file, scenario, status, start, end }` (`status` as the file writes it; `start` and `end`: the whole run, in ms) |
+| `error` | A file cannot be shown. The element shows the reason too | `{ message, status }` (`status`: the HTTP status, or `null`) |
+| `cursorchange` | The user moves the cursor (the pointer, the arrow keys) | `{ cursor }` |
+| `stepselect` | The user chooses a step (on the chart, or its number in the table) | `{ step }` |
+| `viewchange` | The user zooms or moves the view | `{ from, to }` |
+
+- The events are `CustomEvent`. `load` and `error` do not bubble; the others do.
+- A change made through a property or an attribute raises no event. So a screen can keep two timelines, or a timeline and its own chart, in step without a loop: `a.addEventListener('viewchange', (e) => Object.assign(b, e.detail));`.
+- Size: the element is a block as wide as its container and as high as its contents. Give it a height (`max-height`, for example) and it scrolls inside.
+- The slot `actions` puts your own buttons at the right of its header (the timeline page puts **Open a file** there).
+
+Its look is inside its shadow root: the CSS of your page does not reach in, and its CSS does not reach out. To change a colour, set these custom properties on the element, for example `vehicle-sil-timeline { --bad: #b00020; }` (for the dark colours too, in your own `@media (prefers-color-scheme: dark)` or with `theme`):
+
+| Custom properties | Used for |
+|---|---|
+| `--bg`, `--panel`, `--fg`, `--muted`, `--border`, `--grid` | The background, the panels, the text, the lines |
+| `--sent`, `--seen`, `--base`, `--true` | The values the scenario sent, the values seen, the base of a line, a true bool |
+| `--ok`, `--ok-fill`, `--ok-bg`, `--bad`, `--bad-fill`, `--bad-bg`, `--warn`, `--warn-fill`, `--warn-bg`, `--neutral`, `--neutral-fill` | Passed, failed, warnings, and steps without a result |
+| `--unrecorded`, `--e0`, `--e1`, `--e2`, `--cursor`, `--selection` | The time after the record, the states of an enum, the cursor, a selection |
+
+In Angular, allow the element with `CUSTOM_ELEMENTS_SCHEMA`, import the script once, and bind properties to signals and events to methods. The working model is `gui/web/src/app/run/timeline-view.ts` (the **Show the timeline here** of the sample screens, which imports the script when it is first shown):
+
+```ts
+import { CUSTOM_ELEMENTS_SCHEMA, Component, input, signal } from '@angular/core';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineEventMap } from '@vehicle-sil/gui-client/timeline';
+
+@Component({
+  selector: 'app-run-timeline',
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
+  template: `<vehicle-sil-timeline
+    [src]="src()" [cursor]="cursor()" [variables]="['Engine.*']" [compact]="true"
+    (cursorchange)="onCursor($event)" />`,
+})
+export class RunTimeline {
+  readonly src = input.required<string>();
+  readonly cursor = signal<number | null>(null);
+  onCursor(event: Event): void {
+    this.cursor.set((event as VehicleSilTimelineEventMap['cursorchange']).detail.cursor);
+  }
+}
+```
+
+- The npm package gives the element as an ES module. If you import the plain script instead (`client/vehicle-sil-timeline.js`), the Angular build warns that it is not an ES module: add the module you import to `allowedCommonJsDependencies`, as `gui/web/angular.json` does with `@vehicle-sil/gui-client/timeline`.
+
+#### In React
+
+What holds for every React version: get the element with a `ref`, and in an effect set the object properties (`data`, `labels`, `messages`, `headers`, `token`), the boolean `compact`, and add the event listeners. String attributes (`src`, `lang`, `hide`, `variables`, `theme`, `cursor`, `from`, `to`, `step`) can be written in JSX. The repository's tests do not run React: the lines below are the pattern, not a tested example.
+
+```tsx
+import { useEffect, useRef } from 'react';
+import '@vehicle-sil/gui-client/timeline';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+export function RunTimeline(props: { src: string; onCursor: (ms: number | null) => void }) {
+  const ref = useRef<VehicleSilTimelineElement>(null);
+  const { onCursor } = props;
+  useEffect(() => {
+    const timeline = ref.current;
+    if (!timeline) return;
+    timeline.labels = { 'Engine.engine.speed': 'Speed' };
+    timeline.compact = true;
+    const listener = (e: Event) =>
+      onCursor((e as CustomEvent<{ cursor: number | null }>).detail.cursor);
+    timeline.addEventListener('cursorchange', listener);
+    return () => timeline.removeEventListener('cursorchange', listener);
+  }, [onCursor]);
+  return <vehicle-sil-timeline ref={ref} src={props.src} hide="help" />;
+}
+```
+
+With TypeScript, JSX knows the tag after a declaration such as this one in a `.d.ts` of your project (also not run by the repository's tests):
+
+```ts
+import type { DetailedHTMLProps, HTMLAttributes } from 'react';
+import type { VehicleSilTimelineElement } from '@vehicle-sil/gui-client/timeline';
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'vehicle-sil-timeline': DetailedHTMLProps<
+        HTMLAttributes<VehicleSilTimelineElement>,
+        VehicleSilTimelineElement
+      > & { src?: string; hide?: string; variables?: string; theme?: string };
+    }
+  }
+}
+```
+
 ### Screen template (`gui_starter`)
 
 [examples/gui_starter](../examples/gui_starter/) is the smallest screen without a build step, using only the library (plain HTML, ES modules and the bundled library file). In the prebuilt tools, it is in `gui_starter/`.
 
-- It connects, checks a configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp built with `client.variables.bind`.
+- It connects, checks a configuration file, starts and stops a run, lets you pick one variable to watch and write, and has a slider and a lamp built with `client.variables.bind`, and the timeline of the last scenario run with `<vehicle-sil-timeline>`.
 - Its README explains how to use it.
 - `scripts/verify-gui.py` serves this template with `--web` and runs it in a browser, against the replay launcher and a fake Control Server.
 
@@ -1199,7 +1335,7 @@ Directories and tests for developing the GUI itself.
 | Library tests | The `client` stage of `verify-web.py` |
 | Bundling the library into one file | The `bundle` stage of `verify-web.py` |
 | Package | The `package` stage of `verify-web.py` |
-| Unit tests of the timeline page `gui/timeline` | The `timeline` stage of `verify-web.py` (its browser tests: `--e2e-grep 'timeline page'`; with the link of the GUI: `--e2e-grep 'timeline'`) |
+| Unit tests of the timeline page and element `gui/timeline`, and whether `vehicle-sil-timeline.js` is what its sources make | The `timeline` stage of `verify-web.py` (the browser tests of the page: `--e2e-grep 'timeline page'`; of the element: `--e2e-grep 'timeline element'`; with the GUI: `--e2e-grep 'timeline'`). After changing `messages.js`, `timeline.css` or `viewer.js`, run `npm run bundle:timeline` in `gui/web` |
 | Serving the screen template `examples/gui_starter` with `--web` and running it in a browser | The end-to-end test `starter.spec.ts` |
 
 The server tests wait for what should happen with `wait_until` and `Socket.until` in `conftest.py`. Any other wait limit you write goes through `scaled(seconds)`. All of them are multiplied by the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for the rules, see "Timeouts and the scale factor" under "Test names and how to run tests" in [code-map.md](code-map.md#timeouts-and-the-scale-factor)).

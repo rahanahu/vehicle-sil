@@ -34,6 +34,8 @@ SIL Kit の participant と lifecycle を持つ `ParticipantRuntime` につい�
 
 2 つ目は、フラグと状態を読む順です。待ちの中では、フラグ（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る経路ができます。逆に、フラグを読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときはフラグを読み直します。`give_up` が「待つのをやめる」と答えたときも、同じ理由でフラグを読み直します。`give_up` がシミュレーションを見るのは待ちが状態を読んだ後なので、短い実行はその間に始まって終わっていることがあります。この participant が始まっていれば、その答えは採らず、`start()` は始まったものとして戻ります。
 
+participant が走り始める前の Error は、`start()` が見たときの状態が別のものでも、開始の失敗です。`start()` は、現在の状態だけでなく、SIL Kit がこの participant について出した Error（ステータスのハンドラーが覚えます）で判断します。パッチ 0006 のない SIL Kit は、Error を開始の次の状態で上書きして、Running まで進むことがあるためです（[dependencies.md](../dependencies.md#上流の既知の不具合) の「上流の既知の不具合」）。パッチがあれば、participant は Error のままで、どちらで見ても同じです。このとき `start()` は、Error で終わった開始と同じように例外を投げます。SIL Kit がその後もステップを進めても、ステップのハンドラーは呼びません。
+
 この 2 つの順は、`libs/core/src/participant_runtime_probe.hpp` のテスト用のフック（テストだけが使う。インストールしない）で順を決めて、`core.participant_start_*` が確認します。
 
 ### CommunicationReady のハンドラー
@@ -104,6 +106,8 @@ participant が失敗すると（ステップのハンドラー、実時間の�
 失敗のフラグを立てることと、SIL Kit に Error を報告することは、1 つのロックの下で行います。そのため、失敗が見えた後の停止が報告を追い越すことはありません。SIL Kit が後回しにした処理を実行する順序には頼りません。
 
 `stop()` の待ちは、Error と Shutdown を合わせて `shutdown_timeout` までです。過ぎれば、Error の前でも停止を渡します。
+
+`stop()` は、ふつうは終わりの状態の future を待ちます。SIL Kit は、Shutdown になり、ほかの participant がそろって返事をしてから、これを設定します。走り始める前の Error で開始に失敗した後は、lifecycle が Shutdown になったときにも待ちを終えます。SIL Kit は返事の待ちを 1 つずつしか行わず、開始がまだ返事を待っている間に停止が来ると、停止の側の待ちが捨てられて、future が設定されないためです。
 
 次の場合は、Error を経ないか、Stopping の後で Error になります。
 
@@ -301,6 +305,7 @@ TCP だけにするのは、次の理由です。SIL Kit の registry は、TCP 
 - `name_in_use_wait` の既定は 5000 ms です。`PeerOptions` にも同じものがあります。`Simulation` は `start_timeout` を超えない値にします。
 - 作り直すのは、同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い PC、ネットワーク越し）。
 - 時間を過ぎたら、SIL Kit のメッセージに、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを追加して `NameInUseError`（`SilKit::ProtocolError` の一種）です。
+- 参加が、既知の participant の返事を待って時間切れになったら（「Timeout while waiting for replies from known participants」。[dependencies.md](../dependencies.md#sil-kit-ほかの-participant-が抜ける間に参加すると抜けた-participant-を待つ) の「SIL Kit: ほかの participant が抜ける間に参加すると、抜けた participant を待つ」）、participant を 1 回作り直し、そのことを `std::cerr` に 1 行出します。2 回目も時間切れなら、SIL Kit のメッセージに、やり直したことを書き足して `SilKit::ProtocolError` を投げます。このやり直しは全体で 1 回だけで、`name_in_use_wait` を伸ばしません。待つのは、最長で `name_in_use_wait` と、参加の時間切れ 2 回分です。
 - ほかの失敗は、すぐに投げます。
 - SIL Kit の participant を自分で作るプログラム（テストの生の Agent など）も、この関数を使えます。
 

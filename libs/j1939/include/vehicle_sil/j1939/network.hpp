@@ -714,6 +714,8 @@ struct NetworkStatistics
     std::uint64_t transport_retransmit_requests = 0; ///< Clear-to-sends asking for packets again.
     std::uint64_t transport_bam_dropped = 0;       ///< Received broadcasts dropped for a missing,
                                                    ///< repeated or out-of-order packet.
+    std::uint64_t transport_bam_replaced = 0;      ///< Received broadcasts ended before their last
+                                                   ///< packet by the same sender's next announcement.
     std::uint64_t transport_sessions_cancelled = 0; ///< Sessions closed without a frame because an
                                                     ///< address changed (also queued responses).
     std::uint64_t transport_responses_dropped = 0;  ///< Long responses refused (response queue full).

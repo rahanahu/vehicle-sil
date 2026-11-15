@@ -912,6 +912,7 @@ void Transport::on_bam(const Message& message, std::int32_t sender)
     }
     if (Session* existing = find_rx(Kind::BamRx, message.source, kGlobalAddress))
     {
+        ++network_.statistics_.transport_bam_replaced;
         end_receive(*existing, TransferResult::Cancelled, AbortReason::None, message.time); // a new broadcast from the same sender replaces it
     }
     Session* s = allocate(Kind::BamRx);

@@ -36,7 +36,8 @@
             ],
             "styles": ["src/theme.scss", "src/styles.css"],
             "outputPath": "dist",
-            "polyfills": ["@angular/localize/init"]
+            "polyfills": ["@angular/localize/init"],
+            "allowedCommonJsDependencies": ["@vehicle-sil/gui-client/timeline"]
           },
           "configurations": {
             "production": {

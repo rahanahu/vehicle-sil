@@ -913,13 +913,39 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ほかの ECU が受信するもの、送信するもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator でテストしています）。
 
-聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。何を見るかは、見張り（watch）のクラスに書いて `Spy` に追加します。
+聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。型のあるメッセージ（「データの形（Codec）」）なら、`watch<M>()` が、自分のコードなしで信号ごとの値と来た時刻を書きます。それ以外は、何を見るかを見張り（watch）のクラスに書いて `Spy` に追加します。
 
-この見本は、`main()` を除いて `tests/spy/test_spy.cpp` にあり、テストしています。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+見本は、作りものの較正の手順の 2 つのメッセージ（ツールが ECU 0x21 に値を書き、0x21 がアドレスといま持っている値を答える）と、0x21 の Proprietary A のメッセージ全部を見張ります。メッセージは YAML に書き、CMake の `vehicle_sil_add_j1939_codec(cal_messages cal_messages.yaml)` が `cal_messages.hpp` にします（`cal_messages` と `vehicle_sil::spy` をリンクし、下のコードは `cal_messages.hpp` と `vehicle_sil/spy/watch.hpp` をインクルードします）。下の 2 つのブロック（`tests/spy/cal_messages.yaml`、`tests/spy/guide_example.hpp`）は、試験が作って動かし、この手引きがそのまま載せていることも確かめます。`ecu_main` の `main()` は [examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) にあります。受信だけをする participant がほかの ECU の通信を変えないことは、`tests/j1939/test_j1939_silkit.cpp` がテストしています。
+
+<!-- tests/spy/cal_messages.yaml -->
+
+```yaml
+namespace: cal
+indicators: none
+messages:
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x01}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: value, start_bit: 24, length: 16, scale: 0.1, unit: V}
+  - name: WriteAnswer
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x81}
+    signals:
+      - {name: address, start_bit: 8, length: 16}
+      - {name: result, start_bit: 24, length: 8, values: {ok: 0, refused: 1}}
+      - {name: value, start_bit: 32, length: 16, scale: 0.1, unit: V}
+```
+
+<!-- tests/spy/guide_example.hpp -->
 
 ```cpp
+namespace j1939 = vehicle_sil::j1939;
+using namespace std::chrono_literals;
+
 namespace cal {
-inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A: the group of Write and WriteAnswer (cal_messages.yaml)
 }
 
 class BlockWatch {                                   // a watcher: takes Scope& and its own settings; no base class, creates no Listener
@@ -937,13 +963,51 @@ private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0
 class CalSpy {
 public:
     explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // no node: sends nothing
+        spy_.watch<cal::Write>("write", {.from = 0xF9, .to = 0x21});               // write.address, write.value, write.count ...
+        spy_.watch<cal::WriteAnswer>("answer", {.from = 0x21, .stale_after = 500ms}); // answer.result ..., answer.stale
         spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count, block.bytes
     }                                                                               // the Spy writes spy.missed and its breakdown
 private: vehicle_sil::spy::Spy spy_;
 };
+```
 
+```cpp
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
+
+ほかの ECU どうしのやり取りを判定する（要求ごとに応答が来たか、どれだけで来たか、値が合っているか）には、解析を見張りに書きます。ハンドラーは聞いた順にメッセージを受け、`M::decode()` で型にします。状態は見張りのメンバーが持ち、`on_step` で時間内に来なかったものを見つけ、判定は見張りの変数に出して、シナリオの `expect` や GUI が読みます。接続や BAM で運ばれたメッセージも、同じハンドラーに同じ形で届きます。下の見本は、上の見本の宣言を使います。ツール 0xF9 の `Write` ごとに、ECU 0x21 の `WriteAnswer`（アドレスと、いま持っている値を返す）と照らします。試験は、合う応答、応答なし、値の違う応答、接続で来た応答、応答の前の 2 つ目の `Write` の場合を動かします。
+
+<!-- tests/spy/guide_analysis.hpp -->
+
+```cpp
+class WriteCheck {                  // judges each Write of the tool 0xF9 to the ECU 0x21 by the ECU's WriteAnswer
+public:
+    WriteCheck(vehicle_sil::spy::Scope& s, vehicle_sil::SimDuration limit) : limit_(limit) {
+        s.on_message(cal::kPgn, [this](const j1939::Message& m) {          // in the order heard; also long messages
+            if (const auto w = cal::Write::decode(m.data); w && m.source == 0xF9 && m.destination == 0x21) {
+                if (asked_) { ++no_answer_; }                               // a new Write before the answer
+                asked_ = w; asked_at_ = m.time;
+            } else if (const auto a = cal::WriteAnswer::decode(m.data); a && asked_ && m.source == 0x21 && m.destination == 0xF9) {
+                ++answered_; answer_ms_ = (m.time - asked_at_) / 1ms;
+                if (a->address.raw() != asked_->address.raw() || a->value.raw() != asked_->value.raw()) { ++mismatches_; }
+                asked_.reset();
+            }
+        });
+        s.on_step([this](vehicle_sil::SimTime now) {                        // every step, after its messages
+            if (asked_ && now - asked_at_ > limit_) { ++no_answer_; asked_.reset(); }
+        });
+        s.output("answered", &answered_); s.output("no_answer", &no_answer_); s.output("mismatches", &mismatches_);
+        s.output("answer_ms", &answer_ms_, {.unit = "ms", .description = "Time to the latest answer (-1: none yet)"});
+    }
+private:
+    vehicle_sil::SimDuration limit_;
+    std::optional<cal::Write> asked_{};             // the Write waiting for its answer
+    vehicle_sil::SimTime asked_at_{};
+    std::int64_t answered_ = 0, no_answer_ = 0, mismatches_ = 0, answer_ms_ = -1;
+};
+```
+
+`CalSpy` のコンストラクターで `spy_.add<WriteCheck>("check", 200ms);` と足します。シナリオは、判定をほかの変数と同じに確かめます: `expect: { CalSpy.check.no_answer: 0, CalSpy.check.mismatches: 0 }`、`expect: { CalSpy.check.answer_ms: { le: 50 } }`。
 
 | 受信のしかた | 使うもの | 見えるもの |
 |---|---|---|
@@ -951,6 +1015,22 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 | 生の CAN で受信する | `ecu.can(network)` の `on_frame` | 全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受信します。 |
 
 - `Spy(ecu, network)` は、その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作ります。ノードを追加しない `Network` は、Address Claim も、Request への応答も、ACK と NACK もしません。`Listener` も聞くだけで、何も送信しません。
+- `watch<M>(名前, options)` は、型のあるメッセージ `M` を見張ります。`M` は `vehicle_sil_add_j1939_codec()` が作った型か、同じ形で手で書いた型です。ヘッダー `vehicle_sil/spy/watch.hpp` が要ります（`vehicle_sil::j1939_codec` も要りますが、作ったメッセージのターゲットがリンクします）。`M` の PGN のメッセージのうち `M` に直せるもの（長さが足り、`M` にセレクターがあればそれが合うもの）を、`options.from` と `options.to` を書いたときはその送り元からとその宛先へのもの（ブロードキャストは `j1939::kGlobalAddress`）だけ受け取り、次の変数を書きます。
+
+  | 変数 | 型 | 中身 |
+  |---|---|---|
+  | `<名前>.<信号>` | 整数か実数 | 信号の最後の有効な値。単位は定義のもの。列挙（生の値。値の名前は書きません）と、scale が 1 で offset が整数で、有効な値が全部 64 ビットの符号付き整数に入る信号は整数、ほかは実数です（64 ビットのカウンターなど）。有効な値が来るまでは 0 で、有効でない値が来ても前の値のままです |
+  | `<名前>.<信号>.state` | 列挙 | 有効でない値を持ちうる信号（特別な値がある、有効な範囲がビットより狭い、列挙）だけ。最後のメッセージで何だったか。`none`（まだ来ていない）、`valid`、`error`、`not_available`、`special`、`out_of_range`、`undefined` |
+  | `<名前>.count` | 整数 | 受けたメッセージの数 |
+  | `<名前>.last_ms` | 整数 | 最後のメッセージの時刻（ms 未満は切り捨て。-1: まだ来ていない） |
+  | `<名前>.period_ms` | 整数 | 最後のメッセージとその前のメッセージの間隔（ms 未満は切り捨て。-1: 2 回来ていない） |
+  | `<名前>.size` | 整数 | 最後のメッセージのバイト数（型より長く来たメッセージは、その長さ） |
+  | `<名前>.invalid` | 整数 | 有効でない信号を含んでいたメッセージの数 |
+  | `<名前>.stale` | bool | `options.stale_after` を書いたときだけ。その時間より長く 1 回も来ていない間 true（最初のメッセージの前は、ECU の最初のステップから数えます）。ECU のステップで変わるので、最大 1 ステップ遅れます |
+
+  - 「最後」は `Message::time` で決めます。最後のメッセージより古いメッセージ（接続のメッセージは受け手の確認の後に渡るので、後から来た単一フレームより後に渡ることがあります）は、`count` と `invalid` にだけ数え、ほかは変えません。同じ時刻の 2 つ（送り手の 1 つのステップで送ったもの）は、後に渡った方を最後とし、`period_ms` は 0 です。
+  - 項目と同じ名前（`count`、`last_ms`、`period_ms`、`size`、`invalid`、`stale`、`state`）の信号は、ビルドの誤りになり、文がそう言います（「a signal of M is named like an item the watch publishes ...」。どの信号かはコンパイラーが示します）。定義の側で信号の名前を変えます。
+  - `watch()` は `spy::Watch<M>&` を返します。その `count()` と `latest()`（最後のメッセージを `M` で）は、自分のコードから使えます。名前の誤り、空の名前、聞きこぼしの前置きと同じ名前、始まった後の追加は `add()` と同じに断り、0 以下の `stale_after` は `std::invalid_argument` です（「... WatchOptions::stale_after is 0 ns: give a time above 0, or leave it out for no "<名前>.stale"」）。見張りの変数のどれかを ECU が既に持っていると（ほかのコードの `write.count` など）、`watch()` は 1 つも足さずに `std::invalid_argument` を投げます（「... the ECU has the variable "write.count" already, and the watch publishes it too: give the watch another name, or rename the other variable (the watch published nothing)」）。
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラーは、追加した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer_end`、`on_frame`: `Listener` の同じ名前の口にハンドラーを追加します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
   - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を書きます。形は `ecu.output()` と同じです。
@@ -963,24 +1043,33 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
     ```
 
   - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラーの中では 1 つ前のステップの時刻です。ハンドラーでは `Message::time` を使います。
+  - `has_variable(item)`: ECU が `<名前>.<item>` を既に持っていれば true。変数をいくつも書く見張りは、先に全部を確かめれば、最初の変数の前に失敗できます（変数は取り消せません）。
   - 見張りの追加も、ハンドラーと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
 - 見張りのコンストラクターの中から、受け取った `Spy&` で別の見張りを `add()` できます（見張りを組み合わせた見張り）。追加した見張りは、組み合わせた見張りより後に壊れます（`Spy` は `add()` が返った順の逆に壊します）。コンストラクターが投げると、それまでに登録したハンドラーと `on_step` の関数を外し、追加した見張りも壊します。
-- 聞きこぼしの変数: `Spy` は、`Listener` と `Network` の数を、次の変数に書きます（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなのを確認すると、「来なかった」と「聞きこぼした」を見分けられます。
+- 聞きこぼしの変数: `Spy` は、`Listener` の数を、次の変数に書きます（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなら、`Spy` が追い始めた転送で途切れたものはありません。どちらの側で欠けたかは区別しません。送り手がバスに出さなかった BAM のパケットも数えます（`transport_bam_dropped` か `transport_bam_replaced`）。最後まで来なかった転送は `spy.timed_out` で見ます。
 
   | 変数 | 数えるもの |
   |---|---|
-  | `spy.missed` | 下の 8 つの和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、途中のパケットの欠け（欠けた後に、後ろのパケットが来た場合）・重なり・順の違いや空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です。どの転送も最後まで来た、とは言えません（見えないものは下） |
+  | `spy.missed` | 下の `spy.conflicting_packets` までの 5 つと、`Network` の 4 つの数（次の表の `receive_overflows`、`transport_rejected`、`transport_bam_dropped`、`transport_bam_replaced`）の和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、途中のパケットの欠け（欠けた後に、後ろのパケットが来た場合）・重なり・順の違い、同じ送り手の次の告知、空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です。どの転送も最後まで来た、とは言えません（見えないものは下） |
   | `spy.no_session` | 空きがなくて追わなかった接続（同時に追える数は `ListenerOptions::sniffer.sessions`、既定 32） |
   | `spy.incomplete` | パケットを見逃した接続 |
   | `spy.replaced` | 終わる前に告知し直された接続 |
   | `spy.lost` | 同じ participant のノードがそのアドレスを取ったので、追うのをやめた接続 |
   | `spy.conflicting_packets` | 同じ番号で中身の違うパケット（下の「受け手と違うかもしれないメッセージ」） |
-  | `spy.receive_overflows` | `Network` が受け取れなかったフレーム（`NetworkOptions::receive_capacity`） |
-  | `spy.transport_rejected` | `Network` が組み立てを始めなかった BAM（形の正しくない告知、空きのセッションなし）と、同じ participant のノードが断った RTS（別の PGN で話し中、大きすぎ、形の誤り、空きなし） |
-  | `spy.transport_bam_dropped` | `Network` が組み立ての途中で捨てた BAM（パケットの欠け、重なり、順の違い） |
+  | `spy.timed_out` | 末尾のパケットが来なかった（時間切れになった）ほかの ECU どうしの接続。送り手が止めたのか聞きこぼしたのかを見分けられないので、和には入れません |
+
+  `Network` の数は `Network::statistics()` にあり、participant として動く ECU（`ecu_main`、ランチャー）は、変数 `j1939.<ネットワーク>.<数の名前>` にも書きます（[internals/control.md](internals/control.md#peer-の監視) の「Peer の監視」）。`Spy` は重ねて書きません。
+
+  | `Network` の数 | 数えるもの | `spy.missed` に入るか |
+  |---|---|---|
+  | `receive_overflows` | `Network` が受け取れなかったフレーム（`NetworkOptions::receive_capacity`） | 入る |
+  | `transport_rejected` | `Network` が組み立てを始めなかった BAM（形の正しくない告知、空きのセッションなし）と、同じ participant のノードが断った RTS（別の PGN で話し中、大きすぎ、形の誤り、空きなし） | 入る |
+  | `transport_bam_dropped` | `Network` が組み立ての途中で捨てた BAM（パケットの欠け、重なり、順の違い） | 入る |
+  | `transport_bam_replaced` | 最後のパケットが来る前に、同じ送り手の次の告知で置き換わった BAM | 入る |
+  | `transport_timeouts` | 末尾のパケットが来なかった BAM と、この participant のノードの時間切れ | 入らない |
 
   - 見えないもの: スパイの ECU をバスから外した間（`ecu.connected` が false）に来たフレームは、`Network` の手前で捨てられ、どこにも数えられません。`Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）も入れません。
-  - 最後まで来なかった転送も見えません。末尾のパケットが来なかった BAM と接続は時間切れになり、送り手が止めたのか、パケットを聞きこぼしたのかは見分けられません。BAM の時間切れは `Network::statistics()` の `transport_timeouts` に数えますが、この participant のノードの時間切れも数えるので、和には入れません。ほかの ECU どうしの接続は `sniffer_statistics()` の `timed_out` に数えます。最後のパケットが来る前に、同じ送り手の次の告知で置き換わった BAM は、どこにも数えません。
+  - 最後まで来なかった転送も見えません。末尾のパケットが来なかった BAM と接続は時間切れになり、送り手が止めたのか、パケットを聞きこぼしたのかは見分けられません。そのため `spy.timed_out` と `transport_timeouts` は和の外です。どの転送も最後まで来るはずのシナリオでは、これも確かめます（`spy.timed_out: 0`）。
   - 前置きは `SpyOptions::statistics_as`（既定 `"spy"`）で変えられます。空にすると書きません。
 - 寿命: 書いた変数は取り消せないので、変数を書く `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。変数を書いた `Spy` を ECU より先に壊すと、その ECU の次のステップが、変数を読む前に `std::logic_error`（「vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ...」）で止まります。`Spy` は壊れるとき、見張りごとに（`add()` が後に返ったものから）ハンドラーと `on_step` の関数を外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
 - 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。`Listener` をほかのコードと分けるときは、自分で作った `Listener` を `Spy(ecu, network, listener)` に渡します。その `Listener` に `Spy` を 2 つ置くときは、2 つ目の `SpyOptions::statistics_as` を `""` にします。

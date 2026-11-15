@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="style.css" />
     <!-- The script lives in a file because the CSP blocks inline scripts -->
     <script type="module" src="main.js"></script>
+    <!-- The element <vehicle-sil-timeline>, which the GUI server serves for every screen -->
+    <script src="/timeline/vehicle-sil-timeline.js"></script>
   </head>
   <body>
     <h1>My vehicle-sil screen</h1>
@@ -52,6 +54,13 @@
         <output id="lamp" data-testid="lamp" data-on="false">-</output>
         <span id="lamp-condition" data-testid="lamp-condition"></span>
       </p>
+    </section>
+
+    <section>
+      <h2>Timeline</h2>
+      <p id="timeline-none" data-testid="timeline-none">No scenario run with a timeline yet.</p>
+      <vehicle-sil-timeline id="timeline" data-testid="timeline" lang="en" compact hide="help tables" hidden></vehicle-sil-timeline>
+      <p>Cursor: <output id="timeline-cursor" data-testid="timeline-cursor">-</output></p>
     </section>
   </body>
 </html>
