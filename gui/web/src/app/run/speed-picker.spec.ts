@@ -64,18 +64,42 @@ describe('SpeedPicker', () => {
     expect(fixture.componentInstance.invalid()).toBe(false);
   });
 
-  it('says why a factor out of the range cannot be used', async () => {
+  it('says why a factor out of the range cannot be used, once the field is left or Enter is pressed', async () => {
     const input = await chooseFactor();
+    const error = () => element().querySelector('[data-testid="speed-error"]');
     await type(input, '5000');
-    const error = element().querySelector('[data-testid="speed-error"]');
-    expect(error?.textContent).toContain('0.01 から 1000');
-    expect(error?.getAttribute('role')).toBe('alert');
-    expect(input.getAttribute('aria-invalid')).toBe('true');
+    // 打っている間は誤りを出さない（invalid は打つたびに決める: 開始のボタンが使う）
     expect(fixture.componentInstance.invalid()).toBe(true);
+    expect(error()?.textContent?.trim()).toBe('');
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    input.dispatchEvent(new Event('blur'));
+    await fixture.whenStable();
+    expect(error()?.textContent).toContain('0.01 から 1000');
+    expect(error()?.getAttribute('role')).toBe('status');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe(error()?.id);
+
+    // 打ち直すと消える。変換を確定する Enter では出さず、ふつうの Enter で出す
     await type(input, '');
     expect(fixture.componentInstance.invalid()).toBe(true);
+    expect(error()?.textContent?.trim()).toBe('');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }));
+    await fixture.whenStable();
+    expect(error()?.textContent?.trim()).toBe('');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await fixture.whenStable();
+    expect(error()?.textContent).toContain('0.01 から 1000');
+
     await type(input, '3');
     expect(fixture.componentInstance.invalid()).toBe(false);
-    expect(error?.textContent?.trim()).toBe('');
+    expect(error()?.textContent?.trim()).toBe('');
+  });
+
+  it('takes full-width digits, and keeps them in the field while they are typed', async () => {
+    const input = await chooseFactor();
+    await type(input, '１．５');
+    expect(fixture.componentInstance.speed()).toBe(1.5);
+    expect(fixture.componentInstance.invalid()).toBe(false);
+    expect(factorInput()?.value).toBe('１．５');
   });
 });

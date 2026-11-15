@@ -4,6 +4,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
+import { numberText } from '../core/format/number-text';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { WAITING_TEXT, latenessText, speedLabel } from './labels';
@@ -80,7 +81,8 @@ export const DEFAULT_STEP_MS = 100;
     </p>
 
     @if (time.supported()) {
-      <div class="row">
+      <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
+      <form class="row" (submit)="sendStep($event)">
         <mat-form-field class="ms" subscriptSizing="dynamic">
           <mat-label i18n>ステップ送りの量（ms）</mat-label>
           <input
@@ -90,28 +92,34 @@ export const DEFAULT_STEP_MS = 100;
             autocomplete="off"
             data-testid="step-ms"
             [value]="stepText()"
-            [attr.aria-invalid]="stepError() !== null"
-            [attr.aria-describedby]="stepError() !== null ? 'step-ms-error' : null"
+            [attr.aria-invalid]="shownStepError() !== null"
+            [attr.aria-describedby]="shownStepError() !== null ? 'step-ms-error' : null"
             #stepInput
-            (input)="stepText.set(stepInput.value)"
-            (keydown.enter)="step()"
+            (input)="typeStep(stepInput.value)"
+            (blur)="stepChecked.set(true)"
           />
         </mat-form-field>
         <button
           matButton="tonal"
-          type="button"
+          type="submit"
           data-testid="step"
           [disabled]="!canStep()"
           disabledInteractive
           [attr.aria-describedby]="time.canStep() ? null : 'time-step-why'"
-          (click)="step()"
           i18n
         >
           ステップ送り
         </button>
-      </div>
-      <p class="error" id="step-ms-error" role="alert" [class.shown]="stepError() !== null">
-        {{ stepError() }}
+      </form>
+      <!-- 誤りは、欄を離れたときか送ったときに出す（打っている間は消すだけ） -->
+      <p
+        class="error"
+        id="step-ms-error"
+        role="status"
+        data-testid="step-ms-error"
+        [class.shown]="shownStepError() !== null"
+      >
+        {{ shownStepError() }}
       </p>
       <p class="hint" id="time-step-why" data-testid="step-hint">{{ stepHint() }}</p>
 
@@ -232,8 +240,7 @@ export class TimePanel {
   /** ステップ送りの量の欄の文字（打っている途中もそのまま持つ）。 */
   protected readonly stepText = signal(String(DEFAULT_STEP_MS));
   private readonly stepMs = computed(() => {
-    // 日本語入力の全角の数字（１００）も受ける
-    const text = this.stepText().normalize('NFKC').trim();
+    const text = numberText(this.stepText());
     const ms = Number(text);
     return /^\d+$/.test(text) && ms >= 1 && ms <= this.info.limits().step_ms_max ? ms : null;
   });
@@ -241,6 +248,11 @@ export class TimePanel {
     this.stepMs() === null
       ? $localize`ステップ送りの量は 1 から ${this.info.limits().step_ms_max}:max: までの整数（ミリ秒）にしてください。`
       : null,
+  );
+  /** 量の誤りを出してよいか: 欄を離れたか送った後。打ち直すと消す。 */
+  protected readonly stepChecked = signal(false);
+  protected readonly shownStepError = computed(() =>
+    this.stepChecked() ? this.stepError() : null,
   );
   protected readonly canStep = computed(
     () => this.time.canStep() && this.stepMs() !== null && this.time.sending() === null,
@@ -282,7 +294,15 @@ export class TimePanel {
       : null;
   });
 
-  protected step(): void {
+  protected typeStep(text: string): void {
+    this.stepText.set(text);
+    this.stepChecked.set(false);
+  }
+
+  /** 「ステップ送り」か Enter。ページは移らない（サーバーの CSP は form-action 'none'）。 */
+  protected sendStep(event: Event): void {
+    event.preventDefault();
+    this.stepChecked.set(true);
     const ms = this.stepMs();
     if (ms !== null && this.canStep()) this.time.step(ms);
   }

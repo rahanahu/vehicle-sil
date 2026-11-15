@@ -9,7 +9,7 @@ import { VariableFrame } from './variable-frame';
 import { parseNumber } from './variable-state';
 
 /**
- * 数値の入力: 書ける数（範囲がなくてもよい）。入れて Enter か「書く」で書く。型（整数）と範囲は送る前に確かめ、
+ * 数値の入力: 書ける数（範囲がなくてもよい）。入れて Enter か「書く」で書く（全角の数字も受ける）。型（整数）と範囲は送る前に確かめ、
  * 合わなければ送らずに理由を出す。いまの値は欄の上に出す（入れている途中で書き換わらない）。
  */
 @Component({
@@ -24,7 +24,8 @@ import { parseNumber } from './variable-state';
           <span class="unit">{{ unit() }}</span>
         }
       </p>
-      <div class="row">
+      <!-- Enter は form の暗黙の送信で送る: 日本語入力の変換を確定する Enter では、ブラウザーは送らない -->
+      <form class="row" (submit)="send($event)">
         <mat-form-field class="field" subscriptSizing="dynamic">
           <mat-label i18n>書く値</mat-label>
           <input
@@ -38,7 +39,6 @@ import { parseNumber } from './variable-state';
             [disabled]="variable.block() !== null"
             [attr.aria-describedby]="variable.id + '-why'"
             (input)="draft.set(field.value)"
-            (keydown.enter)="submit()"
           />
           @if (unit()) {
             <span matTextSuffix>{{ unit() }}</span>
@@ -46,16 +46,15 @@ import { parseNumber } from './variable-state';
         </mat-form-field>
         <button
           matButton="tonal"
-          type="button"
+          type="submit"
           data-testid="widget-submit"
           [disabled]="variable.block() !== null"
           [attr.aria-describedby]="variable.id + '-why'"
-          (click)="submit()"
           i18n
         >
           書く
         </button>
-      </div>
+      </form>
     </app-variable-frame>
   `,
   styles: `
@@ -103,7 +102,9 @@ export class NumberWidget {
   /** 欄に入れている文字。 */
   protected readonly draft = signal('');
 
-  protected submit(): void {
+  /** 「書く」か Enter。ページは移らない（サーバーの CSP は form-action 'none'）。 */
+  protected send(event: Event): void {
+    event.preventDefault();
     const info = this.variable.info();
     if (!info || this.variable.block() !== null) return;
     const parsed = parseNumber(info, this.draft());
