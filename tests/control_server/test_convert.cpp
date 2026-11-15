@@ -102,6 +102,49 @@ TEST_CASE(control_server_write_request_round_trips)
     CHECK(!from_proto(wire, refused));
 }
 
+TEST_CASE(control_convert_says_which_writes_took_effect_and_leaves_out_what_is_not_known)
+{
+    OperationResult in;
+    in.seq = 9;
+    in.request.writes = {{"Engine", "engine.level", std::int64_t{7}}, {"Engine", "engine.fault", true},
+                         {"Body", "cabin.lamp", true},           {"Body", "cabin.speed", std::int64_t{3}},
+                         {"Cabin", "cabin.fan", true},           {"Gate", "gate.open", true}};
+    in.targets.resize(4);
+    TargetResult& engine = in.targets[0];
+    engine.peer = "Engine";
+    engine.status = TargetStatus::Rejected;
+    engine.reason = "engine.fault: a setter threw: no";
+    engine.applied_writes = 1;
+    engine.failed_write = 1;
+    TargetResult& body = in.targets[1];
+    body.peer = "Body";
+    body.status = TargetStatus::Invalid;
+    body.reason = "cabin.speed: an output is not writable";
+    body.applied_writes = 0;
+    body.failed_write = 1;
+    TargetResult& cabin = in.targets[2];
+    cabin.peer = "Cabin";
+    cabin.status = TargetStatus::Invalid;
+    cabin.reason = "the peer is not connected";
+    cabin.applied_writes = 0; // 0 is said, the position is not
+    in.targets[3].peer = "Gate";
+    in.targets[3].status = TargetStatus::Queued;
+    v1::Operation wire;
+    to_proto(in, wire);
+    // Through the bytes, as a client reads it: 0 stays told apart from absent.
+    v1::Operation out;
+    CHECK(out.ParseFromString(wire.SerializeAsString()));
+    CHECK_EQ(out.targets_size(), 4);
+    CHECK(out.targets(0).status() == v1::TARGET_STATUS_REJECTED);
+    CHECK(out.targets(0).has_applied_writes() && out.targets(0).applied_writes() == 1);
+    CHECK(out.targets(0).has_failed_write() && out.targets(0).failed_write() == 1);
+    CHECK(out.targets(1).has_applied_writes() && out.targets(1).applied_writes() == 0);
+    CHECK(out.targets(1).has_failed_write() && out.targets(1).failed_write() == 1);
+    CHECK(out.targets(2).has_applied_writes() && out.targets(2).applied_writes() == 0);
+    CHECK(!out.targets(2).has_failed_write());
+    CHECK(!out.targets(3).has_applied_writes() && !out.targets(3).has_failed_write());
+}
+
 TEST_CASE(control_convert_names_both_reasons_when_the_simulation_cannot_be_read)
 {
     control_grpc::SimulationSnapshot s;

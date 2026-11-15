@@ -687,7 +687,16 @@ export interface OperationReport {
   done: boolean;
   peers: Record<
     string,
-    { state: string; applied_at_ms: number | null; late: boolean; reason: string | null }
+    {
+      state: string;
+      applied_at_ms: number | null;
+      late: boolean;
+      reason: string | null;
+      /** How many of the participant's writes took effect, from the first (null: not known). */
+      applied_writes: number | null;
+      /** Position (from 0) of the write `reason` is about (null: none, or not known). */
+      failed_write: number | null;
+    }
   >;
 }
 
@@ -723,6 +732,8 @@ const readOperationReport: Reader<OperationReport> = (value, path) => {
           applied_at_ms: field(t, p, 'applied_at_ms', optional(nullable(number), null)),
           late: field(t, p, 'late', optional(boolean, false)),
           reason: field(t, p, 'reason', optional(nullable(string), null)),
+          applied_writes: field(t, p, 'applied_writes', optional(nullable(integer), null)),
+          failed_write: field(t, p, 'failed_write', optional(nullable(integer), null)),
         };
       }),
     ),

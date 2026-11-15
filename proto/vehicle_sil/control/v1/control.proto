@@ -160,7 +160,9 @@ enum TargetStatus {
   TARGET_STATUS_DISCONNECTED = 3;
   TARGET_STATUS_APPLIED = 4;
   TARGET_STATUS_LATE = 5;
-  TARGET_STATUS_REJECTED = 6; // a setter failed; values it wrote before stay
+  // The ECU did not apply it all: a setter threw, or a parameter was written after the first
+  // step. The writes before the refused one stay applied: applied_writes says how many.
+  TARGET_STATUS_REJECTED = 6;
   TARGET_STATUS_CANCELLED = 7;
   TARGET_STATUS_INVALID = 8;
   TARGET_STATUS_BUSY = 9;
@@ -173,6 +175,23 @@ message TargetResult {
   optional sint64 applied_at_ns = 3;
   bool late = 4;
   string reason = 5;
+  // The writes for this peer are the writes of Operation.request whose peer is this one, in the
+  // order of the request (a variable written twice is two writes); positions count in them from
+  // 0, and n is their number.
+  //
+  // How many of them took effect, from the first: writes [0, applied_writes) did, the rest did
+  // not. APPLIED: n. LATE, CANCELLED, BUSY, INVALID: 0. REJECTED: the position of the write
+  // whose setter threw, or 0 for a refused parameter. Absent while SENT, QUEUED or DISCONNECTED,
+  // for UNKNOWN, and for a REJECTED whose ECU gave a number of n or more, or none for two or
+  // more writes. Tell which writes took effect from this, not from reason.
+  optional uint32 applied_writes = 6;
+  // The position of the write that reason is about. INVALID: the write at which the check
+  // stopped; absent when the writes for this peer were refused as a whole (it is not connected,
+  // for example). REJECTED: the write whose setter threw; absent when applied_writes is absent,
+  // and when nothing took effect in a command of two or more writes with a parameter among them
+  // (then a refused parameter cannot be told from a first setter that threw). Absent for every
+  // other status.
+  optional uint32 failed_write = 7;
 }
 
 message Operation {

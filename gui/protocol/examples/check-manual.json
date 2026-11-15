@@ -130,7 +130,7 @@
           "j1939_nodes": null,
           "control": {
             "transport": "silkit",
-            "wire_version": 1
+            "wire_version": 2
           }
         },
         {
@@ -229,7 +229,7 @@
           "j1939_nodes": null,
           "control": {
             "transport": "silkit",
-            "wire_version": 1
+            "wire_version": 2
           }
         },
         {

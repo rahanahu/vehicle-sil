@@ -154,6 +154,7 @@ ECU が変数を公開するかどうかは、実行ファイルの `--describe`
 - `not_offered` の ECU は待ちません。
 - `--describe` の出力では公開しないのに hello を受信した participant は、`connected` です。
 - どの状態でも、シミュレーションは動きます（`--strict` では警告が失敗です）。
+- `vehicle_sil_launch` が変数を読み書きできるのは、メッセージの形式のバージョンが自分と同じ ECU の実行ファイルだけです。vehicle-sil 0.1.0 でビルドした ECU と新しいランチャー、新しい ECU と 0.1.0 のランチャーの組み合わせでは、ECU はシミュレーションに加わりますが、変数を読み書きできません。照合が `control-link-version` を出します。
 
 ### 始まる前の待ち
 
@@ -656,7 +657,7 @@ passed: 0 errors, 1 warning, 1 note
 - 別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている。
 - 実行中に参加した participant の hello を、まだ受信していなかった。
 
-`control-link-version` が出たら、同じバージョンの vehicle-sil でビルドします。
+`control-link-version` が出たら、どちらが古いかが文に出ます。ECU のほうが古ければ `vehicle_sil_launch` の vehicle-sil でビルドし直し、新しければ ECU の vehicle-sil と同じかそれより新しいバージョンの `vehicle_sil_launch` を使います。
 
 `variable-map-not-applied` では、合わなかった対応は適用しません。変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは拒否しています。同じ内容を、実行の行（`log`）にも 1 回書きます。始まった時点で接続している ECU は始まったときに、その後に接続した ECU は実行の終わりに書きます。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、`--describe` の出力と違う変数を通知した実行ファイルのときだけです（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)）。
 
@@ -990,7 +991,7 @@ passed: 0 errors, 1 warning, 1 note
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       },
       {
@@ -1068,7 +1069,7 @@ passed: 0 errors, 1 warning, 1 note
         "j1939_nodes": null,
         "control": {
           "transport": "silkit",
-          "wire_version": 1
+          "wire_version": 2
         }
       }
     ],
@@ -1212,9 +1213,9 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
   | `false` | ECU に入っていません。ECU かそのエージェントが断った、同じ `set` の中で断られた書き込みより後ろにある、送っていない、のどれかです。 |
   | `null` | わかりません。結果が来なかったか、ECU の結果からはどの書き込みが入ったかがわかりません。 |
 
-  ECU は、1 つの `set` の書き込みを順に適用し、setter が断った書き込みで止まります。そのため、断られた書き込みより前のものはもう入っていて（`true`）、断られたものとその後ろは入っていません（`false`）。ECU のエージェントが受け取った時点で断ったとき（名前、型、範囲の誤り）は、その `set` のその participant への書き込みは、どれも入っていません。
+  ECU は、1 つの `set` の書き込みを順に適用し、setter が断った書き込みで止まります。そのため、断られた書き込みより前のものはもう入っていて（`true`）、断られたものとその後ろは入っていません（`false`）。ECU のエージェントが受け取った時点で断ったとき（名前、型、範囲の誤り）は、その `set` のその participant への書き込みは、どれも入っていません。最初のステップの後に `set` がパラメータを書くときも同じで、ECU はその participant への書き込みをまとめて断ります。
 - `point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点がこの書き込みです。何も送っていなければ `null` です。`applied` が `false` か `null` の点は、その系列の `not_applied_from` か、それより後ろにあります。
-- `write` は、失敗の原因になった書き込みの、`writes[]` の添字（0 から）です。ECU かそのエージェントが断るときに名指しした書き込みか、断った participant への書き込みが 1 つだけならその書き込みです。原因が 1 つに決まらないとき（participant がいくつもの書き込みを、名指しせずにまとめて断った、結果が来なかった）と、書き込みの失敗でない手順では `null` です。
+- `write` は、失敗の原因になった書き込みの、`writes[]` の添字（0 から）です。ECU かそのエージェントが断るときに指した書き込み（名前ではなく、その participant への書き込みの中での位置で指します）か、断った participant への書き込みが 1 つだけならその書き込みです。原因が 1 つに決まらないとき（participant がいくつもの書き込みを、どれとも指さずにまとめて断った、結果が来なかった）と、書き込みの失敗でない手順では `null` です。
 - 何も送る前に失敗した手順（変数に書けない、`ramp` や `wave` に始まりの値がない）では、`writes[]` はその 1 つの書き込みで、`point` は `null`、`applied` は `false` です。値を計算する前なら、`value` も `null` です。
 
 ### 値の列（`series[]`）

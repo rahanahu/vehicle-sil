@@ -259,7 +259,9 @@
           "state": "queued",
           "applied_at_ms": null,
           "late": false,
-          "reason": null
+          "reason": null,
+          "applied_writes": null,
+          "failed_write": null
         }
       }
     },
@@ -274,7 +276,9 @@
           "state": "applied",
           "applied_at_ms": 0,
           "late": false,
-          "reason": null
+          "reason": null,
+          "applied_writes": 2,
+          "failed_write": null
         }
       }
     },
@@ -451,7 +455,7 @@
               "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -550,7 +554,7 @@
               "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -818,7 +822,9 @@
                 "state": "applied",
                 "applied_at_ms": 0,
                 "late": false,
-                "reason": null
+                "reason": null,
+                "applied_writes": 2,
+                "failed_write": null
               }
             }
           }
@@ -975,7 +981,7 @@
               "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1074,7 +1080,7 @@
               "j1939_nodes": null,
               "control": {
                 "transport": "silkit",
-                "wire_version": 1
+                "wire_version": 2
               }
             },
             {
@@ -1432,7 +1438,7 @@
                 "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {
@@ -1531,7 +1537,7 @@
                 "j1939_nodes": null,
                 "control": {
                   "transport": "silkit",
-                  "wire_version": 1
+                  "wire_version": 2
                 }
               },
               {

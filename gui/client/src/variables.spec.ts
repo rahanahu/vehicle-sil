@@ -9,6 +9,7 @@ import {
   HISTORY_TOTAL_MAX,
   OPERATIONS_KEPT,
   WriteError,
+  readOperation,
   readVariables,
 } from './variables';
 
@@ -116,6 +117,23 @@ const operation = (seq: number, state: string, done: boolean, peer: object = {},
   state,
   done,
   peers: { Engine: { state, applied_at_ms: null, late: false, reason: null, ...peer } },
+});
+
+describe('readOperation', () => {
+  it('says which writes took effect, and null for what is absent or not a position', () => {
+    const peers = (p: object) =>
+      readOperation(operation(3, 'rejected', true, p), 1)?.peers['Engine'];
+    expect(peers({ applied_writes: 1, failed_write: 1 })).toMatchObject({
+      appliedWrites: 1,
+      failedWrite: 1,
+    });
+    expect(peers({ applied_writes: 0 })).toMatchObject({ appliedWrites: 0, failedWrite: null });
+    expect(peers({ applied_writes: -1, failed_write: 'x' })).toMatchObject({
+      appliedWrites: null,
+      failedWrite: null,
+    });
+    expect(peers({})).toMatchObject({ appliedWrites: null, failedWrite: null }); // an older server
+  });
 });
 
 describe('variables', () => {
@@ -384,13 +402,24 @@ describe('variables', () => {
     request.flush({ session_id: 1, operation: 7 });
     await deliver(operation(7, 'sent', false), operation(7, 'queued', false));
     expect(client.variables.operations.get().map((o) => o.state)).toEqual(['queued']);
-    await deliver(operation(7, 'applied', true, { applied_at_ms: 100, late: true }));
+    await deliver(
+      operation(7, 'applied', true, { applied_at_ms: 100, late: true, applied_writes: 1 }),
+    );
     await expect(first).resolves.toEqual({
       session: 1,
       seq: 7,
       state: 'applied',
       done: true,
-      peers: { Engine: { state: 'applied', appliedAtMs: 100, late: true, reason: null } },
+      peers: {
+        Engine: {
+          state: 'applied',
+          appliedAtMs: 100,
+          late: true,
+          reason: null,
+          appliedWrites: 1,
+          failedWrite: null,
+        },
+      },
     });
     // The result arrived before the HTTP answer
     const second = client.variables.write({ Engine: { 'engine.demand': 41 } });

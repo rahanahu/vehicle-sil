@@ -125,11 +125,19 @@ class LaunchedTest(unittest.TestCase):
         seq = c.write({"Engine": {"engine.throttle": 80.0}}, at=ms(100))
         op = c.wait(seq, until="queued")
         self.assertEqual({t.status for t in op.targets}, {"queued"})
+        self.assertEqual((op.target("Engine").applied_writes, op.target("Engine").failed_write), (None, None))
         c.sim.run_until(ms(600))
         self.assertEqual(c.sim.wait_paused(20).now, ms(600))
         op = c.wait(seq)
         self.assertTrue(op.done)
         self.assertEqual(op.target("Engine").applied_at, ms(100))
+        self.assertEqual((op.target("Engine").applied_writes, op.target("Engine").failed_write), (1, None))
+
+        # The second of two writes is refused (an output): none took effect, and the client hears which.
+        refused = c.wait(c.write({"Engine": {"engine.throttle": 30.0, "engine.speed": 5}}))
+        target = refused.target("Engine")
+        self.assertEqual((target.status, target.applied_writes, target.failed_write), ("invalid", 0, 1))
+        self.assertIn("engine.speed", target.reason)
 
         # The engine sped up (towards 2400 rpm) and the dashboard received it over J1939.
         deadline = time.time() + 10
@@ -176,6 +184,10 @@ class LaunchedTest(unittest.TestCase):
         out = self.cli("set", "Engine", "engine.throttle=500")
         self.assertIn("Engine: invalid", out)
         self.assertIn("out of range", out)
+        self.assertNotIn("writes took effect", out)  # one write: nothing to tell apart
+        out = self.cli("set", "Engine", "engine.throttle=30", "engine.speed=5")
+        self.assertIn("Engine: invalid", out)
+        self.assertIn(", 0 of 2 writes took effect, refused: engine.speed", out)
 
     def test_c_a_warning_comes_on_every_call(self):
         from vehicle_sil_control._stubs import pb
@@ -215,6 +227,17 @@ class ConversionTest(unittest.TestCase):
         for value in (True, False, 7, 2.5):
             back = client._value(client._to_value(value))
             self.assertEqual((type(back), back), (type(value), value))
+
+    def test_which_writes_took_effect(self):
+        from vehicle_sil_control import client
+        from vehicle_sil_control._stubs import pb
+        op = client._operation(pb.Operation(seq=4, done=True, targets=[
+            pb.TargetResult(peer="Engine", status=pb.TARGET_STATUS_REJECTED, reason="engine.fault: a setter threw: no",
+                            applied_writes=1, failed_write=1),
+            pb.TargetResult(peer="Body", status=pb.TARGET_STATUS_INVALID, applied_writes=0),
+            pb.TargetResult(peer="Gate", status=pb.TARGET_STATUS_UNKNOWN)]))
+        self.assertEqual([(t.status, t.applied_writes, t.failed_write) for t in op.targets],
+                         [("rejected", 1, 1), ("invalid", 0, None), ("unknown", None, None)])
 
 
 class OlderServerTest(unittest.TestCase):

@@ -202,6 +202,14 @@ inline void to_proto(const OperationResult& in, v1::Operation& out)
         }
         pt->set_late(t.late);
         pt->set_reason(t.reason);
+        if (t.applied_writes)
+        {
+            pt->set_applied_writes(*t.applied_writes);
+        }
+        if (t.failed_write)
+        {
+            pt->set_failed_write(*t.failed_write);
+        }
     }
     out.set_done(in.done());
 }
