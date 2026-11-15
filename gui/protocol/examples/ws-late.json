@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -330,7 +330,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": []
@@ -830,7 +831,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": []
@@ -905,7 +907,7 @@
         "event": "time",
         "seq": 21,
         "t_ms": 210,
-        "sim_ms": 205,
+        "sim_ms": 200,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1018,7 +1020,7 @@
         "event": "time",
         "seq": 28,
         "t_ms": 280,
-        "sim_ms": 810,
+        "sim_ms": 805,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1290,6 +1292,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1307,6 +1310,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1320,6 +1324,7 @@
               }
             }
           ],
+          "outside": [],
           "traffic": {
             "before_ms": 1230,
             "unplaced": [],
@@ -1597,7 +1602,8 @@
                 "participants": [
                   "Engine",
                   "Dashboard"
-                ]
+                ],
+                "outside": null
               }
             ],
             "findings": []
@@ -1862,7 +1868,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": []
@@ -1978,6 +1985,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1995,6 +2003,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -2008,6 +2017,7 @@
               }
             }
           ],
+          "outside": [],
           "traffic": {
             "before_ms": 1230,
             "unplaced": [],
@@ -2285,7 +2295,8 @@
                 "participants": [
                   "Engine",
                   "Dashboard"
-                ]
+                ],
+                "outside": null
               }
             ],
             "findings": []

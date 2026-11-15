@@ -50,28 +50,17 @@ std::string shown_target(std::string_view target)
     return out;
 }
 
-/// The line of a tool's standard error that says why: the last that starts with "error:" (the
-/// bridges write the usage hint after it), else the last that is not empty; without "\r", or "".
+/// The line of a tool's standard error that says why (detail::LastLine), or "".
 std::string last_line(const std::string& text)
 {
     std::istringstream in(text);
     std::string line;
-    std::string last;
-    std::string error;
+    detail::LastLine last;
     while (std::getline(in, line))
     {
-        std::erase(line, '\r');
-        if (line.rfind("error:", 0) == 0)
-        {
-            error = line;
-        }
-        if (!line.empty())
-        {
-            last = std::move(line);
-        }
+        last.add(line);
     }
-    std::string why = error.empty() ? last : error;
-    return why.size() > 300 ? why.substr(0, 300) + "..." : why;
+    return last.text();
 }
 
 /// Where to see the targets of a network of `kind`.
@@ -400,19 +389,51 @@ ConnectCheck check_connections(const SimulationConfig& config, const std::vector
         out.outside.push_back(std::move(outside));
     }
 
-    if (!out.outside.empty() && config.speed != std::optional<double>(1.0))
+    return out;
+}
+
+std::vector<Finding> connect_time_findings(const std::vector<NetworkOutside>& outside, const std::optional<double>& file_speed,
+                                           const std::optional<std::optional<double>>& run_speed, bool start_paused)
+{
+    std::vector<Finding> out;
+    if (outside.empty())
     {
-        std::vector<std::string> connected;
-        for (const NetworkOutside& outside : out.outside)
+        return out;
+    }
+    std::vector<std::string> connected;
+    for (const NetworkOutside& network : outside)
+    {
+        connected.push_back(network.network);
+    }
+    const std::string what = "--connect connects " + and_list(connected) + " to a real bus";
+    const std::optional<double> speed = run_speed ? *run_speed : file_speed;
+    if (speed != std::optional<double>(1.0))
+    {
+        std::string runs;
+        if (run_speed)
         {
-            connected.push_back(outside.network);
+            runs = speed ? "--speed " + speed_text(speed) + " runs the simulation at that speed"
+                         : std::string("--speed max runs the simulation as fast as possible");
         }
-        add(Severity::Warning, "connect-not-real-time", 0,
-            "--connect connects " + and_list(connected) +
-                " to a real bus, which does not wait for the virtual time, and the file runs " +
-                (config.speed ? "at speed " + speed_text(config.speed) : std::string("as fast as possible (no speed)")) +
-                ": write speed: 1 in the file",
-            "", "");
+        else
+        {
+            runs = speed ? "the file runs the simulation at speed " + speed_text(speed)
+                         : std::string("the file runs the simulation as fast as possible (no speed)");
+        }
+        out.push_back(Finding{Severity::Warning, "connect-not-real-time",
+                              what + ", which does not wait for the virtual time, and " + runs +
+                                  ": the devices there get the messages at the wrong times. Run in real time: " +
+                                  (run_speed ? std::string("--speed 1") : std::string("write speed: 1 in the file, or run with --speed 1")) +
+                                  " (--strict makes this a failure, for an automatic test)",
+                              0, "", ""});
+    }
+    if (start_paused)
+    {
+        out.push_back(Finding{Severity::Warning, "connect-start-paused",
+                              what + ", which does not stand still: with --start-paused, the devices there go on while "
+                                     "the simulation waits for its first step. To stop the simulation and look at it, run "
+                                     "it without --connect (on SIL Kit only)",
+                              0, "", ""});
     }
     return out;
 }

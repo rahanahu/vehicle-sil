@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -120,5 +121,51 @@ inline std::string control_version_fix(std::int64_t version)
                ? "the ECU is of an older vehicle-sil; build it again with the vehicle-sil of this vehicle_sil_launch"
                : "the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one";
 }
+
+/// The line of a tool's output that says why it failed, from its lines one at a time. A line that
+/// says so starts with "error:" (an argument the bridges refuse; they write the usage hint after it)
+/// or "FAIL" (a bridge that cannot set up, or fails while it runs; it writes what it did since, its
+/// statistics and "stopped" after it), after the tag a bridge puts first ("[eth-bridge] ",
+/// "[bridge] "). Without "\r", and cut after 300 bytes. check uses it on a bridge's --describe
+/// (text()), run on the lines of the bridges it starts (failure()).
+class LastLine
+{
+public:
+    void add(std::string_view line)
+    {
+        std::string text(line);
+        std::erase(text, '\r');
+        std::string_view body = text;
+        if (body.size() > 2 && body.front() == '[')
+        {
+            if (const auto close = body.find("] "); close != std::string_view::npos && close > 1 &&
+                                                    body.substr(1, close - 1).find(' ') == std::string_view::npos)
+            {
+                body.remove_prefix(close + 2);
+            }
+        }
+        if (body.rfind("error:", 0) == 0 || body.rfind("FAIL", 0) == 0)
+        {
+            failure_ = text;
+        }
+        if (!text.empty())
+        {
+            last_ = std::move(text);
+        }
+    }
+
+    /// The last line that says why it failed, or else the last line that is not empty.
+    [[nodiscard]] std::string text() const { return cut(failure_.empty() ? last_ : failure_); }
+
+    /// The last line that says why it failed, or "" (a tool that was killed, or ended without
+    /// saying why: its last line would be about something else).
+    [[nodiscard]] std::string failure() const { return cut(failure_); }
+
+private:
+    static std::string cut(const std::string& line) { return line.size() > 300 ? line.substr(0, 300) + "..." : line; }
+
+    std::string last_;
+    std::string failure_;
+};
 
 } // namespace vehicle_sil::launch::detail

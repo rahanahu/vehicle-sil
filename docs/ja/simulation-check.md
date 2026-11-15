@@ -118,7 +118,8 @@
 | `connect-tool-failed` | 誤り | `--connect` の引数でのブリッジの `--describe` が失敗した（終了コード、時間切れ、説明でない出力）か、ブリッジが別の名前やネットワークを出力しました。 | 指摘の文にあるブリッジの行のとおりに直す（先、`external`）か、`vehicle_sil_launch` と同じ vehicle-sil のブリッジを使います。 |
 | `connect-loop` | 誤り | 有効な `role: bridge` の participant が、つなぐネットワークを `--describe` に出力しています（2 つのブリッジの間でフレームが回ります）。 | どちらかを外します（`--disable <name>` か、その `--connect` を外す）。 |
 | `connect-maybe-loop` | 警告 | 有効な `role: bridge` の participant が `describe: false` で、つなぐネットワークがあります（そのネットワークを中継するかもしれません）。 | そのネットワークを中継するなら、2 つのブリッジのどちらかを外します。 |
-| `connect-not-real-time` | 警告 | つなぐネットワークがあり、ファイルの `speed` が 1 ではありません（`speed` がない、つまり最速のときも）。 | ファイルに `speed: 1` を書きます。 |
+| `connect-not-real-time` | 警告 | つなぐネットワークがあり、速さが 1 ではありません（速さがない、つまり最速のときも）。`check` はファイルの `speed` で、`run` は実際に動かす速さ（`--speed`、なければファイルの値）で判断します。 | 速さ 1 で動かします（ファイルに `speed: 1`、または `run --speed 1`）。 |
+| `connect-start-paused` | 警告 | `run` だけ: つなぐネットワークがあり、`--start-paused` があります。シミュレーションが止まっていても、バスの機器は動き続けます。 | シミュレーションを止めて調べるなら、`--connect` なしで動かします。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
@@ -171,9 +172,9 @@
 | `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
 | `test-participant-talks-on-bridged-network` | `--connect` でつなぐネットワークにも、ブリッジがいます。そのときの指摘の文は、その participant を使う実行では `--connect` を外すように言います。 |
 | `single-participant` | `--connect` でつなぐネットワークでは出ません。ブリッジを participant として数えます。participant のいないつなぐネットワークは、今までどおり `unused-network` です。 |
-| `connect-*` | `--connect` のときだけです（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。照合だけの誤りと警告で、照合はアダプターもチャンネルも開きません。 |
+| `connect-*` | `--connect` のときだけです（[simulation-config.md](simulation-config.md#ネットワークを外につなぐexternal--connect)「ネットワークを外につなぐ」）。照合だけの誤りと警告で、照合はアダプターもチャンネルも開きません。`run` の照合にもあるので、警告は何かを起こす前に `run --strict` を失敗させます。ブリッジを動かしてからの `run` の指摘は `connect-failed` と `connect-lost` です（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。 |
 | `connect-filter` | 説明を読めない participant（`failed`、`skipped`）がいる間は出しません。先にその誤りを直します。無効の participant と、`role: bridge`、`role: test` の participant は数えません。既定の絞り込みが通すのは ECU のフレームだけです。 |
-| `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`error:` で始まる最後の行、なければ最後の行）を出します。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがなく、有効な participant の説明をすべて読めたときだけです（読めないと、通すフレームが決まらないため）。終了状態 `0xC0000135`、`0xC0000139`（DLL のために Windows がブリッジを起動しなかった）は、そう言います。`vehicle_sil_vector_xl_bridge` では、文が `vxlapi64.dll` を名指しします。 |
+| `connect-tool-failed` | 指摘の文は、コマンドと、ブリッジの行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行、なければ最後の行）を出します。照合がブリッジを走らせるのは、そのネットワークの `--connect` にほかの誤りがなく、有効な participant の説明をすべて読めたときだけです（読めないと、通すフレームが決まらないため）。終了状態 `0xC0000135`、`0xC0000139`（DLL のために Windows がブリッジを起動しなかった）は、そう言います。`vehicle_sil_vector_xl_bridge` では、文が `vxlapi64.dll` を名指しします。 |
 | `coarse-time-step` | `run` の指摘と同じ文です（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
 | `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
 | `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |
@@ -446,7 +447,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `networks[].kind` | 種類（読めなかったときは `null`） |
 | `networks[].line` | 設定ファイルの行 |
 | `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順。`network_names` を当てた後の名前で数える） |
-| `networks[].outside` | `--connect` でつなぐネットワークだけにあります（ほかのネットワークにはこのキーがありません）。そのブリッジです（下のキー） |
+| `networks[].outside` | `--connect` でつなぐネットワークでは、そのブリッジです（下のキー）。ほかのネットワークでは `null` です（ブリッジを探さないので、出力がその PC の道具で変わりません） |
 | `networks[].outside.tool` | ブリッジの実行ファイル（`vehicle_sil_ethernet_bridge`、`vehicle_sil_vector_xl_bridge`） |
 | `networks[].outside.tool_path` | 見つけた場所（見つからなければ `null`） |
 | `networks[].outside.target` | `--connect` に渡した先 |
@@ -574,7 +575,8 @@ participants:
       "line": 3,
       "participants": [
         "Engine"
-      ]
+      ],
+      "outside": null
     }
   ],
   "findings": [

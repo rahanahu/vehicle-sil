@@ -557,10 +557,11 @@ Other rules:
 
 #### `--connect`
 
-`check --connect <network>=<target>` checks the file as it runs with the network connected to a real bus through a bridge of this repository. `run` does not connect a bus yet: it ends with a usage error (exit code 4) for `--connect`, and so does `test`.
+`--connect <network>=<target>` connects the network to a real bus through a bridge of this repository. `check --connect` checks the file as it runs connected; `run --connect` starts the bridge before the other participants and fails the run if the bridge ends (see "[Connecting a bus outside (`--connect`)](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). `test` ends with a usage error (exit code 4) for `--connect`: it runs each scenario as fast as possible.
 
 ```sh
 vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
 ```
 
 | Kind | Bridge | `<target>` |
@@ -573,9 +574,9 @@ vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=
 - Give each network once. The network's name ends at the first `=`, so a network whose name has `=` cannot be connected (rename it).
 - Quote the whole argument when the target has spaces: `--connect "ETH_EXT=vEthernet (A)"`.
 - The launcher looks for the bridge next to `vehicle_sil_launch`, then in the absolute directories of `PATH`. It never looks in the working directory or in the directory of the configuration file. It looks only for the bridges of the networks given with `--connect`, so a check without `--connect` writes the same on every computer.
-- The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
+- The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
-- A real bus does not wait for the virtual time: with `--connect`, a file without `speed: 1` gets the warning `connect-not-real-time`.
+- A real bus does not wait for the virtual time: with `--connect`, a speed other than 1 gets the warning `connect-not-real-time` (`check`: the file's `speed`; `run`: `--speed`, or else the file's), and `run --start-paused` the warning `connect-start-paused`.
 
 The arguments that the launcher gives the bridge:
 
@@ -891,8 +892,8 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
-                       [--] <file>
+                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                       [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
@@ -927,7 +928,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--log-dir <dir>` | `run` only | Directory for the output files, one per participant. |
 | `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
-| `--connect <network>=<target>` | `check` only | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
+| `--connect <network>=<target>` | `check` and `run` | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
 | `--manual <name>` | | You start participant `<name>` yourself (same as `manual: true`; can be repeated). |
@@ -961,7 +962,7 @@ Notes on individual options:
 | `--timeout-ms` | In a run with a required manual participant, counts from the moment `run` starts to wait for the participants. |
 | `--timeout-ms` | When it runs out, the run is aborted with an error. |
 | `--manual` | `run` does not start the participant; it prints the command and waits. |
-| `--connect` | `run` and `test` end with a usage error for it: `run` does not connect a bus yet, and `test` runs each scenario as fast as possible. |
+| `--connect` | `run` starts the bridge `bridge.<network>` before the other participants (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). `test` ends with a usage error for it: it runs each scenario as fast as possible. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 

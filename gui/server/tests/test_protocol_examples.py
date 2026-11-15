@@ -330,6 +330,10 @@ def test_http_examples(tmp_path: Path) -> None:
             status, body = await c.post("api/stop", {})
             check_example("stop", http("Ask the run to stop in order (force false; again: nothing more).", "POST",
                                        "api/stop", {}, status, body), gui)
+            # The second stop when the launcher has asked Logger to stop and waits for it: the summary then has
+            # every line up to there (the stand-in hurries them out after the first stop), whatever the timing.
+            await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "participant"
+                             and m["event"].get("state") == "stop_requested")
             status, body = await c.post("api/stop", {"force": True})
             check_example("stop-force", http("Ask the run to stop without waiting (a second stop to the launcher).",
                                              "POST", "api/stop", {"force": True}, status, body), gui)

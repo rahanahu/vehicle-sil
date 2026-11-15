@@ -794,7 +794,7 @@ private:
     {
         error("unknown-key", doc_.line(node),
               what + ": where a network is connected is not written in the file, since it differs from PC to PC: "
-                     "remove connect, and give it when you start: vehicle_sil_launch check --connect " +
+                     "remove connect, and give it when you start: vehicle_sil_launch check|run --connect " +
                   (network.empty() ? std::string("<network>") : network) +
                   "=<target> <file> (the keys here: " + join(keys) + ")",
               "", network);
@@ -2330,6 +2330,16 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
             return;
         }
         reported.push_back(key);
+        // The name of a bridge that run --connect starts: it is not a participant of the file.
+        if (const auto network = std::find_if(config.networks.begin(), config.networks.end(),
+                                              [&name](const NetworkConfig& n) { return name == "bridge." + n.name; });
+            network != config.networks.end())
+        {
+            errors.push_back(usage(key + ": " + name + " is the bridge that --connect starts for the network " + network->name +
+                                   ", not a participant of the file: to run " + network->name +
+                                   " on SIL Kit only, give --connect " + network->name + "=none or leave --connect out"));
+            return;
+        }
         const std::string guess = detail::closest(name, names);
         errors.push_back(usage(key + ": the file has no participant with this name" +
                                (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its participants are " +

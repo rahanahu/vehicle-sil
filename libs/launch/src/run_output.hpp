@@ -4,6 +4,7 @@
 // events of run --events. Internal.
 #pragma once
 
+#include "check_words.hpp"
 #include "run_context.hpp"
 
 #include "vehicle_sil/launch/events.hpp"
@@ -71,8 +72,13 @@ public:
     /// participant starts: the files are only used under the lock from then on.
     [[nodiscard]] bool open_logs(RunOutcome& outcome);
 
-    /// A line that participant `index` wrote (its reader thread).
+    /// A line that participant `index` wrote (its reader thread). Of a bridge of --connect, it is
+    /// also kept for last_line().
     void on_line(std::size_t index, std::string_view line);
+
+    /// The last line of the bridge `index` (ParticipantConfig::for_network) that says why it failed
+    /// (detail::LastLine::failure()), or "". Takes the lock.
+    [[nodiscard]] std::string last_line(std::size_t index);
 
 private:
     void write(const std::string& line) const;
@@ -81,6 +87,7 @@ private:
     const RunContext& ctx_;
     std::mutex mutex_;
     std::vector<std::unique_ptr<std::ofstream>> logs_; ///< per participant; guarded by mutex_ once the participants run
+    std::vector<LastLine> last_lines_;                 ///< per participant (only a bridge's is used); guarded by mutex_
 };
 
 } // namespace vehicle_sil::launch::detail

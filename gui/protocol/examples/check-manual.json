@@ -261,7 +261,8 @@
           "participants": [
             "Engine",
             "Dashboard"
-          ]
+          ],
+          "outside": null
         }
       ],
       "findings": [

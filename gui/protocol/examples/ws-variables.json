@@ -586,7 +586,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": [
@@ -1112,7 +1113,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": [
@@ -1234,6 +1236,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1251,6 +1254,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "for_network": null,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1268,6 +1272,7 @@
               "required": false,
               "enabled": false,
               "manual": false,
+              "for_network": null,
               "ended": "not_started",
               "exit_code": null,
               "signal": null,
@@ -1281,6 +1286,7 @@
               }
             }
           ],
+          "outside": [],
           "traffic": {
             "before_ms": 200,
             "unplaced": [],
@@ -1569,7 +1575,8 @@
                 "participants": [
                   "Engine",
                   "Dashboard"
-                ]
+                ],
+                "outside": null
               }
             ],
             "findings": [

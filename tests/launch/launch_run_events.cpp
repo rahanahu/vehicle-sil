@@ -278,7 +278,7 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
             "the result of a run stopped by " + by + ":\n" + result);
     for (const std::string name : {"Engine", "Brake"})
     {
-        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"ended\":\"exited\","
+        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"for_network\":null,\"ended\":\"exited\","
                                                           "\"exit_code\":0,"),
                 name + " ended by itself with 0:\n" + result);
     }

@@ -547,7 +547,7 @@ void live(const Options& o)
             "the result of the stopped run:\n" + result);
     for (const std::string name : {"Engine", "Dashboard"})
     {
-        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"ended\":\"exited\","
+        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"for_network\":null,\"ended\":\"exited\","
                                                           "\"exit_code\":0,"),
                 name + " ended by itself with 0:\n" + result);
     }

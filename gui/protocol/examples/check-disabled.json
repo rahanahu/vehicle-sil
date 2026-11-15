@@ -179,7 +179,8 @@
           "line": 6,
           "participants": [
             "Engine"
-          ]
+          ],
+          "outside": null
         }
       ],
       "findings": [

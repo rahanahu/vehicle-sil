@@ -99,7 +99,19 @@ struct ParticipantRun
     bool manual = false;
     /// manual: it joined the simulation (the controller saw its lifecycle).
     bool manual_joined = false;
-    std::size_t line = 0; ///< its entry in the configuration file
+    /// The bridge that run started for --connect: the network it connects (ParticipantConfig::
+    /// for_network); "" for a participant of the file. If it ends before the simulation is over,
+    /// the run fails (connect-failed before the start, connect-lost after it).
+    std::string for_network{};
+    /// for_network: its last line that says why it failed (one that starts with "error:" or "FAIL"
+    /// after its tag; detail::LastLine::failure()), once its output is read to the end; "" before,
+    /// and if it wrote none (it was killed, say).
+    std::string last_line{};
+    /// for_network: its process had ended by itself when the watch found the simulation over (not
+    /// aborted, not interrupted), before the launcher asked it to stop: the bus was not connected
+    /// for the last moments of the run (connect-lost).
+    bool ended_with_run = false;
+    std::size_t line = 0; ///< its entry in the configuration file (a bridge's: its network's)
     /// Why it could not be started (Ending::NotStarted), or "".
     std::string start_error{};
     Ending ending = Ending::NotStarted;
@@ -133,6 +145,24 @@ struct ParticipantRun
     /// within its steps.
     std::uint64_t control_late_messages = 0;
 };
+
+/// A network that the run connected to a real bus (--connect; the result's "outside").
+struct RunOutside
+{
+    std::string network;
+    std::string target;      ///< as --connect gave it
+    std::string participant; ///< the bridge's name (bridge.<network>)
+    std::string tool;        ///< the bridge's executable (bridge_tool()); not in the result
+    /// The frames that went out to the bus and came in from it; empty: not counted (yet).
+    std::optional<std::uint64_t> to_outside{};
+    std::optional<std::uint64_t> from_outside{};
+};
+
+/// Whether `run` is a participant that stops the run when it ends: a bridge that run started for
+/// --connect (ParticipantRun::for_network).
+namespace detail {
+[[nodiscard]] inline bool stops_run(const ParticipantRun& run) { return !run.for_network.empty(); }
+} // namespace detail
 
 /// How the simulation's time went (the result's "timing"). The pacing numbers are the time gate's
 /// (TimeControlOptions in vehicle_sil/core/simulation_controller.hpp has the definitions): they
@@ -243,7 +273,10 @@ struct RunOutcome
     std::int64_t control_hello_timeout_ms = 0;
     std::optional<std::int64_t> stop_at_ms{};
     RunTiming timing{};
+    /// In the order of the configuration, then the bridges that run started for --connect.
     std::vector<ParticipantRun> participants{};
+    /// --connect: the networks connected to a real bus, in the order of the file's networks.
+    std::vector<RunOutside> outside{};
     /// What went over the networks; empty if the simulation did not start.
     std::optional<RunTraffic> traffic{};
     /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did
@@ -413,6 +446,13 @@ struct RunOptions
 inline constexpr std::string_view kManualRegistryUri = "silkit://127.0.0.1:8500";
 
 namespace detail {
+/// The check that run_file() runs with: a copy of `check` (that passed) with one participant at the
+/// end for each network that --connect connects (CheckReport::outside, in its order): the bridge
+/// bridge.<network> (role: bridge, required: false, its network's line, for_network set), with a
+/// ParticipantResult that is NotChecked and has the bridge's executable. Without --connect the copy
+/// is the same as `check`.
+[[nodiscard]] CheckReport with_bridges(const CheckReport& check);
+
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
 /// who did not join; the ECU's limit only ends it if the launcher is gone. kMaxMillis if the start

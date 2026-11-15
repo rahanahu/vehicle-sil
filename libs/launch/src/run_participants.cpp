@@ -169,20 +169,37 @@ Waited RunParticipants::wait_until(std::chrono::milliseconds timeout, int interr
                             [this, interrupts_allowed] { return ctx_.interrupts() > interrupts_allowed; });
 }
 
-bool RunParticipants::start_children(const std::string& uri)
+bool RunParticipants::start_children(const std::string& uri, Which which)
 {
     const auto workDir = without_dots(std::filesystem::absolute(base_));
     for (std::size_t i = 0; i < ctx_.config.participants.size(); ++i)
     {
         const ParticipantConfig& p = ctx_.config.participants[i];
         ParticipantRun& run = outcome_.participants[i];
+        const bool bridge = !p.for_network.empty();
+        if (bridge != (which == Which::Bridges))
+        {
+            continue;
+        }
         if (!p.enabled)
         {
             out_.say("not starting " + p.name + ": disabled");
             continue;
         }
-        // The one list for the process, the command to start it by hand and the events.
-        const std::vector<std::string> arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds());
+        // The one list for the process, the command to start it by hand and the events. A bridge's
+        // as the check showed it (no placeholders: an adapter's name may have "{name}" in it).
+        std::vector<std::string> arguments;
+        if (bridge)
+        {
+            const auto outside = std::find_if(ctx_.check.outside.begin(), ctx_.check.outside.end(),
+                                              [&p](const NetworkOutside& o) { return o.network == p.for_network; });
+            arguments = bridge_run_arguments(outside != ctx_.check.outside.end() ? *outside : NetworkOutside{}, uri,
+                                             ctx_.config.start_timeout_ms);
+        }
+        else
+        {
+            arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds());
+        }
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)
         {
@@ -213,7 +230,7 @@ bool RunParticipants::start_children(const std::string& uri)
             run.start_error = one_line(e.what());
             out_.event([&](EventStream& stream) { stream.participant_not_started(p.name, run.start_error); });
             out_.say(p.name + " could not be started: " + run.start_error);
-            if (p.required)
+            if (p.required || bridge)
             {
                 return false;
             }
@@ -254,13 +271,13 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
     held.say("  " + line);
 }
 
-int RunParticipants::look_at_children(bool before_start)
+int RunParticipants::look_at_children(bool before_start, bool bridges_only)
 {
     int ended = -1;
     for (std::size_t i = 0; i < children_.size(); ++i)
     {
         ParticipantRun& run = outcome_.participants[i];
-        if (!children_[i] || run.exit)
+        if (!children_[i] || run.exit || (bridges_only && !stops_run(run)))
         {
             continue;
         }
@@ -270,7 +287,7 @@ int RunParticipants::look_at_children(bool before_start)
             run.ending = before_start ? Ending::ExitedBeforeStart : Ending::Exited;
             out_.say(run.name + " " + exit_text(*status));
             out_.event([&](EventStream& e) { e.participant_ended(run.name, *status); });
-            if (run.required && ended < 0)
+            if ((run.required || stops_run(run)) && ended < 0)
             {
                 ended = static_cast<int>(i);
             }
@@ -396,6 +413,32 @@ void RunParticipants::end_children(bool ran, int interrupts_at_end)
         if (child)
         {
             static_cast<void>(child->finish_output(std::chrono::milliseconds(2000)));
+        }
+    }
+}
+
+void RunParticipants::note_bridges_ended_with_run()
+{
+    // Only the bridges: the end of the other participants is noted, and written, when they are
+    // ended, after the phase "stopping".
+    static_cast<void>(look_at_children(false, true));
+    for (ParticipantRun& run : outcome_.participants)
+    {
+        if (stops_run(run) && run.exit && ended_by_itself(run))
+        {
+            run.ended_with_run = true;
+        }
+    }
+}
+
+void RunParticipants::note_last_lines()
+{
+    for (std::size_t i = 0; i < outcome_.participants.size(); ++i)
+    {
+        ParticipantRun& run = outcome_.participants[i];
+        if (stops_run(run))
+        {
+            run.last_line = out_.last_line(i);
         }
     }
 }

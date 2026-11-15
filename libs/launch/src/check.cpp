@@ -306,6 +306,9 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         ConnectCheck connect = check_connections(*report.config, {}, options.connect, nullptr);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
+        const std::vector<Finding> time =
+            connect_time_findings(report.outside, report.config->speed, options.run_speed, options.start_paused);
+        report.findings.insert(report.findings.end(), time.begin(), time.end());
         drop_unusable_commands(report);
     }
     if (!report.config || options.file_only)
@@ -391,6 +394,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
+        // run: at the speed it runs at, which may not be the file's.
+        const std::vector<Finding> time =
+            connect_time_findings(report.outside, report.config->speed, options.run_speed, options.start_paused);
+        report.findings.insert(report.findings.end(), time.begin(), time.end());
     }
     const std::vector<std::string> outside = outside_names(report.outside);
     auto compared = check_participants(*report.config, report.participants, version(), outside);

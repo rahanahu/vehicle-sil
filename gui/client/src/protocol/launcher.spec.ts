@@ -32,11 +32,17 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: scenario.inputs',
   'check result: scenario.lines',
   'check result: networks[].line',
+  // --connect: where the network is connected (null without it); the GUI cannot give --connect yet
+  'check result: networks[].outside',
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
   'run result: strict',
   // Where the run's registry listened: the same as the uri of the registry event, which the parser types
   'run result: registry_uri',
+  // --connect: the bridges the run started (for_network null for a participant of the file) and the networks
+  // connected (empty without --connect); the GUI cannot give --connect yet
+  'run result: participants[].for_network',
+  'run result: outside',
   'run result: scenario.inputs',
   'run result: scenario.lines',
   // The file of --timeline as the launcher was given it (the GUI server's temporary file): screens use the summary's

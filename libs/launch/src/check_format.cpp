@@ -772,8 +772,8 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                 }
             }
             w.end_array();
-            // Only on a network that --connect connects: the output of a check without it does not
-            // depend on the tools this computer has.
+            // null on a network that --connect does not connect: no tool is looked for for it, so
+            // the output of a check without --connect does not depend on the tools this computer has.
             const auto outside = std::find_if(report.outside.begin(), report.outside.end(),
                                               [&](const NetworkOutside& o) { return o.network == network.name; });
             if (outside != report.outside.end())
@@ -799,6 +799,10 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
                     w.null("command");
                 }
                 w.end_object();
+            }
+            else
+            {
+                w.null("outside");
             }
             w.end_object();
         }

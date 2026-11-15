@@ -43,6 +43,81 @@ std::string lines_hint(const ParticipantRun& p)
                     : "the lines [" + p.name + "] above show what it wrote";
 }
 
+/// connect-failed or connect-lost for the bridge `p` of --connect, or nothing: it did not fail the run.
+std::optional<Finding> bridge_failure(const RunOutcome& outcome, const ParticipantRun& p)
+{
+    const bool ran = outcome.simulation != SimulationEnd::NotStarted;
+    const bool blamed = !outcome.failed_participant.empty() && p.name == outcome.failed_participant;
+    const auto outside = std::find_if(outcome.outside.begin(), outcome.outside.end(),
+                                      [&p](const RunOutside& o) { return o.network == p.for_network; });
+    const std::string target = outside != outcome.outside.end() ? outside->target : std::string{};
+    const std::string tool = outside != outcome.outside.end() ? outside->tool : std::string{};
+    // Only a line that says why: a bridge that was killed, or ended without saying why, wrote last about
+    // something else (its start, its statistics, "stopped").
+    const std::string said =
+        p.last_line.empty() ? std::string("it wrote no line that says why") : "it wrote: " + p.last_line;
+    // What it ended with: its process, or what the launcher saw.
+    const std::string how = p.exit && ended_by_itself(p) ? "its process " + exit_text(*p.exit)
+                            : !outcome.failure_reason.empty() && blamed ? "it " + outcome.failure_reason
+                                                                        : std::string("it left the simulation");
+    if (blamed && ran)
+    {
+        return Finding{Severity::Error, "connect-lost",
+                       "network '" + p.for_network + "': the connection to the real bus (" + target +
+                           ") was lost while the simulation was running: " + p.name + " ended (" + how + "; " + said +
+                           "), so the launcher aborted the simulation. The devices on the bus missed what came after; "
+                           "the lines [" + p.name + "] above show what the bridge wrote",
+                       p.line, p.name, p.for_network};
+    }
+    if (p.ended_with_run)
+    {
+        return Finding{Severity::Error, "connect-lost",
+                       "network '" + p.for_network + "': the connection to the real bus (" + target +
+                           ") was lost at about the time the simulation ended: " + p.name + " ended (" + how + "; " +
+                           said + ") before the launcher asked it to stop. The devices on the bus may have missed the "
+                           "last frames; the lines [" + p.name + "] above show what the bridge wrote",
+                       p.line, p.name, p.for_network};
+    }
+    std::string what;
+    if (!p.start_error.empty())
+    {
+        what = "could not be started (" + p.start_error + ")";
+    }
+    else if (p.ending == Ending::ExitedBeforeStart || blamed)
+    {
+        what = "ended before the simulation started (" + how + "; " + said + ")";
+    }
+    else if (p.missing_at_start)
+    {
+        what = "did not run in SIL Kit within " + std::to_string(outcome.start_timeout_ms) +
+               " ms (start_timeout_ms; " + said + ")";
+    }
+    // One that ended by itself while the launcher was ending the run that did not start (the other
+    // of two bridges that failed at once is seen only then).
+    else if (!ran && p.exit && ended_by_itself(p))
+    {
+        what = "ended before the simulation started (" + how + "; " + said + ")";
+    }
+    else
+    {
+        return std::nullopt;
+    }
+    // Whether the participants of the file had been started already (the bridge failed while the run
+    // waited for the start, not before the launcher started them).
+    const bool othersStarted = std::any_of(outcome.participants.begin(), outcome.participants.end(), [](const ParticipantRun& o) {
+        return !detail::stops_run(o) && o.ending != Ending::NotStarted;
+    });
+    const std::string list = tool == "vehicle_sil_vector_xl_bridge" ? std::string("vehicle_sil_vector_xl_bridge --list-channels")
+                                                                     : std::string("vehicle_sil_ethernet_bridge --list-interfaces");
+    return Finding{Severity::Error, "connect-failed",
+                   "network '" + p.for_network + "' could not be connected to the real bus (" + target + "): " + p.name +
+                       " " + what + (othersStarted ? ", so the simulation was not started" : ", so nothing else was started") +
+                       ". Check that " + target +
+                       " is there and free on this computer (" + list + " lists what the bridge can open), or give --connect " +
+                       p.for_network + "=none to run the network on SIL Kit only",
+                   p.line, p.name, p.for_network};
+}
+
 std::size_t count(const std::vector<Finding>& findings, Severity severity)
 {
     return static_cast<std::size_t>(
@@ -70,6 +145,23 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     {
         const std::string pre = prefix_of(p);
         const Severity weight = p.required ? Severity::Error : Severity::Warning;
+        // A bridge of --connect that ended before its time says so in one finding, instead of
+        // start, ended-before-start, participant-failed, not-joined or exit-code.
+        if (detail::stops_run(p))
+        {
+            if (std::optional<Finding> f = bridge_failure(outcome, p))
+            {
+                out.push_back(std::move(*f));
+                continue;
+            }
+            // When the launcher aborts the simulation (for another participant, or --timeout-ms),
+            // SIL Kit tells the bridges too, and one may end by itself with exit code 1 before the
+            // launcher asks it to stop: it followed the abort, which another finding explains.
+            if (outcome.simulation == SimulationEnd::Aborted)
+            {
+                continue;
+            }
+        }
         if (!p.start_error.empty())
         {
             add(weight, "start", pre + p.start_error + ": check the command in the configuration file", &p);
@@ -399,6 +491,12 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
     std::vector<Finding> out;
     for (Finding& f : assess_run(outcome))
     {
+        // A bridge's quotes its last line, which is known once its output has been read to the end
+        // (after the participants have ended).
+        if (f.code == "connect-failed" || f.code == "connect-lost")
+        {
+            continue;
+        }
         // What a participant that failed in the simulation did is said with how its process ended,
         // once it has: until then the finding would still change.
         if (f.code == "participant-failed")
@@ -434,7 +532,8 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
     std::vector<std::int64_t> steps;
     for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
-        if (!config.participants[i].enabled)
+        // A bridge of --connect runs in real time: the gate does not move it.
+        if (!config.participants[i].enabled || !config.participants[i].for_network.empty())
         {
             continue;
         }

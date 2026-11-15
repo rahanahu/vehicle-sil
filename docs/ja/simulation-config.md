@@ -555,10 +555,11 @@ networks:
 
 #### `--connect`
 
-`check --connect <network>=<target>` は、このリポジトリのブリッジでネットワークを実機のバスにつないで走らせるときの形で、ファイルを照合します。`run` はまだバスをつなげません。`--connect` を渡すと使い方の誤り（終了コード 4）で終わります。`test` も同じです。
+`--connect <network>=<target>` は、このリポジトリのブリッジで、ネットワークを実機のバスにつなぎます。`check --connect` は、つないで走らせるときの形でファイルを照合します。`run --connect` は、ほかの participant より先にブリッジを起動し、ブリッジが終わると実行を失敗にします（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ（`--connect`）」）。`test` は `--connect` を使い方の誤り（終了コード 4）にします。各シナリオをできるだけ速く走らせるためです。
 
 ```sh
 vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
+vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=physical:1 simulation.yaml
 ```
 
 | 種類 | ブリッジ | `<target>` |
@@ -571,9 +572,9 @@ vehicle_sil_launch check --connect "ETH_EXT=vEthernet (A)" --connect J1939_CAN1=
 - 1 つのネットワークは 1 回だけ書きます。ネットワークの名前は最初の `=` までなので、名前に `=` を含むネットワークはつなげません（名前を変えます）。
 - 先に空白があるときは、引数全体を引用符で囲みます（`--connect "ETH_EXT=vEthernet (A)"`）。
 - ランチャーは、ブリッジを `vehicle_sil_launch` の隣で探し、次に `PATH` の絶対パスのディレクトリで探します。作業ディレクトリと設定ファイルのディレクトリは見ません。探すのは `--connect` で渡したネットワークのブリッジだけなので、`--connect` のない照合の出力は、どの PC でも同じです。
-- 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
+- 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
-- 実機のバスは仮想時間を待ちません。`--connect` があるのに、ファイルに `speed: 1` がなければ、警告 `connect-not-real-time` です。
+- 実機のバスは仮想時間を待ちません。`--connect` があり、速さが 1 でなければ、警告 `connect-not-real-time` です（`check` はファイルの `speed`、`run` は `--speed`、なければファイルの値）。`run --start-paused` には警告 `connect-start-paused` を出します。
 
 ランチャーがブリッジに渡す引数は、次のとおりです。
 
@@ -889,8 +890,8 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
-                       [--] <file>
+                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                       [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
                         [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
@@ -925,7 +926,7 @@ vehicle_sil_launch version [--json]
 | `--log-dir <dir>` | `run` だけ | participant ごとの出力のファイルを置くディレクトリです。 |
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
-| `--connect <network>=<target>` | `check` だけ | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
+| `--connect <network>=<target>` | `check` と `run` | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
 | `--manual <name>` | | participant `<name>` を自分で起動します（`manual: true` と同じ。繰り返せます）。 |
@@ -959,7 +960,7 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms` | manual の必須の participant がいる実行では、participant を待ち始めた時点から数えます。 |
 | `--timeout-ms` | 超えたら、中断してエラーにします。 |
 | `--manual` | `run` は起動せず、コマンドを表示して待ちます。 |
-| `--connect` | `run` と `test` では使い方の誤りです。`run` はまだバスをつなげず、`test` は各シナリオをできるだけ速く走らせます。 |
+| `--connect` | `run` は、ほかの participant より先にブリッジ `bridge.<network>` を起動します（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。`test` では使い方の誤りです。各シナリオをできるだけ速く走らせるためです。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 

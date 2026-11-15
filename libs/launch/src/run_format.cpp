@@ -201,6 +201,15 @@ std::string format_run_text(const RunReport& report)
     {
         out += detail::scenario_text(*run.scenario) + "\n";
     }
+    // --connect: the networks connected to a real bus, each through its bridge (the last rows below).
+    for (const RunOutside& o : run.outside)
+    {
+        out += "outside: " + o.network + " -> " + o.target + " (" + o.participant + ")\n";
+    }
+    if (!run.outside.empty())
+    {
+        out += "\n";
+    }
     if (!run.participants.empty())
     {
         std::vector<std::vector<std::string>> rows{{"participant", "required", "ended"}};
@@ -486,6 +495,14 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             w.boolean("required", p.required);
             w.boolean("enabled", p.enabled);
             w.boolean("manual", p.manual);
+            if (p.for_network.empty())
+            {
+                w.null("for_network");
+            }
+            else
+            {
+                w.string("for_network", p.for_network);
+            }
             w.string("ended", ending_name(p.ending));
             if (p.exit && !p.exit->signal)
             {
@@ -532,6 +549,31 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
             }
             w.integer("late_messages", static_cast<std::int64_t>(p.control_late_messages));
             w.end_object();
+            w.end_object();
+        }
+    }
+    w.end_array();
+    w.begin_array("outside");
+    if (report.run)
+    {
+        for (const RunOutside& o : report.run->outside)
+        {
+            w.begin_object();
+            w.string("network", o.network);
+            w.string("target", o.target);
+            w.string("participant", o.participant);
+            const auto count = [&w](const char* name, const std::optional<std::uint64_t>& value) {
+                if (value)
+                {
+                    w.integer(name, static_cast<std::int64_t>(*value));
+                }
+                else
+                {
+                    w.null(name);
+                }
+            };
+            count("to_outside", o.to_outside);
+            count("from_outside", o.from_outside);
             w.end_object();
         }
     }

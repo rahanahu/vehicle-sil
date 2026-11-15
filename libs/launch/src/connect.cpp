@@ -5,6 +5,8 @@
 // a configuration is in check_connect.cpp.
 #include "vehicle_sil/launch/connect.hpp"
 
+#include "vehicle_sil/launch/check.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -163,6 +165,15 @@ std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::str
             out.insert(out.end(), {"--bitrate", std::to_string(*external.bitrate)});
         }
     }
+    return out;
+}
+
+std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std::string_view registry_uri,
+                                              std::int64_t start_timeout_ms)
+{
+    std::vector<std::string> out = outside.arguments.value_or(std::vector<std::string>{});
+    out.insert(out.end(), {"--name", outside.participant, "--registry-uri", std::string(registry_uri), "--start-timeout-ms",
+                           std::to_string(start_timeout_ms)});
     return out;
 }
 

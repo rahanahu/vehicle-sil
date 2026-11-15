@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 249,
-      "last_t_ms": 2490,
+      "last_seq": 230,
+      "last_t_ms": 2300,
       "time": {
         "event": "time",
-        "seq": 235,
-        "t_ms": 2350,
-        "sim_ms": 104010,
+        "seq": 216,
+        "t_ms": 2160,
+        "sim_ms": 94990,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -281,7 +281,8 @@
             "participants": [
               "Engine",
               "Dashboard"
-            ]
+            ],
+            "outside": null
           }
         ],
         "findings": [
@@ -373,7 +374,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 245,
+        "seq": 226,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -397,7 +398,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 104010,
+          "sim_ms": 94990,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -413,6 +414,7 @@
             "required": true,
             "enabled": true,
             "manual": false,
+            "for_network": null,
             "ended": "exited",
             "exit_code": 0,
             "signal": null,
@@ -430,6 +432,7 @@
             "required": true,
             "enabled": true,
             "manual": false,
+            "for_network": null,
             "ended": "exited",
             "exit_code": 0,
             "signal": null,
@@ -447,6 +450,7 @@
             "required": false,
             "enabled": true,
             "manual": false,
+            "for_network": null,
             "ended": "killed",
             "exit_code": null,
             "signal": null,
@@ -460,8 +464,9 @@
             }
           }
         ],
+        "outside": [],
         "traffic": {
-          "before_ms": 104010,
+          "before_ms": 94990,
           "unplaced": [
             {
               "participant": "Logger",
@@ -488,8 +493,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 104000,
-                  "frames_sent": 1041,
+                  "at_ms": 94980,
+                  "frames_sent": 951,
                   "frames_received": 0
                 },
                 {
@@ -497,9 +502,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 104000,
+                  "at_ms": 94980,
                   "frames_sent": 0,
-                  "frames_received": 1041
+                  "frames_received": 951
                 }
               ]
             }
@@ -758,7 +763,8 @@
               "participants": [
                 "Engine",
                 "Dashboard"
-              ]
+              ],
+              "outside": null
             }
           ],
           "findings": [
@@ -781,7 +787,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 209,
+          "kept": 190,
           "dropped": 0
         }
       },
@@ -790,7 +796,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

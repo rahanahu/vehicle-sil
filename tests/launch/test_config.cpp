@@ -162,7 +162,7 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    connect: eth0\n    nam: x\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'connect': where a network is connected is not written in the "
-               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check "
+               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check|run "
                "--connect N=<target> <file> (the keys here: name, kind, external)\n"
                "E 6 unknown-key: network 'N': unknown key 'nam': did you mean 'name'? (the keys here: name, kind, "
                "external)\n");
@@ -383,7 +383,7 @@ TEST_CASE(external_of_the_wrong_form_is_an_error_and_says_what_to_write)
                "E 8 unknown-key: network 'ETH1': external: unknown key 'bitrate': it is for a can network, and this one "
                "is ethernet (the keys here: ethertypes, all_frames)\n"
                "E 8 unknown-key: network 'ETH1': external.connect: where a network is connected is not written in the "
-               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check "
+               "file, since it differs from PC to PC: remove connect, and give it when you start: vehicle_sil_launch check|run "
                "--connect ETH1=<target> <file> (the keys here: ethertypes, all_frames)\n"
                "E 11 duplicate-key: network 'ETH2': external: 'all_frames' appears twice (first at line 11); keep one of "
                "them\n");
@@ -1080,6 +1080,26 @@ TEST_CASE(the_command_line_must_name_participants_of_the_file_once)
     check_text(lines(override_conflicts(EnabledOverrides{{"A", "B"}, {"B"}})),
                "E 0 usage: --disable and --enable both name B: give one of them\n");
     CHECK(override_conflicts(EnabledOverrides{{"A"}, {"B"}}).empty());
+}
+
+TEST_CASE(the_command_line_cannot_name_the_bridge_of_a_connected_network)
+{
+    const std::string text = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: ETH, kind: ethernet }\nparticipants:\n"
+                             "  - name: Engine\n    command: e\n";
+    EnabledOverrides overrides;
+    overrides.disable = {"bridge.ETH"};
+    overrides.enable = {"bridge.ETH"};
+    overrides.manual = {"bridge.ETH", "bridge.CAN"};
+    const ConfigRead read = read_config(text, overrides);
+    check_text(lines(read.override_errors),
+               "E 0 usage: --disable and --enable both name bridge.ETH: give one of them\n"
+               "E 0 usage: --disable bridge.ETH: bridge.ETH is the bridge that --connect starts for the network ETH, not "
+               "a participant of the file: to run ETH on SIL Kit only, give --connect ETH=none or leave --connect out\n"
+               "E 0 usage: --enable bridge.ETH: bridge.ETH is the bridge that --connect starts for the network ETH, not a "
+               "participant of the file: to run ETH on SIL Kit only, give --connect ETH=none or leave --connect out\n"
+               "E 0 usage: --manual bridge.ETH: bridge.ETH is the bridge that --connect starts for the network ETH, not a "
+               "participant of the file: to run ETH on SIL Kit only, give --connect ETH=none or leave --connect out\n"
+               "E 0 usage: --manual bridge.CAN: the file has no participant with this name; its participants are Engine\n");
 }
 
 TEST_CASE(a_participant_has_a_role_that_only_the_check_reads)

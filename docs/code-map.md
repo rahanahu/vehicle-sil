@@ -438,7 +438,7 @@ What `launch_cli.*` checks:
 
 - Byte-for-byte comparison with the examples in [docs/simulation-config.md](simulation-config.md)
 - An executable whose `--describe` fails, `--strict`, an unreadable file, argument errors
-- `launch_cli.connect`: `check --connect` with the two bridges (their `main()` on the fake pcap library and the fake XL driver) copied under their real names into `connect_tools/` of the build directory: found on `PATH` and next to a copy of `vehicle_sil_launch`, not in the working directory; `networks[].outside`; a bridge that refuses its arguments; `run --connect` and `test --connect` refused
+- `launch_cli.connect`: `check --connect` with the two bridges (their `main()` on the fake pcap library and the fake XL driver) copied under their real names into `connect_tools/` of the build directory: found on `PATH` and next to a copy of `vehicle_sil_launch`, not in the working directory; `networks[].outside`; a bridge that refuses its arguments; `run --disable bridge.<network>` and `test --connect` refused
 
 What `launch_run.*` checks:
 
@@ -448,6 +448,7 @@ What `launch_run.*` checks:
 - `launch_run.ethernet`: the check and scenario of the 2 ECUs of `examples/ethernet`
 - `launch_run.test_command`, `launch_run.test_interrupt`: `vehicle_sil_launch test`
 - `launch_run.live`: the check of `simulation.live.yaml`, the example configuration file that runs until stopped, and a run that goes past 1000 ms before it is stopped
+- `launch_run.connect_*` (`launch_run_connect.cpp`): `run --connect` with the bridges of `connect_tools/` (the device `fake0` of the fake pcap library answers, the fake XL driver echoes on `virtual:1`): the bridges join before any ECU starts, the frames go both ways, a bridge that cannot start (`connect-failed`, seen by its process, not by the time limit), one that ends while the run waits for a participant started by hand, one killed or ended with exit code 0 while the simulation runs (`connect-lost`), and the speed warnings with `--strict` and `--start-paused`. Each waits for events or lines (no sleeps), and checks what must not happen in the whole output after the end
 
 What `process.*` checks:
 
@@ -854,6 +855,7 @@ Implementation:
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
 | The forms of `--connect`, the bridges' arguments, `find_tool()` (next to the launcher, then `PATH`); the search of `PATH` that `find_tool()` and `find_executable()` share is `detail::find_on_path()` in `src/config.cpp` | `src/connect.cpp` |
 | The check output | `src/check_format.cpp` |
+| `run --connect`: the bridges as participants of the run only, after those of the file (`detail::with_bridges()`). Where they are started first and waited for (`RunStart::wait_for_bridges()`), and where their end stops the run (`detail::stops_run()` in `look_at_children()`, `RunWatch::watch()` and `gone_before_start()`): `run.cpp`, `run_participants.cpp`, `run_start.cpp`, `run_watch.cpp`. Their findings `connect-failed` and `connect-lost`: `run_assess.cpp`; their last line: `RunOutput::on_line()` (the reader threads, under the output's lock) | `src/run_connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
 | The overall flow of `run` | `src/run.cpp` |
 | The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |

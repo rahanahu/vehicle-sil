@@ -256,7 +256,7 @@ void manual_fails(const Options& o)
                     events_with(lines, {"\"name\":\"Hand\"", "\"state\":\"ended\""}).empty(),
                 "no process of Hand in the events");
         const std::string& result = lines.back();
-        require(contains(result, "{\"name\":\"Hand\",\"required\":true,\"enabled\":true,\"manual\":true,\"ended\":\"not_started\","
+        require(contains(result, "{\"name\":\"Hand\",\"required\":true,\"enabled\":true,\"manual\":true,\"for_network\":null,\"ended\":\"not_started\","
                                  "\"exit_code\":null,"),
                 "the result says that Hand was started by hand:\n" + result);
         require(contains(result, "\"code\":\"participant-failed\"") &&
@@ -282,7 +282,7 @@ void manual_stop(const Options& o)
         require(status && status->code == 130, "the run stopped before the start ends with 130");
         const auto ended = byHand.wait(30s);
         require(ended && ended->code == 3, "Hand, which waited for the start, ends as a start that failed (3)");
-        require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"ended\":\"not_started\","),
+        require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"for_network\":null,\"ended\":\"not_started\","),
                 "Late in the result:\n" + lines.back());
     }
 }

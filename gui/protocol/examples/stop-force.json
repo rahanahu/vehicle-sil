@@ -27,14 +27,14 @@
         "silent_s": null
       },
       "stop": "forced",
-      "phase": "running",
-      "last_seq": 23,
-      "last_t_ms": 230,
+      "phase": "stopping",
+      "last_seq": 225,
+      "last_t_ms": 2250,
       "time": {
         "event": "time",
-        "seq": 21,
-        "t_ms": 210,
-        "sim_ms": 0,
+        "seq": 216,
+        "t_ms": 2160,
+        "sim_ms": 94990,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -284,7 +284,8 @@
             "participants": [
               "Engine",
               "Dashboard"
-            ]
+            ],
+            "outside": null
           }
         ],
         "findings": [
@@ -306,7 +307,7 @@
       "participants": [
         {
           "name": "Engine",
-          "state": "joined",
+          "state": "ended",
           "pid": 10002,
           "command": [
             "/path/to/root/engine/vehicle_sil_engine_ecu",
@@ -321,11 +322,13 @@
           "control_link": {
             "state": "connected",
             "variables": 4
-          }
+          },
+          "exit_code": 0,
+          "signal": null
         },
         {
           "name": "Dashboard",
-          "state": "joined",
+          "state": "ended",
           "pid": 10003,
           "command": [
             "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
@@ -340,11 +343,13 @@
           "control_link": {
             "state": "connected",
             "variables": 4
-          }
+          },
+          "exit_code": 0,
+          "signal": null
         },
         {
           "name": "Logger",
-          "state": "started",
+          "state": "stop_requested",
           "pid": 10004,
           "command": [
             "/path/to/root/logger/stubborn_logger",
@@ -353,21 +358,39 @@
           "log": null,
           "control_link": {
             "state": "none"
-          }
+          },
+          "stop_requested": true
         }
       ],
       "participants_omitted": 0,
-      "findings": [],
+      "findings": [
+        {
+          "severity": "note",
+          "code": "interrupted",
+          "file": "ignore-stop.yaml",
+          "line": null,
+          "participant": null,
+          "network": null,
+          "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+          "detail": null
+        }
+      ],
       "findings_omitted": 0,
-      "last_command": null,
+      "last_command": {
+        "seq": 205,
+        "command": "stop",
+        "source": "stdin",
+        "accepted": true,
+        "message": null
+      },
       "result": null,
       "log": {
         "vehicle_sil_launch": {
-          "kept": 5,
+          "kept": 9,
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 3,
+          "kept": 190,
           "dropped": 0
         }
       },
@@ -376,7 +399,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

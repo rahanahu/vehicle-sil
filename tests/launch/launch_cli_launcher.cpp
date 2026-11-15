@@ -880,7 +880,8 @@ void connect(const Options& o)
         // none: SIL Kit only, as without --connect.
         const Captured none = launch(o, {"check", "--json", "--connect", "ETH_EXT=none", shown_path(config)});
         expect_code(none, 0, "check --connect ETH_EXT=none");
-        require(!contains(none.standard_output, "\"outside\"") && contains(none.standard_output, "single-participant"),
+        require(!contains(none.standard_output, "\"outside\": {") && contains(none.standard_output, "\"outside\": null") &&
+                    contains(none.standard_output, "single-participant"),
                 "check --connect ETH_EXT=none wrote:\n" + none.standard_output);
     }
     {
@@ -926,13 +927,23 @@ void connect(const Options& o)
                  "\"ETH_EXT=vEthernet (A)\" (none as the target: SIL Kit only)");
     expect_usage({"check", "--connect", "ETH_EXT=eth0", "--connect", "ETH_EXT=eth1", shown_path(config)},
                  "--connect ETH_EXT is given twice (eth0 and eth1): connect each network once");
-    expect_usage({"run", "--connect", "ETH_EXT=eth0", shown_path(config)},
-                 "--connect is for check in this build: run does not connect a bus outside yet");
+    // The bridge that --connect starts is not a participant of the file.
+    const std::string bridgeNamed = "--disable bridge.ETH_EXT: bridge.ETH_EXT is the bridge that --connect starts for the "
+                                    "network ETH_EXT, not a participant of the file: to run ETH_EXT on SIL Kit only, give "
+                                    "--connect ETH_EXT=none or leave --connect out";
+    {
+        const Captured run = launch(o, {"run", "--disable", "bridge.ETH_EXT", "--connect", "ETH_EXT=eth0", shown_path(config)});
+        expect_code(run, 4, "vehicle_sil_launch run --disable bridge.ETH_EXT");
+        require(contains(lf(run.standard_output) + lf(run.standard_error), bridgeNamed),
+                "run --disable bridge.ETH_EXT wrote:\n" + run.standard_output + run.standard_error);
+    }
     expect_usage({"test", shown_path(config), "--connect", "ETH_EXT=eth0", "--scenarios", shown_path(o.work_dir)},
                  "--connect is not for test: test runs each scenario as fast as possible, and a real bus does not wait for "
-                 "the virtual time");
+                 "the virtual time; for a test with a device, run one scenario: vehicle_sil_launch run --scenario "
+                 "<scenario> --speed 1 --strict --connect <network>=<target> <file>");
     // The value after --connect is not the file.
-    const Captured json = launch(o, {"run", "--json", "--connect", "ETH_EXT=eth0", shown_path(config)});
+    const Captured json =
+        launch(o, {"run", "--json", "--connect", "ETH_EXT=eth0", "--disable", "bridge.ETH_EXT", shown_path(config)});
     expect_code(json, 4, "vehicle_sil_launch run --json --connect");
     require(contains(json.standard_output, "\n  \"file\": " + json_string(shown_path(config)) + ",\n"),
             "run --json --connect wrote:\n" + json.standard_output);

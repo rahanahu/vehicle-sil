@@ -164,6 +164,8 @@ On Linux, write `--backend packet` (or `pcap`) and the name of the network inter
 - Because the URI comes from the launcher, `registry_uri` may have port 0.
 - `required: false`: the simulation does not wait for the bridge, and when the run ends, the launcher asks the bridge to stop (see "[Startup order](bridges.md#startup-order)" in [bridges.md](bridges.md) for frames sent before the bridge joins).
 
+To have the launcher start the bridge without an entry in the file, give `--connect <network>=<target>` to `check` and `run` (see "[`--connect`](simulation-config.md#--connect)" in simulation-config.md). The adapter or channel differs from PC to PC, so it is given when you start, not written in the shared file. `run` then starts the bridge before the ECUs, waits until it runs, so that the first frames reach the bus too, and fails the run if the bridge ends (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md).
+
 ## Exit codes
 
 | Exit code | Meaning | Output |

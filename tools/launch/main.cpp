@@ -89,7 +89,7 @@ constexpr const char* kUsage =
     "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
-    "                              [--describe-timeout-ms <ms>]\n"
+    "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
     "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
@@ -155,12 +155,12 @@ constexpr const char* kUsage =
     "                              with --start-paused and --control, from when it stands still before the start);\n"
     "                              test: each run\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
-    "  --connect <network>=<target> check: the network <network> of <file> is to be connected to a real bus at\n"
-    "                              <target>: an Ethernet adapter (vehicle_sil_ethernet_bridge --list-interfaces),\n"
-    "                              or virtual:<n> or physical:<n> for a CAN channel (vehicle_sil_vector_xl_bridge\n"
-    "                              --list-channels); none: SIL Kit only. The check finds the network's bridge (next\n"
-    "                              to vehicle_sil_launch or on PATH) and asks it --describe. Repeatable, each\n"
-    "                              network once. run does not connect a bus yet\n"
+    "  --connect <network>=<target> connect the network <network> of <file> to a real bus at <target>: an\n"
+    "                              Ethernet adapter (vehicle_sil_ethernet_bridge --list-interfaces), or virtual:<n>\n"
+    "                              or physical:<n> for a CAN channel (vehicle_sil_vector_xl_bridge --list-channels);\n"
+    "                              none: SIL Kit only. check finds the network's bridge (next to vehicle_sil_launch\n"
+    "                              or on PATH) and asks it --describe; run starts it before the other participants\n"
+    "                              (as bridge.<network>) and fails if it ends. Repeatable, each network once\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
     "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not\n"
@@ -979,10 +979,6 @@ int check(const cli::Args& args)
 
 int run(const cli::Args& args, launch::EventStream* events)
 {
-    if (args.has("connect"))
-    {
-        throw cli::UsageError("--connect is for check in this build: run does not connect a bus outside yet");
-    }
     const Common c = common(args, "run");
     if (args.has("log-dir") && args.str("log-dir", "").empty())
     {
@@ -1123,6 +1119,9 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     options.interrupts = &g_interrupts;
     options.interrupt_name = interrupt_name;
+    // --connect: the check judges the time by what this run does.
+    options.check.run_speed = options.speed;
+    options.check.start_paused = options.start_paused;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
@@ -1204,7 +1203,8 @@ int test(const cli::Args& args)
     if (args.has("connect"))
     {
         throw cli::UsageError("--connect is not for test: test runs each scenario as fast as possible, and a real bus does "
-                              "not wait for the virtual time");
+                              "not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
+                              "run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>");
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
