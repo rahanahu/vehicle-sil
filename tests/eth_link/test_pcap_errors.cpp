@@ -22,6 +22,12 @@ using namespace vehicle_sil::eth_link::detail;
 const char* const kNpf = "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}";
 const char* const kNpfOther = "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}";
 
+/// How the "no interface" message for Npcap ends when no Hyper-V switch adapter is offered.
+const std::string kNpcapNotOffered =
+    " Npcap does not offer an adapter that is disabled: enable it in Windows. It does not offer one it is not bound to "
+    "either, such as the physical adapter of a Hyper-V external switch: give the switch's adapter, \"vEthernet (<switch>)\", "
+    "as --interface instead.";
+
 std::vector<PcapDevice> windows_devices()
 {
     return {{kNpf, "Microsoft KM-TEST Loopback Adapter", "Ethernet 2", kPcapIfUp | kPcapIfRunning | kPcapIfConnected},
@@ -87,20 +93,34 @@ TEST_CASE(pcap_error_no_interface_and_more_than_one)
     const auto none = pcap_no_interface(PcapFlavor::Npcap, "Ethernet 9", names);
     CHECK(none.kind() == LinkErrorKind::NoSuchInterface);
     CHECK_TEXT(none.what(), "no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet "
-                            "(run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: "
-                            "enable it in Windows.");
+                            "(run --list-interfaces --backend npcap)." +
+                                kNpcapNotOffered);
+    // The physical adapter of a Hyper-V external switch is not offered (Npcap is not bound to it any
+    // more), but the switch's own adapter is: the message names it.
+    const std::vector<std::string> withSwitch = {"\"vEthernet (vsil-ext)\"", "Ethernet", "\\Device\\NPF_Loopback"};
+    CHECK_TEXT(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", withSwitch).what(),
+               "no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \"vEthernet (vsil-ext)\", Ethernet, "
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
+               "disabled: enable it in Windows. It does not offer one it is not bound to either, such as the physical adapter "
+               "of a Hyper-V external switch: give the switch's adapter, here probably \"vEthernet (vsil-ext)\", as "
+               "--interface instead.");
+    const std::vector<std::string> twoSwitches = {"\"vEthernet (Default Switch)\"", "\"vEthernet (vsil-ext)\"",
+                                                  "vEthernet", "\"Ethernet (vEthernet (x))\""};
+    CHECK(std::string(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", twoSwitches).what())
+              .ends_with(": give the switch's adapter, here probably \"vEthernet (Default Switch)\" or \"vEthernet (vsil-ext)\", "
+                         "as --interface instead."));
     // Only the loopback device, or nothing: what Npcap installed for administrators only gives another user.
     const std::vector<std::string> loopbackOnly = {"\\Device\\NPF_Loopback"};
     CHECK_TEXT(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", loopbackOnly).what(),
                "no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \\Device\\NPF_Loopback (run "
-               "--list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows. It "
-               "offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a console "
-               "started as administrator, or install Npcap again without that limit.");
+               "--list-interfaces --backend npcap)." +
+                   kNpcapNotOffered +
+                   " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a "
+                   "console started as administrator, or install Npcap again without that limit.");
     CHECK(std::string(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", {}).what())
-              .ends_with("offers here: none (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
-                         "disabled: enable it in Windows. It offers no network adapter here: if Npcap was installed for "
-                         "administrators only, run the bridge from a console started as administrator, or install Npcap again "
-                         "without that limit."));
+              .ends_with("offers here: none (run --list-interfaces --backend npcap)." + kNpcapNotOffered +
+                         " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge "
+                         "from a console started as administrator, or install Npcap again without that limit."));
     CHECK_TEXT(pcap_no_interface(PcapFlavor::Libpcap, "eth9", {}).what(),
                "no interface 'eth9' for --backend pcap. Interfaces libpcap offers here: none (run --list-interfaces --backend "
                "pcap).");
@@ -205,14 +225,23 @@ TEST_CASE(pcap_device_is_chosen_by_pcap_name_connection_name_or_identifier)
     CHECK_EQ(choose_pcap_device(devices, "ETHERNET", PcapFlavor::Npcap), std::size_t{1});
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "ethernet 3", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
                "no interface 'ethernet 3' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
-               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
-               "disabled: enable it in Windows.");
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap)." +
+                   kNpcapNotOffered);
     // A pcap name is matched exactly: on Linux it is the interface's name, and Linux tells the case.
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "\\device\\npf_loopback", PcapFlavor::Npcap); },
                         LinkErrorKind::NoSuchInterface),
                "no interface '\\device\\npf_loopback' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", "
-               "Ethernet, \\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter "
-               "that is disabled: enable it in Windows.");
+               "Ethernet, \\Device\\NPF_Loopback (run --list-interfaces --backend npcap)." +
+                   kNpcapNotOffered);
+    // "Ethernet 2" bound to a Hyper-V external switch: Npcap offers the switch's adapter in its place.
+    auto switched = devices;
+    switched[0].connection = "vEthernet (vsil-ext)";
+    CHECK_TEXT(error_of([&] { (void)choose_pcap_device(switched, "Ethernet 2", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
+               "no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \"vEthernet (vsil-ext)\", Ethernet, "
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
+               "disabled: enable it in Windows. It does not offer one it is not bound to either, such as the physical adapter "
+               "of a Hyper-V external switch: give the switch's adapter, here probably \"vEthernet (vsil-ext)\", as "
+               "--interface instead.");
     // Letters outside ASCII are compared as they are (U+00C4 and U+00E4).
     auto accented = devices;
     accented[1].connection = "\xC3\x84thernet";
@@ -222,8 +251,8 @@ TEST_CASE(pcap_device_is_chosen_by_pcap_name_connection_name_or_identifier)
     CHECK(other_letter.starts_with("no interface '\xC3\xA4thernet' for --backend npcap."));
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
                "no interface '' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
-               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
-               "disabled: enable it in Windows.");
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap)." +
+                   kNpcapNotOffered);
 }
 
 TEST_CASE(pcap_device_name_that_fits_two_devices_is_refused_and_a_pcap_name_wins)
