@@ -2,11 +2,13 @@
 
 [日本語](ja/code-map-execution.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [internals/execution.md](internals/execution.md) / [internals/virtual-time.md](internals/virtual-time.md) / [ecu-executable.md](ecu-executable.md)
+
+**On this page:** [Test labels](#test-labels) / [Code and tests by directory](#code-and-tests-by-directory) / [Dependency direction](#dependency-direction) / [What to update together](#what-to-update-together)
+
+**Change topics:** [The `--describe` JSON](#the---describe-json) / [Network name mapping](#network-name-mapping) / [`ecu_main` arguments and exit codes](#ecu_main-arguments-and-exit-codes) / [Disconnecting an ECU from the bus](#disconnecting-an-ecu-from-the-bus) / [Add a network kind or use](#add-a-network-kind-or-use) / [The template and the ECU API](#the-template-and-the-ecu-api)
 
 ## Test labels
 
@@ -192,7 +194,7 @@ The ECU that the guide [howto/first-ecu.md](howto/first-ecu.md) adds to the temp
 
 ## Dependency direction
 
-See [code-map.md](code-map.md#dependency-direction) for the diagram legend and shared boundary tests.
+See the [diagram legend and layers](code-map-core.md#dependency-direction) and [boundary tests](code-map-testing.md#boundary-tests).
 
 ### ECU and local execution (without SIL Kit)
 
@@ -239,6 +241,8 @@ flowchart TD
 ## What to update together
 
 ### The `--describe` JSON
+
+For changes to the consumer, see [launcher implementation](code-map-launcher.md#libslaunch-toolslaunch) and [check rules](code-map-launcher.md#check-rules-and-code).
 
 Where to change:
 

@@ -2,8 +2,6 @@
 
 [日本語](ja/code-map-gui.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [gui.md](gui.md) / [howto/gui-screen.md](howto/gui-screen.md) / [Control API, gRPC and launcher Control Server](code-map-control.md) / [Launcher, process, configuration and run](code-map-launcher.md)
@@ -33,3 +31,11 @@ For an introduction, see [gui.md](gui.md).
 
 - Tests: `gui/server/tests/test_example_client.py`, `gui/web/e2e/starter.spec.ts`
 - `ctest -R`: not in CTest. Run them with `scripts/verify-gui.py`.
+
+## Cross-area changes and development references
+
+- Launcher events, stdin commands, features and format: [events and commands](code-map-launcher.md#events-stdin-commands-version---json). For recordings and protocol examples, see [run traffic](code-map-launcher.md#run-traffic-traffic).
+- Speed and time limits: [launcher limits](code-map-launcher.md#launcher-limits) (GUI copies and the test detecting mismatches).
+- Control API replies: [GetSnapshot](code-map-control.md#reading-time-and-values-together), [control.proto](code-map-control.md#controlproto), and [launcher Control Server](code-map-control.md#the-launchers-control-server).
+- Dashboard schema and template copies: [configuration and schemas](code-map-launcher.md#configuration-file-or-scenario-keys).
+- GUI-specific development, tests and recordings: [GUI development](gui.md#development). For the HTTP/WebSocket contract see [gui/protocol/README.md](../gui/protocol/README.md), for the client API [gui/client/README.md](../gui/client/README.md), for screen development [gui/web/README.md](../gui/web/README.md), and for the starter [examples/gui_starter/README.md](../examples/gui_starter/README.md).

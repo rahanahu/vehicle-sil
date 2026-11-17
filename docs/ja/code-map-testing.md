@@ -2,11 +2,11 @@
 
 [English](../code-map-testing.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 共通のテスト規則と文書の照合です。分野別のテストは [code-map.md](code-map.md) から探します。
 
 関連する仕様と変更範囲: [build.md](build.md)
+
+**このページ:** [テストの名前と実行方法](#テストの名前と実行方法) / [テストのラベル](#テストのラベル) / [ドキュメントの例とテスト](#ドキュメントの例とテスト) / [境界を検査するテスト](#境界を検査するテスト)
 
 ## テストの名前と実行方法
 
@@ -184,7 +184,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 - ガイドにある `check` と `run` の出力のブロックは、`docs/` の直下のドキュメント（simulation-*.md と [scenario.md](scenario.md)）の、同じ印の例のコピーです。`launch_cli.docs` と `launch_run.docs` は、ガイドのブロックがコピーのとおりかを照合します。
 - howto/scenario-tests.md の `<!-- vehicle_sil_launch run ... -->` の 1 つは、scenario.md の同じブロックのコピーで、`launch_run.scenario` も照合します。
-- 例のファイルの場所とテストの内容は、「[ディレクトリごとのコードとテスト](code-map.md#ディレクトリごとのコードとテスト)」の `examples/` の各項目にあります。
+- 例のファイルの場所とテストの内容は、[作業対象から探す](code-map.md#作業対象から探す) の各領域ページにある `examples/` の項目にあります。
 
 ### 照合していないもの
 
@@ -198,3 +198,18 @@ ctest --preset linux-gcc-release -L fetchcontent
 | [simulation-check.md](simulation-check.md) | 「照合」の `code` の表 |
 | [simulation-events.md](simulation-events.md) | `features` の表と、`events.hpp` の `kFeatures` |
 | [ethernet-bridge.md](ethernet-bridge.md) | ブリッジの出力とエラーの文のコピー |
+
+## 境界を検査するテスト
+
+次のテストは、ソースの `#include` などを読んで、層の境界を検査します。内部のヘッダーや SIL Kit のヘッダーを追加すると失敗します。
+
+| テスト | 検査すること |
+|---|---|
+| `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API とツールキットだけを使い、`vehicle_sil::j1939` とほかのコンポーネントだけをリンクする |
+| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary`、`j1939_spy.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
+| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
+| `peer.controllers_are_made_on_the_simulation_name` | `libs/` で SIL Kit のバスのコントローラーを作るのは `libs/peer/src/peer.cpp` だけで、どの呼び出しも `simulation_name()` を通した名前のネットワークに作る（`cmake/VehicleSilCheckControllerNetworks.cmake`） |
+| `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の設定は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
+| `launch.described_networks_are_read_in_one_place` | `libs/launch` と `tools/launch` で自己申告のネットワーク（`description.networks`。メンバーへのポインター `::networks` も）を読むのは `src/check_networks.cpp`（対応を当てる `seen_networks()` と、JSON の `reported` を書く所）と `src/describe_read.cpp` だけ（`cmake/VehicleSilCheckDescribedNetworks.cmake`。設定の `config.networks` は数えない） |
+| `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
+| `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |

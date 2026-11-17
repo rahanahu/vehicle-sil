@@ -1349,7 +1349,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 | 時間の軸のページと要素 `gui/timeline` の単体テスト、`vehicle-sil-timeline.js` が元のファイルから作ったものと同じか | `verify-web.py` の `timeline` の手順（ページのブラウザのテストは `--e2e-grep 'timeline page'`、要素は `--e2e-grep 'timeline element'`、GUI からも開くものは `--e2e-grep 'timeline'`）。`messages.js`、`timeline.css`、`viewer.js` を変えたら、`gui/web` で `npm run bundle:timeline` を実行します |
 | 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
 
-サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
+サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(seconds)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map-testing.md](code-map-testing.md#待ち時間と倍率) の「テストの名前と実行方法」の「待ち時間と倍率」）。
 
 ### 記録を再生するランチャー
 

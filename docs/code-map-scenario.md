@@ -2,11 +2,13 @@
 
 [日本語](ja/code-map-scenario.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [scenario.md](scenario.md) / [simulation-run.md](simulation-run.md) / [Launcher, process, configuration and run](code-map-launcher.md) / [Control API, gRPC and launcher Control Server](code-map-control.md)
+
+**On this page:** [Code and tests by directory](#code-and-tests-by-directory) / [What to update together](#what-to-update-together)
+
+**Change topics:** [Variants and scenario parameters](#variants-and-scenario-parameters) / [Scenarios](#scenarios) / [Timeline files](#timeline-files) / [Running several scenarios](#running-several-scenarios)
 
 ## Code and tests by directory
 
@@ -34,6 +36,8 @@ The comments at the top of the files are not in the guide's blocks. The line num
 ## What to update together
 
 ### Variants and scenario parameters
+
+For configuration or schema changes, see [configuration file or scenario keys](code-map-launcher.md#configuration-file-or-scenario-keys).
 
 `variants` and `params` of the configuration file, `--variant`, `--param`, and `params`, `${name}` and `only` of scenarios. This also covers skipping steps that use a variable with `absent: true` or a variable of a participant that the variant disabled.
 

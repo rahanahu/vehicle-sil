@@ -2,15 +2,19 @@
 
 [日本語](ja/code-map-launcher.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [simulation-config.md](simulation-config.md) / [simulation-check.md](simulation-check.md) / [simulation-run.md](simulation-run.md) / [simulation-events.md](simulation-events.md) / [Scenarios, timelines and batch runs](code-map-scenario.md) / [Control API, gRPC and launcher Control Server](code-map-control.md) / [Core, step, signal and SIL Kit defaults](code-map-core.md) / [ECU, Peer, local execution and Simulation](code-map-execution.md) / [Vector XL and Ethernet bridges](code-map-bridges.md)
 
+**On this page:** [Test labels](#test-labels) / [Code and tests by directory](#code-and-tests-by-directory) / [What to update together](#what-to-update-together)
+
+**Change topics:** [`check` and `run` output](#check-and-run-output) / [Output and code copied into the guides](#output-and-code-copied-into-the-guides) / [Check rules and `code`](#check-rules-and-code) / [Configuration file or scenario keys](#configuration-file-or-scenario-keys) / [`network_names` in the configuration file](#network_names-in-the-configuration-file) / [`j1939_nodes` in the configuration file](#j1939_nodes-in-the-configuration-file) / [Events, stdin commands, `version --json`](#events-stdin-commands-version---json) / [Timing of `run`](#timing-of-run) / [Participants you start yourself](#participants-you-start-yourself) / [Run traffic (`traffic`)](#run-traffic-traffic) / [Launcher limits](#launcher-limits)
+
 ## Test labels
 
 ### `launch` / `process`
+
+For scenario, timeline or batch changes, see the [scenario change checklists](code-map-scenario.md#what-to-update-together).
 
 | Test | Details |
 |---|---|
@@ -231,6 +235,8 @@ Documentation to update:
 
 ### Configuration file or scenario keys
 
+For scenario-specific changes, see [variants and parameters](code-map-scenario.md#variants-and-scenario-parameters) and [scenario changes](code-map-scenario.md#scenarios).
+
 Where to change:
 
 - Keys of configuration files or scenarios, value forms, network kinds, step kinds (the code that reads files in `libs/launch/src/config.cpp` and the scenario's reader, `scenario_reader.hpp` and the files it names)
@@ -294,6 +300,8 @@ Tests:
 
 ### `j1939_nodes` in the configuration file
 
+For the engine's types and implementation, see [J1939 engine](code-map-j1939.md#libsj1939-engine).
+
 `j1939_nodes` gives a participant's J1939 nodes other addresses and NAME fields than its executable's code.
 
 Where to change:
@@ -324,6 +332,8 @@ Tests:
 - `schema.files_and_launcher`
 
 ### Events, stdin commands, `version --json`
+
+When changing events or commands consumed by the GUI, also check [GUI implementation and tests](code-map-gui.md#guiserver-guiprotocol-guiclient-guiweb) and the recordings and protocol examples listed under [Run traffic](#run-traffic-traffic).
 
 Where to change:
 

@@ -942,7 +942,7 @@ a frame like the one the bridge had just sent out (the same length and first byt
 - 引数の解釈（`parse_bridge_options()`）
 - 実行ファイルが出力するもの（`bridge_app.hpp`: 起動の 1 行、OS ごとに使えるバックエンド、プロミスキャスのヒント）
 
-ソースの場所は、[code-map.md](code-map.md) の「Ethernet Bridge」にあります。
+ソースの場所は、[code-map-bridges.md](code-map-bridges.md#ethernet-bridge) の「Ethernet Bridge」にあります。
 
 ## 外部のインターフェース（`ExternalLink`）
 

@@ -2,11 +2,11 @@
 
 [日本語](ja/code-map-testing.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 Common test rules and documentation checks. Find area-specific tests from [code-map.md](code-map.md).
 
 Related specifications and change areas: [build.md](build.md)
+
+**On this page:** [Test names and how to run tests](#test-names-and-how-to-run-tests) / [Test labels](#test-labels) / [Documentation examples and tests](#documentation-examples-and-tests) / [Boundary tests](#boundary-tests)
 
 ## Test names and how to run tests
 
@@ -184,7 +184,7 @@ Among the examples in the documentation (configuration files, code, command outp
 
 - The `check` and `run` output blocks in the guides are copies of the examples with the same markers in the documents directly under `docs/` (simulation-*.md and [scenario.md](scenario.md)). `launch_cli.docs` and `launch_run.docs` compare the guides' blocks with what they copy.
 - One `<!-- vehicle_sil_launch run ... -->` in howto/scenario-tests.md is a copy of the same block in scenario.md, and `launch_run.scenario` also compares it.
-- For the locations of the example files and what their tests cover, see the `examples/` entries in "[Code and tests by directory](code-map.md#code-and-tests-by-directory)".
+- For the locations of the example files and what their tests cover, see the `examples/` entries in the relevant pages listed under [Find by change area](code-map.md#find-by-change-area).
 
 ### What the tests do not compare
 
@@ -198,3 +198,18 @@ No test compares the following. Keep them in sync by hand.
 | [simulation-check.md](simulation-check.md) | The table of `code` values in "Checks" |
 | [simulation-events.md](simulation-events.md) | The `features` table, and `kFeatures` in `events.hpp` |
 | [ethernet-bridge.md](ethernet-bridge.md) | Copies of the bridge's output and error messages |
+
+## Boundary tests
+
+These tests read the sources' `#include` lines and similar, and check the boundaries between layers. They fail when you add an internal header or a SIL Kit header.
+
+| Test | What it checks |
+|---|---|
+| `j1939_parts.boundary` | `libs/j1939/parts` uses only the engine's public API and the toolbox, and links only `vehicle_sil::j1939` and other protocol parts |
+| `local.boundary`, `testkit.boundary`, `peer.boundary`, `ecu.boundary`, `simulation.boundary`, `j1939_codec.boundary`, `param_service.boundary`, `j1939_spy.boundary` | The sources of that directory do not use the engine's internals (`cmake/VehicleSilCheckJ1939Parts.cmake`) |
+| `ecu.no_silkit_boundary`, `ecu.simulation_headers_boundary`, `lin.boundary`, `step.boundary`, `eth.boundary`, `signal.boundary` | `libs/ecu`, `libs/simulation/include`, `libs/lin`, `libs/step`, `libs/eth` and `libs/signal` include no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |
+| `peer.controllers_are_made_on_the_simulation_name` | In `libs/`, only `libs/peer/src/peer.cpp` creates SIL Kit bus controllers, and every call creates one on a network whose name went through `simulation_name()` (`cmake/VehicleSilCheckControllerNetworks.cmake`) |
+| `core.silkit_configuration_defaults` | Every SIL Kit configuration that `libs/`, `tools/`, `bridges/` and `tests/` (except `tests/core/configuration_fixtures`) build from a string goes through the vehicle-sil defaults (`default_participant_configuration()` and others) (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) |
+| `launch.described_networks_are_read_in_one_place` | In `libs/launch` and `tools/launch`, only `src/check_networks.cpp` (`seen_networks()`, which applies the map, and the code that writes `reported` in the JSON) and `src/describe_read.cpp` read the reported networks (`description.networks`, also through a pointer to member `::networks`) (`cmake/VehicleSilCheckDescribedNetworks.cmake`; `config.networks` of the configuration is not counted) |
+| `j1939_codec.independent_of_the_engine` | The only vehicle-sil header that `codec.hpp` includes is `j1939/types.hpp` (the value types); it does not include `Network` or `Node` |
+| `eth_link.boundary` | `libs/eth_link` includes no SIL Kit header, directly or indirectly (`cmake/VehicleSilCheckNoSilKit.cmake`) |

@@ -2,11 +2,13 @@
 
 [English](../code-map-control.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
 関連する仕様と変更範囲: [internals/control.md](internals/control.md) / [control-api.md](control-api.md) / [ランチャー・プロセス・設定・実行](code-map-launcher.md) / [シナリオ・時間の軸・一括実行](code-map-scenario.md) / [ブラウザー GUI・プロトコル・クライアント・画面の例](code-map-gui.md) / [ECU・Peer・ローカル実行・Simulation](code-map-execution.md)
+
+**このページ:** [テストのラベル](#テストのラベル) / [ディレクトリごとのコードとテスト](#ディレクトリごとのコードとテスト) / [依存の向き](#依存の向き) / [変更するときに一緒に直すもの](#変更するときに一緒に直すもの)
+
+**変更の種類:** [変数の対応表](#変数の対応表) / [`control.proto`](#controlproto) / [ランチャーの Control Server](#ランチャーの-control-server) / [シナリオの実行中の Control Server](#シナリオの実行中の-control-server) / [時刻と値をまとめて読む](#時刻と値をまとめて読む) / [Agent と Hub の間のメッセージ](#agent-と-hub-の間のメッセージ) / [SIL Kit の上のトランスポートと開始前の窓](#sil-kit-の上のトランスポートと開始前の窓)
 
 ## テストのラベル
 
@@ -97,7 +99,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 
 ## 依存の向き
 
-矢印の意味と全体の境界テストは [code-map.md](code-map.md#依存の向き) にあります。
+[図の凡例と全体の層](code-map-core.md#依存の向き)、[境界を検査するテスト](code-map-testing.md#境界を検査するテスト) を参照。
 
 ### launch と Control API
 
@@ -250,6 +252,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - `control.control_hub_readers_that_never_read_*`
 
 ### 時刻と値をまとめて読む
+
+応答の形を変える場合は [control.proto](#controlproto)、ランチャーとの接続は [ランチャーの Control Server](#ランチャーの-control-server)、GUI の利用側は [GUI の実装とテスト](code-map-gui.md#guiserverguiprotocolguiclientguiweb) を参照。
 
 `GetSnapshot` です。
 

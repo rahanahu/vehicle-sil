@@ -2,8 +2,6 @@
 
 [English](../code-map-core.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
 関連する仕様と変更範囲: [internals/core.md](internals/core.md) / [internals/virtual-time.md](internals/virtual-time.md)
@@ -38,7 +36,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 
 `signal.boundary` は、`libs/signal` が SIL Kit のヘッダーを含まないことを検査します。
 
-### `core` / `lin`
+### `core`
 
 仮想時間の単体テストです。`unit` ラベルも付きます。
 
@@ -46,20 +44,8 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 
 - ステップ幅の違う participant の同期、最も遅い participant を待つこと、実時間への結合
 - `TickScheduler`、`StepInbox`
-- LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替え
 
-| LIN のテスト | 内容 |
-|---|---|
-| `lin_local.*` | 主なシナリオを、仮想 LIN バスの上でも確認する |
-| `lin_bus.*` | 仮想 LIN バスだけのテスト |
-| `lin.boundary` | `vehicle_sil::lin` が SIL Kit を含まないことの検査 |
-
-### `lin`（`lin_cluster.*`）
-
-registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を別プロセスで動かします。`integration` ラベルも付きます。
-
-- トレースを照合して、スケジュール、両方向のフレーム、Master・Slave・bus idle による休止と起床を確認します。
-- Slave の 1 つを実時間に結合しても、トレースが一致することを確認します。
+LIN のテストは [バスのページ](code-map-buses.md#テストのラベル) を参照。
 
 ## ディレクトリごとのコードとテスト
 
@@ -119,7 +105,42 @@ registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を�
 
 ## 依存の向き
 
-矢印の意味と全体の境界テストは [code-map.md](code-map.md#依存の向き) にあります。
+どの図でも、矢印は「リンクする」（`target_link_libraries`）です。逆向きの依存は作りません。
+
+| 図の書き方 | 意味 |
+|---|---|
+| 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
+| 点線の矢印 | 非公開（`PRIVATE`）のリンク |
+| ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
+
+### 全体の層
+[詳細](code-map-core.md#全体の層)
+
+### 基盤と SIL Kit の実装
+[詳細](code-map-core.md#基盤と-sil-kit-の実装)
+
+### J1939 のエンジンとコンポーネント
+[詳細](code-map-j1939.md#j1939-のエンジンとコンポーネント)
+
+### ECU とローカルの実行（SIL Kit なし）
+[詳細](code-map-execution.md#ecu-とローカルの実行sil-kit-なし)
+
+### Peer と Simulation
+[詳細](code-map-execution.md#peer-と-simulation)
+
+### launch と Control API
+[詳細](code-map-control.md#launch-と-control-api)
+
+### Vector XL CAN Bridge
+[詳細](code-map-bridges.md#vector-xl-can-bridge)
+
+### Ethernet Bridge
+[詳細](code-map-bridges.md#ethernet-bridge)
+
+### ほかの実行ファイル
+[詳細](code-map-build.md#ほかの実行ファイル)
+
+[境界を検査するテスト](code-map-testing.md#境界を検査するテスト) も参照。
 
 ### 全体の層
 
@@ -203,6 +224,8 @@ flowchart TD
 ## 変更するときに一緒に直すもの
 
 ### SIL Kit の設定の既定
+
+設定の既定を変える場合は、[ランチャーの設定キー](code-map-launcher.md#設定ファイルかシナリオのキー) と [ネットワーク名の対応](code-map-execution.md#ネットワークの名前の対応) にも注意する。
 
 変える場所:
 

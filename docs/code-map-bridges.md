@@ -2,8 +2,6 @@
 
 [日本語](ja/code-map-bridges.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [bridges.md](bridges.md) / [ethernet-bridge.md](ethernet-bridge.md) / [CAN, Ethernet and LIN buses](code-map-buses.md) / [Launcher, process, configuration and run](code-map-launcher.md)
@@ -136,7 +134,7 @@ Contents of `libs/eth_link/src/pcap`:
 
 ## Dependency direction
 
-See [code-map.md](code-map.md#dependency-direction) for the diagram legend and shared boundary tests.
+See the [diagram legend and layers](code-map-core.md#dependency-direction) and [boundary tests](code-map-testing.md#boundary-tests).
 
 ### Vector XL CAN Bridge
 

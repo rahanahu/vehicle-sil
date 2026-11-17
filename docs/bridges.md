@@ -500,7 +500,7 @@ A frame passes from the SIL Kit CAN network to the XL Driver through `ICanContro
 | `vehicle_sil::vector_xl::XlCanPort` | Opens one XL channel (`xlOpenPort`) and handles transmitting (`xlCanTransmit`) and the receive thread (`xlReceive` and the notification event) |
 | `vehicle_sil::vector_xl::ExternalPortAdapter` | Turns an `ExternalCanPort` into a port of the common CAN foundation (`RealTime`). Used to place a protocol stack directly on an XL channel. Platform-independent |
 
-For the source locations and tests, see "Vector XL CAN Bridge" in [code-map.md](code-map.md#vector-xl-can-bridge).
+For the source locations and tests, see "Vector XL CAN Bridge" in [code-map-bridges.md](code-map-bridges.md#vector-xl-can-bridge).
 
 ## Test coverage
 

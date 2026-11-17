@@ -2,8 +2,6 @@
 
 [日本語](ja/code-map-core.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [internals/core.md](internals/core.md) / [internals/virtual-time.md](internals/virtual-time.md)
@@ -38,7 +36,7 @@ Unit tests of the waveform functions of `vehicle_sil::signal` (built with the st
 
 `signal.boundary` checks that `libs/signal` includes no SIL Kit header.
 
-### `core` / `lin`
+### `core`
 
 Unit tests of virtual time. The `unit` label is also set.
 
@@ -46,20 +44,8 @@ With an in-process registry, they check:
 
 - Synchronization of participants with different step sizes, waiting for the slowest participant, coupling to real time
 - `TickScheduler`, `StepInbox`
-- LIN schedules, responses, reception of master frames, sleep and wake-up, schedule switching
 
-| LIN test | Details |
-|---|---|
-| `lin_local.*` | Checks the main scenarios on the virtual LIN bus too |
-| `lin_bus.*` | Tests of the virtual LIN bus only |
-| `lin.boundary` | Checks that `vehicle_sil::lin` does not include SIL Kit |
-
-### `lin` (`lin_cluster.*`)
-
-Runs a registry, a controller, a LIN master and 2 slaves (5 / 2 / 4 ms) as separate processes. The `integration` label is also set.
-
-- Compares traces to check the schedule, frames in both directions, and sleep and wake-up by the master, by a slave and by bus idle.
-- Confirms that the traces still match when one slave is coupled to real time.
+For LIN tests, see the [bus map](code-map-buses.md#test-labels).
 
 ## Code and tests by directory
 
@@ -119,7 +105,42 @@ The JSON writer that the output of `--describe` and the JSON of `vehicle_sil_lau
 
 ## Dependency direction
 
-See [code-map.md](code-map.md#dependency-direction) for the diagram legend and shared boundary tests.
+In every diagram, an arrow means "links" (`target_link_libraries`). Do not create dependencies in the opposite direction.
+
+| In the diagrams | Meaning |
+|---|---|
+| Solid arrow | `PUBLIC` or `INTERFACE` link |
+| Dotted arrow | Private (`PRIVATE`) link |
+| Node name | Target name (without `vehicle_sil::`) |
+
+### Layers
+[Details](code-map-core.md#layers)
+
+### Foundation and SIL Kit implementations
+[Details](code-map-core.md#foundation-and-sil-kit-implementations)
+
+### J1939 engine and protocol parts
+[Details](code-map-j1939.md#j1939-engine-and-protocol-parts)
+
+### ECU and local execution (without SIL Kit)
+[Details](code-map-execution.md#ecu-and-local-execution-without-sil-kit)
+
+### Peer and Simulation
+[Details](code-map-execution.md#peer-and-simulation)
+
+### launch and the Control API
+[Details](code-map-control.md#launch-and-the-control-api)
+
+### Vector XL CAN Bridge
+[Details](code-map-bridges.md#vector-xl-can-bridge)
+
+### Ethernet Bridge
+[Details](code-map-bridges.md#ethernet-bridge)
+
+### Other executables
+[Details](code-map-build.md#other-executables)
+
+See also [boundary tests](code-map-testing.md#boundary-tests).
 
 ### Layers
 
@@ -203,6 +224,8 @@ flowchart TD
 ## What to update together
 
 ### SIL Kit configuration defaults
+
+For changes that also affect configuration parsing or network mapping, see [configuration file keys](code-map-launcher.md#configuration-file-or-scenario-keys) and [network name mapping](code-map-execution.md#network-name-mapping).
 
 Where to change:
 

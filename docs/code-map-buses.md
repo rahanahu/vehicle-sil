@@ -2,8 +2,6 @@
 
 [日本語](ja/code-map-buses.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [internals/can.md](internals/can.md) / [internals/ethernet.md](internals/ethernet.md) / [internals/lin.md](internals/lin.md)
@@ -66,6 +64,25 @@ What they check:
 - With an in-process registry, the record of the same scenario is the same on the virtual network and on SIL Kit (for several combinations of step sizes)
 
 The last item includes 3 senders that send at the same time. Their addresses are in a different order from their registration order, and the test checks the address order on the virtual network as well.
+
+### `lin` (unit tests)
+
+Unit tests of virtual time; the LIN coverage includes tests with an in-process registry. The `unit` label is also set.
+
+- LIN schedules, responses, reception of master frames, sleep and wake-up, schedule switching
+
+| LIN test | Details |
+|---|---|
+| `lin_local.*` | Checks the main scenarios on the virtual LIN bus too |
+| `lin_bus.*` | Tests of the virtual LIN bus only |
+| `lin.boundary` | Checks that `vehicle_sil::lin` does not include SIL Kit |
+
+### `lin` (`lin_cluster.*`)
+
+Runs a registry, a controller, a LIN master and 2 slaves (5 / 2 / 4 ms) as separate processes. The `integration` label is also set.
+
+- Compares traces to check the schedule, frames in both directions, and sleep and wake-up by the master, by a slave and by bus idle.
+- Confirms that the traces still match when one slave is coupled to real time.
 
 ## Code and tests by directory
 

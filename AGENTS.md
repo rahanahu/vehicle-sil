@@ -93,7 +93,7 @@ Do not rewrite existing commit history. Ignore settings alone do not untrack a t
 | `scripts/run-gui.py` | Starts the browser GUI from the repository (for anything missing, it names the command that builds it; it builds nothing itself) |
 
 - Run the GUI tests through `verify-web.py` and `verify-gui.py`; do not call pytest, ng or Playwright directly. Before their timing-sensitive tests, these 2 scripts wait while a build, a test run or a Windows VM is running on this computer, because tests that run at the same time fail their timing conditions (`--wait-limit`).
-- On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map.md](docs/code-map.md#timeouts-and-the-scale-factor).
+- On a slow or loaded computer, extend how long the tests wait with the environment variable `VEHICLE_SIL_TEST_TIMEOUT_SCALE` (for example, `3`). The CTest `TIMEOUT` takes the value at configure time, so reconfigure after you change the value. The rules are in "Timeouts and the scale factor" under "Test names and how to run tests" in [docs/code-map-testing.md](docs/code-map-testing.md#timeouts-and-the-scale-factor).
 
 ```sh
 scripts/doctor.py                                    # first: is everything in place?

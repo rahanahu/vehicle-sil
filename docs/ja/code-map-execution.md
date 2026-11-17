@@ -2,11 +2,13 @@
 
 [English](../code-map-execution.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
 関連する仕様と変更範囲: [internals/execution.md](internals/execution.md) / [internals/virtual-time.md](internals/virtual-time.md) / [ecu-executable.md](ecu-executable.md)
+
+**このページ:** [テストのラベル](#テストのラベル) / [ディレクトリごとのコードとテスト](#ディレクトリごとのコードとテスト) / [依存の向き](#依存の向き) / [変更するときに一緒に直すもの](#変更するときに一緒に直すもの)
+
+**変更の種類:** [`--describe` の JSON](#--describe-の-json) / [ネットワークの名前の対応](#ネットワークの名前の対応) / [`ecu_main` の引数と終了コード](#ecu_main-の引数と終了コード) / [ECU のバスからの切断](#ecu-のバスからの切断) / [ネットワークの種類か使い方を追加する](#ネットワークの種類か使い方を追加する) / [テンプレートと ECU の API](#テンプレートと-ecu-の-api)
 
 ## テストのラベル
 
@@ -192,7 +194,7 @@ registry、controller、4 つのピア（1 / 2 / 5 / 10 ms。どれも `Peer` �
 
 ## 依存の向き
 
-矢印の意味と全体の境界テストは [code-map.md](code-map.md#依存の向き) にあります。
+[図の凡例と全体の層](code-map-core.md#依存の向き)、[境界を検査するテスト](code-map-testing.md#境界を検査するテスト) を参照。
 
 ### ECU とローカルの実行（SIL Kit なし）
 
@@ -239,6 +241,8 @@ flowchart TD
 ## 変更するときに一緒に直すもの
 
 ### `--describe` の JSON
+
+読み取る側の変更は [ランチャーの実装](code-map-launcher.md#libslaunchtoolslaunch) と [照合のルール](code-map-launcher.md#照合のルールと-code) を参照。
 
 変える場所:
 

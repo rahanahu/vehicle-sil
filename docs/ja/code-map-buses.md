@@ -2,8 +2,6 @@
 
 [English](../code-map-buses.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
 関連する仕様と変更範囲: [internals/can.md](internals/can.md) / [internals/ethernet.md](internals/ethernet.md) / [internals/lin.md](internals/lin.md)
@@ -66,6 +64,25 @@
 - プロセス内のレジストリで、同じシナリオの記録が仮想ネットワークと SIL Kit で一致すること（ステップ幅の組み合わせを変えて）
 
 最後の項目は、3 つの送信側が同じ時刻に送信する場合を含みます。アドレスを登録の順とずらし、仮想ネットワークの側でもアドレスの順を確認します。
+
+### `lin` (単体テスト)
+
+仮想時間の単体テストです。豊富な LIN の検査はプロセス内のレジストリを使うテストにもあり、`unit` ラベルも付きます。
+
+- LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替え
+
+| LIN のテスト | 内容 |
+|---|---|
+| `lin_local.*` | 主なシナリオを、仮想 LIN バスの上でも確認する |
+| `lin_bus.*` | 仮想 LIN バスだけのテスト |
+| `lin.boundary` | `vehicle_sil::lin` が SIL Kit を含まないことの検査 |
+
+### `lin`（`lin_cluster.*`）
+
+registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を別プロセスで動かします。`integration` ラベルも付きます。
+
+- トレースを照合して、スケジュール、両方向のフレーム、Master・Slave・bus idle による休止と起床を確認します。
+- Slave の 1 つを実時間に結合しても、トレースが一致することを確認します。
 
 ## ディレクトリごとのコードとテスト
 

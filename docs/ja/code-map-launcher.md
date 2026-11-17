@@ -2,15 +2,19 @@
 
 [English](../code-map-launcher.md)
 
-<!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
-
 この分野を変更するときの地図です。全体の入口は [code-map.md](code-map.md)、テストの共通ルールは [code-map-testing.md](code-map-testing.md) にあります。
 
 関連する仕様と変更範囲: [simulation-config.md](simulation-config.md) / [simulation-check.md](simulation-check.md) / [simulation-run.md](simulation-run.md) / [simulation-events.md](simulation-events.md) / [シナリオ・時間の軸・一括実行](code-map-scenario.md) / [Control API・gRPC・ランチャーの Control Server](code-map-control.md) / [基盤・ステップ・信号・SIL Kit の既定](code-map-core.md) / [ECU・Peer・ローカル実行・Simulation](code-map-execution.md) / [Vector XL とイーサネットのブリッジ](code-map-bridges.md)
 
+**このページ:** [テストのラベル](#テストのラベル) / [ディレクトリごとのコードとテスト](#ディレクトリごとのコードとテスト) / [変更するときに一緒に直すもの](#変更するときに一緒に直すもの)
+
+**変更の種類:** [`check` と `run` の出力](#check-と-run-の出力) / [ガイドにある出力とコードのコピー](#ガイドにある出力とコードのコピー) / [照合のルールと `code`](#照合のルールと-code) / [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) / [設定ファイルの `network_names`](#設定ファイルの-network_names) / [設定ファイルの `j1939_nodes`](#設定ファイルの-j1939_nodes) / [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) / [`run` の時間](#run-の時間) / [自分で起動する participant](#自分で起動する-participant) / [実行の送受信（`traffic`）](#実行の送受信traffic) / [ランチャーの上限](#ランチャーの上限)
+
 ## テストのラベル
 
 ### `launch` / `process`
+
+シナリオ、時間の軸、一括実行の変更時は [シナリオのページ](code-map-scenario.md#変更するときに一緒に直すもの) も参照。
 
 | テスト | 内容 |
 |---|---|
@@ -231,6 +235,8 @@
 
 ### 設定ファイルかシナリオのキー
 
+シナリオ固有の変更は [機種とパラメーター](code-map-scenario.md#機種とシナリオのパラメーター) と [シナリオの変更](code-map-scenario.md#シナリオ) も参照。
+
 変える場所:
 
 - 設定ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp` と、シナリオの読み手（`scenario_reader.hpp` と、そこに挙げたファイル）の、ファイルを読むコード）
@@ -294,6 +300,8 @@
 
 ### 設定ファイルの `j1939_nodes`
 
+エンジン側の型と実装は [J1939 エンジン](code-map-j1939.md#libsj1939エンジン) を参照。
+
 `j1939_nodes` は、participant の J1939 のノードに、実行ファイルのコードと別のアドレスと NAME の欄を与えます。
 
 変える場所:
@@ -324,6 +332,8 @@
 - `schema.files_and_launcher`
 
 ### イベント、標準入力のコマンド、`version --json`
+
+GUI が消費するイベントやコマンドを変える場合は、[GUI の実装とテスト](code-map-gui.md#guiserverguiprotocolguiclientguiweb)、[実行の送受信](#実行の送受信traffic) にある録画とプロトコルの例も確認する。
 
 変える場所:
 

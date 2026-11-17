@@ -2,11 +2,13 @@
 
 [日本語](ja/code-map-control.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [internals/control.md](internals/control.md) / [control-api.md](control-api.md) / [Launcher, process, configuration and run](code-map-launcher.md) / [Scenarios, timelines and batch runs](code-map-scenario.md) / [Browser GUI, protocol, client and screen examples](code-map-gui.md) / [ECU, Peer, local execution and Simulation](code-map-execution.md)
+
+**On this page:** [Test labels](#test-labels) / [Code and tests by directory](#code-and-tests-by-directory) / [Dependency direction](#dependency-direction) / [What to update together](#what-to-update-together)
+
+**Change topics:** [Variable maps](#variable-maps) / [`control.proto`](#controlproto) / [The launcher's Control Server](#the-launchers-control-server) / [The Control Server during a scenario](#the-control-server-during-a-scenario) / [Reading time and values together](#reading-time-and-values-together) / [Messages between Agent and Hub](#messages-between-agent-and-hub) / [The SIL Kit transport and the start window](#the-sil-kit-transport-and-the-start-window)
 
 ## Test labels
 
@@ -97,7 +99,7 @@ All of them are registered only in a build with the Control Server, and only whe
 
 ## Dependency direction
 
-See [code-map.md](code-map.md#dependency-direction) for the diagram legend and shared boundary tests.
+See the [diagram legend and layers](code-map-core.md#dependency-direction) and [boundary tests](code-map-testing.md#boundary-tests).
 
 ### launch and the Control API
 
@@ -250,6 +252,8 @@ Tests:
 - `control.control_hub_readers_that_never_read_*`
 
 ### Reading time and values together
+
+For response shape changes, see [control.proto](#controlproto); for launcher integration, [the launcher's Control Server](#the-launchers-control-server); for the GUI consumer, [GUI implementation and tests](code-map-gui.md#guiserver-guiprotocol-guiclient-guiweb).
 
 `GetSnapshot`.
 

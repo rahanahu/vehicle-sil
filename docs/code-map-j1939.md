@@ -2,8 +2,6 @@
 
 [日本語](ja/code-map-j1939.md)
 
-<!-- Style: write each entry as a short block of the same shape (a subheading, a bullet list with one fact per line, a table whose cells are one sentence each). Do not pack several facts into one cell or one bullet: the line gets long and unrelated changes hit the same line. -->
-
 This is the map for changes in this area. Start at [code-map.md](code-map.md); common test rules are in [code-map-testing.md](code-map-testing.md).
 
 Related specifications and change areas: [internals/j1939.md](internals/j1939.md) / [j1939-codec.md](j1939-codec.md) / [j1939-guide.md](j1939-guide.md)
@@ -79,6 +77,8 @@ Typed messages (`j1939_codec.*`):
 
 ### `libs/j1939` (engine)
 
+For NodeOverride or the address/NAME text format, see [launcher j1939_nodes](code-map-launcher.md#j1939_nodes-in-the-configuration-file) for the matching rules, ECU executable argument format and tests.
+
 | Name | Location |
 |---|---|
 | `Network`, `Node` | `j1939/network.hpp` |
@@ -141,7 +141,7 @@ Main classes and functions:
 
 ## Dependency direction
 
-See [code-map.md](code-map.md#dependency-direction) for the diagram legend and shared boundary tests.
+See the [diagram legend and layers](code-map-core.md#dependency-direction) and [boundary tests](code-map-testing.md#boundary-tests).
 
 ### J1939 engine and protocol parts
 
