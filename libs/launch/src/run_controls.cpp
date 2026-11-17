@@ -19,8 +19,8 @@ const char* phase_name(Phase phase)
     return "ended";
 }
 
-RunControls::RunControls(StopRequests& stops, bool start_paused, Observers observers) :
-  stops_(stops), time_(start_paused, observers.on_command), on_phase_(std::move(observers.on_phase)),
+RunControls::RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario) :
+  stops_(stops), time_(start_paused, observers.on_command, scenario), on_phase_(std::move(observers.on_phase)),
   has_command_observer_(static_cast<bool>(observers.on_command))
 {
 }

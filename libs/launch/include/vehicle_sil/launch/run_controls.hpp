@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <functional>
+#include <optional>
 
 namespace vehicle_sil::launch {
 
@@ -56,8 +57,9 @@ public:
     };
 
     /// `stops`: the stop requests, the caller's; they must outlive this object. `start_paused`:
-    /// run --start-paused (TimeCommands). Without `observers`: none.
-    RunControls(StopRequests& stops, bool start_paused, Observers observers);
+    /// run --start-paused (TimeCommands). Without `observers`: none. `scenario`: the run plays a
+    /// scenario (the rules: ControlSituation::scenario).
+    RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario = false);
     explicit RunControls(StopRequests& stops, bool start_paused = false);
     RunControls(const RunControls&) = delete;
     RunControls& operator=(const RunControls&) = delete;
@@ -72,6 +74,16 @@ public:
     /// it also has an EventStream: the run does not write those events by itself then).
     [[nodiscard]] bool has_command_observer() const noexcept { return has_command_observer_; }
     [[nodiscard]] bool has_phase_observer() const noexcept { return static_cast<bool>(on_phase_); }
+    /// Whether `operation` from `entry` would be taken now, and the range of its argument: the
+    /// answer of the rules (control_rules.hpp) that the time commands decide each command with
+    /// (TimeCommands::allowed()). Any thread.
+    [[nodiscard]] Allowed allowed(Operation operation, Entry entry) { return time_.allowed(operation, entry); }
+    /// Whether `entry` is refused everything but a stop for the whole run, and why
+    /// (TimeCommands::always_refused()): a control server then only shows the run.
+    [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const { return time_.always_refused(entry); }
+    /// Whether something that does not wait for the virtual time keeps this run to real time
+    /// (TimeCommands::set_time_lock()): once, right after the configuration has been read.
+    void set_time_lock(bool locked) { time_.set_time_lock(locked); }
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }

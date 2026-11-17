@@ -1111,7 +1111,8 @@ int run(const cli::Args& args, launch::EventStream* events)
             };
             observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
         }
-        shared().controls = new launch::RunControls(g_stops, options.start_paused, std::move(observers));
+        shared().controls =
+            new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
         options.controls = shared().controls;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
@@ -1123,7 +1124,6 @@ int run(const cli::Args& args, launch::EventStream* events)
         a.tls_cert = args.str("control-tls-cert", "");
         a.tls_key = args.str("control-tls-key", "");
         a.audit_log = args.str("control-audit-log", "");
-        a.scenario = args.has("scenario");
         launch_cli::ControlHooks hooks;
         hooks.controls = shared().controls;
         // Its event (and its refusal once the run is over) comes from the time commands.
