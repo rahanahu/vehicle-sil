@@ -8,7 +8,6 @@
 
 #include "vehicle_sil/launch/test.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -216,9 +215,10 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     CHECK(!fast.runs[3].run.has_value() && fast.exit_code() == 1);
 
     // An interrupt that is already there: the first run is the last.
-    std::atomic<int> interrupts{1};
+    StopRequests stops;
+    stops.request(1); // the source is not read here (no interrupt_name)
     options.fail_fast = false;
-    options.run.interrupts = &interrupts;
+    options.run.stops = &stops;
     const TestReport stopped = test_file(dir / "sim.yaml", "sim.yaml", options);
     CHECK(stopped.result() == TestResult::Interrupted && stopped.exit_code() == kExitInterrupted);
     check_text(stopped.runs[1].reason, "the test was interrupted before it");

@@ -10,13 +10,13 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/time_commands.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
 #include "vehicle_sil/launch/timeline.hpp"
 #include "vehicle_sil/launch/traffic.hpp"
 #include "vehicle_sil/process/process.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -354,9 +354,10 @@ struct RunOptions
     /// every event but hello and the result (the caller writes them). No call waits for the
     /// reader of the events. May be null.
     EventStream* events = nullptr;
-    /// How often the launcher has been interrupted (by the caller's signal handler); 1 stops the
-    /// simulation in order, 2 or more skip the waits for the participants to end. May be null.
-    const std::atomic<int>* interrupts = nullptr;
+    /// The requests to stop (the caller's: its signal handler and whatever else asks). The run
+    /// reads their count: 1 stops the simulation in order, 2 or more skip the waits for the
+    /// participants to end. May be null.
+    const StopRequests* stops = nullptr;
     /// The name of the first interrupt ("SIGINT"), for the result.
     std::function<std::string()> interrupt_name{};
     /// How often the launcher looks at the participants and the simulation.
