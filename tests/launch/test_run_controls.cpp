@@ -9,11 +9,13 @@
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/launch/run_controls.hpp"
+#include "vehicle_sil/launch/test.hpp"
 
 #include <chrono>
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -183,6 +185,7 @@ TEST_CASE(a_run_with_the_callers_controls_sets_their_phase_and_leaves_the_phase_
     std::vector<Phase> told;
     RunControls::Observers observers;
     observers.on_phase = [&told](Phase phase) { told.push_back(phase); };
+    observers.on_command = [](const Command&, std::string_view) {};
     RunControls controls(stops, false, std::move(observers));
     Written written;
     RunOptions options;
@@ -195,4 +198,74 @@ TEST_CASE(a_run_with_the_callers_controls_sets_their_phase_and_leaves_the_phase_
     // The observer wrote none, so there is none: the run does not write them a second time.
     CHECK(written.phases().empty());
     CHECK(written.has("\"event\":\"check\""));
+}
+
+namespace {
+
+/// The text of the std::invalid_argument that `call` throws; empty if it throws none.
+template <typename Call> std::string refusal(Call&& call)
+{
+    try
+    {
+        call();
+    }
+    catch (const std::invalid_argument& e)
+    {
+        return e.what();
+    }
+    return {};
+}
+
+} // namespace
+
+TEST_CASE(a_run_refuses_controls_together_with_other_stop_requests)
+{
+    StopRequests stops;
+    StopRequests other;
+    RunControls controls(stops);
+    RunOptions options;
+    options.controls = &controls;
+    options.stops = &other;
+    const std::string text = refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("none.yaml", "none.yaml", options)); });
+    CHECK(text.find("`controls` and `stops`") != std::string::npos);
+    // The same stop requests as those of the controls say the same thing twice: accepted.
+    options.stops = &stops;
+    CHECK(refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options)); })
+            .empty());
+}
+
+TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_for_them)
+{
+    StopRequests stops;
+    Written written;
+    RunOptions options;
+    options.events = written.stream.get();
+    const auto run = [&](RunControls& controls) {
+        options.controls = &controls;
+        return refusal([&] { static_cast<void>(vehicle_sil::launch::run_file("no-such-directory/sim.yaml", "sim.yaml", options)); });
+    };
+    RunControls none(stops);
+    CHECK(run(none).find("on_phase") != std::string::npos);
+    RunControls::Observers only_phase;
+    only_phase.on_phase = [](Phase) {};
+    RunControls phase_only(stops, false, std::move(only_phase));
+    CHECK(run(phase_only).find("on_command") != std::string::npos);
+    RunControls::Observers only_command;
+    only_command.on_command = [](const Command&, std::string_view) {};
+    RunControls command_only(stops, false, std::move(only_command));
+    CHECK(run(command_only).find("on_phase") != std::string::npos);
+    // Without `events` there is nothing to leave to the observers.
+    options.events = nullptr;
+    CHECK(run(none).empty());
+}
+
+TEST_CASE(a_test_refuses_controls_because_every_run_needs_its_own)
+{
+    StopRequests stops;
+    RunControls controls(stops);
+    vehicle_sil::launch::TestOptions options;
+    options.run.controls = &controls;
+    const std::string text =
+      refusal([&] { static_cast<void>(vehicle_sil::launch::test_file("none.yaml", "none.yaml", options)); });
+    CHECK(text.find("TestOptions::run.controls") != std::string::npos);
 }

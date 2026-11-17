@@ -545,6 +545,22 @@ private:
 
 RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options)
 {
+    if (options.controls != nullptr)
+    {
+        if (options.stops != nullptr && options.stops != &options.controls->stops())
+        {
+            throw std::invalid_argument(
+              "RunOptions: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
+              "make the RunControls on the same StopRequests and leave `stops` null.");
+        }
+        if (options.events != nullptr && (!options.controls->has_phase_observer() || !options.controls->has_command_observer()))
+        {
+            throw std::invalid_argument(
+              "RunOptions: `controls` and `events` are both set, but the controls have no observer for the "
+              "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase() and "
+              "Observers::on_command to call EventStream::command(), or leave `events` null.");
+        }
+    }
     const auto event = [&options](auto emit) {
         if (options.events != nullptr)
         {

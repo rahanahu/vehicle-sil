@@ -68,6 +68,11 @@ public:
     /// The time commands of the run.
     [[nodiscard]] TimeCommands& time() noexcept { return time_; }
 
+    /// Whether Observers::on_command / on_phase was given (run_file() needs both to be given when
+    /// it also has an EventStream: the run does not write those events by itself then).
+    [[nodiscard]] bool has_command_observer() const noexcept { return has_command_observer_; }
+    [[nodiscard]] bool has_phase_observer() const noexcept { return static_cast<bool>(on_phase_); }
+
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
     /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called.
@@ -78,6 +83,7 @@ private:
     TimeCommands time_;
     std::atomic<Phase> phase_{Phase::Checking};
     const std::function<void(Phase phase)> on_phase_;
+    const bool has_command_observer_;
 };
 
 } // namespace vehicle_sil::launch

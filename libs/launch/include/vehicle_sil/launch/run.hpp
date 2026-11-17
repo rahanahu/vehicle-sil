@@ -346,7 +346,8 @@ struct RunOptions
     /// take no time command any more. With `events`, the caller gives the controls the observers
     /// that write the command and phase events (the run writes neither by itself then). Null: the
     /// run makes its own for this run, on `stops`; no one outside reaches its time commands, and
-    /// the run writes its phases to `events`.
+    /// the run writes its phases to `events`. With `events` the controls must have both observers, and
+    /// `stops` must be null or the controls' own: run_file() throws std::invalid_argument otherwise.
     RunControls* controls = nullptr;
     /// A file of each participant's output in this directory (created if needed); empty: none.
     std::filesystem::path log_dir{};
