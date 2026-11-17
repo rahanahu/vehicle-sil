@@ -117,7 +117,7 @@ vehicle-sil/
 
 | ターゲット | 区分 | 内容 | 主な型と機能 | 詳しいドキュメント |
 |---|---|---|---|---|
-| `vehicle_sil::sim_base`（ヘッダーのみ） | 基盤 | 仮想時間の基本の型と関数で、SIL Kit なしで使います。 | `SimTime`、`SimDuration`、`StepInbox`、`periodic()`、`once_at()` | — |
+| `vehicle_sil::sim_base`（ヘッダーのみ） | 基盤 | 仮想時間の基本の型と関数と、registry の URI がループバックのアドレスかの判定で、SIL Kit なしで使います。 | `SimTime`、`SimDuration`、`StepInbox`、`periodic()`、`once_at()`、`is_loopback_registry_uri()` | — |
 | `vehicle_sil::core` | 基盤 | SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理し、プロトコルに依存しません。 | `vehicle_sil::ParticipantRuntime`、`SimulationController`（仮想時間のシミュレーションの開始と停止、一時停止、ステップ実行、速度）、`TickScheduler`、`RealTimePacer`、`vehicle_sil::bind_host()`（`step::Host` を participant のステップにつなぐ）、`sim_base` の型（`SimTime`、`StepInbox`） | [internals/core.md](internals/core.md) |
 | `vehicle_sil::step` | 基盤 | 1 つの参加者のプロトコル処理をステップで実行する仕組みで、バスの種類にも SIL Kit にも依存しません。 | `Member`（ステップの参加者）、`Host`（`Member` を段の順に実行する）、`StepDriver`（仮想時間）、`RealTimeDriver`（実時間）、時計（`SteadyRealTimeClock`、テスト用の `ManualRealTimeClock`）、`TimeDomain`（時間の領域） | [internals/can.md](internals/can.md) のホストと駆動の節 |
 | `vehicle_sil::lin` | 基盤 | LIN の Master と Slave、バスへのインターフェース、プロセス内の仮想 LIN バスで、仮想時間で使い、SIL Kit にも J1939 にも依存しません（ふつうは `Ecu::lin_master()` と `Ecu::lin_slave()` から使います）。 | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）、`vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）、`LinPort`、`VirtualLinBus`、`LinScheduleTable`、`validate_schedule()` | [internals/lin.md](internals/lin.md) |
@@ -226,7 +226,7 @@ flowchart LR
     run --> probe
 ```
 
-- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
+- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
 - ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
 - この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。

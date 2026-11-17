@@ -117,7 +117,7 @@ For what each target links (the dependency direction), follow the area-specific 
 
 | Target | Category | Description | Main types and features | Details |
 |---|---|---|---|---|
-| `vehicle_sil::sim_base` (header-only) | Foundation | Basic types and functions for virtual time. Used without SIL Kit. | `SimTime`, `SimDuration`, `StepInbox`, `periodic()`, `once_at()` | — |
+| `vehicle_sil::sim_base` (header-only) | Foundation | Basic types and functions for virtual time, and whether a registry URI is a loopback address. Used without SIL Kit. | `SimTime`, `SimDuration`, `StepInbox`, `periodic()`, `once_at()`, `is_loopback_registry_uri()` | — |
 | `vehicle_sil::core` | Foundation | Manages the SIL Kit participant, the lifecycle, the status of other participants and the virtual-time steps with RAII. Independent of protocols. | `vehicle_sil::ParticipantRuntime`, `SimulationController` (start, stop, pause, single-step and speed of virtual-time simulations), `TickScheduler`, `RealTimePacer`, `vehicle_sil::bind_host()` (connects a `step::Host` to the participant's steps), the `sim_base` types (`SimTime`, `StepInbox`) | [internals/core.md](internals/core.md) |
 | `vehicle_sil::step` | Foundation | Runs the protocol processing of one participant in steps. Independent of the bus type and of SIL Kit. | `Member` (one member of a step), `Host` (runs the `Member`s in stage order), `StepDriver` (virtual time), `RealTimeDriver` (real time), clocks (`SteadyRealTimeClock`, and `ManualRealTimeClock` for tests), `TimeDomain` (time domain) | The sections on the host and on driving in [internals/can.md](internals/can.md) |
 | `vehicle_sil::lin` | Foundation | LIN master and slave, the interface to the bus and an in-process virtual LIN bus. Used in virtual time. Independent of SIL Kit and J1939. You usually use it through `Ecu::lin_master()` and `Ecu::lin_slave()`. | `vehicle_sil::lin::LinMaster` (schedule tables, frames the master sends, master requests, go-to-sleep and wakeup), `vehicle_sil::lin::LinSlave` (responds with the values set in a step, slave responses, reception of the master's frames, sleep and wakeup), `LinPort`, `VirtualLinBus`, `LinScheduleTable`, `validate_schedule()` | [internals/lin.md](internals/lin.md) |
@@ -226,7 +226,7 @@ flowchart LR
     run --> probe
 ```
 
-- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
+- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `participant_configuration`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
 - What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (running the simulation) depends on both.
 - The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
 - One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.

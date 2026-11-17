@@ -202,7 +202,7 @@ A participant without the `DynamicSimulationStep` key has its step shrunk by SIL
 
 ### Listen address
 
-`is_loopback_registry_uri()` decides whether the address is a loopback address. These count as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names.
+`is_loopback_registry_uri()` decides whether the address is a loopback address. These count as loopback: `127.0.0.0/8` (in the numeric notations that `getaddrinfo()` reads), `::1`, `127.x.x.x` mapped to IPv6, and `localhost`. It does not resolve names. It is in `vehicle_sil/core/registry_uri.hpp` (header only, part of sim_base), so code that must not link SIL Kit can use it.
 
 On loopback, the participant listens on TCP port 0 of `127.0.0.1` or `::1`. On systems other than Windows, it also listens on a local-domain socket with a new name in the temporary directory.
 
