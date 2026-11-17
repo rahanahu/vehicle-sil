@@ -478,6 +478,7 @@ The launcher does not wait for a bridge with `required: false` in the configurat
 - vehicle-sil does not include the XL Driver Library. Give its location with `VEHICLE_SIL_VECTOR_XL_DIR`.
 - If it is not found, the build continues without the bridge. With `VEHICLE_SIL_REQUIRE_VECTOR_XL=ON`, the configure step fails instead.
 - The Linux build does not need the XL Driver Library.
+- The prebuilt tools archive does not include this bridge, because it cannot be built without the XL Driver Library (the archive has the Ethernet bridge only). Put the bridge you built, with `vxlapi64.dll`, next to `vehicle_sil_launch` or in a directory on `PATH`: `vehicle_sil_launch check --connect` and `run --connect` look there (see "[Connecting a network outside (`external`, `--connect`)](simulation-config.md#connecting-a-network-outside-external---connect)" in simulation-config.md).
 
 The [XL Driver Library](https://www.vector.com/) (`vxlapi.h` and `vxlapi64.lib`) is software of Vector Informatik GmbH and is not included in vehicle-sil. Get it from Vector and use it under Vector's license terms. In the build, give its location:
 

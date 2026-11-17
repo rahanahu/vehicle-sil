@@ -34,11 +34,11 @@ by `scripts/package.py tools`) contain, besides vehicle-sil itself (MIT,
 
 | Component | Where in the archive | License | License texts in the archive |
 |---|---|---|---|
-| Vector SIL Kit | linked statically into `bin/vehicle_sil_launch` | MIT | `licenses/sil-kit/LICENSE` |
-| asio, fmt, spdlog, and rapidyaml with what is amalgamated into it (c4core, fast_float, debugbreak and others), compiled into SIL Kit and `vehicle_sil_launch` | in `bin/vehicle_sil_launch` | BSL-1.0, MIT, MIT; rapidyaml and the rest as listed | `licenses/sil-kit/ThirdParty/` (`LICENSES.rst` lists them; `rapidyaml-notices.txt` holds the notices of the amalgamated header) |
+| Vector SIL Kit | linked statically into `bin/vehicle_sil_launch` and `bin/vehicle_sil_ethernet_bridge` | MIT | `licenses/sil-kit/LICENSE` |
+| asio, fmt, spdlog, and rapidyaml with what is amalgamated into it (c4core, fast_float, debugbreak and others), compiled into SIL Kit and `vehicle_sil_launch` | in `bin/vehicle_sil_launch` and `bin/vehicle_sil_ethernet_bridge` | BSL-1.0, MIT, MIT; rapidyaml and the rest as listed | `licenses/sil-kit/ThirdParty/` (`LICENSES.rst` lists them; `rapidyaml-notices.txt` holds the notices of the amalgamated header) |
 | gRPC and what it compiles in (Protocol Buffers, utf8_range, abseil, re2, c-ares, BoringSSL, zlib, address_sorting, xxhash), built from source at the pinned version and linked statically (Linux and Windows) | `bin/vehicle_sil_launch` | Apache-2.0 (with gRPC's `NOTICE.txt`), BSD-3-Clause, MIT, Apache-2.0, BSD-3-Clause, MIT, Apache-2.0 (with some older OpenSSL and ISC terms), zlib, BSD-3-Clause, BSD-2-Clause | `licenses/grpc/` |
-| The GCC runtime (libstdc++, libgcc), linked statically | `bin/vehicle_sil_launch` | GPL-3.0 with the GCC Runtime Library Exception | Linux: none required; Windows: `licenses/msys2/gcc/` |
-| Windows: winpthreads and the mingw-w64 C runtime and start-up code, linked statically (in every MinGW executable) | `bin/vehicle_sil_launch.exe` | winpthreads: MIT and BSD style; mingw-w64 runtime: as its COPYING files state | `licenses/msys2/` (`PACKAGES.txt` names the package of each part) |
+| The GCC runtime (libstdc++, libgcc), linked statically | `bin/vehicle_sil_launch`, `bin/vehicle_sil_ethernet_bridge` | GPL-3.0 with the GCC Runtime Library Exception | Linux: none required; Windows: `licenses/msys2/gcc/` |
+| Windows: winpthreads and the mingw-w64 C runtime and start-up code, linked statically (in every MinGW executable) | `bin/vehicle_sil_launch.exe`, `bin/vehicle_sil_ethernet_bridge.exe` | winpthreads: MIT and BSD style; mingw-w64 runtime: as its COPYING files state | `licenses/msys2/` (`PACKAGES.txt` names the package of each part) |
 | The browser GUI's screen: Angular, Angular CDK and Material, RxJS, tslib | `python/vehicle_sil_gui/web/` | MIT, Apache-2.0 (RxJS), 0BSD (tslib) | `licenses/web/3rdpartylicenses.txt` (written by the screen's build) |
 
 Not in the archives: the Python packages of the GUI server and of the Control
@@ -46,3 +46,7 @@ API client (aiohttp and its dependencies, PyYAML, grpcio, protobuf).
 `python/requirements.txt` pins them with hashes, and uv or pip installs them
 from PyPI. The gRPC stubs in `python/vehicle_sil_control/_generated` are
 generated from vehicle-sil's own `proto/` files.
+
+Not in the archives either: the pcap library that `vehicle_sil_ethernet_bridge`
+loads at run time for its `npcap` and `pcap` backends (Npcap on Windows, libpcap
+on Linux). The user installs it; the bridge links none of its code.

@@ -142,12 +142,15 @@ UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\m
 | 入っているもの | 補足 |
 |---|---|
 | `vehicle_sil_launch` | Control Server つきです。 |
+| `vehicle_sil_ethernet_bridge` | Ethernet のブリッジです（[ethernet-bridge.md](ethernet-bridge.md)）。`vehicle_sil_launch` の隣にあり、`vehicle_sil_launch run --connect` がそこで見つけます。`npcap`（Windows）と `pcap`（Linux）のバックエンドには Npcap か libpcap が要ります。アーカイブには入っていないので、自分でインストールします。 |
 | GUI サーバーと画面 | — |
 | Control API の Python クライアント | gRPC のスタブつきです。 |
 | GUI のクライアントのライブラリ | 1 つの ES モジュールと、型つきの npm のパッケージです。 |
 | 自分の画面のテンプレート（`gui_starter/`） | `vehicle-sil-gui --web gui_starter simulation.yaml` で使います。 |
 | ダッシュボードの JSON Schema | — |
 | ライセンスの表示 | — |
+
+Vector XL の CAN のブリッジはアーカイブに入っていません。Vector の XL Driver Library がないとビルドできないためです（[bridges.md](bridges.md) の「ビルド」）。
 
 ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<version>.tgz` を `npm install <その URL かファイル>` でインストールします。クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[gui.md](gui.md) の「自分の画面を作る」）。同じファイルが、ツールのアーカイブの `client/` にも入っています。
 

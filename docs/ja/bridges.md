@@ -478,6 +478,7 @@ VN5620 の XL ドライバは、チャネルを有効にしたままでは、バ
 - XL Driver Library は vehicle-sil に含めません。`VEHICLE_SIL_VECTOR_XL_DIR` で場所を指定します。
 - 見つからない場合は、ブリッジをビルドせずに続けます。`VEHICLE_SIL_REQUIRE_VECTOR_XL=ON` を指定すると、その場合に configure を失敗させます。
 - Linux のビルドに XL Driver Library は不要です。
+- ビルド済みのツールのアーカイブには、このブリッジは入っていません。XL Driver Library がないとビルドできないためです（アーカイブにあるのは Ethernet のブリッジだけです）。ビルドしたブリッジを `vxlapi64.dll` といっしょに、`vehicle_sil_launch` の隣か `PATH` の通ったディレクトリに置きます。`vehicle_sil_launch check --connect` と `run --connect` は、そこを探します（[simulation-config.md](simulation-config.md) の「ネットワークを外につなぐ（`external`、`--connect`）」）。
 
 [XL Driver Library](https://www.vector.com/)（`vxlapi.h` と `vxlapi64.lib`）は Vector Informatik GmbH のソフトウェアで、vehicle-sil には含まれていません。利用者が Vector から入手し、Vector のライセンス条件に従って使います。ビルドでは、その場所を指定します。
 
