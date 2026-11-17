@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Show where a change piles onto source files that are large, busy, or touched by other work. Advice only.
 
-  scripts/hotspots.py PATH...   before the work: the files you plan to touch (HEAD is what the work builds on)
+  scripts/hotspots.py PATH...   before the work: the files you plan to touch (HEAD is what the work builds on); the
+                                paths are relative to the repository root, whatever the current directory is
   scripts/hotspots.py           the files that the current branch, and its uncommitted work, changed
 
 This is an optional aid for a person or an AI agent. It does not judge the design, fails nothing and asks for no
-extra step: a file with "attention" is a hint to check where a new responsibility belongs (AGENTS.md, "Before you
-change code"), not a request to split it.
+extra step: a file with "attention" is a hint to look at where the change goes and who else is changing the file
+(AGENTS.md, "Before you change code"), not a request to split it.
 
 Signals per source file (.cpp, .hpp, .py, .ts; the recordings and examples of the GUI are left out):
   size      1,500 lines or more at HEAD (--size-lines)
@@ -18,10 +19,11 @@ Signals per source file (.cpp, .hpp, .py, .ts; the recordings and examples of th
 "attention" = size with stack or parallel. Size alone, and size with churn, are shown as information.
 
 Observed refs: the local branches, the registered work trees and, if `gh` answers within --gh-timeout seconds, the
-pull requests. What it could not observe is printed on the "observed:" line, and "parallel: none" always reads "among
-observed refs": other computers, other clones and unpushed work are never seen. A branch without a known pull request,
-and a branch whose merge status is unknown, is listed as "unconfirmed" and not counted. Merged (also squash-merged),
-closed and stale (no commit for --stale-days) refs are not counted.
+pull requests. What it could not observe is printed on the "observed:" line, and "none" always reads "among observed
+refs": other computers, other clones and unpushed work are never seen. A branch without a known pull request, and a
+branch whose merge status is unknown, is listed as "unconfirmed" and is not counted as parallel work (a lower layer of
+your own work counts as stack even then). Merged (also squash-merged) and closed refs, and stale ones (no commit for
+--stale-days), are not counted as parallel work. A path that is not in HEAD is named (a new file, or a wrong path).
 
 Known limits: it does not see a wrong responsibility, a duplicate reading of the same data or a small file that
 grows; renames and splits are followed only by git's rename detection; the dates of commits are approximate (merges
@@ -48,6 +50,7 @@ SOURCE_SUFFIXES = (".cpp", ".hpp", ".py", ".ts")
 EXCLUDED_PREFIXES = ("gui/server/tests/recordings/", "gui/protocol/examples/")
 GH_COMMAND = ["gh"]  # the tests replace it
 GH_FIELDS = "number,state,mergedAt,baseRefName,headRefName,headRefOid"
+PR_KEYS = set(GH_FIELDS.split(","))
 NUMSTAT = re.compile(r"^(\d+|-)\t(\d+|-)\t(.*)$")
 
 
@@ -145,6 +148,8 @@ class Observation:
             if out.returncode != 0:
                 raise RuntimeError(out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "failed")
             raw = json.loads(out.stdout)
+            if not isinstance(raw, list) or not all(isinstance(i, dict) and PR_KEYS <= i.keys() for i in raw):
+                raise RuntimeError("unexpected output")
             self.pr_source = "gh"
             if len(raw) >= self.args.gh_limit:
                 self.notes.append(f"PR list cut at {self.args.gh_limit}: older PRs not observed")
@@ -329,7 +334,7 @@ def analyse(args: argparse.Namespace) -> dict:
     return {
         "base": {"name": base_name, "sha": base}, "head": {"sha": head},
         "mode": "paths" if args.paths else "changes",
-        "files": files, "excluded_files": targets["excluded"],
+        "files": files, "excluded_files": targets["excluded"], "not_at_head": targets["not_at_head"],
         "attention": [f["path"] for f in files if f["attention"]],
         "large_busy": [f["path"] for f in files if f["large_and_busy"]],
         "layers": layer_info(refs),
@@ -461,7 +466,8 @@ def target_files(git: Git, args, head: str, own: dict) -> dict:
         paths = sorted(own)
     paths = list(dict.fromkeys(paths))
     return {"source": [p for p in paths if is_source(p)],
-            "excluded": [p for p in paths if p.endswith(SOURCE_SUFFIXES) and not is_source(p)]}
+            "excluded": [p for p in paths if p.endswith(SOURCE_SUFFIXES) and not is_source(p)],
+            "not_at_head": [p for p in paths if args.paths and not git.run("ls-tree", "--name-only", head, "--", p, check=False).strip()]}
 
 
 def file_signals(git, obs, args, base, head, refs, worktrees, own, path) -> dict:
@@ -542,11 +548,15 @@ def render(result: dict) -> tuple[str, str]:
     lines += [file_line(f, qualifier) for f in ranked[:result["top"]]]
     if len(ranked) > result["top"]:
         lines.append(f"  +{len(ranked) - result['top']} more file(s) with a signal (see the log)")
+    if result["not_at_head"]:
+        lines.append("not in HEAD (a new file, or a path that is not relative to the repository root): "
+                     + ", ".join(result["not_at_head"]))
     quiet = len(result["files"]) - len(sig)
     if quiet:
         lines.append(f"  {quiet} file(s) with no signal among observed refs")
-    lines.append("attention (size with stack or parallel; a hint to check placement, not a requirement): "
-                 + (", ".join(result["attention"]) or "none"))
+    lines.append("attention (size with stack or parallel; a hint to look at where the change goes and who else changes "
+                 "the file, not a requirement): "
+                 + (", ".join(result["attention"]) or "none" + (" among observed refs (see observed)" if qualifier else "")))
     if result["large_busy"]:
         lines.append("large and busy, information only: " + ", ".join(result["large_busy"]))
     layers = result["layers"]

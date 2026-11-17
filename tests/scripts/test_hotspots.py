@@ -91,7 +91,10 @@ class HotspotsTest(unittest.TestCase):
         if prs is not None:
             manifest = self.tmp / "prs.json"
             manifest.write_text(json.dumps(prs), encoding="utf-8")
-            gh_code = f"import sys; sys.stdout.write(open({str(manifest)!r}).read())"
+            gh_code = ("import sys; a = sys.argv[1:]; "
+                       "assert a[:4] == ['pr', 'list', '--state', 'all'] and '--limit' in a "
+                       f"and a[a.index('--json') + 1] == {hotspots.GH_FIELDS!r}, a; "
+                       f"sys.stdout.write(open({str(manifest)!r}).read())")
         parsed = hotspots.build_parser().parse_args(argv)
         with self.fake_gh(gh_code or "raise SystemExit(1)"):
             result = hotspots.analyse(parsed)
@@ -339,6 +342,82 @@ class HotspotsTest(unittest.TestCase):
         self.repo.commit({"f.cpp": lines(10)})
         _, text = self.run_tool("f.cpp", "--gh-limit", "0", prs=[])
         self.assertIn("PR list cut at 0", text)
+
+    def test_directories_are_expanded_headers_count_and_gui_examples_are_left_out(self):
+        self.repo.commit({"libs/a/big.hpp": lines(1600), "libs/a/note.md": "n\n", "libs/b/x.cpp": lines(3),
+                          "gui/protocol/examples/e.ts": lines(3)}, date=iso(9))
+        data, _ = self.run_tool("libs", "gui")
+        self.assertEqual(sorted(f["path"] for f in data["files"]), ["libs/a/big.hpp", "libs/b/x.cpp"])
+        self.assertEqual(self.file(data, "libs/a/big.hpp")["signals"], ["size"])
+        self.assertEqual(data["excluded_files"], ["gui/protocol/examples/e.ts"])
+
+    def test_a_path_that_is_not_in_head_is_named(self):
+        self.repo.commit({"libs/a/x.cpp": lines(3)})
+        data, text = self.run_tool("libs/lunch", "a/x.cpp")
+        self.assertEqual(data["not_at_head"], ["libs/lunch", "a/x.cpp"])
+        self.assertIn("not in HEAD (a new file, or a path that is not relative to the repository root): libs/lunch, a/x.cpp", text)
+
+    def test_the_summary_ends_with_what_was_not_observed_and_says_none_only_among_observed_refs(self):
+        self.repo.commit({"f.cpp": lines(1600)}, date=iso(9))
+        _, text = self.run_tool("f.cpp")
+        self.assertIn("attention (size with stack or parallel; a hint to look at where the change goes and who else changes the file, "
+                      "not a requirement): none among observed refs (see observed)", text)
+        last = text.splitlines()[-1]
+        self.assertTrue(last.startswith("observed: ") and last.endswith("other clones and unpushed work are never observed"), last)
+
+    def test_attention_does_not_change_the_exit_code_and_the_log_is_written(self):
+        self.repo.commit({"f.cpp": lines(1600)}, date=iso(9))
+        a = self.repo.commit({"f.cpp": lines(1601)}, branch="a", date=iso(1), start="main")
+        self.repo.commit({"f.cpp": lines(1602)}, branch="b", date=iso(1), start="main")
+        manifest = self.tmp / "prs.json"
+        manifest.write_text(json.dumps([pr(1, "a", a)]), encoding="utf-8")
+        out = io.StringIO()
+        with self.fake_gh(f"import sys; sys.stdout.write(open({str(manifest)!r}).read())"), contextlib.redirect_stdout(out):
+            rc = hotspots.main(["--repo", str(self.repo.root), "--base", "main", "--log", str(self.tmp / "h.log"), "f.cpp"])
+        self.assertEqual(rc, 0)
+        self.assertIn("attention (size with stack or parallel; a hint to look at where the change goes and who else changes the file, "
+                      "not a requirement): f.cpp", out.getvalue())
+        self.assertIn("PRs: 1 from gh", (self.tmp / "h.log").read_text(encoding="utf-8"))
+
+    def test_untracked_files_of_another_worktree_count_also_in_a_new_directory_and_no_lock_is_taken(self):
+        self.repo.commit({"f.cpp": lines(10)}, date=iso(9))
+        self.repo.git("branch", "other")
+        other = self.tmp / "other"
+        self.repo.git("worktree", "add", "-q", str(other), "other")
+        (other / "newdir").mkdir()
+        (other / "newdir" / "new.cpp").write_text(lines(5), encoding="utf-8")  # a new file in a new directory
+        real_run = subprocess.run
+        statuses = []
+
+        def recording_run(argv, *args, **kwargs):
+            if "status" in argv:
+                statuses.append(list(argv))
+            return real_run(argv, *args, **kwargs)
+
+        with unittest.mock.patch.object(hotspots.subprocess, "run", recording_run):
+            data, _ = self.run_tool("newdir/new.cpp", prs=[])
+        self.assertEqual([e["ref"] for e in self.file(data, "newdir/new.cpp")["parallel"]], ["other (worktree)"])
+        self.assertTrue(statuses and all("--no-optional-locks" in argv for argv in statuses), statuses)
+
+    def test_a_ref_counts_as_merged_only_if_all_its_files_are_in_the_base(self):
+        self.repo.commit({"f.cpp": lines(10), "g.cpp": lines(10)}, date=iso(9))
+        self.repo.commit({"f.cpp": lines(11), "g.cpp": lines(11)}, branch="topic", date=iso(1), start="main")
+        self.repo.commit({"f.cpp": lines(11), "g.cpp": lines(12)}, branch="main", start="main", date=iso(0.5))  # g.cpp differs
+        self.repo.commit({"f.cpp": lines(13)}, branch="mine", date=iso(0.2))
+        data, _ = self.run_tool("f.cpp", "g.cpp")
+        self.assertEqual([e["ref"] for e in self.file(data, "f.cpp")["maybe_parallel"]], ["topic"])
+        self.assertIn("0 merged", data["observed"])
+
+    def test_gh_output_of_an_unexpected_shape_is_not_observed_and_does_not_fail(self):
+        self.repo.commit({"f.cpp": lines(1600)})
+        for output in ('{"message": "rate limited"}', "null", '[{"number": 1}]', '["x"]'):
+            _, text = self.run_tool("f.cpp", gh_code=f"print({output!r})")
+            self.assertIn("open PRs not observed (gh failed: unexpected output)", text, output)
+
+    def test_the_defaults_keep_the_run_short_and_the_thresholds(self):
+        args = hotspots.build_parser().parse_args([])
+        self.assertLessEqual(args.gh_timeout, 2.0)
+        self.assertEqual((args.size_lines, args.churn_commits, args.churn_days), (1500, 5, 7))
 
     def test_split_rename(self):
         self.assertEqual(hotspots.split_rename("a/b.cpp"), (None, "a/b.cpp"))

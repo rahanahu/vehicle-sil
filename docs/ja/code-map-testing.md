@@ -58,10 +58,10 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 |---|---|
 | どの変更でも（既定） | 1 つのプリセットと、触ったもののテスト: `scripts/verify.py linux-gcc-debug --tests '<正規表現>'` |
 | 並行性、スレッド、時間 | 同じテストを `linux-clang-tsan` でも |
-| 多くのターゲットが含む公開ヘッダーやテンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする |
-| ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^schema\.`、`^template\.`（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
-| GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `linux-gcc-control` をビルドして `^control` のテストを実行し、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
-| ブラウザ GUI だけ | `scripts/verify-web.py`（1 つの分野だけは `--e2e-grep`） |
+| 多くのターゲットが含む公開ヘッダーや、クラス・関数テンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする: `cmake --build --preset linux-clang-tsan --target <target>` |
+| ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^multi_host\.`、`^schema\.`、`^template\.`（ECU のプロジェクトテンプレート）。ドキュメントと照合します（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
+| GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `scripts/verify.py linux-gcc-control --tests '^control'`、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
+| ブラウザ GUI だけ | `scripts/verify-web.py --skip-install`（`--e2e-grep <パターン>` は、名前が一致する e2e テストだけを実行） |
 | ドキュメントだけ | `scripts/check-docs.py` |
 | スクリプトだけ | `python3 tests/scripts/test_<name>.py` |
 
