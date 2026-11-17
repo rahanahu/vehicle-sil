@@ -7,6 +7,7 @@
 
 #include "check_format.hpp"
 #include "check_words.hpp"
+#include "exit_codes.hpp"
 #include "run_format.hpp"
 #include "run_words.hpp"
 
@@ -452,18 +453,7 @@ TestResult TestReport::result() const
     return failed ? TestResult::Failed : TestResult::Passed;
 }
 
-int TestReport::exit_code() const
-{
-    switch (result())
-    {
-    case TestResult::Passed: return 0;
-    case TestResult::Failed: return 1;
-    case TestResult::Unreadable: return 3;
-    case TestResult::Usage: return 4;
-    case TestResult::Interrupted: return kExitInterrupted;
-    }
-    return 1;
-}
+int TestReport::exit_code() const { return exit_code_of(result()); }
 
 TestReport test_file(const std::filesystem::path& path, const std::string& shown_as, const TestOptions& options)
 {

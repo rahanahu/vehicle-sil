@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// What a run's outcome means: the findings (assess_run()), the result and the exit code. Pure
-// functions of the configuration and the RunOutcome: no state, no thread, no lock.
+// What a run's outcome means: the findings (assess_run()). Pure functions of the configuration and
+// the RunOutcome: no state, no thread, no lock. The counts, the result and the exit code of the
+// report are in run_report.cpp.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "check_words.hpp"
@@ -198,12 +199,6 @@ std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
             bridge->line, bridge->name, o.network});
     }
     return out;
-}
-
-std::size_t count(const std::vector<Finding>& findings, Severity severity)
-{
-    return static_cast<std::size_t>(
-        std::count_if(findings.begin(), findings.end(), [severity](const Finding& f) { return f.severity == severity; }));
 }
 
 } // namespace
@@ -598,55 +593,6 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
         out.push_back(std::move(f));
     }
     return out;
-}
-
-std::size_t RunReport::errors() const { return check.errors() + count(findings, Severity::Error); }
-std::size_t RunReport::warnings() const { return check.warnings() + count(findings, Severity::Warning); }
-std::size_t RunReport::notes() const { return check.notes() + count(findings, Severity::Note); }
-
-RunResult RunReport::result() const
-{
-    if (usage || check.usage)
-    {
-        return RunResult::Usage;
-    }
-    if (!check.config)
-    {
-        return RunResult::Unreadable;
-    }
-    if (!run)
-    {
-        return RunResult::CheckFailed;
-    }
-    if (!run->interrupted_by.empty())
-    {
-        return RunResult::Interrupted;
-    }
-    if (!run->setup_error.empty())
-    {
-        return RunResult::SetupFailed;
-    }
-    const bool ended = run->simulation == SimulationEnd::ReachedStopAt || run->simulation == SimulationEnd::Ended;
-    if (!ended || errors() > 0 || (strict && warnings() > 0))
-    {
-        return RunResult::Failed;
-    }
-    return RunResult::Passed;
-}
-
-int RunReport::exit_code() const
-{
-    switch (result())
-    {
-    case RunResult::Passed: return 0;
-    case RunResult::Failed:
-    case RunResult::CheckFailed: return 1;
-    case RunResult::Unreadable:
-    case RunResult::SetupFailed: return 3;
-    case RunResult::Usage: return 4;
-    case RunResult::Interrupted: return kExitInterrupted;
-    }
-    return 1;
 }
 
 } // namespace vehicle_sil::launch
