@@ -48,6 +48,7 @@ Scripts for development and CI. For the list, see "Verification and scripts" in 
 | `tests/scripts/test_job_summary.py` | `scripts/job_summary.py`: what it writes to the Summary of a GitHub Actions job, and when it writes nothing |
 | `tests/scripts/test_check_docs.py` | `scripts/check-docs.py`: pairs of English and Japanese pages (headings, code blocks, links), pages without an English edition yet |
 | `tests/scripts/test_verify.py` | `scripts/verify.py --summarize`: the lines of a failing test's output in the summary (the first lines, then the lines further down that say FAIL or Error) |
+| `tests/scripts/test_hotspots.py` | `scripts/hotspots.py`: the signals (size, churn, stack, parallel), what counts as a lower layer and as independent work, what is left out (merged, closed, stale), what it says it could not observe, and a failing or hanging `gh` (the test is not run on Windows) |
 | `tests/template/test_get_tools.py` | `package.py template`, `version` |
 
 - `ctest -R`: `^template\.get_tools`, `^scripts\.`
