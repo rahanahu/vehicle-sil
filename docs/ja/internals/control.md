@@ -827,6 +827,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 ### 起動と終了の時期
 
 - 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。
+- Hub は実行が作り、`std::shared_ptr` で `serve_control` に渡します。Server がそれを持ち続けるので、Hub は実行と Server の両方が手放すまで生きています。
 - Server を起動できなければ、何も起動しません（`setup`）。
 - 閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
 

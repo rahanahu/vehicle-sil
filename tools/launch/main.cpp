@@ -86,6 +86,7 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
     "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
+    "                                [--time-policy realtime|free]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
@@ -94,9 +95,10 @@ constexpr const char* kUsage =
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]...\n"
+    "                              [--time-policy realtime|free]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
-    "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]\n"
     "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>...\n"
     "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
@@ -169,6 +171,12 @@ constexpr const char* kUsage =
     "                              network's bridge (next to vehicle_sil_launch or on PATH) and asks it --describe;\n"
     "                              run starts it before the other participants (as bridge.<network>) and fails if\n"
     "                              it ends. Repeatable, each network once\n"
+    "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by\n"
+    "                              an enabled participant with role: bridge). realtime (the default): it goes at\n"
+    "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the\n"
+    "                              error outside-real-time. free: the speed and the time are yours to change as\n"
+    "                              in any run; the bridge still carries frames both ways, so what is connected\n"
+    "                              there sees the simulation pause or run ahead. No effect on other runs\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -827,7 +835,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" || a == "--connect" ||
-                 a == "--network" ||
+                 a == "--network" || a == "--time-policy" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -929,6 +937,17 @@ Common common(const cli::Args& args, const std::string& command)
     if (!c.options.connect.empty())
     {
         c.options.tool_directory = process::current_executable().parent_path();
+    }
+    if (args.has("time-policy"))
+    {
+        const std::optional<launch::TimePolicy> policy = launch::time_policy_named(args.str("time-policy", ""));
+        if (!policy)
+        {
+            throw cli::UsageError("--time-policy must be realtime (a run that is connected outside the simulation goes at "
+                                  "speed 1; the default) or free (its speed and time can be changed), not '" +
+                                  args.str("time-policy", "") + "'");
+        }
+        c.options.time_policy = *policy;
     }
     if (args.has("scenario"))
     {
@@ -1095,9 +1114,8 @@ int run(const cli::Args& args, launch::EventStream* events)
         options.start_paused = true;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // The hub of the control server (the run has one of its own otherwise); before the server, so
-    // that it goes after it.
-    control::Hub hub;
+    // The control server serves the run's hub, which the run makes and gives it when it starts it
+    // (RunOptions::serve_control); the server keeps the hub from then on.
     std::unique_ptr<launch_cli::LauncherControlServer> server;
 #endif
     watch_interrupts();
@@ -1143,8 +1161,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch_cli::make_control_server(a, std::move(hooks));
-        options.hub = &hub;
-        options.serve_control = [&server](control::Hub& h) { return server->start(h); };
+        options.serve_control = [&server](const std::shared_ptr<control::Hub>& hub) { return server->start(hub); };
     }
 #endif
     if (args.flag("stdin-commands"))
@@ -1152,9 +1169,6 @@ int run(const cli::Args& args, launch::EventStream* events)
         start_reading_commands();
     }
     options.interrupt_name = interrupt_name;
-    // --connect: the check judges the time by what this run does.
-    options.check.run_speed = options.speed;
-    options.check.start_paused = options.start_paused;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
@@ -1174,7 +1188,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (report.run && report.run->connection_not_closed_ms)
     {
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-        server.reset(); // its audit log is complete; the hub stays
+        server.reset(); // its audit log is complete; the hub stays, with the thread that was left closing
 #endif
         end_process_at_once(code);
     }
@@ -1235,8 +1249,8 @@ int test(const cli::Args& args)
     }
     if (args.has("connect"))
     {
-        throw cli::UsageError("--connect is not for test: test runs each scenario as fast as possible, and a real bus does "
-                              "not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
+        throw cli::UsageError("--connect is not for test: test is made for runs that go as fast as possible, one after the "
+                              "other, and a real bus does not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
                               "run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>");
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
@@ -1246,7 +1260,8 @@ int test(const cli::Args& args)
         {
             throw cli::UsageError("--" + std::string(runOnly) +
                                   " is for run, not for test (which runs one simulation after the other, each as fast as "
-                                  "possible): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
+                                  "possible, or at speed 1 if a role: bridge participant connects it outside the "
+                                  "simulation): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
         }
     }
     const Common c = common(args, "test");
@@ -1282,7 +1297,10 @@ int test(const cli::Args& args)
         return usage_error(list.errors, json, Command::Test, c.file, nullptr);
     }
     options.scenarios = std::move(list.scenarios);
-    options.run.speed.emplace(std::optional<double>{}); // as fast as possible, whatever the file says
+    // As fast as possible, whatever the file says (at speed 1 with the time lock): a default, not
+    // a speed the user asked for, which the check would refuse with the time lock.
+    options.run.speed.emplace(std::optional<double>{});
+    options.run.check.fastest_by_default = true;
     watch_interrupts();
     options.run.write_line = write_stderr_line;
     options.run.stops = &g_stops;
@@ -1414,13 +1432,14 @@ int main(int argc, char** argv)
             isConnections ? cli::Args(arguments, {"network", "variant"}, {"json"})
             : isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
-                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"},
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline",
+                                "time-policy"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios", "connect"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
                                 "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
-                                "timeline"},
+                                "timeline", "time-policy"},
                                {"json", "strict", "events", "stdin-commands", "start-paused"},
                                {"disable", "enable", "manual", "param", "connect"});
         if (args.positionals().empty())

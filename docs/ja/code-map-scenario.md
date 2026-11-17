@@ -216,7 +216,7 @@
 | `test_file()` | 組ごとに `run_file()` を呼ぶ |
 | `format_test_text()` | 1 組だけを実行し直すコマンドに並べる引数は `TestArguments` |
 | `format_test_json()` | `kTestFormat` |
-| `TestReport::remarks()` | `test` 全体の指摘 `test-nothing-run`、`test-runs-left` |
+| `TestReport::remarks()` | `test` 全体の指摘 `test-nothing-run`、`test-runs-left`、`test-speed-set` |
 | `TestReport::result()` | 結果と終了コード |
 | `ScenarioCheck::not_for_variant` | `only` に合わない組を `skipped` にする |
 | `CheckOptions::params_for_many` | `--param` の検査を緩める |

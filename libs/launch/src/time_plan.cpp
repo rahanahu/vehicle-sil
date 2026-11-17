@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
 // The step of the launcher's controller (plan_time_step()) and the warning about a step that is
-// coarser than the ECUs' (coarse_time_step()). See time_plan.hpp.
+// coarser than the ECUs' (coarse_time_step()); the time lock of a run that is connected outside
+// the simulation (time_lock(), planned_speed(), time_lock_findings()). See time_plan.hpp.
 #include "vehicle_sil/launch/time_plan.hpp"
+
+#include "vehicle_sil/launch/check.hpp"
 
 #include "check_words.hpp"
 #include "seen_ecu.hpp"
@@ -10,14 +13,187 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <numeric>
 #include <string>
 #include <vector>
 
 namespace vehicle_sil::launch {
 
+using detail::and_list;
 using detail::kNanosPerMilli;
 using detail::millis_text;
+
+const char* to_string(TimePolicy policy)
+{
+    return policy == TimePolicy::Free ? "free" : "realtime";
+}
+
+std::optional<TimePolicy> time_policy_named(std::string_view name) noexcept
+{
+    if (name == "realtime")
+    {
+        return TimePolicy::Realtime;
+    }
+    if (name == "free")
+    {
+        return TimePolicy::Free;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> TimeLock::because() const
+{
+    std::vector<std::string> out = connected;
+    out.insert(out.end(), bridges.begin(), bridges.end());
+    return out;
+}
+
+TimeLock time_lock(const SimulationConfig& config, std::span<const ConnectRequest> connect, TimePolicy policy)
+{
+    TimeLock lock;
+    for (const ConnectRequest& request : connect)
+    {
+        if (request.target != kNoTarget)
+        {
+            lock.connected.push_back(request.network);
+        }
+    }
+    for (const ParticipantConfig& p : config.participants)
+    {
+        if (p.enabled && p.role == ParticipantRole::Bridge)
+        {
+            lock.bridges.push_back(p.name);
+        }
+    }
+    lock.locked = policy == TimePolicy::Realtime && (!lock.connected.empty() || !lock.bridges.empty());
+    return lock;
+}
+
+std::optional<double> planned_speed(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
+                                    const std::optional<double>& otherwise)
+{
+    if (lock.locked)
+    {
+        return 1.0;
+    }
+    return asked ? *asked : otherwise;
+}
+
+namespace {
+
+/// "--connect connects CAN1 to a real bus", "participant 'Gateway' is a bridge (role: bridge)", or both.
+std::string connected_outside(const TimeLock& lock)
+{
+    std::string out;
+    if (!lock.connected.empty())
+    {
+        out = "--connect connects " + and_list(lock.connected) + " to a real bus";
+    }
+    if (!lock.bridges.empty())
+    {
+        std::vector<std::string> quoted;
+        for (const std::string& name : lock.bridges)
+        {
+            quoted.push_back("'" + name + "'");
+        }
+        out += out.empty() ? "" : ", and ";
+        out += (quoted.size() == 1 ? "participant " + quoted.front() + " is a bridge" : "participants " + and_list(quoted) + " are bridges") +
+               std::string(" (role: bridge) to something outside the simulation");
+    }
+    return out;
+}
+
+/// How to run on SIL Kit only: "without --connect", "with --disable Gateway --disable Tap", or
+/// both ("without --connect and with --disable Gateway": it takes both).
+std::string not_connected(const TimeLock& lock)
+{
+    std::string out = lock.connected.empty() ? "" : "without --connect";
+    for (std::size_t i = 0; i < lock.bridges.size(); ++i)
+    {
+        out += (i > 0 ? " --disable " : out.empty() ? "with --disable " : " and with --disable ") + lock.bridges[i];
+    }
+    return out;
+}
+
+constexpr const char* kFreeCarries = "the bridge still carries frames both ways";
+
+} // namespace
+
+std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optional<std::optional<double>>& asked,
+                                        const std::optional<double>& otherwise, bool start_paused)
+{
+    std::vector<Finding> out;
+    if (lock.connected.empty() && lock.bridges.empty())
+    {
+        return out;
+    }
+    const std::string what = connected_outside(lock);
+    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real time (" +
+                               std::string(kFreeCarries) + ")";
+    const std::optional<double> unlocked = asked ? *asked : otherwise;
+    const bool realTime = unlocked == std::optional<double>(1.0);
+    if (lock.locked)
+    {
+        if (asked && !realTime)
+        {
+            out.push_back(Finding{Severity::Error, "outside-real-time",
+                                  what + ", which does not wait for the virtual time, so the run goes at speed 1: --speed " +
+                                      speed_text(*asked) +
+                                      " is refused. Leave --speed out; to go at another speed, run " + not_connected(lock) +
+                                      ", or " + freely,
+                                  0, "", ""});
+        }
+        if (!asked && !realTime)
+        {
+            out.push_back(Finding{Severity::Note, "outside-speed-set",
+                                  what + ", which does not wait for the virtual time: the run goes at speed 1 (real time), not " +
+                                      (otherwise ? "at the speed " + speed_text(otherwise) + " of the file"
+                                                 : std::string("as fast as possible")) +
+                                      ". To go at another speed, run " + not_connected(lock) + ", or " + freely,
+                                  0, "", ""});
+        }
+        if (start_paused)
+        {
+            out.push_back(Finding{Severity::Error, "outside-real-time",
+                                  what + ", which does not stand still: --start-paused is refused. To stop the simulation "
+                                         "and look at it, run " +
+                                      not_connected(lock) + ", or " + freely,
+                                  0, "", ""});
+        }
+        return out;
+    }
+    if (!realTime)
+    {
+        std::string runs;
+        if (asked)
+        {
+            runs = unlocked ? "--speed " + speed_text(unlocked) + " runs the simulation at that speed"
+                            : std::string("--speed max runs the simulation as fast as possible");
+        }
+        else
+        {
+            runs = unlocked ? "the simulation runs at the speed " + speed_text(unlocked) + " of the file"
+                            : std::string("the simulation runs as fast as possible");
+        }
+        out.push_back(Finding{Severity::Note, "outside-not-real-time",
+                              what + ", which does not wait for the virtual time, and with --time-policy free " + runs +
+                                  ": what is connected there gets the messages at the wrong times, and " + kFreeCarries +
+                                  ". To run in real time, leave --time-policy free" + (asked ? " and --speed" : "") + " out",
+                              0, "", ""});
+    }
+    if (start_paused)
+    {
+        out.push_back(Finding{Severity::Note, "outside-not-real-time",
+                              what + ", which does not stand still, and with --time-policy free --start-paused makes the "
+                                     "simulation wait before its first step: " +
+                                  kFreeCarries +
+                                  ", so frames from outside pile up while the simulation stands still. To run in "
+                                  "real time, leave --time-policy free and --start-paused out",
+                              0, "", ""});
+    }
+    return out;
+}
 
 std::optional<double> RunTiming::actual_speed() const
 {

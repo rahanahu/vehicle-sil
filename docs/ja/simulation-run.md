@@ -189,6 +189,8 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 合わせるために待つだけなので、いちばん遅い participant より速くはなりません。最速（`max`）では合わせず、遅れも数えません。
 
+シミュレーションの外につながる実行（`--connect`、または有効な `role: bridge` の participant）は、ここで指定した速さが何であっても、速さ 1 で動きます。`--time-policy free` を付ければ別です（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
+
 実時間で動く機器は、シミュレーションを待ちません。シミュレーションが実時間に遅れると、機器から見た結果が変わります。そのため、遅れを次の定義で数えて報告します。
 
 ### 遅れの定義
@@ -286,7 +288,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
 
-`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。実行は `connect-time-changed` を警告します（[バスを外につなぐ](#バスを外につなぐ--connect)）。
+`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。`--time-policy free` を付けなければ、`--start-paused` と 1 以外の `--speed` は断られます。命令が時間を変えると、実行は `connect-time-changed` を警告します（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## バスを外につなぐ（`--connect`）
 
@@ -320,7 +322,30 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 指摘の文は、ブリッジがどう終わったかと、ブリッジが理由を書いた行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行）を出します。強制終了されたブリッジと、そういう行を書かずに終わったブリッジでは、行を出しません（最後の行は `stopped` など、ほかのことだからです）。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
 
-実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
+実機のバスは仮想時間を待ちません。下の[外につながる実行の時間](#外につながる実行の時間--time-policy)を見てください。
+
+### 外につながる実行の時間（`--time-policy`）
+
+次のどちらかに当てはまる実行は、シミュレーションの外につながっています。
+
+- `--connect` でネットワークをつなぐ（先が `none` でないもの）。
+- ファイルに、有効な `role: bridge` の participant がいる（`describe: false` でも）。無効にした participant（`enabled: false`、`--disable`）は数えません。
+
+外につながる相手は仮想時間を待たないので、こういう実行は、既定で実時間を保ちます。`--time-policy` で選びます。
+
+| `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused` |
+|---|---|---|
+| `realtime`（既定） | ファイルの `speed` が何であっても 1 です。ファイルの速さが 1 でないとき（速さがないときも）、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません。 |
+| `free` | ほかの実行と同じです。`--speed`、なければファイルの `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
+
+- 外につながっていない実行では、`--time-policy` は何もしません。
+- `check`、`run`、`test` で使えます。`check` はファイルの `speed` で、`run` は `--speed` と `--start-paused` も見て判断します。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
+- `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。このとき `test` の表の後に、注記 `test-speed-set` を全体で 1 回書きます。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
+- `free` が変えるのは、時間を操作できるかどうかだけです。ブリッジは両方向にフレームを運び続けます。シミュレーションが止まっている間、外から来たフレームは溜まり、ECU がそれまでに送ったものは送られたままです。
+- 注記は、`--strict` でも実行を失敗にしません。
+- 自分で作った実時間の participant（ステップのない ECU や `role: test` の participant）は、実行を実時間に固定しません。
+
+実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。`--connect` のある実行では、受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。外とつなぐものが `role: bridge` の participant だけの実行には、この警告は出ません。
 
 ### 外のバスとやりとりしたフレームの数
 
@@ -341,7 +366,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
 ```
 
-バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。
+バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。`test` は、実行を 1 つずつ続けて最速で走らせるためのもので、実際のバスは仮想時間を待たないためです。
 
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
@@ -1312,6 +1337,10 @@ passed: 0 errors, 1 warning, 1 note
         "outside": null
       }
     ],
+    "time_lock": {
+      "locked": false,
+      "because": []
+    },
     "findings": []
   }
 }
@@ -1717,7 +1746,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 - `FAILED` が `--strict` で警告だけのときは、右の列は最初の警告です。
 - 機種のない設定ファイルでは、`variant` の列がありません。
 
-1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
+1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。コマンドには、`test` の実行と同じ `--speed max` が付きます。`role: bridge` の participant が外とつないでいるために速さ 1 で実行した組には付きません（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。`test` に `--time-policy free` を付けていれば、それも付きます。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
 
 最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です。`interrupted` と `not run` の数は、あるときだけ書きます。
 
@@ -1734,6 +1763,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 |---|---|---|
 | `test-nothing-run` | 警告 | 実行した組が 1 つもない（全部が `skipped`）ので、何も確認していない（`--strict` では失敗） |
 | `test-runs-left` | エラー | 中断されていないのに、実行しなかった組がある |
+| `test-speed-set` | 注記 | `role: bridge` の participant が外とつないでいるために、最速でなく速さ 1 で実行した組がある（`test` 全体で 1 回。最初のそういう組の注記 `outside-speed-set` の文を添える） |
 
 `test-runs-left` は、ある組の後でランチャー自身の SIL Kit の接続が閉じなかったときに出ます（その組の警告 `connection-not-closed`。[止め方](#止め方)）。このとき `test` は、同じプロセスで次のシミュレーションを始めずに終わっています。`not run` の組を、`--variant` と `--scenarios` で選んで実行し直します。
 
@@ -1767,7 +1797,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `scenarios` | 実行するシナリオ（表に出る名前、実行する順） |
 | `passed`、`failed`、`skipped`、`interrupted`、`not_run` | それぞれの結果の組の数 |
 | `runs[]` | 組ごとの結果（下の表）。実行する順 |
-| `findings[]` | 何も実行しなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の指摘（`test-nothing-run`、`test-runs-left`）。なければ空 |
+| `findings[]` | 何も実行しなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の指摘（`test-nothing-run`、`test-runs-left`、`test-speed-set`）。なければ空 |
 
 `findings[]` は、照合の `findings[]` と同じ形です。
 

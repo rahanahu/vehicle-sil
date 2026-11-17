@@ -9,6 +9,7 @@
 
 #include "check_words.hpp"
 #include "run_close.hpp"
+#include "run_connection.hpp"
 #include "run_notes.hpp"
 #include "run_start_limit.hpp"
 
@@ -508,6 +509,155 @@ TEST_CASE(a_close_that_does_not_end_is_left_before_the_limit_when_interrupted)
     CHECK(left && left->interrupted);
     CHECK(left && left->waited < 30s);
     CHECK(took < 30s);
+}
+
+namespace {
+
+/// What the parts of a connection note as they go (ConnectionOf with parts that do nothing else),
+/// and the latch that the transport's end waits for, as SIL Kit's may wait for a connection.
+struct Going
+{
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool open = true; ///< false: the transport does not go until it is set
+    std::vector<std::string> order;
+    bool hub_was_there = false; ///< when the transport went
+
+    void note(const std::string& part)
+    {
+        {
+            const std::lock_guard lock(mutex);
+            order.push_back(part);
+        }
+        changed.notify_all();
+    }
+    [[nodiscard]] std::vector<std::string> noted()
+    {
+        const std::lock_guard lock(mutex);
+        return order;
+    }
+};
+
+struct NotedHub
+{
+    explicit NotedHub(std::shared_ptr<Going> g) : going(std::move(g)) {}
+    ~NotedHub() { going->note("hub"); }
+    std::shared_ptr<Going> going;
+};
+
+struct NotedRegistry
+{
+    explicit NotedRegistry(std::shared_ptr<Going> g) : going(std::move(g)) {}
+    ~NotedRegistry() { going->note("registry"); }
+    std::shared_ptr<Going> going;
+};
+
+struct NotedController
+{
+    explicit NotedController(std::shared_ptr<Going> g) : going(std::move(g)) {}
+    ~NotedController() { going->note("controller"); }
+    std::shared_ptr<Going> going;
+};
+
+/// As the hub's transport: it does not hold the hub, and tells it at its end that the links are over.
+struct NotedTransport
+{
+    NotedTransport(std::shared_ptr<Going> g, std::weak_ptr<NotedHub> h) : going(std::move(g)), hub(std::move(h)) {}
+    ~NotedTransport()
+    {
+        {
+            std::unique_lock lock(going->mutex);
+            going->changed.wait(lock, [this] { return going->open; });
+            going->hub_was_there = !hub.expired();
+        }
+        going->note("transport");
+    }
+    std::shared_ptr<Going> going;
+    std::weak_ptr<NotedHub> hub;
+};
+
+using NotedConnection = launch::detail::ConnectionOf<NotedHub, NotedRegistry, NotedController, NotedTransport>;
+
+/// A connection with all its parts, made in the run's order. `hub`: the maker's own hold of the hub.
+std::shared_ptr<NotedConnection> noted_connection(const std::shared_ptr<Going>& going, const std::shared_ptr<NotedHub>& hub)
+{
+    auto connection = std::make_shared<NotedConnection>(hub);
+    connection->registry = std::make_unique<NotedRegistry>(going);
+    connection->controller = std::make_unique<NotedController>(going);
+    connection->transport = std::make_unique<NotedTransport>(going, hub);
+    return connection;
+}
+
+} // namespace
+
+TEST_CASE(a_connection_closes_its_transport_then_its_controller_then_its_registry_and_keeps_the_hub_for_its_holders)
+{
+    const auto going = std::make_shared<Going>();
+    auto hub = std::make_shared<NotedHub>(going);
+    const auto left =
+        launch::detail::close_connection_within(noted_connection(going, hub), 60s, 1ms, [] { return false; });
+    CHECK(!left);
+    // Closed and joined: the three have gone in the order, and the hub is still the holder's.
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry"}));
+    CHECK(going->hub_was_there);
+    hub.reset();
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
+}
+
+TEST_CASE(a_connection_that_was_not_handed_to_a_close_goes_in_the_same_order_with_its_last_holder)
+{
+    // A run that leaves before its end (a setup that failed): the connection goes where it was made.
+    const auto going = std::make_shared<Going>();
+    auto connection = noted_connection(going, std::make_shared<NotedHub>(going));
+    CHECK(going->noted().empty());
+    connection.reset();
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
+    CHECK(going->hub_was_there);
+}
+
+TEST_CASE(a_connection_is_closed_once_whoever_closes_it)
+{
+    const auto going = std::make_shared<Going>();
+    auto connection = noted_connection(going, std::make_shared<NotedHub>(going));
+    connection->close();
+    connection->close();
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry"}));
+    connection.reset();
+    CHECK(going->noted() == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
+}
+
+TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_close_has_ended)
+{
+    const auto going = std::make_shared<Going>();
+    going->open = false;
+    std::weak_ptr<NotedHub> hub;
+    std::weak_ptr<NotedConnection> watched;
+    std::optional<launch::detail::CloseLeft> left;
+    {
+        // The run's holds: the hub's and the connection's. Both are given up here, as by a caller
+        // that destroys the run although its close was left.
+        auto held = std::make_shared<NotedHub>(going);
+        hub = held;
+        auto connection = noted_connection(going, held);
+        watched = connection;
+        left = launch::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
+        CHECK(connection == nullptr); // NOLINT(bugprone-use-after-move): the hold was given away
+    }
+    CHECK(left.has_value());
+    CHECK(left && !left->interrupted);
+    // The closing thread stands in the transport's end: nothing has gone, and nothing can be
+    // taken from under it.
+    CHECK(going->noted().empty());
+    CHECK(!watched.expired());
+    CHECK(!hub.expired());
+    // It ends when it can, in the order, the hub last and after the transport has told it.
+    std::unique_lock lock(going->mutex);
+    going->open = true;
+    going->changed.notify_all();
+    CHECK(going->changed.wait_for(lock, 30s, [&going] { return going->order.size() == 4; }));
+    CHECK(going->order == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
+    CHECK(going->hub_was_there);
+    CHECK(hub.expired());
 }
 
 TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)

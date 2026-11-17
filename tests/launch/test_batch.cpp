@@ -11,7 +11,9 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace vehicle_sil;
@@ -223,6 +225,118 @@ TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
     CHECK(stopped.result() == TestResult::Interrupted && stopped.exit_code() == kExitInterrupted);
     check_text(stopped.runs[1].reason, "the test was interrupted before it");
     CHECK(stopped.count(TestRunResult::NotRun) == 3);
+}
+
+/// A participant with role: bridge (describe: false; its executable is missing, so nothing starts
+/// in any case) beside the file's speed 4: the time lock.
+const char* const kBridged = "vehicle_sil_simulation: 1\nspeed: 4\nnetworks: []\nparticipants:\n"
+                             "  - name: Gateway\n    command: [missing/gateway]\n    role: bridge\n    describe: false\n";
+
+std::string codes_of(const CheckReport& check, std::string_view prefix)
+{
+    std::string out;
+    for (const Finding& f : check.findings)
+    {
+        if (f.code.rfind(prefix, 0) == 0)
+        {
+            out += f.code + (f.severity == Severity::Error ? " E\n" : " N\n");
+        }
+    }
+    return out;
+}
+
+TEST_CASE(a_run_gives_its_check_the_speed_and_start_paused_of_its_own_options)
+{
+    const auto dir = fresh_dir("batch-time-lock");
+    write(dir / "sim.yaml", kBridged);
+    const auto checked = [&dir](const RunOptions& options) {
+        const RunReport report = run_file(dir / "sim.yaml", "sim.yaml", options);
+        CHECK(!report.run.has_value());
+        return report.check;
+    };
+    // RunOptions alone, nothing in RunOptions::check: the note, and the errors for what the run asks for.
+    RunOptions options;
+    CHECK(checked(options).time_lock.locked);
+    check_text(codes_of(checked(options), "outside-"), "outside-speed-set N\n");
+    options.speed = 2.0;
+    const CheckReport fast = checked(options);
+    check_text(codes_of(fast, "outside-"), "outside-real-time E\n");
+    CHECK(format_text(fast).find("--speed 2 is refused") != std::string::npos);
+    options.speed.reset();
+    options.start_paused = true;
+    const CheckReport paused = checked(options);
+    check_text(codes_of(paused, "outside-"), "outside-real-time E\noutside-speed-set N\n"); // errors first
+    options.speed = 1.0;
+    check_text(codes_of(checked(options), "outside-"), "outside-real-time E\n");
+    // What the check's own options say about the run does not count: the run's options do.
+    options.start_paused = false;
+    options.check.start_paused = true;
+    options.check.run_speed = std::optional<double>{2.0};
+    check_text(codes_of(checked(options), "outside-"), "");
+    // A test's speed (as fast as possible) is its default: a note, not a refused --speed max.
+    options = RunOptions{};
+    options.speed.emplace(std::optional<double>{});
+    check_text(codes_of(checked(options), "outside-"), "outside-real-time E\n");
+    options.check.fastest_by_default = true;
+    const CheckReport test = checked(options);
+    check_text(codes_of(test, "outside-"), "outside-speed-set N\n");
+    // --time-policy free: the notes for the same requests.
+    options = RunOptions{};
+    options.check.time_policy = TimePolicy::Free;
+    options.speed = 2.0;
+    options.start_paused = true;
+    check_text(codes_of(checked(options), "outside-"), "outside-not-real-time N\noutside-not-real-time N\n");
+}
+
+TEST_CASE(a_test_says_once_that_the_time_lock_set_its_runs_to_speed_1)
+{
+    const std::string why = "participant 'Gateway' is a bridge (role: bridge) to something outside the simulation, which does not "
+                            "wait for the virtual time: the run goes at speed 1 (real time), not as fast as possible. To go at "
+                            "another speed, run with --disable Gateway, or pass --time-policy free if what is connected there "
+                            "can take messages that do not come in real time (the bridge still carries frames both ways)";
+    RunReport locked;
+    locked.check.time_lock = TimeLock{true, {}, {"Gateway"}};
+    locked.check.findings = time_lock_findings(locked.check.time_lock, {}, std::nullopt, false);
+    CHECK(locked.check.findings.size() == 1 && locked.check.findings.front().message == why);
+    TestReport report;
+    report.file = "sim.yaml";
+    report.variants = {"small", "medium"};
+    report.scenarios = {"a.yaml", "b.yaml"};
+    report.runs = {{"small", "a.yaml", TestRunResult::Passed, "", RunReport{}},
+                   {"small", "b.yaml", TestRunResult::Skipped, "the scenario is only for medium (its only)", {}},
+                   {"medium", "a.yaml", TestRunResult::Passed, "", locked},
+                   {"medium", "b.yaml", TestRunResult::Passed, "", locked}};
+    const std::string note = "2 of 4 runs went at speed 1 (real time), not as fast as possible: each takes as long as its scenario "
+                             "does in real time (mind --timeout-ms and the time limit of what runs the test). The first of them "
+                             "(scenario a.yaml, variant medium) says why: " + why;
+    CHECK(report.remarks().size() == 1);
+    CHECK(report.result() == TestResult::Passed);
+    check_text(format_test_text(report),
+             "variant  scenario  result\n"
+             "small    a.yaml    passed\n"
+             "small    b.yaml    skipped  the scenario is only for medium (its only)\n"
+             "medium   a.yaml    passed\n"
+             "medium   b.yaml    passed\n"
+             "\n"
+             "note: sim.yaml: " + note + " [test-speed-set]\n"
+             "\n"
+             "passed: 4 runs, 3 passed, 0 failed, 1 skipped\n");
+    CHECK(format_test_json(report).find("  \"findings\": [\n    {\n      \"severity\": \"note\",\n      \"code\": \"test-speed-set\",\n") !=
+          std::string::npos);
+    // --strict does not fail on a note; without variants the note names the scenario only.
+    report.strict = true;
+    CHECK(report.result() == TestResult::Passed);
+    report.variants.clear();
+    report.runs = {{"", "a.yaml", TestRunResult::Failed, "an error", locked}};
+    CHECK(report.remarks().size() == 1 &&
+          report.remarks().front().message.rfind("1 of 1 runs went at speed 1 (real time), not as fast as possible: ", 0) == 0 &&
+          report.remarks().front().message.find("The first of them (scenario a.yaml) says why: ") != std::string::npos);
+    // No run was set to speed 1 (--time-policy free: another note): nothing to say.
+    RunReport freed;
+    freed.check.time_lock = TimeLock{false, {}, {"Gateway"}};
+    freed.check.findings = time_lock_findings(freed.check.time_lock, {}, std::nullopt, false);
+    report.runs = {{"", "a.yaml", TestRunResult::Passed, "", freed}};
+    CHECK(report.remarks().empty());
 }
 
 TEST_CASE(the_report_of_a_test_for_people_and_as_json)

@@ -293,7 +293,10 @@ std::string shell_word(std::string_view text)
 /// does not have); none if the scenario was not read that far.
 std::string run_alone(const TestReport& report, const TestRun& run)
 {
-    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + " --speed max" +
+    // With the time lock the run goes at speed 1, and run refuses --speed max.
+    const bool locked = run.run && run.run->check.time_lock.locked;
+    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed max") +
+                      (report.given.time_policy == TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
                       shell_word(run.scenario);
     if (run.run && run.run->check.scenario)
@@ -424,6 +427,29 @@ std::vector<Finding> TestReport::remarks() const
                                   "see that run's warning connection-not-closed",
                               0, "", ""});
     }
+    // The runs that the time lock set to speed 1: the table has their results only, and a test is
+    // as fast as possible otherwise. Said once, with the note of the first of them.
+    const auto speed_set = [](const TestRun& run) -> const Finding* {
+        if (!run.run)
+        {
+            return nullptr;
+        }
+        const std::vector<Finding>& found = run.run->check.findings;
+        const auto note = std::find_if(found.begin(), found.end(), [](const Finding& f) { return f.code == "outside-speed-set"; });
+        return note == found.end() ? nullptr : &*note;
+    };
+    if (const auto first = std::find_if(runs.begin(), runs.end(), [&](const TestRun& run) { return speed_set(run) != nullptr; });
+        first != runs.end())
+    {
+        const auto slowed = static_cast<std::size_t>(std::count_if(first, runs.end(), [&](const TestRun& run) { return speed_set(run) != nullptr; }));
+        out.push_back(Finding{Severity::Note, "test-speed-set",
+                              std::to_string(slowed) + " of " + std::to_string(runs.size()) + " runs" +
+                                  " went at speed 1 (real time), not as fast as possible: each takes as long as its scenario "
+                                  "does in real time (mind --timeout-ms and the time limit of what runs the test). The first "
+                                  "of them (scenario " + first->scenario + (first->variant.empty() ? "" : ", variant " + first->variant) +
+                                  ") says why: " + speed_set(*first)->message,
+                              0, "", ""});
+    }
     if (ran() == 0 && count(TestRunResult::NotRun) == 0)
     {
         std::string why = "there is no scenario to run";
@@ -472,6 +498,7 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     report.given.disable = options.run.check.overrides.disable;
     report.given.enable = options.run.check.overrides.enable;
     report.given.timeout = options.run.timeout;
+    report.given.time_policy = options.run.check.time_policy;
     if (options.run.check.describe_timeout != CheckOptions{}.describe_timeout)
     {
         report.given.describe_timeout = options.run.check.describe_timeout;

@@ -146,7 +146,7 @@ Where to change:
 | The code that reads it | `read_variables()` in `libs/launch/src/config.cpp` |
 | Rules and conversion | `MappedSchema` in `libs/control/src/variable_map.cpp` |
 | Where the conversion is applied | `control::Hub` (`set_variable_map()`) |
-| Where it is passed to the Hub | `RunControl::hub()` in `libs/launch/src/run_control.cpp` |
+| Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/launch/src/run_control.cpp` |
 | Check | `seen_variables()` in `seen_ecu.cpp` (`SeenEcu::variables()`), `variable_map_code()` in `check_rules.cpp` |
 
 Documentation to update:

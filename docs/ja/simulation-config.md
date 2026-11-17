@@ -522,6 +522,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 - 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。
 - `check --json` では、`participants[].role` に出力されます。
+- 有効な `role: bridge` の participant のいる実行は、`--connect` のある実行と同じく実時間を保ちます。ファイルの `speed` が何であっても速さ 1 で動き、`test` もシナリオを速さ 1 で実行します（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 - 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
 
 ### ネットワークを外につなぐ（`external`、`--connect`）
@@ -578,7 +579,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 - `can` のネットワークのブリッジ（Vector XL のブリッジ）は Windows でだけ動きます。ほかの OS では、`connect-tool-missing` が、そのネットワークは SIL Kit の中だけで動くと言います（見つかったブリッジ、つまり試験用のビルドがあれば、それを使います）。
 - 照合は、下の引数と `--name bridge.<network>`（ブリッジの participant 名）でブリッジの `--describe` を走らせます。`run` は、同じ引数と `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>` でブリッジを起動します。`bridge.<network>` はファイルの participant ではないので、`--disable`、`--enable`、`--manual` には書けません。`--describe` のブリッジは、アダプターもチャンネルも開きません。引数を受けないブリッジは誤り `connect-tool-failed` で、ブリッジ自身の行を出します。
 - つなぐネットワークでは、ブリッジを participant として数えます（ECU が 1 つでも `single-participant` になりません）。同じネットワークに `role: bridge` の participant がいると、輪です（`connect-loop`）。
-- 実機のバスは仮想時間を待ちません。`--connect` があり、速さが 1 でなければ、警告 `connect-not-real-time` です（`check` はファイルの `speed`、`run` は `--speed`、なければファイルの値）。`run --start-paused` には警告 `connect-start-paused` を出します。
+- 実機のバスは仮想時間を待ちません。`--connect` のある実行は、ファイルの `speed` が何であっても速さ 1 で動きます（注記 `outside-speed-set`）。1 以外の `--speed` と `--start-paused` はエラー `outside-real-time` です。`--time-policy free` で外せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 
 ランチャーがブリッジに渡す引数は、次のとおりです。
 
@@ -887,17 +888,20 @@ variants:
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
-                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
+                         [--time-policy realtime|free] [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
+                       [--time-policy realtime|free] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
-                        [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
+                        [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 vehicle_sil_launch version [--json]
@@ -934,6 +938,7 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |
 | `--describe-timeout-ms <ms>` | | 1 つの実行ファイルの `--describe` を待つ時間です（1 以上の整数。既定は 10000）。 |
 | `--connect <network>=<target>` | `check` と `run` | ネットワークを、ブリッジで `<target>` の実機のバスにつなぎます。`none` は SIL Kit の中だけです（繰り返せます。1 つのネットワークは 1 回。[ネットワークを外につなぐ](#ネットワークを外につなぐexternal--connect)）。 |
+| `--time-policy realtime\|free` | | シミュレーションの外につながる実行の時間です。`realtime`（既定）は速さ 1 に保ち、`free` は速さと時間の操作を利用者に任せます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。 |
 | `--network <name>` | `connections` だけ | ネットワーク `<name>` だけを出します。 |
 | `--disable <name>` | | participant `<name>` を無効にします（`enabled: false` と同じ。繰り返せます）。 |
 | `--enable <name>` | | participant `<name>` を有効に戻します（`enabled: true` と同じ。繰り返せます）。 |
@@ -969,6 +974,7 @@ vehicle_sil_launch version [--json]
 | `--timeout-ms` | 超えたら、中断してエラーにします。 |
 | `--manual` | `run` は起動せず、コマンドを表示して待ちます。 |
 | `--connect` | `run` は、ほかの participant より先にブリッジ `bridge.<network>` を起動します（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect)「バスを外につなぐ」）。`test` では使い方の誤りです。各シナリオをできるだけ速く走らせるためです。 |
+| `--time-policy` | ファイルに有効な `role: bridge` の participant がいるとき、`test` は各シナリオを速さ 1 で実行します。`--time-policy free` を付ければ、それでも最速で実行します。 |
 
 Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。
 

@@ -25,12 +25,12 @@
       },
       "stop": "none",
       "phase": "running",
-      "last_seq": 71,
-      "last_t_ms": 710,
+      "last_seq": 50,
+      "last_t_ms": 500,
       "time": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -285,6 +285,10 @@
             "outside": null
           }
         ],
+        "time_lock": {
+          "locked": false,
+          "because": []
+        },
         "findings": [
           {
             "severity": "note",
@@ -446,7 +450,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 46,
+          "kept": 25,
           "dropped": 0
         }
       },
@@ -455,7 +459,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

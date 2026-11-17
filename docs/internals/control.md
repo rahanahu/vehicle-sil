@@ -827,6 +827,7 @@ Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it
 ### When it starts and stops
 
 - After the check passes and before the registry starts, `run_file()` calls `RunOptions::serve_control` (on the main thread).
+- The run makes the Hub and passes it to `serve_control` as a `std::shared_ptr`. The Server keeps it, so the Hub lives until both the run and the Server have let go of it.
 - If the Server cannot start, nothing is started (`setup`).
 - The Server is closed after `run_file()` returns and before the result is written (on the main thread; `ControlServer::shutdown()`).
 

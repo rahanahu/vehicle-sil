@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -29,20 +30,27 @@ struct ControlStart
 /// The hub of the run and what is known about the participants' control links.
 ///
 /// Threads and locks: no lock of its own.
-/// - hub(): the run's own hub is made at the first call. That call is the main thread's, in the
-///   setup, before the controller is started and so before any other thread of the run exists
-///   (Runner::run(): the control server, or the hub's transport); every later call (the start
-///   window's thread, the main thread) only reads the pointer. The Hub keeps itself.
+/// - hub(), shared_hub(): the hub is the Runner's, made before this object. The first call gives
+///   it the variable maps. That call is the main thread's, in the setup, before the controller is
+///   started and so before any other thread of the run exists (Runner::run(): the control server,
+///   or the hub's transport); every later call (the start window's thread, the main thread) only
+///   reads. The Hub keeps itself.
 /// - described_link(), offers_control(), expected_agents(): any thread; they read the RunContext only.
 /// - note_links(), note_late_values(), note_late_maps(): the main thread (they write the RunOutcome).
 class RunControl
 {
 public:
-    RunControl(const RunContext& ctx, RunOutput& out) : ctx_(ctx), out_(out) {}
+    /// `hub`: the run's hub (never null).
+    RunControl(const RunContext& ctx, RunOutput& out, std::shared_ptr<control::Hub> hub) :
+      ctx_(ctx), out_(out), hub_(std::move(hub))
+    {
+    }
 
-    /// RunOptions::hub, or the run's own. The first call gives it the variable maps of the
-    /// enabled participants (control::Hub::set_variable_map()), before any agent connects.
-    [[nodiscard]] control::Hub& hub();
+    /// The run's hub. The first call (of this or of shared_hub()) gives it the variable maps of
+    /// the enabled participants (control::Hub::set_variable_map()), before any agent connects.
+    [[nodiscard]] control::Hub& hub() { return *shared_hub(); }
+    /// The same, for one who keeps the hub for itself (RunOptions::serve_control, before_start).
+    [[nodiscard]] const std::shared_ptr<control::Hub>& shared_hub();
 
     /// What --describe says about participant `i`'s variables (ControlLink::None, NotOffered,
     /// VersionMismatch), or Connected for "it offers them in this launcher's version".
@@ -81,8 +89,8 @@ private:
 
     const RunContext& ctx_;
     RunOutput& out_;
-    std::unique_ptr<control::Hub> own_hub_; ///< without RunOptions::hub
-    bool maps_set_ = false;                 ///< the first hub() gave the hub the participants' variable maps
+    const std::shared_ptr<control::Hub> hub_; ///< the Runner's, shared with it
+    bool maps_set_ = false;                   ///< the first hub() gave the hub the participants' variable maps
 };
 
 } // namespace vehicle_sil::launch::detail
