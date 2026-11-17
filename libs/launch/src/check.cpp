@@ -2,101 +2,22 @@
 //
 // check_file(): the steps of the check. Reads the configuration (config.cpp), runs --describe of
 // each enabled participant and reads its output (describe_read.cpp), compares the descriptions
-// with the file (check_rules.cpp), reads the scenario (scenario.cpp). The outputs are in
-// check_format.cpp.
+// with the file (check_rules.cpp), reads the scenario (scenario.cpp). What it needs from the
+// computer (the files, the executables and their output, the environment) it gets from probe.cpp,
+// in the order of the steps. The outputs are in check_format.cpp.
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/time_plan.hpp"
 
 #include "vehicle_sil/core/participant_configuration.hpp"
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
-#include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch {
-
-namespace {
-
-/// The command as shown in messages, on one line: an argument that is empty or has white space,
-/// quotes or control characters in quotes, the control characters as \n, \t, \r or \xNN.
-std::string command_text(const std::vector<std::string>& words)
-{
-    static constexpr char kHex[] = "0123456789ABCDEF";
-    std::string out;
-    for (const auto& word : words)
-    {
-        bool quote = word.empty();
-        std::string shown;
-        for (const char c : word)
-        {
-            const auto byte = static_cast<unsigned char>(c);
-            quote = quote || byte <= ' ' || c == '"' || c == '\'';
-            if (c == '\n')
-            {
-                shown += "\\n";
-            }
-            else if (c == '\t')
-            {
-                shown += "\\t";
-            }
-            else if (c == '\r')
-            {
-                shown += "\\r";
-            }
-            else if (byte < ' ' || byte == 0x7F)
-            {
-                shown += std::string("\\x") + kHex[byte >> 4] + kHex[byte & 0xF];
-            }
-            else
-            {
-                shown += c;
-            }
-        }
-        out += (out.empty() ? "" : " ") + (quote ? "'" + shown + "'" : shown);
-    }
-    return out;
-}
-
-} // namespace
-
-DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
-                     const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
-                     const std::filesystem::path& directory)
-{
-    std::vector<std::string> words{shown};
-    words.insert(words.end(), arguments.begin(), arguments.end());
-    DescribeRun run;
-    run.command_text = command_text(words);
-    run.timeout = timeout;
-    try
-    {
-        process::Captured captured = process::run_captured(std::filesystem::absolute(executable), arguments,
-                                                           process::CaptureOptions{timeout, 1u << 20, directory});
-        run.exit_code = captured.exit_code;
-        run.signal = captured.signal;
-        run.output_truncated = captured.output_truncated;
-        run.error_truncated = captured.error_truncated;
-        run.standard_output = std::move(captured.standard_output);
-        run.standard_error = std::move(captured.standard_error);
-    }
-    catch (const process::StartError& e)
-    {
-        run.start_error = e.what();
-        run.start_refused_by_system = e.cause() == process::StartError::Cause::System;
-    }
-    catch (const std::exception& e)
-    {
-        run.start_error = e.what();
-        run.start_refused_by_system = true;
-    }
-    return run;
-}
 
 namespace {
 
@@ -163,11 +84,6 @@ void sort_findings(std::vector<Finding>& findings)
 }
 
 namespace {
-/// The largest configuration file read.
-constexpr std::uintmax_t kMaxConfigBytes = std::uintmax_t{16} << 20;
-} // namespace
-
-namespace {
 
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
 /// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
@@ -181,29 +97,8 @@ namespace {
         report.findings.push_back(std::move(finding));
     };
     const std::filesystem::path& path = options.scenario;
-    std::error_code ec;
-    std::string problem;
     std::string text;
-    if (!std::filesystem::exists(path, ec))
-    {
-        problem = "the scenario file does not exist: check the path given with --scenario";
-    }
-    else if (!std::filesystem::is_regular_file(path, ec))
-    {
-        problem = "this is not a regular file: name the scenario file with --scenario";
-    }
-    else if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
-    {
-        problem = "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) + " MiB, too large for a scenario";
-    }
-    else if (std::ifstream in(path, std::ios::binary); !in)
-    {
-        problem = "cannot open the scenario file: check its permissions";
-    }
-    else
-    {
-        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
+    const std::string problem = read_scenario_file(path, text);
     if (!problem.empty())
     {
         add(Finding{Severity::Error, "file", problem, 0, "", ""});
@@ -240,35 +135,6 @@ namespace {
 }
 
 } // namespace
-
-std::string read_config_file(const std::filesystem::path& path, std::string& text)
-{
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec))
-    {
-        return "the file does not exist: check the path";
-    }
-    if (std::filesystem::is_directory(path, ec))
-    {
-        return "this is a directory: name the configuration file in it";
-    }
-    if (!std::filesystem::is_regular_file(path, ec))
-    {
-        return "this is not a regular file (a device or a pipe?): name the configuration file";
-    }
-    if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
-    {
-        return "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) +
-               " MiB, too large for a configuration: name the configuration file";
-    }
-    std::ifstream in(path, std::ios::binary);
-    if (!in)
-    {
-        return "cannot open the file: check its permissions";
-    }
-    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    return {};
-}
 
 CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options)
 {
@@ -319,8 +185,8 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     {
         return report;
     }
-    const std::string listenVariable(kListenOnNetworkVariable);
-    if (auto ignored = inherited_listen_variable(*report.config, std::getenv(listenVariable.c_str())))
+    const std::optional<std::string> listen = environment_value(kListenOnNetworkVariable);
+    if (auto ignored = inherited_listen_variable(*report.config, listen ? listen->c_str() : nullptr))
     {
         report.findings.push_back(std::move(*ignored));
     }
@@ -388,14 +254,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     if (!options.connect.empty())
     {
-        ConnectTools tools;
-        tools.launcher_dir = options.tool_directory;
-        tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
-        // In the bridge's own directory, not the configuration file's (bridge_working_directory()).
-        tools.describe = [&](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-            return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.describe_timeout,
-                            bridge_working_directory(tool));
-        };
+        const ConnectTools tools = bridge_tools(options.tool_directory, options.describe_timeout);
         ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);

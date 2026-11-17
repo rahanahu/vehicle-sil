@@ -6,7 +6,8 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/connect.hpp"
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/launch/probe.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include "check_format.hpp"
 #include "check_words.hpp"
@@ -701,13 +702,7 @@ ConnectionsReport list_connections(const std::filesystem::path& path, const std:
             return report;
         }
     }
-    ConnectTools tools;
-    tools.launcher_dir = options.tool_directory;
-    tools.find = [&options](std::string_view name) { return find_tool(name, options.tool_directory); };
-    tools.describe = [&options](const std::filesystem::path& tool, const std::vector<std::string>& arguments) {
-        return run_tool(tool, process::utf8_from_path(tool.stem()), arguments, options.list_timeout,
-                        bridge_working_directory(tool));
-    };
+    const ConnectTools tools = bridge_tools(options.tool_directory, options.list_timeout);
     report.per_network = connections_of(*read.config, options.network, tools);
     // The file's errors, as check reports them: a network with an error may be missing above.
     for (Finding& finding : read.findings)

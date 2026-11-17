@@ -223,19 +223,6 @@ std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std
     return out;
 }
 
-std::optional<std::filesystem::path> find_tool(std::string_view name, const std::filesystem::path& launcher_dir)
-{
-    if (!launcher_dir.empty())
-    {
-        std::filesystem::path beside = resolve_executable(name, launcher_dir);
-        if (detail::is_runnable_file(beside))
-        {
-            return beside;
-        }
-    }
-    return detail::find_on_path(name);
-}
-
 std::string tool_not_found(const std::filesystem::path& launcher_dir)
 {
     return launcher_dir.empty() ? std::string("not on PATH")

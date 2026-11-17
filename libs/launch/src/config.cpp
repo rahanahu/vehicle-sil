@@ -2863,101 +2863,11 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
     return out;
 }
 
-std::filesystem::path resolve_executable(std::string_view executable, const std::filesystem::path& base_dir)
-{
-    std::filesystem::path path = process::path_from_utf8(executable);
-    if (path.is_relative())
-    {
-        path = base_dir / path;
-    }
-#ifdef _WIN32
-    std::error_code ec;
-    if (lower(process::utf8_from_path(path.extension())) != ".exe" && !std::filesystem::exists(path, ec))
-    {
-        auto withExe = path;
-        withExe += L".exe";
-        if (std::filesystem::exists(withExe, ec))
-        {
-            return withExe;
-        }
-    }
-#endif
-    return path;
-}
-
-namespace detail {
-
-bool is_runnable_file(const std::filesystem::path& path)
-{
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec))
-    {
-        return false;
-    }
-#ifndef _WIN32
-    const auto perms = std::filesystem::status(path, ec).permissions();
-    return (perms & (std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
-                     std::filesystem::perms::others_exec)) != std::filesystem::perms::none;
-#else
-    return true;
-#endif
-}
-
-std::optional<std::filesystem::path> find_on_path(std::string_view name)
-{
-#ifdef _WIN32
-    const wchar_t* variable = _wgetenv(L"PATH");
-    const std::wstring list = variable != nullptr ? variable : L"";
-    constexpr wchar_t kSeparator = L';';
-#else
-    const char* variable = std::getenv("PATH");
-    const std::string list = variable != nullptr ? variable : "";
-    constexpr char kSeparator = ':';
-#endif
-    std::size_t begin = 0;
-    while (begin <= list.size())
-    {
-        const std::size_t end = std::min(list.find(kSeparator, begin), list.size());
-        const std::filesystem::path directory(list.substr(begin, end - begin));
-        begin = end + 1;
-        if (directory.empty() || directory.is_relative())
-        {
-            continue; // a relative entry would depend on the directory the launcher runs in
-        }
-        std::filesystem::path candidate = resolve_executable(name, directory);
-        if (is_runnable_file(candidate))
-        {
-            return candidate;
-        }
-    }
-    return std::nullopt;
-}
-
-} // namespace detail
-
-FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir)
-{
-    FoundExecutable found{resolve_executable(executable, base_dir), false};
-    // Next to the file only an executable file counts (a data file of the same name does not
-    // hide the program on PATH).
-    if (detail::is_runnable_file(found.path) || executable.empty() ||
-        executable.find_first_of("/\\") != std::string_view::npos)
-    {
-        return found;
-    }
-    if (auto onPath = detail::find_on_path(executable))
-    {
-        return FoundExecutable{std::move(*onPath), true};
-    }
-    return found;
-}
-
-std::optional<Finding> check_executable(const ParticipantConfig& participant, const std::filesystem::path& path)
+std::optional<Finding> executable_finding(const ParticipantConfig& participant, const std::filesystem::path& path,
+                                          const std::filesystem::file_status& status)
 {
     const std::string shown = process::shown_path(path);
     const std::string prefix = "participant '" + participant.name + "': the executable " + participant.command.front();
-    std::error_code ec;
-    const auto status = std::filesystem::status(path, ec);
     std::string problem;
     const std::string& written = participant.command.front();
     const std::string extension = lower(process::utf8_from_path(path.extension()));

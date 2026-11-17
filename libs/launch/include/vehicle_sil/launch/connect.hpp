@@ -2,8 +2,8 @@
 //
 // Connecting a network of the simulation outside, to a real bus (--connect <network>=<target>):
 // the request on the command line, the form of a target, the bridge tool of each kind of network,
-// the arguments the launcher gives it and where the launcher looks for it. Pure functions but
-// find_tool(). Internal; the command line: docs/simulation-config.md, the findings:
+// the arguments the launcher gives it and the words about where the launcher looks for it. Pure
+// functions (the search itself is find_tool() in probe.hpp). Internal; the command line: docs/simulation-config.md, the findings:
 // docs/simulation-check.md.
 #pragma once
 
@@ -73,14 +73,6 @@ inline constexpr bool kCanBridgeOnThisOs = false;
 /// `macs` is empty). can: --network, --xl-target, --xl-channel and --bitrate (external).
 [[nodiscard]] std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::string_view target,
                                                         const std::vector<eth::MacAddress>& macs);
-
-/// Where the launcher finds the tool `name` (bridge_tool()): in `launcher_dir` (the directory of
-/// vehicle_sil_launch; skipped if empty), then in the absolute directories of PATH
-/// (detail::find_on_path()); on Windows also with ".exe". Never in the working directory or the
-/// directory of the configuration file: a folder received from someone does not get to run a
-/// program of its own. Empty if it is in none of them.
-[[nodiscard]] std::optional<std::filesystem::path> find_tool(std::string_view name,
-                                                             const std::filesystem::path& launcher_dir);
 
 namespace detail {
 /// The length in bytes of the Unicode control character at the start of UTF-8 `text`: a C1
