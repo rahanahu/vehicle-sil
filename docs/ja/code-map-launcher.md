@@ -75,6 +75,7 @@
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
+| `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
 | `run --timeline` の記録 `TimelineRecord` | `launch/timeline.hpp` |
@@ -340,6 +341,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `run --events` のイベント、`--stdin-commands` のコマンド、`version --json`（`libs/launch/src/events.cpp`、`tools/launch/main.cpp`）
+- `result` イベントの中身: `libs/launch/src/run_format.cpp` の `format_result_event()`（`EventStream::result()` は、書かれたものを受け取ります）。時刻のコマンドの `command` イベント: `TimeCommands::apply()` が、渡された関数（`TimeCommands::OnCommand`。`main.cpp` は `EventStream::command()` を渡します）を呼びます
 
 合わせて直すドキュメント:
 

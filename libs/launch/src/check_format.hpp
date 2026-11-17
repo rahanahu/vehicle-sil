@@ -6,7 +6,8 @@
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/traffic.hpp"
 
 #include <cstddef>
 #include <string>
@@ -38,8 +39,6 @@ void write_params_json(vehicle_sil::json::JsonWriter& w, std::string_view key, c
 void write_findings_json(vehicle_sil::json::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings);
 /// The members of one finding of "findings" (severity, code, file, ...), into the object `w` is in.
 void write_finding_members(vehicle_sil::json::JsonWriter& w, const std::string& file, const Finding& finding);
-/// format_run_json()'s object, as the member `key` of the object `w` is in ("" at the top).
-void write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const RunReport& report);
 
 /// The result's traffic, for people: the line "traffic: ..." (per network of the configuration
 /// how many counted participants sent and how many received, or "nothing sent", or "not

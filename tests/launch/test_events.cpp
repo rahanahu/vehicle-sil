@@ -313,12 +313,12 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     RunReport report;
     report.check = check;
     // The result is written when result() returns.
-    CHECK(e.result(report));
+    CHECK(e.result(format_result_event(report)));
     CHECK(sink.lines().size() >= 2 && sink.lines().back().find("\"event\":\"result\"") != std::string::npos);
     const std::size_t count = sink.lines().size();
     e.log("late", "after the result");
     e.phase(Phase::Ended);
-    CHECK(!e.result(report)); // only one result
+    CHECK(!e.result(format_result_event(report))); // only one result
     std::this_thread::sleep_for(100ms);
     CHECK(sink.lines().size() == count);
     CHECK(sink.closed().empty());
@@ -409,7 +409,7 @@ TEST_CASE(a_reader_that_went_away_closes_the_stream_and_the_caller_is_told_once_
     e.log("Engine", "not written");
     e.phase(Phase::Stopping);
     CHECK(!e.wait_written(0ms));
-    CHECK(!e.result(RunReport{}));
+    CHECK(!e.result(format_result_event(RunReport{})));
     std::this_thread::sleep_for(50ms);
     CHECK(sink.closed().size() == 1);
     check_text(shape(sink.lines()), "phase \"phase\":\"running\"}\n");
@@ -451,7 +451,7 @@ TEST_CASE(no_maker_of_events_waits_for_a_reader_that_does_not_read_and_only_log_
         e.log("C", std::to_string(i));
     }
     sink.unblock();
-    CHECK(e.result(RunReport{}));
+    CHECK(e.result(format_result_event(RunReport{})));
     std::string all = shape(sink.lines());
     all.erase(all.rfind("result ")); // the result's JSON: another test
     check_text(all, R"(phase "phase":"running"}
@@ -571,7 +571,7 @@ TEST_CASE(a_reader_that_does_not_read_is_given_up_after_the_limit)
         check_text(closed.at(0), "their reader has not read for 150 ms");
         CHECK(after >= 150ms && after < 5s);
         CHECK(time_of([&e] { e.log("A", "x"); }) < 1000ms);
-        CHECK(!e.result(RunReport{}));
+        CHECK(!e.result(format_result_event(RunReport{})));
     }
     // A reader that reads slowly is not given up: every write that is taken starts the limit anew.
     Sink sink;
@@ -601,7 +601,7 @@ TEST_CASE(a_heartbeat_is_written_when_nothing_else_is_from_the_first_line_to_the
     e.hello(1, "", {});
     std::this_thread::sleep_for(250ms);
     e.phase(Phase::Checking);
-    CHECK(e.result(RunReport{}));
+    CHECK(e.result(format_result_event(RunReport{})));
     const auto lines = sink.lines();
     std::this_thread::sleep_for(150ms);
     CHECK(sink.lines().size() == lines.size()); // nothing after the result
@@ -637,7 +637,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         EventStream& e = sink.start(options);
         sink.block();
         bool written = true;
-        const auto took = time_of([&] { written = e.result(RunReport{}); });
+        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{})); });
         CHECK(!written && took >= 200ms && took < 5s);
         CHECK(e.closed());
         CHECK(e.close_reason() == "the result could not be written within 200 ms" ||
@@ -658,7 +658,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
             e.registry("silkit://" + std::to_string(i));
         }
         bool written = true;
-        const auto took = time_of([&] { written = e.result(RunReport{}); });
+        const auto took = time_of([&] { written = e.result(format_result_event(RunReport{})); });
         CHECK(!written && took >= 300ms && took < 1500ms);
         check_text(e.close_reason(), "the result could not be written within 300 ms");
         const auto count = sink.lines().size();
@@ -673,7 +673,8 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         sink.block();
         std::atomic<int> asked{0};
         bool written = true;
-        const auto took = time_of([&] { written = e.result(RunReport{}, [&asked] { return ++asked >= 3; }); });
+        const auto took = time_of(
+            [&] { written = e.result(format_result_event(RunReport{}), [&asked] { return ++asked >= 3; }); });
         // Asked only once the reader has not read for a moment: a reader that reads gets the result.
         CHECK(!written && took >= 500ms && took < 5s && asked.load() == 3);
         check_text(e.close_reason(), "the result was not read, and the wait for its reader was stopped");
@@ -687,7 +688,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
         {
             e.registry("silkit://" + std::to_string(i));
         }
-        CHECK(e.result(RunReport{}, [] { return true; }));
+        CHECK(e.result(format_result_event(RunReport{}), [] { return true; }));
         CHECK(sink.lines().size() == 1001 && !e.closed());
     }
     // A reader that reads in time gets it, however late it started.
@@ -702,7 +703,7 @@ TEST_CASE(the_result_waits_to_be_written_but_not_for_a_reader_that_does_not_read
             std::this_thread::sleep_for(200ms);
             sink.unblock();
         });
-        const bool written = e.result(RunReport{});
+        const bool written = e.result(format_result_event(RunReport{}));
         reader.join();
         CHECK(written && !e.closed());
         CHECK(sink.lines().size() == 2);
@@ -781,7 +782,7 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
 {
     Sink sink;
     EventStream& e = sink.start(Sink::quiet());
-    TimeCommands commands(false, &e);
+    TimeCommands commands(false, [&e](const Command& command, std::string_view source) { e.command(command, source); });
     const auto command = [](const std::string& line) { return *parse_command(line); };
     // Before the run has its controller: pause, resume and speed are kept; a step cannot be told
     // how far it goes yet.
@@ -907,7 +908,7 @@ TEST_CASE(time_commands_of_a_control_server_run_until_and_pause_at_a_time_and_ar
     SimulationController controller(options);
     Sink sink;
     EventStream& e = sink.start(Sink::quiet());
-    TimeCommands commands(false, &e);
+    TimeCommands commands(false, [&e](const Command& command, std::string_view source) { e.command(command, source); });
     const auto command = [](const char* name) {
         Command c;
         c.name = name;
