@@ -38,6 +38,10 @@ struct TimeCommands::State
     SimulationController* controller = nullptr;
     std::int64_t step_ms = 1;
     bool detached = false;
+    /// The run plays a scenario (fixed).
+    bool scenario = false;
+    /// set_time_lock().
+    bool time_locked = false;
     /// In hold_before_start(), and no resume, step or run_until yet.
     bool holding = false;
     /// Since the last pause (or the start, paused): a step, run_until or pause at a later time
@@ -51,6 +55,15 @@ struct TimeCommands::State
 
 namespace {
 
+/// Where `s` stands, for the rules. Under its mutex.
+template <typename S> ControlSituation situation_of(const S& s)
+{
+    const ControlStage stage = s.detached ? ControlStage::Detached
+                               : s.controller == nullptr ? ControlStage::SettingUp
+                                                         : ControlStage::Attached;
+    return ControlSituation{stage, s.paused, s.scenario, s.time_locked};
+}
+
 /// `ms` rounded up to a whole number of `step_ms`.
 std::int64_t whole_steps(std::int64_t ms, std::int64_t step_ms)
 {
@@ -59,10 +72,11 @@ std::int64_t whole_steps(std::int64_t ms, std::int64_t step_ms)
 
 } // namespace
 
-TimeCommands::TimeCommands(bool start_paused, OnCommand on_command) : state_(std::make_unique<State>())
+TimeCommands::TimeCommands(bool start_paused, OnCommand on_command, bool scenario) : state_(std::make_unique<State>())
 {
     state_->paused = start_paused;
     state_->on_command = std::move(on_command);
+    state_->scenario = scenario;
 }
 
 TimeCommands::~TimeCommands() = default;
@@ -75,49 +89,13 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
     const std::lock_guard lock(s.mutex);
     Command out = command;
     const std::string name = command.name.value_or("");
-    const auto refuse = [&out](std::string why) {
-        out.accepted = false;
-        out.message = std::move(why);
-    };
     // A pause at a time, or run_until: they need the controller's step to round to.
     const bool at_time = command.at_ms.has_value() && (name == "pause" || name == "run_until");
-    if (s.detached)
+    Decision decision = decide(situation_of(s), entry_of(source), command_operation(name), name, &command);
+    if (!decision.ok)
     {
-        refuse("the simulation is not running (it is over, or it did not start): " + name +
-               " works from the start of the run until the simulation ends");
-    }
-    else if (name != "pause" && name != "resume" && name != "step" && name != "run_until" && name != "speed" &&
-             name != "stop")
-    {
-        refuse("'" + name + "' is no time command: the time commands are pause, resume, step, run_until and speed");
-    }
-    else if (name == "speed" && command.speed && !(*command.speed >= kMinSpeed && *command.speed <= kMaxSpeed))
-    {
-        refuse("the speed must be from 0.000001 to 1000000 simulation seconds per wall-clock second, or max");
-    }
-    else if (name == "step" && !(command.ms.value_or(1) >= 1 && command.ms.value_or(1) <= kMaxMillis))
-    {
-        refuse("step needs a time from 1 to " + std::to_string(kMaxMillis) + " ms");
-    }
-    else if (name == "run_until" && !command.at_ms)
-    {
-        refuse("run_until needs the time to stand still at");
-    }
-    else if (at_time && !(*command.at_ms >= 0 && *command.at_ms <= kMaxMillis))
-    {
-        refuse(name + " at a time needs a time from 0 to " + std::to_string(kMaxMillis) + " ms");
-    }
-    else if ((name == "step" || at_time) && s.controller == nullptr)
-    {
-        refuse("the simulation has not been set up yet: " + name +
-               (name == "step" ? std::string(" works once it stands still (a time event with paused true), with "
-                                             "--start-paused from the start")
-                               : std::string(" at a time works once the participants have been started")));
-    }
-    else if (name == "step" && !s.paused)
-    {
-        refuse("step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with "
-               "--start-paused)");
+        out.accepted = false;
+        out.message = std::move(decision.message);
     }
     else if (name == "step")
     {
@@ -314,6 +292,26 @@ std::optional<TimeChange> TimeCommands::first_time_change()
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
     return s.first_change;
+}
+
+Allowed TimeCommands::allowed(Operation operation, Entry entry)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    return launch::allowed(situation_of(s), entry, operation);
+}
+
+std::optional<Decision> TimeCommands::always_refused(Entry entry) const
+{
+    // Fixed since the constructor: no lock.
+    return launch::always_refused(state_->scenario, entry);
+}
+
+void TimeCommands::set_time_lock(bool locked)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    s.time_locked = locked;
 }
 
 TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationController& controller, bool holding)>& f)

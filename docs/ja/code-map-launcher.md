@@ -76,6 +76,7 @@
 | `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ） | `launch/stop_requests.hpp` |
 | `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()` | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
+| 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（Control Server が run を見せるだけになるか）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |
@@ -380,6 +381,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `libs/launch/src/time_commands.cpp` の `TimeCommands`
+- 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は、`run_notes.hpp` の `detail::noted_paused()`）
 - `run_watch.cpp` の `RunWatch::note_timing()`

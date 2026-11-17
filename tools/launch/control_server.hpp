@@ -21,19 +21,16 @@ struct ControlArguments
     std::string tls_cert;    ///< --control-tls-cert: PEM certificate chain
     std::string tls_key;     ///< --control-tls-key: PEM private key
     std::string audit_log;   ///< --control-audit-log: appended with who changed what
-    /// The run plays a scenario (run --scenario): the server only shows the run. Its clients read,
-    /// wait and stop; nothing of theirs writes a variable or moves the time (kScenarioRunning).
-    bool scenario = false;
 };
-
-/// Why a client's call was refused while a scenario plays: the trailing metadata
-/// "vehicle-sil-reason" of the refusal (FAILED_PRECONDITION).
-inline constexpr const char* kScenarioRunning = "scenario-running";
 
 /// What the server does with the run.
 struct ControlHooks
 {
-    /// The run's controls: the server's time operations go through their time commands.
+    /// The run's controls: the server's time operations go through their time commands. If their
+    /// rules refuse a control server everything but a stop for the whole run (a run that plays a
+    /// scenario: launch::reason::kScenarioRunning), the server only shows the run: its clients
+    /// read, wait and stop, and each other call is refused with that reason (the trailing metadata
+    /// "vehicle-sil-reason" of FAILED_PRECONDITION) and that message.
     launch::RunControls* controls = nullptr;
     /// A client asked to stop the run (Stop): as {"command":"stop"} on standard input. Thread safe,
     /// does not wait.
