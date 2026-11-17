@@ -125,7 +125,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 ### 照合と開始（`api/check`、`api/run`）
 
-- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけているか動いている間、409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
+- **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけている間は 409 `starting`、動いている間は 409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
 - **照合のあとの開始**: `api/run` は、まず実行を成す内容（`file`、`disable`、`manual`、`scenario`、`variant`、`params`）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
 - **variant と params**: `variant`（文字列、なしは `null`）は設定ファイルの variant（`--variant`）、`params`（パラメーター名から文字列か数への object）はシナリオのパラメーター（`--param <name>=<value>`。`scenario` があるときだけ）です。どちらも照合にも実行にも渡ります。`-` で始まる variant の名前は 400 `name-like-option`、object でない `params`、英数字と `_` でない名前（数字では始められない）、ほかの種類の値、`scenario` のない `params` は 400 `invalid-field` です。ファイルにその variant があるか、シナリオにそのパラメーターがあるかは、ランチャーの照合が決め、所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
 - **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
@@ -191,7 +191,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 404 | `not-found` | そういう API や画面のファイルはない |
 | 404 | `no-timeline` | `api/timeline/<session の id>`: その実行の時間の軸のファイルを、サーバーが持っていない（「シナリオの実行の時間の軸（`api/timeline`）」） |
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
-| 409 | `already-running` | 実行が始まりかけているか動いている |
+| 409 | `already-running` | `api/run`: 実行が動いている |
+| 409 | `starting` | `api/run`: 別の `api/run` が実行を始めている途中（ランチャーをまだ登録していない） |
 | 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
 | 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
@@ -307,7 +308,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 受信が遅い画面には、次の順に対処します。
 
 1. log の行、`log_dropped`、知らないイベントを落とす（`dropped`）。
-2. `time` は最後の 1 つにまとめ、`heartbeat` は数えずに落とす。
+2. `time` と `state` は、それぞれ最後の 1 つにまとめ、`heartbeat` は数えずに落とす。
 3. それでも追いつかないときだけ `resync`。
 
 `values` は、送るときに、そのときの最後の値で作ります（待ち行列には watch ごとに 1 つ分の場所だけがあり、送れない間の値はためません）。`variables` と `operation` は落としません。
@@ -395,7 +396,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ## サーバーが受け付けること（`allowed`）
 
-`allowed` は `{rev, start, stop, force}` です。後の 3 つはそれぞれ `{ok, reason, message}` で、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られたリクエストは、同じコードのエラーになります（start のコードは `api/run` のものと同じ）。
+`allowed` は `{rev, start, stop, force}` です。後の 3 つはそれぞれ `{ok, reason, message}` で、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られた `api/run` は、`start` の理由と同じコードのエラーを返します（409 `already-running`、`starting`、503 `shutting-down`、`launcher-unusable`）。`api/stop` はエラーを返さず、いつも要約つきの 200 を返します（`stop` や `force` に理由があるときは何もしません）。そのため `stop` と `force` の理由は `allowed` にだけあります。
 
 | フィールド | `reason` | いつ |
 |---|---|---|
@@ -411,7 +412,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 - 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` は `ok` です。リクエストは待ち、ランチャーが始まったら効きます（「停止（`api/stop`）」）。
 - ランチャーが受け付けること（pause、step、speed、書き込み）はここにはありません。ランチャーが書いたままの `launcher_state` の `allowed` です。そこでの `ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません（一時停止中の `pause` も `ok`）。
-- **`rev`** はサーバー全体で 1 つの番号です。`allowed` の言うことが変わるたびに 1 上がり、`allowed` を運ぶどの場所（`hello`、`api/session`、要約、`allowed` のメッセージ）でも同じです。複数の場所から `allowed` を受ける画面は、`rev` の大きいほうを採ります。新しい実行が始まっても 0 に戻りません。
+- **`rev`** はサーバー全体で 1 つの番号です。`allowed` の言うことが変わるたびに 1 上がり、`allowed` を運ぶどの場所（`hello`、`api/session`、要約、`allowed` のメッセージ）でも同じです。複数の場所から `allowed` を受ける画面は、`rev` の大きいほうを採ります。新しい実行が始まっても 0 に戻りません。サーバーを起動し直すと 1 から始まるので、`rev` を比べるのは同じ `instance`（`hello` の `instance`）の中だけです。`hello` を受けたら、その `allowed` に置き換えます。
 - **いつ送るか**: `allowed` は、`session` を送るたびに、そのときの値で付きます。変わったのに、それを運ぶ `session` が続かないときは、代わりに `allowed` のメッセージを送ります: 開始が始まった（`starting`）、開始に失敗して `start` が `ok` に戻った、サーバーが終わり始めた（`shutting-down`）。`session` がその変化を運ぶとき（実行を登録した、停止を頼んだ、実行が終わった）は、`allowed` のメッセージは送りません。`allowed` のメッセージは小さく、遅い接続でも落としません。このメッセージの種類を知らない読み手は無視し（「版と互換」）、`hello`、`api/session`、各要約の `allowed` は引き続き受けます。
 - 実行がなければ要約がないので、`hello`、`api/session`、`allowed` のメッセージの `allowed` がすべてです。
 - コードは増えることがあります。コードの意味は変わりません。
@@ -738,7 +739,7 @@ YAML に入れないものは次のとおりです。必要なものは、書き
 |---|---|---|
 | `check` | 4 MiB | `null` |
 | `result` | 4 MiB | 入れ子でない短いフィールドだけ（例は `ws-kept-limit.json`） |
-| `launcher_state` | 4 MiB | 前に覚えた 1 つを残し、サーバーが 1 回知らせる（`kept-limit`） |
+| `launcher_state` | 64 KiB | 前に覚えた 1 つを残し、サーバーが 1 回知らせる（`kept-limit`） |
 | `findings` | 1000 個と 1 MiB | `findings_omitted` に数える |
 | `participants` | 256 人で、1 人 4 KiB | `participants_omitted` に数える |
 | `phase`、`time`、`registry`、`command` | 1 つ 4 KiB | 必ず入れるフィールドを残す |

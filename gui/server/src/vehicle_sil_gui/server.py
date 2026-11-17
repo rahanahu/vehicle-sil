@@ -227,9 +227,8 @@ class GuiServer:
     def _push_allowed(self) -> None:
         """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
         fails, the server's end begins): a small message of its own. Nothing when it has not changed."""
-        before = self.numbered.rev
         answer = self.allowed()
-        if answer["rev"] != before:
+        if answer["rev"] > self.hub.told_allowed_rev:  # not yet sent to every screen, whoever made the number
             self.hub.broadcast([{"type": "allowed", "session": self.session.id if self.session else None,
                                  "allowed": answer}])
 
@@ -339,6 +338,7 @@ class GuiServer:
 
     async def get_app(self, request: web.Request) -> web.Response:
         await self.launcher.probe()
+        self._push_allowed()  # the probe may have made the launcher usable or not
         why_not = await self._no_variables()
         v = self.o.variable_limits
         return web.json_response({
@@ -498,9 +498,12 @@ class GuiServer:
             body = await self._body(request)
             check_fields("api/run", body, RUN_FIELDS)
             self._not_closing()
-            if self._starting or (self.session is not None and self.session.state == "running"):
-                raise Refused(409, "already-running", "a simulation is starting or running: stop it (POST api/stop) "
-                                                      "and wait for it to end before starting another")
+            if self.session is not None and self.session.state == "running":
+                raise Refused(409, "already-running", "a simulation is running: stop it (POST api/stop) and wait for "
+                                                      "it to end before starting another")
+            if self._starting:  # no run is running: another request is starting one
+                raise Refused(409, "starting", "a run is starting: wait until it has started (the answer of POST "
+                                               "api/run), then stop it before starting another")
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.

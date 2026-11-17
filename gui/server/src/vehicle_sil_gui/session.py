@@ -63,6 +63,7 @@ class Limits:
     log_sources: int = 64  # sources with their own log; later sources share one
     dropped_seqs: int = 10_000  # per source: the seqs of the last dropped lines, to count what a screen missed
     object_bytes: int = 4 * 1024 * 1024  # the check and the result in the summary
+    state_bytes: int = 64 * 1024  # the launcher's last state in the summary (about 2 KiB now)
     small_bytes: int = 4 * 1024  # phase, time, registry, command, and one participant's entry
     findings: int = 1000
     findings_bytes: int = 1024 * 1024
@@ -414,10 +415,10 @@ class Session:
         elif kind == "state":
             # Only the last one is kept (the launcher writes one whenever what it accepts changes); with its seq
             # and rev, so that a screen tells a new one from the same one sent again in a later summary.
-            if size <= self.limits.object_bytes:
+            if size <= self.limits.state_bytes:
                 self.launcher_state = {k: v for k, v in event.items() if k not in ("event", "t_ms")}
             else:
-                out += self._limit("state", f"the launcher's state is larger than {self.limits.object_bytes} "
+                out += self._limit("state", f"the launcher's state is larger than {self.limits.state_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "registry":
             kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)

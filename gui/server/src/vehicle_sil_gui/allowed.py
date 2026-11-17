@@ -2,7 +2,8 @@
 
 `rev` goes up with each change. Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop
 and POST api/stop with force), reason is a code that stays the same (null when ok) and message is one English
-sentence for a person (null when ok). The codes of start are those the server answers a request with.
+sentence for a person (null when ok). The codes of start are those POST api/run answers with (409 or 503); POST api/stop always answers 200, so the
+reasons of stop and force are only here.
 
 Only what the server knows is decided here: whether the launcher can be used, whether a run is starting, running
 or ending, and how many stop requests it has taken. What the launcher accepts (pause, step, speed, writes) comes

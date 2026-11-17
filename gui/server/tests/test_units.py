@@ -82,7 +82,7 @@ def test_only_the_last_state_of_the_launcher_is_kept() -> None:
     assert s.summary()["launcher_state"]["rev"] == 2
     # too large to keep: it is shown now, the one kept stays, and the server says so once
     big = {"rev": 4, "allowed": {}, "outside": ["x" * 5000]}
-    small = new_session(object_bytes=1000)
+    small = new_session(state_bytes=1000)
     small.feed_line(line("hello", 0, vehicle_sil_events=1))
     small.feed_line(line("state", 1, rev=1, allowed={}))
     out = small.feed_line(line("state", 2, **big))
@@ -587,6 +587,18 @@ def test_a_slow_screen_loses_log_lines_not_the_state() -> None:
     assert all(d["reason"] == "slow-client" and d["session"] == 1 for d in dropped)
     times = [m["event"]["sim_ms"] for m in sent if m["type"] == "event" and m["event"]["event"] == "time"]
     assert times[-1] == 29 and times == sorted(times)
+
+
+def test_a_slow_screen_keeps_the_last_state_of_the_launcher() -> None:
+    messages = [log_event(n, "A") for n in range(200)]
+    messages += [{"type": "event", "session": 1, "event": {"event": "state", "seq": 200 + n, "rev": n, "allowed": {}}}
+                 for n in range(30)]
+    sent, client = run_hub(messages, limit=10)
+    assert client.resyncs == 0
+    revs = [m["event"]["rev"] for m in sent if m["type"] == "event" and m["event"]["event"] == "state"]
+    assert revs and revs[-1] == 29 and revs == sorted(revs)
+    # what was dropped is counted for the log lines only: a state that a later one replaces is not "lost"
+    assert not any(m["type"] == "dropped" and m["events"] for m in sent)
 
 
 def test_a_slow_screen_counts_what_the_launcher_dropped_and_loses_no_heartbeat_count() -> None:

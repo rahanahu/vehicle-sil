@@ -645,6 +645,54 @@ def test_allowed_follows_the_run_and_the_summary_keeps_the_last_state(tmp_path: 
         run_async(main, gui)
 
 
+def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_path: Path) -> None:
+    launcher = tmp_path / "vehicle_sil_launch"
+
+    def write(features: str) -> None:  # another size each time: the server asks the new one for its version
+        launcher.write_text(f"#!{sys.executable}\n# {features}\nimport os, runpy\n"
+                            f"os.environ['REPLAY_FEATURES'] = {features!r}\n"
+                            f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
+        launcher.chmod(0o755)
+
+    write("events,stdin-commands,check-variables")
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        async def main(c: Client) -> None:
+            other = await c.ws()
+            hello = (await other.until(is_synced))[0]["allowed"]
+            assert hello["start"]["ok"]
+            write("check-variables")  # no events: this launcher cannot be used
+            status, app = await c.get("api/app")
+            got = await other.until(lambda m: m["type"] == "allowed" and not m["allowed"]["start"]["ok"])
+            unusable = got[-1]["allowed"]
+            assert unusable["start"]["reason"] == "launcher-unusable" and unusable["rev"] > hello["rev"]
+            # a screen that reads api/session now makes no new number: the other screens already have it
+            status, body = await c.get("api/session")
+            assert body["allowed"]["rev"] == unusable["rev"]
+            write("events,stdin-commands,check-variables,speed")  # usable again
+            await c.get("api/app")
+            got = await other.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
+            assert got[-1]["allowed"]["rev"] > unusable["rev"]
+        run_async(main, gui)
+
+
+def test_a_start_that_is_starting_says_so_to_the_second_request(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "300"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            first = asyncio.ensure_future(c.post("api/run", {"file": "forever.yaml"}))
+            await asyncio.sleep(0.1)
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 409 and body["error"]["code"] == "starting", body
+            assert (await first)[0] == 200
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 409 and body["error"]["code"] == "already-running", body
+            await sock.until(is_time(sim_ms=0))
+            await c.post("api/stop")
+            await sock.until(is_ended)
+        run_async(main, gui)
+
+
 def test_allowed_alone_is_pushed_only_when_no_session_message_carries_it(tmp_path: Path) -> None:
     """A start beginning, and a start that fails, change `allowed` with no session message to carry it: a message
     `allowed` says so, numbered. A start that works is carried by its session message: nothing else is pushed."""

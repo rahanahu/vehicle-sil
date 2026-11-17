@@ -125,7 +125,7 @@ Send a value for `speed` (`null`, `"max"` or a number) and `start_paused` (boole
 
 ### Check and start (`api/check`, `api/run`)
 
-- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `already-running` while a run is starting or running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
+- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
 - **Start after a check**: `api/run` first checks what the run is made of (`file`, `disable`, `manual`, `scenario`, `variant`, `params`), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
 - **Variant and parameters**: `variant` (a string, or `null` for none) is the variant of the configuration file (`--variant`), and `params` (an object of parameter name to a string or a number) sets the scenario's parameters (`--param <name>=<value>`; only with a `scenario`). Both go to the check and to the run. A variant name that starts with `-` gives 400 `name-like-option`; a `params` that is not an object, has a name that is not letters, digits and `_` (not starting with a digit), has another kind of value, or has no `scenario` gives 400 `invalid-field`. Whether the file has the variant, and the scenario the parameter, is the launcher's check: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`). The names that `disable` and `manual` may take are those of the check of that variant.
 - **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` also runs a check in the same queue.
@@ -191,7 +191,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 404 | `not-found` | No such API or screen file |
 | 404 | `no-timeline` | `api/timeline/<session id>`: the server has no timeline file of that run (see "Timeline of a scenario run (`api/timeline`)") |
 | 405 | `method-not-allowed` | A method other than `GET` on a screen file |
-| 409 | `already-running` | A run is starting or running |
+| 409 | `already-running` | `api/run`: a run is running |
+| 409 | `starting` | `api/run`: another `api/run` is starting a run (the launcher has not been registered yet) |
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
@@ -307,7 +308,7 @@ Source names are the same as in `log` of the summary (sources from the 65th on a
 For a screen that receives slowly, the server does the following, in order:
 
 1. Drops log lines, `log_dropped` and unknown events (`dropped`).
-2. Collapses `time` into the last one, and drops `heartbeat` without counting.
+2. Collapses `time` and `state` events into the last one of each, and drops `heartbeat` without counting.
 3. Only if it still cannot catch up: `resync`.
 
 `values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables` and `operation` are never dropped.
@@ -395,7 +396,7 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 ## What the server accepts (`allowed`)
 
-`allowed` is `{rev, start, stop, force}`. Each of the last three is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. A request that is sent anyway gets the same code as an error (the codes of start are those of `api/run`).
+`allowed` is `{rev, start, stop, force}`. Each of the last three is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` does not answer with an error: it always answers 200 with the summary (and does nothing when `stop` or `force` has a reason), so the reasons of `stop` and `force` are only in `allowed`.
 
 | Field | `reason` | When |
 |---|---|---|
@@ -411,7 +412,7 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 - Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` are `ok`: the request waits and applies when the launcher has started ("Stop (`api/stop`)").
 - What the launcher accepts (pause, step, speed, writes) is not here: it is `allowed` of `launcher_state`, as the launcher wrote it. `ok` there means the launcher would accept the command, not that it would change anything (a `pause` is `ok` while paused).
-- **`rev`** is one number for the whole server. It goes up by one each time what `allowed` says changes, and is the same in every place that carries `allowed` (`hello`, `api/session`, the summary, the `allowed` message). A screen that gets `allowed` from several places keeps the one with the larger `rev`. It does not restart when a new run starts.
+- **`rev`** is one number for the whole server. It goes up by one each time what `allowed` says changes, and is the same in every place that carries `allowed` (`hello`, `api/session`, the summary, the `allowed` message). A screen that gets `allowed` from several places keeps the one with the larger `rev`. It does not restart when a new run starts. It starts again at 1 when the server is started again, so compare `rev` only within one `instance` (the `instance` of `hello`); a `hello` replaces what the screen has.
 - **When it is sent**: `allowed` goes out with each `session` message, as it is at that moment. When it changes and no `session` message follows to carry that change, the server sends the `allowed` message instead: a start begins (`starting`), a start fails and `start` is `ok` again, and the server begins to end (`shutting-down`). It does not send the `allowed` message when a `session` message carries the change (a run is registered, a stop is requested, the run ends). The `allowed` message is small and is never dropped for a slow connection. A reader that does not know the message type ignores it (see "Versioning and compatibility"), and then still has `allowed` from `hello`, `api/session` and each summary.
 - With no run there is no summary, and `allowed` of `hello`, `api/session` and the `allowed` message is all there is.
 - A new code may be added; the meaning of a code does not change.
@@ -741,7 +742,7 @@ What the server keeps is limited; whatever exceeds a limit is counted and report
 | `findings` | 1000 and 1 MiB | Counted in `findings_omitted` |
 | `participants` | 256 participants, 4 KiB each | Counted in `participants_omitted` |
 | `phase`, `time`, `registry`, `command` | 4 KiB each | Required fields are kept |
-| `launcher_state` | 4 MiB | The one kept before stays, and the server says so once (`kept-limit`) |
+| `launcher_state` | 64 KiB | The one kept before stays, and the server says so once (`kept-limit`) |
 | Unknown events | Not kept | Only relayed (screens that reconnect do not receive them) |
 
 Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is not kept.
