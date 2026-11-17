@@ -38,7 +38,7 @@ struct RunContext
         return options.interrupt_name ? options.interrupt_name() : std::string("interrupt");
     }
     /// run --start-paused with a control server: the run holds before the first step.
-    [[nodiscard]] bool holds() const { return options.start_paused && static_cast<bool>(options.serve_control); }
+    [[nodiscard]] bool holds() const { return options.start_paused && options.control_endpoint != nullptr; }
 };
 
 inline std::string one_line(std::string text)

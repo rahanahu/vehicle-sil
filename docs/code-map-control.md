@@ -193,7 +193,7 @@ The Python stubs are generated in the test build (`python -m vehicle_sil_control
 Where to change:
 
 - `tools/launch/control_server.cpp`
-- `RunOptions::serve_control`
+- `launch::ControlEndpoint` and `RunOptions::control_endpoint` (`launch/run.hpp`); `run_file()` in `libs/launch/src/run.cpp` starts the Server between `Runner::prepare()` and `Runner::run()`
 - `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
 - `ServerOptions::external_hub`
 - `python/vehicle_sil_control/launcher.py`

@@ -108,7 +108,7 @@ Implementation:
 | This computer's addresses (the URI shown to other computers) | `src/host_addresses.cpp` |
 | The watch of the running simulation (`RunWatch::watch()`), what is settled when it is over (`RunWatch::settle()`: the scenario's end, the timing, the traffic, how the simulation ended), and `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
-| The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`) | `tools/launch/control_server.cpp` |
+| The Control Server of `run --control` (only when `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`). The run sees it as a `ControlEndpoint` (`RunOptions::control_endpoint` in `launch/run.hpp`); `run_file()` starts it between the two stages of a run (`Runner::prepare()`, `Runner::run()` in `src/run.cpp`) | `tools/launch/control_server.cpp` |
 
 The comment at the top of `run.cpp` and the class comments in each `run_*.hpp` describe the role of each class that shares the work of `run`, and which thread handles which state under which lock.
 

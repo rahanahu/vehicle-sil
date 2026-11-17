@@ -1114,9 +1114,9 @@ int run(const cli::Args& args, launch::EventStream* events)
         options.start_paused = true;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // The control server serves the run's hub, which the run makes and gives it when it starts it
-    // (RunOptions::serve_control); the server keeps the hub from then on.
-    std::unique_ptr<launch_cli::LauncherControlServer> server;
+    // The control server serves the run's hub, which the run makes and gives it when run_file()
+    // starts it (RunOptions::control_endpoint); the server keeps the hub from then on.
+    std::unique_ptr<launch::ControlEndpoint> server;
 #endif
     watch_interrupts();
     if (events != nullptr)
@@ -1161,7 +1161,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch_cli::make_control_server(a, std::move(hooks));
-        options.serve_control = [&server](const std::shared_ptr<control::Hub>& hub) { return server->start(hub); };
+        options.control_endpoint = server.get();
     }
 #endif
     if (args.flag("stdin-commands"))

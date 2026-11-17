@@ -46,8 +46,8 @@ public:
     /// The run's hub. The first call (of this or of shared_hub()) gives it the variable maps of
     /// the enabled participants (control::Hub::set_variable_map()), before any agent connects.
     [[nodiscard]] control::Hub& hub() { return *shared_hub(); }
-    /// The same, for one who keeps the hub for itself (the run's RunConnection, RunOptions::serve_control,
-    /// before_start).
+    /// The same, for one who keeps the hub for itself (the run's RunConnection, the control server of
+    /// RunOptions::control_endpoint, before_start).
     [[nodiscard]] const std::shared_ptr<control::Hub>& shared_hub();
 
     /// What --describe says about participant `i`'s variables (ControlLink::None, NotOffered,

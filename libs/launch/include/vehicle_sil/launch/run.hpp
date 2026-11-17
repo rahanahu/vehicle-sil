@@ -323,7 +323,7 @@ struct RunReport
 /// result "unreadable", one finding with the code "internal".
 [[nodiscard]] std::string format_internal_error_json(bool run, const std::string& message);
 
-/// Where the run's control server listens (RunOptions::serve_control).
+/// Where the run's control server listens (ControlEndpoint::start()).
 struct ControlServerInfo
 {
     /// host:port with the port it actually listens on (also for port 0).
@@ -331,6 +331,21 @@ struct ControlServerInfo
     bool tls = false;
     /// Every call needs a token of the server's credentials.
     bool credentials = false;
+};
+
+/// run --control: the control server of one run, as the run sees it (RunOptions::control_endpoint).
+/// The caller makes it before the run, with the run's controls (its time operations go to their
+/// time commands); run_file() starts it; the caller ends it after run_file().
+class ControlEndpoint
+{
+public:
+    virtual ~ControlEndpoint() = default;
+    /// Starts listening on `hub`, the run's (never null), and keeps it for as long as the server
+    /// uses it (as RunOptions::before_start says of the hub); says where it listens. Throws
+    /// std::exception if it cannot listen.
+    virtual ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
+    /// Ends every call (the waits and watches return); idempotent.
+    virtual void end() = 0;
 };
 
 struct RunOptions
@@ -401,15 +416,15 @@ struct RunOptions
     /// offers them in the launcher's version of the messages (it is there before the wait begins,
     /// by the order in which SIL Kit sets the participants up: the limit is a last line).
     std::chrono::milliseconds control_hello_timeout{5000};
-    /// run --control: starts the control server on the run's hub (the argument, never null; as for
-    /// before_start, the server keeps the pointer for as long as it uses the hub) and says where it
-    /// listens. Called once, on the main thread, when the check has passed and before the registry
-    /// starts; the run writes the event "control_server" and the line "control server at
-    /// <address>". If it throws, nothing is started (RunOutcome::setup_error). The server must
-    /// stay usable while run_file() runs (its time operations go to the time commands of
-    /// `controls`, which must be set); the caller ends it after run_file().
+    /// run --control: the control server of this run, the caller's; null: none. run_file() starts
+    /// it on the run's hub (ControlEndpoint::start()) once, on the main thread, when the check has
+    /// passed and the run's files are open, before the registry starts; the run then writes the
+    /// event "control_server" and the line "control server at <address>". If the start throws,
+    /// nothing is started (RunOutcome::setup_error). The server must stay usable while run_file()
+    /// runs (its time operations go to the time commands of `controls`, which must be set); the
+    /// caller ends it after run_file().
     /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
-    std::function<ControlServerInfo(const std::shared_ptr<control::Hub>& hub)> serve_control{};
+    ControlEndpoint* control_endpoint = nullptr;
 };
 
 /// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation; with

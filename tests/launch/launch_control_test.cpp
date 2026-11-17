@@ -459,7 +459,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
 /// The run of a configuration with an ECU (Engine) and, with `stuck`, a participant "Stuck" of this
 /// process that joins and never gets ready (its CommunicationReady is never completed), for the
 /// limits of the start and the hold before the first step (--start-paused with a control server:
-/// here a serve_control that starts nothing). `during_hold` runs on a thread of its own once the
+/// here an endpoint that starts nothing). `during_hold` runs on a thread of its own once the
 /// launcher says that it stands still before the first step.
 struct HoldRun
 {
@@ -495,7 +495,12 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     options.controls = &controls;
     options.timeout = timeout;
     options.interrupt_name = [] { return std::string("SIGINT"); };
-    options.serve_control = [](const std::shared_ptr<control::Hub>&) { return launch::ControlServerInfo{"(test)", false, false}; };
+    struct NoServer final : launch::ControlEndpoint
+    {
+        launch::ControlServerInfo start(std::shared_ptr<control::Hub>) override { return {"(test)", false, false}; }
+        void end() override {}
+    } endpoint;
+    options.control_endpoint = &endpoint;
     options.write_line = [&](std::string_view line) {
         out.lines += std::string(line) + "\n";
         const std::string_view registry = "[vehicle_sil_launch] registry at ";
@@ -663,6 +668,158 @@ void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::pat
             "no hold, and the run ran to its end" + shown(run));
 }
 
+/// A control server of the test: counts its starts, notes what it saw, and fails if told to.
+struct CountingEndpoint final : launch::ControlEndpoint
+{
+    launch::ControlServerInfo start(std::shared_ptr<control::Hub> served) override
+    {
+        ++starts;
+        hub = std::move(served);
+        if (at_start)
+        {
+            at_start();
+        }
+        if (fail_with_no_exception_type)
+        {
+            throw 42; // not a std::exception: it leaves run_file()
+        }
+        if (fail)
+        {
+            throw std::runtime_error("no port\nto listen on");
+        }
+        return {"(test):1", false, false};
+    }
+    void end() override {}
+
+    int starts = 0;
+    bool fail = false;
+    bool fail_with_no_exception_type = false;
+    std::function<void()> at_start{};
+    std::shared_ptr<control::Hub> hub;
+};
+
+/// run_file() starts the control server once, when the run's files are open and before the
+/// registry; a start that fails starts nothing; a run that does not get to its files does not
+/// start the server.
+void the_control_server_is_started_after_the_runs_files_and_before_the_registry(const fs::path& ecu, const fs::path& dir)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+               yaml_quote(process::shown_path(ecu)) + "]\n";
+    fs::remove(dir / "Engine.behaviour");
+    const auto run = [&dir](launch::RunOptions options, std::string& lines) {
+        options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+        const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+        lines = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
+        return report;
+    };
+    const std::string server_line = "[vehicle_sil_launch] control server at (test):1\n";
+    const std::string registry_line = "[vehicle_sil_launch] registry at ";
+    {
+        // It starts: the log directory is there, nothing has been said about a registry yet, and
+        // the line about the server comes before the registry's.
+        fs::remove_all(dir / "logs");
+        CountingEndpoint endpoint;
+        std::string lines;
+        bool logs_open = false;
+        bool registry_said = true;
+        endpoint.at_start = [&] {
+            logs_open = fs::exists(dir / "logs");
+            registry_said = lines.find(registry_line) != std::string::npos;
+        };
+        launch::RunOptions options;
+        options.log_dir = dir / "logs";
+        options.control_endpoint = &endpoint;
+        const launch::RunReport report = run(options, lines);
+        require(report.result() == launch::RunResult::Passed, "the run passed" + lines);
+        require(endpoint.starts == 1 && endpoint.hub != nullptr, "the server was started once, on a hub" + lines);
+        require(logs_open, "the log directory was there when the server started" + lines);
+        require(!registry_said, "the server was started before the registry" + lines);
+        const std::size_t server = lines.find(server_line);
+        const std::size_t registry = lines.find(registry_line);
+        require(server != std::string::npos && registry != std::string::npos && server < registry,
+                "the line of the server comes before the registry's" + lines);
+        require(endpoint.hub->peers().size() == 1, "the hub of the server is the run's: it has the ECU's agent" + lines);
+    }
+    {
+        // It cannot start: nothing is started, and the finding says why, in one line.
+        CountingEndpoint endpoint;
+        endpoint.fail = true;
+        std::string lines;
+        launch::RunOptions options;
+        options.control_endpoint = &endpoint;
+        const launch::RunReport report = run(options, lines);
+        require(endpoint.starts == 1, "the server was started once" + lines);
+        require(report.run && report.run->setup_error == "the control server cannot be started: no port to listen on",
+                "the outcome says why" + lines);
+        require(report.findings.size() == 1 && report.findings[0].code == "setup" &&
+                    report.findings[0].message ==
+                        "cannot set up the simulation: the control server cannot be started: no port to listen on",
+                "the finding says why" + lines);
+        require(lines.find(registry_line) == std::string::npos && lines.find("control server at") == std::string::npos &&
+                    report.run->registry_uri.empty(),
+                "no registry, and no line about a server" + lines);
+    }
+    {
+        // Asked to stop before it began: the server is not started.
+        CountingEndpoint endpoint;
+        std::string lines;
+        launch::StopRequests stops;
+        stops.request(kAnySource);
+        launch::RunOptions options;
+        options.stops = &stops;
+        options.control_endpoint = &endpoint;
+        const launch::RunReport report = run(options, lines);
+        require(endpoint.starts == 0, "the server of a run that was interrupted before it began was not started" + lines);
+        require(report.result() == launch::RunResult::Interrupted, "the run was interrupted" + lines);
+    }
+    {
+        // The log directory cannot be made (a file is in its place): the server is not started.
+        std::ofstream(dir / "not-a-directory") << "x";
+        CountingEndpoint endpoint;
+        std::string lines;
+        launch::RunOptions options;
+        options.log_dir = dir / "not-a-directory" / "logs";
+        options.control_endpoint = &endpoint;
+        const launch::RunReport report = run(options, lines);
+        require(endpoint.starts == 0, "the server of a run whose logs cannot be opened was not started" + lines);
+        require(report.run && !report.run->setup_error.empty() && report.run->registry_uri.empty(),
+                "the run was not set up" + lines);
+    }
+}
+
+/// What a control server's start throws that run_file() does not make a finding of leaves
+/// run_file(), and the time commands have ended by then: they refuse a command, as after a run.
+void what_leaves_run_file_between_the_stages_ends_the_time_commands(const fs::path& ecu, const fs::path& dir)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nstop_at_ms: 200\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+               yaml_quote(process::shown_path(ecu)) + "]\n";
+    fs::remove(dir / "Engine.behaviour");
+    launch::StopRequests stops;
+    launch::RunControls controls(stops, true);
+    require(controls.time().apply(resume_command(), "control_server").accepted, "a command before the run is taken");
+    CountingEndpoint endpoint;
+    endpoint.fail_with_no_exception_type = true;
+    launch::RunOptions options;
+    options.start_paused = true;
+    options.controls = &controls;
+    options.control_endpoint = &endpoint;
+    options.write_line = [](std::string_view) {};
+    bool thrown = false;
+    try
+    {
+        static_cast<void>(launch::run_file(dir / "sim.yaml", "sim.yaml", options));
+    }
+    catch (int)
+    {
+        thrown = true;
+    }
+    require(thrown && endpoint.starts == 1, "what the start threw left run_file()");
+    require(!controls.time().apply(resume_command(), "control_server").accepted,
+            "the time commands ended with the run: a command after it is refused");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -693,6 +850,14 @@ int main(int argc, char** argv)
         {"timeout_counts_the_hold", timeout_counts_the_hold},
         {"an_interrupt_ends_the_hold", an_interrupt_ends_the_hold},
         {"a_resume_before_the_window_means_no_hold", a_resume_before_the_window_means_no_hold},
+        {"the_control_server_is_started_after_the_runs_files_and_before_the_registry",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) {
+             the_control_server_is_started_after_the_runs_files_and_before_the_registry(ecu, dir);
+         }},
+        {"what_leaves_run_file_between_the_stages_ends_the_time_commands",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) {
+             what_leaves_run_file_between_the_stages_ends_the_time_commands(ecu, dir);
+         }},
     };
     std::string names;
     for (const auto& [name, part] : parts)
