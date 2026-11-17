@@ -212,6 +212,26 @@ Messages sent reactively from a receive handler are outside SIL Kit's delivery g
 - To pace virtual time to the wall clock, use the peer's `VirtualTimeOptions::real_time_factor` or the speed of the time gate (see "Coupling to real time" in [internals/virtual-time.md](internals/virtual-time.md#coupling-to-real-time)).
 - Physical CAN and Vector Virtual CAN run in real time and do not take part in virtual-time simulations (see "Physical CAN and virtual time" in [bridges.md](bridges.md#physical-can-and-virtual-time)).
 
+### Layers in `libs/launch`
+
+```mermaid
+flowchart LR
+    pure["Pure side<br>config, check rules, connect rules,<br>scenario, time plan, timeline records, check format"]
+    assemble["check_file(), list_connections(), run_tests()"]
+    probe["Computer side<br>launch/probe.hpp, src/probe.cpp"]
+    run["Run side<br>run, events, time_commands, run_*"]
+    assemble --> pure
+    assemble --> probe
+    run --> pure
+    run --> probe
+```
+
+- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
+- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (running the simulation) depends on both.
+- The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
+- One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.
+- Do not add code that looks at the computer to the pure side. Put it in `probe` and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
+
 ## Internals
 
 When you change vehicle-sil, or look up behavior and limitations, read only the document that covers it.

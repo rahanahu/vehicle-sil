@@ -212,6 +212,26 @@ LIN はホストに載せません。いまの 1 ステップの順序は「ア�
 - 仮想時間を壁時計に合わせるのは、ピアの `VirtualTimeOptions::real_time_factor` か、時間ゲートの速度です（[internals/virtual-time.md](internals/virtual-time.md) の「実時間との結合」）。
 - 物理 CAN と Vector Virtual CAN は実時間で動かし、仮想時間のシミュレーションには参加させません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
 
+### `libs/launch` の層
+
+```mermaid
+flowchart LR
+    pure["純粋な側<br>config、照合の規則、connect の規則、<br>scenario、time plan、timeline の記録、check の書式"]
+    assemble["check_file()、list_connections()、run_tests()"]
+    probe["計算機を調べる側<br>launch/probe.hpp、src/probe.cpp"]
+    run["実行の側<br>run、events、time_commands、run_*"]
+    assemble --> pure
+    assemble --> probe
+    run --> pure
+    run --> probe
+```
+
+- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
+- ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
+- この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
+- 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。
+- 純粋な側に、計算機を調べる処理を足さないでください。`probe` に置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
+
 ## 内部の仕組み
 
 vehicle-sil を変更するときや、仕様と制限を確認するときに、該当するドキュメントだけを読みます。
