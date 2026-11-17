@@ -4,8 +4,72 @@
 #pragma once
 
 #include <atomic>
+#include <string>
 
 namespace vehicle_sil::launch {
+
+/// What kind of party asked to stop a run: a person or a client that gave the command (Operator),
+/// a signal or a console event of the operating system (Signal), or the program that runs the
+/// launcher and went away (Supervisor).
+enum class StopKind
+{
+    Operator,
+    Signal,
+    Supervisor,
+};
+
+/// The sources of a stop request that the library knows (negative; a source of 1 or more is the
+/// caller's own: a signal's number, a console event's code).
+namespace stop_source {
+/// {"command":"stop"} on standard input.
+inline constexpr int kStopCommand = -1;
+/// Standard input ended (run --stdin-commands).
+inline constexpr int kEndOfInput = -2;
+/// The reader of the events has gone (run --events).
+inline constexpr int kOutputClosed = -3;
+/// A client of the control server called Stop (run --control).
+inline constexpr int kControlStop = -4;
+} // namespace stop_source
+
+/// The name of a source that the library knows, as `interrupted_by` shows it; empty for any other.
+[[nodiscard]] inline std::string stop_source_name(int source)
+{
+    switch (source)
+    {
+    case stop_source::kStopCommand: return "stop command";
+    case stop_source::kEndOfInput: return "end of input";
+    case stop_source::kOutputClosed: return "output closed";
+    case stop_source::kControlStop: return "control server stop";
+    default: return {};
+    }
+}
+
+/// The kind of a source: the stop command and the control server's Stop are the Operator's; the
+/// end of standard input and a closed output are the Supervisor's; any other source (a signal, a
+/// console event) is a Signal.
+[[nodiscard]] constexpr StopKind stop_kind(int source) noexcept
+{
+    switch (source)
+    {
+    case stop_source::kStopCommand:
+    case stop_source::kControlStop: return StopKind::Operator;
+    case stop_source::kEndOfInput:
+    case stop_source::kOutputClosed: return StopKind::Supervisor;
+    default: return StopKind::Signal;
+    }
+}
+
+/// The name of a kind: "operator", "signal" or "supervisor".
+[[nodiscard]] constexpr const char* stop_kind_name(StopKind kind) noexcept
+{
+    switch (kind)
+    {
+    case StopKind::Operator: return "operator";
+    case StopKind::Signal: return "signal";
+    case StopKind::Supervisor: return "supervisor";
+    }
+    return "signal";
+}
 
 /// The requests to stop: a count and the source of the first one. The caller of run_file() or
 /// test_file() owns it and lends it (to RunControls, or as RunOptions::stops); it lives longer than
