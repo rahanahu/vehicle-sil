@@ -5,6 +5,7 @@
 # CreateProcessW, process groups and job objects). Internal; not part of the library API.
 add_library(vehicle_sil_process STATIC
   src/child_process.cpp
+  src/paths.cpp
   src/process.cpp
   src/spawn.cpp
 )

@@ -6,7 +6,7 @@
 #include "vehicle_sil/launch/connect.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
 #include <charconv>

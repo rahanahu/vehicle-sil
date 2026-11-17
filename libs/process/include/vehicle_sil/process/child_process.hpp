@@ -6,6 +6,8 @@
 // time limit. Internal; not part of the library API.
 #pragma once
 
+#include "vehicle_sil/process/paths.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -16,19 +18,6 @@
 #include <vector>
 
 namespace vehicle_sil::process {
-
-/// `text` (UTF-8) as a path. On Windows the path holds the text as UTF-16, so a path with
-/// characters outside the code page works with the wide Win32 functions; std::filesystem::path
-/// made from a std::string would read the text in the code page.
-[[nodiscard]] std::filesystem::path path_from_utf8(std::string_view text);
-
-/// `path` as UTF-8 (on Windows from its UTF-16 form; never throws for a path made with
-/// path_from_utf8()).
-[[nodiscard]] std::string utf8_from_path(const std::filesystem::path& path);
-
-/// `path` as UTF-8 with '/' between its parts, also on Windows (where a path joined from parts
-/// can mix '/' and '\\'): for messages, so that one path reads the same everywhere.
-[[nodiscard]] std::string shown_path(const std::filesystem::path& path);
 
 /// The absolute path of the executable of this process (Linux: /proc/self/exe, Windows:
 /// GetModuleFileNameW), or an empty path if the system does not say.
