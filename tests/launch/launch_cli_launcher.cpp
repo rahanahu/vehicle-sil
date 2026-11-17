@@ -589,13 +589,22 @@ void usage(const Options& o)
     expect_usage({"check", "a.yaml", "--describe-timeout-ms"}, "missing value for --describe-timeout-ms");
     expect_usage({"check", "a.yaml", "--describe-timeout-ms", "0"}, "--describe-timeout-ms must be at least 1");
     expect_usage({"check", "a.yaml", "--describe-timeout-ms", "soon"}, "invalid value for --describe-timeout-ms: soon");
+    expect_usage({"check", "a.yaml", "--time-policy"}, "missing value for --time-policy");
+    for (const char* command : {"check", "run", "test"})
+    {
+        expect_usage({command, "a.yaml", "--time-policy", "warn"},
+                     "--time-policy must be realtime (a run that is connected outside the simulation goes at speed 1; the "
+                     "default) or free (its speed and time can be changed), not 'warn'");
+    }
     expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");
     expect_usage({"check", "a.yaml", "--stdin-commands"}, "--stdin-commands is for run: check starts no participant");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"--help"}, {"check", "x.yaml", "-h"}})
     {
         const Captured help = launch(o, args);
         expect_code(help, 0, "vehicle_sil_launch --help");
-        require(lf(help.standard_output).rfind("usage: vehicle_sil_launch check [--json]", 0) == 0 && help.standard_error.empty(),
+        require(lf(help.standard_output).rfind("usage: vehicle_sil_launch check [--json]", 0) == 0 && help.standard_error.empty() &&
+                    contains(help.standard_output, "[--time-policy realtime|free]") &&
+                    contains(help.standard_output, "\n  --time-policy realtime|free the time of a run that is connected outside"),
                 "--help wrote:\n" + help.standard_output + help.standard_error);
     }
     // With --json, a wrong command line is JSON on stdout too.
@@ -787,6 +796,66 @@ std::string runtime_path()
 #endif
 }
 
+/// check --time-policy with `text` (connect()'s file, at speed 1) at another speed, and with a
+/// role: bridge participant in it.
+void time_policy(const Options& o, const std::string& text)
+{
+    std::string fast = text;
+    replace_all(fast, "speed: 1\n", "speed: 2\n");
+    const fs::path config = o.work_dir / "connect-speed-2.yaml";
+    write_file(config, fast);
+    const std::string file = shown_path(config);
+    // realtime (the default): the run will go at speed 1, which is a note.
+    for (const std::vector<std::string>& policy : {std::vector<std::string>{}, std::vector<std::string>{"--time-policy", "realtime"}})
+    {
+        std::vector<std::string> args{"check", "--json", "--strict", "--connect", "ETH_EXT=eth0", "--connect", "J1939_CAN1=virtual:1"};
+        args.insert(args.end(), policy.begin(), policy.end());
+        args.push_back(file);
+        const Captured locked = launch(o, args);
+        expect_code(locked, 0, "check --strict --connect of a file with speed: 2");
+        require(contains(locked.standard_output,
+                         "\"locked\": true,\n    \"because\": [\n      \"ETH_EXT\",\n      \"J1939_CAN1\"\n    ]") &&
+                    contains(locked.standard_output, "\"severity\": \"note\",\n      \"code\": \"outside-speed-set\"") &&
+                    contains(locked.standard_output, "not at the speed 2 of the file") &&
+                    !contains(locked.standard_output, "outside-not-real-time"),
+                "check --connect of a file with speed: 2 wrote:\n" + locked.standard_output);
+    }
+    // free: not locked, but what would lock is named; a note of its own.
+    const Captured free = launch(o, {"check", "--json", "--strict", "--time-policy", "free", "--connect", "ETH_EXT=eth0",
+                                      "--connect", "J1939_CAN1=virtual:1", file});
+    expect_code(free, 0, "check --strict --time-policy free --connect of a file with speed: 2");
+    require(contains(free.standard_output,
+                     "\"locked\": false,\n    \"because\": [\n      \"ETH_EXT\",\n      \"J1939_CAN1\"\n    ]") &&
+                contains(free.standard_output, "\"severity\": \"note\",\n      \"code\": \"outside-not-real-time\"") &&
+                !contains(free.standard_output, "outside-speed-set"),
+            "check --time-policy free wrote:\n" + free.standard_output);
+    const Captured table = launch(o, {"check", "--connect", "ETH_EXT=eth0", file});
+    expect_code(table, 0, "check --connect of a file with speed: 2 (text)");
+    require(contains(table.standard_output, "the run goes at speed 1 (real time), not at the speed 2 of the file") &&
+                contains(table.standard_output, "[outside-speed-set]"),
+            "check --connect of a file with speed: 2 wrote:\n" + table.standard_output);
+    // A role: bridge participant locks the time without --connect, also with describe: false;
+    // --disable takes it out.
+    const fs::path bridged = o.work_dir / "connect-own-bridge.yaml";
+    write_file(bridged, fast + "  - name: Gateway\n"
+                               "    role: bridge\n"
+                               "    describe: false\n"
+                               "    required: false\n"
+                               "    command: [" + yaml_quote(shown_path(o.helper)) + "]\n");
+    const Captured own = launch(o, {"check", "--json", shown_path(bridged)});
+    expect_code(own, 0, "check of a file with a role: bridge participant");
+    require(contains(own.standard_output, "\"locked\": true,\n    \"because\": [\n      \"Gateway\"\n    ]") &&
+                contains(own.standard_output, "\"code\": \"outside-speed-set\"") &&
+                contains(own.standard_output, "participant 'Gateway' is a bridge (role: bridge)") &&
+                contains(own.standard_output, "run with --disable Gateway"),
+            "check of a file with a role: bridge participant wrote:\n" + own.standard_output);
+    const Captured disabled = launch(o, {"check", "--json", "--disable", "Gateway", shown_path(bridged)});
+    expect_code(disabled, 0, "check --disable of the role: bridge participant");
+    require(contains(disabled.standard_output, "\"locked\": false,\n    \"because\": []") &&
+                !contains(disabled.standard_output, "\"outside-"),
+            "check --disable Gateway wrote:\n" + disabled.standard_output);
+}
+
 void connect(const Options& o)
 {
     const std::string helper = yaml_quote(shown_path(o.helper));
@@ -855,6 +924,16 @@ void connect(const Options& o)
         }
         // The bridge is on each network: one ECU there is no single participant.
         require(!contains(run.standard_output, "single-participant"), what + ": " + run.standard_output);
+        // Connected outside: the run keeps real time (the file has speed: 1, so there is nothing to say).
+        require(contains(run.standard_output, "  \"time_lock\": {\n"
+                                              "    \"locked\": true,\n"
+                                              "    \"because\": [\n"
+                                              "      \"ETH_EXT\",\n"
+                                              "      \"J1939_CAN1\"\n"
+                                              "    ]\n"
+                                              "  },\n") &&
+                    !contains(run.standard_output, "\"outside-"),
+                what + ": the time lock:\n" + run.standard_output);
     };
     {
         // On PATH (the launcher's own directory has no bridge).
@@ -889,6 +968,9 @@ void connect(const Options& o)
         require(!contains(none.standard_output, "\"outside\": {") && contains(none.standard_output, "\"outside\": null") &&
                     contains(none.standard_output, "single-participant"),
                 "check --connect ETH_EXT=none wrote:\n" + none.standard_output);
+        require(contains(none.standard_output, "  \"time_lock\": {\n    \"locked\": false,\n    \"because\": []\n  },\n"),
+                "check --connect ETH_EXT=none: no time lock:\n" + none.standard_output);
+        time_policy(o, text);
     }
     {
         // Next to the launcher, without the bridges on PATH.
@@ -952,7 +1034,7 @@ void connect(const Options& o)
                 "run --disable bridge.ETH_EXT wrote:\n" + run.standard_output + run.standard_error);
     }
     expect_usage({"test", shown_path(config), "--connect", "ETH_EXT=eth0", "--scenarios", shown_path(o.work_dir)},
-                 "--connect is not for test: test runs each scenario as fast as possible, and a real bus does not wait for "
+                 "--connect is not for test: test is made for runs that go as fast as possible, one after the other, and a real bus does not wait for "
                  "the virtual time; for a test with a device, run one scenario: vehicle_sil_launch run --scenario "
                  "<scenario> --speed 1 --strict --connect <network>=<target> <file>");
     // The value after --connect is not the file.

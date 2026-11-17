@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 271,
-      "last_t_ms": 2710,
+      "last_seq": 162,
+      "last_t_ms": 1620,
       "time": {
         "event": "time",
-        "seq": 253,
-        "t_ms": 2530,
-        "sim_ms": 110430,
+        "seq": 144,
+        "t_ms": 1440,
+        "sim_ms": 55740,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -285,6 +285,10 @@
             "outside": null
           }
         ],
+        "time_lock": {
+          "locked": false,
+          "because": []
+        },
         "findings": [
           {
             "severity": "note",
@@ -374,13 +378,94 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 265,
+        "seq": 156,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
         "message": null,
         "reason": null,
         "id": null
+      },
+      "launcher_state": {
+        "seq": 161,
+        "rev": 10,
+        "phase": "ended",
+        "paused": false,
+        "holding": false,
+        "speed": "max",
+        "pacing": "not-paced",
+        "stop": {
+          "requests": 2,
+          "by": "stop command"
+        },
+        "scenario": false,
+        "allowed": {
+          "pause": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "resume": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "step": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+            "caution": null,
+            "min_ms": 1,
+            "max_ms": 1000000000000
+          },
+          "speed": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+            "caution": null,
+            "min": 1e-06,
+            "max": 1000000.0
+          },
+          "run_until": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null,
+            "caution": null
+          },
+          "write": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          }
+        },
+        "outside": []
+      },
+      "allowed": {
+        "rev": 11,
+        "start": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "stop": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        },
+        "force": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        }
       },
       "result": {
         "vehicle_sil_run": 1,
@@ -400,7 +485,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 110430,
+          "sim_ms": 55740,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -468,7 +553,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 110430,
+          "before_ms": 55740,
           "unplaced": [
             {
               "participant": "Logger",
@@ -495,8 +580,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110420,
-                  "frames_sent": 1106,
+                  "at_ms": 55730,
+                  "frames_sent": 559,
                   "frames_received": 0
                 },
                 {
@@ -504,9 +589,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110420,
+                  "at_ms": 55730,
                   "frames_sent": 0,
-                  "frames_received": 1106
+                  "frames_received": 559
                 }
               ]
             }
@@ -769,6 +854,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -789,7 +878,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 221,
+          "kept": 112,
           "dropped": 0
         }
       },
@@ -798,7 +887,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

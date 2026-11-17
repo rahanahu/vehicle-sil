@@ -316,7 +316,7 @@ A frame from the bus that came earlier keeps the hint back as well. The hint als
 
 ## Physical CAN and virtual time
 
-- When you connect to physical CAN, run the simulation in real time as a rule.
+- When you connect to physical CAN, run the simulation in real time as a rule. `vehicle_sil_launch` does so by default: a run with `--connect`, or with an enabled `role: bridge` participant in its file, goes at speed 1 (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 - Treat Vector Virtual CAN, too, as not synchronized automatically with SIL Kit's virtual time.
 - The Vector XL CAN Bridge uses the autonomous lifecycle and runs in real time. Do not make it a participant of a virtual-time simulation.
 - A protocol stack placed directly on an XL channel (`ExternalPortAdapter`) also runs in real time only. Registering it with a host that runs with time synchronization is a configuration error.

@@ -248,7 +248,7 @@ def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
             assert all(not alive(pid) for pid in started_pids(sock.received))
             status, _ = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
             assert status == 200
-            got = await sock.until(is_ended)
+            got = [m for m in await sock.until(is_ended) if m["type"] != "allowed"]  # (`starting` comes first)
             assert got[0]["type"] == "session" and got[0]["session"]["id"] == 2
         run_async(main, gui)
 
@@ -306,6 +306,11 @@ def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> No
         summary = body["session"]
         assert summary["result"]["result"] == "passed" and summary["phase"] == "ended"
         assert summary["launcher"]["running"] and summary["state"] == "running"  # so the screen offers Stop
+        assert summary["launcher_state"]["allowed"]["pause"]["reason"] == "not-running"
+        # a time command is refused with the launcher's own sentence (and not written: the replay has none)
+        status, body = await c.post("api/time", {"command": "resume"})
+        assert status == 409 and body["error"]["code"] == "not-running", body
+        assert body["error"]["message"] == summary["launcher_state"]["allowed"]["resume"]["message"], body
         status, body = await c.post("api/stop", {})
         assert status == 200 and body["session"]["stop"] == "requested"
         got = await sock.until(is_ended)
@@ -510,9 +515,12 @@ def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
             got = await sock.until(is_time(sim_ms=30, paused=True))
             step = next(e for e in events(got, "command"))
             assert step["accepted"] and step["ms"] == 30  # whole steps of 10 ms
-            status, body = await c.post("api/time", {"command": "speed", "value": 2})
-            assert status == 200 and body["command"] == {"command": "speed", "value": 2.0}
+            status, body = await c.post("api/time", {"command": "speed", "value": 2, "id": 7})
+            assert status == 200 and body["command"] == {"command": "speed", "value": 2.0, "id": 7}
             await sock.until(is_time(speed=2, paused=True))
+            # the launcher returns the id in the answer to that line, and null in the others
+            answers = {e["command"]: e["id"] for e in events(sock.received, "command")}
+            assert answers == {"step": None, "speed": 7}, answers
             await c.post("api/time", {"command": "resume"})
             await sock.until(is_time(paused=False))
             status, body = await c.post("api/time", {"command": "step", "ms": 10})
@@ -580,6 +588,143 @@ def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
         await c.post("api/stop")
         await sock.until(is_ended)
     with gui_server(tmp_path, env=OLD) as gui:
+        run_async(main, gui)
+
+
+def test_a_launcher_without_state_does_not_get_an_id(tmp_path: Path) -> None:
+    """The launcher returns the id of a command only with the feature `state`: another is not sent one it would
+    not read as an id."""
+    features = "events,stdin-commands,check-variables,speed,start-paused,time-commands"
+
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "forever.yaml"})
+        await sock.until(is_time(sim_ms=0))
+        status, body = await c.post("api/time", {"command": "pause", "id": 3})
+        assert status == 400 and body["error"]["code"] == "unsupported" and "state" in body["error"]["message"], body
+        status, body = await c.post("api/time", {"command": "pause", "id": -1})
+        assert status == 400 and body["error"]["code"] == "invalid-field", body
+        await c.post("api/stop")  # nothing was written for the two above
+        await sock.until(is_ended)
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
+        run_async(main, gui)
+
+
+def test_allowed_follows_the_run_and_the_summary_keeps_the_last_state(tmp_path: Path) -> None:
+    def start(allowed: dict) -> object:
+        return allowed["start"]["reason"]
+
+    async def main(c: Client) -> None:
+        status, body = await c.get("api/session")
+        assert body["session"] is None and start(body["allowed"]) is None
+        assert body["allowed"]["stop"]["reason"] == body["allowed"]["force"]["reason"] == "not-running"
+        sock = await c.ws()
+        got = await sock.until(is_synced)
+        assert got[0]["session"] is None and start(got[0]["allowed"]) is None  # hello says it with no run
+        status, body = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200
+        allowed = body["session"]["allowed"]
+        assert allowed["start"]["reason"] == "already-running" and allowed["stop"]["ok"] and allowed["force"]["ok"]
+        assert isinstance(allowed["start"]["message"], str) and allowed["stop"]["message"] is None
+        await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "state")
+        status, body = await c.get("api/session")
+        assert body["allowed"] == body["session"]["allowed"]
+        assert isinstance(body["session"]["launcher_state"]["rev"], int)
+        status, body = await c.post("api/stop")
+        assert body["session"]["allowed"]["stop"]["reason"] == "already-stopping"
+        assert body["session"]["allowed"]["force"]["ok"]
+        got = await sock.until(is_ended)
+        end = got[-1]["session"]
+        assert end["allowed"]["start"]["ok"] and end["allowed"]["stop"]["reason"] == "not-running"
+        assert end["launcher_state"]["phase"] in ("ended", "stopping", "running")
+        states = events(sock.received, "state")  # many came; the summary has only the last
+        assert len(states) > 1 and end["launcher_state"]["rev"] == states[-1]["rev"] and end["launcher_state"]["seq"] == states[-1]["seq"]
+        assert "event" not in end["launcher_state"] and "t_ms" not in end["launcher_state"]
+        status, body = await c.post("api/stop", {"force": True})  # nothing to stop: the same answer again
+        assert status == 200 and body["session"]["allowed"]["force"]["reason"] == "not-running"
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+        run_async(main, gui)
+
+
+def test_the_probe_that_changes_the_launcher_is_pushed_to_the_other_screens(tmp_path: Path) -> None:
+    launcher = tmp_path / "vehicle_sil_launch"
+
+    def write(features: str) -> None:  # another size each time: the server asks the new one for its version
+        launcher.write_text(f"#!{sys.executable}\n# {features}\nimport os, runpy\n"
+                            f"os.environ['REPLAY_FEATURES'] = {features!r}\n"
+                            f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
+        launcher.chmod(0o755)
+
+    write("events,stdin-commands,check-variables")
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        async def main(c: Client) -> None:
+            other = await c.ws()
+            hello = (await other.until(is_synced))[0]["allowed"]
+            assert hello["start"]["ok"]
+            write("check-variables")  # no events: this launcher cannot be used
+            status, app = await c.get("api/app")
+            got = await other.until(lambda m: m["type"] == "allowed" and not m["allowed"]["start"]["ok"])
+            unusable = got[-1]["allowed"]
+            assert unusable["start"]["reason"] == "launcher-unusable" and unusable["rev"] > hello["rev"]
+            # a screen that reads api/session now makes no new number: the other screens already have it
+            status, body = await c.get("api/session")
+            assert body["allowed"]["rev"] == unusable["rev"]
+            write("events,stdin-commands,check-variables,speed")  # usable again
+            await c.get("api/app")
+            got = await other.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
+            assert got[-1]["allowed"]["rev"] > unusable["rev"]
+        run_async(main, gui)
+
+
+def test_a_start_that_is_starting_says_so_to_the_second_request(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "300"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            first = asyncio.ensure_future(c.post("api/run", {"file": "forever.yaml"}))
+            await asyncio.sleep(0.1)
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 409 and body["error"]["code"] == "starting", body
+            assert (await first)[0] == 200
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 409 and body["error"]["code"] == "already-running", body
+            await sock.until(is_time(sim_ms=0))
+            await c.post("api/stop")
+            await sock.until(is_ended)
+        run_async(main, gui)
+
+
+def test_allowed_alone_is_pushed_only_when_no_session_message_carries_it(tmp_path: Path) -> None:
+    """A start beginning, and a start that fails, change `allowed` with no session message to carry it: a message
+    `allowed` says so, numbered. A start that works is carried by its session message: nothing else is pushed."""
+    def pushed(sock) -> list[dict]:
+        return [m for m in sock.received if m["type"] == "allowed"]
+
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        got = await sock.until(is_synced)
+        hello = got[0]["allowed"]
+        assert hello["start"]["ok"] and isinstance(hello["rev"], int)
+        status, body = await c.post("api/run", {"file": "check-error.yaml"})
+        assert status == 422
+        await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
+        starting, back = pushed(sock)
+        assert starting["session"] is None and starting["allowed"]["start"]["reason"] == "starting"
+        assert starting["allowed"]["start"]["message"] and back["allowed"]["start"]["ok"]
+        assert hello["rev"] < starting["allowed"]["rev"] < back["allowed"]["rev"]
+        status, body = await c.get("api/session")
+        assert body["allowed"]["rev"] == back["allowed"]["rev"]  # nothing changed since: the same number
+        sock.received.clear()
+        status, body = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200
+        carried = body["session"]["allowed"]
+        assert carried["start"]["reason"] == "already-running" and carried["rev"] > back["allowed"]["rev"]
+        await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+        assert [m["allowed"]["start"]["reason"] for m in pushed(sock)] == ["starting"]  # and no more after it
+        await c.post("api/stop")
+        await sock.until(is_ended)
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         run_async(main, gui)
 
 

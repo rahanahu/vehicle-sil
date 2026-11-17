@@ -216,7 +216,7 @@ Where to change (`libs/launch/include/vehicle_sil/launch/test.hpp` and `src/test
 | `test_file()` | Calls `run_file()` for each run |
 | `format_test_text()` | The command that reruns a single run takes its arguments from `TestArguments` |
 | `format_test_json()` | `kTestFormat` |
-| `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run` and `test-runs-left` |
+| `TestReport::remarks()` | The findings for `test` as a whole: `test-nothing-run`, `test-runs-left` and `test-speed-set` |
 | `TestReport::result()` | Result and exit code |
 | `ScenarioCheck::not_for_variant` | Marks a run that does not match `only` as `skipped` |
 | `CheckOptions::params_for_many` | Relaxes the check of `--param` |

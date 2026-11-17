@@ -9,13 +9,8 @@
 
 namespace vehicle_sil::launch::detail {
 
-control::Hub& RunControl::hub()
+const std::shared_ptr<control::Hub>& RunControl::shared_hub()
 {
-    if (ctx_.options.hub == nullptr && !own_hub_)
-    {
-        own_hub_ = std::make_unique<control::Hub>();
-    }
-    control::Hub& hub = ctx_.options.hub != nullptr ? *ctx_.options.hub : *own_hub_;
     if (!maps_set_)
     {
         // Before any agent connects: the hub shows every client (the scenario, the control server)
@@ -25,11 +20,11 @@ control::Hub& RunControl::hub()
         {
             if (p.enabled && !p.variables.empty())
             {
-                hub.set_variable_map(p.name, p.variables);
+                hub_->set_variable_map(p.name, p.variables);
             }
         }
     }
-    return hub;
+    return hub_;
 }
 
 ControlLink RunControl::described_link(std::size_t i) const
@@ -122,8 +117,7 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
                                         [&name](const control_silkit::LinkInfo& l) { return l.participant == name; });
         return found != in.end() ? &*found : nullptr;
     };
-    const control::Hub* hub = ctx_.options.hub != nullptr ? ctx_.options.hub : own_hub_.get();
-    const std::vector<control::PeerInfo> peers = hub != nullptr ? hub->peers() : std::vector<control::PeerInfo>{};
+    const std::vector<control::PeerInfo> peers = hub_->peers();
     for (std::size_t i = 0; i < outcome.participants.size(); ++i)
     {
         ParticipantRun& run = outcome.participants[i];
@@ -217,12 +211,7 @@ void RunControl::note_late_values(RunOutcome& outcome, control_silkit::HubTransp
 
 void RunControl::note_late_maps(RunOutcome& outcome) const
 {
-    const control::Hub* hub = ctx_.options.hub != nullptr ? ctx_.options.hub : own_hub_.get();
-    if (hub == nullptr)
-    {
-        return;
-    }
-    const std::vector<control::PeerInfo> peers = hub->peers();
+    const std::vector<control::PeerInfo> peers = hub_->peers();
     for (ParticipantRun& run : outcome.participants)
     {
         const auto peer = std::find_if(peers.begin(), peers.end(),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// vehicle_sil_launch's run as a library (run_file()) with a hub of the caller and ECUs in their
+// vehicle_sil_launch's run as a library (run_file()), whose hub the caller keeps from the start
+// window on (RunOptions::before_start), and ECUs in their
 // own processes (run_test_ecu.cpp, behaviour "variables"): a parameter written in the window
 // before the start is accepted by every ECU and seen by its step at 0; when the simulation has
 // reached stop_at_ms, the hub has the values of the last steps before it; nothing arrived late.
@@ -108,13 +109,15 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     }
     std::ofstream(dir / "sim.yaml", std::ios::binary) << config;
 
-    control::Hub hub;
+    // The run's hub, kept from the window on: read after the run.
+    std::shared_ptr<control::Hub> kept;
     std::uint64_t seq = 0;
     std::optional<control::OperationResult> queued;
     std::size_t peers_in_window = 0;
     launch::RunOptions options;
-    options.hub = &hub;
-    options.before_start = [&](control::Hub& h) {
+    options.before_start = [&](const std::shared_ptr<control::Hub>& given) {
+        kept = given;
+        control::Hub& h = *given;
         peers_in_window = h.peers().size();
         control::OperationRequest request;
         for (std::size_t i = 0; i < names.size(); ++i)
@@ -145,6 +148,10 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     {
         require(t.status == control::TargetStatus::Queued, "not queued in the window:" + status_text(*queued));
     }
+    // The run is over and its parts are gone: the hub is this test's now, with what the agents
+    // said last.
+    require(kept != nullptr, "the window was not given the run's hub");
+    const control::Hub& hub = *kept;
     // Applied in each ECU's step at 0, and seen there by the application.
     const auto result = hub.operation(seq);
     require(result.has_value() && result->done(), "the write is not done");
@@ -176,10 +183,8 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
         << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
-    control::Hub hub;
     launch::RunOptions options;
-    options.hub = &hub;
-    options.before_start = [](control::Hub&) { throw std::runtime_error("the scenario could not be set up"); };
+    options.before_start = [](const std::shared_ptr<control::Hub>&) { throw std::runtime_error("the scenario could not be set up"); };
     std::string lines;
     options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
     const auto begin = std::chrono::steady_clock::now();
@@ -206,13 +211,11 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
         << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
-    control::Hub hub;
     launch::StopRequests stops;
     launch::RunOptions options;
-    options.hub = &hub;
     options.stops = &stops;
     options.interrupt_name = [] { return std::string("control server stop"); };
-    options.before_start = [&stops](control::Hub&) {
+    options.before_start = [&stops](const std::shared_ptr<control::Hub>&) {
         stops.request(kAnySource);
         throw std::runtime_error("the scenario could not be set up");
     };
@@ -239,9 +242,7 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
     std::ofstream(dir / "test-ecu-no-control") << "\n";
     namespace topics = control_silkit::detail;
     std::unique_ptr<SilKit::IParticipant> impostor;
-    control::Hub hub;
     launch::RunOptions options;
-    options.hub = &hub;
     options.control_hello_timeout = 700ms;
     std::string lines;
     options.write_line = [&](std::string_view line) {
@@ -344,7 +345,9 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     pubsub::IDataPublisher* hello_out = nullptr;
     pubsub::IDataPublisher* submitted_out = nullptr;
     std::atomic<bool> answered{false};
-    control::Hub hub;
+    // The run's hub, from the window on (before_start below). Read by the thread that writes the
+    // line "simulation running" too: the window's thread has ended by then.
+    std::shared_ptr<control::Hub> hub;
     const auto say_hello = [&](const std::string& as, std::uint64_t with_session) {
         control::wire::Hello hello;
         hello.participant = as;
@@ -364,7 +367,7 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
         const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
         while (std::chrono::steady_clock::now() < deadline)
         {
-            const auto peers = hub.peers();
+            const auto peers = hub->peers();
             if (std::any_of(peers.begin(), peers.end(), [&](const control::PeerInfo& p) { return p.participant == name; }))
             {
                 return true;
@@ -376,10 +379,10 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
     bool hello_arrived = false;
     bool marker_arrived = false;
     launch::RunOptions options;
-    options.hub = &hub;
-    if (in_window)
-    {
-        options.before_start = [&](control::Hub&) {
+    options.before_start = [&](const std::shared_ptr<control::Hub>& given) {
+        hub = given;
+        if (in_window)
+        {
             say_hello("Body", session);
             hello_arrived = wait_for_peer("Body");
             const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
@@ -391,8 +394,8 @@ void a_late_hello(const fs::path& ecu, const fs::path& dir, bool in_window)
             // once this second hello is there, the launcher has the answer.
             say_hello("Marker", session + 1);
             marker_arrived = wait_for_peer("Marker");
-        };
-    }
+        }
+    };
     std::string lines;
     options.write_line = [&](std::string_view line) {
         lines += std::string(line) + "\n";
@@ -492,7 +495,7 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     options.controls = &controls;
     options.timeout = timeout;
     options.interrupt_name = [] { return std::string("SIGINT"); };
-    options.serve_control = [](control::Hub&) { return launch::ControlServerInfo{"(test)", false, false}; };
+    options.serve_control = [](const std::shared_ptr<control::Hub>&) { return launch::ControlServerInfo{"(test)", false, false}; };
     options.write_line = [&](std::string_view line) {
         out.lines += std::string(line) + "\n";
         const std::string_view registry = "[vehicle_sil_launch] registry at ";

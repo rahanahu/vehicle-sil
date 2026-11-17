@@ -53,6 +53,8 @@ describe('SessionFeed', () => {
     vi.advanceTimersByTime(BATCH_MS);
   }
 
+  const clientsLast = () => clients[clients.length - 1];
+
   /** Creates a client, connects and opens (no HTTP). */
   function open(http = new FakeHttp()): { run: ReturnType<typeof view>; socket: FakeSocket } {
     const client = createClient({
@@ -87,6 +89,24 @@ describe('SessionFeed', () => {
     // In the example ECUs, Dashboard writes the lines
     expect(session?.logs.some((line) => line.source === 'Dashboard')).toBe(true);
     expect(session?.check?.result).toBe('passed');
+  });
+
+  it('takes the allowed message and an unknown message type without changing the session', () => {
+    const { run, socket } = open();
+    play(socket, 'ws-pass');
+    const before = run.session();
+    const seen: string[] = [];
+    clientsLast().session.onMessages((batch) => seen.push(...batch.map((m) => m.type)));
+    const allowed = { start: { ok: true, reason: null, message: null } };
+    socket.send({
+      type: 'allowed',
+      session: null,
+      allowed: { rev: 99, ...allowed, stop: allowed.start, force: allowed.start },
+    });
+    socket.send({ type: 'a-message-of-a-later-version', session: 1 });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(run.session()).toBe(before); // the same session copy: nothing changed
+    expect(seen).toEqual(['allowed']); // the one it knows is passed on, the unknown one is skipped
   });
 
   it('keeps the check of the hello when the later summaries come without it', () => {

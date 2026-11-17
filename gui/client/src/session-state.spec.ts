@@ -28,6 +28,8 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     time_omitted_fields: [],
     time: null,
     last_command: null,
+    launcher_state: null,
+    allowed: null,
     check: null,
     participants: [],
     findings: [],
@@ -475,6 +477,8 @@ describe('applyEvents', () => {
           accepted: true,
           message: null,
           ms: null,
+          reason: null,
+          id: null,
         },
       }),
     );

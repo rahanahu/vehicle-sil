@@ -608,7 +608,7 @@ to see a failed run in full, run it alone: vehicle_sil_launch run simulation.var
 FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 ```
 
-失敗した組があっても、残りの組は実行されます。`to see a failed run in full` の行のコマンドで、失敗した 1 組だけを、`test` と同じ条件（`--speed max`: 最速）で実行し直せます。
+失敗した組があっても、残りの組は実行されます。`to see a failed run in full` の行のコマンドで、失敗した 1 組だけを、`test` と同じ条件（`--speed max`: 最速）で実行し直せます。ファイルに有効な `role: bridge` の participant がいるときは、`test` は速さ 1 で実行し、コマンドに `--speed max` は付きません（[外につながる実行の時間](../simulation-run.md#外につながる実行の時間--time-policy)）。
 
 | したいこと | 書き方 |
 |---|---|

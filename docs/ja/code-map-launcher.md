@@ -104,6 +104,7 @@
 | 設定ファイルとシナリオの読み取りの共通の部分 | `src/yaml_reader.hpp` |
 | `run` の全体の流れ | `src/run.cpp` |
 | `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
+| 1 回の実行の Hub と、registry、コントローラー、Hub の transport を 1 つにまとめたもの（`detail::ConnectionOf`）: 閉じる順と、持ち主。`Runner::run()` が作り、1 人で持つ。終わりに、閉じるスレッドが引き取り（`detail::close_connection_within()`。`src/run_close.hpp` の `close_within()` の上）、期限を過ぎて放置されたら持ち続ける。放置された閉じるスレッドが触りうるものの一覧は `src/run.cpp` の頭のコメント | `src/run_connection.hpp` |
 | この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
 | 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
@@ -383,6 +384,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 - `libs/launch/src/time_commands.cpp` の `TimeCommands`
 - 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
+- `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は、`run_notes.hpp` の `detail::noted_paused()`）
 - イベント `state`: 中身と知らせる時は、`run_controls.cpp` の `RunControls::compose()` と `publish()`（`paused` と `speed` は `time_commands.cpp` の `facts_of()`、`pacing` は `run_pacing.hpp` の `detail::PacingWatch`）。最新の 1 つだけが書かれるのを待つことは、`events.cpp` の `EventStream::emit()`
 - `run_watch.cpp` の `RunWatch::note_timing()`

@@ -1,0 +1,86 @@
+{
+  "description": "What the server accepts changed with no session message to carry it: a start begins (start is starting), then fails (start is ok again). Each `allowed` has a rev that goes up with each change.",
+  "client": [
+    {
+      "type": "auth",
+      "token": "<token>"
+    }
+  ],
+  "server": [
+    {
+      "type": "hello",
+      "vehicle_sil_gui": 1,
+      "version": "0.1.0",
+      "instance": "0123456789abcdef",
+      "session": null,
+      "allowed": {
+        "rev": 1,
+        "start": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "stop": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        },
+        "force": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        }
+      },
+      "replay": null
+    },
+    {
+      "type": "synced",
+      "session": null,
+      "last_seq": null
+    },
+    {
+      "type": "allowed",
+      "session": null,
+      "allowed": {
+        "rev": 2,
+        "start": {
+          "ok": false,
+          "reason": "starting",
+          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+        },
+        "stop": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "force": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        }
+      }
+    },
+    {
+      "type": "allowed",
+      "session": null,
+      "allowed": {
+        "rev": 3,
+        "start": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "stop": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        },
+        "force": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        }
+      }
+    }
+  ]
+}

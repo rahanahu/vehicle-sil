@@ -104,6 +104,7 @@ Implementation:
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
 | The overall flow of `run` | `src/run.cpp` |
 | The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |
+| The Hub of a run with the registry, the controller and the Hub's transport, as one thing (`detail::ConnectionOf`): the order in which they close, and who holds them. `Runner::run()` makes it and holds it alone; at the end the closing thread takes it over (`detail::close_connection_within()`, on `close_within()` in `src/run_close.hpp`) and keeps it if it is left at its limit. The list of what a closing thread that was left can still reach is the comment at the top of `src/run.cpp` | `src/run_connection.hpp` |
 | This computer's addresses (the URI shown to other computers) | `src/host_addresses.cpp` |
 | The watch of the running simulation (`RunWatch::watch()`), what is settled when it is over (`RunWatch::settle()`: the scenario's end, the timing, the traffic, how the simulation ended), and `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |
@@ -383,6 +384,7 @@ Where to change:
 - `TimeCommands` in `libs/launch/src/time_commands.cpp`
 - Whether a time command, a stop or a write is taken, and the message of the refusal: the rows in `libs/launch/src/control_rules.cpp` (one place for `TimeCommands::apply()`, `RunControls::allowed()` and the control server's `observe_only`; the rows are tested in `tests/launch/test_control_rules.cpp`)
 - `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` in `time_plan.cpp` (declared in `time_plan.hpp`; `check.cpp` uses it without `run.hpp`)
+- `time_lock()`, `planned_speed()` and `time_lock_findings()` in `time_plan.cpp`: whether a run that is connected outside the simulation keeps real time (`--time-policy`), the speed it starts at, and the findings `outside-*` of the check. `check_file()` puts the result in `CheckReport::time_lock`, and the run reads the speed from there
 - `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
 - The event `state`: what is in it and when it is told, `RunControls::compose()` and `publish()` in `run_controls.cpp` (`paused` and `speed` come from `facts_of()` in `time_commands.cpp`, `pacing` from `detail::PacingWatch` in `run_pacing.hpp`); that only the latest one waits to be written, `EventStream::emit()` in `events.cpp`
 - `RunWatch::note_timing()` in `run_watch.cpp`

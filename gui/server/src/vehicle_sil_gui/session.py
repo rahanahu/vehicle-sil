@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any
 
+from .allowed import Facts, Numbered, allowed as allowed_of
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT
 
 EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
@@ -35,7 +36,7 @@ ESSENTIAL = {
     "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested", CONTROL_SUMMARY_FIELD),
     "time": ("event", "seq", "t_ms", "sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms"),
     "registry": ("uri",),
-    "command": ("seq", "command", "accepted", "ms"),
+    "command": ("seq", "command", "accepted", "ms", "reason", "id"),
 }
 # Problems that the server notices about the run, as opposed to what the launcher wrote: each has its own room
 # in the summary, so that a launcher that writes junk cannot push them out.
@@ -62,6 +63,7 @@ class Limits:
     log_sources: int = 64  # sources with their own log; later sources share one
     dropped_seqs: int = 10_000  # per source: the seqs of the last dropped lines, to count what a screen missed
     object_bytes: int = 4 * 1024 * 1024  # the check and the result in the summary
+    state_bytes: int = 64 * 1024  # the launcher's last state in the summary (about 2 KiB now)
     small_bytes: int = 4 * 1024  # phase, time, registry, command, and one participant's entry
     findings: int = 1000
     findings_bytes: int = 1024 * 1024
@@ -151,8 +153,12 @@ def _shape_problem(event: dict) -> str | None:
             return "count or sources is not a count, or an object of counts"
         return None
     if kind == "command":
-        return None if _str_or_none(event.get("command")) and isinstance(event.get("accepted"), bool) \
-            else "command is not a string, or accepted is not true or false"
+        if not (_str_or_none(event.get("command")) and isinstance(event.get("accepted"), bool)):
+            return "command is not a string, or accepted is not true or false"
+        return None if event.get("id") is None or _is_count(event["id"]) else "id is not null or an integer from 0 to 2^53"
+    if kind == "state":
+        return None if _is_count(event.get("rev")) and isinstance(event.get("allowed"), dict) \
+            else "rev is not an integer from 0 to 2^53, or allowed is not an object"
     if kind == "result":
         return None if isinstance(event.get("result"), dict) else "result is not an object"
     if kind == CONTROL_EVENT:
@@ -272,6 +278,9 @@ class Session:
         self.findings_bytes = 0
         self.findings_omitted = 0
         self.last_command: dict | None = None
+        self.launcher_state: dict | None = None  # the last `state` event of the launcher (what it accepts now)
+        self.facts: Callable[[], Facts] = Facts  # what the server knows apart from the run (the server sets it)
+        self.numbered = Numbered()  # numbers `allowed` (the server's, so that all runs share one numbering)
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
@@ -403,6 +412,14 @@ class Session:
         elif kind == "time":
             kept = self._small(kind, event, None)
             self.time = kept if kept is not None else self.time
+        elif kind == "state":
+            # Only the last one is kept (the launcher writes one whenever what it accepts changes); with its seq
+            # and rev, so that a screen tells a new one from the same one sent again in a later summary.
+            if size <= self.limits.state_bytes:
+                self.launcher_state = {k: v for k, v in event.items() if k not in ("event", "t_ms")}
+            else:
+                out += self._limit("state", f"the launcher's state is larger than {self.limits.state_bytes} "
+                                            "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "registry":
             kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)
             self.registry = kept if kept is not None else self.registry
@@ -696,7 +713,8 @@ class Session:
             "time": self.time, "check": self.check, "registry": self.registry,
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,
             "findings": self.findings, "findings_omitted": self.findings_omitted,
-            "last_command": self.last_command, "result": self.result,
+            "last_command": self.last_command, "launcher_state": self.launcher_state,
+            "allowed": self.allowed(), "result": self.result,
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": self.problems, "problems_omitted": self.problems_omitted,
@@ -705,6 +723,11 @@ class Session:
         if variables:
             out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)
         return out
+
+    def allowed(self) -> dict:
+        """What this server accepts now: start, stop, force (see allowed.py)."""
+        return self.numbered.stamp(allowed_of(self.facts(), self.state == "running",
+                                              self.state == "running" and self.launcher_running, self.stop))
 
     def message(self) -> dict:
         """The summary for the screens that are connected. Without `variables`: they are large, change seldom,

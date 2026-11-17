@@ -13,12 +13,52 @@
       "version": "0.1.0",
       "instance": "0123456789abcdef",
       "session": null,
+      "allowed": {
+        "rev": 1,
+        "start": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "stop": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        },
+        "force": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        }
+      },
       "replay": null
     },
     {
       "type": "synced",
       "session": null,
       "last_seq": null
+    },
+    {
+      "type": "allowed",
+      "session": null,
+      "allowed": {
+        "rev": 2,
+        "start": {
+          "ok": false,
+          "reason": "starting",
+          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+        },
+        "stop": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "force": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        }
+      }
     },
     {
       "type": "session",
@@ -51,6 +91,25 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": null,
+        "launcher_state": null,
+        "allowed": {
+          "rev": 3,
+          "start": {
+            "ok": false,
+            "reason": "already-running",
+            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          },
+          "force": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          }
+        },
         "result": null,
         "log": {},
         "problems": [],
@@ -63,7 +122,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -151,8 +210,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -423,6 +482,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -497,8 +560,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -586,9 +649,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -759,9 +822,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -817,12 +880,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 20,
         "t_ms": 200,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -832,7 +894,7 @@
         "event": "control_link",
         "seq": 21,
         "t_ms": 210,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -844,6 +906,18 @@
         "event": "control_link",
         "seq": 22,
         "t_ms": 220,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 23,
+        "t_ms": 230,
         "name": "Logger",
         "state": "none"
       }
@@ -853,8 +927,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 24,
+        "t_ms": 240,
         "phase": "running"
       }
     },
@@ -863,8 +937,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 25,
+        "t_ms": 250,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -906,9 +980,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -932,8 +1006,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 26,
+        "t_ms": 260,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -943,8 +1017,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -974,8 +1048,8 @@
       "session": 1,
       "event": {
         "event": "mystery",
-        "seq": 27,
-        "t_ms": 270,
+        "seq": 28,
+        "t_ms": 280,
         "detail": "an event this reader does not know"
       }
     },
@@ -983,22 +1057,10 @@
       "type": "error",
       "session": 1,
       "code": "seq-gap",
-      "message": "events are missing: seq 28 never came from the launcher",
+      "message": "events are missing: seq 29 never came from the launcher",
       "detail": {
-        "expected": 28,
-        "got": 29
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 29,
-        "t_ms": 290,
-        "source": "Engine",
-        "line": "after a gap",
-        "colour": "blue"
+        "expected": 29,
+        "got": 30
       }
     },
     {
@@ -1008,8 +1070,9 @@
         "event": "log",
         "seq": 30,
         "t_ms": 300,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "source": "Engine",
+        "line": "after a gap",
+        "colour": "blue"
       }
     },
     {
@@ -1089,8 +1152,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1179,8 +1242,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1341,8 +1404,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1744,6 +1807,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -2041,6 +2108,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -2121,6 +2192,87 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": null,
+        "launcher_state": {
+          "seq": 45,
+          "rev": 8,
+          "phase": "ended",
+          "paused": false,
+          "holding": false,
+          "speed": "max",
+          "pacing": "not-paced",
+          "stop": {
+            "requests": 0,
+            "by": null
+          },
+          "scenario": false,
+          "allowed": {
+            "pause": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+              "caution": null
+            },
+            "resume": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+              "caution": null
+            },
+            "step": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+              "caution": null,
+              "min_ms": 1,
+              "max_ms": 1000000000000
+            },
+            "speed": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+              "caution": null,
+              "min": 1e-06,
+              "max": 1000000.0
+            },
+            "run_until": {
+              "ok": false,
+              "reason": "no-control-server",
+              "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+              "caution": null
+            },
+            "stop": {
+              "ok": true,
+              "reason": null,
+              "message": null,
+              "caution": null
+            },
+            "write": {
+              "ok": false,
+              "reason": "no-control-server",
+              "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+              "caution": null
+            }
+          },
+          "outside": []
+        },
+        "allowed": {
+          "rev": 5,
+          "start": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          },
+          "stop": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "no simulation is running: there is nothing to stop"
+          },
+          "force": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "no simulation is running: there is nothing to stop"
+          }
+        },
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -2497,6 +2649,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -2538,10 +2694,10 @@
           },
           {
             "code": "seq-gap",
-            "message": "events are missing: seq 28 never came from the launcher",
+            "message": "events are missing: seq 29 never came from the launcher",
             "detail": {
-              "expected": 28,
-              "got": 29
+              "expected": 29,
+              "got": 30
             }
           }
         ],

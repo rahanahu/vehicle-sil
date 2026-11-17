@@ -22,9 +22,10 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
+from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
-                       FEATURE_START_PAUSED, FEATURE_STDIN_RUN_UNTIL, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
+                       FEATURE_START_PAUSED, FEATURE_STATE, FEATURE_STDIN_RUN_UNTIL, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
                        RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_params,
                        check_speed, check_time_command, check_variant,
                        command_line, run_command)
@@ -181,6 +182,7 @@ class GuiServer:
         self._started = asyncio.Event()  # set when no start is in progress
         self._started.set()
         self._ids = itertools.count(1)
+        self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
         self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
@@ -210,6 +212,25 @@ class GuiServer:
     @property
     def session(self) -> Session | None:
         return self.current.session if self.current else None
+
+    def facts(self) -> Facts:
+        """What `allowed` needs of the server itself (the launcher is as the last probe found it)."""
+        usable = self.launcher.usable
+        return Facts(closing=self._closing, starting=self._starting, launcher_usable=usable,
+                     launcher_message="" if usable else "; ".join(p["message"] for p in self.launcher.problems))
+
+    def allowed(self) -> dict:
+        """The `allowed` of the run the screens see; with no run, what the server accepts (start)."""
+        return self.session.allowed() if self.session else self.numbered.stamp(
+            allowed_of(self.facts(), False, False, "none"))
+
+    def _push_allowed(self) -> None:
+        """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
+        fails, the server's end begins): a small message of its own. Nothing when it has not changed."""
+        answer = self.allowed()
+        if answer["rev"] > self.hub.told_allowed_rev:  # not yet sent to every screen, whoever made the number
+            self.hub.broadcast([{"type": "allowed", "session": self.session.id if self.session else None,
+                                 "allowed": answer}])
 
     # ------------------------------------------------------------ the application
 
@@ -317,6 +338,7 @@ class GuiServer:
 
     async def get_app(self, request: web.Request) -> web.Response:
         await self.launcher.probe()
+        self._push_allowed()  # the probe may have made the launcher usable or not
         why_not = await self._no_variables()
         v = self.o.variable_limits
         return web.json_response({
@@ -357,7 +379,8 @@ class GuiServer:
 
     async def get_session(self, request: web.Request) -> web.Response:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
-        return web.Response(text=encode({"session": self.session.summary() if self.session else None}),
+        return web.Response(text=encode({"session": self.session.summary() if self.session else None,
+                                         "allowed": self.allowed()}),
                             content_type="application/json")
 
     async def get_dashboard(self, request: web.Request) -> web.Response:
@@ -475,15 +498,19 @@ class GuiServer:
             body = await self._body(request)
             check_fields("api/run", body, RUN_FIELDS)
             self._not_closing()
-            if self._starting or (self.session is not None and self.session.state == "running"):
-                raise Refused(409, "already-running", "a simulation is starting or running: stop it (POST api/stop) "
-                                                      "and wait for it to end before starting another")
+            if self.session is not None and self.session.state == "running":
+                raise Refused(409, "already-running", "a simulation is running: stop it (POST api/stop) and wait for "
+                                                      "it to end before starting another")
+            if self._starting:  # no run is running: another request is starting one
+                raise Refused(409, "starting", "a run is starting: wait until it has started (the answer of POST "
+                                               "api/run), then stop it before starting another")
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.
         self._starting = True
         self._started.clear()
         self._stop_on_start = None
+        self._push_allowed()
         try:
             return await self._start(body)
         except (PathRejected, InvalidRequest, Refused) as e:
@@ -492,6 +519,7 @@ class GuiServer:
             self._starting = False
             self._stop_on_start = None
             self._started.set()
+            self._push_allowed()
 
     async def _start(self, body: dict) -> web.Response:
         config = self.root.resolve(body.get("file"))
@@ -550,6 +578,8 @@ class GuiServer:
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
                           launcher_pid=proc.pid, scenario=scenario, manual=manual)
+        session.facts = self.facts
+        session.numbered = self.numbered
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
@@ -622,6 +652,12 @@ class GuiServer:
         if command["command"] == "run_until" and FEATURE_STDIN_RUN_UNTIL not in run.features:
             return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_STDIN_RUN_UNTIL}': "
                                              "it cannot run until a time; build a newer launcher")
+        said = self._launcher_refuses(run, command["command"])
+        if said is not None and said[0] == "not-running":  # the run is over (a late command could change nothing)
+            return error(409, "not-running", said[1])
+        if "id" in command and FEATURE_STATE not in run.features:
+            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_STATE}': it does "
+                                             "not return the id of a command; leave id out, or build a newer launcher")
         gone = error(409, "not-running", "the launcher's input is closed (it is ending): the command was not sent")
         try:
             proc.stdin.write(command_line(command))  # written before any await: in the order the requests came
@@ -638,6 +674,17 @@ class GuiServer:
             return gone
         # Not the summary: what the command does comes later, as the launcher's command and time events.
         return web.json_response({"session_id": run.session.id, "command": command})
+
+    @staticmethod
+    def _launcher_refuses(run: Run, name: str) -> tuple[str, str] | None:
+        """(reason, message) when the launcher's last `state` says it does not accept `name` (an entry of its
+        `allowed`); None when it accepts it, or has not said."""
+        state = run.session.launcher_state
+        item = state["allowed"].get(name) if state else None
+        if not isinstance(item, dict) or item.get("ok") is not False or not isinstance(item.get("reason"), str):
+            return None
+        message = item.get("message")
+        return item["reason"], message if isinstance(message, str) else f"the launcher does not accept {name} now"
 
     def _tell_variables(self, messages: list[dict]) -> None:
         """What a run's variables send to the screens. When their state or schema is told (a new run, ready, the
@@ -929,6 +976,7 @@ class GuiServer:
             self._hurry.set()
             return
         self._closing = True
+        self._push_allowed()
         for proc in list(self._checks):
             process.kill_tree(proc)
         try:
@@ -997,7 +1045,7 @@ class GuiServer:
     def snapshot(self, session_id: int | None, from_seq: int | None) -> list[dict]:
         s = self.session
         hello = {"type": "hello", "vehicle_sil_gui": PROTOCOL, "version": __version__, "instance": self.instance,
-                 "session": s.summary() if s else None, "replay": None}
+                 "session": s.summary() if s else None, "allowed": self.allowed(), "replay": None}
         if s is None:
             return [hello, {"type": "synced", "session": None, "last_seq": None}]
         start = from_seq if session_id == s.id else None
