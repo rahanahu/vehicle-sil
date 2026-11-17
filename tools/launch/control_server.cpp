@@ -414,7 +414,7 @@ std::unique_ptr<LauncherControlServer> make_control_server(const ControlArgument
             "GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a "
             "client, run without --scenario"};
     }
-    auto time = std::make_unique<LaunchTimeControl>(*hooks.commands, std::move(hooks.stop));
+    auto time = std::make_unique<LaunchTimeControl>(hooks.controls->time(), std::move(hooks.stop));
     return std::make_unique<Server>(std::move(options), std::move(time), std::move(audit));
 }
 

@@ -519,7 +519,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         before_start_failed_ = true;
         return false;
     }
-    out_.event([](EventStream& e) { e.phase(Phase::Running); });
+    ctx_.controls.set_phase(Phase::Running);
     out_.say("simulation running");
     // Every participant starts at virtual time 0.
     wait_for_pause_at_start(controller);

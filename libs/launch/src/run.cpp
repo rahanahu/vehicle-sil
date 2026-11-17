@@ -57,6 +57,8 @@
 // - The hub's mutex, then RunSamples' mutex (the tap).
 // - StartLimit's mutex, StartShared::found_mutex, RunSamples' mutex, RunScenario's error mutex:
 //   nothing under them.
+// The controls (RunControls) add no lock: the main thread sets the phase with none of the locks
+// above held, and the phase's observer takes the event stream's only.
 //
 // A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
@@ -117,6 +119,29 @@ using detail::one_line;
 using detail::RunContext;
 using detail::RunControl;
 using detail::RunNotes;
+/// The controls of a run that was given none (RunOptions::controls): made by run_file() for that
+/// run, on the caller's stop requests if there are any. Its phases go to RunOptions::events.
+struct OwnControls
+{
+    static RunControls::Observers observers(EventStream* events)
+    {
+        RunControls::Observers out;
+        if (events != nullptr)
+        {
+            out.on_phase = [events](Phase phase) { events->phase(phase); };
+        }
+        return out;
+    }
+
+    explicit OwnControls(const RunOptions& options) :
+      controls(options.stops != nullptr ? *options.stops : none, options.start_paused, observers(options.events))
+    {
+    }
+
+    StopRequests none; ///< without RunOptions::stops: nothing ever asks
+    RunControls controls;
+};
+
 using detail::RunOutput;
 using detail::RunParticipants;
 using detail::RunSamples;
@@ -142,11 +167,12 @@ class Runner
 
 public:
     /// `check`: the check that passed, with the bridges of --connect (detail::with_bridges()).
-    Runner(CheckReport checked, std::filesystem::path base, const RunOptions& options) :
-      own_commands_(options.time_commands == nullptr ? std::make_unique<TimeCommands>(options.start_paused) : nullptr),
-      check_(std::move(checked)),
+    /// `controls`: RunOptions::controls, or those of `own` (null with the caller's).
+    Runner(CheckReport checked, std::filesystem::path base, const RunOptions& options, RunControls& controls,
+           std::unique_ptr<OwnControls> own) :
+      own_controls_(std::move(own)), check_(std::move(checked)),
       ctx_{*check_.config, check_, options, check_.scenario && check_.scenario->scenario ? &*check_.scenario->scenario : nullptr,
-           own_commands_ ? *own_commands_ : *options.time_commands},
+           controls, controls.time()},
       out_(ctx_), control_(ctx_, out_),
       samples_(participant_names(*check_.config), detail::traffic_plan(*check_.config, check_)),
       notes_(ctx_, participants_), scenario_(ctx_, out_, control_, samples_),
@@ -227,7 +253,7 @@ public:
             outcome_.interrupted_by = ctx_.interrupt_name();
             return outcome_;
         }
-        out_.event([](EventStream& e) { e.phase(Phase::Starting); });
+        ctx_.controls.set_phase(Phase::Starting);
         if (!out_.open_logs(outcome_) || !open_timeline())
         {
             return outcome_;
@@ -337,7 +363,7 @@ public:
         if (participants_.start_children(uri, RunParticipants::Which::Bridges) && start_.wait_for_bridges(*controller) &&
             participants_.start_children(uri, RunParticipants::Which::Others))
         {
-            out_.event([](EventStream& e) { e.phase(Phase::Waiting); });
+            ctx_.controls.set_phase(Phase::Waiting);
             if (start_.wait_for_start(*controller, *transport))
             {
                 ran = true;
@@ -364,7 +390,7 @@ public:
         // What is known for good when the simulation is over (why it ended), before the
         // participants end.
         publish_findings(false);
-        out_.event([](EventStream& e) { e.phase(Phase::Stopping); });
+        ctx_.controls.set_phase(Phase::Stopping);
         participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
         participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
         // Their output is read to the end: the line connect-failed and connect-lost quote.
@@ -492,7 +518,8 @@ private:
 
     // The order matters. Each part keeps references to those it uses (all declared here, so they
     // outlive run()); they are destroyed in the reverse order.
-    std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
+    /// Without RunOptions::controls: what ctx_ refers to, kept here for the same reason as check_.
+    std::unique_ptr<OwnControls> own_controls_;
     /// What ctx_ refers to: kept here, so that it stays with a Runner that run_file() never
     /// destroys (a connection that did not close).
     const CheckReport check_;
@@ -518,15 +545,35 @@ private:
 
 RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options)
 {
+    if (options.controls != nullptr)
+    {
+        if (options.stops != nullptr && options.stops != &options.controls->stops())
+        {
+            throw std::invalid_argument(
+              "RunOptions: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
+              "make the RunControls on the same StopRequests and leave `stops` null.");
+        }
+        if (options.events != nullptr && (!options.controls->has_phase_observer() || !options.controls->has_command_observer()))
+        {
+            throw std::invalid_argument(
+              "RunOptions: `controls` and `events` are both set, but the controls have no observer for the "
+              "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase() and "
+              "Observers::on_command to call EventStream::command(), or leave `events` null.");
+        }
+    }
     const auto event = [&options](auto emit) {
         if (options.events != nullptr)
         {
             emit(*options.events);
         }
     };
+    // The controls of this run: the caller's, or its own, which go with the Runner once there is
+    // one (run_file() may never destroy it).
+    std::unique_ptr<OwnControls> own = options.controls == nullptr ? std::make_unique<OwnControls>(options) : nullptr;
+    RunControls& controls = own ? own->controls : *options.controls;
     RunReport report;
     report.strict = options.check.strict;
-    event([](EventStream& e) { e.phase(Phase::Checking); });
+    controls.set_phase(Phase::Checking);
     report.check = check_file(path, shown_as, options.check);
     if (options.speed)
     {
@@ -536,7 +583,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config || !report.check.passed())
     {
-        event([](EventStream& e) { e.phase(Phase::Ended); });
+        controls.set_phase(Phase::Ended);
         return report;
     }
     // The participants that will not start, before anything starts, in the file's order.
@@ -550,7 +597,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         }
     });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
-    auto runner = std::make_unique<Runner>(detail::with_bridges(report.check), base, options);
+    auto runner = std::make_unique<Runner>(detail::with_bridges(report.check), base, options, controls, std::move(own));
     report.run = runner->run();
     report.findings = assess_run(*report.run);
     {
@@ -564,7 +611,7 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         }
     }
     runner->publish_findings(true);
-    event([](EventStream& e) { e.phase(Phase::Ended); });
+    controls.set_phase(Phase::Ended);
     if (report.run->connection_not_closed_ms)
     {
         // A thread of the run still closes the connection, and may use the parts of the run for

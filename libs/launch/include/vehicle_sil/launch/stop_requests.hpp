@@ -8,8 +8,8 @@
 namespace vehicle_sil::launch {
 
 /// The requests to stop: a count and the source of the first one. The caller of run_file() or
-/// test_file() owns it and lends it (RunOptions::stops); it lives longer than a run, so that a
-/// request that comes before a run, or between the runs of a test, is not lost.
+/// test_file() owns it and lends it (to RunControls, or as RunOptions::stops); it lives longer than
+/// a run, so that a request that comes before a run, or between the runs of a test, is not lost.
 ///
 /// What the count means is the run's: 1 stops the simulation in order, 2 or more skip the waits
 /// for the participants to end. Nothing here resets it.
