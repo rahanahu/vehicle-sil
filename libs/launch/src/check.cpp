@@ -7,7 +7,7 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
-#include "vehicle_sil/core/participant_runtime.hpp"
+#include "vehicle_sil/core/participant_configuration.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
