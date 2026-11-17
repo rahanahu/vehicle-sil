@@ -11,6 +11,7 @@
 #include "vehicle_sil/launch/timeline_format.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
@@ -120,6 +121,7 @@ std::optional<Command> parse_command(std::string_view line)
     if (line[first] != '{')
     {
         out.message = "the line is not a JSON object: " + kExpected;
+        out.reason = reason::kInvalidCommand;
         return out;
     }
     try
@@ -130,6 +132,7 @@ std::optional<Command> parse_command(std::string_view line)
         if (root == ryml::NONE || !tree.is_map(root))
         {
             out.message = "the line is not a JSON object: " + kExpected;
+            out.reason = reason::kInvalidCommand;
             return out;
         }
         const auto node = tree.find_child(root, ryml::csubstr("command", 7));
@@ -137,6 +140,7 @@ std::optional<Command> parse_command(std::string_view line)
         {
             out.message = std::string(node == ryml::NONE ? "the object has no \"command\"" : "\"command\" is not a string") +
                           ": " + kExpected;
+            out.reason = reason::kInvalidCommand;
             return out;
         }
         out.name = detail::to_string(tree.val(node));
@@ -148,6 +152,23 @@ std::optional<Command> parse_command(std::string_view line)
             }
             return std::pair{detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
         };
+        // The sender's number, before the arguments: a refusal for them says it too.
+        if (tree.find_child(root, ryml::csubstr("id", 2)) != ryml::NONE)
+        {
+            const auto id = scalar("id");
+            std::int64_t value = 0;
+            const char* end = id ? id->first.data() + id->first.size() : nullptr;
+            if (!id || id->second || id->first.empty() || std::from_chars(id->first.data(), end, value).ptr != end ||
+                value < 0 || value > kMaxCommandId)
+            {
+                out.message = "\"id\" must be a whole number from 0 to " + std::to_string(kMaxCommandId) +
+                              " (the sender's number for the command, written back in its command event), such as "
+                              "{\"command\":\"pause\",\"id\":1}; leave it out if no answer is looked for";
+                out.reason = reason::kInvalidArgument;
+                return out;
+            }
+            out.id = value;
+        }
         if (*out.name == "step")
         {
             const auto ms = scalar("ms");
@@ -158,6 +179,7 @@ std::optional<Command> parse_command(std::string_view line)
             {
                 out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
                               std::to_string(kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
+                out.reason = reason::kInvalidArgument;
                 return out;
             }
             out.ms = value;
@@ -169,6 +191,7 @@ std::optional<Command> parse_command(std::string_view line)
             {
                 out.message = "speed needs \"value\", a number of simulation seconds per wall-clock second from 0.000001 "
                               "to 1000000 or \"max\", such as {\"command\":\"speed\",\"value\":1}";
+                out.reason = reason::kInvalidArgument;
                 return out;
             }
         }
@@ -176,6 +199,7 @@ std::optional<Command> parse_command(std::string_view line)
     catch (const detail::YamlSyntaxError&)
     {
         out.message = "the line is not valid JSON: " + kExpected;
+        out.reason = reason::kInvalidCommand;
         return out;
     }
     static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "speed"};
@@ -184,6 +208,7 @@ std::optional<Command> parse_command(std::string_view line)
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
         out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step and speed";
+        out.reason = reason::kUnknownCommand;
         return out;
     }
     out.accepted = true;
@@ -203,6 +228,7 @@ void CommandInput::append(std::string_view bytes)
             {
                 Command tooLong;
                 tooLong.message = "the line is longer than " + std::to_string(kMaxCommandLine) + " bytes";
+                tooLong.reason = reason::kInvalidCommand;
                 on_command_(tooLong);
                 pending_.clear();
                 skipping_ = true;
@@ -270,6 +296,7 @@ struct Line
     std::string members; ///< a compact JSON object
     std::int64_t t_ms = 0;
     bool log = false;
+    bool state = false; ///< a "state": at most one waits, and it is counted nowhere
     bool last = false;
     /// Set: the place of dropped "log" events ("log_dropped"; `members` is made when it is written).
     std::unique_ptr<Dropped> dropped{};
@@ -437,7 +464,7 @@ void EventStream::write_lines(const std::shared_ptr<State>& state)
                 --s.log_lines;
                 s.log_bytes -= line.members.size();
             }
-            else
+            else if (!line.state)
             {
                 --s.other_events;
             }
@@ -568,6 +595,18 @@ bool EventStream::emit(std::string_view event, std::string members, Kind kind, c
         s.log_bytes += members.size();
         s.dropping = nullptr;
         line.log = true;
+    }
+    else if (kind == Kind::State)
+    {
+        // Only the latest state means anything: one that still waits is taken out, and this one
+        // goes to the end of the queue, after the history it reflects. So at most one waits, and
+        // it is not counted among the events that close the stream.
+        const auto old = std::find_if(s.queue.rbegin(), s.queue.rend(), [](const Line& l) { return l.state; });
+        if (old != s.queue.rend())
+        {
+            s.queue.erase(std::next(old).base());
+        }
+        line.state = true;
     }
     else if (kind == Kind::Other)
     {
@@ -829,6 +868,8 @@ void EventStream::command(const Command& command, std::string_view source)
              w.string("source", source);
              w.boolean("accepted", command.accepted);
              optional_text(w, "message", command.message);
+             // Not accepted: the code of why, for a program.
+             optional_text(w, "reason", command.accepted ? std::string{} : command.reason);
              // step: how far the simulation goes (a whole number of the controller's steps).
              if (command.accepted && command.name == "step" && command.ms)
              {
@@ -839,7 +880,95 @@ void EventStream::command(const Command& command, std::string_view source)
              {
                  w.integer("at_ms", *command.at_ms);
              }
+             // The sender's number, as it came.
+             if (command.id)
+             {
+                 w.integer("id", *command.id);
+             }
+             else
+             {
+                 w.null("id");
+             }
          }));
+}
+
+namespace {
+
+/// allowed.<key>: whether the operation is taken, why not, and the range of its argument
+/// (`min`, `max`: the names of its two keys, null for an operation without one; `whole`: the
+/// range is of whole numbers).
+void write_allowed(Writer& w, std::string_view key, const Allowed& a, const char* min = nullptr,
+                   const char* max = nullptr, bool whole = false)
+{
+    w.begin_object(key);
+    w.boolean("ok", a.ok);
+    optional_text(w, "reason", a.reason);
+    optional_text(w, "message", a.message);
+    if (a.caution)
+    {
+        w.begin_object("caution");
+        w.string("code", a.caution->code);
+        w.string("message", a.caution->message);
+        w.end_object();
+    }
+    else
+    {
+        w.null("caution");
+    }
+    if (a.range && min != nullptr && whole)
+    {
+        w.integer(min, static_cast<std::int64_t>(a.range->min));
+        w.integer(max, static_cast<std::int64_t>(a.range->max));
+    }
+    else if (a.range && min != nullptr)
+    {
+        w.real(min, a.range->min);
+        w.real(max, a.range->max);
+    }
+    w.end_object();
+}
+
+} // namespace
+
+void EventStream::state(const RunState& state)
+{
+    emit("state", object([&](Writer& w) {
+             w.integer("rev", static_cast<std::int64_t>(state.rev));
+             w.string("phase", phase_name(state.phase));
+             w.boolean("paused", state.paused);
+             w.boolean("holding", state.holding);
+             if (!state.speed)
+             {
+                 w.null("speed");
+             }
+             else if (*state.speed)
+             {
+                 w.real("speed", *state.speed);
+             }
+             else
+             {
+                 w.string("speed", "max");
+             }
+             w.string("pacing", pacing_name(state.pacing));
+             w.begin_object("stop");
+             w.integer("requests", state.stop_requests);
+             optional_text(w, "by", state.stopped_by);
+             w.end_object();
+             w.boolean("scenario", state.scenario);
+             w.begin_object("allowed");
+             write_allowed(w, "pause", state.allowed.pause);
+             write_allowed(w, "resume", state.allowed.resume);
+             write_allowed(w, "step", state.allowed.step, "min_ms", "max_ms", true);
+             write_allowed(w, "speed", state.allowed.speed, "min", "max");
+             write_allowed(w, "run_until", state.allowed.run_until);
+             write_allowed(w, "stop", state.allowed.stop);
+             write_allowed(w, "write", state.allowed.write);
+             w.end_object();
+             // What the run is connected to outside: nothing fills it yet.
+             w.begin_array("outside");
+             w.end_array();
+         }),
+         Kind::State);
 }
 
 bool EventStream::result(std::string members, const std::function<bool()>& give_up)

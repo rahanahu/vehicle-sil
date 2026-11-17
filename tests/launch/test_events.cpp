@@ -293,8 +293,8 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
 {"event":"participant","seq":17,"t_ms":7,"name":"Deaf","state":"killed"}
 {"event":"finding","seq":18,"t_ms":7,"severity":"note","code":"interrupted","file":"sim.yaml","line":null,"participant":null,"network":null,"message":"interrupted (stop command): ...","detail":null}
 {"event":"finding","seq":19,"t_ms":7,"severity":"error","code":"exit-code","file":"sim.yaml","line":5,"participant":"A","network":null,"message":"participant 'A': ...","detail":"more"}
-{"event":"command","seq":20,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object"}
-{"event":"command","seq":21,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null}
+{"event":"command","seq":20,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object","reason":null,"id":null}
+{"event":"command","seq":21,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null,"reason":null,"id":null}
 {"event":"phase","seq":22,"t_ms":7,"phase":"ended"}
 )");
     CHECK(sink.closed().empty() && !e.closed());
@@ -548,6 +548,147 @@ TEST_CASE(the_stream_closes_when_too_many_events_that_cannot_be_dropped_wait)
     CHECK(sink.text().empty() || sink.text() == "{\"event\":\"phase\",\"seq\":0,\"t_ms\":7,\"phase\":\"running\"}\n");
 }
 
+namespace {
+
+/// A state with `rev`, otherwise as a run that is being set up.
+RunState state_of(std::uint64_t rev)
+{
+    RunState s;
+    s.rev = rev;
+    s.allowed.step = Allowed{false, "not-set-up", "the simulation has not been set up yet", std::nullopt,
+                             ArgumentRange{1, static_cast<double>(kMaxMillis)}};
+    s.allowed.speed.range = ArgumentRange{kMinSpeed, kMaxSpeed};
+    return s;
+}
+
+} // namespace
+
+TEST_CASE(a_state_event_has_the_state_and_what_is_allowed_with_the_ranges)
+{
+    Sink sink;
+    EventStream& e = sink.start();
+    // Each is written before the next is made: one that waits would be replaced.
+    e.state(state_of(1));
+    CHECK(e.wait_written(10s));
+    RunState s = state_of(2);
+    s.phase = Phase::Running;
+    s.paused = true;
+    s.holding = true;
+    s.speed = std::optional<double>(0.5);
+    s.pacing = Pacing::Late;
+    s.stop_requests = 2;
+    s.stopped_by = "SIGINT";
+    s.scenario = true;
+    s.allowed.step = Allowed{true, "", "", std::nullopt, ArgumentRange{1, static_cast<double>(kMaxMillis)}};
+    s.allowed.speed.range = ArgumentRange{1, 1};
+    s.allowed.pause.caution = Caution{"some-code", "a caution"};
+    s.allowed.write = Allowed{false, "scenario-running", "why \"not\"", std::nullopt, std::nullopt};
+    e.state(s);
+    CHECK(e.wait_written(10s));
+    s.rev = 3;
+    s.speed = std::optional<double>();
+    s.pacing = Pacing::OnTime;
+    e.state(s);
+    CHECK(e.wait_written(10s));
+    const std::vector<std::string> lines = sink.lines();
+    CHECK_EQ(lines.size(), std::size_t{3});
+    check_text(lines.at(0),
+               R"({"event":"state","seq":0,"t_ms":7,"rev":1,"phase":"checking","paused":false,"holding":false,"speed":null,"pacing":"not-paced","stop":{"requests":0,"by":null},"scenario":false,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":null},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":false,"reason":"not-set-up","message":"the simulation has not been set up yet","caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1e-06,"max":1e+06},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":true,"reason":null,"message":null,"caution":null}},"outside":[]})");
+    check_text(lines.at(1),
+               R"({"event":"state","seq":1,"t_ms":7,"rev":2,"phase":"running","paused":true,"holding":true,"speed":0.5,"pacing":"late","stop":{"requests":2,"by":"SIGINT"},"scenario":true,"allowed":{"pause":{"ok":true,"reason":null,"message":null,"caution":{"code":"some-code","message":"a caution"}},"resume":{"ok":true,"reason":null,"message":null,"caution":null},"step":{"ok":true,"reason":null,"message":null,"caution":null,"min_ms":1,"max_ms":1000000000000},"speed":{"ok":true,"reason":null,"message":null,"caution":null,"min":1,"max":1},"run_until":{"ok":true,"reason":null,"message":null,"caution":null},"stop":{"ok":true,"reason":null,"message":null,"caution":null},"write":{"ok":false,"reason":"scenario-running","message":"why \"not\"","caution":null}},"outside":[]})");
+    CHECK(lines.at(2).find(R"("rev":3,"phase":"running","paused":true,"holding":true,"speed":"max","pacing":"on-time",)") !=
+          std::string::npos);
+}
+
+TEST_CASE(only_the_latest_state_waits_and_states_never_close_the_stream)
+{
+    Sink sink;
+    EventStreamOptions options = Sink::quiet();
+    options.max_other_events = 5;
+    EventStream& e = sink.start(options);
+    sink.block();
+    e.phase(Phase::Running); // the writer is in this line
+    CHECK(sink.wait_inside());
+    // Far more states than the events that would close the stream: none of them counts.
+    e.participant("A", ParticipantState::Joined);
+    for (std::uint64_t rev = 1; rev <= 10000; ++rev)
+    {
+        e.state(state_of(rev));
+    }
+    CHECK(!e.closed());
+    CHECK_EQ(e.waiting_events(), std::size_t{1});
+    // History made after a state goes after it; the next state takes the waiting one's place and
+    // goes to the end, after that history.
+    e.participant("B", ParticipantState::Joined);
+    e.state(state_of(10001));
+    e.participant("C", ParticipantState::Joined);
+    CHECK_EQ(e.waiting_events(), std::size_t{3});
+    // The other events still close it at their limit, states or not.
+    CHECK(!e.closed());
+    sink.unblock();
+    CHECK(e.wait_written(10s));
+    std::string all;
+    for (const std::string& line : sink.lines())
+    {
+        const auto name = line.find("\"event\":\"") + 9;
+        all += line.substr(name, line.find('"', name) - name);
+        if (const auto rev = line.find("\"rev\":"); rev != std::string::npos)
+        {
+            all += " " + line.substr(rev + 6, line.find(',', rev) - rev - 6);
+        }
+        else if (const auto who = line.find("\"name\":\""); who != std::string::npos)
+        {
+            all += " " + line.substr(who + 8, 1);
+        }
+        all += "\n";
+    }
+    // One state, the last, with the seq of its place: after everything made before it.
+    check_text(all, "phase\nparticipant A\nparticipant B\nstate 10001\nparticipant C\n");
+    CHECK_EQ(seq_of(sink.lines().at(3)), std::int64_t{3});
+    // A state that is being written is written; the next one follows it.
+    sink.block();
+    e.state(state_of(10002));
+    CHECK(sink.wait_inside());
+    e.state(state_of(10003));
+    e.state(state_of(10004));
+    sink.unblock();
+    CHECK(e.wait_written(10s));
+    CHECK_EQ(sink.lines().size(), std::size_t{7});
+    CHECK(sink.lines().at(5).find("\"rev\":10002,") != std::string::npos);
+    CHECK(sink.lines().at(6).find("\"rev\":10004,") != std::string::npos);
+    // Nothing follows the result, a state neither.
+    CHECK(e.result(format_result_event(RunReport{})));
+    e.state(state_of(10005));
+    CHECK(e.wait_written(10s));
+    CHECK_EQ(sink.lines().size(), std::size_t{8});
+    CHECK(sink.lines().back().find("\"event\":\"result\"") != std::string::npos);
+    CHECK(sink.closed().empty());
+}
+
+TEST_CASE(a_state_that_waits_leaves_room_for_exactly_as_many_other_events_as_without_it)
+{
+    Sink sink;
+    EventStreamOptions options = Sink::quiet();
+    options.max_other_events = 3;
+    EventStream& e = sink.start(options);
+    sink.block();
+    e.phase(Phase::Running);
+    CHECK(sink.wait_inside());
+    e.state(state_of(1));
+    for (int i = 0; i < 3; ++i)
+    {
+        e.command(stop_command(), "stdin");
+        e.state(state_of(static_cast<std::uint64_t>(i + 2)));
+    }
+    CHECK(!e.closed());
+    e.command(stop_command(), "stdin");
+    CHECK(e.closed());
+    check_text(sink.wait_closed().at(0), "more than 3 events wait to be written");
+    // A closed stream takes no state.
+    e.state(state_of(9));
+    CHECK_EQ(e.waiting_events(), std::size_t{0});
+}
+
 TEST_CASE(a_reader_that_does_not_read_is_given_up_after_the_limit)
 {
     for (const bool busy : {false, true})
@@ -741,6 +882,66 @@ TEST_CASE(a_command_is_a_json_object_with_the_command_stop)
     check_text(read(R"({"command":"jump"})"),
                "refused 'jump': unknown command 'jump': the commands are stop, pause, resume, step and speed");
     CHECK(!parse_command(R"({"command":"jump"})")->is_stop());
+    // Each refusal has its code; an accepted line has none.
+    const auto reason = [](std::string_view line) { return parse_command(line)->reason; };
+    check_text(reason(R"({"command":"stop"})"), "");
+    check_text(reason("stop"), "invalid-command");
+    check_text(reason(R"(["stop"])"), "invalid-command");
+    check_text(reason(R"({"command":"stop")"), "invalid-command");
+    check_text(reason(R"({"cmd":"stop"})"), "invalid-command");
+    check_text(reason(R"({"command":1})"), "invalid-command");
+    check_text(reason(R"({"command":"jump"})"), "unknown-command");
+    check_text(reason(R"({"command":"step"})"), "invalid-argument");
+    check_text(reason(R"({"command":"speed","value":0})"), "invalid-argument");
+}
+
+TEST_CASE(a_command_may_carry_the_senders_number_which_comes_back_in_its_event)
+{
+    // Every command takes an "id"; without one there is none.
+    CHECK(!parse_command(R"({"command":"pause"})")->id);
+    for (const char* line : {R"({"command":"pause","id":0})", R"({"id":0,"command":"stop"})",
+                             R"({"command":"step","ms":10,"id":0})", R"({"command":"speed","value":"max","id":0})"})
+    {
+        const Command c = *parse_command(line);
+        CHECK(c.accepted);
+        CHECK(c.id == std::optional<std::int64_t>(0));
+    }
+    CHECK(parse_command(R"({"command":"resume","id":9007199254740992})")->id ==
+          std::optional<std::int64_t>(std::int64_t{9007199254740992}));
+    // An "id" that is no such number: the command is refused, so that its sender is told.
+    for (const char* line :
+         {R"({"command":"pause","id":-1})", R"({"command":"pause","id":9007199254740993})", R"({"command":"pause","id":"1"})",
+          R"({"command":"pause","id":1.5})", R"({"command":"pause","id":null})", R"({"command":"pause","id":[1]})",
+          R"({"command":"pause","id":{"n":1}})", R"({"command":"pause","id":true})"})
+    {
+        const Command c = *parse_command(line);
+        CHECK(!c.accepted);
+        CHECK(!c.id);
+        check_text(c.reason, "invalid-argument");
+        check_text(c.message, "\"id\" must be a whole number from 0 to 9007199254740992 (the sender's number for the "
+                              "command, written back in its command event), such as {\"command\":\"pause\",\"id\":1}; "
+                              "leave it out if no answer is looked for");
+    }
+    // A command refused for something else keeps its number: the sender finds that answer too.
+    Command c = *parse_command(R"({"command":"jump","id":7})");
+    CHECK(!c.accepted && c.id == std::optional<std::int64_t>(7));
+    c = *parse_command(R"({"command":"step","id":8})");
+    CHECK(!c.accepted && c.id == std::optional<std::int64_t>(8));
+
+    // The event: "reason" after "message" of a refusal, "id" last; the time commands keep both.
+    Sink sink;
+    EventStream& e = sink.start();
+    TimeCommands commands(false, [&e](const Command& done, std::string_view source) { e.command(done, source); });
+    static_cast<void>(commands.apply(*parse_command(R"({"command":"pause","id":41})"), "stdin"));
+    static_cast<void>(commands.apply(*parse_command(R"({"command":"step","ms":10,"id":42})"), "stdin"));
+    e.command(*parse_command(R"({"command":"jump","id":43})"), "stdin");
+    e.command(*parse_command("x"), "stdin");
+    CHECK(e.wait_written(10s));
+    check_text(shape(sink.lines()), R"(command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":41}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":42}
+command "command":"jump","source":"stdin","accepted":false,"message":"unknown command 'jump': the commands are stop, pause, resume, step and speed","reason":"unknown-command","id":43}
+command "command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object: write one JSON object per line, such as {\"command\":\"stop\"}","reason":"invalid-command","id":null}
+)");
 }
 
 TEST_CASE(the_time_commands_are_read_with_their_values)
@@ -800,11 +1001,11 @@ TEST_CASE(time_commands_before_the_simulation_are_kept_and_after_it_refused)
                              "of the run until the simulation ends");
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()),
-               R"(command "command":"speed","source":"stdin","accepted":true,"message":null}
-command "command":"pause","source":"stdin","accepted":true,"message":null}
-command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start"}
-command "command":"resume","source":"stdin","accepted":true,"message":null}
-command "command":"pause","source":"stdin","accepted":false,"message":"the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends"}
+               R"(command "command":"speed","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
+command "command":"pause","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
+command "command":"step","source":"stdin","accepted":false,"message":"the simulation has not been set up yet: step works once it stands still (a time event with paused true), with --start-paused from the start","reason":"not-set-up","id":null}
+command "command":"resume","source":"stdin","accepted":true,"message":null,"reason":null,"id":null}
+command "command":"pause","source":"stdin","accepted":false,"message":"the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends","reason":"not-running","id":null}
 )");
     // Without events: only the answer.
     TimeCommands quiet(true);
@@ -942,13 +1143,13 @@ TEST_CASE(time_commands_of_a_control_server_run_until_and_pause_at_a_time_and_ar
     commands.detach();
     CHECK(e.wait_written(10s));
     check_text(shape(sink.lines()),
-               R"(command "command":"run_until","source":"control_server","accepted":false,"message":"the simulation has not been set up yet: run_until at a time works once the participants have been started"}
-command "command":"run_until","source":"control_server","accepted":true,"message":null,"at_ms":30}
-command "command":"step","source":"control_server","accepted":true,"message":null,"ms":10}
-command "command":"pause","source":"control_server","accepted":true,"message":null,"at_ms":110}
-command "command":"speed","source":"control_server","accepted":false,"message":"the speed must be from 0.000001 to 1000000 simulation seconds per wall-clock second, or max"}
-command "command":"step","source":"control_server","accepted":false,"message":"step needs a time from 1 to 1000000000000 ms"}
-command "command":"pause","source":"control_server","accepted":false,"message":"pause at a time needs a time from 0 to 1000000000000 ms"}
+               R"(command "command":"run_until","source":"control_server","accepted":false,"message":"the simulation has not been set up yet: run_until at a time works once the participants have been started","reason":"not-set-up","id":null}
+command "command":"run_until","source":"control_server","accepted":true,"message":null,"reason":null,"at_ms":30,"id":null}
+command "command":"step","source":"control_server","accepted":true,"message":null,"reason":null,"ms":10,"id":null}
+command "command":"pause","source":"control_server","accepted":true,"message":null,"reason":null,"at_ms":110,"id":null}
+command "command":"speed","source":"control_server","accepted":false,"message":"the speed must be from 0.000001 to 1000000 simulation seconds per wall-clock second, or max","reason":"out-of-range","id":null}
+command "command":"step","source":"control_server","accepted":false,"message":"step needs a time from 1 to 1000000000000 ms","reason":"out-of-range","id":null}
+command "command":"pause","source":"control_server","accepted":false,"message":"pause at a time needs a time from 0 to 1000000000000 ms","reason":"out-of-range","id":null}
 )");
 }
 
@@ -1205,13 +1406,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "connect",
     "connections",
     "connect-counts",
+    "state",
     "time-policy"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"time-policy\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

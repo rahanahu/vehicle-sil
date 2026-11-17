@@ -6,6 +6,7 @@
 #pragma once
 
 #include "run_context.hpp"
+#include "run_pacing.hpp"
 #include "run_participants.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -91,7 +92,9 @@ public:
 
     /// The controller's virtual time and how it goes. At the start 0; then when it stands still
     /// or runs on, or the speed changes, at once; when it has moved, at most every 100 ms; at the
-    /// end, if anything changed.
+    /// end, if anything changed. Then (but at the end, where the detach of the time commands
+    /// follows and does it) the run's state, if it changed: the pacing seen here, and what no call
+    /// tells the controls (the gate stands still or goes on, a stop request of a signal handler).
     void note_time(SimulationController& controller, TimeNote note, const RunOutcome& outcome);
 
 private:
@@ -107,6 +110,7 @@ private:
     std::optional<double> last_speed_{};
     std::deque<std::pair<std::chrono::steady_clock::time_point, std::int64_t>> samples_; ///< (wall, sim_ms)
     std::vector<Finding> published_; ///< the findings written
+    PacingWatch pacing_;             ///< for the state's `pacing`
 };
 
 } // namespace vehicle_sil::launch::detail

@@ -43,8 +43,24 @@ void check_cut_events(const std::vector<std::string>& lines)
     }
 }
 
-/// `text` (event lines) without the heartbeat events and the time events between the first and
-/// the last (how many there are depends on how long the run takes), "seq" counted without them.
+/// `lines` without the state events: the history. (How many states are written depends on the
+/// reader: one that still waits is replaced by the next.)
+std::vector<std::string> history_of(const std::vector<std::string>& lines)
+{
+    std::vector<std::string> out;
+    for (const std::string& line : lines)
+    {
+        if (value_of(line, "event") != "state")
+        {
+            out.push_back(line);
+        }
+    }
+    return out;
+}
+
+/// `text` (event lines) without the heartbeat events, the state events and the time events between
+/// the first and the last (how many there are depends on how long the run takes and on how fast
+/// the events are read), "seq" counted without them.
 std::string without_heartbeats(const std::string& text)
 {
     std::string out;
@@ -61,7 +77,7 @@ std::string without_heartbeats(const std::string& text)
     for (std::size_t i = 0; i < all.size(); ++i)
     {
         const std::string& line = all[i];
-        if (value_of(line, "event") == "heartbeat" ||
+        if (value_of(line, "event") == "heartbeat" || value_of(line, "event") == "state" ||
             (value_of(line, "event") == "time" && i != times.front() && i != times.back()))
         {
             continue;
@@ -227,7 +243,7 @@ void events_usage(const Options& o)
             "the error on stderr:\n" + alone.standard_error);
     const Captured missing = launch(o, {"run", "--events", "missing.yaml"}, dir);
     expect_code(missing, 3, "run --events missing.yaml");
-    const std::vector<std::string> lines = check_events(missing.standard_output);
+    const std::vector<std::string> lines = history_of(check_events(missing.standard_output));
     require(lines.size() == 5 && value_of(lines[0], "file") == "missing.yaml" && contains(lines[2], "\"event\":\"check\"") &&
                 contains(lines[4], "\"result\":\"unreadable\""),
             "hello, checking, check, ended and the result of a file that cannot be read:\n" + missing.standard_output);
@@ -238,7 +254,15 @@ void events_usage(const Options& o)
     const fs::path sim = two_ecus(o);
     const Captured name = launch(o, {"run", "--events", "--disable", "Nobody", "sim.yaml"}, sim);
     expect_code(name, 4, "run --events --disable Nobody");
-    const std::vector<std::string> found = check_events(name.standard_output);
+    const std::vector<std::string> states = events_with(check_events(name.standard_output), {"\"event\":\"state\""});
+    // The state at the check and at the end, each after its phase (the first is not written if
+    // the second came before the writer got to it): nothing was set up, nothing was asked to stop.
+    require(!states.empty() && states.size() <= 2 && (states.size() == 1 || contains(states[0], "\"rev\":1,\"phase\":\"checking\",")) &&
+                contains(states.back(), "\"rev\":2,\"phase\":\"ended\",\"paused\":false,\"holding\":false,\"speed\":null,"
+                                        "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null},\"scenario\":false,") &&
+                contains(states.back(), "\"outside\":[]}"),
+            "a state after each phase of a run that ends at its check:\n" + name.standard_output);
+    const std::vector<std::string> found = history_of(check_events(name.standard_output));
     require(found.size() == 5 && contains(found[1], "\"phase\":\"checking\"") && contains(found[2], "\"event\":\"check\"") &&
                 contains(found[2], "\"result\":\"usage\"") && contains(found[3], "\"phase\":\"ended\"") &&
                 contains(found[4], "\"event\":\"result\"") && contains(found[4], "\"result\":\"usage\"") &&
@@ -287,7 +311,7 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
                                                                                "participants\""});
     require(note.size() == 1, "the note interrupted as a finding:\n" + all);
     // Known when the simulation has stopped: written then, before the participants are ended.
-    const auto stopping = events_with(lines, {"\"phase\":\"stopping\""});
+    const auto stopping = events_with(lines, {"\"event\":\"phase\"", "\"phase\":\"stopping\""});
     require(stopping.size() == 1 && std::stoll(value_of(note[0], "seq")) < std::stoll(value_of(stopping[0], "seq")),
             "the note comes before the stopping phase:\n" + all);
 }
@@ -316,7 +340,7 @@ void stdin_stop(const Options& o)
     require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are stop, pause, resume, step and "
                                   "speed\""),
             "an unknown command:\n" + commands[1]);
-    require(contains(commands[2], "\"command\":\"stop\",\"source\":\"stdin\",\"accepted\":true,\"message\":null}"),
+    require(contains(commands[2], "\"command\":\"stop\",\"source\":\"stdin\",\"accepted\":true,\"message\":null,\"reason\":null,\"id\":null}"),
             "the stop:\n" + commands[2]);
     // The command comes before what it does.
     const auto at = [&lines](const std::string& part) {
@@ -819,7 +843,7 @@ void events_findings(const Options& o)
     };
     const std::string engine = "\"name\":\"Engine\"";
     const auto failedAt = seq({"\"event\":\"participant\"", engine, "\"state\":\"failed\",\"reason\":\"left_simulation\"}"});
-    const auto stoppingAt = seq({"\"phase\":\"stopping\""});
+    const auto stoppingAt = seq({"\"event\":\"phase\"", "\"phase\":\"stopping\""});
     const auto endedAt = seq({"\"event\":\"participant\"", engine, "\"state\":\"ended\""});
     const auto findingAt = seq({"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
     require(failedAt < stoppingAt && stoppingAt < endedAt && endedAt < findingAt,

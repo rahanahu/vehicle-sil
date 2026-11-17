@@ -4,7 +4,7 @@
 // (run.hpp, detail::host_addresses() and detail::other_computers_line()).
 #include "vehicle_sil/launch/run.hpp"
 
-#include "vehicle_sil/core/participant_configuration.hpp"
+#include "vehicle_sil/core/registry_uri.hpp"
 
 #include <algorithm>
 #include <cstdint>

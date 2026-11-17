@@ -61,6 +61,7 @@ LIN のテストは [バスのページの LIN 単体テスト](code-map-buses.m
 | `SimTime`（`sim_base`） | `core/sim_time.hpp` |
 | `StepInbox`（`sim_base`） | `core/step_inbox.hpp` |
 | `periodic()`（`sim_base`） | `core/periodic.hpp` |
+| `is_loopback_registry_uri()`（`sim_base`） | `core/registry_uri.hpp` |
 
 - テスト: `tests/core`
 - `ctest -R`: `^core\.`

@@ -61,6 +61,7 @@ For LIN tests, see [LIN unit tests](code-map-buses.md#lin-unit-tests) and [LIN i
 | `SimTime` (`sim_base`) | `core/sim_time.hpp` |
 | `StepInbox` (`sim_base`) | `core/step_inbox.hpp` |
 | `periodic()` (`sim_base`) | `core/periodic.hpp` |
+| `is_loopback_registry_uri()` (`sim_base`) | `core/registry_uri.hpp` |
 
 - Tests: `tests/core`
 - `ctest -R`: `^core\.`

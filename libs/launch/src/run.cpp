@@ -58,7 +58,12 @@
 // - StartLimit's mutex, StartShared::found_mutex, RunSamples' mutex, RunScenario's error mutex:
 //   nothing under them.
 // The controls (RunControls) add no lock: the main thread sets the phase with none of the locks
-// above held, and the phase's observer takes the event stream's only.
+// above held, and the phase's observer takes the event stream's only. The run's state is put
+// together and told under TimeCommands' mutex (RunControls::publish(), TimeCommands::OnChange),
+// which reads the time gate and then takes the event stream's: the order of the first line. So
+// publish() is called with none of the locks above held (set_phase() and RunNotes::note_time() on
+// the main thread; the hold's begin and end on the window's thread, where TimeCommands' mutex is
+// taken already).
 //
 // A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
@@ -129,6 +134,7 @@ struct OwnControls
         if (events != nullptr)
         {
             out.on_phase = [events](Phase phase) { events->phase(phase); };
+            out.on_state = [events](const RunState& state) { events->state(state); };
         }
         return out;
     }
@@ -136,6 +142,10 @@ struct OwnControls
     explicit OwnControls(const RunOptions& options) :
       controls(options.stops != nullptr ? *options.stops : none, options.start_paused, observers(options.events))
     {
+        if (options.interrupt_name)
+        {
+            controls.set_stop_name(options.interrupt_name);
+        }
     }
 
     StopRequests none; ///< without RunOptions::stops: nothing ever asks
@@ -554,12 +564,14 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
               "RunOptions: both `controls` and `stops` are set, and the run reads only the stop requests of `controls`; "
               "make the RunControls on the same StopRequests and leave `stops` null.");
         }
-        if (options.events != nullptr && (!options.controls->has_phase_observer() || !options.controls->has_command_observer()))
+        if (options.events != nullptr && (!options.controls->has_phase_observer() || !options.controls->has_command_observer() ||
+                                          !options.controls->has_state_observer()))
         {
             throw std::invalid_argument(
               "RunOptions: `controls` and `events` are both set, but the controls have no observer for the "
-              "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase() and "
-              "Observers::on_command to call EventStream::command(), or leave `events` null.");
+              "events the run leaves to them; set RunControls::Observers::on_phase to call EventStream::phase(), "
+              "Observers::on_command to call EventStream::command() and Observers::on_state to call "
+              "EventStream::state(), or leave `events` null.");
         }
     }
     const auto event = [&options](auto emit) {

@@ -20,7 +20,7 @@ stood still) and lateness (0). A recording that still has a path of this compute
 token in it is not written (the case fails with what was found).
 
 --compare records into a temporary directory and compares with recordings/ (outline() and Shapes say exactly
-what): the events in order (time, log and log_dropped aside: how many and where depends on timing; of the
+what): the events in order (time, state, log and log_dropped aside: how many and where depends on timing; of the
 participant events between two others, the order across participants is not compared, the order of one
 participant's states is), the values the launcher decides (findings' codes, commands accepted or not, states and
 exit codes, the result, the check, version's features and formats), the keys and JSON types of every kind of
@@ -469,7 +469,7 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 # ---------------------------------------------------------------- comparing
 
 
-NOT_IN_ORDER = {"time", "log", "log_dropped"}
+NOT_IN_ORDER = {"time", "log", "log_dropped", "state"}
 SOMETIMES = {"log_dropped"}  # a kind of event that only a slow reader makes the launcher write  # how many and where depend on timing: their shapes are compared
 
 
@@ -513,7 +513,7 @@ def checked(c) -> tuple:
 
 
 def outline(entries: list[dict], unsure: frozenset = frozenset()) -> list:
-    """What is compared in order: the events but time, log and log_dropped, with the values the launcher decides
+    """What is compared in order: the events but time, state, log and log_dropped, with the values the launcher decides
     (participant events between two others in any order: that order is timing), what check --json and version
     --json print, the commands written, the exit code, and whether anything came on standard error."""
     out: list = []

@@ -482,25 +482,39 @@ void pause_step(const Options& o)
     const fs::path dir = one_ecu(o, "", "pid");
     Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    // The state says the same, and that a step is taken now.
+    live.wait_for({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":true,\"holding\":false,\"speed\":\"max\","
+                                        "\"pacing\":\"not-paced\",\"stop\":{\"requests\":0,\"by\":null}",
+                   "\"step\":{\"ok\":true,\"reason\":null,\"message\":null,\"caution\":null,\"min_ms\":1,"});
     // A step goes the time given, in whole steps of the controller (10 ms), and stands still.
     live.write("{\"command\":\"step\",\"ms\":50}\n");
-    live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"ms\":50}"});
+    live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"reason\":null,\"ms\":50,\"id\":null}"});
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":50,", "\"paused\":true,"});
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":60,"}).empty(), "it stands still at 50 ms");
-    live.write("{\"command\":\"step\",\"ms\":15}\n");
-    live.wait_for({"\"command\":\"step\"", "\"ms\":20}"});
+    // With the sender's number, which comes back.
+    live.write("{\"command\":\"step\",\"ms\":15,\"id\":7}\n");
+    live.wait_for({"\"command\":\"step\"", "\"ms\":20,\"id\":7}"});
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":70,", "\"paused\":true,"});
     // Running: a step is refused; the speed changes.
     live.write("{\"command\":\"resume\"}\n");
     live.wait_for({"\"event\":\"time\"", "\"paused\":false,"});
-    live.write("{\"command\":\"step\",\"ms\":10}\n{\"command\":\"speed\",\"value\":1}\n");
-    live.wait_for({"\"command\":\"step\"", "\"accepted\":false"});
+    // The state: it goes, and a step is refused with the reason the command would get.
+    live.wait_for({"\"event\":\"state\"", "\"paused\":false,", "\"step\":{\"ok\":false,\"reason\":\"not-paused\","});
+    live.write("{\"command\":\"step\",\"ms\":10,\"id\":8}\n{\"command\":\"speed\",\"value\":1}\n");
+    live.wait_for({"\"command\":\"step\"", "\"accepted\":false", "\"reason\":\"not-paused\",\"id\":8}"});
     live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":false,"});
+    // The speed set, and whether the run keeps up with it (on time, unless this computer is busy).
+    const std::string paced = live.wait_for({"\"event\":\"state\"", "\"paused\":false,\"holding\":false,\"speed\":1,\"pacing\":\""});
+    require(contains(paced, "\"pacing\":\"on-time\"") || contains(paced, "\"pacing\":\"late\""),
+            "a run that goes at a speed is on time or late:\n" + paced);
     live.write("{\"command\":\"pause\"}\n");
     const std::string paused = live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":true,"});
+    live.wait_for({"\"event\":\"state\"", "\"paused\":true,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","});
     std::this_thread::sleep_for(300ms);
     live.write("{\"command\":\"stop\"}\n");
+    // The stop request is in the state at once, by its name in the result.
+    live.wait_for({"\"event\":\"state\"", "\"stop\":{\"requests\":1,\"by\":\"stop command\"}"});
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
@@ -523,12 +537,41 @@ void pause_step(const Options& o)
                             [&](const std::string& l) { return std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(l, p); }); }) -
                lines.begin();
     };
-    require(at({"\"ms\":50}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
+    require(at({"\"ms\":50,\"id\":null}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
     require(!events_with(lines, {"\"command\":\"step\"", "\"accepted\":false,\"message\":\"step works while the simulation is "
                                                          "paused: send {\\\"command\\\":\\\"pause\\\"} first (or run with "
-                                                         "--start-paused)\"}"})
+                                                         "--start-paused)\",\"reason\":\"not-paused\",\"id\":8}"})
                  .empty(),
             "a step while it runs is refused:\n" + all);
+    // The states: each "rev" higher than the one before; the state a command made comes after
+    // the command's event; the last one is the end, where no time command is taken any more.
+    const auto states = events_with(lines, {"\"event\":\"state\""});
+    for (std::size_t i = 1; i < states.size(); ++i)
+    {
+        require(std::stoll(value_of(states[i], "rev")) > std::stoll(value_of(states[i - 1], "rev")),
+                "rev goes up from state to state:\n" + states[i - 1] + "\n" + states[i]);
+    }
+    // (A step goes too, and is still taken: the first state that goes is the first step's.)
+    require(at({"\"ms\":50,\"id\":null}"}) < at({"\"event\":\"state\"", "\"phase\":\"running\",\"paused\":false,"}) &&
+                at({"\"command\":\"resume\""}) < at({"\"event\":\"state\"", "\"step\":{\"ok\":false,\"reason\":\"not-paused\","}),
+            "the step and the resume come before the states they made:\n" + all);
+    require(at({"\"command\":\"speed\""}) < at({"\"event\":\"state\"", "\"speed\":1,"}),
+            "the speed command comes before the state with that speed:\n" + all);
+    require(at({"\"command\":\"stop\""}) < at({"\"event\":\"state\"", "\"stop\":{\"requests\":1,"}),
+            "the stop command comes before the state with the request:\n" + all);
+    require(!states.empty() &&
+                contains(states.back(), "\"phase\":\"ended\",\"paused\":false,\"holding\":false,\"speed\":1,\"pacing\":\"not-paced\","
+                                        "\"stop\":{\"requests\":1,\"by\":\"stop command\"}") &&
+                contains(states.back(), "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
+                contains(states.back(), "\"stop\":{\"ok\":true,\"reason\":null,"),
+            "the last state is the end:\n" + all);
+    // This run has no control server: no state says that a run_until or a write would be taken.
+    for (const std::string& state : states)
+    {
+        require(contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
+                    contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\","),
+                "a run without --control refuses run_until and write in every state:\n" + state);
+    }
     // The result: stood still for at least the waits above.
     const std::string& result = lines.back();
     require(std::stoll(value_of(result, "paused_ms")) >= 600 && contains(result, "\"speed\":1,"),

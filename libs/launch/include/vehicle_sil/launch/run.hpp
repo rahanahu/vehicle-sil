@@ -375,7 +375,11 @@ struct RunOptions
     /// waits for the participants to end. May be null. Not read with `controls`, which has its own
     /// (RunControls::stops()).
     StopRequests* stops = nullptr;
-    /// The name of the first interrupt ("SIGINT"), for the result.
+    /// The name of the first interrupt ("SIGINT"), for the result and, without `controls`, for the
+    /// state events (RunControls::set_stop_name()). Called from any thread that changes the run's
+    /// state (the run's own, a control server's, the hold's), under the time commands' mutex, and
+    /// by run_file() for the result: safe from several threads, short, no wait, no call into the
+    /// run or its controls.
     std::function<std::string()> interrupt_name{};
     /// How often the launcher looks at the participants and the simulation.
     std::chrono::milliseconds poll{20};

@@ -74,7 +74,7 @@
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（各ブリッジに 1 回だけ聞く）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `launch/stop_requests.hpp` |
-| `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()` | `launch/run_controls.hpp` |
+| `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（Control Server が run を見せるだけになるか）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
 | `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
@@ -385,6 +385,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は、`run_notes.hpp` の `detail::noted_paused()`）
+- イベント `state`: 中身と知らせる時は、`run_controls.cpp` の `RunControls::compose()` と `publish()`（`paused` と `speed` は `time_commands.cpp` の `facts_of()`、`pacing` は `run_pacing.hpp` の `detail::PacingWatch`）。最新の 1 つだけが書かれるのを待つことは、`events.cpp` の `EventStream::emit()`
 - `run_watch.cpp` の `RunWatch::note_timing()`
 - 時間のゲート: `libs/core/src/simulation_controller.cpp`
 - ゲートの状態と遅れの計算: `libs/core/src/time_gate.cpp`（時計を持たない）

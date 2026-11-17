@@ -38,6 +38,25 @@ struct TimeChange
     std::optional<double> speed{}; ///< speed: its value (empty: max)
 };
 
+/// What the time commands know of where the run stands, at one moment: the part of the run's
+/// state (RunState of run_controls.hpp) that changes under their mutex.
+struct TimeFacts
+{
+    /// What the rules look at (allowed() answers from it).
+    ControlSituation situation{};
+    /// The run waits in the hold before its first step.
+    bool holding = false;
+    /// The simulation stands still: attached, the controller's time gate does (or is at the time
+    /// it is to stand still at, as the time event's `paused`), or the run holds; before that,
+    /// whether it will stand still at 0 when it starts (--start-paused, a pause); false once
+    /// detached.
+    bool standing = false;
+    /// The speed set: of the controller's gate while attached, the last one known after that;
+    /// before, the last speed command's. The outer empty: not known yet (no speed command, and
+    /// the run has not read its configuration's speed into the controller). The inner empty: max.
+    std::optional<std::optional<double>> speed{};
+};
+
 /// The time commands (pause, resume, step, run_until, speed) on their way to the simulation's time
 /// gate, from every source: the reader of standard input (`run --stdin-commands`) and the threads
 /// of a control server (`run --control`). Thread safe. The commands of all sources go through one
@@ -51,7 +70,8 @@ struct TimeChange
 ///
 /// Before the run attaches its controller (the check, the start), what the commands ask for is
 /// kept and given to the controller when it is attached. While attached, each command goes to the
-/// gate at once. Once detached (the simulation is over, or did not start), commands are refused.
+/// gate at once. Once detached (the simulation is over, or did not start), the rules refuse the
+/// commands (but a stop from standard input, which is a stop request whenever it comes).
 ///
 /// The hold (run --start-paused with a control server): in the start window, before anyone's
 /// step at 0, the run waits in hold_before_start() until a resume, step or run_until command is
@@ -80,12 +100,15 @@ public:
     /// entry_of(source) and the command's arguments); writes its command
     /// event (`source`) with that answer (and, for step, how far the simulation goes: "ms" rounded
     /// up to whole steps of the controller; for run_until and pause with at_ms, where it will stand
-    /// still: "at_ms" rounded up the same way), then does it. The event comes before what the
-    /// command changes. Returns the command as written. Refused (the rows of control_rules.cpp): a
-    /// step while not paused, a step, run_until or pause with at_ms before the controller is
-    /// attached, any command once detached, a speed out of the range of parse_speed(), a step or
-    /// at_ms out of 1 to kMaxMillis (at_ms from 0). A "stop" (a control server's) is only decided
-    /// and written here (refused once detached); the caller asks the run to stop.
+    /// still: "at_ms" rounded up the same way), then does it, then tells OnChange. The event comes
+    /// before what the command changes. Returns the command as written; one that was refused has
+    /// the code of the row that refused it (Command::reason) and its message. What is refused is
+    /// the table's alone to say (the rows of control_rules.cpp). A "stop" is only decided and
+    /// written here; the caller asks the run to stop.
+    ///
+    /// `source` must be the entry_name() of an entry ("stdin", "control_server"): a command of
+    /// any other source is refused (reason::kUnknownSource) and written with that source, so that
+    /// a misspelt or new source is never taken by the rules of another entry.
     Command apply(const Command& command, std::string_view source);
     /// As apply(command, source), and if the command is accepted, `accepted` is called before
     /// apply() returns, under this object's mutex (short, must not wait): before any later
@@ -96,8 +119,21 @@ public:
     /// Whether `operation` from `entry` would be taken now, and the range of its argument
     /// (launch::allowed()): what apply() decides for a command of that operation whose arguments
     /// are in range, at this moment (another thread's command may change it right after). Changes
-    /// nothing and writes nothing.
+    /// nothing and writes nothing. Takes this object's mutex: not to be called from what runs
+    /// under it (OnCommand, OnChange, `accepted`, the `f` of inspect() and look(), on_detach), which
+    /// would wait for itself.
     [[nodiscard]] Allowed allowed(Operation operation, Entry entry);
+
+    /// What is called, under this object's mutex, whenever the facts may have changed: at the end
+    /// of apply() (after the command is done, also for one that was refused), attach(), detach(),
+    /// set_time_lock(), and when a hold begins or ends. It must be short, must not wait and must
+    /// not call this object; it may take the event stream's mutex (as OnCommand). Set once,
+    /// before any other thread uses this object (RunControls sets it in its constructor).
+    using OnChange = std::function<void(const TimeFacts& facts)>;
+    void set_on_change(OnChange on_change);
+    /// Calls `f` once with the facts as they are now, under this object's mutex (the rules for
+    /// `f`: as OnChange). Reads the controller's time gate while attached.
+    void look(const std::function<void(const TimeFacts& facts)>& f);
     /// launch::always_refused() for this run: whether `entry` is refused everything but a stop for
     /// the whole run. The same answer whenever it is asked.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const;

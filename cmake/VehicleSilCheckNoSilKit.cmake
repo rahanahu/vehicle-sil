@@ -1,8 +1,8 @@
 # Checks that the sources and headers under DIR include no SIL Kit header, directly or through
 # a vehicle-sil header that needs SIL Kit: of vehicle-sil's core headers only those of
-# vehicle_sil::sim_base (sim_time.hpp, step_inbox.hpp, periodic.hpp) are allowed, and no header
-# of a *_silkit library. The vehicle-sil headers they include are checked the same way, and the
-# headers those include, and so on (e.g. vehicle_sil/peer/peer.hpp fails: it includes
+# vehicle_sil::sim_base (sim_time.hpp, step_inbox.hpp, periodic.hpp, registry_uri.hpp) are allowed,
+# and no header of a *_silkit library. The vehicle-sil headers they include are checked the same
+# way, and the headers those include, and so on (e.g. vehicle_sil/peer/peer.hpp fails: it includes
 # vehicle_sil/can_silkit/... and vehicle_sil/core/participant_runtime.hpp). A failure names the
 # file under DIR and the chain of includes to the forbidden one. A vehicle_sil/... include that is
 # in none of the project's include directories fails too (it could hide SIL Kit), unless it is
@@ -24,7 +24,8 @@ file(GLOB include_roots LIST_DIRECTORIES true
      "${root}/libs/*/include" "${root}/libs/j1939/codec/include" "${root}/libs/j1939/parts/*/include"
      "${root}/bridges/*/include" "${root}/tools/*/include")
 
-set(allowed_core vehicle_sil/core/sim_time.hpp vehicle_sil/core/step_inbox.hpp vehicle_sil/core/periodic.hpp)
+set(allowed_core vehicle_sil/core/sim_time.hpp vehicle_sil/core/step_inbox.hpp vehicle_sil/core/periodic.hpp
+                  vehicle_sil/core/registry_uri.hpp)
 set(bad "")
 set(queue ${files})
 set(done "")

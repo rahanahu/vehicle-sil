@@ -74,7 +74,7 @@ Public headers:
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `StopRequests`, the requests to stop that the caller of `run_file()` or `test_file()` owns and lends (the count the run reads, and the source of the first request); `StopKind` (operator, signal, supervisor), the four sources the library knows (`stop_source::kStopCommand` and the others) with their names, and `stop_kind()`. The signal and console-event names stay in the CLI | `launch/stop_requests.hpp` |
-| `RunControls`, the controls of one run, which the run borrows from its caller or makes for itself: the stop requests (lent), the `TimeCommands`, and the phase it keeps and tells its observer; `Phase`, `phase_name()` | `launch/run_controls.hpp` |
+| `RunControls`, the controls of one run, which the run borrows from its caller or makes for itself: the stop requests (lent), the `TimeCommands`, and the phase it keeps and tells its observer; `Phase`, `phase_name()`. `RunState`, the run's state as the event `state` writes it, which `RunControls::publish()` puts together from those three and tells its observer when it has changed | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | The rules of the controls: `decide()` (whether the run takes an operation now, by the entry it came in and where the run stands; the table of the rows is in `src/control_rules.cpp`), `allowed()` (the same answer without arguments, with the range of the argument), `always_refused()` (whether a control server only shows the run), the reason codes `reason::*`. Pure | `launch/control_rules.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
@@ -385,6 +385,7 @@ Where to change:
 - `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` in `time_plan.cpp` (declared in `time_plan.hpp`; `check.cpp` uses it without `run.hpp`)
 - `time_lock()`, `planned_speed()` and `time_lock_findings()` in `time_plan.cpp`: whether a run that is connected outside the simulation keeps real time (`--time-policy`), the speed it starts at, and the findings `outside-*` of the check. `check_file()` puts the result in `CheckReport::time_lock`, and the run reads the speed from there
 - `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
+- The event `state`: what is in it and when it is told, `RunControls::compose()` and `publish()` in `run_controls.cpp` (`paused` and `speed` come from `facts_of()` in `time_commands.cpp`, `pacing` from `detail::PacingWatch` in `run_pacing.hpp`); that only the latest one waits to be written, `EventStream::emit()` in `events.cpp`
 - `RunWatch::note_timing()` in `run_watch.cpp`
 - The time gate: `libs/core/src/simulation_controller.cpp`
 - The gate's state and the lateness calculation: `libs/core/src/time_gate.cpp` (it has no clock)

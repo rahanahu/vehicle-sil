@@ -45,7 +45,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `finding` | A run finding is decided | The same keys as one entry of `findings[]` in the result |
 | `scenario_step` | A step of the `--scenario` scenario starts or is decided | The same keys as one entry of `scenario.steps[]` in the result |
 | `time` | Virtual time advances, the simulation pauses or resumes, or the speed changes | `sim_ms`, `speed`, `paused`, `actual_speed`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
-| `command` | A command arrives | `command`, `source`, `accepted`, `message`, `ms`, `at_ms` |
+| `state` | Where the run stands, or what it accepts, has changed | `rev`, `phase`, `paused`, `holding`, `speed`, `pacing`, `stop`, `scenario`, `allowed`, `outside` |
+| `command` | A command arrives | `command`, `source`, `accepted`, `message`, `reason`, `ms`, `at_ms`, `id` |
 | `heartbeat` | Nothing was written for 1 second | None (only the 3 common keys) |
 | `result` | Last line | `result` |
 
@@ -141,10 +142,118 @@ An event with `paused: true` is normally written after the simulation has paused
 | `source` | `"stdin"` (arrived as a line), `"eof"` (end of stdin), `"control_server"` (a client call) |
 | `accepted` | Whether the command was accepted |
 | `message` | Why the command was not accepted (`null` if it was accepted) |
+| `reason` | The code of why the command was not accepted (see [Reason codes](#reason-codes); `null` if it was accepted) |
 | `ms` | Only for an accepted `step`: the virtual time the simulation actually advances (rounded up to a multiple of the time step) |
 | `at_ms` | Only for an accepted `run_until` and an accepted `pause` with a time: the virtual time at which the simulation pauses (rounded up to a multiple of the time step) |
+| `id` | The `id` of the stdin line, unchanged (`null` if the line had none, and for the other sources) |
 
 `command` is written when a command arrives on stdin (`--stdin-commands`) and when a Control Server client calls a time operation or a stop (`--control`). `run_until` and `pause` with a time come only from clients.
+
+A program that sends a command and waits for its answer puts a number of its own into `id` and waits for the `command` event with that `id`. Without `id`, a `command` event of the same name can be the answer to a line that another program sent.
+
+### The `state` event
+
+`state` says where the run stands now and which operations it accepts now. Read it instead of working these out from the other events: the launcher decides each command with the same rules that fill `allowed`.
+
+Unlike every other event, `state` is not history. Only the latest one matters: while a `state` waits to be written (the reader is slow), a newer one replaces it. A reader keeps the last `state` it read and needs no earlier one.
+
+| Key | Value |
+|---|---|
+| `rev` | Counts the states the launcher made: 1, 2, 3, ... (a gap means that states were replaced before they were written; nothing is lost) |
+| `phase` | The current phase (the values of the `phase` event) |
+| `paused` | Whether the simulation is paused. Before the simulation starts: whether it will pause at time 0 (`--start-paused`, a `pause`). `false` once the simulation has ended |
+| `holding` | Whether the run waits before the step at time 0 (`--control` with `--start-paused`; see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)) |
+| `speed` | The speed set: a number or `"max"`. `null` while it is not known yet (before the launcher has set up the simulation, unless a `speed` command has arrived) |
+| `pacing` | Whether the run keeps the speed set: `"not-paced"`, `"on-time"` or `"late"` (see below) |
+| `stop` | The stop requests: `requests` is 0, 1 (stopping in order) or 2 (not waiting for the participants); `by` is who asked first (the values of `interrupted_by` in the result; `null` if nobody) |
+| `scenario` | Whether the run plays a scenario (`--scenario`) |
+| `allowed` | For each operation, whether the run accepts it now (see below) |
+| `outside` | Reserved for the state of the networks connected to a real bus (`--connect`); an empty array for now |
+
+`state` has only values that change in steps. Virtual time and the numbers that keep growing are in `time` (and, for a connected network, in `outside`).
+
+`pacing`:
+
+| Value | Meaning |
+|---|---|
+| `not-paced` | There is no speed to keep: the speed is `"max"`, the simulation is paused, or it is not running |
+| `on-time` | The simulation runs at the speed set |
+| `late` | A time step is later than `late_tolerance_ms` now (`late_ms` of `time`), or one was late within the last 5 seconds. It goes back to `on-time` after 5 seconds without a late time step |
+
+How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` and `actual_speed` of `time`.
+
+`allowed` has one object for each of `pause`, `resume`, `step`, `speed`, `run_until`, `stop` and `write`:
+
+| Key | Value |
+|---|---|
+| `ok` | Whether the run accepts the operation now (with arguments that are in range) |
+| `reason` | The code of why not (see [Reason codes](#reason-codes); `null` if `ok` is `true`). A command sent now is refused with the same `reason` |
+| `message` | Why not, and what to do instead: one English sentence (`null` if `ok` is `true`) |
+| `caution` | `null`, or `{"code", "message"}`: the run accepts the operation, but there is something to know first. Nothing sets it yet |
+| `min_ms`, `max_ms` | Only in `step`: the range of its `ms` (also while `ok` is `false`) |
+| `min`, `max` | Only in `speed`: the range of its value (also while `ok` is `false`). `"max"` is accepted as well, unless `min` equals `max` |
+
+`ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
+
+`pause`, `resume`, `step`, `speed` and `stop` are answered as for a stdin command. `run_until` and `write` (writing a variable) exist only for Control Server clients, so they are answered as for a client. In a run without a Control Server (no `--control`) nothing can send these two, so both have `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those five show the answer for stdin.
+
+When `state` is written:
+
+| Moment | What is written |
+|---|---|
+| The phase changes | A `state` with the new phase is written; normally after the `phase` event. |
+| A command changes the state (a pause, a speed, a stop from stdin or a client) | A `state` with the change is written after the `command` event of that command. A command that changes nothing writes no `state`. |
+| The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). |
+
+Several threads of the launcher write `state`, so do not rely on the exact place of a `state` among the other events. Next to a `phase` event, the `command` event of a stdin `stop`, or a `time` event, one `state` that was made just before that event can follow it and does not show it yet, and the `state` with a new phase can come just before its `phase` event. A `state` that shows the change is always written, and the last `state` is correct: use the latest `state`, not the first one after an event.
+
+A stop request by a signal (Ctrl+C) that arrives before the simulation runs appears in the next `state` (the one of the next phase).
+
+A `state` of a run with `--control` (pretty-printed here; it is one line in the output):
+
+```json
+{
+  "event": "state", "seq": 31, "t_ms": 1204,
+  "rev": 9,
+  "phase": "running",
+  "paused": false,
+  "holding": false,
+  "speed": 1,
+  "pacing": "on-time",
+  "stop": { "requests": 0, "by": null },
+  "scenario": false,
+  "allowed": {
+    "pause": { "ok": true, "reason": null, "message": null, "caution": null },
+    "resume": { "ok": true, "reason": null, "message": null, "caution": null },
+    "step": { "ok": false, "reason": "not-paused", "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)", "caution": null, "min_ms": 1, "max_ms": 1000000000000 },
+    "speed": { "ok": true, "reason": null, "message": null, "caution": null, "min": 1e-06, "max": 1e+06 },
+    "run_until": { "ok": true, "reason": null, "message": null, "caution": null },
+    "stop": { "ok": true, "reason": null, "message": null, "caution": null },
+    "write": { "ok": true, "reason": null, "message": null, "caution": null }
+  },
+  "outside": []
+}
+```
+
+### Reason codes
+
+The `reason` of a `command` event that was not accepted, and of `allowed` in `state`. Codes can be added; the meaning of a code does not change.
+
+| Code | Meaning |
+|---|---|
+| `not-set-up` | The launcher has not set up the simulation yet (`step`, `run_until`, `pause` with a time) |
+| `not-paused` | `step` while the simulation is not paused |
+| `not-running` | The simulation has ended, or did not start |
+| `scenario-running` | The run plays a scenario: a client can neither write variables nor move time |
+| `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`run_until`, `write`) |
+| `outside-real-time` | Something connected to the run does not wait for virtual time, so the run keeps to real time. Nothing sets this yet |
+| `out-of-range` | An argument is out of range (a client's speed, step or time) |
+| `missing-argument` | A client's `run_until` without a time |
+| `not-a-time-command` | The name is not a time command |
+| `invalid-command` | A stdin line that is not a command: not a JSON object, no `command`, or longer than 64 KiB |
+| `unknown-command` | A stdin line with a command name that stdin does not accept |
+| `invalid-argument` | A stdin line whose argument or `id` is missing, of the wrong form or out of range |
+| `unknown-source` | Not written by the launcher: the launcher library refuses a command from a source it does not know |
 
 ### The `state` of `participant`
 
@@ -202,6 +311,7 @@ The first line is `hello` and the last line is `result`. Nothing is written afte
 | `control_link` | After `joined` of all required participants and before `phase` `running`, in configuration file order |
 | `participant` with `failed` | Immediately when the failure is decided |
 | `command` | Before what the command causes (such as `phase` `stopping`) |
+| `state` | Normally after the event of what changed it; one older `state` can come in between, and the last `state` is correct (see [The `state` event](#the-state-event)) |
 | `heartbeat` | Between other lines, in any phase from `hello` to `result` |
 
 - `control_server` is not written for a run that fails the check, or for a usage error.
@@ -350,7 +460,7 @@ The behavior is the same when stdout is a pipe set not to block on writes (`O_NO
 
 If no `result` arrives, use the exit code of the process.
 
-`event` values, keys, and the values of `state` and `phase` can be added without a version change. When the meaning of a key changes or a key is removed, `vehicle_sil_events` goes up.
+`event` values, keys, reason codes, and the values of `phase` and of a participant's `state` can be added without a version change. When the meaning of a key changes or a key is removed, `vehicle_sil_events` goes up.
 
 With `--events`, stderr gets only the notices of `vehicle_sil_launch` itself (usage errors, events can no longer be written, the result cannot be written, unexpected failures). Participant lines and progress lines do not go there. Anything a library inside `vehicle_sil_launch` writes to stdout goes to stderr (it never mixes with the event lines).
 
@@ -394,7 +504,7 @@ All lines of a short run. `--disable Dashboard` leaves only Engine, so the outpu
 {"event":"result","seq":22,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"registry_uri":"silkit://127.0.0.1:<port>","timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"manual":false,"for_network":null,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"connected","variables":22,"version":null,"late_messages":0}},{"name":"Dashboard","required":true,"enabled":false,"manual":false,"for_network":null,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"none","variables":null,"version":null,"late_messages":0}}],"outside":[],"traffic":{"before_ms":1000,"unplaced":[],"networks":[{"name":"J1939_CAN","kind":"can","counted":1,"senders":1,"receivers":0,"delivered":false,"unplaced":[],"participants":[{"name":"Engine","counted":true,"not_counted":null,"virtual_time":true,"at_ms":990,"frames_sent":11,"frames_received":0}]}]},"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"network_map":null,"j1939_nodes":null,"control":{"transport":"silkit","wire_version":2}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"network_map":null,"j1939_nodes":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"],"outside":null}],"time_lock":{"locked":false,"because":[]},"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
 ```
 
-The CTest test `launch_run.events` compares this example with the real output byte for byte. Before the comparison, it removes the `heartbeat` lines and every `time` line other than the first and the last from the real output (renumbering `seq`), and makes the replacements above. It removes those `time` lines because on a slow computer the launcher also writes `time` events for intermediate times.
+The CTest test `launch_run.events` compares this example with the real output byte for byte. Before the comparison, it removes the `heartbeat` lines, the `state` lines and every `time` line other than the first and the last from the real output (renumbering `seq`), and makes the replacements above. It removes those `time` lines because on a slow computer the launcher also writes `time` events for intermediate times, and the `state` lines because how many are written depends on how fast they are read (see [The `state` event](#the-state-event)).
 
 ## Stdin commands (`run --stdin-commands`)
 
@@ -407,6 +517,7 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `{"command":"resume"}` | Ends the pause and continues. |
 | `{"command":"step","ms":<ms>}` | Only while paused: advances virtual time by `<ms>` (an integer from 1 to 10^12) and pauses again. |
 | `{"command":"speed","value":<speed>}` | Changes the speed (`<speed>` is a number or `"max"`, in the same range as `speed` in the configuration file). |
+| Any of the above with `"id":<id>` | The same; `<id>` (an integer from 0 to 2^53) comes back in the `id` of the line's `command` event. |
 | End of stdin (EOF) | The same as one `stop` (the program that started the launcher has gone, or closed the pipe). |
 | A line of only white space | Skipped. |
 | Anything else | Does nothing. |
@@ -421,8 +532,8 @@ The launcher reads stdin only with `--stdin-commands`. Without it, stdin is not 
 | `step` | Sent while a previous `step` is in progress, it counts from the time at which that step pauses. |
 | `speed` | A pause stays in effect. |
 | EOF | If a stop request (`stop`, a signal, a closed stdout) has already arrived, does nothing (it does not count as a second one and no `command` event is written). |
-| Anything else | This covers a line that is not a JSON object, has no `command`, has an unknown command, or is longer than 64 KiB. |
-| Anything else | With `--events`, a `command` event (`accepted: false` and the reason) is written; otherwise one line goes to stderr. |
+| Anything else | This covers a line that is not a JSON object, has no `command`, has an unknown command, has an `id` that is not an integer from 0 to 2^53, or is longer than 64 KiB. |
+| Anything else | With `--events`, a `command` event (`accepted: false`, the `message` and the `reason`) is written; otherwise one line goes to stderr. |
 
 Other keys of the object are ignored. Commands are accepted and carried out even when nobody reads the events.
 
@@ -438,9 +549,9 @@ For a time command (`pause`, `resume`, `step`, `speed`), the thread that reads s
 | `pause` while paused, `resume` while running | Accepted; does nothing. |
 | `pause`, `resume` or `speed` received before the controller exists (during the check, for example) | Kept, and handed to the controller when it exists. |
 
-The reason for not accepting goes into `message`. A `pause` received before the controller exists pauses at 0, as `--start-paused` does.
+The reason for not accepting goes into `message` (a sentence) and `reason` (a code; see [Reason codes](#reason-codes)). `allowed` of the `state` event says the same before a command is sent. A `pause` received before the controller exists pauses at 0, as `--start-paused` does.
 
-A pause leaves `phase` at `running`. The `paused` of `time` reports the pause.
+A pause leaves `phase` at `running`. The `paused` of `state` and of `time` reports the pause.
 
 In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).
 
@@ -508,6 +619,7 @@ The time operations (`Pause`, `Resume`, `Step`, `RunUntil`, `SetSpeed`) and `Sto
     "connect",
     "connections",
     "connect-counts",
+    "state",
     "time-policy"
   ]
 }
@@ -566,6 +678,7 @@ These rules hold for every JSON form above (`check --json`, `run --json`, `test 
 | `connect` | `--connect` of `check` and `run`: connecting a network to a real bus through its bridge (see "Connecting a bus outside (`--connect`)" in [simulation-run.md](simulation-run.md#connecting-a-bus-outside---connect)) |
 | `connections` | `vehicle_sil_launch connections`: where each network can be connected on this computer (see "Where a network can be connected (`vehicle_sil_launch connections`)" in [simulation-run.md](simulation-run.md#where-a-network-can-be-connected-vehicle_sil_launch-connections)) |
 | `connect-counts` | The frames that a connected network sent to the real bus and got from a device there (see "Counting the frames to and from the bus" in [simulation-run.md](simulation-run.md#counting-the-frames-to-and-from-the-bus)) |
+| `state` | The event `state`: where the run stands and what it accepts now (see [The `state` event](#the-state-event)) |
 | `time-policy` | `--time-policy` of `check`, `run` and `test`: a run that is connected outside the simulation keeps real time unless `free` is chosen (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `control-server` | `run --control` (only in builds with the Control Server) |
 | `scenario-control` | `run --scenario` and `--control` can be used together (only in builds with the Control Server) |
@@ -589,6 +702,7 @@ Each name indicates that the following are present:
 | `connect` | `external` of a network in the configuration file, `check --connect` and `run --connect`, `networks[].outside` in the check JSON, `outside` and `participants[].for_network` in the result, the participant `bridge.<network>` in the result and the events, the `outside:` lines of the human-readable result, and the findings `connect-*` |
 | `connections` | `vehicle_sil_launch connections` with `--json` and `--network`, `connections` in `formats`, and `vehicle_sil_launch connections` named by the findings `connect-target` and `connect-failed` |
 | `connect-counts` | The event `outside`, the counts in `outside[].to_outside` and `from_outside` of the result (`null` before this feature), the counts at the end of the `outside:` lines of the human-readable result, the finding `connect-nothing-received`, and `--stats-every-ms 1000` in the command of a bridge that `run` starts |
+| `state` | The event `state`, `reason` and `id` in the event `command`, and `id` in the stdin commands |
 | `time-policy` | `--time-policy`, `time_lock` in the check JSON, the findings `outside-real-time`, `outside-speed-set` and `outside-not-real-time` (before this feature: the warnings `connect-not-real-time` and `connect-start-paused`, and a run with `--connect` went at the file's speed) |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 

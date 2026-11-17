@@ -9,8 +9,10 @@
 #include "vehicle_sil/launch/time_commands.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 namespace vehicle_sil::launch {
 
@@ -26,6 +28,53 @@ enum class Phase
 };
 [[nodiscard]] const char* phase_name(Phase phase);
 
+/// Whether a run keeps up with the speed set for it.
+enum class Pacing
+{
+    NotPaced, ///< nothing to keep up with: as fast as possible, standing still, or not running
+    OnTime,   ///< it runs at the speed set
+    Late,     ///< it is behind real time now, or was within the last seconds (PacingWatch of the run)
+};
+/// "not-paced", "on-time", "late".
+[[nodiscard]] const char* pacing_name(Pacing pacing);
+
+/// Where a run stands and what it takes now: the discrete facts only (no time that moves, no
+/// number that grows), as the event "state" writes them (docs/simulation-events.md). The one
+/// place that says so: a reader does not work it out from the other events.
+struct RunState
+{
+    /// Counts the states that RunControls::publish() has told: 1, 2, ... A reader that sees a gap
+    /// has skipped states (only the latest waits to be written), which loses nothing.
+    std::uint64_t rev = 0;
+    Phase phase = Phase::Checking;
+    /// TimeFacts::standing.
+    bool paused = false;
+    /// The run waits in the hold before its first step.
+    bool holding = false;
+    /// The speed set (TimeFacts::speed): the outer empty, not known yet; the inner empty, max.
+    std::optional<std::optional<double>> speed{};
+    Pacing pacing = Pacing::NotPaced;
+    /// The stop requests so far: 0, 1 (the run stops in order) or 2 (it does not wait for the
+    /// participants; more requests than two say nothing more).
+    int stop_requests = 0;
+    /// What asked first (RunControls::set_stop_name(); the result's interrupted_by), or "".
+    std::string stopped_by{};
+    /// The run plays a scenario.
+    bool scenario = false;
+    /// What the run takes now (launch::allowed()), each as from the entry that has the operation:
+    /// pause, resume, step, speed and stop as from standard input; run_until and write as from a
+    /// control server (standard input has neither). In a run without a control server
+    /// (RunControls::set_control_server()) nothing can send those two: refused, with
+    /// reason::kNoControlServer.
+    struct Operations
+    {
+        Allowed pause, resume, step, speed, run_until, stop, write;
+        [[nodiscard]] bool operator==(const Operations&) const = default;
+    } allowed{};
+
+    [[nodiscard]] bool operator==(const RunState&) const = default;
+};
+
 /// The controls of one run: the stop requests (borrowed), the time commands and the phase.
 /// Whoever asks something of the run from outside (the reader of standard input, the threads of a
 /// control server) and the run itself meet here; nothing here knows the events or SIL Kit.
@@ -37,11 +86,27 @@ enum class Phase
 /// never destroyed, as the reader of standard input uses it until the process ends). Without
 /// RunOptions::controls the run makes its own for that run.
 ///
+/// The state (RunState) is put together here from its owners: the phase and the pacing (told by
+/// the run), the stop requests, and the time commands' facts. publish() tells Observers::on_state
+/// when it differs from the one told last. It is called by whatever changed something: the time
+/// commands after each command, attach, detach and the hold (TimeCommands::OnChange), set_phase(),
+/// and the run's watch on every look (which is how a stop request of a signal handler, which
+/// must not call anything here, and the time gate's standing still or going on get into it).
+///
 /// Threads and locks: stops() and time() return the same objects for the whole lifetime, and each
 /// keeps itself (StopRequests: atomics; TimeCommands: its mutex). phase() may be read from any
-/// thread. set_phase() is the run's alone, one call at a time. This object has no mutex of its
-/// own: set_phase() takes none, and the observers are called without one (`on_command` under
-/// TimeCommands' mutex, as TimeCommands::OnCommand says).
+/// thread. set_phase() and set_pacing() are the run's alone, one call at a time. This object has
+/// no mutex of its own: the state told last and its `rev` are touched only under TimeCommands'
+/// mutex (in its OnChange and in the `f` of its look()), and `on_state` is called there, so the
+/// states are told one at a time, each after the command event of the command that made it. The
+/// order of the locks stays: TimeCommands' mutex, then the event stream's or the time gate's.
+/// set_phase() calls `on_phase` with no lock, then publish(). `on_command` is called under
+/// TimeCommands' mutex (TimeCommands::OnCommand).
+///
+/// What takes TimeCommands' mutex here (allowed(), publish(), state(), set_phase()) must not be
+/// called from what runs under it: the observers `on_command` and `on_state`, the `accepted` of
+/// TimeCommands::apply(), the `f` of TimeCommands::inspect() and look(), on_detach. Such a call
+/// would wait for itself. Nor from a signal handler.
 class RunControls
 {
 public:
@@ -54,6 +119,10 @@ public:
         /// Each phase the run enters, on the run's thread, after phase() has it (the writer of the
         /// phase events). Must not call set_phase().
         std::function<void(Phase phase)> on_phase{};
+        /// Each state that differs from the one told last (the writer of the state events), under
+        /// TimeCommands' mutex: short, must not wait, must not call this object or its time
+        /// commands.
+        std::function<void(const RunState& state)> on_state{};
     };
 
     /// `stops`: the stop requests, the caller's; they must outlive this object. `start_paused`:
@@ -74,9 +143,11 @@ public:
     /// it also has an EventStream: the run does not write those events by itself then).
     [[nodiscard]] bool has_command_observer() const noexcept { return has_command_observer_; }
     [[nodiscard]] bool has_phase_observer() const noexcept { return static_cast<bool>(on_phase_); }
+    [[nodiscard]] bool has_state_observer() const noexcept { return static_cast<bool>(on_state_); }
     /// Whether `operation` from `entry` would be taken now, and the range of its argument: the
     /// answer of the rules (control_rules.hpp) that the time commands decide each command with
-    /// (TimeCommands::allowed()). Any thread.
+    /// (TimeCommands::allowed()). Any thread, but not from what runs under TimeCommands' mutex
+    /// (see above: it takes that mutex).
     [[nodiscard]] Allowed allowed(Operation operation, Entry entry) { return time_.allowed(operation, entry); }
     /// Whether `entry` is refused everything but a stop for the whole run, and why
     /// (TimeCommands::always_refused()): a control server then only shows the run.
@@ -87,15 +158,49 @@ public:
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
-    /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called.
+    /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called,
+    /// then publish().
     void set_phase(Phase phase);
 
+    /// How the first stop request is called in the state (RunState::stopped_by): as the result's
+    /// interrupted_by (RunOptions::interrupt_name). Without it: "interrupt". Called while the
+    /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
+    /// before any other thread uses this object.
+    void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
+    /// Whether the run has a control server (RunOptions::serve_control), for the state: without
+    /// one, RunState::allowed refuses what only a control server's client can send (run_until,
+    /// write). Not given: none. It changes no rule and no command's answer. Set before the run and
+    /// before any other thread uses this object.
+    void set_control_server(bool present) noexcept { control_server_ = present; }
+    /// The run's alone: whether it keeps up with its speed, as its watch saw it last. publish()
+    /// tells it.
+    void set_pacing(Pacing pacing) noexcept { pacing_.store(pacing); }
+    /// Puts the state together and, if it differs from the one told last (but for `rev`), counts
+    /// `rev` up and tells Observers::on_state. Any thread (not from what runs under TimeCommands'
+    /// mutex, not from a signal handler). Cheap when nothing changed.
+    void publish();
+    /// The state as it is now, with the `rev` of the one told last (0: none yet). Any thread, as
+    /// publish().
+    [[nodiscard]] RunState state();
+
 private:
+    /// The state of `facts`, the phase, the pacing and the stop requests, without `rev`. Under
+    /// TimeCommands' mutex.
+    [[nodiscard]] RunState compose(const TimeFacts& facts) const;
+    /// compose(), and on_state if it differs from told_. Under TimeCommands' mutex.
+    void tell(const TimeFacts& facts);
+
     StopRequests& stops_;
     TimeCommands time_;
     std::atomic<Phase> phase_{Phase::Checking};
+    std::atomic<Pacing> pacing_{Pacing::NotPaced};
     const std::function<void(Phase phase)> on_phase_;
+    const std::function<void(const RunState& state)> on_state_;
+    std::function<std::string()> stop_name_{};
+    bool control_server_ = false;
     const bool has_command_observer_;
+    /// The state told last (rev 0: none). Under TimeCommands' mutex.
+    RunState told_{};
 };
 
 } // namespace vehicle_sil::launch

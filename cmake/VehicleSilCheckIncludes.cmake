@@ -1,6 +1,8 @@
 # Checks that the listed files (FILES, relative to ROOT) include none of the headers a layer
 # must not depend on, directly or through the headers they include: a SIL Kit header (silkit/...,
 # also any *_silkit/ library), vehicle_sil/core/participant_runtime.hpp,
+# vehicle_sil/core/participant_configuration.hpp (its definitions link SIL Kit; the loopback test is
+# in registry_uri.hpp),
 # vehicle_sil/process/child_process.hpp, vehicle_sil/process/process.hpp,
 # vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
 # headers named events.hpp, time_commands.hpp, stop_requests.hpp or run_*.hpp (run_controls.hpp
@@ -24,7 +26,8 @@ file(GLOB include_roots LIST_DIRECTORIES true
      "${project}/bridges/*/include" "${project}/tools/*/include")
 
 set(forbidden_exact vehicle_sil/core/participant_runtime.hpp vehicle_sil/process/child_process.hpp
-                    vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp vehicle_sil/launch/probe.hpp)
+                    vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp vehicle_sil/launch/probe.hpp
+                    vehicle_sil/core/participant_configuration.hpp)
 set(bad "")
 set(checked 0)
 foreach(listed IN LISTS FILES)
