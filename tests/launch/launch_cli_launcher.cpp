@@ -1034,7 +1034,7 @@ void connect(const Options& o)
                 "run --disable bridge.ETH_EXT wrote:\n" + run.standard_output + run.standard_error);
     }
     expect_usage({"test", shown_path(config), "--connect", "ETH_EXT=eth0", "--scenarios", shown_path(o.work_dir)},
-                 "--connect is not for test: test runs each scenario as fast as possible, and a real bus does not wait for "
+                 "--connect is not for test: test is made for runs that go as fast as possible, one after the other, and a real bus does not wait for "
                  "the virtual time; for a test with a device, run one scenario: vehicle_sil_launch run --scenario "
                  "<scenario> --speed 1 --strict --connect <network>=<target> <file>");
     // The value after --connect is not the file.

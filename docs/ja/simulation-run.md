@@ -340,12 +340,12 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 - 外につながっていない実行では、`--time-policy` は何もしません。
 - `check`、`run`、`test` で使えます。`check` はファイルの `speed` で、`run` は `--speed` と `--start-paused` も見て判断します。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
-- `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
+- `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。このとき `test` の表の後に、注記 `test-speed-set` を全体で 1 回書きます。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
 - `free` が変えるのは、時間を操作できるかどうかだけです。ブリッジは両方向にフレームを運び続けます。シミュレーションが止まっている間、外から来たフレームは溜まり、ECU がそれまでに送ったものは送られたままです。
 - 注記は、`--strict` でも実行を失敗にしません。
 - 自分で作った実時間の participant（ステップのない ECU や `role: test` の participant）は、実行を実時間に固定しません。
 
-実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
+実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。`--connect` のある実行では、受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。外とつなぐものが `role: bridge` の participant だけの実行には、この警告は出ません。
 
 ### 外のバスとやりとりしたフレームの数
 
@@ -366,7 +366,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
 ```
 
-バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。
+バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。`test` は、実行を 1 つずつ続けて最速で走らせるためのもので、実際のバスは仮想時間を待たないためです。
 
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
@@ -1746,7 +1746,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 - `FAILED` が `--strict` で警告だけのときは、右の列は最初の警告です。
 - 機種のない設定ファイルでは、`variant` の列がありません。
 
-1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
+1 組だけを実行し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に適用されるものを並べるので、同じ実行になります。並べるのは、`--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms` です。コマンドには、`test` の実行と同じ `--speed max` が付きます。`role: bridge` の participant が外とつないでいるために速さ 1 で実行した組には付きません（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。`test` に `--time-policy free` を付けていれば、それも付きます。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます。Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます。
 
 最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です。`interrupted` と `not run` の数は、あるときだけ書きます。
 
@@ -1763,6 +1763,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 |---|---|---|
 | `test-nothing-run` | 警告 | 実行した組が 1 つもない（全部が `skipped`）ので、何も確認していない（`--strict` では失敗） |
 | `test-runs-left` | エラー | 中断されていないのに、実行しなかった組がある |
+| `test-speed-set` | 注記 | `role: bridge` の participant が外とつないでいるために、最速でなく速さ 1 で実行した組がある（`test` 全体で 1 回。最初のそういう組の注記 `outside-speed-set` の文を添える） |
 
 `test-runs-left` は、ある組の後でランチャー自身の SIL Kit の接続が閉じなかったときに出ます（その組の警告 `connection-not-closed`。[止め方](#止め方)）。このとき `test` は、同じプロセスで次のシミュレーションを始めずに終わっています。`not run` の組を、`--variant` と `--scenarios` で選んで実行し直します。
 
@@ -1796,7 +1797,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `scenarios` | 実行するシナリオ（表に出る名前、実行する順） |
 | `passed`、`failed`、`skipped`、`interrupted`、`not_run` | それぞれの結果の組の数 |
 | `runs[]` | 組ごとの結果（下の表）。実行する順 |
-| `findings[]` | 何も実行しなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の指摘（`test-nothing-run`、`test-runs-left`）。なければ空 |
+| `findings[]` | 何も実行しなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の指摘（`test-nothing-run`、`test-runs-left`、`test-speed-set`）。なければ空 |
 
 `findings[]` は、照合の `findings[]` と同じ形です。
 

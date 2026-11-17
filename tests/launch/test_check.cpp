@@ -3412,7 +3412,8 @@ TEST_CASE(time_lock_findings_refuse_another_speed_and_a_paused_start_with_the_lo
 
 TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
 {
-    const std::string freely = "give --time-policy free if what is connected there does not mind (the bridge still carries frames both ways)";
+    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
+                               "time (the bridge still carries frames both ways)";
     const TimeLock networks{true, {"ETH", "CAN1"}, {}};
     check_text(lines(time_lock_findings(networks, asked_speed(2.0), 1.0, true)),
                "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the virtual "
@@ -3434,14 +3435,14 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
                "N 0 outside-speed-set: --connect connects ETH to a real bus, and participants 'Gateway' and 'Tap' are "
                "bridges (role: bridge) to something outside the simulation, which does not wait for the virtual time: the "
                "run goes at speed 1 (real time), not as fast as possible. To go at another speed, run without --connect "
-               "and --disable Gateway and --disable Tap, or " + freely + "\n");
+               "and with --disable Gateway --disable Tap, or " + freely + "\n");
     // free: notes, which say that the bridge goes on in both directions.
     const TimeLock free{false, {"ETH"}, {}};
     check_text(lines(time_lock_findings(free, asked_speed(2.0), 1.0, true)),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free --speed 2 runs the simulation at that speed: what is connected there gets the "
                "messages at the wrong times, and the bridge still carries frames both ways. To run in real time, leave "
-               "--time-policy free out\n"
+               "--time-policy free and --speed out\n"
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not stand still, and with "
                "--time-policy free --start-paused makes the simulation wait before its first step: the bridge still "
                "carries frames both ways, so frames from outside pile up while the simulation stands still. To run in "
@@ -3450,7 +3451,7 @@ TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free --speed max runs the simulation as fast as possible: what is connected there "
                "gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
-               "leave --time-policy free out\n");
+               "leave --time-policy free and --speed out\n");
     check_text(lines(time_lock_findings(free, kNoSpeedAsked, 2.0, false)),
                "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
                "and with --time-policy free the simulation runs at the speed 2 of the file: what is connected there gets "

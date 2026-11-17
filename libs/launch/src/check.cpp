@@ -338,9 +338,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     auto compared = check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
     drop_unusable_commands(report);
-    // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before it runs.
+    // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before
+    // it runs. A run with a speed of its own (run --speed, test) reports its own afterwards.
     if (const std::optional<double> speed = planned_speed(report.time_lock, {}, report.config->speed);
-        speed && report.config->time_step_ms)
+        !options.run_speed && !options.fastest_by_default && speed && report.config->time_step_ms)
     {
         RunTiming timing = detail::plan_time_step(*report.config, report, speed);
         timing.speed = speed;

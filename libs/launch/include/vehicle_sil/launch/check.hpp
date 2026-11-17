@@ -394,13 +394,16 @@ struct CheckOptions
     /// --time-policy: what a run that is connected outside the simulation does about time
     /// (CheckReport::time_lock).
     TimePolicy time_policy = TimePolicy::Realtime;
-    /// run: its --speed (RunOptions::speed), for time_lock_findings(); the outer optional empty
-    /// without it (check: always), and the file's speed counts.
+    /// The --speed of the run this check is for, for time_lock_findings(); the outer optional
+    /// empty without it (check: always), and the file's speed counts. run_file() sets it from
+    /// RunOptions::speed (unless `fastest_by_default`), whatever is written here.
     std::optional<std::optional<double>> run_speed{};
     /// test: without the time lock every run goes as fast as possible, whatever the file's speed
-    /// (which then does not count for time_lock_findings()).
+    /// (which then does not count for time_lock_findings()); RunOptions::speed is that default
+    /// then, not a speed the user asked for, and run_file() leaves `run_speed` empty.
     bool fastest_by_default = false;
-    /// run: --start-paused, for time_lock_findings().
+    /// The --start-paused of the run this check is for, for time_lock_findings(). run_file() sets
+    /// it from RunOptions::start_paused, whatever is written here.
     bool start_paused = false;
 };
 

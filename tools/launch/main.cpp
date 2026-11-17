@@ -1157,9 +1157,6 @@ int run(const cli::Args& args, launch::EventStream* events)
         start_reading_commands();
     }
     options.interrupt_name = interrupt_name;
-    // --connect: the check judges the time by what this run does.
-    options.check.run_speed = options.speed;
-    options.check.start_paused = options.start_paused;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
@@ -1240,8 +1237,8 @@ int test(const cli::Args& args)
     }
     if (args.has("connect"))
     {
-        throw cli::UsageError("--connect is not for test: test runs each scenario as fast as possible, and a real bus does "
-                              "not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
+        throw cli::UsageError("--connect is not for test: test is made for runs that go as fast as possible, one after the "
+                              "other, and a real bus does not wait for the virtual time; for a test with a device, run one scenario: vehicle_sil_launch "
                               "run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>");
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
@@ -1251,7 +1248,8 @@ int test(const cli::Args& args)
         {
             throw cli::UsageError("--" + std::string(runOnly) +
                                   " is for run, not for test (which runs one simulation after the other, each as fast as "
-                                  "possible): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
+                                  "possible, or at speed 1 if a role: bridge participant connects it outside the "
+                                  "simulation): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
         }
     }
     const Common c = common(args, "test");
@@ -1287,8 +1285,10 @@ int test(const cli::Args& args)
         return usage_error(list.errors, json, Command::Test, c.file, nullptr);
     }
     options.scenarios = std::move(list.scenarios);
-    options.run.speed.emplace(std::optional<double>{}); // as fast as possible, whatever the file says
-    options.run.check.fastest_by_default = true;       // (at speed 1 with the time lock)
+    // As fast as possible, whatever the file says (at speed 1 with the time lock): a default, not
+    // a speed the user asked for, which the check would refuse with the time lock.
+    options.run.speed.emplace(std::optional<double>{});
+    options.run.check.fastest_by_default = true;
     watch_interrupts();
     options.run.write_line = write_stderr_line;
     options.run.stops = &g_stops;

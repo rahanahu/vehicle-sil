@@ -362,8 +362,11 @@ void own_bridge(const Options& o)
     write_file(dir / "scn" / "a.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 5 }\n"
                                        "  - wait_until: { Body.level: 6 }\n    timeout_ms: 50\n");
     out = ran({"test", "sim.yaml", "--scenarios", "scn"}, 1, "test with a role: bridge participant");
-    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --scenario scn/a.yaml\n"),
-            "test at speed 1: the run alone takes no --speed max:\n" + out);
+    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --scenario scn/a.yaml\n") &&
+                contains(out, "note: sim.yaml: 1 of 1 runs went at speed 1 (real time), not as fast as possible: ") &&
+                contains(out, "The first of them (scenario scn/a.yaml) says why: participant 'Gateway' is a bridge") &&
+                contains(out, "pass --time-policy free if ") && contains(out, " [test-speed-set]\n"),
+            "test at speed 1: the run alone takes no --speed max, and a note says why the test is not as fast as possible:\n" + out);
     out = ran({"test", "sim.yaml", "--scenarios", "scn", "--json"}, 1, "test --json with a role: bridge participant");
     require(contains(out, "\"speed\": 1,") && !contains(out, "\"speed\": \"max\",") && contains(out, "\"code\": \"outside-speed-set\"") &&
                 contains(out, "not as fast as possible"),
@@ -371,6 +374,7 @@ void own_bridge(const Options& o)
     out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn"}, 1, "test --time-policy free");
     require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --speed max --time-policy free --scenario scn/a.yaml\n"),
             "test --time-policy free: as fast as possible:\n" + out);
+    require(!contains(out, "test-speed-set"), "test --time-policy free: no note about speed 1:\n" + out);
     out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn", "--json"}, 1, "test --json --time-policy free");
     require(contains(out, "\"speed\": \"max\",") && contains(out, "\"code\": \"outside-not-real-time\"") &&
                 contains(out, "the simulation runs as fast as possible"),

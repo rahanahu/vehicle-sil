@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -103,13 +104,14 @@ std::string connected_outside(const TimeLock& lock)
     return out;
 }
 
-/// How to run on SIL Kit only: "without --connect", "with --disable Gateway", or both.
+/// How to run on SIL Kit only: "without --connect", "with --disable Gateway --disable Tap", or
+/// both ("without --connect and with --disable Gateway": it takes both).
 std::string not_connected(const TimeLock& lock)
 {
     std::string out = lock.connected.empty() ? "" : "without --connect";
-    for (const std::string& name : lock.bridges)
+    for (std::size_t i = 0; i < lock.bridges.size(); ++i)
     {
-        out += (out.empty() ? "with --disable " : " and --disable ") + name;
+        out += (i > 0 ? " --disable " : out.empty() ? "with --disable " : " and with --disable ") + lock.bridges[i];
     }
     return out;
 }
@@ -127,7 +129,8 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         return out;
     }
     const std::string what = connected_outside(lock);
-    const std::string freely = "give --time-policy free if what is connected there does not mind (" + std::string(kFreeCarries) + ")";
+    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real time (" +
+                               std::string(kFreeCarries) + ")";
     const std::optional<double> unlocked = asked ? *asked : otherwise;
     const bool realTime = unlocked == std::optional<double>(1.0);
     if (lock.locked)
@@ -176,7 +179,7 @@ std::vector<Finding> time_lock_findings(const TimeLock& lock, const std::optiona
         out.push_back(Finding{Severity::Note, "outside-not-real-time",
                               what + ", which does not wait for the virtual time, and with --time-policy free " + runs +
                                   ": what is connected there gets the messages at the wrong times, and " + kFreeCarries +
-                                  ". To run in real time, leave --time-policy free out",
+                                  ". To run in real time, leave --time-policy free" + (asked ? " and --speed" : "") + " out",
                               0, "", ""});
     }
     if (start_paused)

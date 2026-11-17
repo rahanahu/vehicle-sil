@@ -122,6 +122,8 @@ struct TestReport
     /// nothing otherwise. An error "test-runs-left": runs were left out without an interrupt.
     /// A warning "test-nothing-run": no run was run (every one was skipped), so nothing was
     /// checked; --strict fails on it.
+    /// A note "test-speed-set": the time lock set runs to speed 1 (their note outside-speed-set),
+    /// so the test is not as fast as possible; once, with the note of the first of them.
     [[nodiscard]] std::vector<Finding> remarks() const;
     [[nodiscard]] TestResult result() const;
     /// 0 passed; 1 failed; 3 unreadable; 4 usage; kExitInterrupted.

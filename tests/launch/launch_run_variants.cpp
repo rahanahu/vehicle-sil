@@ -580,7 +580,7 @@ void test_command(const Options& o)
             "--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>",
             "test --scenario");
     refused({"test", "sim.yaml", "--speed", "2", "--scenarios", "scn"},
-            "--speed is for run, not for test (which runs one simulation after the other, each as fast as possible): to use "
+            "--speed is for run, not for test (which runs one simulation after the other, each as fast as possible, or at speed 1 if a role: bridge participant connects it outside the simulation): to use "
             "it, run one scenario with vehicle_sil_launch run --scenario <file>",
             "test --speed");
     // A participant that someone starts by hand: refused before the first run (each run would

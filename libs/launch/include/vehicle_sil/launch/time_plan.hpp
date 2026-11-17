@@ -24,7 +24,8 @@ struct CheckReport; // check.hpp, which includes this header
 /// --time-policy: what a run does about time when it is connected outside the simulation.
 enum class TimePolicy
 {
-    /// It goes at speed 1, and nothing stops the time, moves it or changes the speed.
+    /// It starts at speed 1 and not paused: the check refuses another --speed and --start-paused
+    /// (time_lock_findings()).
     Realtime,
     /// The time is the user's to change, as in a run that is not connected outside.
     Free,
@@ -36,7 +37,7 @@ enum class TimePolicy
 /// Whether a run keeps real time, and what connects it outside the simulation (time_lock()).
 struct TimeLock
 {
-    /// The run goes at speed 1 and its time is not changed: the policy is TimePolicy::Realtime and
+    /// The run starts at speed 1 and not paused: the policy is TimePolicy::Realtime and
     /// `connected` or `bridges` has a name.
     bool locked = false;
     /// The networks that --connect connects (a target other than kNoTarget), in the order given.
