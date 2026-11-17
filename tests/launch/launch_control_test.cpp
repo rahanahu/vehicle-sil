@@ -44,6 +44,8 @@ using namespace std::chrono_literals;
 using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace fs = std::filesystem;
+/// The source of a stop request where the run does not read it (RunOptions::interrupt_name names it).
+constexpr int kAnySource = 1;
 
 void require(bool condition, const std::string& what)
 {
@@ -205,13 +207,13 @@ void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
                yaml_quote(process::shown_path(ecu)) + "]\n";
     std::ofstream(dir / "Engine.behaviour") << "variables\n";
     control::Hub hub;
-    std::atomic<int> interrupts{0};
+    launch::StopRequests stops;
     launch::RunOptions options;
     options.hub = &hub;
-    options.interrupts = &interrupts;
+    options.stops = &stops;
     options.interrupt_name = [] { return std::string("control server stop"); };
-    options.before_start = [&interrupts](control::Hub&) {
-        interrupts = 1;
+    options.before_start = [&stops](control::Hub&) {
+        stops.request(kAnySource);
         throw std::runtime_error("the scenario could not be set up");
     };
     std::string lines;
@@ -469,7 +471,7 @@ struct HoldRun
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
                  launch::TimeCommands& commands, std::optional<std::chrono::milliseconds> timeout,
-                 const std::function<void()>& during_hold, const std::atomic<int>* interrupts = nullptr,
+                 const std::function<void()>& during_hold, const launch::StopRequests* stops = nullptr,
                  const std::string& more_keys = {})
 {
     std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\n" + more_keys +
@@ -489,7 +491,7 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     options.start_paused = start_paused;
     options.time_commands = &commands;
     options.timeout = timeout;
-    options.interrupts = interrupts;
+    options.stops = stops;
     options.interrupt_name = [] { return std::string("SIGINT"); };
     options.serve_control = [](control::Hub&) { return launch::ControlServerInfo{"(test)", false, false}; };
     options.write_line = [&](std::string_view line) {
@@ -629,11 +631,11 @@ void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const 
 void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
     launch::TimeCommands commands(true);
-    std::atomic<int> interrupts{0};
+    launch::StopRequests stops;
     const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, std::nullopt, [&] {
         std::this_thread::sleep_for(200ms);
-        interrupts = 1;
-    }, &interrupts);
+        stops.request(kAnySource);
+    }, &stops);
     require(run.held, "the run held" + shown(run));
     require(run.report.result() == launch::RunResult::Interrupted && run.report.run &&
                 run.report.run->simulation == launch::SimulationEnd::Interrupted,

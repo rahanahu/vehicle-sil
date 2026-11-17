@@ -36,6 +36,7 @@
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
@@ -364,9 +365,9 @@ void write_stderr_line_without_waiting(std::string line)
 
 // --- interrupts and stop requests (run) ---
 
-std::atomic<int> g_interrupts{0};
-/// What asked first: a signal (POSIX), a console event + 1 (Windows), or one of these.
-std::atomic<int> g_first_interrupt{0};
+/// The stop requests of the process (launch::RunOptions::stops). The source of a request: a
+/// signal (POSIX), a console event + 1 (Windows), or one of these.
+constinit launch::StopRequests g_stops;
 constexpr int kStopCommand = -1;  // {"command":"stop"} on standard input
 constexpr int kEndOfInput = -2;   // standard input ended (run --stdin-commands)
 constexpr int kOutputClosed = -3; // the reader of the events has gone (run --events)
@@ -384,32 +385,6 @@ std::string stop_source_name(int source)
     }
 }
 
-/// A stop request as one Ctrl+C: the first stops the run in order, the second skips the waits.
-void request_stop(int source)
-{
-    int none = 0;
-    g_first_interrupt.compare_exchange_strong(none, source);
-    g_interrupts.fetch_add(1);
-}
-
-/// A stop request only if nothing has asked for a stop yet (the end of input, a closed output:
-/// never a second request). `before` runs between the decision and the request (it writes the
-/// event that says why, before the run reacts). false if a stop had been requested.
-template <class Before>
-bool request_first_stop(int source, Before before)
-{
-    int none = 0;
-    if (!g_first_interrupt.compare_exchange_strong(none, source))
-    {
-        return false;
-    }
-    before();
-    // A signal in between counts as the first request, not as a second one.
-    int zero = 0;
-    g_interrupts.compare_exchange_strong(zero, 1);
-    return true;
-}
-
 #ifdef _WIN32
 BOOL WINAPI on_console_event(DWORD event)
 {
@@ -417,9 +392,8 @@ BOOL WINAPI on_console_event(DWORD event)
     {
         return FALSE;
     }
-    int none = 0;
-    g_first_interrupt.compare_exchange_strong(none, static_cast<int>(event) + 1);
-    g_interrupts.fetch_add(event == CTRL_CLOSE_EVENT ? 2 : 1);
+    // Closing the console is not followed by a second request: it skips the waits at once.
+    g_stops.request(static_cast<int>(event) + 1, event == CTRL_CLOSE_EVENT ? 2 : 1);
     if (event == CTRL_CLOSE_EVENT)
     {
         // Windows ends the process when this returns: give the run time to end the participants
@@ -431,7 +405,7 @@ BOOL WINAPI on_console_event(DWORD event)
 
 std::string interrupt_name()
 {
-    const int first = g_first_interrupt.load();
+    const int first = g_stops.first();
     if (first < 0)
     {
         return stop_source_name(first);
@@ -450,18 +424,12 @@ void watch_interrupts() { SetConsoleCtrlHandler(on_console_event, TRUE); }
 /// A broken pipe is an error of the write, not a signal, on Windows.
 void ignore_broken_pipes() {}
 #else
-static_assert(std::atomic<int>::is_always_lock_free, "the signal handler needs a lock-free counter");
-
-extern "C" void on_signal(int signal)
-{
-    int none = 0;
-    g_first_interrupt.compare_exchange_strong(none, signal);
-    g_interrupts.fetch_add(1);
-}
+/// Only launch::StopRequests::request(): lock-free atomics, nothing else (async-signal-safe).
+extern "C" void on_signal(int signal) { g_stops.request(signal); }
 
 std::string interrupt_name()
 {
-    const int first = g_first_interrupt.load();
+    const int first = g_stops.first();
     return first < 0 ? stop_source_name(first) : process::signal_name(first);
 }
 
@@ -606,7 +574,7 @@ launch::EventWrite write_events(std::string_view bytes)
 /// that says why.
 void on_events_closed(const std::string& reason)
 {
-    const bool stops = request_first_stop(kOutputClosed, [] {});
+    const bool stops = g_stops.request_first(kOutputClosed, [] {});
 #ifdef _WIN32
     // A write that waits for the reader ends (so that nothing of the process waits in it).
     CancelIoEx(g_events_handle, nullptr);
@@ -686,7 +654,7 @@ void start_reading_commands()
             }
             if (command.is_stop())
             {
-                request_stop(kStopCommand);
+                g_stops.request(kStopCommand);
             }
         });
         char buffer[4096];
@@ -726,7 +694,7 @@ void start_reading_commands()
             input.append(std::string_view(buffer, static_cast<std::size_t>(got)));
         }
         input.finish();
-        static_cast<void>(request_first_stop(kEndOfInput, [events] {
+        static_cast<void>(g_stops.request_first(kEndOfInput, [events] {
             if (events != nullptr)
             {
                 launch::Command stop;
@@ -757,9 +725,9 @@ int write_or_fail(const std::string& text, int code)
 /// happened).
 int finish_events(launch::EventStream& events, const launch::RunReport& report, int code)
 {
-    const int requests = g_interrupts.load();
+    const int requests = g_stops.count();
     const bool written = events.result(launch::format_result_event(report),
-                                       [requests] { return g_interrupts.load() > std::min(requests, 1); });
+                                       [requests] { return g_stops.count() > std::min(requests, 1); });
     finish_threads();
     if (!written && report.result() != launch::RunResult::Interrupted)
     {
@@ -1167,7 +1135,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         launch_cli::ControlHooks hooks;
         hooks.commands = shared().time_commands;
         // Its event (and its refusal once the run is over) comes from the time commands.
-        hooks.stop = [] { request_stop(kControlStop); };
+        hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch_cli::make_control_server(a, std::move(hooks));
         options.hub = &hub;
         options.serve_control = [&server](control::Hub& h) { return server->start(h); };
@@ -1177,7 +1145,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         start_reading_commands();
     }
-    options.interrupts = &g_interrupts;
+    options.stops = &g_stops;
     options.interrupt_name = interrupt_name;
     // --connect: the check judges the time by what this run does.
     options.check.run_speed = options.speed;
@@ -1312,7 +1280,7 @@ int test(const cli::Args& args)
     options.run.speed.emplace(std::optional<double>{}); // as fast as possible, whatever the file says
     watch_interrupts();
     options.run.write_line = write_stderr_line;
-    options.run.interrupts = &g_interrupts;
+    options.run.stops = &g_stops;
     options.run.interrupt_name = interrupt_name;
     const launch::TestReport report = launch::test_file(process::path_from_utf8(c.file), c.file, options);
     if (report.usage)
