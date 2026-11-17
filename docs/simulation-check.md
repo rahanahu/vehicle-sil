@@ -118,8 +118,9 @@ Each rule has a fixed name (the code; `code` in JSON) that the output shows. A s
 | `connect-tool-failed` | Error | The bridge's `--describe` with the arguments of `--connect` failed (an exit code, the time limit, output that is not a description), or the bridge described another name or network. | Correct what the bridge's line in the finding message says (the target, `external`), or use the bridge of the vehicle-sil of `vehicle_sil_launch`. |
 | `connect-loop` | Error | An enabled `role: bridge` participant reports a connected network in its `--describe` output: frames would go round between the two bridges. | Leave one of them out (`--disable <name>`, or leave the `--connect` out). |
 | `connect-maybe-loop` | Warning | An enabled `role: bridge` participant has `describe: false`, and a network is connected (it may carry that network). | If it carries the network, leave one of the two bridges out. |
-| `connect-not-real-time` | Warning | A network is connected, and the speed is not 1 (also without a speed: as fast as possible). `check` judges the file's `speed`; `run` the speed it runs at (`--speed`, or else the file's). | Run at speed 1: `speed: 1` in the file, or `run --speed 1`. |
-| `connect-start-paused` | Warning | `run` only: a network is connected, and `--start-paused` is given. The devices on the bus go on while the simulation stands still. | To stop the simulation and look at it, run without `--connect`. |
+| `outside-real-time` | Error | The run is connected outside the simulation (a network that `--connect` connects, or an enabled `role: bridge` participant), so it keeps real time (`--time-policy realtime`, the default), and `run` got a `--speed` other than 1 or `--start-paused`. Nothing starts. | Leave `--speed` and `--start-paused` out. To go at another speed or to pause, run without the connection (no `--connect`, `--disable` the bridge), or pass `--time-policy free`. |
+| `outside-speed-set` | Note | The run is connected outside the simulation and keeps real time: it goes at speed 1, not at the file's `speed` (also without a speed: as fast as possible). | Nothing to fix. For another speed, see `outside-real-time`. |
+| `outside-not-real-time` | Note | With `--time-policy free`: the run is connected outside the simulation, and its speed is not 1 (`--speed`, or else the file's; without a speed, as fast as possible) or `--start-paused` is given. The bridge still carries frames both ways. | To run in real time, leave `--time-policy free` out. |
 | `not-checked` | Note | A `describe: false` participant (not checked). | No action needed. |
 | `participant-disabled` | Note | A disabled participant (`enabled: false`, `--disable`; neither checked nor started). | No action needed. |
 | `participant-manual` | Note | A participant that you start yourself (`manual: true`, `--manual`; `run` does not start it, but prints the command and waits). | Start it with the command that `run` prints. |
@@ -447,6 +448,8 @@ Keys of each element of `networks[]` and `findings[]`:
 | `networks[].kind` | Kind (`null` if it could not be read) |
 | `networks[].line` | Line in the configuration file |
 | `networks[].participants` | Names of the participants that use the network (in the order of the configuration file; counted under the names after `network_names` is applied) |
+| `time_lock.locked` | `true` if a run keeps real time because it is connected outside the simulation: it goes at speed 1, and the check refuses another `--speed` and `--start-paused` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). `time_lock` is `null` if the configuration file cannot be read |
+| `time_lock.because` | What connects the run outside: the names of the networks that `--connect` connects (a target other than `none`), then the names of the enabled `role: bridge` participants. With `--time-policy free`, `locked` is `false` and the names are still listed; empty if nothing connects the run outside |
 | `networks[].outside` | On a network that `--connect` connects, its bridge (below); `null` on the other networks (no bridge is looked for for them, so the output does not depend on the tools on the computer) |
 | `networks[].outside.tool` | The bridge's executable (`vehicle_sil_ethernet_bridge`, `vehicle_sil_vector_xl_bridge`) |
 | `networks[].outside.tool_path` | Where it was found (`null` if it was not) |
@@ -579,6 +582,10 @@ participants:
       "outside": null
     }
   ],
+  "time_lock": {
+    "locked": false,
+    "because": []
+  },
   "findings": [
     {
       "severity": "error",

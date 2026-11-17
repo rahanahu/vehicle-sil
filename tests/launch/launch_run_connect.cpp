@@ -29,9 +29,10 @@
 //                               from outside): connect-lost as well.
 //   connect_dies_while_waiting  the bridge ends while the run waits for a participant started by
 //                               hand: connect-failed, the simulation does not start.
-//   connect_speed               --speed 2 over the file's speed 1: connect-not-real-time; with
-//                               --strict nothing starts; --start-paused: connect-start-paused, and
-//                               it runs after a resume (which is no connect-time-changed).
+//   connect_speed               --speed 2 over the file's speed 1, and --start-paused: the error
+//                               outside-real-time, and nothing starts; with --time-policy free the
+//                               note outside-not-real-time, and it runs (with --strict too). A
+//                               file with another speed: the run goes at speed 1 (outside-speed-set).
 //   connect_time_changed        paused while it runs, then a speed, a resume and a stop: one
 //                               warning connect-time-changed, about the pause; with --strict, a
 //                               speed command (written at once) fails the run after its end.
@@ -448,29 +449,117 @@ void connect_dies_while_waiting(const Options& base)
 void connect_speed(const Options& base)
 {
     const Options o = connect_options(base);
-    const fs::path dir = connect_dir(o, "speed", "stop_at_ms: 300\n", "");
-    // --speed over the file's speed 1: a warning about --speed.
-    const Captured fast = launch(o, {"run", "--events", "--speed", "2", "--connect", "ETH_EXT=fake0", "sim.yaml"}, dir);
-    const std::vector<std::string> fastLines = check_events(fast.standard_output);
-    expect_code(fast, 0, "run --connect --speed 2 (a warning)");
-    require(contains(finding_in(fastLines, "connect-not-real-time"), "--speed 2 runs the simulation at that speed"),
-            "the warning is about --speed:\n" + out_of(fastLines));
-    // With --strict nothing starts, not even the bridge.
-    const Captured strict =
-        launch(o, {"run", "--events", "--strict", "--speed", "2", "--connect", "ETH_EXT=fake0", "sim.yaml"}, dir);
-    const std::vector<std::string> strictLines = check_events(strict.standard_output);
-    expect_code(strict, 1, "run --strict --connect --speed 2");
-    require(contains(strictLines.back(), "\"result\":\"check_failed\"") &&
-                events_with(strictLines, {"\"name\":\"bridge.ETH_EXT\"", "\"state\":\"started\""}).empty(),
-            "the check failed, and the bridge was not started:\n" + out_of(strictLines));
-    // --start-paused: a warning, and it runs after a resume.
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "--connect", "ETH_EXT=fake0", "sim.yaml"});
+    // Both networks connected, as connect_roundtrip: the check has no other finding, so --strict
+    // judges these alone.
+    const auto dir_of = [&o](const std::string& name) {
+        return connect_dir(o, name, "stop_at_ms: 300\n", talker(o), {{"Talker", "talk CAN"}});
+    };
+    const auto run_with = [](std::vector<std::string> args) {
+        args.insert(args.begin(), {"run", "--events"});
+        args.insert(args.end(), {"--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"});
+        return args;
+    };
+    const fs::path dir = dir_of("speed");
+    /// The check failed with outside-real-time about `what`, and nothing was started.
+    const auto refused = [](const Captured& run, const std::string& what) {
+        const std::vector<std::string> lines = check_events(run.standard_output);
+        expect_code(run, 1, "run --connect " + what);
+        require(contains(lines.back(), "\"severity\":\"error\",\"code\":\"outside-real-time\"") &&
+                    contains(lines.back(), what + " is refused") && contains(lines.back(), "\"result\":\"check_failed\"") &&
+                    contains(lines.back(), "\"errors\":1,\"warnings\":0,") &&
+                    events_with(lines, {"\"event\":\"participant\"", "\"state\":\"started\""}).empty(),
+                "the error outside-real-time is about " + what + ", and nothing was started:\n" + out_of(lines));
+    };
+    // --speed 2 over the file's speed 1: the run keeps real time, so it is an error.
+    refused(launch(o, run_with({"--speed", "2"}), dir), "--speed 2");
+    refused(launch(o, run_with({"--time-policy", "realtime", "--speed", "max"}), dir), "--speed max");
+    // --time-policy free: a note, so it runs with --strict too.
+    const Captured free = launch(o, run_with({"--strict", "--time-policy", "free", "--speed", "2"}), dir);
+    const std::vector<std::string> freeLines = check_events(free.standard_output);
+    expect_code(free, 0, "run --strict --time-policy free --connect --speed 2 (a note)");
+    require(contains(finding_in(freeLines, "outside-not-real-time"), "--speed 2 runs the simulation at that speed") &&
+                contains(freeLines.back(), "\"severity\":\"note\",\"code\":\"outside-not-real-time\"") &&
+                contains(finding_in(freeLines, "outside-not-real-time"), "the bridge still carries frames both ways") &&
+                !events_with(freeLines, {"\"event\":\"time\"", "\"speed\":2,"}).empty() &&
+                contains(freeLines.back(), "\"simulation\":\"reached_stop_at\""),
+            "the note is about --speed, and the run went at speed 2:\n" + out_of(freeLines));
+    // No --speed, and another speed in the file: the run goes at speed 1, and a note says so.
+    {
+        const fs::path other = dir_of("speed_set");
+        std::string text = read_text(other / "sim.yaml");
+        require(contains(text, "speed: 1\n"), "the file of connect_dir() has speed: 1");
+        text.replace(text.find("speed: 1\n"), 9, "speed: 8\n");
+        write_file(other / "sim.yaml", text);
+        const Captured set = launch(o, run_with({"--strict"}), other);
+        const std::vector<std::string> setLines = check_events(set.standard_output);
+        expect_code(set, 0, "run --strict --connect of a file with speed: 8 (a note)");
+        require(contains(finding_in(setLines, "outside-speed-set"), "not at the speed 8 of the file") &&
+                    !events_with(setLines, {"\"event\":\"time\"", "\"speed\":1,"}).empty() &&
+                    events_with(setLines, {"\"event\":\"time\"", "\"speed\":8,"}).empty() &&
+                    contains(setLines.back(), "\"timing\":{\"speed\":1,") &&
+                    contains(setLines.back(), "\"simulation\":\"reached_stop_at\""),
+                "the run went at speed 1, and outside-speed-set says so:\n" + out_of(setLines));
+        // With --time-policy free, the file's speed.
+        const Captured kept = launch(o, run_with({"--strict", "--time-policy", "free"}), other);
+        const std::vector<std::string> keptLines = check_events(kept.standard_output);
+        expect_code(kept, 0, "run --strict --time-policy free --connect of a file with speed: 8");
+        require(contains(finding_in(keptLines, "outside-not-real-time"), "at the speed 8 of the file") &&
+                    contains(keptLines.back(), "\"timing\":{\"speed\":8,"),
+                "the run went at the file's speed:\n" + out_of(keptLines));
+        // Nothing connected (none): nothing is locked: the file's speed, and no finding about it.
+        const Captured alone =
+            launch(o, {"run", "--events", "--connect", "ETH_EXT=none", "--connect", "CAN=none", "sim.yaml"}, other);
+        const std::vector<std::string> aloneLines = check_events(alone.standard_output);
+        expect_code(alone, 0, "run --connect <network>=none of a file with speed: 8");
+        require(finding_in(aloneLines, "outside-speed-set").empty() && finding_in(aloneLines, "outside-not-real-time").empty() &&
+                    contains(aloneLines.back(), "\"timing\":{\"speed\":8,"),
+                "nothing connected, nothing locked:\n" + out_of(aloneLines));
+    }
+    // The speed 1 of the time lock is the speed the controller's step is planned for: a file
+    // without a speed and with a time_step_ms coarser than the ECUs' steps gets coarse-time-step
+    // from the check, as a file with speed: 1 does (and not with --time-policy free: no speed).
+    {
+        const fs::path coarse = connect_dir(o, "speed_step", "stop_at_ms: 300\ntime_step_ms: 30\n", talker(o), {{"Talker", "talk CAN"}});
+        std::string text = read_text(coarse / "sim.yaml");
+        text.erase(text.find("speed: 1\n"), 9);
+        write_file(coarse / "sim.yaml", text);
+        const std::vector<std::string> both{"--connect", "ETH_EXT=fake0", "--connect", "CAN=virtual:1", "sim.yaml"};
+        const auto with = [&both](std::vector<std::string> args) {
+            args.insert(args.end(), both.begin(), both.end());
+            return args;
+        };
+        const Captured locked = launch(o, with({"check", "--json"}), coarse);
+        expect_code(locked, 0, "check --connect of a file with a coarse time_step_ms and no speed");
+        require(contains(locked.standard_output, "\"code\": \"coarse-time-step\"") &&
+                    contains(locked.standard_output, "\"code\": \"outside-speed-set\"") &&
+                    contains(locked.standard_output, "not as fast as possible"),
+                "at speed 1 the step is too coarse:\n" + locked.standard_output);
+        const Captured unlocked = launch(o, with({"check", "--json", "--time-policy", "free"}), coarse);
+        expect_code(unlocked, 0, "the same with --time-policy free");
+        require(!contains(unlocked.standard_output, "coarse-time-step") &&
+                    contains(unlocked.standard_output, "\"code\": \"outside-not-real-time\""),
+                "as fast as possible, the step is not too coarse:\n" + unlocked.standard_output);
+        const Captured run = launch(o, with({"run", "--json"}), coarse);
+        expect_code(run, 0, "run --connect of a file with a coarse time_step_ms and no speed");
+        const std::string out = lf(run.standard_output);
+        std::size_t count = 0;
+        for (auto at = out.find("\"code\": \"coarse-time-step\""); at != std::string::npos; at = out.find("\"code\": \"coarse-time-step\"", at + 1))
+        {
+            ++count;
+        }
+        require(count == 1 && contains(out, "\"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 30,"),
+                "the run went at speed 1 with the file's step, and coarse-time-step is the check's:\n" + out);
+    }
+    // --start-paused: an error too.
+    refused(launch(o, run_with({"--stdin-commands", "--start-paused"}), dir), "--start-paused");
+    // With --time-policy free it is a note, and it runs after a resume.
+    Live live(o, dir, run_with({"--strict", "--stdin-commands", "--time-policy", "free", "--start-paused"}));
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
     live.write("{\"command\":\"resume\"}\n");
     const auto [status, lines] = live.finish();
     require(status && status->code == 0, "exit code " + code_text(status) + "\n" + out_of(lines));
-    require(contains(finding_in(lines, "connect-start-paused"), "with --start-paused, the devices there go on"),
-            "the warning connect-start-paused:\n" + out_of(lines));
+    require(contains(finding_in(lines, "outside-not-real-time"), "--start-paused makes the simulation wait before its first step"),
+            "the note outside-not-real-time:\n" + out_of(lines));
     require(contains(lines.back(), "\"simulation\":\"reached_stop_at\""), "it ran to its end:\n" + lines.back());
     // Starting paused and the resume do not change the time of a run that goes on in real time.
     require(finding_in(lines, "connect-time-changed").empty(), "no connect-time-changed:\n" + out_of(lines));

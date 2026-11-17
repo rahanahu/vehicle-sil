@@ -189,6 +189,8 @@ With `speed` (configuration file) or `run --speed`, the controller paces virtual
 
 Pacing only adds waits, so it never makes the simulation faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
 
+A run that is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) goes at speed 1 whatever speed is set here, unless you pass `--time-policy free` (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
+
 Real-time devices do not wait for the simulation. When the simulation falls behind real time, the devices see different results. That is why `run` measures lateness with the definitions below and reports it.
 
 ### Definition of lateness
@@ -286,7 +288,7 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
 
-With `--connect`, the devices on the real bus do not stop or change speed with the simulation: the run warns with `connect-time-changed` (see [Connecting a bus outside](#connecting-a-bus-outside---connect)).
+With `--connect`, the devices on the real bus do not stop or change speed with the simulation: `--start-paused` and a `--speed` other than 1 are refused unless you pass `--time-policy free`, and the run warns with `connect-time-changed` when a command changes the time (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
 
 ## Connecting a bus outside (`--connect`)
 
@@ -320,7 +322,30 @@ A bridge is not a participant of the file. It appears in the result (`participan
 
 The messages say how the bridge ended and quote the line in which it said why: its last line that starts with `error:` or `FAIL`, after its tag such as `[eth-bridge]`. A bridge that was killed, or ended without such a line, has none quoted (its last line would be about something else, such as `stopped`). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
 
-A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. The first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended.
+A real bus does not wait for the virtual time: see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy) below.
+
+### Time of a run that is connected outside (`--time-policy`)
+
+A run is connected outside the simulation if at least one of these holds:
+
+- `--connect` connects a network (a target other than `none`).
+- The file has an enabled participant with `role: bridge` (also one with `describe: false`). A participant that is disabled (`enabled: false`, `--disable`) does not count.
+
+What is connected there does not wait for the virtual time, so by default such a run keeps real time. `--time-policy` chooses:
+
+| `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
+|---|---|---|
+| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. |
+| `free` | As in any run: `--speed`, or else `speed` in the file, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
+
+- `--time-policy` has no effect on a run that is not connected outside.
+- `check`, `run` and `test` take it. `check` judges the file's `speed`; `run` also its `--speed` and `--start-paused`. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
+- `test` runs each scenario as fast as possible, but at speed 1 when the file has an enabled `role: bridge` participant (the note `outside-speed-set`). To run them as fast as possible all the same, pass `--time-policy free` or `--disable` the bridge.
+- `free` changes only what you may do with the time. The bridge still carries frames both ways: while the simulation is paused, frames from outside pile up, and what the ECUs sent before stays sent.
+- The notes do not fail a run with `--strict`.
+- A real-time participant of your own (an ECU or a `role: test` participant without a step) does not make the run keep real time.
+
+Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. The first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended.
 
 ### Counting the frames to and from the bus
 
@@ -1312,6 +1337,10 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         "outside": null
       }
     ],
+    "time_lock": {
+      "locked": false,
+      "because": []
+    },
     "findings": []
   }
 }

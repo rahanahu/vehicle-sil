@@ -90,6 +90,7 @@ struct TestArguments
     std::vector<std::string> enable{};   ///< --enable
     std::optional<std::chrono::milliseconds> timeout{};          ///< --timeout-ms
     std::optional<std::chrono::milliseconds> describe_timeout{}; ///< --describe-timeout-ms, if not the default
+    TimePolicy time_policy = TimePolicy::Realtime;               ///< --time-policy
 };
 
 /// The result of `vehicle_sil_launch test`.

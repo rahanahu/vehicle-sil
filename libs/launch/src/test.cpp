@@ -293,7 +293,10 @@ std::string shell_word(std::string_view text)
 /// does not have); none if the scenario was not read that far.
 std::string run_alone(const TestReport& report, const TestRun& run)
 {
-    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + " --speed max" +
+    // With the time lock the run goes at speed 1, and run refuses --speed max.
+    const bool locked = run.run && run.run->check.time_lock.locked;
+    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + (locked ? "" : " --speed max") +
+                      (report.given.time_policy == TimePolicy::Free ? " --time-policy free" : "") +
                       (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
                       shell_word(run.scenario);
     if (run.run && run.run->check.scenario)
@@ -472,6 +475,7 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     report.given.disable = options.run.check.overrides.disable;
     report.given.enable = options.run.check.overrides.enable;
     report.given.timeout = options.run.timeout;
+    report.given.time_policy = options.run.check.time_policy;
     if (options.run.check.describe_timeout != CheckOptions{}.describe_timeout)
     {
         report.given.describe_timeout = options.run.check.describe_timeout;

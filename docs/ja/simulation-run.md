@@ -189,6 +189,8 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 
 合わせるために待つだけなので、いちばん遅い participant より速くはなりません。最速（`max`）では合わせず、遅れも数えません。
 
+シミュレーションの外につながる実行（`--connect`、または有効な `role: bridge` の participant）は、ここで指定した速さが何であっても、速さ 1 で動きます。`--time-policy free` を付ければ別です（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
+
 実時間で動く機器は、シミュレーションを待ちません。シミュレーションが実時間に遅れると、機器から見た結果が変わります。そのため、遅れを次の定義で数えて報告します。
 
 ### 遅れの定義
@@ -286,7 +288,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
 
-`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。実行は `connect-time-changed` を警告します（[バスを外につなぐ](#バスを外につなぐ--connect)）。
+`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。`--time-policy free` を付けなければ、`--start-paused` と 1 以外の `--speed` は断られます。命令が時間を変えると、実行は `connect-time-changed` を警告します（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## バスを外につなぐ（`--connect`）
 
@@ -320,7 +322,30 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 指摘の文は、ブリッジがどう終わったかと、ブリッジが理由を書いた行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行）を出します。強制終了されたブリッジと、そういう行を書かずに終わったブリッジでは、行を出しません（最後の行は `stopped` など、ほかのことだからです）。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
 
-実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
+実機のバスは仮想時間を待ちません。下の[外につながる実行の時間](#外につながる実行の時間--time-policy)を見てください。
+
+### 外につながる実行の時間（`--time-policy`）
+
+次のどちらかに当てはまる実行は、シミュレーションの外につながっています。
+
+- `--connect` でネットワークをつなぐ（先が `none` でないもの）。
+- ファイルに、有効な `role: bridge` の participant がいる（`describe: false` でも）。無効にした participant（`enabled: false`、`--disable`）は数えません。
+
+外につながる相手は仮想時間を待たないので、こういう実行は、既定で実時間を保ちます。`--time-policy` で選びます。
+
+| `--time-policy` | 実行の速さ | 1 以外の `--speed`、`--start-paused` |
+|---|---|---|
+| `realtime`（既定） | ファイルの `speed` が何であっても 1 です。ファイルの速さが 1 でないとき（速さがないときも）、注記 `outside-speed-set` が知らせます。 | 照合のエラー `outside-real-time` です。何も起動しません。 |
+| `free` | ほかの実行と同じです。`--speed`、なければファイルの `speed`、それもなければ最速です。 | 受け付けます。注記 `outside-not-real-time` が、実時間でないことを知らせます。 |
+
+- 外につながっていない実行では、`--time-policy` は何もしません。
+- `check`、`run`、`test` で使えます。`check` はファイルの `speed` で、`run` は `--speed` と `--start-paused` も見て判断します。`check --json` の `time_lock` に、この判断があります（[simulation-check.md](simulation-check.md#json--json)）。
+- `test` は各シナリオを最速で実行しますが、ファイルに有効な `role: bridge` の participant がいるときは速さ 1 で実行します（注記 `outside-speed-set`）。それでも最速で実行するなら、`--time-policy free` を付けるか、ブリッジを `--disable` します。
+- `free` が変えるのは、時間を操作できるかどうかだけです。ブリッジは両方向にフレームを運び続けます。シミュレーションが止まっている間、外から来たフレームは溜まり、ECU がそれまでに送ったものは送られたままです。
+- 注記は、`--strict` でも実行を失敗にしません。
+- 自分で作った実時間の participant（ステップのない ECU や `role: test` の participant）は、実行を実時間に固定しません。
+
+実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
 
 ### 外のバスとやりとりしたフレームの数
 
@@ -1312,6 +1337,10 @@ passed: 0 errors, 1 warning, 1 note
         "outside": null
       }
     ],
+    "time_lock": {
+      "locked": false,
+      "because": []
+    },
     "findings": []
   }
 }

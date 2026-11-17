@@ -28,13 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 225,
-      "last_t_ms": 2250,
+      "last_seq": 147,
+      "last_t_ms": 1470,
       "time": {
         "event": "time",
-        "seq": 216,
-        "t_ms": 2160,
-        "sim_ms": 94990,
+        "seq": 138,
+        "t_ms": 1380,
+        "sim_ms": 55600,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -288,6 +288,10 @@
             "outside": null
           }
         ],
+        "time_lock": {
+          "locked": false,
+          "because": []
+        },
         "findings": [
           {
             "severity": "note",
@@ -377,7 +381,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 205,
+        "seq": 132,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -390,7 +394,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 190,
+          "kept": 112,
           "dropped": 0
         }
       },
@@ -399,7 +403,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

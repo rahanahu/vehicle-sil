@@ -239,15 +239,21 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     report.findings = std::move(read.findings);
     report.config = std::move(read.config);
+    if (report.config)
+    {
+        // The file and the request decide it: before any executable is asked.
+        report.time_lock = time_lock(*report.config, options.connect, options.time_policy);
+        const std::vector<Finding> time =
+            time_lock_findings(report.time_lock, options.run_speed,
+                               options.fastest_by_default ? std::optional<double>{} : report.config->speed, options.start_paused);
+        report.findings.insert(report.findings.end(), time.begin(), time.end());
+    }
     if (report.config && options.file_only && !options.connect.empty())
     {
         // Only the form and the names: no tool is looked for.
         ConnectCheck connect = check_connections(*report.config, {}, options.connect, nullptr);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
-        const std::vector<Finding> time =
-            connect_time_findings(report.outside, report.config->speed, options.run_speed, options.start_paused);
-        report.findings.insert(report.findings.end(), time.begin(), time.end());
         drop_unusable_commands(report);
     }
     if (!report.config || options.file_only)
@@ -327,20 +333,17 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         ConnectCheck connect = check_connections(*report.config, report.participants, options.connect, &tools);
         report.findings.insert(report.findings.end(), connect.findings.begin(), connect.findings.end());
         report.outside = std::move(connect.outside);
-        // run: at the speed it runs at, which may not be the file's.
-        const std::vector<Finding> time =
-            connect_time_findings(report.outside, report.config->speed, options.run_speed, options.start_paused);
-        report.findings.insert(report.findings.end(), time.begin(), time.end());
     }
     const std::vector<std::string> outside = outside_names(report.outside);
     auto compared = check_participants(*report.config, report.participants, version(), outside);
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
     drop_unusable_commands(report);
-    // A run at the file's speed with the file's time_step_ms: known before it runs.
-    if (report.config->speed && report.config->time_step_ms)
+    // A run at the file's speed (1 with the time lock) with the file's time_step_ms: known before it runs.
+    if (const std::optional<double> speed = planned_speed(report.time_lock, {}, report.config->speed);
+        speed && report.config->time_step_ms)
     {
-        RunTiming timing = detail::plan_time_step(*report.config, report, report.config->speed);
-        timing.speed = report.config->speed;
+        RunTiming timing = detail::plan_time_step(*report.config, report, speed);
+        timing.speed = speed;
         if (auto f = detail::coarse_time_step(timing))
         {
             report.findings.push_back(std::move(*f));

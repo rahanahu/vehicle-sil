@@ -9,6 +9,7 @@
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/launch/time_plan.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -254,15 +255,6 @@ inline constexpr std::int64_t kBridgeStatisticsEveryMs = 1000;
 [[nodiscard]] std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std::string_view registry_uri,
                                                             std::int64_t start_timeout_ms);
 
-/// The warnings about time of a check with --connect, for the networks in `outside` (none if it is
-/// empty): connect-not-real-time if the speed is not 1 (`run_speed`: run's --speed, the outer
-/// optional empty without it; then `file_speed`, the file's speed; empty: as fast as possible), and
-/// connect-start-paused with `start_paused` (run --start-paused).
-[[nodiscard]] std::vector<Finding> connect_time_findings(const std::vector<NetworkOutside>& outside,
-                                                         const std::optional<double>& file_speed,
-                                                         const std::optional<std::optional<double>>& run_speed,
-                                                         bool start_paused);
-
 /// What check_connections() uses to look for a bridge and to ask it --describe, and
 /// connections_of() to ask it for its list.
 struct ConnectTools
@@ -287,8 +279,8 @@ struct ConnectTools
 /// all known; the default filter passes the frames of the ECUs only, not of participants with
 /// role: test), connect-tool-missing, connect-tool-failed (its --describe failed, or it described
 /// another name or network); the bridge's --describe runs only if nothing else is wrong with the
-/// request and every enabled participant was described. (check_file() adds
-/// connect_time_findings() after these.) Without `tools` (only the file is read)
+/// request and every enabled participant was described. (What a connection outside means for the
+/// time is not judged here: time_lock_findings() in time_plan.hpp.) Without `tools` (only the file is read)
 /// neither the tools nor the participants' descriptions are looked at: only the requests' form and
 /// names. NetworkOutside::arguments is empty for a network with an error here; check_file() also
 /// empties it for one with an error of check_participants() (connect-loop).
@@ -334,6 +326,9 @@ struct CheckReport
     std::optional<ScenarioCheck> scenario{};
     /// --connect: the networks connected to a real bus (check_connections()); empty without it.
     std::vector<NetworkOutside> outside{};
+    /// Whether a run keeps real time because it is connected outside the simulation (time_lock()
+    /// of `config` and CheckOptions::connect, time_policy); nothing without `config`.
+    TimeLock time_lock{};
     /// --strict: a warning fails the check too (a note never does).
     bool strict = false;
     /// The command line was wrong (format_json(): result "usage"; the findings say why; `file` stays
@@ -396,10 +391,16 @@ struct CheckOptions
     std::vector<ConnectRequest> connect{};
     /// Where the launcher is: the first place to look for a bridge (find_tool()); empty: PATH only.
     std::filesystem::path tool_directory{};
-    /// run: its --speed (RunOptions::speed), for connect-not-real-time; the outer optional empty
+    /// --time-policy: what a run that is connected outside the simulation does about time
+    /// (CheckReport::time_lock).
+    TimePolicy time_policy = TimePolicy::Realtime;
+    /// run: its --speed (RunOptions::speed), for time_lock_findings(); the outer optional empty
     /// without it (check: always), and the file's speed counts.
     std::optional<std::optional<double>> run_speed{};
-    /// run: --start-paused, for connect-start-paused.
+    /// test: without the time lock every run goes as fast as possible, whatever the file's speed
+    /// (which then does not count for time_lock_findings()).
+    bool fastest_by_default = false;
+    /// run: --start-paused, for time_lock_findings().
     bool start_paused = false;
 };
 

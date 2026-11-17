@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -334,6 +334,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": []
         }
       }
@@ -835,6 +839,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": []
         },
         "registry": {
@@ -1037,7 +1045,7 @@
         "event": "time",
         "seq": 29,
         "t_ms": 290,
-        "sim_ms": 910,
+        "sim_ms": 905,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1606,6 +1614,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": []
           }
         }
@@ -1872,6 +1884,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": []
         },
         "registry": {
@@ -2299,6 +2315,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": []
           }
         },

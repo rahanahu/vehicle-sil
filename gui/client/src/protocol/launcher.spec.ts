@@ -34,6 +34,8 @@ const PASSED_THROUGH: readonly string[] = [
   'check result: networks[].line',
   // --connect: where the network is connected (null without it); the GUI cannot give --connect yet
   'check result: networks[].outside',
+  // whether a run that is connected outside keeps real time, and because of what; the GUI does not show it yet
+  'check result: time_lock',
   'run result: vehicle_sil_run',
   'run result: vehicle_sil',
   'run result: strict',

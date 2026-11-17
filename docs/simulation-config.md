@@ -524,6 +524,7 @@ Other rules:
 
 - In the participant table of the human-readable output, the name of a participant whose role is not `ecu` is followed by `(role: test)` or similar.
 - `check --json` writes the role to `participants[].role`.
+- A run with an enabled `role: bridge` participant keeps real time, as one with `--connect` does: it goes at speed 1 whatever `speed` the file has, and `test` runs its scenarios at speed 1 too (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 - A variant (`variants`) cannot change it, as with `describe` and `required`.
 
 ### Connecting a network outside (`external`, `--connect`)
@@ -580,7 +581,7 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" --connect J19
 - The bridge of a `can` network (the Vector XL bridge) runs on Windows only. Elsewhere, `connect-tool-missing` says that the network runs on SIL Kit only, unless a bridge is found anyway (a build for tests).
 - The check runs the bridge's `--describe` with the arguments below and `--name bridge.<network>`, the bridge's participant name. `run` starts it with the same arguments and `--name bridge.<network> --registry-uri <URI> --start-timeout-ms <start_timeout_ms>`. `bridge.<network>` is not a participant of the file: `--disable`, `--enable` and `--manual` do not take it. With `--describe`, the bridge opens neither the adapter nor the channel. A bridge that refuses the arguments is the error `connect-tool-failed`, with the bridge's own line.
 - On a connected network, the bridge counts as a participant (one ECU there is not `single-participant`), and a `role: bridge` participant on the same network is a loop (`connect-loop`).
-- A real bus does not wait for the virtual time: with `--connect`, a speed other than 1 gets the warning `connect-not-real-time` (`check`: the file's `speed`; `run`: `--speed`, or else the file's), and `run --start-paused` the warning `connect-start-paused`.
+- A real bus does not wait for the virtual time: a run with `--connect` goes at speed 1 whatever `speed` the file has (the note `outside-speed-set`), and another `--speed` or `--start-paused` is the error `outside-real-time`. `--time-policy free` lifts this (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 
 The arguments that the launcher gives the bridge:
 
@@ -889,17 +890,20 @@ For the syntax and the errors, see "Variants and parameters" in [scenario.md](sc
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
-                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                         [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
+                         [--time-policy realtime|free] [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]... [--disable <name>]...
+                       [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
+                       [--time-policy realtime|free] [--disable <name>]...
                        [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
-                        [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
+                        [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]
+                        [--disable <name>]... [--enable <name>]...
                         <file> --scenarios <directory or files>...
 vehicle_sil_launch connections [--json] [--network <name>] [--] <file>
 vehicle_sil_launch version [--json]
@@ -936,6 +940,7 @@ The usage above shows which commands accept each option. The Condition column of
 | `--timeout-ms <ms>` | `run`, and `test` (per run) | Limit on the wall-clock time from the start to the end of the simulation (an integer of 1 or more; default no limit). |
 | `--describe-timeout-ms <ms>` | | How long to wait for the `--describe` of one executable (an integer of 1 or more; default 10000). |
 | `--connect <network>=<target>` | `check` and `run` | Connects the network to a real bus at `<target>` through its bridge; `none`: SIL Kit only (can be repeated, each network once; see [Connecting a network outside](#connecting-a-network-outside-external---connect)). |
+| `--time-policy realtime\|free` | | The time of a run that is connected outside the simulation: `realtime` (the default) keeps it at speed 1, `free` leaves the speed and the time to you (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). |
 | `--network <name>` | `connections` only | Lists the network `<name>` only. |
 | `--disable <name>` | | Disables participant `<name>` (same as `enabled: false`; can be repeated). |
 | `--enable <name>` | | Enables participant `<name>` again (same as `enabled: true`; can be repeated). |
@@ -971,6 +976,7 @@ Notes on individual options:
 | `--timeout-ms` | When it runs out, the run is aborted with an error. |
 | `--manual` | `run` does not start the participant; it prints the command and waits. |
 | `--connect` | `run` starts the bridge `bridge.<network>` before the other participants (see "[Connecting a bus outside](simulation-run.md#connecting-a-bus-outside---connect)" in simulation-run.md). `test` ends with a usage error for it: it runs each scenario as fast as possible. |
+| `--time-policy` | `test` runs each scenario at speed 1 when the file has an enabled `role: bridge` participant; `--time-policy free` runs them as fast as possible all the same. |
 
 On Windows, the arguments are read as UTF-8 from the wide-character command line, so paths with non-ASCII characters work.
 

@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -354,6 +354,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -955,11 +959,17 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "time",
         "seq": 53,
         "t_ms": 530,
-        "source": "Dashboard",
-        "line": "t=16000 ms engine speed 1200 rpm (160 messages)"
+        "sim_ms": 15770,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
       }
     },
     {
@@ -970,7 +980,7 @@
         "seq": 54,
         "t_ms": 540,
         "source": "Dashboard",
-        "line": "t=16500 ms engine speed 1200 rpm (165 messages)"
+        "line": "t=16000 ms engine speed 1200 rpm (160 messages)"
       }
     },
     {
@@ -981,7 +991,7 @@
         "seq": 55,
         "t_ms": 550,
         "source": "Dashboard",
-        "line": "t=17000 ms engine speed 1200 rpm (170 messages)"
+        "line": "t=16500 ms engine speed 1200 rpm (165 messages)"
       }
     },
     {
@@ -992,7 +1002,7 @@
         "seq": 56,
         "t_ms": 560,
         "source": "Dashboard",
-        "line": "t=17500 ms engine speed 1200 rpm (175 messages)"
+        "line": "t=17000 ms engine speed 1200 rpm (170 messages)"
       }
     },
     {
@@ -1003,7 +1013,7 @@
         "seq": 57,
         "t_ms": 570,
         "source": "Dashboard",
-        "line": "t=18000 ms engine speed 1200 rpm (180 messages)"
+        "line": "t=17500 ms engine speed 1200 rpm (175 messages)"
       }
     },
     {
@@ -1014,7 +1024,7 @@
         "seq": 58,
         "t_ms": 580,
         "source": "Dashboard",
-        "line": "t=18500 ms engine speed 1200 rpm (185 messages)"
+        "line": "t=18000 ms engine speed 1200 rpm (180 messages)"
       }
     },
     {
@@ -1025,7 +1035,7 @@
         "seq": 59,
         "t_ms": 590,
         "source": "Dashboard",
-        "line": "t=19000 ms engine speed 1200 rpm (190 messages)"
+        "line": "t=18500 ms engine speed 1200 rpm (185 messages)"
       }
     },
     {
@@ -1036,7 +1046,7 @@
         "seq": 60,
         "t_ms": 600,
         "source": "Dashboard",
-        "line": "t=19500 ms engine speed 1200 rpm (195 messages)"
+        "line": "t=19000 ms engine speed 1200 rpm (190 messages)"
       }
     },
     {
@@ -1047,7 +1057,7 @@
         "seq": 61,
         "t_ms": 610,
         "source": "Dashboard",
-        "line": "t=20000 ms engine speed 1200 rpm (200 messages)"
+        "line": "t=19500 ms engine speed 1200 rpm (195 messages)"
       }
     },
     {
@@ -1058,7 +1068,7 @@
         "seq": 62,
         "t_ms": 620,
         "source": "Dashboard",
-        "line": "t=20500 ms engine speed 1200 rpm (205 messages)"
+        "line": "t=20000 ms engine speed 1200 rpm (200 messages)"
       }
     },
     {
@@ -1069,7 +1079,7 @@
         "seq": 63,
         "t_ms": 630,
         "source": "Dashboard",
-        "line": "t=21000 ms engine speed 1200 rpm (210 messages)"
+        "line": "t=20500 ms engine speed 1200 rpm (205 messages)"
       }
     },
     {
@@ -1080,7 +1090,7 @@
         "seq": 64,
         "t_ms": 640,
         "source": "Dashboard",
-        "line": "t=21500 ms engine speed 1200 rpm (215 messages)"
+        "line": "t=21000 ms engine speed 1200 rpm (210 messages)"
       }
     },
     {
@@ -1091,7 +1101,7 @@
         "seq": 65,
         "t_ms": 650,
         "source": "Dashboard",
-        "line": "t=22000 ms engine speed 1200 rpm (220 messages)"
+        "line": "t=21500 ms engine speed 1200 rpm (215 messages)"
       }
     },
     {
@@ -1102,7 +1112,7 @@
         "seq": 66,
         "t_ms": 660,
         "source": "Dashboard",
-        "line": "t=22500 ms engine speed 1200 rpm (225 messages)"
+        "line": "t=22000 ms engine speed 1200 rpm (220 messages)"
       }
     },
     {
@@ -1113,7 +1123,7 @@
         "seq": 67,
         "t_ms": 670,
         "source": "Dashboard",
-        "line": "t=23000 ms engine speed 1200 rpm (230 messages)"
+        "line": "t=22500 ms engine speed 1200 rpm (225 messages)"
       }
     },
     {
@@ -1124,7 +1134,7 @@
         "seq": 68,
         "t_ms": 680,
         "source": "Dashboard",
-        "line": "t=23500 ms engine speed 1200 rpm (235 messages)"
+        "line": "t=23000 ms engine speed 1200 rpm (230 messages)"
       }
     },
     {
@@ -1135,7 +1145,7 @@
         "seq": 69,
         "t_ms": 690,
         "source": "Dashboard",
-        "line": "t=24000 ms engine speed 1200 rpm (240 messages)"
+        "line": "t=23500 ms engine speed 1200 rpm (235 messages)"
       }
     },
     {
@@ -1146,24 +1156,18 @@
         "seq": 70,
         "t_ms": 700,
         "source": "Dashboard",
-        "line": "t=24500 ms engine speed 1200 rpm (245 messages)"
+        "line": "t=24000 ms engine speed 1200 rpm (240 messages)"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 71,
         "t_ms": 710,
-        "sim_ms": 24860,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
+        "source": "Dashboard",
+        "line": "t=24500 ms engine speed 1200 rpm (245 messages)"
       }
     },
     {
@@ -1218,7 +1222,7 @@
         "seq": 76,
         "t_ms": 760,
         "source": "Dashboard",
-        "line": "t=27000 ms engine speed 1200 rpm (270 messages)"
+        "line": "error: something went wrong, exiting with code 3"
       }
     },
     {
@@ -1229,7 +1233,7 @@
         "seq": 77,
         "t_ms": 770,
         "source": "Dashboard",
-        "line": "t=27500 ms engine speed 1200 rpm (275 messages)"
+        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 2762644 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
       }
     },
     {
@@ -1239,413 +1243,6 @@
         "event": "log",
         "seq": 78,
         "t_ms": 780,
-        "source": "Dashboard",
-        "line": "t=28000 ms engine speed 1200 rpm (280 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 79,
-        "t_ms": 790,
-        "source": "Dashboard",
-        "line": "t=28500 ms engine speed 1200 rpm (285 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 80,
-        "t_ms": 800,
-        "source": "Dashboard",
-        "line": "t=29000 ms engine speed 1200 rpm (290 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 81,
-        "t_ms": 810,
-        "source": "Dashboard",
-        "line": "t=29500 ms engine speed 1200 rpm (295 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 82,
-        "t_ms": 820,
-        "source": "Dashboard",
-        "line": "t=30000 ms engine speed 1200 rpm (300 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 83,
-        "t_ms": 830,
-        "source": "Dashboard",
-        "line": "t=30500 ms engine speed 1200 rpm (305 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 84,
-        "t_ms": 840,
-        "source": "Dashboard",
-        "line": "t=31000 ms engine speed 1200 rpm (310 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 85,
-        "t_ms": 850,
-        "source": "Dashboard",
-        "line": "t=31500 ms engine speed 1200 rpm (315 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 86,
-        "t_ms": 860,
-        "source": "Dashboard",
-        "line": "t=32000 ms engine speed 1200 rpm (320 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 87,
-        "t_ms": 870,
-        "source": "Dashboard",
-        "line": "t=32500 ms engine speed 1200 rpm (325 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 88,
-        "t_ms": 880,
-        "source": "Dashboard",
-        "line": "t=33000 ms engine speed 1200 rpm (330 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 89,
-        "t_ms": 890,
-        "source": "Dashboard",
-        "line": "t=33500 ms engine speed 1200 rpm (335 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 90,
-        "t_ms": 900,
-        "source": "Dashboard",
-        "line": "t=34000 ms engine speed 1200 rpm (340 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 91,
-        "t_ms": 910,
-        "source": "Dashboard",
-        "line": "t=34500 ms engine speed 1200 rpm (345 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 92,
-        "t_ms": 920,
-        "source": "Dashboard",
-        "line": "t=35000 ms engine speed 1200 rpm (350 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 93,
-        "t_ms": 930,
-        "source": "Dashboard",
-        "line": "t=35500 ms engine speed 1200 rpm (355 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 94,
-        "t_ms": 940,
-        "source": "Dashboard",
-        "line": "t=36000 ms engine speed 1200 rpm (360 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 95,
-        "t_ms": 950,
-        "source": "Dashboard",
-        "line": "t=36500 ms engine speed 1200 rpm (365 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 96,
-        "t_ms": 960,
-        "source": "Dashboard",
-        "line": "t=37000 ms engine speed 1200 rpm (370 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 97,
-        "t_ms": 970,
-        "source": "Dashboard",
-        "line": "t=37500 ms engine speed 1200 rpm (375 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 98,
-        "t_ms": 980,
-        "source": "Dashboard",
-        "line": "t=38000 ms engine speed 1200 rpm (380 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 99,
-        "t_ms": 990,
-        "source": "Dashboard",
-        "line": "t=38500 ms engine speed 1200 rpm (385 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 100,
-        "t_ms": 1000,
-        "source": "Dashboard",
-        "line": "t=39000 ms engine speed 1200 rpm (390 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 101,
-        "t_ms": 1010,
-        "source": "Dashboard",
-        "line": "t=39500 ms engine speed 1200 rpm (395 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 102,
-        "t_ms": 1020,
-        "source": "Dashboard",
-        "line": "t=40000 ms engine speed 1200 rpm (400 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 103,
-        "t_ms": 1030,
-        "source": "Dashboard",
-        "line": "t=40500 ms engine speed 1200 rpm (405 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 104,
-        "t_ms": 1040,
-        "source": "Dashboard",
-        "line": "t=41000 ms engine speed 1200 rpm (410 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 105,
-        "t_ms": 1050,
-        "source": "Dashboard",
-        "line": "t=41500 ms engine speed 1200 rpm (415 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 106,
-        "t_ms": 1060,
-        "source": "Dashboard",
-        "line": "t=42000 ms engine speed 1200 rpm (420 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 107,
-        "t_ms": 1070,
-        "source": "Dashboard",
-        "line": "t=42500 ms engine speed 1200 rpm (425 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 108,
-        "t_ms": 1080,
-        "source": "Dashboard",
-        "line": "t=43000 ms engine speed 1200 rpm (430 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 109,
-        "t_ms": 1090,
-        "source": "Dashboard",
-        "line": "t=43500 ms engine speed 1200 rpm (435 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 110,
-        "t_ms": 1100,
-        "source": "Dashboard",
-        "line": "t=44000 ms engine speed 1200 rpm (440 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 111,
-        "t_ms": 1110,
-        "source": "Dashboard",
-        "line": "t=44500 ms engine speed 1200 rpm (445 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 112,
-        "t_ms": 1120,
-        "source": "Dashboard",
-        "line": "t=45000 ms engine speed 1200 rpm (450 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 113,
-        "t_ms": 1130,
-        "source": "Dashboard",
-        "line": "error: something went wrong, exiting with code 3"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 114,
-        "t_ms": 1140,
-        "source": "Dashboard",
-        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 511190 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 115,
-        "t_ms": 1150,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 3"
       }
@@ -1655,8 +1252,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 116,
-        "t_ms": 1160,
+        "seq": 79,
+        "t_ms": 790,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 3,
@@ -1668,8 +1265,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 117,
-        "t_ms": 1170,
+        "seq": 80,
+        "t_ms": 800,
         "name": "Dashboard",
         "state": "failed",
         "reason": "process_ended",
@@ -1681,8 +1278,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 118,
-        "t_ms": 1180,
+        "seq": 81,
+        "t_ms": 810,
         "source": "vehicle_sil_launch",
         "line": "participant 'Dashboard' failed; aborting the simulation"
       }
@@ -1692,9 +1289,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 119,
-        "t_ms": 1190,
-        "sim_ms": 45390,
+        "seq": 82,
+        "t_ms": 820,
+        "sim_ms": 26640,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -1709,8 +1306,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 120,
-        "t_ms": 1200,
+        "seq": 83,
+        "t_ms": 830,
         "source": "vehicle_sil_launch",
         "line": "the simulation was aborted: participant 'Dashboard' failed"
       }
@@ -1720,8 +1317,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 121,
-        "t_ms": 1210,
+        "seq": 84,
+        "t_ms": 840,
         "severity": "error",
         "code": "participant-failed",
         "file": "participant-crash.yaml",
@@ -1737,8 +1334,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 122,
-        "t_ms": 1220,
+        "seq": 85,
+        "t_ms": 850,
         "phase": "stopping"
       }
     },
@@ -1747,8 +1344,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 123,
-        "t_ms": 1230,
+        "seq": 86,
+        "t_ms": 860,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1758,8 +1355,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 124,
-        "t_ms": 1240,
+        "seq": 87,
+        "t_ms": 870,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1771,8 +1368,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 125,
-        "t_ms": 1250,
+        "seq": 88,
+        "t_ms": 880,
         "source": "vehicle_sil_launch",
         "line": "asking Logger to stop (SIGTERM)"
       }
@@ -1782,8 +1379,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 126,
-        "t_ms": 1260,
+        "seq": 89,
+        "t_ms": 890,
         "name": "Logger",
         "state": "stop_requested"
       }
@@ -1793,8 +1390,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 127,
-        "t_ms": 1270,
+        "seq": 90,
+        "t_ms": 900,
         "name": "Logger",
         "state": "ended",
         "exit_code": null,
@@ -1806,8 +1403,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 128,
-        "t_ms": 1280,
+        "seq": 91,
+        "t_ms": 910,
         "phase": "ended"
       }
     },
@@ -1816,8 +1413,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 129,
-        "t_ms": 1290,
+        "seq": 92,
+        "t_ms": 920,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1836,7 +1433,7 @@
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 45390,
+            "sim_ms": 26640,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -1904,7 +1501,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 45390,
+            "before_ms": 26640,
             "unplaced": [
               {
                 "participant": "Logger",
@@ -1931,8 +1528,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 45380,
-                    "frames_sent": 455,
+                    "at_ms": 26630,
+                    "frames_sent": 268,
                     "frames_received": 0
                   },
                   {
@@ -1940,9 +1537,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 45380,
+                    "at_ms": 26630,
                     "frames_sent": 0,
-                    "frames_received": 455
+                    "frames_received": 268
                   }
                 ]
               }
@@ -2205,6 +1802,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -2242,13 +1843,13 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 129,
-        "last_t_ms": 1290,
+        "last_seq": 92,
+        "last_t_ms": 920,
         "time": {
           "event": "time",
-          "seq": 119,
-          "t_ms": 1190,
-          "sim_ms": 45390,
+          "seq": 82,
+          "t_ms": 820,
+          "sim_ms": 26640,
           "speed": "max",
           "paused": false,
           "actual_speed": 1.5,
@@ -2502,6 +2103,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -2613,7 +2218,7 @@
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 45390,
+            "sim_ms": 26640,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -2681,7 +2286,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 45390,
+            "before_ms": 26640,
             "unplaced": [
               {
                 "participant": "Logger",
@@ -2708,8 +2313,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 45380,
-                    "frames_sent": 455,
+                    "at_ms": 26630,
+                    "frames_sent": 268,
                     "frames_received": 0
                   },
                   {
@@ -2717,9 +2322,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 45380,
+                    "at_ms": 26630,
                     "frames_sent": 0,
-                    "frames_received": 455
+                    "frames_received": 268
                   }
                 ]
               }
@@ -2982,6 +2587,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -3002,7 +2611,7 @@
             "dropped": 0
           },
           "Dashboard": {
-            "kept": 93,
+            "kept": 56,
             "dropped": 0
           }
         },

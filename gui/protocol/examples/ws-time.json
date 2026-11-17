@@ -65,7 +65,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -361,6 +361,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -724,7 +728,7 @@
         "event": "time",
         "seq": 29,
         "t_ms": 290,
-        "sim_ms": 50,
+        "sim_ms": 40,
         "speed": 1,
         "paused": true,
         "actual_speed": null,
@@ -763,7 +767,7 @@
           "event": "time",
           "seq": 29,
           "t_ms": 290,
-          "sim_ms": 50,
+          "sim_ms": 40,
           "speed": 1,
           "paused": true,
           "actual_speed": null,
@@ -1017,6 +1021,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -1123,7 +1131,7 @@
         "event": "time",
         "seq": 31,
         "t_ms": 310,
-        "sim_ms": 50,
+        "sim_ms": 40,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1271,10 +1279,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 50,
+            "sim_ms": 40,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 2,
+            "paced_steps": 1,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -1339,7 +1347,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 50,
+            "before_ms": 40,
             "unplaced": [],
             "networks": [
               {
@@ -1356,7 +1364,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 40,
+                    "at_ms": 30,
                     "frames_sent": 2,
                     "frames_received": 0
                   },
@@ -1365,7 +1373,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 40,
+                    "at_ms": 30,
                     "frames_sent": 0,
                     "frames_received": 2
                   }
@@ -1640,6 +1648,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -1685,7 +1697,7 @@
           "event": "time",
           "seq": 31,
           "t_ms": 310,
-          "sim_ms": 50,
+          "sim_ms": 40,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1939,6 +1951,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -2052,10 +2068,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 50,
+            "sim_ms": 40,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 2,
+            "paced_steps": 1,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -2120,7 +2136,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 50,
+            "before_ms": 40,
             "unplaced": [],
             "networks": [
               {
@@ -2137,7 +2153,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 40,
+                    "at_ms": 30,
                     "frames_sent": 2,
                     "frames_received": 0
                   },
@@ -2146,7 +2162,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 40,
+                    "at_ms": 30,
                     "frames_sent": 0,
                     "frames_received": 2
                   }
@@ -2421,6 +2437,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",

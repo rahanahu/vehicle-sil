@@ -316,7 +316,7 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 ## 物理 CAN と仮想時間
 
-- 物理 CAN に接続するときは、原則として実時間で動かします。
+- 物理 CAN に接続するときは、原則として実時間で動かします。`vehicle_sil_launch` は既定でそうします。`--connect` のある実行と、ファイルに有効な `role: bridge` の participant のいる実行は、速さ 1 で動きます（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。
 - Vector Virtual CAN も、SIL Kit の仮想時間には自動で同期しないものとして扱います。
 - Vector XL CAN Bridge は、autonomous lifecycle を使い、実時間で動きます。仮想時間のシミュレーションには参加させません。
 - プロトコルスタックを XL のチャネルに直接載せる場合（`ExternalPortAdapter`）も実時間だけです。時刻同期で動かすホストに登録すると、構成エラーになります。

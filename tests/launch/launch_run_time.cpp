@@ -314,6 +314,69 @@ void speed_change(const Options& o)
             "the time of a run that went on four times as fast from " + std::to_string(reached) + " ms or later:\n" + result);
 }
 
+/// A participant with role: bridge in the file: the run is connected outside the simulation, so it
+/// keeps real time (speed 1) whatever speed the file has, in test too; --time-policy free and
+/// --disable lift that.
+void own_bridge(const Options& o)
+{
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\nstop_at_ms: 200\nspeed: 4\nnetworks: []\nparticipants:\n"
+                                      "  - name: Body\n    command: [" + ecu(o) + "]\n"
+                                      "  - name: Gateway\n    command: [" + helper(o) + ", --pid-file, gateway.pid]\n"
+                                      "    role: bridge\n    describe: false\n    required: false\n",
+                                      {{"Body", "scenario-variables"}});
+    const auto ran = [&](std::vector<std::string> args, int code, const std::string& what) {
+        fs::remove(dir / "gateway.pid");
+        const Captured run = launch(o, args, dir);
+        const bool gone = all_gone(dir, {"gateway.pid"}, 30s);
+        expect_code(run, code, what);
+        require(gone, what + ": Gateway has ended");
+        return lf(run.standard_output);
+    };
+    std::string out = ran({"run", "--json", "sim.yaml"}, 0, "a run with a role: bridge participant");
+    require(contains(out, "\"timing\": {\n    \"speed\": 1,\n") && contains(out, "\"code\": \"outside-speed-set\"") &&
+                contains(out, "participant 'Gateway' is a bridge (role: bridge) to something outside the simulation") &&
+                contains(out, "not at the speed 4 of the file") &&
+                contains(out, "\"time_lock\": {\n      \"locked\": true,\n      \"because\": [\n        \"Gateway\"\n      ]\n"),
+            "the run went at speed 1, and a note says so:\n" + out);
+    out = ran({"run", "--json", "--time-policy", "free", "sim.yaml"}, 0, "the same with --time-policy free");
+    require(contains(out, "\"timing\": {\n    \"speed\": 4,\n") && contains(out, "\"code\": \"outside-not-real-time\"") &&
+                !contains(out, "outside-speed-set") &&
+                contains(out, "\"time_lock\": {\n      \"locked\": false,\n      \"because\": [\n        \"Gateway\"\n      ]\n"),
+            "--time-policy free: the file's speed, and a note:\n" + out);
+    out = ran({"run", "--json", "--disable", "Gateway", "sim.yaml"}, 0, "the same without the bridge");
+    require(contains(out, "\"timing\": {\n    \"speed\": 4,\n") && !contains(out, "\"outside-") &&
+                contains(out, "\"time_lock\": {\n      \"locked\": false,\n      \"because\": []\n"),
+            "--disable Gateway: nothing connects the run outside:\n" + out);
+    fs::remove(dir / "gateway.pid");
+    const Captured refused = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
+    expect_code(refused, 1, "run --speed 2 with a role: bridge participant");
+    require(contains(refused.standard_output, "\"result\": \"check_failed\"") &&
+                contains(refused.standard_output, "\"code\": \"outside-real-time\"") &&
+                contains(refused.standard_output, "--speed 2 is refused") && !fs::exists(dir / "gateway.pid"),
+            "outside-real-time, and nothing started:\n" + refused.standard_output);
+    expect_code(launch(o, {"run", "--speed", "1", "sim.yaml"}, dir), 0, "run --speed 1 with a role: bridge participant");
+    // test: each run at speed 1 too (it is as fast as possible otherwise), and the command to run
+    // one alone is one that run takes.
+    fs::create_directories(dir / "scn");
+    write_file(dir / "scn" / "a.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.level: 5 }\n"
+                                       "  - wait_until: { Body.level: 6 }\n    timeout_ms: 50\n");
+    out = ran({"test", "sim.yaml", "--scenarios", "scn"}, 1, "test with a role: bridge participant");
+    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --scenario scn/a.yaml\n"),
+            "test at speed 1: the run alone takes no --speed max:\n" + out);
+    out = ran({"test", "sim.yaml", "--scenarios", "scn", "--json"}, 1, "test --json with a role: bridge participant");
+    require(contains(out, "\"speed\": 1,") && !contains(out, "\"speed\": \"max\",") && contains(out, "\"code\": \"outside-speed-set\"") &&
+                contains(out, "not as fast as possible"),
+            "test --json at speed 1:\n" + out);
+    out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn"}, 1, "test --time-policy free");
+    require(contains(out, "run it alone: vehicle_sil_launch run sim.yaml --speed max --time-policy free --scenario scn/a.yaml\n"),
+            "test --time-policy free: as fast as possible:\n" + out);
+    out = ran({"test", "sim.yaml", "--time-policy", "free", "--scenarios", "scn", "--json"}, 1, "test --json --time-policy free");
+    require(contains(out, "\"speed\": \"max\",") && contains(out, "\"code\": \"outside-not-real-time\"") &&
+                contains(out, "the simulation runs as fast as possible"),
+            "test --json --time-policy free:\n" + out);
+}
+
 void step_width(const Options& o)
 {
     const auto step_file = [](const fs::path& dir, const std::string& ms) { write_file(dir / "test-ecu-step-ms", ms + "\n"); };
@@ -395,6 +458,7 @@ void step_width(const Options& o)
     require(json_value(run.standard_output, "time_step_ms") == "1" && json_value(run.standard_output, "ecu_step_ms") == "null" &&
                 json_value(run.standard_output, "step_delay_ms") == "null" && !contains(run.standard_output, "coarse-time-step"),
             "an unknown step: 1 ms\n" + run.standard_output);
+    own_bridge(o);
 }
 
 /// A run that has ended stands still nowhere: its last "time" event says `paused` false, at `sim_ms`

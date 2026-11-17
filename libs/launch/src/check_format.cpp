@@ -808,6 +808,22 @@ void detail::write_check_json(vehicle_sil::json::JsonWriter& w, std::string_view
         }
     }
     w.end_array();
+    if (report.config)
+    {
+        w.begin_object("time_lock");
+        w.boolean("locked", report.time_lock.locked);
+        w.begin_array("because");
+        for (const std::string& name : report.time_lock.because())
+        {
+            w.string({}, name);
+        }
+        w.end_array();
+        w.end_object();
+    }
+    else
+    {
+        w.null("time_lock");
+    }
     detail::write_findings_json(w, report.file, report.findings);
     if (report.scenario)
     {

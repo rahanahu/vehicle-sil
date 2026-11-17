@@ -186,7 +186,8 @@ public:
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
         outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
         outcome_.stop_at_ms = config.stop_at_ms;
-        const std::optional<double> speed = options.speed ? *options.speed : config.speed;
+        // 1 with the time lock, whatever was asked for (the check refuses another --speed).
+        const std::optional<double> speed = planned_speed(check.time_lock, options.speed, config.speed);
         if (ctx_.scenario != nullptr)
         {
             outcome_.scenario = scenario_not_run(*ctx_.scenario);
