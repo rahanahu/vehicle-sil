@@ -470,10 +470,10 @@ struct HoldRun
 };
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
-                 launch::TimeCommands& commands, std::optional<std::chrono::milliseconds> timeout,
-                 const std::function<void()>& during_hold, const launch::StopRequests* stops = nullptr,
-                 const std::string& more_keys = {})
+                 launch::RunControls& controls, std::optional<std::chrono::milliseconds> timeout,
+                 const std::function<void()>& during_hold, const std::string& more_keys = {})
 {
+    launch::TimeCommands& commands = controls.time();
     std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\n" + more_keys +
                          "networks: []\nparticipants:\n"
                          "  - name: Engine\n    command: [" + yaml_quote(process::shown_path(ecu)) + "]\n";
@@ -489,9 +489,8 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
     HoldRun out;
     launch::RunOptions options;
     options.start_paused = start_paused;
-    options.time_commands = &commands;
+    options.controls = &controls;
     options.timeout = timeout;
-    options.stops = stops;
     options.interrupt_name = [] { return std::string("SIGINT"); };
     options.serve_control = [](control::Hub&) { return launch::ControlServerInfo{"(test)", false, false}; };
     options.write_line = [&](std::string_view line) {
@@ -550,8 +549,9 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
 {
     {
         // Without the hold: a participant that never gets ready ends the start at its limit.
-        launch::TimeCommands commands(false);
-        const HoldRun run = hold_run(ecu, helper, dir, true, false, commands, std::nullopt, [] {});
+        launch::StopRequests stops;
+        launch::RunControls controls(stops, false);
+        const HoldRun run = hold_run(ecu, helper, dir, true, false, controls, std::nullopt, [] {});
         require(!run.held, "no hold without --start-paused" + shown(run));
         require(run.report.run && run.report.run->simulation == launch::SimulationEnd::NotStarted &&
                     run.report.run->start_error.find("did not all get to their first step within") != std::string::npos &&
@@ -567,9 +567,11 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
     {
         // With the hold: it stands still longer than start_timeout_ms (2000 ms), then the start
         // has start_timeout_ms again from the resume.
-        launch::TimeCommands commands(true);
+        launch::StopRequests stops;
+        launch::RunControls controls(stops, true);
+        launch::TimeCommands& commands = controls.time();
         std::chrono::steady_clock::time_point resumed{};
-        const HoldRun run = hold_run(ecu, helper, dir, true, true, commands, std::nullopt, [&] {
+        const HoldRun run = hold_run(ecu, helper, dir, true, true, controls, std::nullopt, [&] {
             std::this_thread::sleep_for(3000ms);
             resumed = std::chrono::steady_clock::now();
             require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
@@ -595,12 +597,14 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
     limits.stop_timeout_ms = 1000;
     const std::chrono::milliseconds without_hold{launch::detail::ecu_start_timeout_ms(limits, false)};
     require(without_hold == 13000ms, "the limit of an ECU without the hold is the one this test stands still for");
-    launch::TimeCommands commands(true);
-    const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, std::nullopt, [&] {
+    launch::StopRequests stops;
+    launch::RunControls controls(stops, true);
+    launch::TimeCommands& commands = controls.time();
+    const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
         // The ECU began its wait before the hold: this is longer than its limit would be.
         std::this_thread::sleep_for(without_hold + 1500ms);
         require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
-    }, nullptr, "stop_timeout_ms: 1000\n");
+    }, "stop_timeout_ms: 1000\n");
     require(run.held, "the run held before the first step" + shown(run));
     require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
     require(run.report.result() == launch::RunResult::Passed && run.report.run &&
@@ -612,8 +616,9 @@ void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs
 /// comes does not leave the run waiting.
 void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::TimeCommands commands(true);
-    const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, 1500ms, [] {});
+    launch::StopRequests stops;
+    launch::RunControls controls(stops, true);
+    const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, 1500ms, [] {});
     require(run.held, "the run held" + shown(run));
     require(run.report.run && run.report.run->timed_out && run.report.run->timed_out_while_holding &&
                 run.report.result() == launch::RunResult::Failed,
@@ -630,12 +635,12 @@ void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const 
 /// Ctrl+C in the hold ends it: the simulation starts and is stopped (its step at 0 runs).
 void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::TimeCommands commands(true);
     launch::StopRequests stops;
-    const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, std::nullopt, [&] {
+    launch::RunControls controls(stops, true);
+    const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [&] {
         std::this_thread::sleep_for(200ms);
         stops.request(kAnySource);
-    }, &stops);
+    });
     require(run.held, "the run held" + shown(run));
     require(run.report.result() == launch::RunResult::Interrupted && run.report.run &&
                 run.report.run->simulation == launch::SimulationEnd::Interrupted,
@@ -645,9 +650,11 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
 /// A resume before the window: the run does not hold (and runs to stop_at_ms).
 void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
-    launch::TimeCommands commands(true);
+    launch::StopRequests stops;
+    launch::RunControls controls(stops, true);
+    launch::TimeCommands& commands = controls.time();
     require(commands.apply(resume_command(), "control_server").accepted, "the resume was refused");
-    const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, std::nullopt, [] {});
+    const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [] {});
     require(!run.held && run.report.result() == launch::RunResult::Passed && run.report.run &&
                 run.report.run->simulation == launch::SimulationEnd::ReachedStopAt,
             "no hold, and the run ran to its end" + shown(run));

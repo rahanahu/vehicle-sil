@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 
@@ -457,6 +458,12 @@ int TestReport::exit_code() const { return exit_code_of(result()); }
 
 TestReport test_file(const std::filesystem::path& path, const std::string& shown_as, const TestOptions& options)
 {
+    if (options.run.controls != nullptr)
+    {
+        throw std::invalid_argument(
+          "TestOptions::run.controls must be null: every run of a test needs RunControls of its own, so test_file() "
+          "makes them for each run on `run.stops`.");
+    }
     TestReport report;
     report.file = shown_as;
     report.strict = options.run.check.strict;

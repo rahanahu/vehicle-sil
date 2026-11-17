@@ -131,7 +131,9 @@ struct TestOptions
 {
     /// For every run: the check's options (strict, --disable and --enable, the parameters, the
     /// --describe limit), the speed, the time limit of one run, where the lines go, the
-    /// interrupts. Its variant and scenario are set for each run.
+    /// interrupts (RunOptions::stops). Its variant and scenario are set for each run. Its controls
+    /// must be null (test_file() throws std::invalid_argument otherwise): each run makes its own
+    /// (RunControls serves one run).
     RunOptions run{};
     /// --variant: only these variants (each must be one of the file's); empty: all of them.
     std::vector<std::string> variants{};

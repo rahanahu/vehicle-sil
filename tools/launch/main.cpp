@@ -215,8 +215,9 @@ struct Shared
     /// themselves after their result).
     std::atomic<bool> finished{false};
     launch::EventStream* events = nullptr;
-    /// The time commands (run --stdin-commands): the reader of stdin hands them to the run.
-    launch::TimeCommands* time_commands = nullptr;
+    /// The controls of the run (run), on g_stops: the reader of stdin hands the time commands to
+    /// the run through them, a control server its time operations.
+    launch::RunControls* controls = nullptr;
 };
 
 Shared& shared()
@@ -365,25 +366,15 @@ void write_stderr_line_without_waiting(std::string line)
 
 // --- interrupts and stop requests (run) ---
 
-/// The stop requests of the process (launch::RunOptions::stops). The source of a request: a
-/// signal (POSIX), a console event + 1 (Windows), or one of these.
+/// The stop requests of the process (run: those of the run's controls; test:
+/// launch::RunOptions::stops). The source of a request: a
+/// signal (POSIX), a console event + 1 (Windows), or one of launch::stop_source.
 constinit launch::StopRequests g_stops;
-constexpr int kStopCommand = -1;  // {"command":"stop"} on standard input
-constexpr int kEndOfInput = -2;   // standard input ended (run --stdin-commands)
-constexpr int kOutputClosed = -3; // the reader of the events has gone (run --events)
-constexpr int kControlStop = -4;  // a client of the control server called Stop (run --control)
-
-std::string stop_source_name(int source)
-{
-    switch (source)
-    {
-    case kStopCommand: return "stop command";
-    case kEndOfInput: return "end of input";
-    case kOutputClosed: return "output closed";
-    case kControlStop: return "control server stop";
-    default: return {};
-    }
-}
+using launch::stop_source::kControlStop;
+using launch::stop_source::kEndOfInput;
+using launch::stop_source::kOutputClosed;
+using launch::stop_source::kStopCommand;
+using launch::stop_source_name;
 
 #ifdef _WIN32
 BOOL WINAPI on_console_event(DWORD event)
@@ -637,12 +628,12 @@ void start_reading_commands()
 {
     std::thread([] {
         launch::EventStream* events = shared().events;
-        launch::TimeCommands* timeCommands = shared().time_commands;
-        launch::CommandInput input([events, timeCommands](const launch::Command& command) {
+        launch::RunControls* controls = shared().controls;
+        launch::CommandInput input([events, controls](const launch::Command& command) {
             // The time commands: the run decides whether one can be done now, and writes its event
             // before it does it (neither waits for the run or the reader of the events).
             const launch::Command done =
-                command.is_time() && timeCommands != nullptr ? timeCommands->apply(command, "stdin") : command;
+                command.is_time() && controls != nullptr ? controls->time().apply(command, "stdin") : command;
             // The event first: it comes before what the stop does (it does not wait for its reader).
             if (events != nullptr && !command.is_time())
             {
@@ -1109,18 +1100,20 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         options.write_line = write_stderr_line;
     }
-    if (args.flag("stdin-commands") || control)
     {
-        // Never destroyed: the reader of stdin may use it until the process ends.
-        launch::TimeCommands::OnCommand on_command;
+        // The controls of this run, on the stop requests of the process. Never destroyed: the
+        // reader of stdin may use them until the process ends.
+        launch::RunControls::Observers observers;
         if (events != nullptr)
         {
-            on_command = [events](const launch::Command& command, std::string_view source) {
+            observers.on_command = [events](const launch::Command& command, std::string_view source) {
                 events->command(command, source);
             };
+            observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
         }
-        shared().time_commands = new launch::TimeCommands(options.start_paused, std::move(on_command));
-        options.time_commands = shared().time_commands;
+        shared().controls =
+            new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
+        options.controls = shared().controls;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
     if (control)
@@ -1131,9 +1124,8 @@ int run(const cli::Args& args, launch::EventStream* events)
         a.tls_cert = args.str("control-tls-cert", "");
         a.tls_key = args.str("control-tls-key", "");
         a.audit_log = args.str("control-audit-log", "");
-        a.scenario = args.has("scenario");
         launch_cli::ControlHooks hooks;
-        hooks.commands = shared().time_commands;
+        hooks.controls = shared().controls;
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch_cli::make_control_server(a, std::move(hooks));
@@ -1145,7 +1137,6 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         start_reading_commands();
     }
-    options.stops = &g_stops;
     options.interrupt_name = interrupt_name;
     // --connect: the check judges the time by what this run does.
     options.check.run_speed = options.speed;

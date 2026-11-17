@@ -8,12 +8,15 @@
 #include "vehicle_sil/launch/stop_requests.hpp"
 
 #include <atomic>
+#include <string>
 #include <thread>
 #include <vector>
 
 namespace {
 
+using vehicle_sil::launch::StopKind;
 using vehicle_sil::launch::StopRequests;
+namespace stop_source = vehicle_sil::launch::stop_source;
 
 constexpr int kSignal = 2;
 constexpr int kOther = 15;
@@ -138,4 +141,35 @@ TEST_CASE(stop_requests_from_several_threads_are_all_counted_and_one_is_the_firs
     CHECK(firsts.load() <= 1);
     CHECK(stops.count() >= kThreads * kEach && stops.count() <= kThreads * kEach + 1);
     CHECK(stops.first() >= 1 && stops.first() <= kThreads);
+}
+
+TEST_CASE(the_known_stop_sources_keep_their_values_and_names)
+{
+    using vehicle_sil::launch::stop_source_name;
+    CHECK_EQ(stop_source::kStopCommand, -1);
+    CHECK_EQ(stop_source::kEndOfInput, -2);
+    CHECK_EQ(stop_source::kOutputClosed, -3);
+    CHECK_EQ(stop_source::kControlStop, -4);
+    CHECK(stop_source_name(stop_source::kStopCommand) == std::string("stop command"));
+    CHECK(stop_source_name(stop_source::kEndOfInput) == std::string("end of input"));
+    CHECK(stop_source_name(stop_source::kOutputClosed) == std::string("output closed"));
+    CHECK(stop_source_name(stop_source::kControlStop) == std::string("control server stop"));
+    // A signal or a console event is named by the caller, not here.
+    CHECK(stop_source_name(kSignal) == std::string());
+    CHECK(stop_source_name(-5) == std::string());
+}
+
+TEST_CASE(a_stop_source_has_the_kind_of_who_asked)
+{
+    using vehicle_sil::launch::stop_kind;
+    using vehicle_sil::launch::stop_kind_name;
+    CHECK(stop_kind(stop_source::kStopCommand) == StopKind::Operator);
+    CHECK(stop_kind(stop_source::kControlStop) == StopKind::Operator);
+    CHECK(stop_kind(stop_source::kEndOfInput) == StopKind::Supervisor);
+    CHECK(stop_kind(stop_source::kOutputClosed) == StopKind::Supervisor);
+    CHECK(stop_kind(kSignal) == StopKind::Signal);
+    CHECK(stop_kind(kOther) == StopKind::Signal);
+    CHECK(std::string(stop_kind_name(StopKind::Operator)) == std::string("operator"));
+    CHECK(std::string(stop_kind_name(StopKind::Signal)) == std::string("signal"));
+    CHECK(std::string(stop_kind_name(StopKind::Supervisor)) == std::string("supervisor"));
 }

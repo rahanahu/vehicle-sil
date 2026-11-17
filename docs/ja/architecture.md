@@ -226,7 +226,7 @@ flowchart LR
     run --> probe
 ```
 
-- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
+- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
 - ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
 - この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。

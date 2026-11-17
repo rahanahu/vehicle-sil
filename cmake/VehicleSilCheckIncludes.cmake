@@ -5,13 +5,13 @@
 # in registry_uri.hpp),
 # vehicle_sil/process/child_process.hpp, vehicle_sil/process/process.hpp,
 # vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
-# headers named events.hpp, time_commands.hpp or run_*.hpp. The
-# check follows the vehicle_sil/... includes (found in the project's include directories) and the
-# "..." includes of a header in the same directory as the including file (the private headers of
-# libs/launch/src). A failure names the listed file and the chain of includes to the forbidden
-# header; to fix it, move what the file needs out of that header, or take the file off the list
-# if it is meant to depend on it. The check reads the text: an include inside #if 0 or a comment
-# counts, which errs on the safe side.
+# headers named events.hpp, time_commands.hpp, stop_requests.hpp or run_*.hpp (run_controls.hpp
+# among them). The check follows the vehicle_sil/... includes (found in the project's include
+# directories) and the "..." includes of a header in the same directory as the including file (the
+# private headers of libs/launch/src). A failure names the listed file and the chain of includes
+# to the forbidden header; to fix it, move what the file needs out of that header, or take the file
+# off the list if it is meant to depend on it. The check reads the text: an include inside #if 0 or
+# a comment counts, which errs on the safe side.
 # Usage: cmake -DROOT=<directory> -DFILES=<file>[,<file>...] -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
 if(NOT DEFINED ROOT OR NOT DEFINED FILES)
@@ -57,7 +57,8 @@ foreach(listed IN LISTS FILES)
       string(TOLOWER "${path}" lower)
       get_filename_component(base "${path}" NAME)
       if(lower MATCHES "^silkit/" OR lower MATCHES "_silkit/" OR path IN_LIST forbidden_exact
-         OR base STREQUAL "events.hpp" OR base STREQUAL "time_commands.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
+         OR base STREQUAL "events.hpp" OR base STREQUAL "time_commands.hpp"
+         OR base STREQUAL "stop_requests.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
         list(APPEND bad "${chain} ${path}")
         continue()
       endif()

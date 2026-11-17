@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/command.hpp"
+#include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
@@ -65,18 +66,6 @@ inline constexpr std::string_view kScenarioControlFeature = "scenario-control";
 /// `version --json`: the formats this launcher writes and reads, kFeatures, then `more` (what
 /// this build adds).
 [[nodiscard]] std::string format_version_json(const std::vector<std::string_view>& more = {});
-
-/// The stages of a run, in this order (a run may skip some, never goes back).
-enum class Phase
-{
-    Checking, ///< the check (--describe of each executable)
-    Starting, ///< the registry, the controller, the participants' processes
-    Waiting,  ///< for the required participants to join
-    Running,  ///< the simulation runs
-    Stopping, ///< the simulation has ended (or did not start): the participants are being ended
-    Ended,    ///< every participant has ended; the result follows
-};
-[[nodiscard]] const char* phase_name(Phase phase);
 
 /// The longest command line read; a longer one is not accepted.
 inline constexpr std::size_t kMaxCommandLine = 64 * 1024;

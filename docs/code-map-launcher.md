@@ -73,8 +73,10 @@ Public headers:
 | `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, `no_bridge_here()` (LIN; CAN elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
-| `StopRequests`, the requests to stop that the caller of `run_file()` or `test_file()` owns and lends (the count the run reads, and the source of the first request) | `launch/stop_requests.hpp` |
+| `StopRequests`, the requests to stop that the caller of `run_file()` or `test_file()` owns and lends (the count the run reads, and the source of the first request); `StopKind` (operator, signal, supervisor), the four sources the library knows (`stop_source::kStopCommand` and the others) with their names, and `stop_kind()`. The signal and console-event names stay in the CLI | `launch/stop_requests.hpp` |
+| `RunControls`, the controls of one run, which the run borrows from its caller or makes for itself: the stop requests (lent), the `TimeCommands`, and the phase it keeps and tells its observer; `Phase`, `phase_name()` | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
+| The rules of the controls: `decide()` (whether the run takes an operation now, by the entry it came in and where the run stands; the table of the rows is in `src/control_rules.cpp`), `allowed()` (the same answer without arguments, with the range of the argument), `always_refused()` (whether a control server only shows the run), the reason codes `reason::*`. Pure | `launch/control_rules.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
 | `Command`, a command as it was read and as `TimeCommands` decided it | `launch/command.hpp` |
@@ -344,7 +346,7 @@ When changing events or commands consumed by the GUI, also check [GUI implementa
 Where to change:
 
 - The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/events.cpp`, `tools/launch/main.cpp`)
-- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`)
+- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunOptions::events`)
 
 Documentation to update:
 
@@ -379,6 +381,7 @@ Speed, pause, stepping and lateness behind real time.
 Where to change:
 
 - `TimeCommands` in `libs/launch/src/time_commands.cpp`
+- Whether a time command, a stop or a write is taken, and the message of the refusal: the rows in `libs/launch/src/control_rules.cpp` (one place for `TimeCommands::apply()`, `RunControls::allowed()` and the control server's `observe_only`; the rows are tested in `tests/launch/test_control_rules.cpp`)
 - `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` in `time_plan.cpp` (declared in `time_plan.hpp`; `check.cpp` uses it without `run.hpp`)
 - `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
 - `RunWatch::note_timing()` in `run_watch.cpp`

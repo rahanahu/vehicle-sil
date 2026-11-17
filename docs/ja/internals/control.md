@@ -818,7 +818,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 見るだけのサーバー（`observe_only`）
 
-- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。
+- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server は、run の間ずっと、停止のほかをすべて断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
 - 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があります。
 - `observe_only` のサーバーは、「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。
 - 拒否した呼び出しは、Hub にも `TimeControl` にも届きません。

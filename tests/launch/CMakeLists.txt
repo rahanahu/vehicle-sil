@@ -11,9 +11,11 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_config.cpp
     test_connect.cpp
     test_connections.cpp
+    test_control_rules.cpp
     test_events.cpp
     test_j1939_nodes_match.cpp
     test_run.cpp
+    test_run_controls.cpp
     test_run_outside.cpp
     test_scenario.cpp
     test_scenario_line.cpp
@@ -53,7 +55,8 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
 # The files of the launcher that make up its pure layer (the configuration, the checks and the
-# scenario) include no SIL Kit header, no process header, no run, events or time-command header,
+# scenario) include no SIL Kit header, no process header, no run, events, time-command or
+# stop-request header (the run's controls are a run header),
 # no probe.hpp (what looks at the computer),
 # directly or through the headers they include (the private ones of libs/launch/src too). Add a
 # file to the list when it no longer includes them. The check itself must reject a fixture that
@@ -75,7 +78,8 @@ set(_launch_pure_files
     libs/launch/include/vehicle_sil/launch/timeline.hpp libs/launch/include/vehicle_sil/launch/connect.hpp
     libs/launch/include/vehicle_sil/launch/traffic.hpp libs/launch/include/vehicle_sil/launch/command.hpp
     libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp libs/launch/src/check_networks.cpp
-    libs/launch/src/timeline_format.cpp)
+    libs/launch/src/timeline_format.cpp
+    libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
 add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}

@@ -17,6 +17,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/config.cpp
   src/connect.cpp
   src/connections.cpp
+  src/control_rules.cpp
   src/describe_read.cpp
   src/events.cpp
   src/host_addresses.cpp
@@ -25,6 +26,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_assess.cpp
   src/run_connect.cpp
   src/run_control.cpp
+  src/run_controls.cpp
   src/run_format.cpp
   src/run_notes.cpp
   src/run_output.cpp

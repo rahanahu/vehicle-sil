@@ -818,7 +818,7 @@ Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it
 
 ### Observe-only server (`observe_only`)
 
-- When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only`.
+- When it runs a scenario (`run --scenario`), the launcher sets `ServerOptions::observe_only`. It does not decide this itself: it asks the rules of the run's controls whether a control server is refused everything but a stop for the whole run (`always_refused()` in `libs/launch/src/control_rules.cpp`), and takes the reason and the message from there.
 - Each row of the call table (`rpc_rules()` in `libs/control_grpc/src/auth.cpp`) states what the call does to the simulation (read, change, stop).
 - An `observe_only` server refuses "change" calls in one place, right after the permission check and before the body of the call (`FAILED_PRECONDITION`, trailing metadata `vehicle-sil-reason`).
 - A refused call reaches neither the Hub nor `TimeControl`.

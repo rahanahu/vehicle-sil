@@ -85,20 +85,6 @@ std::string format_version_json(const std::vector<std::string_view>& more)
     return out;
 }
 
-const char* phase_name(Phase phase)
-{
-    switch (phase)
-    {
-    case Phase::Checking: return "checking";
-    case Phase::Starting: return "starting";
-    case Phase::Waiting: return "waiting";
-    case Phase::Running: return "running";
-    case Phase::Stopping: return "stopping";
-    case Phase::Ended: return "ended";
-    }
-    return "ended";
-}
-
 const char* participant_state_name(ParticipantState state)
 {
     switch (state)

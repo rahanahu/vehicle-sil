@@ -339,8 +339,7 @@ bool RunStart::wait_for_bridges(SimulationController& controller)
         [this] { return ctx_.interrupts() > 0; });
     if (waited == Waited::Interrupted)
     {
-        outcome_.interrupted_by = ctx_.interrupt_name();
-        out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+        interrupted_before_start();
         return false;
     }
     if (waited == Waited::TimedOut)
@@ -396,8 +395,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
     {
         if (ctx_.interrupts() > 0)
         {
-            outcome_.interrupted_by = ctx_.interrupt_name();
-            out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+            interrupted_before_start();
             return false;
         }
         if (const auto from = shared_.manual_wait_began(); from && std::chrono::steady_clock::now() >= *from + *ctx_.options.timeout)
@@ -485,8 +483,7 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         // hand as they end the wait above.
         if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
         {
-            outcome_.interrupted_by = ctx_.interrupt_name();
-            out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+            interrupted_before_start();
             return false;
         }
         if (!manual_timed_out_.empty())
@@ -519,12 +516,18 @@ bool RunStart::wait_for_start(SimulationController& controller, control_silkit::
         before_start_failed_ = true;
         return false;
     }
-    out_.event([](EventStream& e) { e.phase(Phase::Running); });
+    ctx_.controls.set_phase(Phase::Running);
     out_.say("simulation running");
     // Every participant starts at virtual time 0.
     wait_for_pause_at_start(controller);
     notes_.note_time(controller, TimeNote::Start, outcome_);
     return true;
+}
+
+void RunStart::interrupted_before_start()
+{
+    outcome_.interrupted_by = ctx_.interrupt_name();
+    out_.say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
 }
 
 bool RunStart::start_timed_out(const std::string& waiting_for)

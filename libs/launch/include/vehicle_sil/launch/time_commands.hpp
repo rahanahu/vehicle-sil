@@ -2,11 +2,12 @@
 //
 // The time commands of a run (pause, resume, step, run_until, speed) from standard input and a
 // control server, on their way to the simulation's time gate (TimeCommands). Used by the run
-// (run.hpp: RunOptions::time_commands). Internal; the commands: docs/simulation-events.md.
+// through its controls (run_controls.hpp). Internal; the commands: docs/simulation-events.md.
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/command.hpp"
+#include "vehicle_sil/launch/control_rules.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -45,6 +46,9 @@ struct TimeChange
 /// the reader of the events: only for this object's mutex and the gate's (neither is held while
 /// something waits).
 ///
+/// Whether a command is taken is the rules' answer (control_rules.hpp: decide()) for where this
+/// object stands; allowed() gives the same answer without doing anything.
+///
 /// Before the run attaches its controller (the check, the start), what the commands ask for is
 /// kept and given to the controller when it is attached. While attached, each command goes to the
 /// gate at once. Once detached (the simulation is over, or did not start), commands are refused.
@@ -65,27 +69,42 @@ public:
     using OnCommand = std::function<void(const Command& command, std::string_view source)>;
 
     /// `start_paused`: run --start-paused (a step is accepted before anything has been paused).
-    /// `on_command`: where apply() writes the command events (may be empty).
-    explicit TimeCommands(bool start_paused = false, OnCommand on_command = {});
+    /// `on_command`: where apply() writes the command events (may be empty). `scenario`: the run
+    /// plays a scenario (ControlSituation::scenario).
+    explicit TimeCommands(bool start_paused = false, OnCommand on_command = {}, bool scenario = false);
     ~TimeCommands();
     TimeCommands(const TimeCommands&) = delete;
     TimeCommands& operator=(const TimeCommands&) = delete;
 
-    /// Decides whether the time command (Command::is_time()) can be done now; writes its command
+    /// Decides whether the time command (Command::is_time()) can be done now (decide(), with
+    /// entry_of(source) and the command's arguments); writes its command
     /// event (`source`) with that answer (and, for step, how far the simulation goes: "ms" rounded
     /// up to whole steps of the controller; for run_until and pause with at_ms, where it will stand
     /// still: "at_ms" rounded up the same way), then does it. The event comes before what the
-    /// command changes. Returns the command as written. Refused: a step while not paused, a step,
-    /// run_until or pause with at_ms before the controller is attached, any command once detached,
-    /// a speed out of the range of parse_speed(), a step or at_ms out of 1 to kMaxMillis (at_ms
-    /// from 0). A "stop" (a control server's) is only decided and written here (refused once
-    /// detached); the caller asks the run to stop.
+    /// command changes. Returns the command as written. Refused (the rows of control_rules.cpp): a
+    /// step while not paused, a step, run_until or pause with at_ms before the controller is
+    /// attached, any command once detached, a speed out of the range of parse_speed(), a step or
+    /// at_ms out of 1 to kMaxMillis (at_ms from 0). A "stop" (a control server's) is only decided
+    /// and written here (refused once detached); the caller asks the run to stop.
     Command apply(const Command& command, std::string_view source);
     /// As apply(command, source), and if the command is accepted, `accepted` is called before
     /// apply() returns, under this object's mutex (short, must not wait): before any later
     /// command and before detach(). A control server's stop asks the run to stop there, so that
     /// a stop that is accepted reaches the run before the simulation is over.
     Command apply(const Command& command, std::string_view source, const std::function<void()>& accepted);
+
+    /// Whether `operation` from `entry` would be taken now, and the range of its argument
+    /// (launch::allowed()): what apply() decides for a command of that operation whose arguments
+    /// are in range, at this moment (another thread's command may change it right after). Changes
+    /// nothing and writes nothing.
+    [[nodiscard]] Allowed allowed(Operation operation, Entry entry);
+    /// launch::always_refused() for this run: whether `entry` is refused everything but a stop for
+    /// the whole run. The same answer whenever it is asked.
+    [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const;
+    /// Whether something that does not wait for the virtual time keeps this run to real time
+    /// (ControlSituation::time_locked; false until this is called). For the run: once, right after
+    /// it has read the configuration, and not again. Nothing calls it yet.
+    void set_time_lock(bool locked);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
     /// made with `step_ms`); first it is given the speed (`speed`, or the last speed command) and
@@ -112,13 +131,9 @@ public:
     Hold hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
                            const std::function<void()>& on_hold = {});
 
-    /// Where the run stands, for a control server.
-    enum class Stage
-    {
-        SettingUp, ///< before attach(): the check, the start of the registry and the controller
-        Attached,  ///< the controller takes the commands (also before its start and in the hold)
-        Detached,  ///< the simulation is over, or did not start
-    };
+    /// Where the run stands, for a control server: SettingUp (before attach()), Attached,
+    /// Detached.
+    using Stage = ControlStage;
     /// While attached, calls `f` with the controller and whether the run holds before its first
     /// step, under this object's mutex (`f` must be short and must not wait). Returns the stage.
     Stage inspect(const std::function<void(SimulationController& controller, bool holding)>& f);
