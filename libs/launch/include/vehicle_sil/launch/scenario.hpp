@@ -26,8 +26,6 @@
 
 namespace vehicle_sil::launch {
 
-struct CheckReport;
-
 /// The version of the scenario format (its "vehicle_sil_scenario" key).
 inline constexpr int kScenarioFormat = 1;
 
@@ -286,9 +284,6 @@ struct CatalogParticipant
     std::shared_ptr<const control::MappedSchema> map{};
 };
 using ScenarioCatalog = std::vector<CatalogParticipant>;
-
-/// The catalog of a checked configuration (CheckReport::config must be set).
-[[nodiscard]] ScenarioCatalog scenario_catalog(const CheckReport& check);
 
 /// What a scenario is read for, besides the participants: the variant and the parameters.
 struct ScenarioContext
