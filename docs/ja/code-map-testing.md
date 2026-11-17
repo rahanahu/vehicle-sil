@@ -50,6 +50,30 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 - 接頭辞だけを指定するときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.`、`j1939_spy.` にも一致します。
 - ラベルで選ぶときは `-L` を使います（[テストのラベル](#テストのラベル)）。
 
+### リスクに応じて検証を選ぶ
+
+変更が壊しうるものを手元で実行し、プリセットの全組み合わせは CI に任せます。変更する分野のページに、その分野のテストと `ctest -R` の式があります（[作業対象から探す](code-map.md#作業対象から探す)）。
+
+| 変更 | 手元で実行するもの |
+|---|---|
+| どの変更でも（既定） | 1 つのプリセットと、触ったもののテスト: `scripts/verify.py linux-gcc-debug --tests '<正規表現>'` |
+| 並行性、スレッド、時間 | 同じテストを `linux-clang-tsan` でも |
+| 多くのターゲットが含む公開ヘッダーやテンプレート | 触ったターゲットを `linux-clang-tsan` でビルドする |
+| ランチャーが出力・計数するもの（所見、イベント、`run` の出力）と、それを写したドキュメント | `^launch`、`^schema\.`、`^template\.`（[ドキュメントの例とテスト](#ドキュメントの例とテスト)） |
+| GUI が再生するランチャーの出力（`gui/server/tests/recordings/`）、または Control API | `linux-gcc-control` をビルドして `^control` のテストを実行し、続けて `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
+| ブラウザ GUI だけ | `scripts/verify-web.py`（1 つの分野だけは `--e2e-grep`） |
+| ドキュメントだけ | `scripts/check-docs.py` |
+| スクリプトだけ | `python3 tests/scripts/test_<name>.py` |
+
+作業の報告と pull request の説明は、次の 2 行で終えます。
+
+```text
+Verified: <実行したものと、それが確かめたこと>
+Not run: <CI に任せたもの、実行しなかったものと、その理由>
+```
+
+実行していないものを `Verified:` に書きません。何も実行しなかったときは、両方の行にそう書きます。
+
 ### ポートとロック
 
 テストは決まったポートで待ち受けません。同じ PC で、別の作業ツリーのビルドのテストと同時に実行できます。
