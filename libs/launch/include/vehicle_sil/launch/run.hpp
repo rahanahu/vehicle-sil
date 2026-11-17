@@ -259,10 +259,10 @@ struct RunOutcome
     /// registry) had not closed when the launcher stopped waiting for it, after the participants
     /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
     /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
-    /// closing it; it keeps the three and the run's hub, and uses nothing else of the run (whose
-    /// parts are never destroyed all the same). The result is complete. The caller ends the process without destroying what it gave the run
-    /// (RunOptions) and without running the destructors of static objects (std::_Exit(); Windows:
-    /// TerminateProcess()) when it has written the result.
+    /// closing it; it keeps the three and the run's hub, and uses nothing else of the run or of
+    /// what the caller gave the run (RunOptions): both may be destroyed. The result is complete.
+    /// The caller ends the process without running the destructors of static objects (std::_Exit();
+    /// Windows: TerminateProcess()) when it has written the result: the thread is inside SIL Kit.
     std::optional<std::int64_t> connection_not_closed_ms{};
     /// connection_not_closed_ms: one more interrupt ended the wait before its limit (the person
     /// asked for the end at once: no finding). false: the limit passed (finding

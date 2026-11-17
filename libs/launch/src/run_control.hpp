@@ -30,26 +30,24 @@ struct ControlStart
 /// The hub of the run and what is known about the participants' control links.
 ///
 /// Threads and locks: no lock of its own.
-/// - hub(), shared_hub(): the hub is the Runner's, made before this object. The first call gives
-///   it the variable maps. That call is the main thread's, in the setup, before the controller is
-///   started and so before any other thread of the run exists (Runner::run(): the control server,
-///   or the hub's transport); every later call (the start window's thread, the main thread) only
-///   reads. The Hub keeps itself.
+/// - hub(), shared_hub(): the hub is made with this object, the one hub of the run. The first
+///   call gives it the variable maps. That call is the main thread's, at the beginning of
+///   Runner::run() (which gives the hub to its RunConnection), before any other thread of the run
+///   exists; every later call (the start window's thread, the main thread) only reads. The Hub
+///   keeps itself.
 /// - described_link(), offers_control(), expected_agents(): any thread; they read the RunContext only.
 /// - note_links(), note_late_values(), note_late_maps(): the main thread (they write the RunOutcome).
 class RunControl
 {
 public:
-    /// `hub`: the run's hub (never null).
-    RunControl(const RunContext& ctx, RunOutput& out, std::shared_ptr<control::Hub> hub) :
-      ctx_(ctx), out_(out), hub_(std::move(hub))
-    {
-    }
+    /// Makes the run's hub.
+    RunControl(const RunContext& ctx, RunOutput& out) : ctx_(ctx), out_(out), hub_(std::make_shared<control::Hub>()) {}
 
     /// The run's hub. The first call (of this or of shared_hub()) gives it the variable maps of
     /// the enabled participants (control::Hub::set_variable_map()), before any agent connects.
     [[nodiscard]] control::Hub& hub() { return *shared_hub(); }
-    /// The same, for one who keeps the hub for itself (RunOptions::serve_control, before_start).
+    /// The same, for one who keeps the hub for itself (the run's RunConnection, RunOptions::serve_control,
+    /// before_start).
     [[nodiscard]] const std::shared_ptr<control::Hub>& shared_hub();
 
     /// What --describe says about participant `i`'s variables (ControlLink::None, NotOffered,
@@ -89,7 +87,7 @@ private:
 
     const RunContext& ctx_;
     RunOutput& out_;
-    const std::shared_ptr<control::Hub> hub_; ///< the Runner's, shared with it
+    const std::shared_ptr<control::Hub> hub_; ///< the run's hub: made here, never null
     bool maps_set_ = false;                   ///< the first hub() gave the hub the participants' variable maps
 };
 
