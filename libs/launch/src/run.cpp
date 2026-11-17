@@ -20,8 +20,8 @@
 //   run_connect.cpp      with_bridges()   run --connect: the bridges as participants of the run only
 //   run_outside.cpp      read_outside_counts(), OutsideNote   run --connect: the counts in a bridge's
 //                        statistics lines, and when the event "outside" goes out
-//   timeline.cpp         TimelineRecord, format_timeline_json()   run --timeline: what the scenario's
-//                        engine notes, and the file made of it (Runner::open_timeline(), write_timeline())
+//   timeline.cpp         TimelineRecord   run --timeline: what the scenario's engine notes
+//   timeline_format.cpp  format_timeline_json()   the file made of it (Runner::open_timeline(), write_timeline())
 //
 // The threads of a run, and what each may touch:
 // - The main thread (run_file()'s caller): everything, and alone the RunOutcome, RunParticipants,
@@ -76,6 +76,7 @@
 #include "run_watch.hpp"
 
 #include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/timeline_format.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"

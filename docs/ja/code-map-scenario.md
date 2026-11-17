@@ -165,7 +165,7 @@
 |---|---|
 | 記録、上限、古い側を捨てる決まり | `libs/launch/src/timeline.cpp` の `TimelineRecord` |
 | 記録に入れる所 | `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`place()`（入力の線 `lines[]`。`shape` の中身はシナリオの読み手が読んだ `ScenarioMotion::described`）、`issue_step()`（見張り）、`fail()`（失敗の中身。書く内容は `scenario_failure.cpp` が作る）、`close_record()`（記録の終わり `recorded_to_ms`） |
-| ファイルの形 | `timeline.cpp` の `format_timeline_json()` |
+| ファイルの形 | `timeline_format.cpp` の `format_timeline_json()` |
 | 1 行に 1 点 | `libs/json/include/vehicle_sil/json/json_writer.hpp` の `JsonWriter::begin_array_on_one_line()` |
 | ファイルを開く所と書く所 | `run.cpp` の `Runner::open_timeline()` と `write_timeline()` |
 | 指摘 `timeline-write` と `timeline-limit` | `run_assess.cpp` |

@@ -46,6 +46,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/seen_ecu.cpp
   src/test.cpp
   src/timeline.cpp
+  src/timeline_format.cpp
   src/time_commands.cpp
 )
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)

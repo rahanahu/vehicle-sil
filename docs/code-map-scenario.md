@@ -165,7 +165,7 @@ Where to change:
 |---|---|
 | The record, its limits and the rule that drops the older points | `TimelineRecord` in `libs/launch/src/timeline.cpp` |
 | Where the engine records | In `scenario_run.cpp`: `submit_one()` (writes), `observe()` (samples), `place()` (the input lines `lines[]`; the contents of `shape` are `ScenarioMotion::described`, which the scenario's reader fills when it reads the scenario), `issue_step()` (watches), `fail()` (what failed; what it says comes from `scenario_failure.cpp`), `close_record()` (the end of the record, `recorded_to_ms`) |
-| The file format | `format_timeline_json()` in `timeline.cpp` |
+| The file format | `format_timeline_json()` in `timeline_format.cpp` |
 | One point per line | `JsonWriter::begin_array_on_one_line()` in `libs/json/include/vehicle_sil/json/json_writer.hpp` |
 | Opening and writing the file | `Runner::open_timeline()` and `write_timeline()` in `run.cpp` |
 | The findings `timeline-write` and `timeline-limit` | `run_assess.cpp` |
