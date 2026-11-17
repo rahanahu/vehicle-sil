@@ -8,7 +8,7 @@
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/launch/connections.hpp"
 #include "vehicle_sil/launch/test.hpp"
-#include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/launch/timeline_format.hpp"
 
 #include <algorithm>
 #include <charconv>

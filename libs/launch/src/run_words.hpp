@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// The words of the run's output that more than one part of it uses: how a process ended, a
-// time in milliseconds. Pure functions. Internal.
+// The words of the run's output that more than one part of it uses: how a process ended (a time in
+// milliseconds is in check_words.hpp). Pure functions. Internal.
 #pragma once
 
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+
+#include "check_words.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -17,8 +19,6 @@ namespace vehicle_sil::launch::detail {
 /// The launcher's own lines: the participant name of its "log" events, the tag of its lines.
 inline constexpr std::string_view kLauncherName = "vehicle_sil_launch";
 inline constexpr std::string_view kLauncherTag = "[vehicle_sil_launch] ";
-
-inline constexpr std::int64_t kNanosPerMilli = 1'000'000;
 
 inline std::string hex_code(int code)
 {
@@ -47,12 +47,6 @@ inline bool ended_by_itself(const ParticipantRun& p)
 inline bool failed_exit(const ParticipantRun& p)
 {
     return p.exit && ended_by_itself(p) && (p.exit->code != 0 || p.exit->signal);
-}
-
-/// Nanoseconds as milliseconds in the shortest form ("10", "2.5").
-inline std::string millis_text(std::int64_t ns)
-{
-    return speed_text(static_cast<double>(ns) / static_cast<double>(kNanosPerMilli));
 }
 
 } // namespace vehicle_sil::launch::detail

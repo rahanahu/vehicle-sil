@@ -51,6 +51,38 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: if \\(\\(result\\.ecu->description\\.\\*\\(&EcuDescription::networks\\)\\)\\.empty\\(\\)\\)[^:]*launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
+# The files of the launcher that make up its pure layer (the configuration, the checks and the
+# scenario) include no SIL Kit header, no process header, no run, events or time-command header,
+# directly or through the headers they include (the private ones of libs/launch/src too). Add a
+# file to the list when it no longer includes them. The check itself must reject a fixture that
+# reaches them, and name the chain.
+set(_launch_pure_files
+    libs/launch/src/yaml_reader.hpp libs/launch/src/yaml_tree.hpp libs/launch/src/check_rules.cpp
+    libs/launch/src/config.cpp libs/launch/src/connect.cpp libs/launch/src/check_connect.cpp
+    libs/launch/src/scenario_csv.cpp libs/launch/src/scenario_csv.hpp
+    libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp libs/launch/src/seen_ecu.hpp
+    libs/launch/src/check_words.hpp libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
+    libs/launch/src/scenario_values.cpp libs/launch/src/scenario_waves.cpp libs/launch/src/scenario_inputs.cpp
+    libs/launch/src/scenario_shapes.cpp libs/launch/src/scenario_shapes.hpp libs/launch/src/scenario_line.cpp
+    libs/launch/src/scenario_line.hpp libs/launch/src/scenario_run.cpp libs/launch/src/scenario_failure.cpp
+    libs/launch/src/scenario_failure.hpp libs/launch/include/vehicle_sil/launch/config.hpp
+    libs/launch/include/vehicle_sil/launch/scenario.hpp libs/launch/include/vehicle_sil/launch/scenario_run.hpp
+    libs/launch/include/vehicle_sil/launch/timeline.hpp libs/launch/include/vehicle_sil/launch/connect.hpp
+    libs/launch/include/vehicle_sil/launch/traffic.hpp)
+list(JOIN _launch_pure_files "," _launch_pure_files_arg)
+add_test(NAME launch.pure_files_include_no_runtime
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+add_test(NAME launch.pure_files_check_rejects_a_forbidden_include
+         COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/direct
+                 -DFILES=launch/src/pure.cpp,launch/src/clean.hpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+set_tests_properties(launch.pure_files_include_no_runtime launch.pure_files_check_rejects_a_forbidden_include
+                     PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
+                     PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
+                     FAIL_REGULAR_EXPRESSION "clean\\.hpp:")
+
 # vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of
 # tests/process), --strict, files that cannot be read, the command line.

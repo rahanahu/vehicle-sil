@@ -78,7 +78,8 @@ Public headers:
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
-| `TimelineRecord`, the record of `run --timeline`; `format_timeline_json()`, which writes the file | `launch/timeline.hpp` |
+| `TimelineRecord`, the record of `run --timeline` | `launch/timeline.hpp` |
+| `format_timeline_json()`, which writes the file of `run --timeline` from the record and the scenario's result | `launch/timeline_format.hpp` |
 
 Implementation:
 

@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 //
 // The words that more than one reader or output of the check puts into its messages: lists, the
-// kinds and uses of network as the messages list them, a step, an address. Pure functions.
-// Internal.
+// kinds and uses of network as the messages list them, a step, an address, a time in
+// milliseconds. Pure functions. Internal.
 #pragma once
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/j1939/types.hpp"
+#include "vehicle_sil/launch/config.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -185,5 +186,13 @@ private:
     std::string last_;
     std::string failure_;
 };
+
+inline constexpr std::int64_t kNanosPerMilli = 1'000'000;
+
+/// Nanoseconds as milliseconds in the shortest form ("10", "2.5").
+inline std::string millis_text(std::int64_t ns)
+{
+    return speed_text(static_cast<double>(ns) / static_cast<double>(kNanosPerMilli));
+}
 
 } // namespace vehicle_sil::launch::detail
