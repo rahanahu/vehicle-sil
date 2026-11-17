@@ -132,7 +132,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 `paused` が `true` のイベントは、ふつう、止まった後に書きます。`--start-paused` の最初の `time` も、時刻 0 で止まってから書くので、結果の `paused_ms` は、このイベントより前から数えています。例外は次の 2 つです。どちらも、止まる予定の時刻に着いているのに、まだ止まっていない間に `true` を書きます。このときの `paused_ms` は、実際に止まってから数えます。
 
 - 始まった後 2 秒たっても、時刻 0 で止まらなかったとき（待つのをやめて書きます）。
-- 時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次のタイムステップで止まるとき。
+- 動いている間に、時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次のタイムステップで止まるとき。
 
 `command`:
 
@@ -144,7 +144,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `message` | 受け付けなかった理由（受け付けたら `null`） |
 | `reason` | 受け付けなかった理由のコード（[理由のコード](#理由のコード)。受け付けたら `null`） |
 | `ms` | 受け付けた `step` にだけあります。実際に進む仮想時間（タイムステップの倍数に切り上げたもの） |
-| `at_ms` | 受け付けた `run_until` と、時刻つきの `pause` にだけあります。止まる仮想時刻（タイムステップの倍数に切り上げたもの） |
+| `at_ms` | 受け付けた `run_until` と、時刻つきの `pause` にだけあります。頼んだ仮想時刻（タイムステップの倍数に切り上げたもの）。その時刻がすでに過ぎている場合を除き、止まる時刻です（「標準入力のコマンド」を見てください） |
 | `id` | 標準入力の行の `id` をそのまま返します（行になければ `null`。ほかの `source` でも `null`） |
 
 `command` を書くのは、標準入力からコマンドを受けたとき（`--stdin-commands`）と、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`）です。時刻つきの `pause` は、クライアントからだけ来ます。
@@ -530,14 +530,14 @@ participant の `log` の終わりの側には、保証がありません。part
 | `pause` | controller のタイムステップの境目で止まります（速度を合わせて待っているタイムステップがあれば、そこで。なければ次のタイムステップで）。 |
 | `resume` | 速度は、ここから数え直します。 |
 | `step` | タイムステップの倍数に切り上げます（`command` のイベントの `ms` が、実際に進む量です）。 |
-| `run_until` | 動いている間も、一時停止している間も使えます。過ぎた時刻なら、次のタイムステップで止まります。`command` のイベントの `at_ms` が止まる時刻です（タイムステップの倍数に切り上げたもの）。 |
 | `step` | 前の `step` の途中で送ると、その止まる時刻から数えます。 |
+| `run_until` | 動いている間も、一時停止している間も使えます。止まっている時刻がすでに指定の時刻以上なら、そのまま止まっていて、何も起きません。動いている間に過ぎた時刻なら、次のタイムステップで止まります。`command` のイベントの `at_ms` は、頼んだ時刻をタイムステップの倍数に切り上げたものです。過ぎた時刻では止まる時刻と一致しないので、`at_ms` を待たず、次の `paused` が `true` の `time` の `sim_ms` か `state` のイベントを見てください。 |
 | `speed` | 一時停止はそのままです。 |
 | EOF | すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` のイベントも書きません）。 |
 | それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、`id` が 0 以上 2^53 以下の整数でない、64 KiB を超える行がこれに当たります。 |
 | それ以外 | `--events` なら `command` のイベント（`accepted: false`、`message`、`reason`）を、なければ標準エラーに 1 行を書きます。 |
 
-オブジェクトのほかのキーは無視します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
+オブジェクトのほかのキーは無視します。`at_ms` を付けた `pause` は、時刻なしの `pause` として扱います（時刻で止めるには `run_until` を使います）。`--stdin-commands` のない実行でも、`state` のイベントは `run_until` を標準入力の答えとして示します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
 
 ### 時間のコマンドを受け付ける条件
 
@@ -555,7 +555,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 一時停止しても、`phase` は `running` のままです。一時停止は `state` と `time` の `paused` で通知します。
 
-`--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
+`--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`run_until`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
 
 ### `accepted` の意味と、止めた実行の結果
 
@@ -681,7 +681,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connections` | `vehicle_sil_launch connections`: この PC で各ネットワークをどこにつなげるか（[simulation-run.md](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections) の「つなげる先の一覧（`vehicle_sil_launch connections`）」） |
 | `connect-counts` | つないだネットワークが実機のバスへ送ったフレームと、そこの機器から来たフレームの数（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」） |
 | `state` | イベント `state`: 実行がいまどこにいるかと、いま受け付ける操作（[`state` のイベント](#state-のイベント)） |
-| `stdin-run-until` | 標準入力の `run_until` |
+| `stdin-run-until` | 標準入力の `run_until`（[標準入力のコマンド](#標準入力のコマンドrun---stdin-commands)を見てください） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 

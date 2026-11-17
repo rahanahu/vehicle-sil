@@ -158,9 +158,9 @@ The body is one of the following (any other field gives 400 `invalid-field`).
 
 The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
-- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, and for `step` the actual `ms` it advances). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
+- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, for `step` the actual `ms` it advances, and for `run_until` the `at_ms` asked for, rounded up to the time step). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
 - If no run is running (it ended, it is starting, the launcher's input is closed), the response is 409 `not-running`.
-- If the launcher of that run (`version --json` at the start) lacks `time-commands` in `features`, the response is 400 `unsupported`. The same for `run_until` and `stdin-run-until`.
+- If the launcher of that run (`version --json` at the start) lacks `time-commands` in `features`, the response is 400 `unsupported`. A `run_until` is also refused with 400 `unsupported` when `features` lacks `stdin-run-until`.
 - Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
 - What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
 

@@ -307,6 +307,13 @@ void run_until_stdin(const Options& o)
     live.wait_for({"\"event\":\"time\"", "\"sim_ms\":100,", "\"paused\":true,"});
     std::this_thread::sleep_for(300ms);
     require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "it stands still at 100 ms");
+    // A time that has passed while it stands still at 100: accepted, and nothing moves (the at_ms is
+    // the time asked for, rounded up, not a time it stops at).
+    live.write("{\"command\":\"run_until\",\"at_ms\":50,\"id\":7}\n");
+    live.wait_for({"\"command\":\"run_until\"", "\"accepted\":true,\"message\":null,\"reason\":null,"
+                   "\"at_ms\":50,\"id\":7}"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":110,"}).empty(), "a time that has passed moves nothing");
     live.write("{\"command\":\"run_until\",\"id\":6}\n");
     live.wait_for({"\"command\":\"run_until\"", "\"accepted\":false", "\"reason\":\"invalid-argument\",\"id\":6}"});
     live.write("{\"command\":\"stop\"}\n");
