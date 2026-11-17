@@ -6,7 +6,8 @@
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/command.hpp"
+#include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <array>
@@ -76,29 +77,6 @@ enum class Phase
     Ended,    ///< every participant has ended; the result follows
 };
 [[nodiscard]] const char* phase_name(Phase phase);
-
-/// One line of standard input, read as a command.
-struct Command
-{
-    /// The value of "command" if the line is a JSON object whose "command" is a string.
-    std::optional<std::string> name{};
-    bool accepted = false;
-    /// Why it was not accepted (one line), or "".
-    std::string message{};
-    /// step: its "ms" as read; once applied (TimeCommands), how far the simulation goes (the
-    /// command event's "ms").
-    std::optional<std::int64_t> ms{};
-    /// speed: its "value" (empty: "max").
-    std::optional<double> speed{};
-    /// Only from a control server: pause at, and run_until, this virtual time; once applied
-    /// (TimeCommands), where the simulation will stand (the command event's "at_ms"), a whole
-    /// number of the controller's steps.
-    std::optional<std::int64_t> at_ms{};
-
-    [[nodiscard]] bool is_stop() const { return accepted && name == "stop"; }
-    /// pause, resume, step, run_until or speed (TimeCommands applies it).
-    [[nodiscard]] bool is_time() const { return accepted && name && *name != "stop"; }
-};
 
 /// The longest command line read; a longer one is not accepted.
 inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
@@ -311,12 +289,14 @@ public:
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
     /// client ("control_server").
     void command(const Command& command, std::string_view source);
-    /// The last event: the run's result as `run --json` writes it. Waits until it has been written
+    /// The last event: the run's result as `run --json` writes it. `members`: the event's members
+    /// as a compact JSON object, {"result":{...}} (format_result_event() of run.hpp writes it from
+    /// the run's report). Waits until it has been written
     /// (true) or the stream has closed (false): at most stall_timeout, whether the reader reads
     /// or not. While nothing could be written for half a second, `give_up` is asked every few
     /// milliseconds, and true closes the stream (`give_up` takes the result from no reader that
     /// reads).
-    bool result(const RunReport& report, const std::function<bool()>& give_up = {});
+    bool result(std::string members, const std::function<bool()>& give_up = {});
 
     /// Waits up to `timeout` until every event given so far has been written; false if the time
     /// is over or the stream has closed.

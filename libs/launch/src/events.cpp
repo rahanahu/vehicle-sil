@@ -856,9 +856,9 @@ void EventStream::command(const Command& command, std::string_view source)
          }));
 }
 
-bool EventStream::result(const RunReport& report, const std::function<bool()>& give_up)
+bool EventStream::result(std::string members, const std::function<bool()>& give_up)
 {
-    if (!emit("result", object([&](Writer& w) { detail::write_run_json(w, "result", report); }), Kind::Result))
+    if (!emit("result", std::move(members), Kind::Result))
     {
         return false;
     }

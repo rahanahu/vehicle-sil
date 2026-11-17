@@ -7,6 +7,7 @@
 
 #include "check_format.hpp"
 #include "check_words.hpp"
+#include "run_format.hpp"
 #include "run_words.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"

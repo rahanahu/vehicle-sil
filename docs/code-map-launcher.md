@@ -77,6 +77,7 @@ Public headers:
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
+| `Command`, a command as it was read and as `TimeCommands` decided it | `launch/command.hpp` |
 | `read_scenario()`, which reads scenarios; `Waveform`, the interface for functions of time | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
 | `TimelineRecord`, the record of `run --timeline` | `launch/timeline.hpp` |
@@ -343,6 +344,7 @@ When changing events or commands consumed by the GUI, also check [GUI implementa
 Where to change:
 
 - The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/events.cpp`, `tools/launch/main.cpp`)
+- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`)
 
 Documentation to update:
 
