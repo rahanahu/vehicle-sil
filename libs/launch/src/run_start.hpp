@@ -153,6 +153,9 @@ private:
     /// --timeout-ms passed before the simulation started (a run that waits for a participant started
     /// by hand): `waiting_for` says for what. Returns false (it did not start).
     bool start_timed_out(const std::string& waiting_for);
+    /// A stop request came before the simulation started: notes who asked in the outcome and says
+    /// so. The caller returns false.
+    void interrupted_before_start();
     /// Says once of each participant that joined the simulation under a name this run does not
     /// have and waits for the start (a mistyped --name of a participant started by hand;
     /// StrangerWait): the run waits on without it. One outside the file that runs on its own

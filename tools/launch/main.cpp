@@ -368,24 +368,13 @@ void write_stderr_line_without_waiting(std::string line)
 
 /// The stop requests of the process (run: those of the run's controls; test:
 /// launch::RunOptions::stops). The source of a request: a
-/// signal (POSIX), a console event + 1 (Windows), or one of these.
+/// signal (POSIX), a console event + 1 (Windows), or one of launch::stop_source.
 constinit launch::StopRequests g_stops;
-constexpr int kStopCommand = -1;  // {"command":"stop"} on standard input
-constexpr int kEndOfInput = -2;   // standard input ended (run --stdin-commands)
-constexpr int kOutputClosed = -3; // the reader of the events has gone (run --events)
-constexpr int kControlStop = -4;  // a client of the control server called Stop (run --control)
-
-std::string stop_source_name(int source)
-{
-    switch (source)
-    {
-    case kStopCommand: return "stop command";
-    case kEndOfInput: return "end of input";
-    case kOutputClosed: return "output closed";
-    case kControlStop: return "control server stop";
-    default: return {};
-    }
-}
+using launch::stop_source::kControlStop;
+using launch::stop_source::kEndOfInput;
+using launch::stop_source::kOutputClosed;
+using launch::stop_source::kStopCommand;
+using launch::stop_source_name;
 
 #ifdef _WIN32
 BOOL WINAPI on_console_event(DWORD event)
