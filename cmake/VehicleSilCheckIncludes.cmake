@@ -2,7 +2,8 @@
 # must not depend on, directly or through the headers they include: a SIL Kit header (silkit/...,
 # also any *_silkit/ library), vehicle_sil/core/participant_runtime.hpp,
 # vehicle_sil/process/child_process.hpp, vehicle_sil/process/process.hpp,
-# vehicle_sil/launch/run.hpp, and headers named events.hpp, time_commands.hpp or run_*.hpp. The
+# vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
+# headers named events.hpp, time_commands.hpp or run_*.hpp. The
 # check follows the vehicle_sil/... includes (found in the project's include directories) and the
 # "..." includes of a header in the same directory as the including file (the private headers of
 # libs/launch/src). A failure names the listed file and the chain of includes to the forbidden
@@ -23,7 +24,7 @@ file(GLOB include_roots LIST_DIRECTORIES true
      "${project}/bridges/*/include" "${project}/tools/*/include")
 
 set(forbidden_exact vehicle_sil/core/participant_runtime.hpp vehicle_sil/process/child_process.hpp
-                    vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp)
+                    vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp vehicle_sil/launch/probe.hpp)
 set(bad "")
 set(checked 0)
 foreach(listed IN LISTS FILES)

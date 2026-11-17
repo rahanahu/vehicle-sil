@@ -309,16 +309,10 @@ struct ScenarioContext
     /// Reads a file the scenario names (a wave's `points: { file: <path> }`). `path` is as the
     /// scenario writes it, already checked: relative, '/' between directories, no "..". Returns the
     /// bytes, or empty and `problem` (what is wrong and how to fix it, after "<path> ").
-    /// files_beside() gives the one of a scenario file. Not set: a scenario that names a file is an
-    /// error ("scenario-points-file").
+    /// files_beside() (probe.hpp) gives the one of a scenario file. Not set: a scenario that names a
+    /// file is an error ("scenario-points-file").
     std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_file{};
 };
-
-/// The ScenarioContext::read_file of the scenario file `scenario`: a path is from the directory
-/// the file is in (a UTF-8 path, also on Windows). A file larger than 16 MiB, a directory and a
-/// file that cannot be opened are problems.
-[[nodiscard]] std::function<std::optional<std::string>(const std::string&, std::string&)>
-files_beside(const std::filesystem::path& scenario);
 
 struct ScenarioRead
 {
