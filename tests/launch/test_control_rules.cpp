@@ -105,7 +105,10 @@ TEST_CASE(control_rules_name_the_operations_and_the_entries)
     check_text(entry_name(Entry::ControlServer), "control_server");
     CHECK(entry_of("control_server") == Entry::ControlServer);
     CHECK(entry_of("stdin") == Entry::Stdin);
-    CHECK(entry_of("anything else") == Entry::Stdin);
+    // No other text is an entry: nothing falls to the entry with the fewer rules.
+    CHECK(!entry_of("anything else"));
+    CHECK(!entry_of("Control_Server"));
+    CHECK(!entry_of(""));
 }
 
 TEST_CASE(control_rules_take_what_no_row_refuses)
@@ -398,13 +401,19 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
             CHECK(a.ok);
             CHECK(!a.range);
         }
-        // Refused: the code and the message of the row, by the operation's name, and no range.
+        // Refused: the code and the message of the row, by the operation's name; the range all
+        // the same (what the argument would have to be), and no caution anywhere yet.
         const Allowed early = allowed(situation(ControlStage::Attached, false), entry, Operation::Step);
         CHECK(!early.ok);
         check_text(early.reason, "not-paused");
         check_text(early.message, "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run "
                                   "with --start-paused)");
-        CHECK(!early.range);
+        CHECK(early.range.has_value());
+        CHECK_EQ(early.range->min, 1.0);
+        CHECK_EQ(early.range->max, static_cast<double>(kMaxMillis));
+        CHECK(!early.caution && !step.caution && !speed.caution);
+        CHECK(allowed(situation(ControlStage::Detached), entry, Operation::Speed).range.has_value());
+        CHECK(!allowed(situation(ControlStage::Detached), entry, Operation::Pause).range);
         // Without arguments a run_until has a time and a pause has none.
         const Allowed until = allowed(situation(ControlStage::SettingUp), entry, Operation::RunUntil);
         check_text(until.reason, "not-set-up");
@@ -424,7 +433,7 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
             const Allowed a = allowed(locked, entry, o);
             CHECK(!a.ok);
             check_text(a.reason, "outside-real-time");
-            CHECK(!a.range);
+            CHECK(a.range.has_value() == (o == Operation::Step)); // a step has its range, taken or not
         }
         CHECK(allowed(locked, entry, Operation::Resume).ok);
         CHECK(allowed(locked, entry, Operation::Stop).ok);

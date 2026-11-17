@@ -6,9 +6,9 @@
 // State and lock: everything is in TimeCommands::State, guarded by its mutex. Any thread applies
 // a command (the thread that reads the commands, a control server's); the run's main thread
 // attaches and detaches the controller; the start window's thread holds before the first step.
-// Taken while that mutex is held: whatever on_command takes (the event stream's, for the "command"
-// event), the controller's gate's (pause, resume, run_until, set_speed, time_state) and whatever
-// on_detach takes.
+// Taken while that mutex is held: whatever on_command and on_change take (the event stream's, for
+// the "command" and "state" events), the controller's gate's (pause, resume, run_until, set_speed,
+// time_state) and whatever on_detach takes.
 // hold_before_start() calls on_hold and give_up without it.
 #include "vehicle_sil/launch/time_commands.hpp"
 
@@ -47,6 +47,10 @@ struct TimeCommands::State
     /// Since the last pause (or the start, paused): a step, run_until or pause at a later time
     /// has let the simulation go on from 0, so there is nothing to hold before the first step.
     bool released = false;
+    /// The speed the gate had when it was looked at last (facts_of()); kept for after detach().
+    std::optional<std::optional<double>> gate_speed{};
+    /// set_on_change().
+    OnChange on_change{};
     /// Called in detach() with the controller, before it goes (set_on_detach()).
     std::function<void(SimulationController&)> on_detach{};
     /// The first accepted command that changed how the time goes (first_time_change()).
@@ -62,6 +66,36 @@ template <typename S> ControlSituation situation_of(const S& s)
                                : s.controller == nullptr ? ControlStage::SettingUp
                                                          : ControlStage::Attached;
     return ControlSituation{stage, s.paused, s.scenario, s.time_locked};
+}
+
+/// The facts of `s` now. Under its mutex; reads the gate.
+template <typename S> TimeFacts facts_of(S& s)
+{
+    TimeFacts f;
+    f.situation = situation_of(s);
+    f.holding = s.holding;
+    if (s.controller != nullptr)
+    {
+        const TimeState t = s.controller->time_state();
+        // As the time event's `paused` (noted_paused()): it stands still, or does with its next step.
+        f.standing = s.holding || t.paused || (t.pause_target && *t.pause_target <= t.now);
+        s.gate_speed = t.speed;
+    }
+    else
+    {
+        f.standing = !s.detached && s.paused;
+    }
+    f.speed = s.gate_speed ? s.gate_speed : s.speed;
+    return f;
+}
+
+/// Tells on_change, if there is one. Under the mutex of `s`.
+template <typename S> void tell(S& s)
+{
+    if (s.on_change)
+    {
+        s.on_change(facts_of(s));
+    }
 }
 
 /// `ms` rounded up to a whole number of `step_ms`.
@@ -87,15 +121,28 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
+    // However this returns: what the command changed (or a stop request the caller made in
+    // `accepted`) is told after the command's event.
+    struct Tell
+    {
+        State& s;
+        ~Tell() { tell(s); }
+    } const told{s};
     Command out = command;
     const std::string name = command.name.value_or("");
     // A pause at a time, or run_until: they need the controller's step to round to.
     const bool at_time = command.at_ms.has_value() && (name == "pause" || name == "run_until");
-    Decision decision = decide(situation_of(s), entry_of(source), command_operation(name), name, &command);
+    const std::optional<Entry> entry = entry_of(source);
+    Decision decision =
+        entry ? decide(situation_of(s), *entry, command_operation(name), name, &command)
+              : Decision{false, reason::kUnknownSource,
+                         "the command came from '" + std::string(source) +
+                             "', which is no entry of a run's commands (stdin, control_server): it is refused"};
     if (!decision.ok)
     {
         out.accepted = false;
         out.message = std::move(decision.message);
+        out.reason = std::move(decision.reason);
     }
     else if (name == "step")
     {
@@ -210,6 +257,21 @@ void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms
     {
         controller.pause_at(SimTime{});
     }
+    tell(s);
+}
+
+void TimeCommands::set_on_change(OnChange on_change)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    s.on_change = std::move(on_change);
+}
+
+void TimeCommands::look(const std::function<void(const TimeFacts& facts)>& f)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    f(facts_of(s));
 }
 
 void TimeCommands::set_on_detach(std::function<void(SimulationController& controller)> f)
@@ -224,13 +286,22 @@ void TimeCommands::detach()
     State& s = *state_;
     {
         const std::lock_guard lock(s.mutex);
-        if (s.controller != nullptr && s.on_detach)
+        if (s.controller != nullptr)
         {
-            s.on_detach(*s.controller);
+            static_cast<void>(facts_of(s)); // the gate's speed, for the facts from now on
+            if (s.on_detach)
+            {
+                s.on_detach(*s.controller);
+            }
         }
+        const bool was_detached = s.detached;
         s.controller = nullptr;
         s.detached = true;
         s.holding = false;
+        if (!was_detached)
+        {
+            tell(s);
+        }
     }
     s.cv.notify_all();
 }
@@ -250,6 +321,7 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
             return Hold::None; // a command before the window let it go on: nothing to hold
         }
         s.holding = true;
+        tell(s);
     }
     // However this ends (also by an exception), the run no longer holds.
     struct EndHold
@@ -259,6 +331,7 @@ TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& 
         {
             const std::lock_guard lock(s.mutex);
             s.holding = false;
+            tell(s);
         }
     } const end{s};
     if (on_hold)
@@ -312,6 +385,7 @@ void TimeCommands::set_time_lock(bool locked)
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
     s.time_locked = locked;
+    tell(s);
 }
 
 TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationController& controller, bool holding)>& f)

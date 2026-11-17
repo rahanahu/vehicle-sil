@@ -42,9 +42,9 @@ enum class Entry
 };
 /// "stdin", "control_server": the `source` of the command events.
 [[nodiscard]] const char* entry_name(Entry entry);
-/// The entry of a `source` as TimeCommands::apply() is given it: ControlServer for
-/// "control_server", else Stdin.
-[[nodiscard]] Entry entry_of(std::string_view source);
+/// The entry whose entry_name() is `source`; empty for any other text (TimeCommands::apply()
+/// refuses a command of such a source: nothing is taken as from the entry with the fewer rules).
+[[nodiscard]] std::optional<Entry> entry_of(std::string_view source);
 
 /// Where the run stands for its time commands.
 enum class ControlStage
@@ -68,7 +68,8 @@ struct ControlSituation
 };
 
 /// The codes of the refusals (lower case with hyphens), for a program to tell them apart without
-/// reading the message.
+/// reading the message: the `reason` of a command event that was not accepted and of the state's
+/// `allowed` (docs/simulation-events.md lists them). Codes are added; the meaning of one stays.
 namespace reason {
 inline constexpr const char* kScenarioRunning = "scenario-running";
 inline constexpr const char* kNotRunning = "not-running";
@@ -78,6 +79,12 @@ inline constexpr const char* kOutOfRange = "out-of-range";
 inline constexpr const char* kMissingArgument = "missing-argument";
 inline constexpr const char* kNotSetUp = "not-set-up";
 inline constexpr const char* kNotPaused = "not-paused";
+// Not of the table: of the reader of standard input (parse_command(), CommandInput), which reads
+// only the form of a line, and of TimeCommands::apply() for a source that is no entry.
+inline constexpr const char* kInvalidCommand = "invalid-command";   ///< the line is no command (no JSON object, no "command", too long)
+inline constexpr const char* kUnknownCommand = "unknown-command";   ///< a command of a name standard input does not take
+inline constexpr const char* kInvalidArgument = "invalid-argument"; ///< an argument (or "id") is missing or has not the form or the range
+inline constexpr const char* kUnknownSource = "unknown-source";     ///< apply() was given a source that is no entry
 } // namespace reason
 
 /// The answer of the rules.
@@ -104,6 +111,15 @@ struct ArgumentRange
 {
     double min = 0;
     double max = 0;
+    [[nodiscard]] bool operator==(const ArgumentRange&) const = default;
+};
+
+/// Something to know about an operation that is taken all the same.
+struct Caution
+{
+    std::string code{};    ///< lower case with hyphens, as the reasons
+    std::string message{}; ///< one line, English
+    [[nodiscard]] bool operator==(const Caution&) const = default;
 };
 
 /// Whether an operation is taken now, for showing it (a state for clients, a button).
@@ -112,8 +128,12 @@ struct Allowed
     bool ok = true;
     std::string reason{};  ///< as Decision::reason
     std::string message{}; ///< as Decision::message
-    /// Step and Speed, when taken: what the argument may be.
+    /// Taken, but with something to know. No row of the table gives one yet: the place is here so
+    /// that the state's form (allowed.<operation>.caution) does not change when one does.
+    std::optional<Caution> caution{};
+    /// Step and Speed, taken or not: what the argument may be.
     std::optional<ArgumentRange> range{};
+    [[nodiscard]] bool operator==(const Allowed&) const = default;
 };
 
 /// decide() without arguments, by the operation's own name, and the range of its argument.

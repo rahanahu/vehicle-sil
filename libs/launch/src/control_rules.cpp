@@ -42,9 +42,16 @@ Operation command_operation(std::string_view name)
 
 const char* entry_name(Entry entry) { return entry == Entry::ControlServer ? "control_server" : "stdin"; }
 
-Entry entry_of(std::string_view source)
+std::optional<Entry> entry_of(std::string_view source)
 {
-    return source == entry_name(Entry::ControlServer) ? Entry::ControlServer : Entry::Stdin;
+    for (const Entry e : {Entry::Stdin, Entry::ControlServer})
+    {
+        if (source == entry_name(e))
+        {
+            return e;
+        }
+    }
+    return std::nullopt;
 }
 
 namespace {
@@ -219,12 +226,12 @@ Decision decide(const ControlSituation& situation, Entry entry, Operation operat
 Allowed allowed(const ControlSituation& situation, Entry entry, Operation operation)
 {
     Decision d = decide(situation, entry, operation, operation_name(operation), nullptr);
-    Allowed out{d.ok, std::move(d.reason), std::move(d.message), std::nullopt};
-    if (out.ok && operation == Operation::Step)
+    Allowed out{d.ok, std::move(d.reason), std::move(d.message), std::nullopt, std::nullopt};
+    if (operation == Operation::Step)
     {
         out.range = ArgumentRange{1, static_cast<double>(kMaxMillis)};
     }
-    else if (out.ok && operation == Operation::Speed)
+    else if (operation == Operation::Speed)
     {
         // Locked: only the speed of 1 is taken (the row outside-real-time).
         out.range = situation.time_locked ? ArgumentRange{1, 1} : ArgumentRange{kMinSpeed, kMaxSpeed};

@@ -330,12 +330,12 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 25,
-        "last_t_ms": 250,
+        "last_seq": 33,
+        "last_t_ms": 330,
         "time": {
           "event": "time",
-          "seq": 25,
-          "t_ms": 250,
+          "seq": 32,
+          "t_ms": 320,
           "sim_ms": 200,
           "speed": "max",
           "paused": true,
@@ -654,12 +654,14 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 18,
+          "seq": 23,
           "command": "step",
           "source": "stdin",
           "accepted": true,
           "message": null,
-          "ms": 200
+          "reason": null,
+          "ms": 200,
+          "id": null
         },
         "result": null,
         "log": {
@@ -857,12 +859,12 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 36,
-        "last_t_ms": 360,
+        "last_seq": 48,
+        "last_t_ms": 480,
         "time": {
           "event": "time",
-          "seq": 27,
-          "t_ms": 270,
+          "seq": 36,
+          "t_ms": 360,
           "sim_ms": 200,
           "speed": "max",
           "paused": false,
@@ -1196,11 +1198,13 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 26,
+          "seq": 34,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
-          "message": null
+          "message": null,
+          "reason": null,
+          "id": null
         },
         "result": {
           "vehicle_sil_run": 1,

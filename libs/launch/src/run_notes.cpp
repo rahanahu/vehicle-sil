@@ -113,6 +113,21 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
     // A simulation that does not move although its real time has come (a stall) is news too,
     // while it lasts: the time stays, the lateness grows.
     const std::int64_t late = ceil_ms(s.current_lateness);
+    // The state after the time event of the same look (history first); not at the end, where the
+    // time commands' detach tells it.
+    ctx_.controls.set_pacing(
+        pacing_.look(wall, !paused && s.speed.has_value(), late > outcome.timing.late_tolerance_ms, s.late_steps));
+    struct Publish
+    {
+        RunControls* controls;
+        ~Publish()
+        {
+            if (controls != nullptr)
+            {
+                controls->publish();
+            }
+        }
+    } const publish{note == TimeNote::Last ? nullptr : &ctx_.controls};
     const bool stalled = late > outcome.timing.late_tolerance_ms && late != last_late_ms_;
     // Only that it moved, or is late: not while other events wait for a slow reader (they
     // would pile up).
