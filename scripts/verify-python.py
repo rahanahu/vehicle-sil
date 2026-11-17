@@ -8,6 +8,7 @@ needs no C++ build:
   sync     uv sync --locked (fails when uv.lock does not match pyproject.toml)
   syntax   compiles every tracked *.py file
   codegen  tools/j1939_codegen/test_j1939_codegen.py
+  knowledge tools/knowledge: the tests of shared_edit.py and init_local.py (POSIX only)
   template tests/template/test_get_tools.py (the template's get_tools.py, scripts/package.py template and version,
            with archives made there, no network)
   schema   tests/schema/test_schemas.py: the JSON Schemas of schema/ against the examples and the documents (the
@@ -202,6 +203,11 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
     def codegen(s: Step) -> bool:
         return s.run([python, "tools/j1939_codegen/test_j1939_codegen.py"])
 
+    def knowledge(s: Step) -> bool:
+        if os.name != "posix":
+            return True  # shared_edit.py locks with fcntl
+        return s.run([python, "-m", "unittest", "discover", "-s", "tools/knowledge"])
+
     def template(s: Step) -> bool:
         return s.run([python, "tests/template/test_get_tools.py"])
 
@@ -227,10 +233,10 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
 
-    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("template", template), ("schema", schema),
+    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("knowledge", knowledge), ("template", template), ("schema", schema),
              ("scripts", scripts), ("control", control)]
     if lowest:  # the syntax, the template's script and the scripts do not depend on the packages
-        steps = [s for s in steps if s[0] not in ("syntax", "template", "scripts")]
+        steps = [s for s in steps if s[0] not in ("syntax", "template", "scripts", "knowledge")]
     times = []
     for step_name, body in steps:
         log = LOG_DIR / f"{tag}-py{name}-{step_name}.log"
