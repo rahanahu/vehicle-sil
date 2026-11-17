@@ -4,29 +4,14 @@
 // configuration (vehicle_sil::core).
 #pragma once
 
+#include "vehicle_sil/core/registry_uri.hpp"
+
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace vehicle_sil {
-
-/// The environment variable that makes the participants of a process listen on every address
-/// even when their registry URI is a loopback address: "1" does, "0", empty or not set does not;
-/// any other value is an error (std::invalid_argument when a participant is made). For a registry
-/// that other computers reach although this computer's participants connect to it at a loopback
-/// address: vehicle_sil_launch run with registry_uri silkit://0.0.0.0:<port> sets it to 1 for the
-/// participants it starts (and to 0 when the registry is on a loopback address). Without it, the
-/// participants of the other computers are given this computer's loopback acceptors and try them on
-/// their own loopback address, where another program may answer: the join then fails.
-inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN_ON_NETWORK";
-
-/// Whether `registry_uri` (silkit://<host>:<port>...) names its host by a loopback address: an IPv4
-/// address in 127.0.0.0/8 in any numeric form that getaddrinfo() reads ("127.0.0.1", "127.1"),
-/// ::1 in any IPv6 form ([::1], [0:0:0:0:0:0:0:1]), 127.x.x.x mapped to IPv6
-/// ([::ffff:127.0.0.1]), or localhost (any case, also "localhost."). Other names are not resolved:
-/// they count as not loopback.
-[[nodiscard]] bool is_loopback_registry_uri(std::string_view registry_uri);
 
 /// The SIL Kit participant configuration (JSON) for a participant of the registry at
 /// `registry_uri` that is given none. It changes two of SIL Kit's defaults:

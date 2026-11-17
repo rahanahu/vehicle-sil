@@ -406,7 +406,7 @@ struct EnabledOverrides
 [[nodiscard]] bool waits_for_manual(const SimulationConfig& config);
 
 /// true if other computers may reach the registry of `config`: registry_uri is written and not a
-/// loopback address (is_loopback_registry_uri() of vehicle_sil/core/participant_configuration.hpp).
+/// loopback address (is_loopback_registry_uri() of vehicle_sil/core/registry_uri.hpp).
 [[nodiscard]] bool registry_on_network(const SimulationConfig& config);
 
 /// The value of VEHICLE_SIL_LISTEN_ON_NETWORK (kListenOnNetworkVariable) that run gives the

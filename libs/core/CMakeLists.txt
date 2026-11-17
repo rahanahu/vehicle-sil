@@ -29,7 +29,7 @@ if(TARGET rapidyaml)
 endif()
 vehicle_sil_target_defaults(vehicle_sil_core)
 
-# vehicle_sil::sim_base - simulation time and the step inbox, without SIL Kit. The headers stay
+# vehicle_sil::sim_base - simulation time, the step inbox and the registry URI test, without SIL Kit. The headers stay
 # under vehicle_sil/core/; libraries that must build without SIL Kit (vehicle_sil::can) link
 # only this target, so including a SIL Kit dependent header there fails to compile.
 find_package(Threads REQUIRED) # StepInbox uses std::mutex
