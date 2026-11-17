@@ -72,6 +72,7 @@ Public headers:
 | `--connect`: `parse_connect()`, `target_problem()`, `bridge_arguments()`, `find_tool()`, where the launcher looks for a bridge, `no_bridge_here()` (LIN; CAN elsewhere than on Windows), and `bridge_working_directory()`, the bridge's own directory, where the check, `connections` and `run` start it | `launch/connect.hpp` |
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
+| `StopRequests`, the requests to stop that the caller of `run_file()` or `test_file()` owns and lends (the count the run reads, and the source of the first request) | `launch/stop_requests.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |

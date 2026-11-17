@@ -16,8 +16,8 @@ namespace vehicle_sil::launch::detail {
 /// What a run is given, fixed before it begins: the parts of the run (run_*.hpp) keep a reference.
 ///
 /// Threads and locks: any thread of the run reads it, and nothing here is written while the run
-/// lasts, so there is no lock. What it points to that does change keeps itself: the interrupt
-/// count is the caller's atomic, TimeCommands and EventStream have their own mutexes.
+/// lasts, so there is no lock. What it points to that does change keeps itself: the stop
+/// requests are the caller's (StopRequests: atomics), TimeCommands and EventStream have their own mutexes.
 struct RunContext
 {
     const SimulationConfig& config;
@@ -28,8 +28,8 @@ struct RunContext
     /// The run's time commands: RunOptions::time_commands, or the run's own.
     TimeCommands& commands;
 
-    /// The stop requests so far (RunOptions::interrupts).
-    [[nodiscard]] int interrupts() const { return options.interrupts != nullptr ? options.interrupts->load() : 0; }
+    /// The stop requests so far (RunOptions::stops).
+    [[nodiscard]] int interrupts() const { return options.stops != nullptr ? options.stops->count() : 0; }
     [[nodiscard]] std::string interrupt_name() const
     {
         return options.interrupt_name ? options.interrupt_name() : std::string("interrupt");

@@ -18,6 +18,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_scenario.cpp
     test_scenario_line.cpp
     test_shared_values.cpp
+    test_stop_requests.cpp
     test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)

@@ -578,7 +578,7 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
             options.run.write_line(std::string(detail::kLauncherTag) + text);
         }
     };
-    const auto interrupted = [&options] { return options.run.interrupts != nullptr && options.run.interrupts->load() > 0; };
+    const auto interrupted = [&options] { return options.run.stops != nullptr && options.run.stops->count() > 0; };
     std::string left; // why the runs from here on are not run
     for (std::size_t i = 0; i < report.runs.size(); ++i)
     {
