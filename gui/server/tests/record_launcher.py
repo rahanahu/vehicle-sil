@@ -739,6 +739,19 @@ def checks() -> list[Case]:
              "the check of forever.yaml with a participant left out"),
         Case("check-forever-no-logger", ["check", "--json", "--disable", "Logger", "--", "forever.yaml"],
              "the check of forever.yaml without Logger"),
+        Case("check-forever-disable-both", ["check", "--json", "--disable", "Dashboard", "--disable", "Logger", "--",
+                                            "forever.yaml"], "the check of forever.yaml with two participants left out"),
+        Case("check-forever-scenario", ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--",
+                                        "forever.yaml"], "the check of forever.yaml with a scenario"),
+        Case("check-forever-scenario-no-logger", ["check", "--json", "--scenario", "scenarios/throttle.yaml",
+                                                  "--disable", "Logger", "--", "forever.yaml"],
+             "the check of forever.yaml with a scenario, without Logger"),
+        Case("check-variants", ["check", "--json", "--", "variants.yaml"],
+             "the check of a file with variants, none chosen (the launcher says to choose one)"),
+        Case("check-variants-small", ["check", "--json", "--variant", "small", "--", "variants.yaml"],
+             "the check of a variant"),
+        Case("check-variants-quiet", ["check", "--json", "--variant", "quiet", "--", "variants.yaml"],
+             "the check of a variant that leaves Logger out"),
     ]
 
 
@@ -753,6 +766,7 @@ def runs() -> list[Case]:
         run_case("run-manual", "manual.yaml", "Dashboard is started by hand when the launcher says so",
                  ("until", event("participant", state="manual", name="Dashboard")), ("sleep", 0.3),
                  ("start", "Dashboard")),
+        run_case("run-variants-small", "variants.yaml", "a run of a variant", extra=("--variant", "small")),
         run_case("run-simulation-disable", "simulation.yaml", "a run without Logger", extra=("--disable", "Logger")),
         run_case("run-simulation-speed", "simulation.yaml", "a run without Logger at speed 2",
                  extra=("--disable", "Logger", "--speed", "2")),
