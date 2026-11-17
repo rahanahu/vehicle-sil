@@ -261,7 +261,7 @@ After authentication, the server sends, in this order:
 2. `dropped` (if any): the number of log lines from `from_seq` on that the server cannot send because it no longer keeps them (per source).
 3. `event`: the kept log lines from `from_seq` on, in `seq` order.
 4. `synced`: `{session, last_seq}`. The end of the replay.
-5. From then on, as things happen: `event`, `session`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
+5. From then on, as things happen: `event`, `session`, `allowed`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
 
 If `session` differs from the `id` of the `hello` summary, or `from_seq` does not belong to the current session, the replay starts from the beginning (`replay.from_seq` is `null`).
 
@@ -275,6 +275,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `event` | `{session, event}`. The launcher event as is (after the server checked its shape) | `ws-pass.json`, `ws-log-dropped.json`, `ws-time.json` (time commands), `ws-late.json` (lateness) |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
+| `allowed` | `{session, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `session` is the id of the current run, or `null` | `ws-allowed.json` |
 | `error` | `{session, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
@@ -394,7 +395,7 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 ## What the server accepts (`allowed`)
 
-`allowed` is `{start, stop, force}`. Each is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary) and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. A request that is sent anyway gets the same code as an error (the codes of start are those of `api/run`).
+`allowed` is `{rev, start, stop, force}`. Each of the last three is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. A request that is sent anyway gets the same code as an error (the codes of start are those of `api/run`).
 
 | Field | `reason` | When |
 |---|---|---|
@@ -410,7 +411,9 @@ If the launcher exits without writing `result`, the summary has `launcher.runnin
 
 - Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` are `ok`: the request waits and applies when the launcher has started ("Stop (`api/stop`)").
 - What the launcher accepts (pause, step, speed, writes) is not here: it is `allowed` of `launcher_state`, as the launcher wrote it. `ok` there means the launcher would accept the command, not that it would change anything (a `pause` is `ok` while paused).
-- `allowed` goes out with each `session` message, as it is at that moment; the server sends no `session` only because `allowed` changed. So `starting` (while `api/run` has not answered), the end of a failed start and the beginning of the server's end are not pushed: a screen that needs them reads `allowed` of `hello` or `api/session`. With no run there is no summary at all, and `allowed` of `hello` or `api/session` is the only place.
+- **`rev`** is one number for the whole server. It goes up by one each time what `allowed` says changes, and is the same in every place that carries `allowed` (`hello`, `api/session`, the summary, the `allowed` message). A screen that gets `allowed` from several places keeps the one with the larger `rev`. It does not restart when a new run starts.
+- **When it is sent**: `allowed` goes out with each `session` message, as it is at that moment. When it changes and no `session` message follows to carry that change, the server sends the `allowed` message instead: a start begins (`starting`), a start fails and `start` is `ok` again, and the server begins to end (`shutting-down`). It does not send the `allowed` message when a `session` message carries the change (a run is registered, a stop is requested, the run ends). The `allowed` message is small and is never dropped for a slow connection. A reader that does not know the message type ignores it (see "Versioning and compatibility"), and then still has `allowed` from `hello`, `api/session` and each summary.
+- With no run there is no summary, and `allowed` of `hello`, `api/session` and the `allowed` message is all there is.
 - A new code may be added; the meaning of a code does not change.
 
 ## ECU variables

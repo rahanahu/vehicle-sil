@@ -1,6 +1,6 @@
 """What this server accepts of a screen now: `allowed.start`, `allowed.stop` and `allowed.force` of the summary.
 
-Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop
+`rev` goes up with each change. Each is {"ok", "reason", "message"}: ok says whether the server would take the request (POST api/run, POST api/stop
 and POST api/stop with force), reason is a code that stays the same (null when ok) and message is one English
 sentence for a person (null when ok). The codes of start are those the server answers a request with.
 
@@ -68,6 +68,22 @@ def allowed_force(facts: Facts, stoppable: bool, stop: str) -> dict:
     if stop == "forced":
         return _answer("already-forced", "the stop was already forced: wait for the run to end")
     return _answer()
+
+
+class Numbered:
+    """Gives `allowed` a number (`rev`) that goes up whenever what it says changes, so that a reader who gets it from
+    several places (hello, api/session, the summary, the `allowed` message) keeps the one with the larger number.
+    One per server."""
+
+    def __init__(self) -> None:
+        self.rev = 0
+        self._last: dict | None = None
+
+    def stamp(self, answer: dict) -> dict:
+        if answer != self._last:
+            self._last = answer
+            self.rev += 1
+        return {"rev": self.rev, **answer}
 
 
 def allowed(facts: Facts, running: bool, stoppable: bool, stop: str) -> dict:

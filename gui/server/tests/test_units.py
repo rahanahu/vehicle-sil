@@ -104,7 +104,7 @@ def test_allowed_says_what_this_server_takes() -> None:
     ok = {"ok": True, "reason": None, "message": None}
 
     def reasons() -> dict:
-        return {k: v["reason"] for k, v in s.summary()["allowed"].items()}
+        return {k: v["reason"] for k, v in s.summary()["allowed"].items() if k != "rev"}
 
     assert reasons() == {"start": "already-running", "stop": None, "force": None}
     assert s.summary()["allowed"]["stop"] == ok and s.allowed()["start"]["message"].startswith("a simulation is running")
@@ -130,6 +130,19 @@ def test_allowed_says_what_this_server_takes() -> None:
     s.launcher_exited(0)
     s.ended()
     assert s.summary()["allowed"]["start"]["message"] == "no launcher"
+
+
+def test_allowed_has_a_number_that_goes_up_with_each_change_only() -> None:
+    s = new_session()
+    first = s.summary()["allowed"]
+    assert s.summary()["allowed"]["rev"] == first["rev"] and s.allowed()["rev"] == first["rev"]  # unchanged
+    s.request_stop(False)
+    second = s.summary()["allowed"]
+    assert second["rev"] == first["rev"] + 1 and s.allowed()["rev"] == second["rev"]
+    s.facts = lambda: Facts(closing=True)
+    assert s.allowed()["rev"] == second["rev"] + 1
+    s.facts = Facts  # back: it is a change again, so a new number (a reader keeps the larger)
+    assert s.allowed()["rev"] == second["rev"] + 2
 
 
 def test_a_signal_is_not_an_exit_code() -> None:

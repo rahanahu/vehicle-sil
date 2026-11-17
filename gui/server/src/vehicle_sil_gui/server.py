@@ -22,7 +22,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
-from .allowed import Facts, allowed as allowed_of
+from .allowed import Facts, Numbered, allowed as allowed_of
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
                        FEATURE_START_PAUSED, FEATURE_STATE, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
@@ -182,6 +182,7 @@ class GuiServer:
         self._started = asyncio.Event()  # set when no start is in progress
         self._started.set()
         self._ids = itertools.count(1)
+        self.numbered = Numbered()  # the numbering of `allowed` that every place that carries it shares
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
         self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
@@ -220,7 +221,17 @@ class GuiServer:
 
     def allowed(self) -> dict:
         """The `allowed` of the run the screens see; with no run, what the server accepts (start)."""
-        return self.session.allowed() if self.session else allowed_of(self.facts(), False, False, "none")
+        return self.session.allowed() if self.session else self.numbered.stamp(
+            allowed_of(self.facts(), False, False, "none"))
+
+    def _push_allowed(self) -> None:
+        """Tells the screens an `allowed` that changed with no `session` message to carry it (a start begins or
+        fails, the server's end begins): a small message of its own. Nothing when it has not changed."""
+        before = self.numbered.rev
+        answer = self.allowed()
+        if answer["rev"] != before:
+            self.hub.broadcast([{"type": "allowed", "session": self.session.id if self.session else None,
+                                 "allowed": answer}])
 
     # ------------------------------------------------------------ the application
 
@@ -496,6 +507,7 @@ class GuiServer:
         self._starting = True
         self._started.clear()
         self._stop_on_start = None
+        self._push_allowed()
         try:
             return await self._start(body)
         except (PathRejected, InvalidRequest, Refused) as e:
@@ -504,6 +516,7 @@ class GuiServer:
             self._starting = False
             self._stop_on_start = None
             self._started.set()
+            self._push_allowed()
 
     async def _start(self, body: dict) -> web.Response:
         config = self.root.resolve(body.get("file"))
@@ -563,6 +576,7 @@ class GuiServer:
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
                           launcher_pid=proc.pid, scenario=scenario, manual=manual)
         session.facts = self.facts
+        session.numbered = self.numbered
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
@@ -956,6 +970,7 @@ class GuiServer:
             self._hurry.set()
             return
         self._closing = True
+        self._push_allowed()
         for proc in list(self._checks):
             process.kill_tree(proc)
         try:

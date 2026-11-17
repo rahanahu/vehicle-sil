@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any
 
-from .allowed import Facts, allowed as allowed_of
+from .allowed import Facts, Numbered, allowed as allowed_of
 from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT
 
 EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
@@ -279,6 +279,7 @@ class Session:
         self.last_command: dict | None = None
         self.launcher_state: dict | None = None  # the last `state` event of the launcher (what it accepts now)
         self.facts: Callable[[], Facts] = Facts  # what the server knows apart from the run (the server sets it)
+        self.numbered = Numbered()  # numbers `allowed` (the server's, so that all runs share one numbering)
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
@@ -724,8 +725,8 @@ class Session:
 
     def allowed(self) -> dict:
         """What this server accepts now: start, stop, force (see allowed.py)."""
-        return allowed_of(self.facts(), self.state == "running", self.state == "running" and self.launcher_running,
-                          self.stop)
+        return self.numbered.stamp(allowed_of(self.facts(), self.state == "running",
+                                              self.state == "running" and self.launcher_running, self.stop))
 
     def message(self) -> dict:
         """The summary for the screens that are connected. Without `variables`: they are large, change seldom,

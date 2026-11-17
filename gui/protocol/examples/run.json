@@ -43,6 +43,7 @@
       "last_command": null,
       "launcher_state": null,
       "allowed": {
+        "rev": 7,
         "start": {
           "ok": false,
           "reason": "already-running",

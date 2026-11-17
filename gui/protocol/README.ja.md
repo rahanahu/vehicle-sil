@@ -261,7 +261,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 2. `dropped`（あれば）: `from_seq` 以後の log の行のうち、サーバーが覚えていないので送れない数（source ごと）。
 3. `event`: 覚えている log の行のうち `from_seq` 以後のものを、`seq` の順に。
 4. `synced`: `{session, last_seq}`。再送の終わり。
-5. 以後は、起きるたびに `event`、`session`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`。
+5. 以後は、起きるたびに `event`、`session`、`allowed`、`error`、`dropped`、`resync`、`variables`、`values`、`operation`。
 
 `session` の `id` が `hello` の要約と違う、または `from_seq` が今のセッションのものでないときは、最初からの再送になります（`replay.from_seq` が `null`）。
 
@@ -275,6 +275,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `event` | `{session, event}`。ランチャーのイベントそのまま（サーバーが形を確認して通したもの） | `ws-pass.json`、`ws-log-dropped.json`、`ws-time.json`（時間のコマンド）、`ws-late.json`（遅れ） |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約） | `ws-pass.json`、`ws-without-check.json` |
+| `allowed` | `{session, allowed}`。サーバーが受け付けることが変わり、それを運ぶ `session` が続かない（下の「サーバーが受け付けること（`allowed`）」）。`session` は今の実行の id、なければ `null` | `ws-allowed.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の「`error` の `code`」）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数 | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受信が遅く、落とせない通知まであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
@@ -394,7 +395,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 ## サーバーが受け付けること（`allowed`）
 
-`allowed` は `{start, stop, force}` です。それぞれ `{ok, reason, message}` で、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）に入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られたリクエストは、同じコードのエラーになります（start のコードは `api/run` のものと同じ）。
+`allowed` は `{rev, start, stop, force}` です。後の 3 つはそれぞれ `{ok, reason, message}` で、`ok` はサーバーがいまそのリクエストを受け付けるか、`reason` は理由のコード（`ok` のときは `null`）、`message` は人に見せる英語の 1 文（`ok` のときは `null`）です。`session`（要約）と `allowed` のメッセージに入り、実行がないときにも読めるように、`hello` と `api/session` の答えの最上位にも入ります。画面は、`ok` でボタンを使えるようにし、`message` を出せば、自分の表を持たずに済みます。それでも送られたリクエストは、同じコードのエラーになります（start のコードは `api/run` のものと同じ）。
 
 | フィールド | `reason` | いつ |
 |---|---|---|
@@ -410,7 +411,9 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 
 - 当てはまる理由のうち、表の順で最初の 1 つだけを返します。実行を始めている途中は、`stop` と `force` は `ok` です。リクエストは待ち、ランチャーが始まったら効きます（「停止（`api/stop`）」）。
 - ランチャーが受け付けること（pause、step、speed、書き込み）はここにはありません。ランチャーが書いたままの `launcher_state` の `allowed` です。そこでの `ok` は、ランチャーがそのコマンドを受け付けることを言い、何かが変わることは言いません（一時停止中の `pause` も `ok`）。
-- `allowed` は、`session` を送るたびに、そのときの値で付きます。`allowed` が変わっただけでは `session` を送りません。そのため、`starting`（`api/run` がまだ答えていない間）、失敗した開始の終わり、サーバーが終わり始めたことは送られません。それが要る画面は `hello` か `api/session` の `allowed` を読みます。実行がなければ要約がないので、`hello` か `api/session` の `allowed` だけが読める場所です。
+- **`rev`** はサーバー全体で 1 つの番号です。`allowed` の言うことが変わるたびに 1 上がり、`allowed` を運ぶどの場所（`hello`、`api/session`、要約、`allowed` のメッセージ）でも同じです。複数の場所から `allowed` を受ける画面は、`rev` の大きいほうを採ります。新しい実行が始まっても 0 に戻りません。
+- **いつ送るか**: `allowed` は、`session` を送るたびに、そのときの値で付きます。変わったのに、それを運ぶ `session` が続かないときは、代わりに `allowed` のメッセージを送ります: 開始が始まった（`starting`）、開始に失敗して `start` が `ok` に戻った、サーバーが終わり始めた（`shutting-down`）。`session` がその変化を運ぶとき（実行を登録した、停止を頼んだ、実行が終わった）は、`allowed` のメッセージは送りません。`allowed` のメッセージは小さく、遅い接続でも落としません。このメッセージの種類を知らない読み手は無視し（「版と互換」）、`hello`、`api/session`、各要約の `allowed` は引き続き受けます。
+- 実行がなければ要約がないので、`hello`、`api/session`、`allowed` のメッセージの `allowed` がすべてです。
 - コードは増えることがあります。コードの意味は変わりません。
 
 ## ECU の変数

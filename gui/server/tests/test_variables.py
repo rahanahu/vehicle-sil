@@ -49,6 +49,7 @@ def test_a_launcher_without_a_control_server_has_no_variables_and_says_why(gui) 
         await c.post("api/stop")
         got = await ws.until(is_ended)
         # Told once, right after the run's first session message.
+        got = [m for m in got if m["type"] != "allowed"]  # (the start's `starting` comes first)
         assert [m["type"] for m in got[:2]] == ["session", "variables"] and got[1]["variables"]["state"] == "off"
         assert not [m for m in got[2:] if m["type"] in ("values", "variables", "operation", "error")]
         assert "variables" not in got[-1]["session"]  # the session messages never carry them

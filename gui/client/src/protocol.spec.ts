@@ -124,6 +124,15 @@ describe('the readers accept every example of gui/protocol', () => {
       reason: null,
       message: null,
     });
+    // the allowed message carries the same shape, and its rev goes up with each change
+    const own = examples
+      .find((example) => example.name === 'ws-allowed')
+      ?.server.map((m) => readServerMessage(m));
+    const revs = (own ?? []).flatMap((m) =>
+      m?.type === 'hello' || m?.type === 'allowed' ? [m.allowed?.rev ?? 0] : [],
+    );
+    expect(revs.length).toBe(3);
+    expect(revs.every((rev, i) => i === 0 || rev > (revs[i - 1] ?? 0))).toBe(true);
     const states = messages.flatMap((m) =>
       m?.type === 'event' && m.event.event === 'state' ? [m.event] : [],
     );

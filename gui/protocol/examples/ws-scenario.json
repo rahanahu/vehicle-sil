@@ -14,6 +14,7 @@
       "instance": "0123456789abcdef",
       "session": null,
       "allowed": {
+        "rev": 1,
         "start": {
           "ok": true,
           "reason": null,
@@ -36,6 +37,28 @@
       "type": "synced",
       "session": null,
       "last_seq": null
+    },
+    {
+      "type": "allowed",
+      "session": null,
+      "allowed": {
+        "rev": 2,
+        "start": {
+          "ok": false,
+          "reason": "starting",
+          "message": "a run is starting: wait until it has started (the answer of POST api/run), then stop it before starting another"
+        },
+        "stop": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "force": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        }
+      }
     },
     {
       "type": "session",
@@ -70,6 +93,7 @@
         "last_command": null,
         "launcher_state": null,
         "allowed": {
+          "rev": 3,
           "start": {
             "ok": false,
             "reason": "already-running",
@@ -2381,6 +2405,7 @@
           "outside": []
         },
         "allowed": {
+          "rev": 5,
           "start": {
             "ok": true,
             "reason": null,

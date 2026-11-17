@@ -248,7 +248,7 @@ def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
             assert all(not alive(pid) for pid in started_pids(sock.received))
             status, _ = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
             assert status == 200
-            got = await sock.until(is_ended)
+            got = [m for m in await sock.until(is_ended) if m["type"] != "allowed"]  # (`starting` comes first)
             assert got[0]["type"] == "session" and got[0]["session"]["id"] == 2
         run_async(main, gui)
 
@@ -641,6 +641,39 @@ def test_allowed_follows_the_run_and_the_summary_keeps_the_last_state(tmp_path: 
         assert "event" not in end["launcher_state"] and "t_ms" not in end["launcher_state"]
         status, body = await c.post("api/stop", {"force": True})  # nothing to stop: the same answer again
         assert status == 200 and body["session"]["allowed"]["force"]["reason"] == "not-running"
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
+        run_async(main, gui)
+
+
+def test_allowed_alone_is_pushed_only_when_no_session_message_carries_it(tmp_path: Path) -> None:
+    """A start beginning, and a start that fails, change `allowed` with no session message to carry it: a message
+    `allowed` says so, numbered. A start that works is carried by its session message: nothing else is pushed."""
+    def pushed(sock) -> list[dict]:
+        return [m for m in sock.received if m["type"] == "allowed"]
+
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        got = await sock.until(is_synced)
+        hello = got[0]["allowed"]
+        assert hello["start"]["ok"] and isinstance(hello["rev"], int)
+        status, body = await c.post("api/run", {"file": "check-error.yaml"})
+        assert status == 422
+        await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
+        starting, back = pushed(sock)
+        assert starting["session"] is None and starting["allowed"]["start"]["reason"] == "starting"
+        assert starting["allowed"]["start"]["message"] and back["allowed"]["start"]["ok"]
+        assert hello["rev"] < starting["allowed"]["rev"] < back["allowed"]["rev"]
+        status, body = await c.get("api/session")
+        assert body["allowed"]["rev"] == back["allowed"]["rev"]  # nothing changed since: the same number
+        sock.received.clear()
+        status, body = await c.post("api/run", {"file": "forever.yaml"})
+        assert status == 200
+        carried = body["session"]["allowed"]
+        assert carried["start"]["reason"] == "already-running" and carried["rev"] > back["allowed"]["rev"]
+        await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
+        assert [m["allowed"]["start"]["reason"] for m in pushed(sock)] == ["starting"]  # and no more after it
+        await c.post("api/stop")
+        await sock.until(is_ended)
     with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         run_async(main, gui)
 

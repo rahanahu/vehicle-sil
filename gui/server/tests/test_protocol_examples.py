@@ -42,7 +42,7 @@ EXAMPLES = {
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
-    "check-manual", "ws-manual",
+    "check-manual", "ws-manual", "ws-allowed",
 }
 
 
@@ -515,6 +515,20 @@ def test_ws_without_check_example(tmp_path: Path) -> None:
             again = await c.ws({"session_without_check": True})
             hello = (await again.until(is_synced))[0]
             assert hello["session"]["check"]["result"] == "passed"
+        run_async(talk, gui)
+
+
+def test_ws_allowed_example(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "check-error.yaml"})  # refused by its check: no run is started
+            await sock.until(lambda m: m["type"] == "allowed" and m["allowed"]["start"]["ok"])
+            check_example("ws-allowed", ws("What the server accepts changed with no session message to carry it: a "
+                                           "start begins (start is starting), then fails (start is ok again). Each "
+                                           "`allowed` has a rev that goes up with each change.", sock.sent,
+                                           sock.received), gui)
         run_async(talk, gui)
 
 

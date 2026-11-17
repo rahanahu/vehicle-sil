@@ -437,6 +437,7 @@
           "outside": []
         },
         "allowed": {
+          "rev": 5,
           "start": {
             "ok": true,
             "reason": null,
@@ -872,6 +873,7 @@
         }
       },
       "allowed": {
+        "rev": 5,
         "start": {
           "ok": true,
           "reason": null,

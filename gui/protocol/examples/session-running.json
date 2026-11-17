@@ -422,6 +422,7 @@
         "outside": []
       },
       "allowed": {
+        "rev": 7,
         "start": {
           "ok": false,
           "reason": "already-running",
@@ -464,6 +465,7 @@
       }
     },
     "allowed": {
+      "rev": 7,
       "start": {
         "ok": false,
         "reason": "already-running",

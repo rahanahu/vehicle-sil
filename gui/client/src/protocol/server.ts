@@ -654,6 +654,12 @@ export interface ServerAllowedItem {
  * already-stopping (stop), already-forced (force). What the launcher accepts is `launcher_state.allowed`.
  */
 export interface ServerAllowed {
+  /**
+   * Goes up by one each time what `allowed` says changes, the same in every place that carries it (`hello`,
+   * `api/session`, the summary, the `allowed` message): keep the one with the larger rev. 0 from a server that does not
+   * number it.
+   */
+  rev: number;
   start: ServerAllowedItem;
   stop: ServerAllowedItem;
   force: ServerAllowedItem;
@@ -671,6 +677,7 @@ const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
 export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
   const f = object(value, path);
   return {
+    rev: field(f, path, 'rev', optional(integer, 0)),
     start: field(f, path, 'start', readServerAllowedItem),
     stop: field(f, path, 'stop', readServerAllowedItem),
     force: field(f, path, 'force', readServerAllowedItem),
@@ -1150,6 +1157,11 @@ export type ServerMessage =
       allowed: ServerAllowed | null;
       replay: Replay | null;
     }
+  /**
+   * What the server accepts changed with no `session` to carry it (a start begins or fails, the server begins to end).
+   * session is the current run's id (null if none). Other changes arrive in the summary.
+   */
+  | { type: 'allowed'; session: number | null; allowed: ServerAllowed }
   /** A launcher event (resent log lines as well as new events). */
   | { type: 'event'; session: number; event: LauncherEvent }
   /** The resend has finished. */
@@ -1216,6 +1228,12 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
         log: field(f, path, 'log', record(integer)),
         at_least: field(f, path, 'at_least', array(string)),
         events: field(f, path, 'events', integer),
+      };
+    case 'allowed':
+      return {
+        type,
+        session: field(f, path, 'session', nullable(integer)),
+        allowed: field(f, path, 'allowed', readServerAllowed),
       };
     case 'resync':
       return { type, message: field(f, path, 'message', optional(string, '')) };
