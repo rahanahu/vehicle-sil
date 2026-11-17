@@ -25,6 +25,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_assess.cpp
   src/run_connect.cpp
   src/run_control.cpp
+  src/run_controls.cpp
   src/run_format.cpp
   src/run_notes.cpp
   src/run_output.cpp

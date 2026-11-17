@@ -74,6 +74,7 @@ Public headers:
 | `vehicle_sil_launch connections`: `list_connections()`, `connections_of()` (each bridge asked once), `interpret_list()` (the bridge's list, or the one the launcher makes: `tool-*`), `quoted_for_shells()`, the outputs | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `StopRequests`, the requests to stop that the caller of `run_file()` or `test_file()` owns and lends (the count the run reads, and the source of the first request) | `launch/stop_requests.hpp` |
+| `RunControls`, the controls of one run, which the run borrows from its caller or makes for itself: the stop requests (lent), the `TimeCommands`, and the phase it keeps and tells its observer; `Phase`, `phase_name()` | `launch/run_controls.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
 | `RunTraffic` (the result's `traffic`) | `launch/traffic.hpp` |
 | `EventStream`, `parse_command()` | `launch/events.hpp` |
@@ -344,7 +345,7 @@ When changing events or commands consumed by the GUI, also check [GUI implementa
 Where to change:
 
 - The events of `run --events`, the commands of `--stdin-commands`, `version --json` (`libs/launch/src/events.cpp`, `tools/launch/main.cpp`)
-- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`)
+- The members of the event `result`: `format_result_event()` in `libs/launch/src/run_format.cpp` (`EventStream::result()` takes them as written). The event `command` of a time command: `TimeCommands::apply()` calls the function it was given (`TimeCommands::OnCommand`; `main.cpp` passes `EventStream::command()`). The event `phase`: `RunControls::set_phase()` calls the function the controls were given (`RunControls::Observers`; `main.cpp` passes `EventStream::phase()`, and a run that makes its own controls writes to `RunOptions::events`)
 
 Documentation to update:
 

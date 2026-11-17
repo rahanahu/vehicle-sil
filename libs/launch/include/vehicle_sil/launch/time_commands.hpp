@@ -2,7 +2,7 @@
 //
 // The time commands of a run (pause, resume, step, run_until, speed) from standard input and a
 // control server, on their way to the simulation's time gate (TimeCommands). Used by the run
-// (run.hpp: RunOptions::time_commands). Internal; the commands: docs/simulation-events.md.
+// through its controls (run_controls.hpp). Internal; the commands: docs/simulation-events.md.
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"

@@ -9,6 +9,7 @@
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/run_controls.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/stop_requests.hpp"
 #include "vehicle_sil/launch/time_commands.hpp"
@@ -339,8 +340,14 @@ struct RunOptions
     std::optional<std::optional<double>> speed{};
     /// --start-paused: the simulation stands still at 0 until a resume or step command.
     bool start_paused = false;
-    /// Where the time commands go (--stdin-commands); null: the run has none of its own.
-    TimeCommands* time_commands = nullptr;
+    /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
+    /// `stops` below says), the time commands it attaches its controller to (--stdin-commands, a
+    /// control server) and the phase it sets. For this one run: controls that a run has used
+    /// take no time command any more. With `events`, the caller gives the controls the observers
+    /// that write the command and phase events (the run writes neither by itself then). Null: the
+    /// run makes its own for this run, on `stops`; no one outside reaches its time commands, and
+    /// the run writes its phases to `events`.
+    RunControls* controls = nullptr;
     /// A file of each participant's output in this directory (created if needed); empty: none.
     std::filesystem::path log_dir{};
     /// run --timeline, with a scenario: the timeline file of the run (timeline.hpp; its directory
@@ -358,10 +365,11 @@ struct RunOptions
     /// every event but hello and the result (the caller writes them). No call waits for the
     /// reader of the events. May be null.
     EventStream* events = nullptr;
-    /// The requests to stop (the caller's: its signal handler and whatever else asks). The run
-    /// reads their count: 1 stops the simulation in order, 2 or more skip the waits for the
-    /// participants to end. May be null.
-    const StopRequests* stops = nullptr;
+    /// Without `controls`: the requests to stop (the caller's: its signal handler and whatever
+    /// else asks). The run reads their count: 1 stops the simulation in order, 2 or more skip the
+    /// waits for the participants to end. May be null. Not read with `controls`, which has its own
+    /// (RunControls::stops()).
+    StopRequests* stops = nullptr;
     /// The name of the first interrupt ("SIGINT"), for the result.
     std::function<std::string()> interrupt_name{};
     /// How often the launcher looks at the participants and the simulation.
@@ -389,8 +397,9 @@ struct RunOptions
     /// listens. Called once, on the main thread, when the check has passed and before the registry
     /// starts; the run writes the event "control_server" and the line "control server at
     /// <address>". If it throws, nothing is started (RunOutcome::setup_error). The server must
-    /// stay usable while run_file() runs (its time operations go to `time_commands`, which must be
-    /// set) and outlive the hub's use by run_file(); the caller ends it after run_file().
+    /// stay usable while run_file() runs (its time operations go to the time commands of
+    /// `controls`, which must be set) and outlive the hub's use by run_file(); the caller ends it
+    /// after run_file().
     /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
     std::function<ControlServerInfo(control::Hub& hub)> serve_control{};
 };

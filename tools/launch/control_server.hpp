@@ -33,8 +33,8 @@ inline constexpr const char* kScenarioRunning = "scenario-running";
 /// What the server does with the run.
 struct ControlHooks
 {
-    /// The run's time commands: the server's time operations go through them.
-    launch::TimeCommands* commands = nullptr;
+    /// The run's controls: the server's time operations go through their time commands.
+    launch::RunControls* controls = nullptr;
     /// A client asked to stop the run (Stop): as {"command":"stop"} on standard input. Thread safe,
     /// does not wait.
     std::function<void()> stop{};

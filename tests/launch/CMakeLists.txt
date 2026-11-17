@@ -14,6 +14,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_events.cpp
     test_j1939_nodes_match.cpp
     test_run.cpp
+    test_run_controls.cpp
     test_run_outside.cpp
     test_scenario.cpp
     test_scenario_line.cpp
@@ -53,7 +54,8 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
 # The files of the launcher that make up its pure layer (the configuration, the checks and the
-# scenario) include no SIL Kit header, no process header, no run, events or time-command header,
+# scenario) include no SIL Kit header, no process header, no run, events, time-command or
+# stop-request header (the run's controls are a run header),
 # no probe.hpp (what looks at the computer),
 # directly or through the headers they include (the private ones of libs/launch/src too). Add a
 # file to the list when it no longer includes them. The check itself must reject a fixture that
