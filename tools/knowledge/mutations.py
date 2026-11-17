@@ -40,6 +40,8 @@ MUTATIONS = [
     ("delete a temporary file that this call did not create",
      [("        tmp_fd = os.open(tmp_path,", "        tmp = tmp_path\n        tmp_fd = os.open(tmp_path,")]),
     ("read --old-file from a forbidden directory", [("    _refuse_forbidden(path, root, what)\n", "")]),
+    ("ignore the common git directory of a linked working tree",
+     [("repo = (gitdir / common).resolve().parent", "pass")]),
     ("forget to remove the temporary file after a failure", [("            try:\n                os.unlink(tmp)\n            except OSError:\n                pass\n", "            pass\n")]),
 ]
 

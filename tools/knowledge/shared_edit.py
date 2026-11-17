@@ -64,14 +64,14 @@ POLL_SECONDS = 0.02
 FORBIDDEN_DIRS = ("vendor",)  # relative to .local; third-party downloads that an agent must not open, even as --old-file
 
 
-def _local_dir() -> Path:
+def _local_dir(script: Path = Path(__file__)) -> Path:
     """The .local directory of the repository that holds this script. A linked worktree has no .local
     of its own, so a .git file ("gitdir: ...") is followed to the common git directory."""
-    repo = Path(__file__).resolve().parents[2]
+    repo = script.resolve().parents[2]
     git = repo / ".git"
     if git.is_file():
         try:
-            gitdir = Path(git.read_text().split("gitdir:", 1)[1].strip())
+            gitdir = (repo / git.read_text().split("gitdir:", 1)[1].strip()).resolve()  # may be relative
             common = (gitdir / "commondir").read_text().strip()
             repo = (gitdir / common).resolve().parent
         except (OSError, IndexError):
@@ -131,6 +131,8 @@ def edit_file(root: Path, name: str, old: bytes, new: bytes, timeout: float = DE
         raise EditError(2, "usage", "--old and --new are the same; there is nothing to change.")
     rel = resolve_target(root, name)
     target = root / rel
+    if not root.is_dir():
+        raise EditError(2, "usage", f"{root} does not exist. Run tools/knowledge/init_local.py --apply first.")
     try:
         lock_fd = _acquire(root / LOCK_NAME, timeout)
     except OSError as e:

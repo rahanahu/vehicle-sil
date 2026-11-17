@@ -27,6 +27,12 @@ class InitLocal(unittest.TestCase):
             code = init_local.main(["--repo", str(self.repo), *args])
         return code, out.getvalue()
 
+    def run_init_at(self, repo, *args):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = init_local.main(["--repo", str(repo), *args])
+        return code, out.getvalue()
+
     def test_dry_run_writes_nothing(self):
         code, out = self.run_init()
         self.assertEqual(code, 0)
@@ -71,6 +77,39 @@ class InitLocal(unittest.TestCase):
         with contextlib.redirect_stderr(out):
             self.assertEqual(init_local.main(["--repo", other.name, "--apply"]), 2)
         self.assertFalse((Path(other.name) / ".local").exists())
+
+    def test_linked_worktree_uses_the_main_checkout(self):
+        wt = self.repo.parent / (self.repo.name + "-wt")
+        self.addCleanup(lambda: __import__("shutil").rmtree(wt, ignore_errors=True))
+        gitdir = self.repo / ".git" / "worktrees" / "wt"
+        gitdir.mkdir(parents=True)
+        (gitdir / "commondir").write_text("../..\n")
+        wt.mkdir()
+        (wt / ".git").write_text(f"gitdir: {gitdir}\n")
+        code, _ = self.run_init_at(wt, "--apply")
+        self.assertEqual(code, 0)
+        self.assertTrue((self.repo / ".local/plans/STATE.md").is_file())
+        self.assertFalse((wt / ".local").exists())
+        self.assertFalse((wt / "CLAUDE.local.md").exists())
+        self.assertIn("/.local/", (self.repo / ".git/info/exclude").read_text())
+
+    def test_relative_gitdir_is_resolved_from_the_working_tree(self):
+        wt = self.repo / "sub-wt"
+        gitdir = self.repo / ".git" / "worktrees" / "wt"
+        gitdir.mkdir(parents=True)
+        (gitdir / "commondir").write_text("../..\n")
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: ../.git/worktrees/wt\n")
+        self.assertEqual(init_local.git_dir(wt), (self.repo / ".git").resolve())
+
+    def test_symbolic_link_is_refused_and_nothing_is_written_through_it(self):
+        outside = Path(self._tmp.name + "-outside")
+        outside.mkdir()
+        self.addCleanup(lambda: __import__("shutil").rmtree(outside, ignore_errors=True))
+        (self.repo / ".local").symlink_to(outside)
+        code, _ = self.run_init("--apply")
+        self.assertEqual(code, 2)
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_templates_have_no_absolute_paths_or_real_knowledge(self):
         for t in (Path(init_local.__file__).parent / "templates").iterdir():

@@ -1,4 +1,4 @@
-# Constraints (change only by an explicit decision of the user; never loosen after an incident)
+# Constraints (only an explicit decision of the user changes them; do not loosen them after an incident)
 
 Rules that every agent follows before any work. Keep reasons and history out of this file.
 

@@ -15,7 +15,7 @@ Everything lives in `.local/` at the repository root. `.git/info/exclude` exclud
 | `decisions/ACTIVE.md` | Register of the design decisions that are valid now. **Shared file.** |
 | `decisions/`, `research/`, `reviews/`, `experiments/`, `plans/` | Deliberation, research, review records, experiment logs, plans: dated documents, kept as records. |
 | `changelog/pending.md` | User-visible changes not yet in `CHANGELOG.md`. **Shared file.** |
-| `vendor/`, `work/`, `vm/`, `backup/`, `tools/` | Downloads, scratch checkouts, VM images, backups, local scripts. Not knowledge: do not search them. Never open `vendor/` unless a task needs a named file. |
+| `vendor/`, `work/`, `vm/`, `backup/`, `tools/` | Downloads, scratch checkouts, VM images, backups, local scripts. Not knowledge: do not search them. Do not open `vendor/`. |
 
 ## Rules
 
@@ -39,7 +39,7 @@ Zero hits do not prove that no decision exists. Try the title words and other di
 - Record external facts by pointer, not by copy: pull requests, CI, counts, commits, and the list of working trees come from `gh` and `git`.
 
 **Expire.**
-- The first word of the line `State:` (or the Japanese equivalent) near the top of a record says whether it still applies: superseded, rejected, handed over, done and cancelled end it. Adopted, decided, implemented, in progress, proposal and under review do not decide anything; a record without a state line is unjudged.
+- A state line (`State: <word> ...`) near the top of a record, in English or in the project's own language, says whether the record still applies. The words superseded, rejected, handed-over, done, finished and cancelled end it. Any other word (adopted, decided, implemented, in progress, proposal, under review) does not make the record current, and a record without a state line is unjudged: check it against newer documents and Git.
 - A stream file has `Last updated`. If it is older than 48 hours, check its next steps and waiting items against GitHub and the working trees before you use them.
 - An entry of `ACTIVE.md` ends when Git carries the same constraint (then remove the entry) or when a newer decision replaces it (then change the entry).
 
@@ -66,7 +66,7 @@ Agents read `.local/CONSTRAINTS.md` through instructions that are not committed.
 
 - **Claude Code.** `CLAUDE.local.md` (excluded from Git; `templates/CLAUDE.local.md` is a start) imports `@.local/CONSTRAINTS.md` and names the files to read first. In a working tree the import may not load, so the file also names the absolute path to read. Sub-agent definitions in `.claude/agents/` should say to read `CONSTRAINTS.md` by its absolute path; a request to a built-in sub-agent should say so too.
 - **Copilot.** It does not read `CLAUDE.local.md`. Put `templates/copilot-instructions.md` (with the absolute path of your clone filled in) into the user-level instructions file of your Copilot product; it is conditional on the repository, so it does not affect other repositories. Whether a given Copilot product reads that file has to be checked in a new chat.
-- **Deny rules (Claude Code).** `templates/claude-settings-deny.json` shows `permissions.deny` entries for `.local/vendor/` in `.claude/settings.local.json`, once with a relative and once with a `//`-absolute path. They stop the Read tool and `cat`, not `grep -r` or a script that opens the file. They back up the written constraints; they do not replace them.
+- **Deny rules (Claude Code).** `templates/claude-settings-deny.json` shows `permissions.deny` entries for `.local/vendor/` in `.claude/settings.local.json`, once with a relative and once with a `//`-absolute path. They stop the Read tool and `cat`, not `grep -r` or a script that opens the file. They back up the written constraints; they do not replace them. The same template denies `Edit` and `Write` on the five shared files, so that they are only written with `shared_edit.py`.
 
 ## Tests
 
@@ -75,4 +75,4 @@ python3 -m unittest discover -s tools/knowledge     # also run by scripts/verify
 python3 tools/knowledge/mutations.py                # the tests must catch every mutation of shared_edit.py
 ```
 
-`shared_edit.py` needs a POSIX system (it locks with `fcntl`). Its lock file is `.local/.shared-edit.lock`; it is never deleted. A leftover `.<name>.<pid>.<random>.tmp` file in a shared file's directory is harmless and may be deleted by hand while no tool is running.
+`shared_edit.py` needs a POSIX system (it locks with `fcntl`); on Windows use WSL or another POSIX shell, and the tests are skipped there. In a linked working tree both scripts act on the main checkout's `.local/`. Its lock file is `.local/.shared-edit.lock`; it is never deleted. A leftover `.<name>.<pid>.<random>.tmp` file in a shared file's directory is harmless and may be deleted by hand while no tool is running.

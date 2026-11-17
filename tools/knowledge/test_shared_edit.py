@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import fcntl
+try:
+    import fcntl
+except ImportError:  # not POSIX: shared_edit.py needs fcntl
+    import unittest
+    raise unittest.SkipTest("shared_edit.py needs a POSIX system")
 import hashlib
 import io
 import os
@@ -88,6 +92,22 @@ def wait_for(path: Path, what: str) -> None:
 
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class LocalDir(unittest.TestCase):
+    def test_a_linked_working_tree_uses_the_main_checkouts_local_dir(self):
+        with tempfile.TemporaryDirectory(prefix="shared-edit-wt-") as tmp:
+            main = Path(tmp) / "main"
+            gitdir = main / ".git" / "worktrees" / "wt"
+            gitdir.mkdir(parents=True)
+            (gitdir / "commondir").write_text("../..\n")
+            wt = Path(tmp) / "wt"
+            (wt / "tools/knowledge").mkdir(parents=True)
+            (wt / ".git").write_text("gitdir: ../main/.git/worktrees/wt\n")  # relative, as newer git writes it
+            self.assertEqual(shared_edit._local_dir(wt / "tools/knowledge/shared_edit.py"), main.resolve() / ".local")
+            (main / "tools/knowledge").mkdir(parents=True)
+            (main / ".git").mkdir(exist_ok=True)
+            self.assertEqual(shared_edit._local_dir(main / "tools/knowledge/shared_edit.py"), main.resolve() / ".local")
 
 
 class Base(unittest.TestCase):

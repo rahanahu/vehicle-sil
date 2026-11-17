@@ -5,4 +5,4 @@ Each entry: the constraint in one sentence, its source (the user's decision and 
 
 ## <area>
 
-- Constraint: <one sentence>. Source: <user decision YYYY-MM-DD>. Detail: [<document>](../decisions/<file>.md), section "<heading>".
+- Constraint: <one sentence>. Source: <user decision YYYY-MM-DD>. Detail: `<document>` in `.local/decisions/`, section "<heading>".

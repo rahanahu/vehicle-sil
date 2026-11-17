@@ -10,7 +10,9 @@ CLAUDE.local.md, but only for a file that does not exist. A file that exists is 
 the command is safe in a clone that already has a .local/. It prints what the user still has to do
 by hand (the placeholders in the copies, the Copilot and Claude settings).
 
-Exit codes: 0 done (or shown), 2 usage error or not a git repository.
+In a linked working tree it works on the main checkout's .local/.
+
+Exit codes: 0 done (or shown), 2 usage error, not a git repository, or a symbolic link in the way.
 """
 
 from __future__ import annotations
@@ -34,12 +36,13 @@ EXCLUDES = ("/.local/", "/CLAUDE.local.md")
 
 
 def git_dir(repo: Path) -> Path | None:
+    """The git directory that holds info/exclude. For a linked working tree it is the common one."""
     git = repo / ".git"
     if git.is_dir():
         return git
-    if git.is_file():  # a linked working tree: use the common directory, which holds info/exclude
+    if git.is_file():
         try:
-            gitdir = Path(git.read_text().split("gitdir:", 1)[1].strip())
+            gitdir = (repo / git.read_text().split("gitdir:", 1)[1].strip()).resolve()  # may be relative
             return (gitdir / (gitdir / "commondir").read_text().strip()).resolve()
         except (OSError, IndexError):
             return None
@@ -51,7 +54,12 @@ def run(repo: Path, apply: bool) -> int:
     if common is None:
         print(f"init_local: FAIL {repo} is not a git repository.", file=sys.stderr)
         return 2
+    if (repo / ".git").is_file():  # a linked working tree has no .local of its own: use the main checkout
+        repo = common.parent
     local = repo / ".local"
+    if local.is_symlink() or (repo / "CLAUDE.local.md").is_symlink():
+        print("init_local: FAIL .local or CLAUDE.local.md is a symbolic link; nothing was written.", file=sys.stderr)
+        return 2
     verb = "create" if apply else "would create"
     for rel in DIRS:
         if not (local / rel).is_dir():
@@ -69,15 +77,16 @@ def run(repo: Path, apply: bool) -> int:
                     f.write(("" if not have or exclude.read_text().endswith("\n") else "\n") + line + "\n")
                 have.append(line)
     for template, rel in FILES.items():
-        target = (local / rel).resolve()
+        target = repo / "CLAUDE.local.md" if rel.startswith("../") else local / rel
         shown = rel.replace("../", "")
-        if target.exists():
+        if target.exists() or target.is_symlink():
             print(f"keep {shown} (exists)")
             continue
         print(f"{verb} {shown}")
         if apply:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text((HERE / "templates" / template).read_text(encoding="utf-8"), encoding="utf-8")
+            with target.open("x", encoding="utf-8") as out:  # "x": never replaces a file that appeared meanwhile
+                out.write((HERE / "templates" / template).read_text(encoding="utf-8"))
     print("next: replace the <placeholders> in the new files; see tools/knowledge/README.md for the Claude and "
           "Copilot settings." if apply else "nothing was written; run again with --apply.")
     return 0
