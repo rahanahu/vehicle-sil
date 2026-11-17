@@ -1885,7 +1885,7 @@
         "findings_omitted": 0,
         "last_command": null,
         "launcher_state": {
-          "seq": 41,
+          "seq": 42,
           "rev": 8,
           "phase": "ended",
           "paused": false,
