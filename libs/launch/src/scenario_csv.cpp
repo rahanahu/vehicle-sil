@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// The points file of a wave: read_csv() splits its text, files_beside() reads it next to the
-// scenario file (the only file access of a scenario's check besides the scenario itself).
+// The points file of a wave: read_csv() splits its text. (files_beside() in probe.cpp reads the
+// file next to the scenario file.)
 #include "scenario_csv.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
-#include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
-#include <fstream>
-#include <iterator>
-#include <system_error>
 #include <utility>
 
 namespace vehicle_sil::launch {
@@ -187,37 +183,5 @@ std::string shown_cell(const std::string& cell)
 }
 
 } // namespace detail
-
-std::function<std::optional<std::string>(const std::string&, std::string&)> files_beside(const std::filesystem::path& scenario)
-{
-    return [directory = scenario.parent_path()](const std::string& name, std::string& problem) -> std::optional<std::string> {
-        const std::filesystem::path path = directory / process::path_from_utf8(name);
-        std::error_code ec;
-        if (!std::filesystem::exists(path, ec))
-        {
-            problem = "does not exist (looked for " + process::utf8_from_path(path) +
-                      "): the path is from the scenario file's directory; check it";
-            return std::nullopt;
-        }
-        if (!std::filesystem::is_regular_file(path, ec))
-        {
-            problem = "is not a regular file: name the CSV file";
-            return std::nullopt;
-        }
-        if (std::filesystem::file_size(path, ec) > detail::kMaxCsvBytes)
-        {
-            problem = "is larger than " + std::to_string(detail::kMaxCsvBytes >> 20) +
-                      " MiB, too large for points: keep fewer points, or split it into steps of their own";
-            return std::nullopt;
-        }
-        std::ifstream in(path, std::ios::binary);
-        if (!in)
-        {
-            problem = "cannot be opened: check its permissions";
-            return std::nullopt;
-        }
-        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    };
-}
 
 } // namespace vehicle_sil::launch

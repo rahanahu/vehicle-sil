@@ -9,6 +9,7 @@
 #include "launch_test_util.hpp"
 #include "test_harness.hpp"
 
+#include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/timeline.hpp"

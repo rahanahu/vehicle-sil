@@ -450,29 +450,12 @@ struct ConfigRead
 /// required participant among the enabled ones).
 [[nodiscard]] ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides = {});
 
-/// Where a participant's executable is: command[0], relative to `base_dir` unless absolute
-/// (UTF-8 in, a path that works with non-ASCII characters on Windows out; not normalized, so that
-/// ".." keeps its meaning across symbolic links). On Windows a path that does not exist and does
-/// not end in ".exe" gets ".exe" if that file exists. PATH is not searched (find_executable()).
-[[nodiscard]] std::filesystem::path resolve_executable(std::string_view executable, const std::filesystem::path& base_dir);
-
-/// Where command[0] of a participant is.
-struct FoundExecutable
-{
-    std::filesystem::path path;
-    /// It was not next to the configuration file but on PATH (`path` is then where).
-    bool on_path = false;
-};
-
-/// resolve_executable(); if no executable file is there and `executable` is a bare name (no '/' or
-/// '\\'), the first directory of PATH that has it as an executable file (on Windows also with
-/// ".exe"). Without a match: resolve_executable()'s path.
-[[nodiscard]] FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir);
-
-/// An error if `path` (resolve_executable()) is not an executable file of `participant`:
-/// missing (with a hint for PATH and for arguments in one text), a directory, a batch file
-/// (.bat, .cmd), or (POSIX) without an execute permission.
-[[nodiscard]] std::optional<Finding> check_executable(const ParticipantConfig& participant, const std::filesystem::path& path);
+/// An error if `path` (resolve_executable() in probe.hpp), where the file system has `status`, is
+/// not an executable file of `participant`: missing (with a hint for PATH and for arguments in one
+/// text), a directory, a batch file (.bat, .cmd), or (POSIX) without an execute permission.
+[[nodiscard]] std::optional<Finding> executable_finding(const ParticipantConfig& participant,
+                                                        const std::filesystem::path& path,
+                                                        const std::filesystem::file_status& status);
 
 /// The arguments with the placeholders replaced and "{{word}}" as "{word}"; any other "{word}" and
 /// any other brace stay as they are.
@@ -480,12 +463,6 @@ struct FoundExecutable
                                                            std::string_view registry_uri, std::string_view name);
 
 namespace detail {
-/// `path` is a regular file that can be run (POSIX: one with an execute permission).
-[[nodiscard]] bool is_runnable_file(const std::filesystem::path& path);
-/// The first directory of PATH that has `name` as a runnable file (resolve_executable(): on
-/// Windows also with ".exe"). Relative entries of PATH are skipped: they would depend on the
-/// directory the launcher runs in. Shared by find_executable() and find_tool() (connect.hpp).
-[[nodiscard]] std::optional<std::filesystem::path> find_on_path(std::string_view name);
 /// The number of single-character edits between `a` and `b` (for "did you mean").
 [[nodiscard]] std::size_t edit_distance(std::string_view a, std::string_view b);
 /// The candidate closest to `word` if it is close enough to be a typing error, or "".

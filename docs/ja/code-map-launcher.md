@@ -69,7 +69,8 @@
 |---|---|
 | `read_config()` | `launch/config.hpp` |
 | `check_file()` | `launch/check.hpp` |
-| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()`、ランチャーがブリッジを探す `find_tool()`、`no_bridge_here()`（LIN、Windows 以外の CAN）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
+| ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `check_executable()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
+| `--connect` の `parse_connect()`、`target_problem()`、`bridge_arguments()`、`no_bridge_here()`（LIN、Windows 以外の CAN）、照合と `connections` と `run` がブリッジを起動するディレクトリ（ブリッジ自身のもの）の `bridge_working_directory()` | `launch/connect.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（各ブリッジに 1 回だけ聞く）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()` | `launch/run.hpp` |
 | `TimeCommands` | `launch/time_commands.hpp` |
@@ -84,13 +85,14 @@
 | 内容 | 場所 |
 |---|---|
 | 照合の全体の流れ | `src/check.cpp` |
+| コンピューターを調べる: ファイルシステム（実行ファイルやブリッジの場所、設定ファイル、シナリオ、点のファイル）、環境変数（`PATH`、`VEHICLE_SIL_LISTEN_ON_NETWORK`）、出力を読むために動かすプロセス。ルールは自分では調べず、調べた結果を値（`config.cpp` の `executable_finding()` はファイルの状態を受け取る）か関数（`ConnectTools`、`ScenarioContext::read_file`）で受け取る | `src/probe.cpp` |
 | `--describe` の JSON を読む | `src/describe_read.cpp` |
 | シミュレーションから見た ECU（`SeenEcu`）: 実行ファイルの自己申告に、participant の項目を当てたもの。照合、`run`、シナリオは、自己申告（名前、ステップ、ネットワーク、変数、制御の口、features）をこれからだけ読む | `src/seen_ecu.hpp`、`src/seen_ecu.cpp`（`seen_variables()` も） |
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
-| `--connect` の形、ブリッジの引数、`find_tool()`（ランチャーの隣、次に `PATH`）。`find_tool()` と `find_executable()` が共有する `PATH` の探索は `src/config.cpp` の `detail::find_on_path()` | `src/connect.cpp` |
-| `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/check.cpp` の `run_tool()` で起こします | `src/connections.cpp` |
+| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `src/probe.cpp` | `src/connect.cpp` |
+| `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/connections.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()`、`gone_before_start()` の `detail::stops_run()`）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
 | `run --connect`: ブリッジの数。`detail::read_outside_counts()` がブリッジの統計の行を読む（キーは `ethernet_bridge::format_statistics()` と `vector_xl::format_statistics()` のもの。`launch.read_outside_counts_reads_the_lines_the_bridges_print` が両側を守る）。`detail::OutsideNote` が `outside` イベントを出す時を決める（時刻は引数）。`RunOutput::on_line()`（読み手のスレッド）が、出力の鍵の下で行を読み、数を覚え、イベントを書き、行は出さない（最後に読んだ 1 行だけを `take_counts()` が 1 回出す）。主スレッドは `RunWatch::watch()` の見回りごとに控えの数を書き（`outside_due()`）、`RunParticipants::note_last_lines()` が出力を読み終えた後に最後の数を結果に取る（`take_counts()`。結果のイベントより前）。注意 `connect-nothing-received` は `run_assess.cpp` | `src/run_outside.cpp` |

@@ -84,7 +84,7 @@ Where to change:
 | Advancing the steps | `libs/launch/src/scenario_run.cpp` |
 | Why a step failed: the conditions not met and the writes not applied, in the message and in the record (`failed.conditions[]`, `failed.writes[]`) | `libs/launch/src/scenario_failure.cpp` (`unmet()`, `unmet_values()`, `failed_write()`, `applied_text()`, `during()`) |
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/launch/src/scenario_shapes.cpp` |
-| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
+| Reading `points` from a CSV file | `read_csv()` in `libs/launch/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
 | Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |

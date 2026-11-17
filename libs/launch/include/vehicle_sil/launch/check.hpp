@@ -122,17 +122,6 @@ struct DescribeRun
     std::chrono::milliseconds timeout{};
 };
 
-/// One run of `executable` with `arguments` (process::run_captured(): at most 1 MiB kept of each
-/// output) in `directory` (empty: the launcher's), killed after `timeout`; shown in messages as
-/// `shown` followed by the arguments. A participant's --describe, a bridge's --describe or list.
-[[nodiscard]] DescribeRun run_tool(const std::filesystem::path& executable, const std::string& shown,
-                                   const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
-                                   const std::filesystem::path& directory);
-
-/// Reads the configuration file `path` into `text`: "" if it was read, else what is wrong with it
-/// (the message of the finding "file": it does not exist, is a directory or too large, ...).
-[[nodiscard]] std::string read_config_file(const std::filesystem::path& path, std::string& text);
-
 /// What a participant's --describe gave: its description, or the error that says why not.
 struct DescribeOutcome
 {
