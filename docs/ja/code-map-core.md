@@ -45,7 +45,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - ステップ幅の違う participant の同期、最も遅い participant を待つこと、実時間への結合
 - `TickScheduler`、`StepInbox`
 
-LIN のテストは [バスのページ](code-map-buses.md#テストのラベル) を参照。
+LIN のテストは [バスのページの LIN 単体テスト](code-map-buses.md#lin-単体テスト) と [LIN の結合テスト](code-map-buses.md#linlin_cluster) を参照してください。
 
 ## ディレクトリごとのコードとテスト
 
@@ -112,33 +112,6 @@ LIN のテストは [バスのページ](code-map-buses.md#テストのラベル
 | 実線の矢印 | `PUBLIC` か `INTERFACE` のリンク |
 | 点線の矢印 | 非公開（`PRIVATE`）のリンク |
 | ノードの名前 | ターゲットの名前（`vehicle_sil::` を省く） |
-
-### 全体の層
-[詳細](code-map-core.md#全体の層)
-
-### 基盤と SIL Kit の実装
-[詳細](code-map-core.md#基盤と-sil-kit-の実装)
-
-### J1939 のエンジンとコンポーネント
-[詳細](code-map-j1939.md#j1939-のエンジンとコンポーネント)
-
-### ECU とローカルの実行（SIL Kit なし）
-[詳細](code-map-execution.md#ecu-とローカルの実行sil-kit-なし)
-
-### Peer と Simulation
-[詳細](code-map-execution.md#peer-と-simulation)
-
-### launch と Control API
-[詳細](code-map-control.md#launch-と-control-api)
-
-### Vector XL CAN Bridge
-[詳細](code-map-bridges.md#vector-xl-can-bridge)
-
-### Ethernet Bridge
-[詳細](code-map-bridges.md#ethernet-bridge)
-
-### ほかの実行ファイル
-[詳細](code-map-build.md#ほかの実行ファイル)
 
 [境界を検査するテスト](code-map-testing.md#境界を検査するテスト) も参照。
 

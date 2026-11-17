@@ -45,7 +45,7 @@ With an in-process registry, they check:
 - Synchronization of participants with different step sizes, waiting for the slowest participant, coupling to real time
 - `TickScheduler`, `StepInbox`
 
-For LIN tests, see the [bus map](code-map-buses.md#test-labels).
+For LIN tests, see [LIN unit tests](code-map-buses.md#lin-unit-tests) and [LIN integration tests](code-map-buses.md#lin-lin_cluster).
 
 ## Code and tests by directory
 
@@ -112,33 +112,6 @@ In every diagram, an arrow means "links" (`target_link_libraries`). Do not creat
 | Solid arrow | `PUBLIC` or `INTERFACE` link |
 | Dotted arrow | Private (`PRIVATE`) link |
 | Node name | Target name (without `vehicle_sil::`) |
-
-### Layers
-[Details](code-map-core.md#layers)
-
-### Foundation and SIL Kit implementations
-[Details](code-map-core.md#foundation-and-sil-kit-implementations)
-
-### J1939 engine and protocol parts
-[Details](code-map-j1939.md#j1939-engine-and-protocol-parts)
-
-### ECU and local execution (without SIL Kit)
-[Details](code-map-execution.md#ecu-and-local-execution-without-sil-kit)
-
-### Peer and Simulation
-[Details](code-map-execution.md#peer-and-simulation)
-
-### launch and the Control API
-[Details](code-map-control.md#launch-and-the-control-api)
-
-### Vector XL CAN Bridge
-[Details](code-map-bridges.md#vector-xl-can-bridge)
-
-### Ethernet Bridge
-[Details](code-map-bridges.md#ethernet-bridge)
-
-### Other executables
-[Details](code-map-build.md#other-executables)
 
 See also [boundary tests](code-map-testing.md#boundary-tests).
 

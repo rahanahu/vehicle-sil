@@ -67,7 +67,7 @@ The last item includes 3 senders that send at the same time. Their addresses are
 
 ### `lin` (unit tests)
 
-Unit tests of virtual time; the LIN coverage includes tests with an in-process registry. The `unit` label is also set.
+LIN unit tests include coverage of LIN behavior in virtual time with an in-process registry. The `unit` label is also set.
 
 - LIN schedules, responses, reception of master frames, sleep and wake-up, schedule switching
 

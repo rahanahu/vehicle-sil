@@ -33,6 +33,8 @@ Start with the page for the area you change. Follow its specifications and read 
 - [Documentation examples and tests](code-map-testing.md#documentation-examples-and-tests)
 - Change checklists: see "What to update together" in the relevant area. For a cross-area change, follow links from the specific entry.
 
+## Area page format
+
 Each entry gives, in this order, a table of the main classes and functions (headers as paths under `include/`), the test directory and the regular expression to pass to `ctest -R`.
 
 Each entry lists, in this order, where to change, the documentation to update with it, the code to update with it, the rules to keep and the tests (headings that do not apply are left out). Items marked "keep in sync by hand" are not compared by any test.
