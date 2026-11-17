@@ -94,11 +94,13 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ### セッションのコピー
 
-| 種類 | 名前                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 型   | `ClientSession`（`session`、`ready`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`          |
-| 関数 | `runOutcome`、`phaseIndex`                                                                                                           |
+| 種類 | 名前                                                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 型   | `ClientSession`（`session`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
+| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`                     |
+| 関数 | `runOutcome`、`phaseIndex`                                                                                                                      |
+
+`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。
 
 ### 実行の操作
 
@@ -284,7 +286,7 @@ try {
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `status`                                            | 見せる状態 1 つ: `link`、`run`、`file`、`result`、`problem`（下）。離散の値だけです                                                                                                                                                                            |
 | `clock`                                             | `sim_ms`、`speed`、`actual_speed`、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                                                                                                                                          |
-| `controls`                                          | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min` と `max` つき）、`write`                                                                                          |
+| `controls`                                          | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min` と `max` つき）                                                                                                   |
 | `scenario`                                          | いまの（か最後の）実行のシナリオ: `file`、`name`、`status`、`steps`、`timeline_url`。シナリオのない実行では `null`                                                                                                                                             |
 | `run`                                               | `start(intent?, { file }?)`、`stop()`、`forceStop()`                                                                                                                                                                                                           |
 | `time`                                              | `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`、`runUntil(ms)`                                                                                                                                                                                           |
@@ -296,13 +298,13 @@ try {
 
 ### `status`
 
-| 欄        | 値                                                                                                                                                                                            |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `link`    | `connecting`、`online`、`offline`、`rejected`（トークンが断られた）、`incompatible`（プロトコルの版が違う）。`online` はコピーがサーバーと揃っていることです                                  |
-| `run`     | `none`、`starting`（開始が向かっている。このページのでも別のページのでも）、`waiting`、`running`、`paused`、`stopping`、`ended`（結果がある）、`crashed`（ランチャーが結果なしで終わった）    |
-| `file`    | 実行の構成ファイル（走っていなければ最後のもの）。最初の実行の前は、サーバーの起動時のファイル                                                                                                |
-| `result`  | `run` が `ended` か `crashed` の間: `end`（`completed`、`stopped`、`interrupted`、`failed`、`setup_failed`、`crashed`）、`scenario`、`ok`、`message`（英語の 1 文）。操作者の停止は `ok` です |
-| `problem` | いま利用者に知らせる問題 1 件（`{ code, message }`）か `null`                                                                                                                                 |
+| 欄        | 値                                                                                                                                                                                                                         |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `link`    | `connecting`、`online`、`offline`、`rejected`（トークンが断られた）、`incompatible`（プロトコルの版が違う）。`online` はコピーがサーバーと揃っていることです                                                               |
+| `run`     | `none`、`starting`（開始が向かっている。このページのでも別のページのでも）、`waiting`（参加者がそろうのを待っている）、`running`、`paused`、`stopping`、`ended`（結果がある）、`crashed`（ランチャーが結果なしで終わった） |
+| `file`    | 実行の構成ファイル（走っていなければ最後のもの）。最初の実行の前は、サーバーの起動時のファイル                                                                                                                             |
+| `result`  | `run` が `ended` か `crashed` の間: `end`（`completed`、`stopped`、`interrupted`、`failed`、`setup_failed`、`crashed`）、`scenario`、`ok`、`message`（英語の 1 文）。操作者の停止は `ok` です                              |
+| `problem` | いま利用者に知らせる問題 1 件（`{ code, message }`）か `null`                                                                                                                                                              |
 
 `problem` は次の順で選びます。まず接続（トークンの拒否、プロトコルの版の違い、切断）。なければ、ランチャーの異常終了、直前の操作の失敗、失敗した実行（`result.ok` が偽）のうち、新しいものです。異常終了と失敗した実行は、次の実行が始まると消えます。操作の失敗は、次の操作か、`status.run` が変わったときに消えます。操作者の停止は問題にしません。変数の書き込みの失敗は、ここでなく、その変数の `problem` に出ます。サーバーの知らせ（`low.session.session` の `problems`）と `notices` は `low` のままです。
 
@@ -312,14 +314,14 @@ try {
 
 各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
 
-| 項目                                                     | 出どころ                                                                                                                                                                                                |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`                                                  | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                           |
-| `stop`、`force_stop`                                     | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`） |
-| `pause`、`resume`、`step`、`speed`、`run_until`、`write` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`          |
-| `pause`、`resume`（何も変わらないとき）                  | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません                       |
-| `run_until`                                              | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                             |
-| すべて                                                   | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                        |
+| 項目                                            | 出どころ                                                                                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                           |
+| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`） |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`          |
+| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません                       |
+| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                             |
+| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                        |
 
 ### 操作
 
@@ -327,14 +329,14 @@ try {
 
 `run.start(intent, { file })` の `intent` は、いま GUI サーバーが受ける部分です: `disable`、`manual`、`scenario`、`variant`、`params`、`speed`、`start_paused`。`file` の既定は、サーバーの起動時のファイルです。
 
-| 操作                               | 解決する時                                                                                                                                                                              | 拒否の理由                                                                                                                                        |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.start`                        | サーバーが受け付けた時。走り出したかは `status.run`（待つなら `until(client.status, s => s.run !== 'starting')` の後で `run` を見る）                                                   | 断り（`check-failed` と `findings`、`already-running` など）。時間内に答えがなければ `no-answer`（`unknown`: 始まったかもしれない）               |
-| `run.stop`、`run.forceStop`        | サーバーが受け付けた時。接続の状態に関係なく送る（WebSocket が切れていても HTTP が届くことがある）。向かっている間にもう一度頼んでも、同じ要求                                          | 同じ                                                                                                                                              |
-| `time.pause`、`resume`、`setSpeed` | ランチャーが答えた時。一時停止中の `pause` と、走行中の `resume` は、何も送らずに解決する（接続が `online` で、実行がその操作を受けるときだけ）                                         | ランチャーの `reason` と文（`refused`）。5 秒以内に答えがなければ `no-answer`（`unknown`）。答えの前に実行が終わったら `not-running`（`unknown`） |
-| `time.step`、`time.runUntil`       | 時刻が着いて、実行がまた一時停止した時。`await` の後で `clock` を読める。`runUntil(t)` は `t` に着いた時、`step(ms)` は、受け付けた時刻にランチャーが丸めた `ms` を足した時刻に着いた時 | 上と同じ。着く前に、再開、一時停止、別のステップ、停止が来たら（このページでも別のページでも stdin でも）`interrupted`（`unknown`）               |
+| 操作                               | 解決する時                                                                                                                                                                                                                                     | 拒否の理由                                                                                                                                                                                                                                            |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.start`                        | サーバーが受け付けた時。走り出したかは `status.run`（待つなら `until(client.status, s => s.run !== 'starting')` の後で `run` を見る）                                                                                                          | 断り（`check-failed` と `findings`、`already-running` など）。時間内に答えがなければ `no-answer`（`unknown`: 始まったかもしれない）                                                                                                                   |
+| `run.stop`、`run.forceStop`        | サーバーが受け付けた時。接続の状態に関係なく送る（WebSocket が切れていても HTTP が届くことがある）。向かっている間にもう一度頼んでも、同じ要求                                                                                                 | 同じ                                                                                                                                                                                                                                                  |
+| `time.pause`、`resume`、`setSpeed` | ランチャーが答えた時。一時停止中の `pause` と、走行中の `resume` は、何も送らずに解決する（接続が `online` で、実行がその操作を受けるときだけ）                                                                                                | ランチャーの `reason` と文（`refused`）。5 秒以内に答えがなければ `no-answer`（`unknown`）。答えの前に実行が終わったら `not-running`（`unknown`）                                                                                                     |
+| `time.step`、`time.runUntil`       | 時刻が着いて、実行がまた一時停止した時。`await` の後で `clock` を読める。`runUntil(t)` は `t` に着いた時、`step(ms)` は、ランチャーが答えに書く `at_ms` に着いた時（古いランチャーでは、受け付けた時刻にランチャーが丸めた `ms` を足した推定） | 上と同じ。着く前に、ほかの送り手（別のページ、stdin）の再開か一時停止が来たら `interrupted`（`unknown`）（このページの一時停止と再開、停止でも同じく拒否しますが、`status.problem` には出しません）。途中で送った別のステップは、これを終わらせません |
 
-送る前に client が断るのは、client が持ち主であるものだけです。接続（`rejected`、`incompatible`）、同じ操作が答えを待っていること（`busy`）、引数の形（`invalid-argument`）です。それ以外は、`controls` が不可でも送り、持ち主の答えを返します（コピーが古いことがあるため）。5 秒は正面の口が持つ時間で、着くまでの待ちには適用しません（着くまでの待ちは、実行の終わりか、別の命令の割り込みで終わります）。
+送る前に client が断るのは、client が持ち主であるものだけです。接続（`rejected`、`incompatible`）、同じ操作が答えを待っていること（`busy`。`start()` も含む）、引数の形（`invalid-argument`）です。それ以外は、`controls` が不可でも送り、持ち主の答えを返します（コピーが古いことがあるため）。5 秒は正面の口が持つ時間で、着くまでの待ちには適用しません（着くまでの待ちは、実行の終わりか、別の命令の割り込みで終わります）。
 
 時刻の命令には、ページが選んだ要求の番号（`id`）を付け、答えは、同じ `id` を持つランチャーの `command` イベントです。ほかのページや stdin の、同じ名前の命令への答えは、自分のものとして取りません。`state` を出すランチャーが要ります（古いランチャーには GUI サーバーが命令を断ります（`unsupported`））。
 
@@ -353,7 +355,7 @@ await throttle.write(40); // ECU のステップで適用されたときに解�
 stop(); // 最後の購読を解除すると、サーバーに値を頼むのをやめる
 ```
 
-見え方（view）は、`value`、`text`（enum は項目の名前）、`unit`、`min`、`max`、`step`、`sim_ms`、`stale`、`note`（値が生きたものでないときの 1 文）、`can_write`、`why`（書けない理由の `{ code, message }`）、`writing`、`problem`（このページの直前の書き込みが通らなかった理由）と、`client.low.variables.bind` の値（`condition`、`block`、`write_status`）を持ちます。
+見え方（view）は、`value`、`text`（enum は項目の名前）、`unit`、`min`、`max`、`step`、`sim_ms`、`stale`、`note`（値が生きたものでないときの 1 文）、`can_write`（変数自身の条件と、ランチャーが受けるか（`state.allowed.write`））、`why`（書けない理由の `{ code, message }`。変数自身の理由が先、次にランチャーの理由）、`writing`、`problem`（このページの直前の書き込みが通らなかった理由）と、`client.low.variables.bind` の値（`condition`、`block`、`write_status`）を持ちます。
 
 - 最初の購読がサーバーに値を頼み、最後の購読の解除がやめます。`close()` はありません。
 - `write(value)` は購読がなくても書けます（その 1 回だけ送ります）。`ActionError` で拒否します。`no-answer` は `unknown` で、答えの来なかった書き込みは送り直しません。

@@ -72,13 +72,18 @@ interface Waiting {
   /** moving: the virtual time that has to be reached, and the time it started from. */
   target: number;
   from: number;
+  /** The launcher said when it pauses (`at_ms` of the command event): the target is exact. */
+  exact: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   resolve: () => void;
   reject: (error: ActionError) => void;
 }
 
-/** The commands that move time or change whether it stands still: seen from another sender, they interrupt a step. */
-const MOVES = new Set(['pause', 'resume', 'step', 'run_until']);
+/**
+ * The commands that make a step on its way end somewhere else: a pause or a resume from another sender. (A step or a
+ * run_until sent meanwhile does not: the launcher carries the first one on and counts the next from where it stops.)
+ */
+const MOVES = new Set(['pause', 'resume']);
 
 export class FrontActions {
   private readonly busyValue: Writable<ReadonlySet<OperationName>>;
@@ -122,6 +127,8 @@ export class FrontActions {
         ),
       );
     }
+    const own = this.refusalOfStart();
+    if (own) return this.fail(own);
     const request: RunRequest = {
       file,
       disable: intent.disable ?? [],
@@ -133,6 +140,22 @@ export class FrontActions {
       ...(intent.params ? { params: intent.params } : {}),
     };
     return this.guarded('start', () => this.src.low.run.start(request).then(() => undefined));
+  }
+
+  /** What the client refuses before it sends a start: the connection, and a start of this page still on its way. */
+  private refusalOfStart(): ActionError | null {
+    const link = linkOf(this.src.snapshot());
+    if (link === 'rejected' || link === 'incompatible') {
+      const why = this.src.controls().start.reason;
+      return new ActionError(link, why?.message ?? link, 'refused');
+    }
+    return this.busyValue.get().has('start')
+      ? new ActionError(
+          'busy',
+          'the previous start has not been answered yet: wait for it',
+          'refused',
+        )
+      : null;
   }
 
   stop(): Promise<void> {
@@ -245,9 +268,10 @@ export class FrontActions {
         stage: 'sent',
         target: 0,
         from: 0,
+        exact: false,
         timer: undefined,
         resolve,
-        reject: (error) => reject(this.record(error)),
+        reject,
       };
       this.waiting.set(id, waiting);
       this.setBusy(op, true);
@@ -268,13 +292,15 @@ export class FrontActions {
   }
 
   /** Ends a waiting command: with an error, or (null) as done. A command ended twice is ended once. */
-  private settle(waiting: Waiting, error: ActionError | null): void {
+  private settle(waiting: Waiting, error: ActionError | null, report = true): void {
     if (this.waiting.get(waiting.id) !== waiting) return;
     clearTimeout(waiting.timer);
     this.waiting.delete(waiting.id);
     if (waiting.stage === 'sent') this.setBusy(waiting.op, this.stillSent(waiting.op));
-    if (error) waiting.reject(error);
-    else waiting.resolve();
+    if (error) {
+      if (report) this.record(error);
+      waiting.reject(error);
+    } else waiting.resolve();
   }
 
   private stillSent(op: TimeOperation): boolean {
@@ -329,21 +355,20 @@ export class FrontActions {
       );
       return;
     }
-    if (
-      waiting.op === 'pause' ||
-      waiting.op === 'resume' ||
-      waiting.op === 'step' ||
-      waiting.op === 'run_until'
-    ) {
-      this.interruptMoving(waiting, `${waiting.op} came before it arrived`);
+    if (waiting.op === 'pause' || waiting.op === 'resume') {
+      // This page's own pause or resume: the step that it ends is not a problem to show
+      this.interruptMoving(waiting, `${waiting.op} of this page came before it arrived`, false);
     }
     if (waiting.op === 'step' || waiting.op === 'run_until') {
       clearTimeout(waiting.timer);
       waiting.stage = 'moving';
       waiting.from = sim ?? 0;
       // A step ends at the time it was accepted plus the amount the launcher rounded it to; a run_until at its time
+      // (the launcher's own `at_ms` says it exactly, and is used when it is there)
+      waiting.exact = event.at_ms !== null;
       waiting.target =
-        waiting.op === 'step' ? waiting.from + (event.ms ?? waiting.amount) : waiting.amount;
+        event.at_ms ??
+        (waiting.op === 'step' ? waiting.from + (event.ms ?? waiting.amount) : waiting.amount);
       this.setBusy(waiting.op, this.stillSent(waiting.op));
       return;
     }
@@ -351,7 +376,7 @@ export class FrontActions {
   }
 
   /** Ends the steps and run_untils on their way (except `keep`) as interrupted. */
-  private interruptMoving(keep: Waiting | null, why: string): void {
+  private interruptMoving(keep: Waiting | null, why: string, report = true): void {
     for (const w of [...this.waiting.values()]) {
       if (w !== keep && w.stage === 'moving') {
         this.settle(
@@ -361,6 +386,7 @@ export class FrontActions {
             `${w.op} did not arrive: ${why}; read clock to see where the time is`,
             'unknown',
           ),
+          report,
         );
       }
     }
@@ -388,12 +414,14 @@ export class FrontActions {
         this.settle(
           w,
           new ActionError('interrupted', `${w.op} did not arrive: a stop was asked for`, 'unknown'),
+          false, // a stop by the operator is not a problem to show
         );
         continue;
       }
       const sim = session.time?.simMs ?? session.simMs;
       const paused = state ? state.paused : session.time?.paused;
-      if (sim !== null && sim > w.from && sim >= w.target && paused === true) this.settle(w, null);
+      if (sim !== null && (w.exact || sim > w.from) && sim >= w.target && paused === true)
+        this.settle(w, null);
     }
   }
 

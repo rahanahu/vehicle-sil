@@ -271,7 +271,6 @@ describe('the front door', () => {
               max: 1,
               caution: { code: 'outside-real-time', message: 'it keeps to real time' },
             },
-            write: refusal('scenario-running', 'a scenario runs'),
           },
         ),
       );
@@ -280,7 +279,6 @@ describe('the front door', () => {
         code: 'outside-real-time',
         message: 'it keeps to real time',
       });
-      expect(c.write.reason).toEqual({ code: 'scenario-running', message: 'a scenario runs' });
     });
 
     it('keeps the same object while nothing changed', async () => {
@@ -384,6 +382,12 @@ describe('the front door', () => {
         { type: 'synced', session: null, last_seq: null },
       );
       expect(rig.front.controls.get().start.ok).toBe(true);
+    });
+
+    it('calls the run stopping, with no result, while the ended phase is in but the result is not', async () => {
+      const rig = await running();
+      await rig.deliver(event(stateEvent(2, { phase: 'ended' })));
+      expect(rig.front.status.get()).toMatchObject({ run: 'stopping', result: null });
     });
 
     it('shows the sentences of a result by its name, and a stop by the operator is not a failure', async () => {
@@ -725,6 +729,7 @@ describe('the front door', () => {
       await rig.deliver(event(commandEvent(60, 'step', id, { ms: 100 })));
       await rig.deliver({ type: 'session', session: summary({ stop: 'requested' }) });
       expect(await step).toMatchObject({ code: 'interrupted', outcome: 'unknown' });
+      expect(rig.front.status.get().problem).toBeNull();
 
       const other = await running();
       const pause = other.front.time.pause().catch((e: unknown) => e as ActionError);
@@ -739,15 +744,55 @@ describe('the front door', () => {
       expect(await pause).toMatchObject({ code: 'not-running', outcome: 'unknown' });
     });
 
-    it('lets the second step interrupt the first of the same page', async () => {
+    it('does not end a step on its way because another step is sent meanwhile', async () => {
       const rig = await running(pausedState(1));
-      const first = rig.front.time.step(100).catch((e: unknown) => e as ActionError);
+      let done = false;
+      const first = rig.front.time.step(100).then(() => (done = true));
       const id1 = rig.timeBody().id;
-      await rig.deliver(event(commandEvent(60, 'step', id1, { ms: 100 })));
+      await rig.deliver(event(commandEvent(60, 'step', id1, { ms: 100, at_ms: 600 })));
       void rig.front.time.step(50).catch(() => undefined);
       const id2 = rig.timeBody().id;
-      await rig.deliver(event(commandEvent(61, 'step', id2, { ms: 50 })));
-      expect(await first).toMatchObject({ code: 'interrupted' });
+      await rig.deliver(event(commandEvent(61, 'step', id2, { ms: 50, at_ms: 650 })));
+      expect(done).toBe(false);
+      await rig.deliver(event(timeEvent(62, 650, true)), event(pausedState(3)));
+      await first;
+      expect(done).toBe(true);
+    });
+
+    it('uses the at_ms of the command event as the target: a step right after a pause waits for its own time', async () => {
+      const rig = await running(pausedState(1));
+      let done = false;
+      const step = rig.front.time.step(10).then(() => (done = true));
+      const id = rig.timeBody().id;
+      // the launcher was still stopping from the pause: the last time seen (500) is not where the step starts
+      await rig.deliver(
+        event(timeEvent(60, 540, true)),
+        event(commandEvent(61, 'step', id, { ms: 10, at_ms: 550 })),
+      );
+      expect(done).toBe(false);
+      await rig.deliver(event(timeEvent(62, 550, true)), event(pausedState(3)));
+      await step;
+      expect(done).toBe(true);
+    });
+
+    it("does not show the end of a step by this page's own pause or by a stop as the problem, but another sender's resume", async () => {
+      const rig = await running();
+      const own = rig.front.time.step(100).catch((e: unknown) => e as ActionError);
+      const idStep = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(60, 'step', idStep, { ms: 100, at_ms: 600 })));
+      void rig.front.time.pause().catch(() => undefined);
+      const idPause = rig.timeBody().id;
+      await rig.deliver(event(commandEvent(61, 'pause', idPause)));
+      expect(await own).toMatchObject({ code: 'interrupted' });
+      expect(rig.front.status.get().problem).toBeNull();
+
+      const other = await running(pausedState(1));
+      const step = other.front.time.step(100).catch((e: unknown) => e as ActionError);
+      const id = other.timeBody().id;
+      await other.deliver(event(commandEvent(60, 'step', id, { ms: 100, at_ms: 600 })));
+      await other.deliver(event(commandEvent(61, 'resume', 9)));
+      expect(await step).toMatchObject({ code: 'interrupted' });
+      expect(other.front.status.get().problem?.code).toBe('interrupted');
     });
 
     it('sends run_until with its time, and takes the time as the target', async () => {
@@ -786,6 +831,28 @@ describe('the front door', () => {
         { type: 'synced', session: 1, last_seq: 40 },
       );
       expect(rig.front.controls.get().run_until.ok).toBe(true);
+    });
+
+    it('refuses a second start while the first is on its way, and a start with the token refused', async () => {
+      const rig = await open();
+      await rig.deliver(
+        {
+          type: 'hello',
+          vehicle_sil_gui: 1,
+          version: '0.1.0',
+          instance: 'x',
+          session: null,
+          allowed: serverAllowed(1, startOk, notRunning),
+          replay: null,
+        },
+        { type: 'synced', session: null, last_seq: null },
+      );
+      void rig.front.run.start(undefined, { file: 'sim.yaml' }).catch(() => undefined);
+      await expect(rig.front.run.start(undefined, { file: 'sim.yaml' })).rejects.toMatchObject({
+        code: 'busy',
+        outcome: 'refused',
+      });
+      expect(rig.http.requests.filter((r) => r.request.path === 'api/run')).toHaveLength(1);
     });
 
     it('refuses an argument of the wrong form without sending', async () => {
@@ -874,54 +941,61 @@ describe('the front door', () => {
     });
   });
 
+  /** A run with the variable Engine.engine.offset, and the launcher's state `state`. */
+  async function withVariable(state: unknown = stateEvent(1)): Promise<Rig> {
+    const rig = await open();
+    await rig.deliver(
+      {
+        type: 'hello',
+        vehicle_sil_gui: 1,
+        version: '0.1.0',
+        instance: 'x',
+        session: {
+          id: 1,
+          state: 'running',
+          launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
+          stop: 'none',
+          variables: {
+            state: 'ready',
+            reason: null,
+            peers: [
+              {
+                name: 'Engine',
+                connected: true,
+                variables: [
+                  {
+                    name: 'engine.offset',
+                    type: 'real',
+                    role: 'input',
+                    writable: true,
+                    unit: 'rpm',
+                    min: null,
+                    max: null,
+                    step: null,
+                    description: '',
+                    enum: null,
+                  },
+                ],
+              },
+            ],
+            peers_omitted: 0,
+            variables_omitted: 0,
+            operations: [],
+          },
+        },
+        replay: null,
+      },
+      event(state),
+      { type: 'synced', session: 1, last_seq: null },
+    );
+    return rig;
+  }
+
   describe('a variable', () => {
     const named = 'Engine.engine.offset';
 
     it('writes without a subscription, and resolves when the write is applied', async () => {
-      const rig = await open();
-      await rig.deliver(
-        {
-          type: 'hello',
-          vehicle_sil_gui: 1,
-          version: '0.1.0',
-          instance: 'x',
-          session: {
-            id: 1,
-            state: 'running',
-            launcher: { pid: 1, running: true, exit_code: null, signal: null, silent_s: null },
-            stop: 'none',
-            variables: {
-              state: 'ready',
-              reason: null,
-              peers: [
-                {
-                  name: 'Engine',
-                  connected: true,
-                  variables: [
-                    {
-                      name: 'engine.offset',
-                      type: 'real',
-                      role: 'input',
-                      writable: true,
-                      unit: 'rpm',
-                      min: null,
-                      max: null,
-                      step: null,
-                      description: '',
-                      enum: null,
-                    },
-                  ],
-                },
-              ],
-              peers_omitted: 0,
-              variables_omitted: 0,
-              operations: [],
-            },
-          },
-          replay: null,
-        },
-        { type: 'synced', session: 1, last_seq: null },
-      );
+      const rig = await withVariable();
       const variable = rig.front.variable(named);
       let writing = false;
       const done = variable.write(50).then(() => (writing = true));

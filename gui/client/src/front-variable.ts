@@ -2,7 +2,7 @@
 // be written and the write status are those of `client.low.variables.bind`; this adds a Promise for a write, a reason
 // with a sentence for what cannot be written, and a note for a value that is not a live one.
 import type { GuiClient } from './client';
-import { ActionError, FrontVariable, Reason, VariableView } from './front-types';
+import { ActionError, Control, FrontVariable, Reason, VariableView } from './front-types';
 import { actionError } from './front-actions';
 import { sameData } from './front-compose';
 import type { BoundVariable, VariableBinding } from './variable-binding';
@@ -77,7 +77,11 @@ interface Track {
   problem: Reason | null;
 }
 
-export function viewOf(bound: BoundVariable, track: Track): VariableView {
+/**
+ * `launcher` is what the launcher accepts for a write now (`state.allowed.write`, with the connection and the run). The
+ * variable's own reason (it is an output, the ECU is not connected, ...) comes first; otherwise the launcher's.
+ */
+export function viewOf(bound: BoundVariable, track: Track, launcher: Control): VariableView {
   const status = bound.writeStatus;
   const failed =
     status.kind === 'invalid' || status.kind === 'dropped' || 'code' in status
@@ -96,8 +100,11 @@ export function viewOf(bound: BoundVariable, track: Track): VariableView {
     sim_ms: bound.reading?.sampleMs ?? null,
     stale: bound.condition.kind === 'stale',
     note: noteOf(bound.condition),
-    can_write: bound.block === null,
-    why: bound.block === null ? null : { code: bound.block, message: WHY_BLOCKED[bound.block] },
+    can_write: bound.block === null && launcher.ok,
+    why:
+      bound.block === null
+        ? launcher.reason
+        : { code: bound.block, message: WHY_BLOCKED[bound.block] },
     writing:
       track.writing ||
       status.kind === 'sending' ||
@@ -127,6 +134,8 @@ export function makeVariable(
   ref: VariableRef,
   /** Refuses a write the client must not send (the connection is refused, or the versions differ). */
   refuse: () => ActionError | null,
+  /** What the launcher accepts for a write (see `viewOf`). */
+  launcher: Readable<Control>,
 ): FrontVariable {
   const track = new Writable<Track>({ writing: false, problem: null }, sameData);
   const view = new Writable<VariableView | null>(null, sameData);
@@ -135,7 +144,7 @@ export function makeVariable(
   let stops: (() => void)[] = [];
 
   const refresh = () => {
-    if (binding) view.set(viewOf(binding.state.get(), track.get()));
+    if (binding) view.set(viewOf(binding.state.get(), track.get(), launcher.get()));
   };
 
   /** The view without anyone subscribed: no values are asked for. The same object while nothing changed. */
@@ -143,7 +152,7 @@ export function makeVariable(
   const peek = (): VariableView => {
     const once = low.variables.bind(ref, { visible: false });
     try {
-      const next = viewOf(once.state.get(), track.get());
+      const next = viewOf(once.state.get(), track.get(), launcher.get());
       if (!peeked || !sameData(peeked, next)) peeked = next;
       return peeked;
     } finally {
@@ -154,13 +163,16 @@ export function makeVariable(
   const readable: Readable<VariableView> = {
     get: () => {
       if (!binding) return peek();
-      refresh();
       return view.get() as VariableView;
     },
     subscribe: (listener) => {
       if (count++ === 0) {
         binding = low.variables.bind(ref);
-        stops = [binding.state.subscribe(refresh), track.subscribe(refresh)];
+        stops = [
+          binding.state.subscribe(refresh),
+          track.subscribe(refresh),
+          launcher.subscribe(refresh),
+        ];
         refresh();
       }
       const off = view.subscribe((v) => v && listener(v));

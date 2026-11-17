@@ -20,13 +20,14 @@ import {
   Snapshot,
   clockOf,
   controlsOf,
+  writeOf,
   linkProblem,
   newest,
   runOf,
   sameData,
   statusOf,
 } from './front-compose';
-import { FrontActions } from './front-actions';
+import { FrontActions, actionError } from './front-actions';
 import { makeVariable, refOf } from './front-variable';
 import { ErrorSink, Readable, derived } from './values';
 import { linkOf } from './front-compose';
@@ -113,6 +114,16 @@ function createFront(options: ClientOptions, onClose: () => void): Front {
     () => {
       const s = snapshot();
       return controlsOf(s, runOf(s));
+    },
+    sameData,
+    onError,
+  );
+
+  const writeControl = derived(
+    [...sources, actions.busy],
+    () => {
+      const s = snapshot();
+      return writeOf(s, runOf(s));
     },
     sameData,
     onError,
@@ -205,12 +216,17 @@ function createFront(options: ClientOptions, onClose: () => void): Front {
       const key = `${named.peer}\u0000${named.name}`;
       let variable = variables.get(key);
       if (!variable) {
-        variable = makeVariable(low, named, () => {
-          const link = linkOf(snapshot());
-          return link === 'rejected' || link === 'incompatible'
-            ? new ActionError(link, controls.get().write.reason?.message ?? link, 'refused')
-            : null;
-        });
+        variable = makeVariable(
+          low,
+          named,
+          () => {
+            const link = linkOf(snapshot());
+            return link === 'rejected' || link === 'incompatible'
+              ? new ActionError(link, writeControl.get().reason?.message ?? link, 'refused')
+              : null;
+          },
+          writeControl,
+        );
         variables.set(key, variable);
       }
       return variable;
@@ -246,7 +262,7 @@ async function open(options: ConnectOptions, onClose: () => void): Promise<Front
     await front.low.loadApp();
   } catch (error) {
     front.close();
-    throw error;
+    throw actionError(error);
   }
   return front;
 }

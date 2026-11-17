@@ -87,7 +87,8 @@ export function runOf(s: Snapshot): RunState {
     case 'stopping':
       return 'stopping';
     case 'ended':
-      return 'ended';
+      // The launcher writes the ended phase before the result: until the result is in, the run is ending
+      return 'stopping';
     default:
       return paused === true ? 'paused' : 'running';
   }
@@ -268,6 +269,15 @@ const STATE_ITEM_MISSING = (name: string) =>
   );
 
 export function controlsOf(s: Snapshot, run: RunState): FrontControls {
+  return composeControls(s, run).controls;
+}
+
+/** Whether the launcher takes a write now (`state.allowed.write` with the connection and the run). Not in `controls`: a variable says whether it can be written, and uses this. */
+export function writeOf(s: Snapshot, run: RunState): Control {
+  return composeControls(s, run).write;
+}
+
+function composeControls(s: Snapshot, run: RunState): { controls: FrontControls; write: Control } {
   const link = linkOf(s);
   const down = linkReason(link, s);
   const session = s.session;
@@ -374,7 +384,7 @@ export function controlsOf(s: Snapshot, run: RunState): FrontControls {
         runUntilBase.caution,
       );
 
-  return {
+  const controls: FrontControls = {
     start,
     stop,
     force_stop: force,
@@ -391,8 +401,8 @@ export function controlsOf(s: Snapshot, run: RunState): FrontControls {
       min: numberOf(speedItem, 'min') ?? s.limits.speed_min,
       max: numberOf(speedItem, 'max') ?? s.limits.speed_max,
     },
-    write: timeControl('write', 'write'),
   };
+  return { controls, write: timeControl('write', 'write') };
 }
 
 // --- the problem ----------------------------------------------------------------------------------

@@ -883,6 +883,11 @@ export interface CommandReport {
    * answers. null when the line had none, and from a launcher before `state`.
    */
   id: number | null;
+  /**
+   * For an accepted `step`, `run_until` and `pause` with a time: the virtual time at which the simulation pauses (null
+   * otherwise, and from a launcher that does not write it).
+   */
+  at_ms: number | null;
 }
 
 /**
@@ -900,6 +905,7 @@ export function readCommandFields(f: Fields, path: string, u?: Unreadable): Comm
     ms: field(f, path, 'ms', soft(nullable(integer), null, u)),
     reason: field(f, path, 'reason', soft(nullable(string), null, u)),
     id: field(f, path, 'id', soft(nullable(integer), null, u)),
+    at_ms: field(f, path, 'at_ms', soft(nullable(number), null, u)),
   };
 }
 

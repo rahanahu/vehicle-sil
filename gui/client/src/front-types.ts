@@ -17,7 +17,7 @@ export type Link = 'connecting' | 'online' | 'offline' | 'rejected' | 'incompati
 
 /**
  * Where the run stands. `starting`: a start is on its way (this page's or another page's) or the launcher has not
- * begun; `waiting`: the launcher waits (for a participant you start yourself, or before the first step); `ended`: the
+ * begun; `waiting`: the launcher waits for the participants to join (phase `waiting`; a run held before the first step with start_paused is `paused`); `ended`: the
  * run has a result; `crashed`: the launcher ended without one.
  */
 export type RunState =
@@ -83,7 +83,6 @@ export interface FrontControls {
   step: Control & { min_ms: number; max_ms: number };
   run_until: Control;
   speed: Control & { min: number; max: number };
-  write: Control;
 }
 
 /** The operations that have a control. */
@@ -167,6 +166,7 @@ export interface VariableView {
   stale: boolean;
   /** One English sentence when the value is not a live one (waiting, paused, stale, ended, ...); null while live. */
   note: string | null;
+  /** Whether it can be written: the variable's own conditions and what the launcher accepts (`state.allowed.write`). */
   can_write: boolean;
   /** Why the variable cannot be written (null if it can). */
   why: Reason | null;
