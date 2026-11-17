@@ -18,6 +18,8 @@
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
 //   run_connect.cpp      with_bridges()   run --connect: the bridges as participants of the run only
+//   run_outside.cpp      read_outside_counts(), OutsideNote   run --connect: the counts in a bridge's
+//                        statistics lines, and when the event "outside" goes out
 //   timeline.cpp         TimelineRecord, format_timeline_json()   run --timeline: what the scenario's
 //                        engine notes, and the file made of it (Runner::open_timeline(), write_timeline())
 //
@@ -37,7 +39,10 @@
 //   participants have ended).
 // - The controller's SIL Kit thread: the hub's tap (what RunSamples keeps).
 // - Each participant's reader thread (process::Process): RunOutput::on_line() (which keeps a bridge's
-//   last line under RunOutput's mutex; the main thread copies it into the result after the end).
+//   last line and its counts under RunOutput's mutex, and writes the event "outside" there; the
+//   main thread writes the counts held back while it watches the simulation (outside_due()), and
+//   takes the last ones, with their event, into the result after the end (take_counts()), before
+//   the result's event).
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry, and touches nothing else of the run. The main
 //   thread waits for it with a limit.
@@ -184,7 +189,7 @@ public:
         }
         for (const NetworkOutside& o : check.outside)
         {
-            outcome_.outside.push_back(RunOutside{o.network, o.target, o.participant, std::nullopt, std::nullopt});
+            outcome_.outside.push_back(RunOutside{o.network, o.target, o.participant, std::nullopt, std::nullopt, o.tool});
         }
     }
 

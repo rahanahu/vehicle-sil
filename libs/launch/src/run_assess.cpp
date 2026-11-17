@@ -11,11 +11,13 @@
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/launch/connect.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <numeric>
 #include <utility>
 
@@ -160,6 +162,44 @@ std::optional<Finding> time_changed_finding(const RunOutcome& outcome)
                        "events show each one). To pause, step or change the speed, run without --connect (on SIL Kit "
                        "only); --strict makes this a failure, for an automatic test",
                    0, "", ""};
+}
+
+/// connect-nothing-received: a bridge of --connect that sent frames to the real bus while the
+/// simulation ran and got none from a device there, for each such network. Not for a bridge that
+/// failed the run (connect-failed, connect-lost say more), nor without counts (none could be read).
+std::vector<Finding> nothing_received_findings(const RunOutcome& outcome)
+{
+    std::vector<Finding> out;
+    if (outcome.simulation == SimulationEnd::NotStarted)
+    {
+        return out;
+    }
+    for (const RunOutside& o : outcome.outside)
+    {
+        if (!o.to_outside || !o.from_outside || *o.to_outside == 0 || *o.from_outside != 0)
+        {
+            continue;
+        }
+        const auto bridge = std::find_if(outcome.participants.begin(), outcome.participants.end(),
+                                         [&o](const ParticipantRun& p) { return p.for_network == o.network; });
+        if (bridge == outcome.participants.end() || bridge_failure(outcome, *bridge))
+        {
+            continue;
+        }
+        const bool can = o.tool == bridge_tool(NetworkKind::Can);
+        out.push_back(Finding{
+            Severity::Note, "connect-nothing-received",
+            "network '" + o.network + "': nothing came from a device on the real bus (" + o.target + ") before the run ended: " + o.participant +
+                " sent " + std::to_string(*o.to_outside) + (*o.to_outside == 1 ? " frame" : " frames") +
+                " there and got none from a device" +
+                (can ? std::string{} : std::string(" (frames that this computer sent do not count)")) +
+                ". If a device is meant to answer, check that it is on, " +
+                (can ? "its cable and termination, the bit rate, and that --connect names the channel it is on"
+                     : "its cable, and that --connect names the adapter it is on") +
+                "; a short run can end before a device answers",
+            bridge->line, bridge->name, o.network});
+    }
+    return out;
 }
 
 std::size_t count(const std::vector<Finding>& findings, Severity severity)
@@ -463,6 +503,7 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     {
         out.push_back(std::move(*f));
     }
+    std::ranges::move(nothing_received_findings(outcome), std::back_inserter(out));
     if (!outcome.timing.coarse_step_checked)
     {
         if (auto f = detail::coarse_time_step(outcome.timing))
@@ -539,9 +580,9 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
     std::vector<Finding> out;
     for (Finding& f : assess_run(outcome))
     {
-        // A bridge's quotes its last line, which is known once its output has been read to the end
-        // (after the participants have ended).
-        if (f.code == "connect-failed" || f.code == "connect-lost")
+        // A bridge's quotes its last line, or its counts, which are known once its output has been
+        // read to the end (after the participants have ended).
+        if (f.code == "connect-failed" || f.code == "connect-lost" || f.code == "connect-nothing-received")
         {
             continue;
         }

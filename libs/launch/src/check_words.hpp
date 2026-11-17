@@ -133,6 +133,21 @@ inline std::string control_version_fix(std::int64_t version)
                : "the ECU is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one";
 }
 
+/// A line of a bridge's output without the tag that the bridge puts first: "[" and a word without a
+/// space, then "] " ("[eth-bridge] ", "[bridge] "). The line as it is if it has none.
+inline std::string_view without_tag(std::string_view line)
+{
+    if (line.size() > 2 && line.front() == '[')
+    {
+        if (const auto close = line.find("] ");
+            close != std::string_view::npos && close > 1 && line.substr(1, close - 1).find(' ') == std::string_view::npos)
+        {
+            line.remove_prefix(close + 2);
+        }
+    }
+    return line;
+}
+
 /// The line of a tool's output that says why it failed, from its lines one at a time. A line that
 /// says so starts with "error:" (an argument the bridges refuse; they write the usage hint after it)
 /// or "FAIL" (a bridge that cannot set up, or fails while it runs; it writes what it did since, its
@@ -146,15 +161,7 @@ public:
     {
         std::string text(line);
         std::erase(text, '\r');
-        std::string_view body = text;
-        if (body.size() > 2 && body.front() == '[')
-        {
-            if (const auto close = body.find("] "); close != std::string_view::npos && close > 1 &&
-                                                    body.substr(1, close - 1).find(' ') == std::string_view::npos)
-            {
-                body.remove_prefix(close + 2);
-            }
-        }
+        const std::string_view body = without_tag(text);
         if (body.rfind("error:", 0) == 0 || body.rfind("FAIL", 0) == 0)
         {
             failure_ = text;

@@ -48,6 +48,7 @@ int main(int argc, char** argv)
             {"connect_lost_exit0", connect_lost_exit0},
             {"connect_lost_kill", connect_lost_kill},
             {"connect_no_adapter", connect_no_adapter},
+            {"connect_nothing_received", connect_nothing_received},
             {"connect_roundtrip", connect_roundtrip},
             {"connect_speed", connect_speed},
             {"connect_time_changed", connect_time_changed},

@@ -219,7 +219,7 @@ std::vector<std::string> bridge_run_arguments(const NetworkOutside& outside, std
 {
     std::vector<std::string> out = outside.arguments.value_or(std::vector<std::string>{});
     out.insert(out.end(), {"--name", outside.participant, "--registry-uri", std::string(registry_uri), "--start-timeout-ms",
-                           std::to_string(start_timeout_ms)});
+                           std::to_string(start_timeout_ms), "--stats-every-ms", std::to_string(kBridgeStatisticsEveryMs)});
     return out;
 }
 

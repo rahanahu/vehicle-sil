@@ -753,7 +753,7 @@ Windows には TAP デバイスに当たるバックエンドがありません�
 
 ## 統計
 
-`format_statistics()` は、全部の数を 1 行にします。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。ブリッジは止まるときにこの行を出し、`--stats-every-ms <ms>` を指定すれば動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラム（たとえば自分で書いたスクリプト）のためにこのドキュメントが定め、テストが守ります。
+`format_statistics()` は、全部の数を 1 行にします。`stats` の後に、下の表のキーごとに ` <キー>=<数>` を、表の順に並べます。ブリッジは止まるときにこの行を出し、`--stats-every-ms <ms>` を指定すれば動いている間にも出します（最初の間隔で 1 回、その後は数が変わった間隔ごと）。数は起動からの合計で、1 つずつ読むので、1 行の数が同じ瞬間のものとは限りません。キーとその順序は、行を読むプログラム（たとえば自分で書いたスクリプト）のためにこのドキュメントが定め、テストが守ります。`vehicle_sil_launch run --connect` が起こしたブリッジには、ランチャーが `--stats-every-ms 1000` を渡し、数のためにこの行を読みます。実行の出力には、ブリッジが動いている間の行は出ず、ブリッジが終わったときに最後の 1 行が 1 回出ます（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」）。
 
 ```
 stats silkit_to_ext=0 ext_to_silkit=0 ext_from_devices=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0

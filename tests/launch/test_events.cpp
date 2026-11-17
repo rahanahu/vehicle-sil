@@ -256,6 +256,7 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
                      .slipped_ms = 30, .late_ms = 4});
     // A participant's line may hold anything: quotes, a backslash, a tab, a line end.
     e.log("Engine", "say \"hi\"\\\tthen\nmore");
+    e.outside("ETH_EXT", 152, 0);
     e.participant_ended("Engine", process::ExitStatus{0, std::nullopt});
     e.participant_ended("Crash", process::ExitStatus{139, 11});
     e.participant("Deaf", ParticipantState::StopRequested);
@@ -284,16 +285,17 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
 {"event":"time","seq":10,"t_ms":7,"sim_ms":1000,"speed":"max","paused":false,"actual_speed":null,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
 {"event":"time","seq":11,"t_ms":7,"sim_ms":1010,"speed":0.5,"paused":true,"actual_speed":0.48,"late_steps":3,"max_late_ms":12,"slipped_ms":30,"late_ms":4}
 {"event":"log","seq":12,"t_ms":7,"source":"Engine","line":"say \"hi\"\\\tthen\nmore"}
-{"event":"participant","seq":13,"t_ms":7,"name":"Engine","state":"ended","exit_code":0,"signal":null}
-{"event":"participant","seq":14,"t_ms":7,"name":"Crash","state":"ended","exit_code":null,"signal":")" +
+{"event":"outside","seq":13,"t_ms":7,"network":"ETH_EXT","to_outside":152,"from_outside":0}
+{"event":"participant","seq":14,"t_ms":7,"name":"Engine","state":"ended","exit_code":0,"signal":null}
+{"event":"participant","seq":15,"t_ms":7,"name":"Crash","state":"ended","exit_code":null,"signal":")" +
                    process::signal_name(11) + R"("}
-{"event":"participant","seq":15,"t_ms":7,"name":"Deaf","state":"stop_requested"}
-{"event":"participant","seq":16,"t_ms":7,"name":"Deaf","state":"killed"}
-{"event":"finding","seq":17,"t_ms":7,"severity":"note","code":"interrupted","file":"sim.yaml","line":null,"participant":null,"network":null,"message":"interrupted (stop command): ...","detail":null}
-{"event":"finding","seq":18,"t_ms":7,"severity":"error","code":"exit-code","file":"sim.yaml","line":5,"participant":"A","network":null,"message":"participant 'A': ...","detail":"more"}
-{"event":"command","seq":19,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object"}
-{"event":"command","seq":20,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null}
-{"event":"phase","seq":21,"t_ms":7,"phase":"ended"}
+{"event":"participant","seq":16,"t_ms":7,"name":"Deaf","state":"stop_requested"}
+{"event":"participant","seq":17,"t_ms":7,"name":"Deaf","state":"killed"}
+{"event":"finding","seq":18,"t_ms":7,"severity":"note","code":"interrupted","file":"sim.yaml","line":null,"participant":null,"network":null,"message":"interrupted (stop command): ...","detail":null}
+{"event":"finding","seq":19,"t_ms":7,"severity":"error","code":"exit-code","file":"sim.yaml","line":5,"participant":"A","network":null,"message":"participant 'A': ...","detail":"more"}
+{"event":"command","seq":20,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object"}
+{"event":"command","seq":21,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null}
+{"event":"phase","seq":22,"t_ms":7,"phase":"ended"}
 )");
     CHECK(sink.closed().empty() && !e.closed());
 }
@@ -1200,13 +1202,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "run-traffic",
     "j1939-nodes",
     "connect",
-    "connections"
+    "connections",
+    "connect-counts"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"connect\",\n    \"connections\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connections\",\n    \"connect-counts\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

@@ -88,6 +88,20 @@ RunOutput::RunOutput(const RunContext& ctx) : ctx_(ctx)
 {
     logs_.resize(ctx.config.participants.size());
     last_lines_.resize(ctx.config.participants.size());
+    outside_.resize(ctx.config.participants.size());
+    last_statistics_.resize(ctx.config.participants.size());
+    for (const ParticipantConfig& p : ctx.config.participants)
+    {
+        const auto outside = std::find_if(ctx.check.outside.begin(), ctx.check.outside.end(), [&p](const NetworkOutside& o) {
+            return !p.for_network.empty() && o.network == p.for_network;
+        });
+        tools_.push_back(outside != ctx.check.outside.end() ? outside->tool : std::string{});
+    }
+}
+
+void RunOutput::write_outside(std::size_t index, const OutsideCounts& counts) const
+{
+    event([&](EventStream& e) { e.outside(ctx_.config.participants[index].for_network, counts.to_outside, counts.from_outside); });
 }
 
 void RunOutput::write(const std::string& line) const
@@ -152,6 +166,30 @@ bool RunOutput::open_logs(RunOutcome& outcome)
 void RunOutput::on_line(std::size_t index, std::string_view line)
 {
     const std::lock_guard lock(mutex_);
+    if (logs_[index])
+    {
+        *logs_[index] << line << '\n' << std::flush;
+    }
+    if (!ctx_.config.participants[index].for_network.empty())
+    {
+        last_lines_[index].add(line);
+        // The launcher's to read while the bridge runs: the event "outside" and the result show its
+        // counts; the last such line is shown once at the end (take_counts()).
+        if (const auto counts = read_outside_counts(tools_[index], line))
+        {
+            if (const auto now = outside_[index].on_counts(*counts, std::chrono::steady_clock::now()))
+            {
+                write_outside(index, *now);
+            }
+            last_statistics_[index] = std::string(line);
+            return;
+        }
+    }
+    show(index, line);
+}
+
+void RunOutput::show(std::size_t index, std::string_view line) const
+{
     if (ctx_.options.events != nullptr)
     {
         ctx_.options.events->log(ctx_.config.participants[index].name, printable(line));
@@ -160,20 +198,41 @@ void RunOutput::on_line(std::size_t index, std::string_view line)
     {
         write("[" + ctx_.config.participants[index].name + "] " + printable(line));
     }
-    if (logs_[index])
-    {
-        *logs_[index] << line << '\n' << std::flush;
-    }
-    if (!ctx_.config.participants[index].for_network.empty())
-    {
-        last_lines_[index].add(line);
-    }
 }
 
 std::string RunOutput::last_line(std::size_t index)
 {
     const std::lock_guard lock(mutex_);
     return last_lines_[index].failure();
+}
+
+void RunOutput::outside_due(std::chrono::steady_clock::time_point now)
+{
+    const std::lock_guard lock(mutex_);
+    for (std::size_t i = 0; i < outside_.size(); ++i)
+    {
+        if (const auto counts = outside_[i].due(now))
+        {
+            write_outside(i, *counts);
+        }
+    }
+}
+
+std::optional<OutsideCounts> RunOutput::take_counts(std::size_t index)
+{
+    const std::lock_guard lock(mutex_);
+    if (const auto counts = outside_[index].flush())
+    {
+        write_outside(index, *counts);
+    }
+    // The bridge's report for people: its last statistics line, with every count (its line at the
+    // stop, or the last while it ran if it was ended without one), once.
+    if (!last_statistics_[index].empty())
+    {
+        show(index, last_statistics_[index]);
+        last_statistics_[index].clear();
+    }
+    return outside_[index].last();
 }
 
 } // namespace detail

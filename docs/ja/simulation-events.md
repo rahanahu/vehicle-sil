@@ -41,6 +41,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control_link` | シミュレーションが始まった直後（`phase` の `running` の前）に、participant ごとに 1 回 | `name`、`state`、`variables`、`version` |
 | `log` | participant か `vehicle_sil_launch` が 1 行書いたとき | `source`、`line` |
 | `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に | `count`、`sources` |
+| `outside` | `--connect` のある実行で、ブリッジの数が変わったとき（ネットワークごとに 1 秒に 1 回まで） | `network`、`to_outside`、`from_outside` |
 | `finding` | 実行の指摘が決まったとき | 結果の `findings[]` の 1 つと同じキー |
 | `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー |
 | `time` | 仮想時間が進んだとき、一時停止に入ったとき・出たとき、速度が変わったとき | `sim_ms`、`speed`、`paused`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
@@ -196,6 +197,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `participant` の `manual` | `started` と同じ所に、設定ファイルの順 |
 | `--connect` のブリッジ（`bridge.<network>`）の `participant` | その `started` と `joined` は、ファイルのどの participant の `started` よりも前（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ」） |
 | participant の `log` | その participant の `started` より後 |
+| `outside` | そのネットワークのブリッジの `started` より後、`result` より前（[つないだネットワークの数（`outside`）](#つないだネットワークの数outside)） |
 | `participant` の `joined` | SIL Kit のライフサイクルで参加する participant だけ |
 | `control_link` | 必須の participant の `joined` がそろった後、`phase` の `running` の前に、設定ファイルの順 |
 | `participant` の `failed` | 失敗と決めた時点ですぐ |
@@ -264,6 +266,24 @@ participant の `log` の終わりの側には、保証がありません。part
 分けた `log` に、続きであることを示すキーはありません。
 
 `--log-dir` のファイルには、置き換える前のバイトをそのまま書きます。読む側が遅くて `log` を書けなかったときも、ファイルにはすべての行があります。
+
+### つないだネットワークの数（`outside`）
+
+`--connect` のある実行で、`run` は各ブリッジの数を統計の行から読み（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」）、`outside` イベントに書きます。
+
+| キー | 値 |
+|---|---|
+| `network` | `--connect` がつないだネットワーク |
+| `to_outside` | ブリッジがここまでにバスへ送ったフレームの数（整数） |
+| `from_outside` | ここまでにバスの機器から来たフレームの数（整数） |
+
+- ネットワークの数が、そのネットワークの前の `outside` と違うときに書きます。ネットワークごとに 1 秒に 1 回までです。シミュレーションが走っている間は、1 秒の間に変わった数を、1 秒たったときに書きます。走る前と、participant を終わらせている間は、次に違う数が来たときか、終わりに書きます。
+- ネットワークの最後の `outside` は、結果の `outside[]` のそのネットワークの数と同じです。`result` より前に来ます。ブリッジの `ended` や `phase` の `stopping` より後に来ることがあります。
+- ブリッジが、`run` の読める統計の行を 1 つも書かなかったネットワークには、`outside` を書きません（結果の数は `null`）。
+- `outside` は、`log` と違い、読む側が遅くても落としません。
+- 数のもとの統計の行は、ブリッジが動いている間は `log` イベントにしません（ブリッジの `--log-dir` のファイルにはあります）。最後に読んだ 1 行は、そのネットワークの最後の `outside` の後、`result` の前に、ブリッジの `log` イベントとして 1 回だけ書きます。
+
+`outside` を知らない読む側は、読み飛ばしてかまいません（最後の数は結果にあります）。
 
 ### 読む側が遅いとき、読まないとき
 
@@ -486,7 +506,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "run-traffic",
     "j1939-nodes",
     "connect",
-    "connections"
+    "connections",
+    "connect-counts"
   ]
 }
 ```
@@ -543,6 +564,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `j1939-nodes` | 設定ファイルの `j1939_nodes`（[simulation-config.md](simulation-config.md) の「J1939 のアドレスと NAME を合わせる（`j1939_nodes`）」） |
 | `connect` | `check` と `run` の `--connect`。ネットワークをブリッジで実機のバスにつなぐこと（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」） |
 | `connections` | `vehicle_sil_launch connections`: この PC で各ネットワークをどこにつなげるか（[simulation-run.md](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections) の「つなげる先の一覧（`vehicle_sil_launch connections`）」） |
+| `connect-counts` | つないだネットワークが実機のバスへ送ったフレームと、そこの機器から来たフレームの数（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -564,6 +586,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `j1939-nodes` | 実行ファイルに渡す `--j1939-node`、照合の JSON の `participants[].j1939_nodes`、指摘 `j1939-node-*`、`address-conflict`、`address-shared`、`name-conflict` の終わりの設定ファイルでの直し方、照合の participant の表の `0x01<-0x00` |
 | `connect` | 設定ファイルのネットワークの `external`、`check --connect` と `run --connect`、照合の JSON の `networks[].outside`、結果の `outside` と `participants[].for_network`、結果とイベントの participant `bridge.<network>`、人向けの結果の `outside:` の行、指摘 `connect-*` |
 | `connections` | `vehicle_sil_launch connections` とその `--json` と `--network`、`formats` の `connections`、指摘 `connect-target` と `connect-failed` が挙げる `vehicle_sil_launch connections` |
+| `connect-counts` | イベント `outside`、結果の `outside[].to_outside` と `from_outside` の数（この機能の前は `null`）、人向けの結果の `outside:` の行の末尾の数、指摘 `connect-nothing-received`、`run` が起こすブリッジのコマンドの `--stats-every-ms 1000` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

@@ -301,14 +301,14 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 
 | 順 | `run` がすること |
 |---|---|
-| 1 | つなぐネットワークごとのブリッジを、participant `bridge.<network>` として、ファイルのネットワークの順に起動します。引数は、照合が出すコマンド（`check --json` の `networks[].outside.command`）と、`--name`、`--registry-uri`、`--start-timeout-ms` です。 |
+| 1 | つなぐネットワークごとのブリッジを、participant `bridge.<network>` として、ファイルのネットワークの順に起動します。引数は、照合が出すコマンド（`check --json` の `networks[].outside.command`）と、`--name`、`--registry-uri`、`--start-timeout-ms`、`--stats-every-ms 1000` です。 |
 | 2 | 各ブリッジが SIL Kit の中で動き出すのを、`start_timeout_ms` まで待ちます。ブリッジは実時間で動き、足並みをそろえた開始には加わりません。 |
 | 3 | ファイルの participant を、`--connect` がないときと同じように起動します。 |
 | 4 | シミュレーションが終わったら、ほかの `required: false` の participant と一緒に、ブリッジに止まるよう頼みます（[止め方](#止め方)）。 |
 
 ブリッジを先に起動するのは、ブリッジが加わる前に ECU が送ったフレーム（時刻 0 のアドレスの宣言など）が、外のバスに出ないためです。
 
-ブリッジはファイルの participant ではありません。結果（`participants[]` のファイルの participant の後で、`for_network` 付き。`outside[]`）とイベント（`started`、`joined`、`ended`、ブリッジの行）には、ほかの participant と同じように出ます。`--disable`、`--enable`、`--manual` にはその名前を書けません。ネットワークを SIL Kit の中だけで動かすなら、`--connect <network>=none` を渡すか、`--connect` を外します。
+ブリッジはファイルの participant ではありません。結果（`participants[]` のファイルの participant の後で、`for_network` 付き。`outside[]`）とイベント（`started`、`joined`、`ended`、ブリッジの行）には、ほかの participant と同じように出ます。ただし統計の行は別です（下記）。`--disable`、`--enable`、`--manual` にはその名前を書けません。ネットワークを SIL Kit の中だけで動かすなら、`--connect <network>=none` を渡すか、`--connect` を外します。
 
 | ブリッジに起きたこと | `run` がすること | 指摘 |
 |---|---|---|
@@ -321,6 +321,25 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 指摘の文は、ブリッジがどう終わったかと、ブリッジが理由を書いた行（`[eth-bridge]` などの札の後が `error:` か `FAIL` で始まる最後の行）を出します。強制終了されたブリッジと、そういう行を書かずに終わったブリッジでは、行を出しません（最後の行は `stopped` など、ほかのことだからです）。`run` はブリッジのプロセスを見ているので、SIL Kit につながる前に終わったブリッジは、`start_timeout_ms` を待たずに、すぐ開始を失敗にします。
 
 実機のバスは仮想時間を待ちません。照合は、実行の速さが 1 でないとき（`--speed`、なければファイルの `speed`。速さがなければ最速）に `connect-not-real-time` を、`--start-paused` に `connect-start-paused` を警告します（[simulation-check.md](simulation-check.md)）。どちらも照合の警告なので、`--strict` では何も起動する前に失敗します。実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。
+
+### 外のバスとやりとりしたフレームの数
+
+`run` は、つないだネットワークごとに、ブリッジがバスへ送ったフレームと、バスの機器から来たフレームを数えます。数はブリッジの統計の行（`stats ...`。[ethernet-bridge.md](ethernet-bridge.md#統計) と [bridges.md](bridges.md#統計) の「統計」）から読みます。`--stats-every-ms 1000` で、ブリッジは動いている間もこの行を書きます（数が変わったときに 1 秒に 1 回と、止まるときに 1 回）。
+
+| ネットワーク | `to_outside` | `from_outside` |
+|---|---|---|
+| Ethernet | `silkit_to_ext` | `ext_from_devices`: 送り元がこの PC でないフレーム。ブリッジの絞り込みの前に数える |
+| CAN | `silkit_to_xl` | `xl_to_silkit` |
+
+- 数は結果（`outside[]`。人向けの結果の `outside:` の行、例えば `outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`）と、`--events` なら実行中の `outside` イベントに出ます（[simulation-events.md](simulation-events.md#つないだネットワークの数outside) の「つないだネットワークの数（`outside`）」）。`--events` があってもなくても同じ数です。
+- ブリッジが動いている間に `run` が読んだ統計の行は、ブリッジの行（`[bridge.<network>] ...`）にも `log` イベントにも出しません。ブリッジが終わったら、`run` は最後に読んだ 1 行を、ブリッジの行として 1 回だけ出します。全部の数が載ったブリッジの報告です（例えば、絞り込みで ECU に渡さなかったフレーム `filtered_from_ext`、止めるときに捨てたフレーム `xl_tx_unsent`）。ブリッジが止まるときに書いた行か、それを書かずに終わらされたなら、動いている間の最後の行です。ブリッジの `--log-dir` のファイルには全部の行があります。`run` が読めない行（例えば、これらのキーのない別の版のブリッジの行）は、ふつうの行として出します。
+- 数は最後に読めた行のものです。最後の行を書かずに終わらされたブリッジ（ランチャーが止まるよう頼めなかった Windows）は、動いている間の最後の行の数になります。1 行も読めなければ、どちらも `null` です。
+
+シミュレーションが動き、ブリッジがバスへフレームを送ったのに、実行が終わるまでにそこの機器から 1 つも来なかったら、実行は注意 `connect-nothing-received` で終わります。機器が答えないのは不具合とは限らないので、注意です（`--strict` でも失敗にしません）。実行を失敗させたブリッジ（`connect-failed`、`connect-lost`）と、数が `null` のときは出しません。Ethernet では、この PC がそのアダプターに出すフレーム（例えば、Hyper-V の `vEthernet` のアダプターに OS が出す IPv6 と ARP のフレーム）は数えないので、ケーブルが抜けていればこの注意が出ます。ブリッジも、動いている間に、最初に送ってから 10 秒たって機器から何も来なければ警告します（[ethernet-bridge.md](ethernet-bridge.md#機器から何も来ないときのヒント) の「機器から何も来ないときのヒント」）。
+
+```text
+network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
+```
 
 バスに機器をつないだ自動の試験は、シナリオ 1 つを、速さ 1 と `--strict` で走らせます。`test` は `--connect` を受けません。各シナリオをできるだけ速く走らせるためです。
 
@@ -677,7 +696,7 @@ participant は UTF-8 で書いてください。Windows のコンソールに�
 | 1 | 照合の表と、照合の指摘 |
 | 2 | `run:` で始まるシミュレーションの 1 行 |
 | 3 | `time:` の 1 行（速度を指定したか、速度を合わせたタイムステップがあったとき） |
-| 4 | `--connect` があると、つないだネットワークごとに `outside:` の 1 行（`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT)`） |
+| 4 | `--connect` があると、つないだネットワークごとに `outside:` の 1 行（`outside: ETH_EXT -> vEthernet (A) (bridge.ETH_EXT): 152 frames out, 3 from devices`。数が分からなければ数なし） |
 | 5 | participant の表（必須か、どう終わったか。`--connect` のブリッジは最後） |
 | 6 | ネットワークごとの送受信（`traffic:` の 1 行と表。下の「[ネットワークの送受信](#ネットワークの送受信traffic)」） |
 | 7 | 実行の指摘 |
@@ -803,6 +822,7 @@ passed: 0 errors, 1 warning, 1 note
 | `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、シミュレーションを始めなかった。ファイルの participant を起動する前の失敗なら、それらも起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
 | `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた |
 | `connect-time-changed` | 警告 | `--connect` のある実行で、命令がシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も実機のバスの機器は動いていた（実行に 1 つ。最初のそういう命令について。[バスを外につなぐ](#バスを外につなぐ--connect)） |
+| `connect-nothing-received` | 注意 | `--connect` のある実行で、ネットワークのブリッジが実機のバスへフレームを送ったのに、そこの機器から 1 つも来なかった（そういうネットワークごとに 1 つ。[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
@@ -942,7 +962,8 @@ passed: 0 errors, 1 warning, 1 note
 | `network` | ネットワーク |
 | `target` | つないだ先（`--connect` に渡したとおり） |
 | `participant` | `participants[]` でのブリッジの名前（`bridge.<network>`） |
-| `to_outside`、`from_outside` | バスへ出たフレームと、バスから来たフレームの数。この版ではいつも `null` です（まだ数えません） |
+| `to_outside` | ブリッジがバスへ送ったフレームの数（Ethernet は `silkit_to_ext`、CAN は `silkit_to_xl`）。ブリッジの統計の行を 1 つも読めなければ `null` |
+| `from_outside` | バスの機器から来たフレームの数（Ethernet は `ext_from_devices`、CAN は `xl_to_silkit`）。`null` は `to_outside` と同じ（[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
 
 `participants[].control_link` のキー（[ECU の変数との接続](#ecu-の変数との接続control_link)）:
 
