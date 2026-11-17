@@ -45,7 +45,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `finding` | 実行の指摘が決まったとき | 結果の `findings[]` の 1 つと同じキー |
 | `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー |
 | `time` | 仮想時間が進んだとき、一時停止に入ったとき・出たとき、速度が変わったとき | `sim_ms`、`speed`、`paused`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
-| `command` | コマンドを受けたとき | `command`、`source`、`accepted`、`message`、`ms`、`at_ms` |
+| `state` | 実行の状態か、受け付ける操作が変わったとき | `rev`、`phase`、`paused`、`holding`、`speed`、`pacing`、`stop`、`scenario`、`allowed`、`outside` |
+| `command` | コマンドを受けたとき | `command`、`source`、`accepted`、`message`、`reason`、`ms`、`at_ms`、`id` |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result` |
 
@@ -141,10 +142,118 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `source` | `"stdin"`（行で来た）、`"eof"`（標準入力の終わり）、`"control_server"`（クライアントの呼び出し） |
 | `accepted` | 受け付けたか |
 | `message` | 受け付けなかった理由（受け付けたら `null`） |
+| `reason` | 受け付けなかった理由のコード（[理由のコード](#理由のコード)。受け付けたら `null`） |
 | `ms` | 受け付けた `step` にだけあります。実際に進む仮想時間（タイムステップの倍数に切り上げたもの） |
 | `at_ms` | 受け付けた `run_until` と、時刻つきの `pause` にだけあります。止まる仮想時刻（タイムステップの倍数に切り上げたもの） |
+| `id` | 標準入力の行の `id` をそのまま返します（行になければ `null`。ほかの `source` でも `null`） |
 
 `command` を書くのは、標準入力からコマンドを受けたとき（`--stdin-commands`）と、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`）です。`run_until` と、時刻つきの `pause` は、クライアントからだけ来ます。
+
+コマンドを送って答えを待つプログラムは、自分の番号を `id` に入れ、同じ `id` の `command` のイベントを待ちます。`id` がないと、同じ名前の `command` のイベントが、ほかのプログラムが送った行への答えかもしれません。
+
+### `state` のイベント
+
+`state` は、実行がいまどこにいるかと、いまどの操作を受け付けるかを伝えます。ほかのイベントから組み立てずに、これを読んでください。ランチャーは、`allowed` を作るのと同じ規則で、それぞれのコマンドを判断します。
+
+ほかのイベントと違い、`state` は履歴ではありません。意味があるのは最新の 1 つだけです。書かれるのを待っている `state` があれば（読む側が遅いとき）、新しいものがそれを置き換えます。読む側は、最後に読んだ `state` だけを持てば足ります。
+
+| キー | 値 |
+|---|---|
+| `rev` | ランチャーが作った状態の番号: 1、2、3、…（飛んでいれば、書かれる前に置き換えられた状態があります。失われるものはありません） |
+| `phase` | いまの段階（`phase` のイベントの値） |
+| `paused` | シミュレーションが一時停止しているか。始まる前は、時刻 0 で止まることになっているか（`--start-paused`、`pause`）。シミュレーションが終わった後は `false` |
+| `holding` | 時刻 0 のステップの前で待っているか（`--control` と `--start-paused`。[control-api.md](control-api.md) の「始まる前に書く」） |
+| `speed` | 指定の速度: 数か `"max"`。まだ分からない間は `null`（ランチャーがシミュレーションを準備する前。`speed` のコマンドが来ていれば、その値） |
+| `pacing` | 指定の速度を保てているか: `"not-paced"`、`"on-time"`、`"late"`（下の表） |
+| `stop` | 停止の要求: `requests` は 0、1（順に止めている）、2（参加者を待たない）。`by` は最初に求めたもの（結果の `interrupted_by` の値。なければ `null`） |
+| `scenario` | シナリオを再生する実行か（`--scenario`） |
+| `allowed` | 操作ごとに、いま受け付けるか（下の表） |
+| `outside` | 実物のバスにつないだネットワーク（`--connect`）の状態のための場所です。いまは空の配列です |
+
+`state` にあるのは、段階的に変わる値だけです。仮想時刻と、増え続ける数は `time` にあります（つないだネットワークの数は `outside`）。
+
+`pacing`:
+
+| 値 | 意味 |
+|---|---|
+| `not-paced` | 保つ速度がありません: 速度が `"max"`、一時停止中、または走っていません |
+| `on-time` | 指定の速度で走っています |
+| `late` | いまのタイムステップが `late_tolerance_ms` より遅れている（`time` の `late_ms`）か、最後の 5 秒に遅れたタイムステップがありました。遅れのない状態が 5 秒続くと `on-time` に戻ります |
+
+どれだけ遅れているか、実際の速さは、`time` の `late_ms`、`slipped_ms`、`actual_speed` です。
+
+`allowed` には、`pause`、`resume`、`step`、`speed`、`run_until`、`stop`、`write` のそれぞれに 1 つのオブジェクトがあります。
+
+| キー | 値 |
+|---|---|
+| `ok` | いまその操作を受け付けるか（引数が範囲の中なら） |
+| `reason` | 受け付けない理由のコード（[理由のコード](#理由のコード)。`ok` が `true` なら `null`）。いまコマンドを送ると、同じ `reason` で断られます |
+| `message` | 受け付けない理由と、代わりにすること。英語の 1 文（`ok` が `true` なら `null`） |
+| `caution` | `null` か `{"code", "message"}`: 受け付けるが、先に知っておくことがある操作。いまは、これを設定するものはありません |
+| `min_ms`、`max_ms` | `step` にだけあります。`ms` の範囲（`ok` が `false` の間も） |
+| `min`、`max` | `speed` にだけあります。値の範囲（`ok` が `false` の間も）。`min` と `max` が同じでなければ、`"max"` も受け付けます |
+
+`ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
+
+`pause`、`resume`、`step`、`speed`、`stop` は、標準入力のコマンドとして答えます。`run_until` と `write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、この 2 つを送る口がないので、実行の間ずっと、どちらも `ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 5 つは標準入力の答えです。
+
+`state` を書くとき:
+
+| とき | 書くもの |
+|---|---|
+| 段階が変わった | 新しい段階の `state` を書きます。ふつうは `phase` のイベントの後。 |
+| コマンドが状態を変えた（一時停止、速度、標準入力やクライアントからの停止） | その変化を反映した `state` を、そのコマンドの `command` のイベントの後に書きます。何も変えないコマンドでは書きません。 |
+| シミュレーションが止まった・動き出した、`pacing` が変わった、シグナルが停止を求めた | ランチャーが次に見たとき（シミュレーションが走っている間は 20 ms ごと）。 |
+
+`state` はランチャーの複数のスレッドが書くので、ほかのイベントとの間の正確な位置には頼らないでください。`phase` のイベント、標準入力の `stop` の `command` のイベント、`time` のイベントの近くでは、そのイベントの直前に作られた `state` が 1 つ、そのイベントの後に来ることがあり、その `state` はまだそのイベントを反映していません。新しい段階の `state` が、その `phase` のイベントの直前に来ることもあります。変化を反映した `state` は必ず書かれ、最後の `state` は正しい内容です。イベントの後の最初の `state` ではなく、最新の `state` を使ってください。
+
+シミュレーションが走る前に来た、シグナル（Ctrl+C）による停止の要求は、次の `state`（次の段階のもの）に現れます。
+
+`--control` つきの実行の `state` の例（読みやすく整形しています。出力では 1 行です）:
+
+```json
+{
+  "event": "state", "seq": 31, "t_ms": 1204,
+  "rev": 9,
+  "phase": "running",
+  "paused": false,
+  "holding": false,
+  "speed": 1,
+  "pacing": "on-time",
+  "stop": { "requests": 0, "by": null },
+  "scenario": false,
+  "allowed": {
+    "pause": { "ok": true, "reason": null, "message": null, "caution": null },
+    "resume": { "ok": true, "reason": null, "message": null, "caution": null },
+    "step": { "ok": false, "reason": "not-paused", "message": "step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with --start-paused)", "caution": null, "min_ms": 1, "max_ms": 1000000000000 },
+    "speed": { "ok": true, "reason": null, "message": null, "caution": null, "min": 1e-06, "max": 1e+06 },
+    "run_until": { "ok": true, "reason": null, "message": null, "caution": null },
+    "stop": { "ok": true, "reason": null, "message": null, "caution": null },
+    "write": { "ok": true, "reason": null, "message": null, "caution": null }
+  },
+  "outside": []
+}
+```
+
+### 理由のコード
+
+受け付けなかった `command` のイベントの `reason` と、`state` の `allowed` の `reason` です。コードは増えることがあります。コードの意味は変わりません。
+
+| コード | 意味 |
+|---|---|
+| `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`） |
+| `not-paused` | 一時停止していないときの `step` |
+| `not-running` | シミュレーションが終わった、または始まりませんでした |
+| `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けず、時間も動かせません |
+| `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`run_until`、`write`）です |
+| `outside-real-time` | 実行につながっているものが仮想時間を待たないので、実行は実時間を保ちます。いまは、これを設定するものはありません |
+| `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
+| `missing-argument` | クライアントの `run_until` に時刻がありません |
+| `not-a-time-command` | 時間のコマンドの名前ではありません |
+| `invalid-command` | コマンドでない標準入力の行: JSON のオブジェクトでない、`command` がない、64 KiB を超える |
+| `unknown-command` | 標準入力が受け付けない名前のコマンド |
+| `invalid-argument` | 標準入力の行の引数か `id` がない、形が違う、範囲の外 |
+| `unknown-source` | ランチャーは書きません: ランチャーのライブラリが、知らない入口からのコマンドを断るときのコードです |
 
 ### `participant` の `state`
 
@@ -202,6 +311,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control_link` | 必須の participant の `joined` がそろった後、`phase` の `running` の前に、設定ファイルの順 |
 | `participant` の `failed` | 失敗と決めた時点ですぐ |
 | `command` | そのコマンドで起きること（`phase` の `stopping` など）より前 |
+| `state` | ふつうは、それを変えたもののイベントの後。古い `state` が 1 つ間に挟まることがあり、最後の `state` は正しい内容です（[`state` のイベント](#state-のイベント)） |
 | `heartbeat` | `hello` から `result` までのどの段階でも、ほかの行の間 |
 
 - `control_server` は、照合で失敗した実行と、引数のエラーでは書きません。
@@ -350,7 +460,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 `result` が来なかったときは、プロセスの終了コードで判断します。
 
-`event`、キー、`state` と `phase` の値は、バージョンを上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。
+`event`、キー、理由のコード、`phase` の値と参加者の `state` の値は、バージョンを上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。
 
 `--events` のとき、標準エラーに書くのは `vehicle_sil_launch` 自身の通知（引数のエラー、イベントを書けなくなった、結果を書けない、想定外の失敗）だけで、participant の行も経過も書きません。`vehicle_sil_launch` の中のライブラリが標準出力に書いたものは、標準エラーに行きます（イベントの行に混ざりません）。
 
@@ -394,7 +504,7 @@ participant の `log` の終わりの側には、保証がありません。part
 {"event":"result","seq":22,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"registry_uri":"silkit://127.0.0.1:<port>","timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"manual":false,"for_network":null,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"connected","variables":22,"version":null,"late_messages":0}},{"name":"Dashboard","required":true,"enabled":false,"manual":false,"for_network":null,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"none","variables":null,"version":null,"late_messages":0}}],"outside":[],"traffic":{"before_ms":1000,"unplaced":[],"networks":[{"name":"J1939_CAN","kind":"can","counted":1,"senders":1,"receivers":0,"delivered":false,"unplaced":[],"participants":[{"name":"Engine","counted":true,"not_counted":null,"virtual_time":true,"at_ms":990,"frames_sent":11,"frames_received":0}]}]},"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"role":"ecu","step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}],"mac":null}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"network_map":null,"j1939_nodes":null,"control":{"transport":"silkit","wire_version":2}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"role":"ecu","step_ms":5,"status":"disabled","reported":null,"variables":null,"network_map":null,"j1939_nodes":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"],"outside":null}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
 ```
 
-この例は、CTest の `launch_run.events` が、実際の出力と、バイト単位で照合します。照合の前に、実際の出力から `heartbeat` の行と、最初と最後のほかの `time` の行を除き（`seq` は詰めます）、上の置き換えをします。遅い PC では、途中の時刻の `time` も書くためです。
+この例は、CTest の `launch_run.events` が、実際の出力と、バイト単位で照合します。照合の前に、実際の出力から `heartbeat` の行、`state` の行、最初と最後のほかの `time` の行を除き（`seq` は詰めます）、上の置き換えをします。遅い PC では、途中の時刻の `time` も書くためです。`state` の行は、いくつ書かれるかが読む速さで変わるためです（[`state` のイベント](#state-のイベント)）。
 
 ## 標準入力のコマンド（`run --stdin-commands`）
 
@@ -407,6 +517,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `{"command":"resume"}` | 一時停止をやめて進みます。 |
 | `{"command":"step","ms":<ms>}` | 一時停止している間だけ: 仮想時間を `<ms>`（1 以上 10^12 以下の整数）だけ進めて、また止まります。 |
 | `{"command":"speed","value":<速度>}` | 速度を変えます（`<速度>` は数か `"max"`。設定ファイルの `speed` と同じ範囲）。 |
+| 上のどれかに `"id":<id>` を付けたもの | 同じです。`<id>`（0 以上 2^53 以下の整数）が、その行の `command` のイベントの `id` に返ります。 |
 | 標準入力の終わり（EOF） | `stop` を 1 回受けたのと同じです（起動した側がいなくなった、パイプを閉じた）。 |
 | 空白だけの行 | 読み飛ばします。 |
 | それ以外 | 何もしません。 |
@@ -421,8 +532,8 @@ participant の `log` の終わりの側には、保証がありません。part
 | `step` | 前の `step` の途中で送ると、その止まる時刻から数えます。 |
 | `speed` | 一時停止はそのままです。 |
 | EOF | すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` のイベントも書きません）。 |
-| それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、64 KiB を超える行がこれに当たります。 |
-| それ以外 | `--events` なら `command` のイベント（`accepted: false` と理由）を、なければ標準エラーに 1 行を書きます。 |
+| それ以外 | JSON のオブジェクトでない、`command` がない、知らないコマンド、`id` が 0 以上 2^53 以下の整数でない、64 KiB を超える行がこれに当たります。 |
+| それ以外 | `--events` なら `command` のイベント（`accepted: false`、`message`、`reason`）を、なければ標準エラーに 1 行を書きます。 |
 
 オブジェクトのほかのキーは無視します。イベントを読む側が読んでいなくても、コマンドは受け付けて実行します。
 
@@ -438,9 +549,9 @@ participant の `log` の終わりの側には、保証がありません。part
 | 一時停止しているときの `pause`、動いているときの `resume` | 受け付けて、何もしません。 |
 | controller ができる前（照合の間など）に受けた `pause`、`resume`、`speed` | 覚えておき、controller ができたときに渡します。 |
 
-受け付けなかった理由は `message` に書きます。controller ができる前に受けた `pause` は、`--start-paused` と同じく 0 で止まります。
+受け付けなかった理由は `message`（文）と `reason`（コード。[理由のコード](#理由のコード)）に書きます。コマンドを送る前には、`state` のイベントの `allowed` が同じことを伝えます。controller ができる前に受けた `pause` は、`--start-paused` と同じく 0 で止まります。
 
-一時停止しても、`phase` は `running` のままです。一時停止は `time` の `paused` で通知します。
+一時停止しても、`phase` は `running` のままです。一時停止は `state` と `time` の `paused` で通知します。
 
 `--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
 
@@ -507,7 +618,8 @@ participant の `log` の終わりの側には、保証がありません。part
     "j1939-nodes",
     "connect",
     "connections",
-    "connect-counts"
+    "connect-counts",
+    "state"
   ]
 }
 ```
@@ -565,6 +677,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connect` | `check` と `run` の `--connect`。ネットワークをブリッジで実機のバスにつなぐこと（[simulation-run.md](simulation-run.md#バスを外につなぐ--connect) の「バスを外につなぐ（`--connect`）」） |
 | `connections` | `vehicle_sil_launch connections`: この PC で各ネットワークをどこにつなげるか（[simulation-run.md](simulation-run.md#つなげる先の一覧vehicle_sil_launch-connections) の「つなげる先の一覧（`vehicle_sil_launch connections`）」） |
 | `connect-counts` | つないだネットワークが実機のバスへ送ったフレームと、そこの機器から来たフレームの数（[simulation-run.md](simulation-run.md#外のバスとやりとりしたフレームの数) の「外のバスとやりとりしたフレームの数」） |
+| `state` | イベント `state`: 実行がいまどこにいるかと、いま受け付ける操作（[`state` のイベント](#state-のイベント)） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 
@@ -587,6 +700,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connect` | 設定ファイルのネットワークの `external`、`check --connect` と `run --connect`、照合の JSON の `networks[].outside`、結果の `outside` と `participants[].for_network`、結果とイベントの participant `bridge.<network>`、人向けの結果の `outside:` の行、指摘 `connect-*` |
 | `connections` | `vehicle_sil_launch connections` とその `--json` と `--network`、`formats` の `connections`、指摘 `connect-target` と `connect-failed` が挙げる `vehicle_sil_launch connections` |
 | `connect-counts` | イベント `outside`、結果の `outside[].to_outside` と `from_outside` の数（この機能の前は `null`）、人向けの結果の `outside:` の行の末尾の数、指摘 `connect-nothing-received`、`run` が起こすブリッジのコマンドの `--stats-every-ms 1000` |
+| `state` | イベント `state`、イベント `command` の `reason` と `id`、標準入力のコマンドの `id` |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

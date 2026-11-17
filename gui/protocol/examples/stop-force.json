@@ -28,13 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 225,
-      "last_t_ms": 2250,
+      "last_seq": 264,
+      "last_t_ms": 2640,
       "time": {
         "event": "time",
-        "seq": 216,
-        "t_ms": 2160,
-        "sim_ms": 94990,
+        "seq": 253,
+        "t_ms": 2530,
+        "sim_ms": 110420,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -377,11 +377,13 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 205,
+        "seq": 241,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
-        "message": null
+        "message": null,
+        "reason": null,
+        "id": null
       },
       "result": null,
       "log": {
@@ -390,7 +392,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 190,
+          "kept": 221,
           "dropped": 0
         }
       },
@@ -399,7 +401,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

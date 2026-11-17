@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 230,
-      "last_t_ms": 2300,
+      "last_seq": 271,
+      "last_t_ms": 2710,
       "time": {
         "event": "time",
-        "seq": 216,
-        "t_ms": 2160,
-        "sim_ms": 94990,
+        "seq": 253,
+        "t_ms": 2530,
+        "sim_ms": 110420,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -374,11 +374,13 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 226,
+        "seq": 265,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
-        "message": null
+        "message": null,
+        "reason": null,
+        "id": null
       },
       "result": {
         "vehicle_sil_run": 1,
@@ -398,7 +400,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 94990,
+          "sim_ms": 110420,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -466,7 +468,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 94990,
+          "before_ms": 110420,
           "unplaced": [
             {
               "participant": "Logger",
@@ -493,8 +495,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 94980,
-                  "frames_sent": 951,
+                  "at_ms": 110410,
+                  "frames_sent": 1106,
                   "frames_received": 0
                 },
                 {
@@ -502,9 +504,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 94980,
+                  "at_ms": 110410,
                   "frames_sent": 0,
-                  "frames_received": 951
+                  "frames_received": 1106
                 }
               ]
             }
@@ -787,7 +789,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 190,
+          "kept": 221,
           "dropped": 0
         }
       },
@@ -796,7 +798,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

@@ -646,6 +646,11 @@ void start_reading_commands()
             if (command.is_stop())
             {
                 g_stops.request(kStopCommand);
+                // The state says the request now, not at the run's next look.
+                if (controls != nullptr)
+                {
+                    controls->publish();
+                }
             }
         });
         char buffer[4096];
@@ -694,6 +699,10 @@ void start_reading_commands()
                 events->command(stop, "eof");
             }
         }));
+        if (controls != nullptr)
+        {
+            controls->publish();
+        }
     }).detach();
 }
 
@@ -1110,9 +1119,14 @@ int run(const cli::Args& args, launch::EventStream* events)
                 events->command(command, source);
             };
             observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
+            observers.on_state = [events](const launch::RunState& state) { events->state(state); };
         }
         shared().controls =
             new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
+        // The state names the first stop request as the result does.
+        shared().controls->set_stop_name(interrupt_name);
+        // Without --control nothing can send a run_until or a write: the state says so.
+        shared().controls->set_control_server(control);
         options.controls = shared().controls;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER

@@ -218,6 +218,12 @@ class LauncherTest(unittest.TestCase):
         lines = [e["line"] for e in launch.events if e["event"] == "log" and e["source"] == "vehicle_sil_launch"]
         self.assertIn(f"control server at {server['address']}", lines)
         self.assertEqual(control_address(json.dumps(e) for e in launch.events), server["address"])
+        # The state: with a control server, a write is taken throughout and a run_until while the
+        # controller takes the time commands.
+        states = [e for e in launch.events if e["event"] == "state"]
+        self.assertTrue(all(s["allowed"]["write"]["ok"] for s in states), states)
+        self.assertTrue(any(s["allowed"]["run_until"]["ok"] for s in states), states)
+        self.assertNotIn("no-control-server", json.dumps(states))
 
     def test_the_time_events_of_a_step_from_the_hold_say_paused_only_where_it_stands(self):
         # As fast as possible, the step may be over before the launcher writes the time event of

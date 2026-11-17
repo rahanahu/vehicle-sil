@@ -31,7 +31,7 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 21> kFeatures{"events",
+inline constexpr std::array<std::string_view, 22> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -51,7 +51,8 @@ inline constexpr std::array<std::string_view, 21> kFeatures{"events",
                                                             "j1939-nodes",
                                                             "connect",
                                                             "connections",
-                                                            "connect-counts"};
+                                                            "connect-counts",
+                                                            "state"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -72,7 +73,8 @@ inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
 
 /// Reads `line` (without its line end; a "\r" at its end is ignored) as a command: {"command":
 /// "stop"}, {"command":"pause"}, {"command":"resume"}, {"command":"step","ms":<1 to kMaxMillis>},
-/// {"command":"speed","value":<a speed, parse_speed()>} (other keys are ignored). Only the form
+/// {"command":"speed","value":<a speed, parse_speed()>}, each with or without "id":<0 to
+/// kMaxCommandId> (other keys are ignored). A line that is not accepted has its `reason`. Only the form
 /// is read: whether the command can be done now is TimeCommands' part. Empty for a line of white
 /// space only (it is skipped).
 [[nodiscard]] std::optional<Command> parse_command(std::string_view line);
@@ -181,6 +183,9 @@ struct EventStreamOptions
 /// - Only "log" events are ever dropped, and only while more than max_log_lines or max_log_bytes
 ///   of them wait. A "log_dropped" event stands where they would have been ("count", and "sources":
 ///   how many of which source), with the numbers known when it is written.
+/// - A "state" event is the latest state, not history: while one waits, a newer one takes its
+///   place at the end of the queue, so a reader that reads slowly skips the states in between
+///   (their "rev" shows the gap). At most one waits, and it does not count for max_other_events.
 /// - Any other event is written, or the stream closes. It closes (once, for good) when `write`
 ///   fails; when a line is being written and `write` has taken nothing for stall_timeout; when
 ///   more than max_other_events other events wait; when result() gives up. A closed
@@ -278,6 +283,12 @@ public:
     /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
     /// client ("control_server").
     void command(const Command& command, std::string_view source);
+    /// "state": where the run stands and what it takes now (RunControls::publish() calls this
+    /// when that has changed). Unlike every other event it is no history: only the latest means
+    /// anything, so a "state" that still waits to be written is replaced by this one, which goes
+    /// to the end of the queue (its "seq" is higher than that of every event made before the
+    /// call). It is never counted for max_other_events, and at most one waits.
+    void state(const RunState& state);
     /// The last event: the run's result as `run --json` writes it. `members`: the event's members
     /// as a compact JSON object, {"result":{...}} (format_result_event() of run.hpp writes it from
     /// the run's report). Waits until it has been written
@@ -303,6 +314,7 @@ private:
     {
         Log,
         Other,
+        State,
         Result,
     };
     /// Queues {"event":<event>,"seq":..,"t_ms":..,<the members of `object`>}; `object` is a compact

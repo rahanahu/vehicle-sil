@@ -51,6 +51,10 @@ const PASSED_THROUGH: readonly string[] = [
   'event participant: command',
   'event participant: log',
   'event log: colour',
+  // Why a command was not accepted, as a code, and the sender's number of a stdin command (null: the GUI server
+  // sends none yet)
+  'event command: reason',
+  'event command: id',
 ];
 
 /**
@@ -60,6 +64,8 @@ const PASSED_THROUGH: readonly string[] = [
  */
 const UNKNOWN_EVENTS: Record<string, string> = {
   mystery: 'an event that a newer launcher may write',
+  // Where the run stands and which operations it accepts now (docs/simulation-events.md): not read here yet
+  state: 'the state of the run, which every run writes',
 };
 
 /** Events whose parser puts the event's fields into one property (`finding`, `step`, `link`). */

@@ -12,6 +12,9 @@
 
 namespace vehicle_sil::launch {
 
+/// The largest "id" of a command: 2^53, which every JSON reader keeps exactly.
+inline constexpr std::int64_t kMaxCommandId = std::int64_t{1} << 53;
+
 /// One line of standard input, read as a command.
 struct Command
 {
@@ -20,6 +23,12 @@ struct Command
     bool accepted = false;
     /// Why it was not accepted (one line), or "".
     std::string message{};
+    /// Not accepted: the code of why (reason::* of control_rules.hpp; the command event's
+    /// "reason"), or "".
+    std::string reason{};
+    /// The line's "id" if it has one (a whole number from 0 to kMaxCommandId): the sender's number
+    /// for this command, written back in its command event so that the sender finds its answer.
+    std::optional<std::int64_t> id{};
     /// step: its "ms" as read; once applied (TimeCommands), how far the simulation goes (the
     /// command event's "ms").
     std::optional<std::int64_t> ms{};
