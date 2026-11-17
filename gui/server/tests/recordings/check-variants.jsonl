@@ -40,7 +40,8 @@
 {"err": "                              at most <ms> for it to take the result (1000 or more; default 30000)"}
 {"err": "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}"}
 {"err": "                              stops in order (twice: without waiting); the end of stdin stops as well;"}
-{"err": "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time"}
+{"err": "                              pause, resume, step (with \"ms\"), run_until (with \"at_ms\") and speed (with"}
+{"err": "                              \"value\") control the time"}
 {"err": "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step"}
 {"err": "                              command (with --control: before the first step, so that a client's writes"}
 {"err": "                              take effect at 0)"}

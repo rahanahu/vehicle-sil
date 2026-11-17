@@ -153,13 +153,14 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | `{"command": "pause"}` | |
 | `{"command": "resume"}` | |
 | `{"command": "step", "ms": <integer>}` | 1 から `limits.step_ms_max` |
+| `{"command": "run_until", "at_ms": <整数>}` | 0 から `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | `speed` と同じ範囲 |
 
 サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、レスポンスを待たずに返します。止まっているランチャーでリクエストが固まらないようにするためです。
 
 - 受け付けたかどうかと理由は、ランチャーの `command` のイベント（`accepted`、`message`、`step` の実際に進む `ms`）で届きます。コマンドが反映されたことは `time` のイベントで届きます。どちらも、要約の `last_command` と `time` に残ります。
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running` です。
-- その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。
+- その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。`run_until` は `stdin-run-until` も同じです。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
 - コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/ja/simulation-events.md) の「標準入力のコマンド」）。
 

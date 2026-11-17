@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -151,8 +151,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-set-up",
+            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
             "caution": null
           },
           "stop": {
@@ -497,8 +497,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-set-up",
+            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
             "caution": null
           },
           "stop": {
@@ -586,9 +586,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "ok": true,
+            "reason": null,
+            "message": null,
             "caution": null
           },
           "stop": {
@@ -759,9 +759,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "ok": true,
+            "reason": null,
+            "message": null,
             "caution": null
           },
           "stop": {
@@ -817,12 +817,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 20,
         "t_ms": 200,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -832,7 +831,7 @@
         "event": "control_link",
         "seq": 21,
         "t_ms": 210,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -844,6 +843,18 @@
         "event": "control_link",
         "seq": 22,
         "t_ms": 220,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 23,
+        "t_ms": 230,
         "name": "Logger",
         "state": "none"
       }
@@ -853,8 +864,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 24,
+        "t_ms": 240,
         "phase": "running"
       }
     },
@@ -863,8 +874,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 25,
+        "t_ms": 250,
         "rev": 5,
         "phase": "running",
         "paused": false,
@@ -906,9 +917,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "ok": true,
+            "reason": null,
+            "message": null,
             "caution": null
           },
           "stop": {
@@ -932,8 +943,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 26,
+        "t_ms": 260,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -943,8 +954,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 27,
+        "t_ms": 270,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -953,17 +964,6 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 27,
-        "t_ms": 270,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1300,11 +1300,17 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "time",
         "seq": 58,
         "t_ms": 580,
-        "source": "Dashboard",
-        "line": "t=16000 ms engine speed 1200 rpm (160 messages)"
+        "sim_ms": 15680,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
       }
     },
     {
@@ -1315,7 +1321,7 @@
         "seq": 59,
         "t_ms": 590,
         "source": "Dashboard",
-        "line": "t=16500 ms engine speed 1200 rpm (165 messages)"
+        "line": "t=16000 ms engine speed 1200 rpm (160 messages)"
       }
     },
     {
@@ -1326,7 +1332,7 @@
         "seq": 60,
         "t_ms": 600,
         "source": "Dashboard",
-        "line": "t=17000 ms engine speed 1200 rpm (170 messages)"
+        "line": "t=16500 ms engine speed 1200 rpm (165 messages)"
       }
     },
     {
@@ -1337,7 +1343,7 @@
         "seq": 61,
         "t_ms": 610,
         "source": "Dashboard",
-        "line": "t=17500 ms engine speed 1200 rpm (175 messages)"
+        "line": "t=17000 ms engine speed 1200 rpm (170 messages)"
       }
     },
     {
@@ -1348,7 +1354,7 @@
         "seq": 62,
         "t_ms": 620,
         "source": "Dashboard",
-        "line": "t=18000 ms engine speed 1200 rpm (180 messages)"
+        "line": "t=17500 ms engine speed 1200 rpm (175 messages)"
       }
     },
     {
@@ -1359,7 +1365,7 @@
         "seq": 63,
         "t_ms": 630,
         "source": "Dashboard",
-        "line": "t=18500 ms engine speed 1200 rpm (185 messages)"
+        "line": "t=18000 ms engine speed 1200 rpm (180 messages)"
       }
     },
     {
@@ -1370,7 +1376,7 @@
         "seq": 64,
         "t_ms": 640,
         "source": "Dashboard",
-        "line": "t=19000 ms engine speed 1200 rpm (190 messages)"
+        "line": "t=18500 ms engine speed 1200 rpm (185 messages)"
       }
     },
     {
@@ -1381,7 +1387,7 @@
         "seq": 65,
         "t_ms": 650,
         "source": "Dashboard",
-        "line": "t=19500 ms engine speed 1200 rpm (195 messages)"
+        "line": "t=19000 ms engine speed 1200 rpm (190 messages)"
       }
     },
     {
@@ -1392,7 +1398,7 @@
         "seq": 66,
         "t_ms": 660,
         "source": "Dashboard",
-        "line": "t=20000 ms engine speed 1200 rpm (200 messages)"
+        "line": "t=19500 ms engine speed 1200 rpm (195 messages)"
       }
     },
     {
@@ -1403,7 +1409,7 @@
         "seq": 67,
         "t_ms": 670,
         "source": "Dashboard",
-        "line": "t=20500 ms engine speed 1200 rpm (205 messages)"
+        "line": "t=20000 ms engine speed 1200 rpm (200 messages)"
       }
     },
     {
@@ -1414,7 +1420,7 @@
         "seq": 68,
         "t_ms": 680,
         "source": "Dashboard",
-        "line": "t=21000 ms engine speed 1200 rpm (210 messages)"
+        "line": "t=20500 ms engine speed 1200 rpm (205 messages)"
       }
     },
     {
@@ -1425,7 +1431,7 @@
         "seq": 69,
         "t_ms": 690,
         "source": "Dashboard",
-        "line": "t=21500 ms engine speed 1200 rpm (215 messages)"
+        "line": "t=21000 ms engine speed 1200 rpm (210 messages)"
       }
     },
     {
@@ -1436,7 +1442,7 @@
         "seq": 70,
         "t_ms": 700,
         "source": "Dashboard",
-        "line": "t=22000 ms engine speed 1200 rpm (220 messages)"
+        "line": "t=21500 ms engine speed 1200 rpm (215 messages)"
       }
     },
     {
@@ -1447,7 +1453,7 @@
         "seq": 71,
         "t_ms": 710,
         "source": "Dashboard",
-        "line": "t=22500 ms engine speed 1200 rpm (225 messages)"
+        "line": "t=22000 ms engine speed 1200 rpm (220 messages)"
       }
     },
     {
@@ -1458,7 +1464,7 @@
         "seq": 72,
         "t_ms": 720,
         "source": "Dashboard",
-        "line": "t=23000 ms engine speed 1200 rpm (230 messages)"
+        "line": "t=22500 ms engine speed 1200 rpm (225 messages)"
       }
     },
     {
@@ -1469,7 +1475,7 @@
         "seq": 73,
         "t_ms": 730,
         "source": "Dashboard",
-        "line": "t=23500 ms engine speed 1200 rpm (235 messages)"
+        "line": "t=23000 ms engine speed 1200 rpm (230 messages)"
       }
     },
     {
@@ -1480,7 +1486,7 @@
         "seq": 74,
         "t_ms": 740,
         "source": "Dashboard",
-        "line": "t=24000 ms engine speed 1200 rpm (240 messages)"
+        "line": "t=23500 ms engine speed 1200 rpm (235 messages)"
       }
     },
     {
@@ -1491,24 +1497,18 @@
         "seq": 75,
         "t_ms": 750,
         "source": "Dashboard",
-        "line": "t=24500 ms engine speed 1200 rpm (245 messages)"
+        "line": "t=24000 ms engine speed 1200 rpm (240 messages)"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 76,
         "t_ms": 760,
-        "sim_ms": 24840,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
+        "source": "Dashboard",
+        "line": "t=24500 ms engine speed 1200 rpm (245 messages)"
       }
     },
     {
@@ -1783,7 +1783,7 @@
         "seq": 101,
         "t_ms": 1010,
         "source": "Dashboard",
-        "line": "t=37000 ms engine speed 1200 rpm (370 messages)"
+        "line": "error: something went wrong, exiting with code 3"
       }
     },
     {
@@ -1794,7 +1794,7 @@
         "seq": 102,
         "t_ms": 1020,
         "source": "Dashboard",
-        "line": "t=37500 ms engine speed 1200 rpm (375 messages)"
+        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 3295991 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
       }
     },
     {
@@ -1804,127 +1804,6 @@
         "event": "log",
         "seq": 103,
         "t_ms": 1030,
-        "source": "Dashboard",
-        "line": "t=38000 ms engine speed 1200 rpm (380 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 104,
-        "t_ms": 1040,
-        "source": "Dashboard",
-        "line": "t=38500 ms engine speed 1200 rpm (385 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 105,
-        "t_ms": 1050,
-        "source": "Dashboard",
-        "line": "t=39000 ms engine speed 1200 rpm (390 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 106,
-        "t_ms": 1060,
-        "source": "Dashboard",
-        "line": "t=39500 ms engine speed 1200 rpm (395 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 107,
-        "t_ms": 1070,
-        "source": "Dashboard",
-        "line": "t=40000 ms engine speed 1200 rpm (400 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 108,
-        "t_ms": 1080,
-        "source": "Dashboard",
-        "line": "t=40500 ms engine speed 1200 rpm (405 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 109,
-        "t_ms": 1090,
-        "source": "Dashboard",
-        "line": "t=41000 ms engine speed 1200 rpm (410 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 110,
-        "t_ms": 1100,
-        "source": "Dashboard",
-        "line": "t=41500 ms engine speed 1200 rpm (415 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 111,
-        "t_ms": 1110,
-        "source": "Dashboard",
-        "line": "t=42000 ms engine speed 1200 rpm (420 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 112,
-        "t_ms": 1120,
-        "source": "Dashboard",
-        "line": "error: something went wrong, exiting with code 3"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 113,
-        "t_ms": 1130,
-        "source": "Dashboard",
-        "line": "/path/to/root/dashboard/failing_dashboard: line 8: 2977592 Killed                     \"$here/vehicle_sil_dashboard_ecu\" \"$@\""
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 114,
-        "t_ms": 1140,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 3"
       }
@@ -1934,8 +1813,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 115,
-        "t_ms": 1150,
+        "seq": 104,
+        "t_ms": 1040,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 3,
@@ -1947,8 +1826,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 116,
-        "t_ms": 1160,
+        "seq": 105,
+        "t_ms": 1050,
         "name": "Dashboard",
         "state": "failed",
         "reason": "process_ended",
@@ -1960,8 +1839,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 117,
-        "t_ms": 1170,
+        "seq": 106,
+        "t_ms": 1060,
         "source": "vehicle_sil_launch",
         "line": "participant 'Dashboard' failed; aborting the simulation"
       }
@@ -1971,9 +1850,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 118,
-        "t_ms": 1180,
-        "sim_ms": 42190,
+        "seq": 107,
+        "t_ms": 1070,
+        "sim_ms": 36570,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -1988,8 +1867,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 119,
-        "t_ms": 1190,
+        "seq": 108,
+        "t_ms": 1080,
         "rev": 6,
         "phase": "running",
         "paused": false,
@@ -2032,8 +1911,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
             "caution": null
           },
           "stop": {
@@ -2057,8 +1936,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 120,
-        "t_ms": 1200,
+        "seq": 109,
+        "t_ms": 1090,
         "source": "vehicle_sil_launch",
         "line": "the simulation was aborted: participant 'Dashboard' failed"
       }
@@ -2068,8 +1947,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 121,
-        "t_ms": 1210,
+        "seq": 110,
+        "t_ms": 1100,
         "severity": "error",
         "code": "participant-failed",
         "file": "participant-crash.yaml",
@@ -2085,8 +1964,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 122,
-        "t_ms": 1220,
+        "seq": 111,
+        "t_ms": 1110,
         "phase": "stopping"
       }
     },
@@ -2095,8 +1974,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 123,
-        "t_ms": 1230,
+        "seq": 112,
+        "t_ms": 1120,
         "rev": 7,
         "phase": "stopping",
         "paused": false,
@@ -2139,8 +2018,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
             "caution": null
           },
           "stop": {
@@ -2164,8 +2043,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 124,
-        "t_ms": 1240,
+        "seq": 113,
+        "t_ms": 1130,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -2175,8 +2054,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 125,
-        "t_ms": 1250,
+        "seq": 114,
+        "t_ms": 1140,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -2188,8 +2067,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 126,
-        "t_ms": 1260,
+        "seq": 115,
+        "t_ms": 1150,
         "source": "vehicle_sil_launch",
         "line": "asking Logger to stop (SIGTERM)"
       }
@@ -2199,8 +2078,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 127,
-        "t_ms": 1270,
+        "seq": 116,
+        "t_ms": 1160,
         "name": "Logger",
         "state": "stop_requested"
       }
@@ -2210,8 +2089,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 128,
-        "t_ms": 1280,
+        "seq": 117,
+        "t_ms": 1170,
         "name": "Logger",
         "state": "ended",
         "exit_code": null,
@@ -2223,8 +2102,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 129,
-        "t_ms": 1290,
+        "seq": 118,
+        "t_ms": 1180,
         "phase": "ended"
       }
     },
@@ -2233,8 +2112,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 130,
-        "t_ms": 1300,
+        "seq": 119,
+        "t_ms": 1190,
         "rev": 8,
         "phase": "ended",
         "paused": false,
@@ -2277,8 +2156,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "no-control-server",
-            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
             "caution": null
           },
           "stop": {
@@ -2302,8 +2181,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 131,
-        "t_ms": 1310,
+        "seq": 120,
+        "t_ms": 1200,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -2322,7 +2201,7 @@
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 42190,
+            "sim_ms": 36570,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -2390,7 +2269,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 42190,
+            "before_ms": 36570,
             "unplaced": [
               {
                 "participant": "Logger",
@@ -2417,8 +2296,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 42180,
-                    "frames_sent": 423,
+                    "at_ms": 36560,
+                    "frames_sent": 367,
                     "frames_received": 0
                   },
                   {
@@ -2426,9 +2305,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 42180,
+                    "at_ms": 36550,
                     "frames_sent": 0,
-                    "frames_received": 423
+                    "frames_received": 367
                   }
                 ]
               }
@@ -2728,13 +2607,13 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 131,
-        "last_t_ms": 1310,
+        "last_seq": 120,
+        "last_t_ms": 1200,
         "time": {
           "event": "time",
-          "seq": 118,
-          "t_ms": 1180,
-          "sim_ms": 42190,
+          "seq": 107,
+          "t_ms": 1070,
+          "sim_ms": 36570,
           "speed": "max",
           "paused": false,
           "actual_speed": 1.5,
@@ -3099,7 +2978,7 @@
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 42190,
+            "sim_ms": 36570,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -3167,7 +3046,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 42190,
+            "before_ms": 36570,
             "unplaced": [
               {
                 "participant": "Logger",
@@ -3194,8 +3073,8 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 42180,
-                    "frames_sent": 423,
+                    "at_ms": 36560,
+                    "frames_sent": 367,
                     "frames_received": 0
                   },
                   {
@@ -3203,9 +3082,9 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 42180,
+                    "at_ms": 36550,
                     "frames_sent": 0,
-                    "frames_received": 423
+                    "frames_received": 367
                   }
                 ]
               }
@@ -3488,7 +3367,7 @@
             "dropped": 0
           },
           "Dashboard": {
-            "kept": 87,
+            "kept": 76,
             "dropped": 0
           }
         },

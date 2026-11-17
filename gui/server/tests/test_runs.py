@@ -544,7 +544,9 @@ def test_time_commands_are_checked(tmp_path: Path) -> None:
                     {"command": "step", "ms": 1.5}, {"command": "step", "ms": True}, {"command": "step", "ms": "5"},
                     {"command": "step", "ms": 10 ** 12 + 1}, {"command": "speed"}, {"command": "speed", "value": 0},
                     {"command": "speed", "value": "fast"}, {"command": "speed", "value": 10 ** 7},
-                    {"command": "pause", "ms": 5}):
+                    {"command": "pause", "ms": 5}, {"command": "run_until"}, {"command": "run_until", "at_ms": -1},
+                    {"command": "run_until", "at_ms": 1.5}, {"command": "run_until", "at_ms": 10 ** 12 + 1},
+                    {"command": "run_until", "at_ms": 5, "ms": 5}):
             status, body = await c.post("api/time", bad)
             assert status == 400 and body["error"]["code"] == "invalid-field", (bad, body)
         status, body = await c.post("api/time", raw=b'{"command": "speed", "value": NaN}')

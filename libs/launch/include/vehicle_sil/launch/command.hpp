@@ -34,7 +34,8 @@ struct Command
     std::optional<std::int64_t> ms{};
     /// speed: its "value" (empty: "max").
     std::optional<double> speed{};
-    /// Only from a control server: pause at, and run_until, this virtual time; once applied
+    /// run_until (from standard input or a control server) and pause at a time (a control server
+    /// only): pause at, and run_until, this virtual time; once applied
     /// (TimeCommands), where the simulation will stand (the command event's "at_ms"), a whole
     /// number of the controller's steps.
     std::optional<std::int64_t> at_ms{};

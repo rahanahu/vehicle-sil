@@ -62,9 +62,9 @@ struct RunState
     /// The run plays a scenario.
     bool scenario = false;
     /// What the run takes now (launch::allowed()), each as from the entry that has the operation:
-    /// pause, resume, step, speed and stop as from standard input; run_until and write as from a
-    /// control server (standard input has neither). In a run without a control server
-    /// (RunControls::set_control_server()) nothing can send those two: refused, with
+    /// pause, resume, step, run_until, speed and stop as from standard input; write as from a
+    /// control server (standard input has none). In a run without a control server
+    /// (RunControls::set_control_server()) nothing can send a write: refused, with
     /// reason::kNoControlServer.
     struct Operations
     {

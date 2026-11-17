@@ -31,7 +31,7 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 22> kFeatures{"events",
+inline constexpr std::array<std::string_view, 23> kFeatures{"events",
                                                             "stdin-commands",
                                                             "check-variables",
                                                             "speed",
@@ -52,7 +52,8 @@ inline constexpr std::array<std::string_view, 22> kFeatures{"events",
                                                             "connect",
                                                             "connections",
                                                             "connect-counts",
-                                                            "state"};
+                                                            "state",
+                                                            "stdin-run-until"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();

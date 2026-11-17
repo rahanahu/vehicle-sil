@@ -31,7 +31,7 @@
         "event": "time",
         "seq": 253,
         "t_ms": 2530,
-        "sim_ms": 110420,
+        "sim_ms": 110430,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -400,7 +400,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 110420,
+          "sim_ms": 110430,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -468,7 +468,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 110420,
+          "before_ms": 110430,
           "unplaced": [
             {
               "participant": "Logger",
@@ -495,7 +495,7 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110410,
+                  "at_ms": 110420,
                   "frames_sent": 1106,
                   "frames_received": 0
                 },
@@ -504,7 +504,7 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110410,
+                  "at_ms": 110420,
                   "frames_sent": 0,
                   "frames_received": 1106
                 }
@@ -798,7 +798,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, stdin-run-until, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

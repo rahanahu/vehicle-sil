@@ -260,6 +260,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       scenario_failures
       scenario_same
       scenario_wave
+      run_until_stdin
       speed_change
       stall
       stand_still
