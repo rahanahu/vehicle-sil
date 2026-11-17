@@ -77,7 +77,8 @@
 | `EventStream`、`parse_command()` | `launch/events.hpp` |
 | シナリオの `read_scenario()`、時間の関数のインターフェース `Waveform` | `launch/scenario.hpp` |
 | `ScenarioEngine` | `launch/scenario_run.hpp` |
-| `run --timeline` の記録 `TimelineRecord` と、ファイルを作る `format_timeline_json()` | `launch/timeline.hpp` |
+| `run --timeline` の記録 `TimelineRecord` | `launch/timeline.hpp` |
+| 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
 
 実装:
 

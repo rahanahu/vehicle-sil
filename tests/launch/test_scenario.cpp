@@ -12,6 +12,7 @@
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/launch/timeline.hpp"
+#include "vehicle_sil/launch/timeline_format.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
