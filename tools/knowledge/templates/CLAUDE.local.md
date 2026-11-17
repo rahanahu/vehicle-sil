@@ -6,4 +6,8 @@ Before any work, follow @.local/CONSTRAINTS.md. If it was not imported (a workin
 
 ## Handover
 
-Before you start, read `.local/plans/STATE.md`, then your stream file `.local/plans/streams/<stream>.md`. Details only when they are needed.
+Before you start, read `.local/plans/STATE.md`, then your stream file `.local/plans/streams/<stream>.md`; in a working tree, which has no `.local/`, use the absolute path under the main checkout. Details only when they are needed.
+
+## Rules of work
+
+How to work (pull requests, verification, keeping output small): `.local/plans/RULES.md`; read only the sections you need. How to find and write knowledge: `tools/knowledge/README.md`.
