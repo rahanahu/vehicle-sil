@@ -104,6 +104,7 @@ code 3 (the real launcher's rule for the token file).
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -504,6 +505,9 @@ class Player:
         # SimpleQueue: the handler of SIGTERM puts into it, and a Queue's put there waits forever when the signal
         # came while the main thread held the Queue's lock (in get or empty).
         self.inputs: queue.SimpleQueue = queue.SimpleQueue()
+        # The "id" of each line read (None: it has none), in order: the launcher returns it in the command event of
+        # that line. The id is taken off the line before the recordings are compared with it (a recording has none).
+        self.ids: collections.deque = collections.deque()
         self.tick = int(os.environ.get("REPLAY_TICK_MS", "100")) / 100
         self.sleepers: dict[str, subprocess.Popen] = {}
         self.control = None
@@ -536,6 +540,8 @@ class Player:
             while time.monotonic() < self.muted_until:
                 time.sleep(0.01)
             kind = event["event"]
+            if kind == "command" and event.get("source") == "stdin" and self.ids:
+                event = {**event, "id": self.ids.popleft()}  # the id of the line it answers
             rest = {k: v for k, v in event.items() if k != "event"}
             self._line(json.dumps({"event": kind, "seq": self.seq, "t_ms": self.t_ms(), **rest},
                                   ensure_ascii=False, separators=(",", ":")))
@@ -595,8 +601,17 @@ class Player:
         for raw in sys.stdin:
             line = raw.strip()
             if line:
-                self.inputs.put(line)
+                self.inputs.put(self.take_id(line))
         self.inputs.put(None)
+
+    def take_id(self, line: str) -> str:
+        try:
+            command = json.loads(line)
+        except ValueError:
+            command = None
+        number = command.pop("id", None) if isinstance(command, dict) else None
+        self.ids.append(number)
+        return line if number is None else json.dumps(command, separators=(",", ":"))
 
     def since(self, take: Take, i: int, k: int) -> int:
         """The milestones of take before entry i, counted from its command k-1 (from the start when k is 0)."""

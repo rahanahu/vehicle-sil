@@ -13,6 +13,23 @@
       "version": "0.1.0",
       "instance": "0123456789abcdef",
       "session": null,
+      "allowed": {
+        "start": {
+          "ok": true,
+          "reason": null,
+          "message": null
+        },
+        "stop": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        },
+        "force": {
+          "ok": false,
+          "reason": "not-running",
+          "message": "no simulation is running: there is nothing to stop"
+        }
+      },
       "replay": null
     },
     {
@@ -51,6 +68,24 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": null,
+        "launcher_state": null,
+        "allowed": {
+          "start": {
+            "ok": false,
+            "reason": "already-running",
+            "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          },
+          "force": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          }
+        },
         "result": null,
         "log": {},
         "problems": [],
@@ -3081,6 +3116,86 @@
         ],
         "findings_omitted": 0,
         "last_command": null,
+        "launcher_state": {
+          "seq": 130,
+          "rev": 8,
+          "phase": "ended",
+          "paused": false,
+          "holding": false,
+          "speed": "max",
+          "pacing": "not-paced",
+          "stop": {
+            "requests": 0,
+            "by": null
+          },
+          "scenario": false,
+          "allowed": {
+            "pause": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+              "caution": null
+            },
+            "resume": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+              "caution": null
+            },
+            "step": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+              "caution": null,
+              "min_ms": 1,
+              "max_ms": 1000000000000
+            },
+            "speed": {
+              "ok": false,
+              "reason": "not-running",
+              "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+              "caution": null,
+              "min": 1e-06,
+              "max": 1000000.0
+            },
+            "run_until": {
+              "ok": false,
+              "reason": "no-control-server",
+              "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+              "caution": null
+            },
+            "stop": {
+              "ok": true,
+              "reason": null,
+              "message": null,
+              "caution": null
+            },
+            "write": {
+              "ok": false,
+              "reason": "no-control-server",
+              "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+              "caution": null
+            }
+          },
+          "outside": []
+        },
+        "allowed": {
+          "start": {
+            "ok": true,
+            "reason": null,
+            "message": null
+          },
+          "stop": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "no simulation is running: there is nothing to stop"
+          },
+          "force": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "no simulation is running: there is nothing to stop"
+          }
+        },
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",

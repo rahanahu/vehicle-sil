@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from vehicle_sil_gui import process
+from vehicle_sil_gui.allowed import Facts
 from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_params,
                                      check_speed, check_time_command, check_variant, command_line, run_command,
@@ -65,6 +66,72 @@ def test_session_follows_the_events() -> None:
     assert kinds(out) == ["session"] and out[0]["session"]["state"] == "ended"
 
 
+def test_only_the_last_state_of_the_launcher_is_kept() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    assert s.summary()["launcher_state"] is None
+    first = {"rev": 1, "phase": "starting", "allowed": {"pause": {"ok": True, "reason": None}}}
+    out = s.feed_line(line("state", 1, **first))
+    assert kinds(out) == ["event"] and s.summary()["launcher_state"] == {"seq": 1, **first}
+    second = {"rev": 2, "phase": "running", "allowed": {"pause": {"ok": False, "reason": "not-running"}}}
+    s.feed_line(line("state", 2, **second))
+    assert s.summary()["launcher_state"] == {"seq": 2, **second}  # not a history: the one before is gone
+    # a state of the wrong shape is not passed on and the one kept stays
+    assert kinds(s.feed_line(line("state", 3, rev="x", allowed={}))) == ["error:bad-event"]
+    assert kinds(s.feed_line(line("state", 4, rev=3, allowed=[]))) == ["error:bad-event"]
+    assert s.summary()["launcher_state"]["rev"] == 2
+    # too large to keep: it is shown now, the one kept stays, and the server says so once
+    big = {"rev": 4, "allowed": {}, "outside": ["x" * 5000]}
+    small = new_session(object_bytes=1000)
+    small.feed_line(line("hello", 0, vehicle_sil_events=1))
+    small.feed_line(line("state", 1, rev=1, allowed={}))
+    out = small.feed_line(line("state", 2, **big))
+    assert kinds(out) == ["error:kept-limit", "event"] and small.summary()["launcher_state"]["rev"] == 1
+
+
+def test_the_command_event_returns_the_id_and_the_reason() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("command", 1, command="step", accepted=False, message="m", reason="not-paused", id=7))
+    assert s.summary()["last_command"] == {"seq": 1, "command": "step", "accepted": False, "message": "m",
+                                           "reason": "not-paused", "id": 7}
+    assert kinds(s.feed_line(line("command", 2, command="step", accepted=True, id="7"))) == ["error:bad-event"]
+    assert kinds(s.feed_line(line("command", 3, command="step", accepted=True, id=None))) == ["event"]
+
+
+def test_allowed_says_what_this_server_takes() -> None:
+    s = new_session()
+    ok = {"ok": True, "reason": None, "message": None}
+
+    def reasons() -> dict:
+        return {k: v["reason"] for k, v in s.summary()["allowed"].items()}
+
+    assert reasons() == {"start": "already-running", "stop": None, "force": None}
+    assert s.summary()["allowed"]["stop"] == ok and s.allowed()["start"]["message"].startswith("a simulation is running")
+    s.request_stop(False)
+    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": None}
+    s.request_stop(True)
+    assert reasons() == {"start": "already-running", "stop": "already-stopping", "force": "already-forced"}
+    s.launcher_exited(0)
+    assert reasons()["stop"] == reasons()["force"] == "not-running" and reasons()["start"] == "already-running"
+    s.ended()
+    assert reasons() == {"start": None, "stop": "not-running", "force": "not-running"}
+    # the server's own facts: the first that holds wins, in this order
+    for facts, start, stop in (
+            (Facts(launcher_usable=False, launcher_message="no launcher"), "launcher-unusable", "not-running"),
+            (Facts(starting=True, launcher_usable=False), "starting", None),
+            (Facts(closing=True, starting=True), "shutting-down", "shutting-down")):
+        s.facts = lambda facts=facts: facts
+        assert (reasons()["start"], reasons()["stop"]) == (start, stop), facts
+    s = new_session()  # running
+    s.facts = lambda: Facts(starting=True)
+    assert reasons()["start"] == "already-running"  # the run just registered, its start not yet answered
+    s.facts = lambda: Facts(launcher_usable=False, launcher_message="no launcher")
+    s.launcher_exited(0)
+    s.ended()
+    assert s.summary()["allowed"]["start"]["message"] == "no launcher"
+
+
 def test_a_signal_is_not_an_exit_code() -> None:
     s = new_session()
     s.launcher_exited(-9)
@@ -110,7 +177,8 @@ KNOWN = {
     "log": {"source": "A", "line": "l"},
     "finding": {"severity": "note", "code": "c", "message": "m"},
     "time": {"sim_ms": 1},
-    "command": {"command": "stop", "accepted": True},
+    "command": {"command": "stop", "accepted": True, "id": 3},
+    "state": {"rev": 1, "allowed": {"pause": {"ok": True}}},
     "result": {"result": {"result": "passed", "participants": []}},
 }
 
@@ -657,6 +725,17 @@ def test_speeds_and_time_commands_are_written_as_the_launcher_reads_them() -> No
     assert command_line(check_time_command({"command": "speed", "value": 2})) == b'{"command":"speed","value":2}\n'
     assert command_line(check_time_command({"command": "speed", "value": "max"})) == \
         b'{"command":"speed","value":"max"}\n'
+    assert command_line(check_time_command({"command": "pause", "id": 0})) == b'{"command":"pause","id":0}\n'
+    assert command_line(check_time_command({"command": "step", "ms": 25, "id": 2 ** 53})) == \
+        b'{"command":"step","ms":25,"id":9007199254740992}\n'
+    assert command_line(check_time_command({"command": "speed", "value": 0.5, "id": 4})) == \
+        b'{"command":"speed","value":0.5,"id":4}\n'
+    assert command_line(check_time_command({"command": "speed", "value": "max", "id": 4})) == \
+        b'{"command":"speed","value":"max","id":4}\n'
+    for bad_id in (-1, 2 ** 53 + 1, 1.5, "7", True, None, [1]):
+        with pytest.raises(InvalidRequest) as e:
+            check_time_command({"command": "resume", "id": bad_id})
+        assert e.value.code == "invalid-field" and "id must be a whole number" in str(e.value)
     for bad in ({}, {"command": None}, {"command": "stop"}, {"command": "step", "ms": 0}, {"command": "step"},
                 {"command": "speed", "value": None}, {"command": "resume", "value": 1}):
         with pytest.raises(InvalidRequest):

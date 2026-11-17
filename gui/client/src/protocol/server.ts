@@ -35,6 +35,7 @@ import {
   ScenarioStep,
   Speed,
   SummaryCommand,
+  SummaryState,
   TimeReport,
   readCheckResult,
   readCommandFields,
@@ -43,6 +44,7 @@ import {
   readLauncherEvent,
   readRunResult,
   readScenarioStep,
+  readStateFields,
   readSpeed,
   readTimeFields,
 } from './launcher';
@@ -453,6 +455,16 @@ export interface SessionSummary {
   /** The last command event (whether it was accepted, and why not). null until it arrives. */
   last_command: SummaryCommand | null;
   /**
+   * The last state event of the launcher (what it accepts now); only the last is kept. null until it arrives. The
+   * parsers always set it; it may be absent in a summary built by hand.
+   */
+  launcher_state?: SummaryState | null;
+  /**
+   * What this server accepts now (start, stop, force). null from a server that does not say. The parsers always set
+   * it; it may be absent in a summary built by hand.
+   */
+  allowed?: ServerAllowed | null;
+  /**
    * The check result of this run (the check event). null until it arrives. The `session` notifications of a connection
    * that asked for `session_without_check` lack the field and read it as null (the local check result is used as is).
    */
@@ -560,6 +572,23 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
         u,
       ),
     ),
+    launcher_state: field(
+      f,
+      path,
+      'launcher_state',
+      soft(
+        nullable((v, p): SummaryState => {
+          const s = object(v, p);
+          return {
+            ...readStateFields(s, p, u),
+            seq: field(s, p, 'seq', soft(nullable(integer), null, u)),
+          };
+        }),
+        null,
+        u,
+      ),
+    ),
+    allowed: field(f, path, 'allowed', soft(nullable(readServerAllowed), null, u)),
     check: field(
       f,
       path,
@@ -609,6 +638,45 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   return { ...summary, unreadable: u.parts };
 };
 
+/**
+ * Whether this server takes one request now. `ok` says it would; `reason` is a code that stays the same (`null` if
+ * ok), `message` one English sentence (`null` if ok).
+ */
+export interface ServerAllowedItem {
+  ok: boolean;
+  reason: string | null;
+  message: string | null;
+}
+
+/**
+ * What this server accepts now (`allowed` of the summary, of `hello` and of `api/session`). start: reasons
+ * shutting-down, starting, already-running, launcher-unusable. stop and force: shutting-down, not-running,
+ * already-stopping (stop), already-forced (force). What the launcher accepts is `launcher_state.allowed`.
+ */
+export interface ServerAllowed {
+  start: ServerAllowedItem;
+  stop: ServerAllowedItem;
+  force: ServerAllowedItem;
+}
+
+const readServerAllowedItem: Reader<ServerAllowedItem> = (value, path) => {
+  const f = object(value, path);
+  return {
+    ok: field(f, path, 'ok', boolean),
+    reason: field(f, path, 'reason', optional(nullable(string), null)),
+    message: field(f, path, 'message', optional(nullable(string), null)),
+  };
+};
+
+export const readServerAllowed: Reader<ServerAllowed> = (value, path) => {
+  const f = object(value, path);
+  return {
+    start: field(f, path, 'start', readServerAllowedItem),
+    stop: field(f, path, 'stop', readServerAllowedItem),
+    force: field(f, path, 'force', readServerAllowedItem),
+  };
+};
+
 /** Reads the per-source counts, only those that are readable. */
 function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, T>> {
   return (value, path) => {
@@ -625,6 +693,15 @@ function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, 
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
   field(object(value, 'response'), 'response', 'session', nullable(readSessionSummary));
 
+/** What the server accepts, from `allowed` of an `api/session` response: also there when there is no run. */
+export const readSessionAllowed = (value: unknown): ServerAllowed | null =>
+  field(
+    object(value, 'response'),
+    'response',
+    'allowed',
+    optional(nullable(readServerAllowed), null),
+  );
+
 /**
  * Body of POST api/stop. force: false stops in order (asking again has no further effect); true stops without waiting.
  */
@@ -639,17 +716,27 @@ export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed';
  * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
  * arrives as a command event, and its effect as a time event.
  */
-export type TimeCommand =
+export type TimeCommand = (
   | { command: 'pause' }
   | { command: 'resume' }
   /** Only while paused. Advances by ms and pauses again (the launcher rounds up to a multiple of the time step). */
   | { command: 'step'; ms: number }
-  | { command: 'speed'; value: number | 'max' };
+  | { command: 'speed'; value: number | 'max' }
+) & {
+  /**
+   * A whole number from 0 to 2^53 of the sender's choice. The launcher returns it as `id` of the command event that
+   * answers this command, so the sender tells that answer from the answers to other commands. Needs a launcher with
+   * the feature `state`.
+   */
+  id?: number;
+};
 
 /** Answer of POST api/time: the number of the run it was sent to, and the command passed to the launcher. */
 export interface TimeAnswer {
   session_id: number;
   command: TimeCommandName;
+  /** The `id` the request had (null if none). */
+  id: number | null;
 }
 
 export const readTimeResponse = (value: unknown): TimeAnswer => {
@@ -659,6 +746,7 @@ export const readTimeResponse = (value: unknown): TimeAnswer => {
   return {
     session_id: field(f, path, 'session_id', integer),
     command: field(command, `${path}.command`, 'command', string) as TimeCommandName,
+    id: field(command, `${path}.command`, 'id', optional(nullable(integer), null)),
   };
 };
 
@@ -1054,7 +1142,14 @@ export type ServerMessage =
    * Right after connecting (and after resync): summary of the current session, and a description of the resend that
    * follows.
    */
-  | { type: 'hello'; instance: string; session: SessionSummary | null; replay: Replay | null }
+  | {
+      type: 'hello';
+      instance: string;
+      session: SessionSummary | null;
+      /** What the server accepts now; also there when `session` is null. null from a server that does not say. */
+      allowed: ServerAllowed | null;
+      replay: Replay | null;
+    }
   /** A launcher event (resent log lines as well as new events). */
   | { type: 'event'; session: number; event: LauncherEvent }
   /** The resend has finished. */
@@ -1092,6 +1187,7 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
         type,
         instance: field(f, path, 'instance', string),
         session: field(f, path, 'session', nullable(readSessionSummary)),
+        allowed: field(f, path, 'allowed', optional(nullable(readServerAllowed), null)),
         replay: field(f, path, 'replay', nullable(readReplay)),
       };
     case 'event': {

@@ -114,6 +114,55 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(summary?.stop).toBe('none');
   });
 
+  it('reads what the server and the launcher accept now', async () => {
+    const examples = await webSocketExamples();
+    const messages = examples.flatMap((example) => example.server.map((m) => readServerMessage(m)));
+    // hello carries what the server accepts, also when there is no run
+    const hello = messages.find((m) => m?.type === 'hello' && m.session === null);
+    expect(hello?.type === 'hello' && hello.allowed?.start).toEqual({
+      ok: true,
+      reason: null,
+      message: null,
+    });
+    const states = messages.flatMap((m) =>
+      m?.type === 'event' && m.event.event === 'state' ? [m.event] : [],
+    );
+    expect(states.length).toBeGreaterThan(0);
+    for (const state of states) {
+      expect(Object.keys(state.allowed)).toEqual(
+        expect.arrayContaining(['pause', 'resume', 'step', 'speed', 'run_until', 'stop', 'write']),
+      );
+      expect(state.allowed['step']?.raw?.['max_ms'], 'the range stays in raw').toBeDefined();
+    }
+    // the summary keeps the last state with its seq, and says what the server accepts
+    const summaries = messages.flatMap((m) => (m?.type === 'session' ? [m.session] : []));
+    const kept = summaries.find((s) => s.launcher_state !== null);
+    expect(kept?.launcher_state?.rev).toBeGreaterThan(0);
+    expect(kept?.launcher_state?.seq).not.toBeNull();
+    expect(summaries.every((s) => s.allowed !== null)).toBe(true);
+    const running = summaries.find((s) => s.state === 'running');
+    expect(running?.allowed?.start).toMatchObject({ ok: false, reason: 'already-running' });
+    expect(running?.allowed?.start.message).toEqual(expect.any(String));
+    const ended = summaries.find((s) => s.state === 'ended');
+    expect(ended?.allowed?.start.ok).toBe(true);
+    expect(ended?.allowed?.stop).toMatchObject({ ok: false, reason: 'not-running' });
+  });
+
+  it('reads the id and the reason of a command answer, and the id of a time command', async () => {
+    const examples = await webSocketExamples();
+    const commands = examples
+      .flatMap((example) => example.server.map((m) => readServerMessage(m)))
+      .flatMap((m) => (m?.type === 'event' && m.event.event === 'command' ? [m.event] : []));
+    expect(
+      commands.some((c) => c.reason !== null),
+      'a refused command has its reason',
+    ).toBe(true);
+    expect(commands.every((c) => c.id === null || Number.isInteger(c.id))).toBe(true);
+    const answer = (await httpExamples()).find((example) => example.name === 'time')?.response;
+    expect(readTimeResponse(answer).id).toBeNull();
+    expect(readTimeResponse({ session_id: 1, command: { command: 'pause', id: 7 } }).id).toBe(7);
+  });
+
   it('reads every WebSocket message, passing over what it does not know', async () => {
     const examples = await webSocketExamples();
     expect(examples.map((example) => example.name)).toContain('ws-pass');
@@ -127,8 +176,8 @@ describe('the readers accept every example of gui/protocol', () => {
           }
         })();
         const raw = message as { type: string; event?: { event: string } };
-        // Launcher events the parser does not know yet are skipped: a made-up one, and the run's state
-        const skipped = raw.event?.event === 'mystery' || raw.event?.event === 'state';
+        // A launcher event the parser does not know is skipped: a made-up one
+        const skipped = raw.event?.event === 'mystery';
         if (raw.type === 'event' && skipped) {
           expect(read, `${example.name} server[${i}]`).toBeNull();
         } else {

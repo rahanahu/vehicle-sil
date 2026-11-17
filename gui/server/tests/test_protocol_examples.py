@@ -76,7 +76,8 @@ def resumed(example: dict) -> None:
 
 
 SHOWN = {
-    "session-none": lambda e: (e["status"], e["response"]) == (200, {"session": None}),
+    "session-none": lambda e: (e["status"], e["response"]["session"], e["response"]["allowed"]["start"]) ==
+    (200, None, {"ok": True, "reason": None, "message": None}),
     "dashboard-none": lambda e: e["status"] == 200 and e["response"]["found"] is False
     and e["response"]["dashboard"] is None,
     "ws-bad-types": ended("passed", problems={"bad-event": 9}),
