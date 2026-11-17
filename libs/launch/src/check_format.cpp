@@ -9,7 +9,7 @@
 #include "seen_ecu.hpp"
 #include "vehicle_sil/ecu/describe_json.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <system_error>
 #include <cctype>

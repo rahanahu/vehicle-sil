@@ -3,7 +3,7 @@
 
 #include "vehicle_sil/core/participant_configuration.hpp"
 
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 #include "yaml_reader.hpp"
 
 #include <algorithm>

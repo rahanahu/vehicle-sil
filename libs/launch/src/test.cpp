@@ -11,7 +11,7 @@
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
-#include "vehicle_sil/process/child_process.hpp"
+#include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
 #include <cstdint>

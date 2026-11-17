@@ -6,7 +6,6 @@
 // are in check_participants() (check_rules.cpp).
 #include "vehicle_sil/launch/check.hpp"
 
-#include "vehicle_sil/process/child_process.hpp"
 
 #include "check_words.hpp"
 #include "seen_ecu.hpp"
