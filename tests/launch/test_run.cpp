@@ -721,14 +721,16 @@ TEST_CASE(what_a_run_has_beside_its_connection_can_be_destroyed_while_a_close_th
     const auto latch = std::make_shared<HeldTransport::Latch>();
     const auto window_calls = std::make_shared<std::atomic<int>>(0);
     // Where the hub was destroyed, told once it has gone.
-    std::promise<std::thread::id> hub_gone;
-    std::future<std::thread::id> hub_went = hub_gone.get_future();
+    // Held by the deleter too, so a left closing thread that ends after this test gave up waiting
+    // still writes into a live promise.
+    const auto hub_gone = std::make_shared<std::promise<std::thread::id>>();
+    std::future<std::thread::id> hub_went = hub_gone->get_future();
     std::weak_ptr<HeldConnection> watched;
     std::optional<launch::detail::CloseLeft> left;
     {
-        auto parts = std::make_unique<RunParts>(std::shared_ptr<control::Hub>(new control::Hub, [&hub_gone](control::Hub* hub) {
+        auto parts = std::make_unique<RunParts>(std::shared_ptr<control::Hub>(new control::Hub, [hub_gone](control::Hub* hub) {
             delete hub;
-            hub_gone.set_value(std::this_thread::get_id());
+            hub_gone->set_value(std::this_thread::get_id());
         }));
         auto connection = std::make_shared<HeldConnection>(parts->hub);
         watched = connection;
