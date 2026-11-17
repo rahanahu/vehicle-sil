@@ -12,7 +12,6 @@
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/launch/connect.hpp"
-#include "vehicle_sil/process/child_process.hpp"
 
 #include <algorithm>
 #include <cmath>
