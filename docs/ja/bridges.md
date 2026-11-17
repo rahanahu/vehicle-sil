@@ -500,7 +500,7 @@ XL Driver Library が見つかれば、`vxlapi64.dll` を実行ファイルの�
 | `vehicle_sil::vector_xl::XlCanPort` | XL のチャネル 1 つを開き（`xlOpenPort`）、送信（`xlCanTransmit`）と受信スレッド（`xlReceive` と通知イベント）を担う |
 | `vehicle_sil::vector_xl::ExternalPortAdapter` | `ExternalCanPort` を CAN の共通基盤のポート（`RealTime`）にする。プロトコルスタックを XL のチャネルに直接載せるときに使う。プラットフォームに依存しない |
 
-ソースの場所とテストは、[code-map.md](code-map.md) の「Vector XL CAN Bridge」にあります。
+ソースの場所とテストは、[code-map-bridges.md](code-map-bridges.md#vector-xl-can-bridge) の「Vector XL CAN Bridge」にあります。
 
 ## 検証の範囲
 

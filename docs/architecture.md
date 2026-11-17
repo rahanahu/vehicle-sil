@@ -113,7 +113,7 @@ The category tells you where to start.
 | Testing | Tools for tests and examples. |
 | — | Executables, generated code and the CAN bridge have no category. |
 
-For what each target links (the dependency direction), see the diagrams in "Dependency direction" in [code-map.md](code-map.md#dependency-direction).
+For what each target links (the dependency direction), follow the area-specific dependency diagrams from [code-map.md](code-map.md#find-by-kind-of-information).
 
 | Target | Category | Description | Main types and features | Details |
 |---|---|---|---|---|
