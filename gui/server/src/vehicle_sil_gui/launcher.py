@@ -160,6 +160,19 @@ class InvalidRequest(ValueError):
         self.code = code
 
 
+CHECK_FIELDS = ("file", "disable", "manual", "scenario")
+RUN_FIELDS = CHECK_FIELDS + ("speed", "start_paused")
+
+
+def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
+    """Refuses a body with a field the endpoint does not take: a field that is ignored (a misspelled or an
+    unsupported one) would leave the sender believing it had an effect."""
+    unknown = sorted(k for k in body if k not in allowed)
+    if unknown:
+        raise InvalidRequest("invalid-field", f"{endpoint} takes no {', '.join(repr(k) for k in unknown)}: "
+                                              f"the fields it takes are {', '.join(allowed)}")
+
+
 def check_speed(speed: object) -> float | str | None:
     if speed is None or speed == "max":
         return speed

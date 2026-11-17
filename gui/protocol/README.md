@@ -168,7 +168,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | HTTP | `code` | When |
 |---|---|---|
 | 400 | `invalid-json` | The body is not a JSON object |
-| 400 | `invalid-field` | A field has the wrong type or is out of range (which fields: below the table) |
+| 400 | `invalid-field` | A field has the wrong type or is out of range, or the body of `api/check` or `api/run` has a field that the request does not take (which fields: below the table) |
 | 400 | `invalid-path` | `file` is not a path string relative to the root (empty, too long, `\`, NUL, `:`, unpaired surrogate) |
 | 400 | `outside-root` | Absolute path, `..`, symbolic link out of the root |
 | 400 | `not-a-configuration` | Not a regular `.yaml` / `.yml` file |
@@ -206,6 +206,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
+- `api/check` takes `file`, `disable`, `manual` and `scenario`; `api/run` takes those and `speed` and `start_paused`. Any other field (a misspelled one, or `speed` in `api/check`) gives 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `force`, `disable`, `manual` (also the same name as in `disable`), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Cases of `unsupported`: a value sent for `speed` / `start-paused` / `scenario` / `manual-participants` that the launcher does not have; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
 
