@@ -373,7 +373,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - `libs/launch/src/time_commands.cpp` の `TimeCommands`
-- `run_assess.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）と `RunTiming::actual_speed()`
+- `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は、`run_notes.hpp` の `detail::noted_paused()`）
 - `run_watch.cpp` の `RunWatch::note_timing()`
 - 時間のゲート: `libs/core/src/simulation_controller.cpp`

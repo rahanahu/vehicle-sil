@@ -373,7 +373,7 @@ Speed, pause, stepping and lateness behind real time.
 Where to change:
 
 - `TimeCommands` in `libs/launch/src/time_commands.cpp`
-- `detail::plan_time_step()` (the default time step of the controller) and `RunTiming::actual_speed()` in `run_assess.cpp`
+- `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` in `time_plan.cpp` (declared in `time_plan.hpp`; `check.cpp` uses it without `run.hpp`)
 - `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
 - `RunWatch::note_timing()` in `run_watch.cpp`
 - The time gate: `libs/core/src/simulation_controller.cpp`
