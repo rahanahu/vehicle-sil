@@ -146,7 +146,7 @@ flowchart TD
 | 読むコード | `libs/launch/src/config.cpp` の `read_variables()` |
 | ルールと変換 | `libs/control/src/variable_map.cpp` の `MappedSchema` |
 | 変換を適用する所 | `control::Hub`（`set_variable_map()`） |
-| Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::hub()` |
+| Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::shared_hub()` |
 | 照合 | `seen_ecu.cpp` の `seen_variables()`（`SeenEcu::variables()`）、`check_rules.cpp` の `variable_map_code()` |
 
 合わせて直すドキュメント:

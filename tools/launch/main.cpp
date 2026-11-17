@@ -1114,9 +1114,8 @@ int run(const cli::Args& args, launch::EventStream* events)
         options.start_paused = true;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    // The hub of the control server (the run has one of its own otherwise); before the server, so
-    // that it goes after it.
-    control::Hub hub;
+    // The control server serves the run's hub, which the run makes and gives it when it starts it
+    // (RunOptions::serve_control); the server keeps the hub from then on.
     std::unique_ptr<launch_cli::LauncherControlServer> server;
 #endif
     watch_interrupts();
@@ -1162,8 +1161,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         // Its event (and its refusal once the run is over) comes from the time commands.
         hooks.stop = [] { g_stops.request(kControlStop); };
         server = launch_cli::make_control_server(a, std::move(hooks));
-        options.hub = &hub;
-        options.serve_control = [&server](control::Hub& h) { return server->start(h); };
+        options.serve_control = [&server](const std::shared_ptr<control::Hub>& hub) { return server->start(hub); };
     }
 #endif
     if (args.flag("stdin-commands"))
@@ -1190,7 +1188,7 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (report.run && report.run->connection_not_closed_ms)
     {
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-        server.reset(); // its audit log is complete; the hub stays
+        server.reset(); // its audit log is complete; the hub stays, with the thread that was left closing
 #endif
         end_process_at_once(code);
     }

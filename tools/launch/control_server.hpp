@@ -43,8 +43,9 @@ class LauncherControlServer
 {
 public:
     virtual ~LauncherControlServer() = default;
-    /// For RunOptions::serve_control: starts listening on `hub` (std::runtime_error if it cannot).
-    virtual launch::ControlServerInfo start(control::Hub& hub) = 0;
+    /// For RunOptions::serve_control: starts listening on `hub`, the run's (never null), and keeps
+    /// it until the server is destroyed (std::runtime_error if it cannot listen).
+    virtual launch::ControlServerInfo start(std::shared_ptr<control::Hub> hub) = 0;
     /// Ends every call (the waits and watches return); idempotent. Also the destructor.
     virtual void end() = 0;
 };

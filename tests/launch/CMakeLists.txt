@@ -348,9 +348,9 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     RUN_SERIAL)
 endif()
 
-# The run of vehicle_sil_launch as a library with a hub of the caller: a parameter written in the
-# window before the start is what each ECU's process sees in its step at 0, and the values the
-# hub has at the end are those of the last steps.
+# The run of vehicle_sil_launch as a library, whose hub the caller keeps from the start window on:
+# a parameter written in the window before the start is what each ECU's process sees in its step
+# at 0, and the values the hub has at the end are those of the last steps.
 if(TARGET vehicle_sil_launch_test_ecu)
   add_executable(vehicle_sil_launch_control_test launch_control_test.cpp)
   target_link_libraries(vehicle_sil_launch_control_test PRIVATE vehicle_sil::launch vehicle_sil::control SilKit::SilKit)

@@ -72,7 +72,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
         std::string error;
         try
         {
-            ctx_.options.before_start(control_.hub());
+            ctx_.options.before_start(control_.shared_hub());
         }
         catch (const std::exception& e)
         {
