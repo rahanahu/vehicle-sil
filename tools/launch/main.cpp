@@ -1125,6 +1125,8 @@ int run(const cli::Args& args, launch::EventStream* events)
             new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));
         // The state names the first stop request as the result does.
         shared().controls->set_stop_name(interrupt_name);
+        // Without --control nothing can send a run_until or a write: the state says so.
+        shared().controls->set_control_server(control);
         options.controls = shared().controls;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER

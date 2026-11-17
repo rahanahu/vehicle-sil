@@ -497,6 +497,13 @@ void pause_step(const Options& o)
                 contains(states.back(), "\"pause\":{\"ok\":false,\"reason\":\"not-running\",") &&
                 contains(states.back(), "\"stop\":{\"ok\":true,\"reason\":null,"),
             "the last state is the end:\n" + all);
+    // This run has no control server: no state says that a run_until or a write would be taken.
+    for (const std::string& state : states)
+    {
+        require(contains(state, "\"run_until\":{\"ok\":false,\"reason\":\"no-control-server\",") &&
+                    contains(state, "\"write\":{\"ok\":false,\"reason\":\"no-control-server\","),
+                "a run without --control refuses run_until and write in every state:\n" + state);
+    }
     // The result: stood still for at least the waits above.
     const std::string& result = lines.back();
     require(std::stoll(value_of(result, "paused_ms")) >= 600 && contains(result, "\"speed\":1,"),

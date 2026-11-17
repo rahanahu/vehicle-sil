@@ -31,6 +31,22 @@ const char* pacing_name(Pacing pacing)
     return "not-paced";
 }
 
+namespace {
+
+/// The answer for an operation that only a control server's client can send, in a run that has
+/// no control server.
+Allowed no_control_server(const char* what)
+{
+    Allowed out;
+    out.ok = false;
+    out.reason = reason::kNoControlServer;
+    out.message = std::string("this run has no control server, and only a control server's client can ") + what +
+                  ": start the run with --control <address> (docs/control-api.md)";
+    return out;
+}
+
+} // namespace
+
 RunControls::RunControls(StopRequests& stops, bool start_paused, Observers observers, bool scenario) :
   stops_(stops), time_(start_paused, observers.on_command, scenario), on_phase_(std::move(observers.on_phase)),
   on_state_(std::move(observers.on_state)), has_command_observer_(static_cast<bool>(observers.on_command))
@@ -77,9 +93,11 @@ RunState RunControls::compose(const TimeFacts& facts) const
     out.allowed.step = ask(Operation::Step, Entry::Stdin);
     out.allowed.speed = ask(Operation::Speed, Entry::Stdin);
     out.allowed.stop = ask(Operation::Stop, Entry::Stdin);
-    // Standard input has neither: as the entry that has them answers.
-    out.allowed.run_until = ask(Operation::RunUntil, Entry::ControlServer);
-    out.allowed.write = ask(Operation::Write, Entry::ControlServer);
+    // Standard input has neither: as the entry that has them answers, if the run has that entry.
+    out.allowed.run_until =
+        control_server_ ? ask(Operation::RunUntil, Entry::ControlServer) : no_control_server("send run_until");
+    out.allowed.write =
+        control_server_ ? ask(Operation::Write, Entry::ControlServer) : no_control_server("write a variable");
     return out;
 }
 

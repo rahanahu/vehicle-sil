@@ -193,21 +193,23 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `min_ms`、`max_ms` | `step` にだけあります。`ms` の範囲（`ok` が `false` の間も） |
 | `min`、`max` | `speed` にだけあります。値の範囲（`ok` が `false` の間も）。`min` と `max` が同じでなければ、`"max"` も受け付けます |
 
-`ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。
+`ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
-`pause`、`resume`、`step`、`speed`、`stop` は、標準入力のコマンドとして答えます。`run_until` と `write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。`allowed` は標準入力の答えです。
+`pause`、`resume`、`step`、`speed`、`stop` は、標準入力のコマンドとして答えます。`run_until` と `write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、この 2 つを送る口がないので、実行の間ずっと、どちらも `ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 5 つは標準入力の答えです。
 
 `state` を書くとき:
 
 | とき | 書くもの |
 |---|---|
-| 段階が変わった | `phase` のイベントの後。 |
-| コマンドが状態を変えた（一時停止、速度、標準入力やクライアントからの停止） | そのコマンドの `command` のイベントの後。何も変えないコマンドでは書きません。 |
+| 段階が変わった | 新しい段階の `state` を書きます。ふつうは `phase` のイベントの後。 |
+| コマンドが状態を変えた（一時停止、速度、標準入力やクライアントからの停止） | その変化を反映した `state` を、そのコマンドの `command` のイベントの後に書きます。何も変えないコマンドでは書きません。 |
 | シミュレーションが止まった・動き出した、`pacing` が変わった、シグナルが停止を求めた | ランチャーが次に見たとき（シミュレーションが走っている間は 20 ms ごと）。 |
+
+`state` はランチャーの複数のスレッドが書くので、ほかのイベントとの間の正確な位置には頼らないでください。`phase` のイベント、標準入力の `stop` の `command` のイベント、`time` のイベントの近くでは、そのイベントの直前に作られた `state` が 1 つ、そのイベントの後に来ることがあり、その `state` はまだそのイベントを反映していません。新しい段階の `state` が、その `phase` のイベントの直前に来ることもあります。変化を反映した `state` は必ず書かれ、最後の `state` は正しい内容です。イベントの後の最初の `state` ではなく、最新の `state` を使ってください。
 
 シミュレーションが走る前に来た、シグナル（Ctrl+C）による停止の要求は、次の `state`（次の段階のもの）に現れます。
 
-`state` の例（読みやすく整形しています。出力では 1 行です）:
+`--control` つきの実行の `state` の例（読みやすく整形しています。出力では 1 行です）:
 
 ```json
 {
@@ -243,6 +245,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
 | `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けず、時間も動かせません |
+| `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`run_until`、`write`）です |
 | `outside-real-time` | 実行につながっているものが仮想時間を待たないので、実行は実時間を保ちます。いまは、これを設定するものはありません |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
 | `missing-argument` | クライアントの `run_until` に時刻がありません |
@@ -308,7 +311,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control_link` | 必須の participant の `joined` がそろった後、`phase` の `running` の前に、設定ファイルの順 |
 | `participant` の `failed` | 失敗と決めた時点ですぐ |
 | `command` | そのコマンドで起きること（`phase` の `stopping` など）より前 |
-| `state` | それを変えたもののイベントの後（[`state` のイベント](#state-のイベント)）。`state` より前のイベントは、すべてその `state` に反映されています |
+| `state` | ふつうは、それを変えたもののイベントの後。古い `state` が 1 つ間に挟まることがあり、最後の `state` は正しい内容です（[`state` のイベント](#state-のイベント)） |
 | `heartbeat` | `hello` から `result` までのどの段階でも、ほかの行の間 |
 
 - `control_server` は、照合で失敗した実行と、引数のエラーでは書きません。

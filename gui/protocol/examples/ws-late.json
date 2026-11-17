@@ -151,8 +151,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -162,9 +162,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -466,8 +466,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -477,9 +477,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -555,9 +555,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -567,9 +567,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -700,9 +700,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -712,9 +712,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -836,9 +836,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -848,9 +848,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1252,7 +1252,7 @@
         "event": "time",
         "seq": 26,
         "t_ms": 260,
-        "sim_ms": 205,
+        "sim_ms": 200,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1331,7 +1331,7 @@
         "event": "time",
         "seq": 31,
         "t_ms": 310,
-        "sim_ms": 610,
+        "sim_ms": 605,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1348,7 +1348,7 @@
         "event": "time",
         "seq": 32,
         "t_ms": 320,
-        "sim_ms": 710,
+        "sim_ms": 705,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1410,7 +1410,7 @@
         "event": "time",
         "seq": 36,
         "t_ms": 360,
-        "sim_ms": 1015,
+        "sim_ms": 1010,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1427,7 +1427,7 @@
         "event": "time",
         "seq": 37,
         "t_ms": 370,
-        "sim_ms": 1115,
+        "sim_ms": 1110,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1444,7 +1444,7 @@
         "event": "time",
         "seq": 38,
         "t_ms": 380,
-        "sim_ms": 1215,
+        "sim_ms": 1210,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1517,9 +1517,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1529,9 +1529,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1545,7 +1545,7 @@
         "event": "time",
         "seq": 41,
         "t_ms": 410,
-        "sim_ms": 1235,
+        "sim_ms": 1230,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1559,78 +1559,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "state",
+        "event": "log",
         "seq": 42,
         "t_ms": 420,
-        "rev": 7,
-        "phase": "running",
-        "paused": false,
-        "holding": false,
-        "speed": 1,
-        "pacing": "not-paced",
-        "stop": {
-          "requests": 1,
-          "by": "stop command"
-        },
-        "scenario": false,
-        "allowed": {
-          "pause": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "resume": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "step": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
-            "caution": null,
-            "min_ms": 1,
-            "max_ms": 1000000000000
-          },
-          "speed": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
-            "caution": null,
-            "min": 1e-06,
-            "max": 1000000.0
-          },
-          "run_until": {
-            "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
-            "caution": null
-          },
-          "stop": {
-            "ok": true,
-            "reason": null,
-            "message": null,
-            "caution": null
-          },
-          "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
-            "caution": null
-          }
-        },
-        "outside": []
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 43,
-        "t_ms": 430,
         "source": "vehicle_sil_launch",
         "line": "interrupted (stop command): the simulation was stopped"
       }
@@ -1640,15 +1571,15 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 44,
-        "t_ms": 440,
+        "seq": 43,
+        "t_ms": 430,
         "severity": "warning",
         "code": "behind-real-time",
         "file": "late.yaml",
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -1656,8 +1587,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 45,
-        "t_ms": 450,
+        "seq": 44,
+        "t_ms": 440,
         "severity": "note",
         "code": "interrupted",
         "file": "late.yaml",
@@ -1673,8 +1604,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 46,
-        "t_ms": 460,
+        "seq": 45,
+        "t_ms": 450,
         "phase": "stopping"
       }
     },
@@ -1683,8 +1614,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 47,
-        "t_ms": 470,
+        "seq": 46,
+        "t_ms": 460,
         "rev": 8,
         "phase": "stopping",
         "paused": false,
@@ -1727,8 +1658,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1738,9 +1669,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1752,8 +1683,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 48,
-        "t_ms": 480,
+        "seq": 47,
+        "t_ms": 470,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1763,8 +1694,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 49,
-        "t_ms": 490,
+        "seq": 48,
+        "t_ms": 480,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1776,8 +1707,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 50,
-        "t_ms": 500,
+        "seq": 49,
+        "t_ms": 490,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1787,8 +1718,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 51,
-        "t_ms": 510,
+        "seq": 50,
+        "t_ms": 500,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -1800,8 +1731,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 52,
-        "t_ms": 520,
+        "seq": 51,
+        "t_ms": 510,
         "phase": "ended"
       }
     },
@@ -1810,8 +1741,8 @@
       "session": 1,
       "event": {
         "event": "state",
-        "seq": 53,
-        "t_ms": 530,
+        "seq": 52,
+        "t_ms": 520,
         "rev": 9,
         "phase": "ended",
         "paused": false,
@@ -1854,8 +1785,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1865,9 +1796,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1879,8 +1810,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 54,
-        "t_ms": 540,
+        "seq": 53,
+        "t_ms": 530,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1899,10 +1830,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1235,
+            "sim_ms": 1230,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 247,
+            "paced_steps": 246,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1949,7 +1880,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 1235,
+            "before_ms": 1230,
             "unplaced": [],
             "networks": [
               {
@@ -1966,7 +1897,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1230,
+                    "at_ms": 1220,
                     "frames_sent": 14,
                     "frames_received": 0
                   },
@@ -1975,7 +1906,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1230,
+                    "at_ms": 1220,
                     "frames_sent": 0,
                     "frames_received": 14
                   }
@@ -1991,7 +1922,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -2255,13 +2186,13 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 54,
-        "last_t_ms": 540,
+        "last_seq": 53,
+        "last_t_ms": 530,
         "time": {
           "event": "time",
           "seq": 41,
           "t_ms": 410,
-          "sim_ms": 1235,
+          "sim_ms": 1230,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -2553,7 +2484,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -2594,10 +2525,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1235,
+            "sim_ms": 1230,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 247,
+            "paced_steps": 246,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -2644,7 +2575,7 @@
           ],
           "outside": [],
           "traffic": {
-            "before_ms": 1235,
+            "before_ms": 1230,
             "unplaced": [],
             "networks": [
               {
@@ -2661,7 +2592,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1230,
+                    "at_ms": 1220,
                     "frames_sent": 14,
                     "frames_received": 0
                   },
@@ -2670,7 +2601,7 @@
                     "counted": true,
                     "not_counted": null,
                     "virtual_time": true,
-                    "at_ms": 1230,
+                    "at_ms": 1220,
                     "frames_sent": 0,
                     "frames_received": 14
                   }
@@ -2686,7 +2617,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",

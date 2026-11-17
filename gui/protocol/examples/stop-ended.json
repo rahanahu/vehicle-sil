@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 262,
-      "last_t_ms": 2620,
+      "last_seq": 271,
+      "last_t_ms": 2710,
       "time": {
         "event": "time",
-        "seq": 244,
-        "t_ms": 2440,
-        "sim_ms": 105730,
+        "seq": 253,
+        "t_ms": 2530,
+        "sim_ms": 110420,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -374,7 +374,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 256,
+        "seq": 265,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -400,7 +400,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 105730,
+          "sim_ms": 110420,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -468,7 +468,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 105730,
+          "before_ms": 110420,
           "unplaced": [
             {
               "participant": "Logger",
@@ -495,8 +495,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 105720,
-                  "frames_sent": 1059,
+                  "at_ms": 110410,
+                  "frames_sent": 1106,
                   "frames_received": 0
                 },
                 {
@@ -504,9 +504,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 105720,
+                  "at_ms": 110410,
                   "frames_sent": 0,
-                  "frames_received": 1059
+                  "frames_received": 1106
                 }
               ]
             }
@@ -789,7 +789,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 212,
+          "kept": 221,
           "dropped": 0
         }
       },

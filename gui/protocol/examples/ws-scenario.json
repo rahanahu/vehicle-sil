@@ -164,8 +164,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -176,8 +176,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -517,8 +517,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -529,8 +529,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -607,8 +607,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -619,8 +619,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -780,8 +780,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -792,8 +792,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -946,8 +946,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -958,8 +958,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1139,8 +1139,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1151,8 +1151,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1246,8 +1246,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1258,8 +1258,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1419,8 +1419,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1431,8 +1431,8 @@
           },
           "write": {
             "ok": false,
-            "reason": "scenario-running",
-            "message": "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a client, run without --scenario",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },

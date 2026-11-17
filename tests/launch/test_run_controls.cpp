@@ -277,12 +277,14 @@ TEST_CASE(a_run_refuses_controls_with_events_when_the_controls_have_no_observer_
 
 namespace {
 
-/// Controls whose states are kept as they are told.
+/// Controls whose states are kept as they are told; of a run with a control server unless
+/// `control_server` says otherwise.
 struct Told
 {
-    explicit Told(bool start_paused = false, bool scenario = false) :
+    explicit Told(bool start_paused = false, bool scenario = false, bool control_server = true) :
       controls(stops, start_paused, observers(), scenario)
     {
+        controls.set_control_server(control_server);
     }
 
     RunControls::Observers observers()
@@ -453,6 +455,60 @@ TEST_CASE(the_state_of_a_run_with_a_scenario_refuses_what_only_a_control_server_
     // The same answers as the rules give those entries.
     CHECK(s.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
     CHECK(s.allowed.pause == t.controls.allowed(Operation::Pause, Entry::Stdin));
+}
+
+TEST_CASE(the_state_of_a_run_without_a_control_server_refuses_what_only_a_control_server_has)
+{
+    // Whether a scenario plays or not, and wherever the run stands: nothing can send a run_until
+    // or a write, and the state says so with one reason. What standard input takes is as with a
+    // control server.
+    for (const bool scenario : {false, true})
+    {
+        Told t(false, scenario, false);
+        Told with(false, scenario, true);
+        const auto check = [&t, &with] {
+            t.controls.publish();
+            with.controls.publish();
+            const RunState s = t.states.back();
+            for (const auto* a : {&s.allowed.run_until, &s.allowed.write})
+            {
+                CHECK(!a->ok);
+                CHECK(a->reason == "no-control-server");
+                CHECK(a->message.find("--control <address>") != std::string::npos);
+                CHECK(!a->range && !a->caution);
+            }
+            CHECK(s.allowed.run_until.message.find("send run_until") != std::string::npos);
+            CHECK(s.allowed.write.message.find("write a variable") != std::string::npos);
+            const RunState& other = with.states.back();
+            CHECK(s.allowed.pause == other.allowed.pause && s.allowed.resume == other.allowed.resume &&
+                  s.allowed.step == other.allowed.step && s.allowed.speed == other.allowed.speed &&
+                  s.allowed.stop == other.allowed.stop);
+            // The rules themselves answer as before: the state alone knows that the entry is not there.
+            CHECK(other.allowed.write == t.controls.allowed(Operation::Write, Entry::ControlServer));
+        };
+        check();
+        vehicle_sil::unit::InProcessRegistry registry;
+        vehicle_sil::SimulationControllerOptions options;
+        options.registry_uri = registry.uri;
+        options.required_participants = {"NeverJoins"};
+        options.time_control = vehicle_sil::TimeControlOptions{.step = std::chrono::milliseconds(10)};
+        vehicle_sil::SimulationController controller(options);
+        vehicle_sil::unit::InProcessRegistry other_registry;
+        options.registry_uri = other_registry.uri;
+        vehicle_sil::SimulationController other(options);
+        t.controls.time().attach(controller, 10, std::optional<double>(1.0));
+        with.controls.time().attach(other, 10, std::optional<double>(1.0));
+        t.controls.set_phase(Phase::Running);
+        with.controls.set_phase(Phase::Running);
+        check();
+        t.controls.time().detach();
+        with.controls.time().detach();
+        check();
+    }
+    // Controls that were told nothing have none.
+    StopRequests stops;
+    RunControls plain(stops);
+    CHECK(plain.state().allowed.write.reason == "no-control-server");
 }
 
 TEST_CASE(the_state_says_the_hold_while_it_lasts)

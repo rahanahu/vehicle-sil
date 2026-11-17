@@ -25,8 +25,8 @@
       },
       "stop": "none",
       "phase": "ended",
-      "last_seq": 43,
-      "last_t_ms": 430,
+      "last_seq": 42,
+      "last_t_ms": 420,
       "time": {
         "event": "time",
         "seq": 29,

@@ -810,10 +810,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "seq": 25,
+        "t_ms": 250,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {

@@ -85,6 +85,8 @@ inline constexpr const char* kInvalidCommand = "invalid-command";   ///< the lin
 inline constexpr const char* kUnknownCommand = "unknown-command";   ///< a command of a name standard input does not take
 inline constexpr const char* kInvalidArgument = "invalid-argument"; ///< an argument (or "id") is missing or has not the form or the range
 inline constexpr const char* kUnknownSource = "unknown-source";     ///< apply() was given a source that is no entry
+// Of the state alone (RunControls): no command is refused with it, as nothing could send one.
+inline constexpr const char* kNoControlServer = "no-control-server"; ///< the operation is a control server's, and the run has none
 } // namespace reason
 
 /// The answer of the rules.

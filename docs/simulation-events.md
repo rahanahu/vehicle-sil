@@ -193,21 +193,23 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 | `min_ms`, `max_ms` | Only in `step`: the range of its `ms` (also while `ok` is `false`) |
 | `min`, `max` | Only in `speed`: the range of its value (also while `ok` is `false`). `"max"` is accepted as well, unless `min` equals `max` |
 
-`ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing).
+`ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
 
-`pause`, `resume`, `step`, `speed` and `stop` are answered as for a stdin command. `run_until` and `write` (writing a variable) exist only for Control Server clients, so they are answered as for a client. During a scenario the two differ: clients cannot move time (`scenario-running`), stdin commands can, and `allowed` shows the answer for stdin.
+`pause`, `resume`, `step`, `speed` and `stop` are answered as for a stdin command. `run_until` and `write` (writing a variable) exist only for Control Server clients, so they are answered as for a client. In a run without a Control Server (no `--control`) nothing can send these two, so both have `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those five show the answer for stdin.
 
 When `state` is written:
 
 | Moment | What is written |
 |---|---|
-| The phase changes | After the `phase` event. |
-| A command changes the state (a pause, a speed, a stop from stdin or a client) | After the `command` event of that command. A command that changes nothing writes no `state`. |
+| The phase changes | A `state` with the new phase is written; normally after the `phase` event. |
+| A command changes the state (a pause, a speed, a stop from stdin or a client) | A `state` with the change is written after the `command` event of that command. A command that changes nothing writes no `state`. |
 | The simulation pauses or continues, the pacing changes, a signal asks to stop | When the launcher next looks (every 20 ms while the simulation runs). |
+
+Several threads of the launcher write `state`, so do not rely on the exact place of a `state` among the other events. Next to a `phase` event, the `command` event of a stdin `stop`, or a `time` event, one `state` that was made just before that event can follow it and does not show it yet, and the `state` with a new phase can come just before its `phase` event. A `state` that shows the change is always written, and the last `state` is correct: use the latest `state`, not the first one after an event.
 
 A stop request by a signal (Ctrl+C) that arrives before the simulation runs appears in the next `state` (the one of the next phase).
 
-A `state` (pretty-printed here; it is one line in the output):
+A `state` of a run with `--control` (pretty-printed here; it is one line in the output):
 
 ```json
 {
@@ -243,6 +245,7 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 | `not-paused` | `step` while the simulation is not paused |
 | `not-running` | The simulation has ended, or did not start |
 | `scenario-running` | The run plays a scenario: a client can neither write variables nor move time |
+| `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`run_until`, `write`) |
 | `outside-real-time` | Something connected to the run does not wait for virtual time, so the run keeps to real time. Nothing sets this yet |
 | `out-of-range` | An argument is out of range (a client's speed, step or time) |
 | `missing-argument` | A client's `run_until` without a time |
@@ -308,7 +311,7 @@ The first line is `hello` and the last line is `result`. Nothing is written afte
 | `control_link` | After `joined` of all required participants and before `phase` `running`, in configuration file order |
 | `participant` with `failed` | Immediately when the failure is decided |
 | `command` | Before what the command causes (such as `phase` `stopping`) |
-| `state` | After the event of what changed it (see [The `state` event](#the-state-event)); the events before a `state` are all reflected in it |
+| `state` | Normally after the event of what changed it; one older `state` can come in between, and the last `state` is correct (see [The `state` event](#the-state-event)) |
 | `heartbeat` | Between other lines, in any phase from `hello` to `result` |
 
 - `control_server` is not written for a run that fails the check, or for a usage error.

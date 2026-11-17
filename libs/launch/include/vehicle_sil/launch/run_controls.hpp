@@ -63,7 +63,9 @@ struct RunState
     bool scenario = false;
     /// What the run takes now (launch::allowed()), each as from the entry that has the operation:
     /// pause, resume, step, speed and stop as from standard input; run_until and write as from a
-    /// control server (standard input has neither).
+    /// control server (standard input has neither). In a run without a control server
+    /// (RunControls::set_control_server()) nothing can send those two: refused, with
+    /// reason::kNoControlServer.
     struct Operations
     {
         Allowed pause, resume, step, speed, run_until, stop, write;
@@ -165,6 +167,11 @@ public:
     /// state is put together, under TimeCommands' mutex: short, no wait. Set before the run and
     /// before any other thread uses this object.
     void set_stop_name(std::function<std::string()> name) { stop_name_ = std::move(name); }
+    /// Whether the run has a control server (RunOptions::serve_control), for the state: without
+    /// one, RunState::allowed refuses what only a control server's client can send (run_until,
+    /// write). Not given: none. It changes no rule and no command's answer. Set before the run and
+    /// before any other thread uses this object.
+    void set_control_server(bool present) noexcept { control_server_ = present; }
     /// The run's alone: whether it keeps up with its speed, as its watch saw it last. publish()
     /// tells it.
     void set_pacing(Pacing pacing) noexcept { pacing_.store(pacing); }
@@ -190,6 +197,7 @@ private:
     const std::function<void(Phase phase)> on_phase_;
     const std::function<void(const RunState& state)> on_state_;
     std::function<std::string()> stop_name_{};
+    bool control_server_ = false;
     const bool has_command_observer_;
     /// The state told last (rev 0: none). Under TimeCommands' mutex.
     RunState told_{};

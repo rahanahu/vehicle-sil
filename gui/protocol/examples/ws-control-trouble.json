@@ -151,8 +151,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -162,9 +162,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -536,8 +536,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-set-up",
-            "message": "the simulation has not been set up yet: run_until at a time works once the participants have been started",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -547,9 +547,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -625,9 +625,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -637,9 +637,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -826,9 +826,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -838,9 +838,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -983,9 +983,9 @@
             "max": 1000000.0
           },
           "run_until": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -995,9 +995,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1120,8 +1120,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1131,9 +1131,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1210,8 +1210,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1221,9 +1221,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },
@@ -1407,8 +1407,8 @@
           },
           "run_until": {
             "ok": false,
-            "reason": "not-running",
-            "message": "the simulation is not running (it is over, or it did not start): run_until works from the start of the run until the simulation ends",
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           },
           "stop": {
@@ -1418,9 +1418,9 @@
             "caution": null
           },
           "write": {
-            "ok": true,
-            "reason": null,
-            "message": null,
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
             "caution": null
           }
         },

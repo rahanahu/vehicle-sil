@@ -28,13 +28,13 @@
       },
       "stop": "forced",
       "phase": "stopping",
-      "last_seq": 255,
-      "last_t_ms": 2550,
+      "last_seq": 264,
+      "last_t_ms": 2640,
       "time": {
         "event": "time",
-        "seq": 244,
-        "t_ms": 2440,
-        "sim_ms": 105730,
+        "seq": 253,
+        "t_ms": 2530,
+        "sim_ms": 110420,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -377,7 +377,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 232,
+        "seq": 241,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -392,7 +392,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 212,
+          "kept": 221,
           "dropped": 0
         }
       },
