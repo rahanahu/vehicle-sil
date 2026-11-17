@@ -25,8 +25,9 @@ from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
                        FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
-                       RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_speed,
-                       check_time_command, command_line, run_command)
+                       RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_params,
+                       check_speed, check_time_command, check_variant,
+                       command_line, run_command)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .scenarios import list_scenarios, resolve_scenario
@@ -184,7 +185,7 @@ class GuiServer:
         self._check_waiting = 0
         self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
         self.launcher.track = self._checks
-        self._names: dict[str, tuple[tuple, list[str]]] = {}
+        self._names: dict[tuple[str, str | None], tuple[tuple, list[str]]] = {}
         self._sockets: dict[web.WebSocketResponse, web.BaseRequest] = {}
         self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
         self._authenticated: set[web.WebSocketResponse] = set()
@@ -432,14 +433,20 @@ class GuiServer:
                                                 "scenario null, or build a newer launcher")
         return scenario
 
-    async def _participants_of(self, config: ConfigFile, body: dict, always: bool) -> tuple[list[str], list[str]]:
-        """(disable, manual) of a check or run request: names of the file's participants (from its last check, or
-        a new one; always: even when the request names none)."""
+    @staticmethod
+    def _intent(body: dict, scenario: str | None) -> tuple[str | None, list[str]]:
+        """(variant, params) of a check or run request, as the launcher's arguments."""
+        return check_variant(body.get("variant")), check_params(body.get("params"), scenario)
+
+    async def _participants_of(self, config: ConfigFile, body: dict, always: bool,
+                               variant: str | None = None) -> tuple[list[str], list[str]]:
+        """(disable, manual) of a check or run request: names of the file's participants (of its variant, from its
+        last check, or a new one; always: even when the request names none)."""
         wanted, manual = body.get("disable"), body.get("manual")
         if manual is not None and FEATURE_MANUAL not in self.launcher.features:
             raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{FEATURE_MANUAL}': leave manual "
                                                 "out, or build a newer launcher")
-        known = await self.participant_names(config.relative) if always or wanted or manual else []
+        known = await self.participant_names(config.relative, variant) if always or wanted or manual else []
         disable = check_disable(wanted, known)
         return disable, check_manual(manual, known, disable)
 
@@ -454,8 +461,9 @@ class GuiServer:
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
-            disable, manual = await self._participants_of(config, body, always=False)
-            code, result = await self._check(config.relative, disable, scenario, manual)
+            variant, params = self._intent(body, scenario)
+            disable, manual = await self._participants_of(config, body, always=False, variant=variant)
+            code, result = await self._check(config.relative, disable, scenario, manual, variant, params)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         return web.json_response({"file": config.relative, "disable": disable, "manual": manual,
@@ -501,7 +509,14 @@ class GuiServer:
         if scenario is not None and start_paused:
             raise InvalidRequest("invalid-field", "start_paused cannot be used with a scenario (the launcher plays "
                                                   "it from time 0): leave start_paused false")
-        disable, manual = await self._participants_of(config, body, always=True)
+        variant, params = self._intent(body, scenario)
+        disable, manual = await self._participants_of(config, body, always=True, variant=variant)
+        # The check of what this run is made of (its own disable, manual, scenario, variant and params): a run that
+        # the check refuses is not started, and the answer carries the findings (the same as `api/check`'s).
+        _, checked = await self._check(config.relative, disable, scenario, manual, variant, params)
+        if checked.get("result") != "passed":
+            raise Refused(422, "check-failed", self._check_failed_message(config.relative, checked),
+                          {"result": checked.get("result"), "findings": checked.get("findings", [])})
         why_not = await self._no_variables()
         # The one place that decides whether a scenario's run has the launcher's control server: only a launcher
         # with scenario-control can have it (it then refuses writes); the others refuse --scenario with --control.
@@ -524,7 +539,7 @@ class GuiServer:
         timeline = await asyncio.to_thread(self.timelines.new_file) \
             if scenario is not None and FEATURE_TIMELINE in self.launcher.features else None
         argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials, scenario,
-                           manual, timeline)
+                           manual, timeline, variant, params)
         try:
             proc = await process.start(argv, cwd=self.root.root)
         except BaseException as e:
@@ -701,14 +716,21 @@ class GuiServer:
             raise InvalidRequest("launcher-unusable",
                                  "; ".join(p["message"] for p in self.launcher.problems) or "the launcher is not usable")
 
-    async def participant_names(self, relative: str) -> list[str]:
-        """The participant names of the file, from the last check of it, or from a new check (no --disable)
-        when the file has changed since."""
-        cached = self._names.get(relative)
+    @staticmethod
+    def _check_failed_message(relative: str, result: dict) -> str:
+        errors = result.get("errors")
+        what = f"{errors} error(s)" if isinstance(errors, int) and errors else f"the result {result.get('result')!r}"
+        return (f"the check of {relative} found {what}, so no run was started: fix what detail.findings lists "
+                "(the same findings as POST api/check), then start again")
+
+    async def participant_names(self, relative: str, variant: str | None = None) -> list[str]:
+        """The participant names of the file (of its variant), from the last check of it, or from a new check
+        (no --disable) when the file has changed since."""
+        cached = self._names.get((relative, variant))
         if cached and cached[0] == self._stamp(relative):
             return cached[1]
-        await self._check(relative, [])
-        return self._names.get(relative, ((), []))[1]
+        await self._check(relative, [], variant=variant)
+        return self._names.get((relative, variant), ((), []))[1]
 
     def _stamp(self, relative: str) -> tuple:
         try:
@@ -719,7 +741,8 @@ class GuiServer:
         return (st.st_mtime_ns, st.st_size)
 
     async def _check(self, relative: str, disable: list[str], scenario: str | None = None,
-                     manual: list[str] = ()) -> tuple[int, dict]:
+                     manual: list[str] = (), variant: str | None = None,
+                     params: list[str] = ()) -> tuple[int, dict]:
         """check --json, one at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
         self._not_closing()
         if self._check_waiting >= MAX_CHECK_WAITING:
@@ -736,16 +759,16 @@ class GuiServer:
             self._check_waiting -= 1
         try:
             self._not_closing()
-            return await self._check_locked(relative, disable, scenario, manual)
+            return await self._check_locked(relative, disable, scenario, manual, variant, params)
         finally:
             self._check_lock.release()
 
     async def _check_locked(self, relative: str, disable: list[str], scenario: str | None,
-                            manual: list[str]) -> tuple[int, dict]:
+                            manual: list[str], variant: str | None, params: list[str]) -> tuple[int, dict]:
         stamp = self._stamp(relative)
         try:
             code, out, err = await process.run_to_end(check_command(self.launcher, relative, disable, scenario,
-                                                                    manual),
+                                                                    manual, variant, params),
                                                       cwd=self.root.root, timeout_s=self.o.check_timeout_s,
                                                       track=self._checks)
         except TimeoutError:
@@ -764,8 +787,8 @@ class GuiServer:
                                                   "check object", tail)
         names = [p["name"] for p in result["participants"] if isinstance(p, dict) and isinstance(p.get("name"), str)]
         if names or result.get("result") not in ("usage",):
-            self._names.pop(relative, None)
-            self._names[relative] = (stamp, names)
+            self._names.pop((relative, variant), None)
+            self._names[(relative, variant)] = (stamp, names)
             while len(self._names) > MAX_NAMES_CACHED:
                 del self._names[next(iter(self._names))]
         return code, result

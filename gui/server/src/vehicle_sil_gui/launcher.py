@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -20,6 +22,7 @@ VERSION_TIMEOUT_S = 10
 # and docs/simulation-events.md): the range of a speed (the same for --speed and the speed command), the most milliseconds
 # one step command may ask for, the time commands, and the features that say which of them a launcher has. The
 # launcher's tests (launch.the_gui_takes_the_launchers_limits) compare the numbers with its own.
+PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SPEED_MIN = 0.000001
 SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12
@@ -160,7 +163,7 @@ class InvalidRequest(ValueError):
         self.code = code
 
 
-CHECK_FIELDS = ("file", "disable", "manual", "scenario")
+CHECK_FIELDS = ("file", "disable", "manual", "scenario", "variant", "params")
 RUN_FIELDS = CHECK_FIELDS + ("speed", "start_paused")
 
 
@@ -171,6 +174,43 @@ def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
     if unknown:
         raise InvalidRequest("invalid-field", f"{endpoint} takes no {', '.join(repr(k) for k in unknown)}: "
                                               f"the fields it takes are {', '.join(allowed)}")
+
+
+def check_variant(variant: object) -> str | None:
+    """The name to give --variant (None: none). Whether the file has it, the launcher's check says."""
+    if variant is None:
+        return None
+    if not isinstance(variant, str) or not variant:
+        raise InvalidRequest("invalid-field", "variant must be null or the name of a variant of the file (a "
+                                              "non-empty string)")
+    if variant.startswith("-"):
+        raise InvalidRequest("name-like-option", f"variant {variant!r} starts with '-': vehicle_sil_launch would "
+                                                 "read it as an option, so it cannot be given to --variant")
+    return variant
+
+
+def check_params(params: object, scenario: str | None) -> list[str]:
+    """The values to give --param, each as <name>=<value>: {name: value} of the scenario's parameters (a string or
+    a number). The launcher takes them only with a scenario."""
+    if params is None:
+        return []
+    if not isinstance(params, dict):
+        raise InvalidRequest("invalid-field", 'params must be an object of parameter name to value, e.g. '
+                                              '{"idle_rpm": "650"}')
+    if params and scenario is None:
+        raise InvalidRequest("invalid-field", "params sets parameters of a scenario: give scenario too, or leave "
+                                              "params out")
+    out = []
+    for name, value in params.items():
+        if not PARAM_NAME.fullmatch(name):
+            raise InvalidRequest("invalid-field", f"params has the name {name!r}: a parameter name is letters, "
+                                                  "digits and _, and does not start with a digit")
+        ok = isinstance(value, str) or (isinstance(value, (int, float)) and not isinstance(value, bool)
+                                        and math.isfinite(value))
+        if not ok:
+            raise InvalidRequest("invalid-field", f"params {name!r} must be a string or a number")
+        out.append(f"{name}={value if isinstance(value, str) else json.dumps(value)}")
+    return out
 
 
 def check_speed(speed: object) -> float | str | None:
@@ -274,13 +314,23 @@ def command_line(command: dict) -> bytes:
 
 
 def check_command(launcher: Launcher, file: str, disable: list[str], scenario: str | None = None,
-                  manual: list[str] = ()) -> list[str]:
+                  manual: list[str] = (), variant: str | None = None, params: list[str] = ()) -> list[str]:
     """scenario: a root-relative path from scenarios.resolve_scenario (the launcher runs in the root). disable,
-    manual: names that check_disable and check_manual accepted."""
+    manual: names that check_disable and check_manual accepted. variant, params: from check_variant and
+    check_params."""
     argv = launcher.prefix + ["check", "--json"]
     if scenario is not None:
         argv += ["--scenario", scenario_argument(scenario)]
-    return argv + _participant_arguments(disable, manual) + ["--", file]
+    return argv + _intent_arguments(disable, manual, variant, params) + ["--", file]
+
+
+def _intent_arguments(disable: list[str], manual: list[str], variant: str | None, params: list[str]) -> list[str]:
+    argv = _participant_arguments(disable, manual)
+    if variant is not None:
+        argv += ["--variant", variant]
+    for param in params:
+        argv += ["--param", param]
+    return argv
 
 
 def _participant_arguments(disable: list[str], manual: list[str]) -> list[str]:
@@ -299,7 +349,8 @@ def scenario_argument(relative: str) -> str:
 
 def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
                 start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None,
-                manual: list[str] = (), timeline: Path | None = None) -> list[str]:
+                manual: list[str] = (), timeline: Path | None = None, variant: str | None = None,
+                params: list[str] = ()) -> list[str]:
     """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
     127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
     event and in the list of processes). scenario, disable, manual: as check_command's. timeline: the file that
@@ -311,7 +362,7 @@ def run_command(launcher: Launcher, file: str, disable: list[str], speed: float 
             argv += ["--timeline", str(timeline)]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
-    argv += _participant_arguments(disable, manual)
+    argv += _intent_arguments(disable, manual, variant, params)
     if speed is not None:
         argv += ["--speed", speed_argument(speed)]
     if start_paused:

@@ -176,8 +176,57 @@ def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
         assert [v["builtin"] for v in engine["variables"]] == [True, False, False, False]
         status, body = await c.post("api/check", {"file": "check-error.yaml"})
         assert status == 200 and body["exit_code"] == 1 and body["check"]["result"] == "failed"
-        got = await run_to_end(c, {"file": "check-error.yaml"})
-        assert got[-1]["session"]["result"]["result"] == "check_failed" and not started_pids(got)
+    run_async(main, gui)
+
+
+def test_a_run_whose_check_fails_is_refused_with_the_findings_of_the_check(gui: Gui) -> None:
+    """No run is started: 422 check-failed, and detail.findings are the findings that api/check returns."""
+    async def main(c: Client) -> None:
+        req = {"file": "check-error.yaml", "disable": []}
+        status, checked = await c.post("api/check", req)
+        assert status == 200 and checked["check"]["result"] == "failed"
+        status, body = await c.post("api/run", req)
+        assert status == 422, body
+        error = body["error"]
+        assert error["code"] == "check-failed" and "check-error.yaml" in error["message"]
+        assert error["detail"] == {"result": "failed", "findings": checked["check"]["findings"]}
+        assert any(f["severity"] == "error" for f in error["detail"]["findings"])
+        status, body = await c.get("api/session")
+        assert body["session"] is None  # nothing was started, and the next start is not blocked
+        got = await run_to_end(c, {"file": "simulation.yaml"})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+    run_async(main, gui)
+
+
+def test_a_variant_goes_to_the_check_and_the_run(gui: Gui) -> None:
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "variants.yaml", "variant": "small"})
+        assert status == 200 and body["check"]["result"] == "passed", body
+        status, body = await c.post("api/check", {"file": "variants.yaml", "variant": "quiet", "disable": []})
+        assert status == 200 and body["check"]["result"] == "passed", body
+        # without a variant, the launcher's check says to choose one: the run is refused with that finding
+        status, body = await c.post("api/run", {"file": "variants.yaml"})
+        assert (status, body["error"]["code"]) == (422, "check-failed"), body
+        got = await run_to_end(c, {"file": "variants.yaml", "variant": "small"})
+        assert got[-1]["session"]["result"]["result"] == "passed"
+        assert events(got, "hello")[0]["arguments"][-4:] == ["--variant", "small", "--", "variants.yaml"]
+    run_async(main, gui)
+
+
+def test_variant_and_params_of_the_wrong_shape_are_refused(gui: Gui) -> None:
+    async def main(c: Client) -> None:
+        scenario = "scenarios/throttle.yaml"
+        for path in ("api/check", "api/run"):
+            for body, code in (({"variant": ""}, "invalid-field"), ({"variant": 1}, "invalid-field"),
+                               ({"variant": "-x"}, "name-like-option"), ({"params": ["a"]}, "invalid-field"),
+                               ({"params": {"a": "1"}}, "invalid-field"),  # no scenario
+                               ({"params": {"1a": "1"}, "scenario": scenario}, "invalid-field"),
+                               ({"params": {"a": True}, "scenario": scenario}, "invalid-field"),
+                               ({"params": {"a": None}, "scenario": scenario}, "invalid-field")):
+                status, reply = await c.post(path, {"file": "simulation.yaml", **body})
+                assert (status, reply["error"]["code"]) == (400, code), (path, body, reply)
+        status, body = await c.get("api/session")
+        assert body["session"] is None
     run_async(main, gui)
 
 

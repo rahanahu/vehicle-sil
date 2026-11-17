@@ -169,6 +169,12 @@
         "modified": "2026-01-01T00:00:00Z",
         "size": 532,
         "simulation": true
+      },
+      {
+        "path": "variants.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 614,
+        "simulation": true
       }
     ],
     "truncated": false

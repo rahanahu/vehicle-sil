@@ -217,6 +217,10 @@ export interface CheckRequest {
    * means none. Send only when the launcher's `features` include `scenario`.
    */
   scenario?: string | null;
+  /** The variant of the configuration file (`--variant`); omitted or null means none. */
+  variant?: string | null;
+  /** Values of the scenario's parameters (name to value; `--param`); only with a `scenario`. */
+  params?: Record<string, string | number>;
 }
 
 /** One entry of GET api/scenarios. */

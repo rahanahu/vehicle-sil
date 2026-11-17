@@ -1,0 +1,45 @@
+{
+  "description": "A start whose check found an error: no run is started, and detail.findings are the check's findings.",
+  "request": {
+    "method": "POST",
+    "path": "api/run",
+    "body": {
+      "file": "check-error.yaml",
+      "disable": [],
+      "speed": null,
+      "start_paused": false
+    }
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "check-failed",
+      "message": "the check of check-error.yaml found 1 error(s), so no run was started: fix what detail.findings lists (the same findings as POST api/check), then start again",
+      "detail": {
+        "result": "failed",
+        "findings": [
+          {
+            "severity": "error",
+            "code": "step-mismatch",
+            "file": "check-error.yaml",
+            "line": 11,
+            "participant": "Engine",
+            "network": null,
+            "message": "participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms",
+            "detail": null
+          },
+          {
+            "severity": "note",
+            "code": "not-checked",
+            "file": "check-error.yaml",
+            "line": 14,
+            "participant": "Logger",
+            "network": null,
+            "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
+            "detail": null
+          }
+        ]
+      }
+    }
+  }
+}

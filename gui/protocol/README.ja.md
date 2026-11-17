@@ -80,8 +80,8 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 |---|---|---|
 | `GET api/app` | サーバーとランチャーの情報、変数を読み書きできるか、上限 | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml` の一覧 | `configs.json` |
-| `POST api/check` `{file, disable, manual, scenario}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, manual, speed, start_paused, scenario}` | `{session}`（始めた実行の要約） | `run.json` |
+| `POST api/check` `{file, disable, manual, scenario, variant, params}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, manual, speed, start_paused, scenario, variant, params}` | `{session}`（始めた実行の要約）。または、所見つきの 422 `check-failed`（下の「照合と開始」） | `run.json`、`error-check-failed.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送ったコマンド） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
@@ -126,7 +126,9 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 ### 照合と開始（`api/check`、`api/run`）
 
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけているか動いている間、409 `already-running` です。レスポンスの要約を、画面はその場で手元の状態に反映します（後から届く `session` も同じ内容です）。
-- **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も、participant 名を確認するために同じ順番で照合することがあります。
+- **照合のあとの開始**: `api/run` は、まず実行を成す内容（`file`、`disable`、`manual`、`scenario`、`variant`、`params`）を、`api/check` と同じ順番で照合します。照合が通らなければ（`result` が `passed` でなければ）実行は始めず、422 `check-failed` を返します。`detail` は `{result, findings}` で、`result` は照合の `result`（`failed`、`unreadable`、`usage`）、`findings` は同じリクエストで `api/check` が返す `findings`（同じオブジェクト）です。警告や注記があるだけで通る照合は、実行を始めます。所見を直してから、もう一度 `api/run` を送ります。何も始める前に断るので、止めるものはありません。例: `error-check-failed.json`。
+- **variant と params**: `variant`（文字列、なしは `null`）は設定ファイルの variant（`--variant`）、`params`（パラメーター名から文字列か数への object）はシナリオのパラメーター（`--param <name>=<value>`。`scenario` があるときだけ）です。どちらも照合にも実行にも渡ります。`-` で始まる variant の名前は 400 `name-like-option`、object でない `params`、英数字と `_` でない名前（数字では始められない）、ほかの種類の値、`scenario` のない `params` は 400 `invalid-field` です。ファイルにその variant があるか、シナリオにそのパラメーターがあるかは、ランチャーの照合が決め、所見（`api/check`）か 422 `check-failed`（`api/run`）に出ます。`disable` と `manual` に使える名前は、その variant の照合の結果のものです。
+- **照合**: 同時の `api/check` は拒否せず、順に 1 つずつ実行します。待っているリクエストが多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も同じ順番で照合します。
 
 ### 停止（`api/stop`）
 
@@ -188,6 +190,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 404 | `no-timeline` | `api/timeline/<session の id>`: その実行の時間の軸のファイルを、サーバーが持っていない（「シナリオの実行の時間の軸（`api/timeline`）」） |
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
 | 409 | `already-running` | 実行が始まりかけているか動いている |
+| 422 | `check-failed` | `api/run`: 実行を成す内容の照合が通らなかったので、実行を始めなかった（`detail` は `{result, findings}`。上の「照合と開始」）。例: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
 | 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを実行している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
@@ -206,7 +209,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
-- `api/check` が受けるフィールドは `file`、`disable`、`manual`、`scenario` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、`api/check` の `speed`）は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
+- `api/check` が受けるフィールドは `file`、`disable`、`manual`、`scenario`、`variant`、`params` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、`api/check` の `speed`）は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`force`、`disable`、`manual`（`disable` と同じ名前も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
 
@@ -214,7 +217,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 
 | ファイル | 内容 |
 |---|---|
-| `error-already-running.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json` | HTTP のエラー |
+| `error-already-running.json`、`error-check-failed.json`、`error-not-writable.json`、`error-scenario-not-listed.json`、`error-scenario-running.json`、`error-session-changed.json` | HTTP のエラー |
 | `error-invalid-watch.json` | WebSocket の `error` |
 | `stop.json`、`stop-force.json`、`stop-ended.json` | 停止のレスポンス |
 | `time.json` | 時間のコマンドのレスポンス |

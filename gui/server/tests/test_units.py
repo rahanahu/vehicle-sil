@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from vehicle_sil_gui import process
 from vehicle_sil_gui.hub import Client, Hub, encode
-from vehicle_sil_gui.launcher import (InvalidRequest, check_disable, check_speed, check_time_command, command_line,
+from vehicle_sil_gui.launcher import (InvalidRequest, Launcher, check_command, check_disable, check_params,
+                                     check_speed, check_time_command, check_variant, command_line, run_command,
                                      speed_argument)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
@@ -879,3 +880,19 @@ def test_an_unexpected_error_is_a_500_with_the_usual_headers() -> None:
     assert response.status == 500 and json.loads(response.body)["error"]["code"] == "internal"
     assert "script-src 'self'" in response.headers["Content-Security-Policy"]
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_variant_and_params_become_the_launchers_arguments() -> None:
+    launcher = Launcher(Path("vehicle_sil_launch"))
+    params = check_params({"idle_rpm": 650, "gain": 0.5, "label": "a=b"}, "scenarios/s.yaml")
+    assert params == ["idle_rpm=650", "gain=0.5", "label=a=b"]
+    tail = ["--variant", "small", "--param", "idle_rpm=650", "--param", "gain=0.5", "--param", "label=a=b",
+            "--", "f.yaml"]
+    argv = check_command(launcher, "f.yaml", [], "scenarios/s.yaml", [], check_variant("small"), params)
+    assert argv[1:] == ["check", "--json", "--scenario", "scenarios/s.yaml", *tail]
+    argv = run_command(launcher, "f.yaml", ["Logger"], 2.0, False, scenario="scenarios/s.yaml",
+                       variant="small", params=params)
+    assert argv[1:] == ["run", "--events", "--stdin-commands", "--scenario", "scenarios/s.yaml", "--disable",
+                        "Logger", "--variant", "small", "--param", "idle_rpm=650", "--param",
+                        "gain=0.5", "--param", "label=a=b", "--speed", "2", "--", "f.yaml"]
+    assert "--variant" not in check_command(launcher, "f.yaml", [])

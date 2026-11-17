@@ -28,7 +28,7 @@ POSIX = sys.platform != "win32"
 
 EXAMPLES = {
     "app", "configs", "session-none", "session-running", "session-ended", "check-passed", "check-disabled",
-    "check-failed", "run", "stop", "stop-force", "stop-ended",
+    "check-failed", "error-check-failed", "run", "stop", "stop-force", "stop-ended",
     "error-unauthorized", "error-forbidden-host", "error-forbidden-origin", "error-cors-not-allowed",
     "error-not-found", "error-method-not-allowed", "error-too-large", "error-unsupported-media-type",
     "error-invalid-json", "error-invalid-field", "error-invalid-path", "error-outside-root",
@@ -36,7 +36,7 @@ EXAMPLES = {
     "error-already-running", "error-check-busy", "error-check-timeout", "error-launcher-output",
     "error-launcher-unusable", "error-launcher-start", "error-shutting-down", "error-too-many-connections",
     "error-not-running", "time", "ws-time", "ws-late", "ws-control-trouble",
-    "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
+    "ws-pass", "ws-log-dropped", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
@@ -80,7 +80,6 @@ SHOWN = {
     "dashboard-none": lambda e: e["status"] == 200 and e["response"]["found"] is False
     and e["response"]["dashboard"] is None,
     "ws-bad-types": ended("passed", problems={"bad-event": 9}),
-    "ws-check-error": ended("check_failed"),
     "ws-orphan": ended("passed", problems={"output-left-open": 1}),
     "ws-stop": ended("interrupted", "stop command", states=["ended", "ended", "ended"]),
     "ws-force-stop": ended("interrupted", "stop command", states=["ended", "ended", "killed"]),
@@ -272,6 +271,11 @@ def test_http_examples(tmp_path: Path) -> None:
             ):
                 status, body = await c.post("api/check", req)
                 check_example(name, http(text, "POST", "api/check", req, status, body), gui)
+            req = {"file": "check-error.yaml", "disable": [], "speed": None, "start_paused": False}
+            status, body = await c.post("api/run", req)
+            check_example("error-check-failed", http("A start whose check found an error: no run is started, and "
+                                                     "detail.findings are the check's findings.", "POST",
+                                                     "api/run", req, status, body), gui)
             for code, path, req, kw, text in (
                     ("unauthorized", "api/check", {"file": "simulation.yaml"}, {"token": "wrong"},
                      "No token, or a wrong one."),
@@ -427,7 +431,6 @@ def test_errors_of_a_launcher_that_changed(tmp_path: Path) -> None:
 
 SCENARIOS = {
     "pass": ("simulation.yaml", "A run that passes: hello with no session, then everything of the run."),
-    "check-error": ("check-error.yaml", "A run whose check fails: nothing is started."),
     "participant-crash": ("participant-crash.yaml", "A required participant fails while running."),
     "launcher-crash": ("launcher-crash.yaml", "The launcher dies without a result: the launcher's exit in the "
                                               "summary, then no-result."),

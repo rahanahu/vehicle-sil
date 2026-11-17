@@ -80,8 +80,8 @@ Every `api/` request has these conditions:
 |---|---|---|
 | `GET api/app` | Information on the server and the launcher, whether variables can be read and written, limits | `app.json` |
 | `GET api/configs` | The `.yaml` / `.yml` files under the root | `configs.json` |
-| `POST api/check` `{file, disable, manual, scenario}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
-| `POST api/run` `{file, disable, manual, speed, start_paused, scenario}` | `{session}` (the summary of the run it started) | `run.json` |
+| `POST api/check` `{file, disable, manual, scenario, variant, params}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
+| `POST api/run` `{file, disable, manual, speed, start_paused, scenario, variant, params}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `error-check-failed.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
 | `POST api/time` `{command, ms, value}` | `{session_id, command}` (the command sent to the launcher) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
@@ -126,7 +126,9 @@ Send a value for `speed` (`null`, `"max"` or a number) and `start_paused` (boole
 ### Check and start (`api/check`, `api/run`)
 
 - **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `already-running` while a run is starting or running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
-- **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` may also run a check in the same queue, to confirm the participant names.
+- **Start after a check**: `api/run` first checks what the run is made of (`file`, `disable`, `manual`, `scenario`, `variant`, `params`), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
+- **Variant and parameters**: `variant` (a string, or `null` for none) is the variant of the configuration file (`--variant`), and `params` (an object of parameter name to a string or a number) sets the scenario's parameters (`--param <name>=<value>`; only with a `scenario`). Both go to the check and to the run. A variant name that starts with `-` gives 400 `name-like-option`; a `params` that is not an object, has a name that is not letters, digits and `_` (not starting with a digit), has another kind of value, or has no `scenario` gives 400 `invalid-field`. Whether the file has the variant, and the scenario the parameter, is the launcher's check: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`). The names that `disable` and `manual` may take are those of the check of that variant.
+- **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` also runs a check in the same queue.
 
 ### Stop (`api/stop`)
 
@@ -188,6 +190,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 404 | `no-timeline` | `api/timeline/<session id>`: the server has no timeline file of that run (see "Timeline of a scenario run (`api/timeline`)") |
 | 405 | `method-not-allowed` | A method other than `GET` on a screen file |
 | 409 | `already-running` | A run is starting or running |
+| 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
 | 409 | `session-changed` | `api/write`: `session` differs from the id of the running run (a write sent while the run changed). Nothing is written. Example: `error-session-changed.json` |
@@ -206,7 +209,7 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 504 | `check-timeout` | The check did not finish within the time limit (it was stopped) |
 | 504 | `write-timeout` | `api/write`: the Control Server did not answer in time (`limits.write_timeout_s`). It may have received the write (do not resend) |
 
-- `api/check` takes `file`, `disable`, `manual` and `scenario`; `api/run` takes those and `speed` and `start_paused`. Any other field (a misspelled one, or `speed` in `api/check`) gives 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
+- `api/check` takes `file`, `disable`, `manual`, `scenario`, `variant` and `params`; `api/run` takes those and `speed` and `start_paused`. Any other field (a misspelled one, or `speed` in `api/check`) gives 400 `invalid-field`, and the message names every unknown field and the fields the request takes, so that a field is never ignored without notice.
 - Fields covered by `invalid-field`: `speed`, `start_paused`, `force`, `disable`, `manual` (also the same name as in `disable`), `command`, `ms` and `value` of `api/time`, `writes`, `at_ms` and `late` of `api/write`, and values that do not fit the variable's type or range. For a variable value, `detail` holds `{peer, name}`.
 - Cases of `unsupported`: a value sent for `speed` / `start-paused` / `scenario` / `manual-participants` that the launcher does not have; `api/time` sent when the launcher lacks `time-commands`; `api/write` sent when the launcher lacks `control-server`.
 
@@ -214,7 +217,7 @@ The example files. The GUI server's tests check the other codes.
 
 | File | Contents |
 |---|---|
-| `error-already-running.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json` | HTTP errors |
+| `error-already-running.json`, `error-check-failed.json`, `error-not-writable.json`, `error-scenario-not-listed.json`, `error-scenario-running.json`, `error-session-changed.json` | HTTP errors |
 | `error-invalid-watch.json` | WebSocket `error` |
 | `stop.json`, `stop-force.json`, `stop-ended.json` | Stop responses |
 | `time.json` | Time command response |
