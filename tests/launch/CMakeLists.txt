@@ -60,6 +60,8 @@ set(_launch_pure_files
     libs/launch/src/yaml_reader.hpp libs/launch/src/yaml_tree.hpp libs/launch/src/check_rules.cpp
     libs/launch/src/config.cpp libs/launch/src/connect.cpp libs/launch/src/check_connect.cpp
     libs/launch/src/scenario_csv.cpp libs/launch/src/scenario_csv.hpp
+    libs/launch/src/time_plan.cpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
+    libs/launch/src/timeline.cpp libs/launch/include/vehicle_sil/launch/timeline_format.hpp
     libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp libs/launch/src/seen_ecu.hpp
     libs/launch/src/check_words.hpp libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
     libs/launch/src/scenario_values.cpp libs/launch/src/scenario_waves.cpp libs/launch/src/scenario_inputs.cpp
