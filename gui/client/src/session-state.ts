@@ -18,6 +18,7 @@ import {
   SessionSummary,
   SummaryScenario,
   Speed,
+  StateReport,
   StopRequest,
   TimeReport,
 } from './protocol';
@@ -259,6 +260,11 @@ export interface SessionView {
   stopRequests: number;
   /** The last command event received (whether it was accepted, and why not). */
   lastCommand: CommandView | null;
+  /**
+   * What the launcher accepts now and where the run stands (the last `state` event, or `launcher_state` of the
+   * summary; the one with the larger `rev` wins). null until one arrives (and for a launcher without `state`).
+   */
+  launcherState: StateReport | null;
   result: RunResult | null;
   launcher: LauncherView;
   /** What the server noticed (shown in English, unchanged). */
@@ -328,6 +334,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     time: null,
     stopRequests: 0,
     lastCommand: null,
+    launcherState: null,
     result: null,
     launcher: launcherOf(summary),
     problems: [],
@@ -454,6 +461,7 @@ export function applySummary(
     lastCommand: summary.last_command
       ? commandView(summary.last_command, summary.last_command.seq ?? -1)
       : next.lastCommand,
+    launcherState: newerState(next.launcherState, summary.launcher_state ?? null),
     findings: summary.findings,
     result,
     check,
@@ -462,6 +470,12 @@ export function applySummary(
     // file). If there is a result, how it ended (stopped or not) comes from the result too
     participants: withResult(check ? mergeCheck(participants, check) : participants, result),
   };
+}
+
+/** The state with the larger rev (a state sent again, or an old one in a resend, never replaces a newer one). */
+function newerState(current: StateReport | null, incoming: StateReport | null): StateReport | null {
+  if (!incoming) return current;
+  return !current || incoming.rev >= current.rev ? incoming : current;
 }
 
 function union(a: readonly string[], b: readonly string[]): readonly string[] {
@@ -654,6 +668,8 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':
       return { ...next, lastCommand: commandView(event, event.seq) };
+    case 'state':
+      return { ...next, launcherState: newerState(next.launcherState, event) };
     case 'result':
       return {
         ...next,

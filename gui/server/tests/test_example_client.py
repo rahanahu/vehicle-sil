@@ -1,7 +1,7 @@
 """The example clients of the GUI server's interface, run with Node against the GUI server and the stand-in launcher:
 examples/gui_client/run.mjs (plain JavaScript, no library) and run-with-library.mjs (the client library gui/client,
 bundled into one ESM file by `npm run build:client` in gui/web). Each checks the file, starts a run, reads what
-comes and waits for the end. variables.mjs (the library again) writes a variable of an ECU before the first step,
+comes and waits for the end. front.mjs does the same through the front door of the library (connect(), status). variables.mjs (the library again) writes a variable of an ECU before the first step,
 steps, and checks what it reads while the simulation stands still: against the stand-in launcher with its stand-in for
 the control server, and, when there is one (VEHICLE_SIL_GUI_LAUNCHER), against the real launcher and the ecu_main
 example ECUs.
@@ -61,6 +61,23 @@ def test_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, example: 
         out = run_example(example, gui.url, file, "--timeout", "60")
     assert out.returncode == code, out.stdout + out.stderr
     assert out.stdout.strip().splitlines()[-1].startswith(last), out.stdout + out.stderr
+    assert gui.token not in out.stdout + out.stderr
+
+
+@pytest.mark.parametrize("file, code, last", [
+    ("simulation.yaml", 0, "result: completed, ok true"),
+    ("participant-crash.yaml", 1, "result: failed, ok false"),
+    ("launcher-crash.yaml", 1, "result: crashed, ok false"),
+    ("check-error.yaml", 1, "error: check-failed (refused)"),
+])
+def test_front_door_runs_a_configuration_to_its_end(tmp_path: Path, bundle: Path, file: str, code: int,
+                                                    last: str) -> None:
+    with gui_server(tmp_path) as gui:
+        out = run_example("front.mjs", gui.url, file, "--timeout", "60")
+    assert out.returncode == code, out.stdout + out.stderr
+    lines = out.stdout.strip().splitlines()
+    assert any(line.startswith(last) for line in lines), out.stdout + out.stderr
+    assert "status: link online, run none" in lines, out.stdout
     assert gui.token not in out.stdout + out.stderr
 
 

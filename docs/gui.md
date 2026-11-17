@@ -34,7 +34,7 @@ Arrows point in the direction of the calls. The GUI is also an SDK for building 
 |---|---|---|
 | GUI server | `gui/server` (the command is `vehicle-sil-gui`) | Starts the launcher, provides the API, and serves the screens' static files. |
 | Server API | [gui/protocol](../gui/protocol/README.md) | Defines the HTTP and WebSocket shapes, the versioning and compatibility rules, and authentication. Usable from any language. |
-| Client library | [gui/client](../gui/client/README.md) (`@vehicle-sil/gui-client`) | A TypeScript library for the connection, run and time control, and ECU variables. It does not depend on any framework. |
+| Client library | [gui/client](../gui/client/README.md) (`@vehicle-sil/gui-client`) | A TypeScript library for the connection, run and time control, and ECU variables. It does not depend on any framework. `connect()` returns its front door: what a screen shows (`status`, `clock`, `controls`), the operations as Promises, and one variable at a time. |
 | Sample screens | `gui/web` (Angular) | A reference implementation built only on the 3 parts above. The GUI server serves it unless you give `--web`. |
 
 The library talks to the GUI server over HTTP and WebSocket ([gui/protocol](../gui/protocol/README.md) is the specification). The GUI server talks to the launcher through the launcher's stdin and stdout and through the Control Server (gRPC).
@@ -1232,9 +1232,11 @@ declare module 'react' {
 |---|---|
 | `run.mjs` | Written with only the standard `fetch` and `WebSocket`, without the library. |
 | `run-with-library.mjs` | Uses the bundled library file. |
+| `front.mjs` | Uses the front door of the library (`connect()`, `status`) to start a run and wait for its result. |
 | `variables.mjs` | Reads and writes ECU variables with the library. |
 
 - `run.mjs` and `run-with-library.mjs` check, start a run, read the events, wait for the end, and return an exit code from the result.
+- `front.mjs` starts a run through `client.run.start()`, prints each change of `client.status`, and returns an exit code from `result.ok` (a refused start prints the `ActionError` code and its findings). "The front door (`connect()`)" in [gui/client/README.md](../gui/client/README.md#the-front-door-connect) describes what it shows and how each operation ends.
 - `variables.mjs` starts paused, writes one value before the first step, advances and pauses, and checks the value at the paused time (exit code 0 if it is as expected).
 - The URL is passed in an environment variable (as an argument, the token would be visible to other users in the process list).
 

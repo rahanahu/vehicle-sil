@@ -66,6 +66,8 @@ export interface ServerProblem {
   message: string;
   /** For launcher-stderr, the number of lines dropped at this point (`detail.skipped`). Other notices lack it. */
   skipped?: number;
+  /** For `check-failed`, the findings of the check that refused the start (`detail.findings`; unreadable ones left out). */
+  findings?: Finding[];
 }
 
 /** Reads a server notice (`{code, message, detail}`). The `error` in an HTTP error has the same shape. */
@@ -81,6 +83,20 @@ export const readServerProblem: Reader<ServerProblem> = (value, path) => {
     const skipped = detail.skipped;
     if (typeof skipped === 'number' && Number.isSafeInteger(skipped) && skipped >= 0) {
       problem.skipped = skipped;
+    }
+  }
+  if (typeof detail === 'object' && detail !== null && 'findings' in detail) {
+    const list = detail.findings;
+    if (Array.isArray(list)) {
+      const findings: Finding[] = [];
+      list.forEach((item, i) => {
+        try {
+          findings.push(readFinding(item, `${path}.detail.findings[${i}]`));
+        } catch {
+          // A finding that cannot be read is left out (the message already says what failed)
+        }
+      });
+      problem.findings = findings;
     }
   }
   return problem;
@@ -717,7 +733,7 @@ export interface StopRequestBody {
 }
 
 /** Names of the time commands (the launcher's stdin commands other than stop). */
-export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed';
+export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed' | 'run_until';
 
 /**
  * Body of POST api/time. The server passes it to the launcher as one line and returns at once. Whether it was accepted
@@ -729,6 +745,8 @@ export type TimeCommand = (
   /** Only while paused. Advances by ms and pauses again (the launcher rounds up to a multiple of the time step). */
   | { command: 'step'; ms: number }
   | { command: 'speed'; value: number | 'max' }
+  /** Not taken by the GUI server yet (it refuses it); the front door sends it so that a server that takes it works at once. */
+  | { command: 'run_until'; at_ms: number }
 ) & {
   /**
    * A whole number from 0 to 2^53 of the sender's choice. The launcher returns it as `id` of the command event that

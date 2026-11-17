@@ -23,6 +23,31 @@ export {
   FEATURE_TIME_COMMANDS,
 } from './time';
 
+// Front door: `connect()` returns it. Built on the client above (`front.low`); the client keeps its names and shapes.
+export { connect, until, watch } from './front';
+export type { ConnectOptions } from './front';
+export { ActionError } from './front-types';
+export type {
+  Control,
+  EndKind,
+  Front,
+  FrontClock,
+  FrontControls,
+  FrontResult,
+  FrontRun,
+  FrontScenario,
+  FrontStatus,
+  FrontTime,
+  FrontVariable,
+  Intent,
+  Link,
+  OperationName,
+  Pacing,
+  Reason,
+  RunState,
+  VariableView,
+} from './front-types';
+
 // Token (the #token= of the URL the server printed)
 export { TOKEN_STORAGE_KEY, takeToken } from './token';
 export type { TokenPlace } from './token';
