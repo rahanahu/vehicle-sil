@@ -53,6 +53,7 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
 
 # The files of the launcher that make up its pure layer (the configuration, the checks and the
 # scenario) include no SIL Kit header, no process header, no run, events or time-command header,
+# no probe.hpp (what looks at the computer),
 # directly or through the headers they include (the private ones of libs/launch/src too). Add a
 # file to the list when it no longer includes them. The check itself must reject a fixture that
 # reaches them, and name the chain.
@@ -62,6 +63,7 @@ set(_launch_pure_files
     libs/launch/src/scenario_csv.cpp libs/launch/src/scenario_csv.hpp
     libs/launch/src/time_plan.cpp libs/launch/include/vehicle_sil/launch/time_plan.hpp
     libs/launch/src/timeline.cpp libs/launch/include/vehicle_sil/launch/timeline_format.hpp
+    libs/launch/include/vehicle_sil/launch/check.hpp libs/launch/include/vehicle_sil/launch/connections.hpp
     libs/launch/src/describe_read.cpp libs/launch/src/seen_ecu.cpp libs/launch/src/seen_ecu.hpp
     libs/launch/src/check_words.hpp libs/launch/src/scenario.cpp libs/launch/src/scenario_reader.hpp
     libs/launch/src/scenario_values.cpp libs/launch/src/scenario_waves.cpp libs/launch/src/scenario_inputs.cpp

@@ -3,9 +3,10 @@
 // What vehicle_sil_launch finds out from the computer it runs on: where an executable or a bridge
 // is, what a file has, what an executable prints (--describe, a bridge's list), what an environment
 // variable has. Each function looks once and returns what it found as a value. The rules that turn
-// those values into findings (config.hpp, check.hpp, connect.hpp, scenario.hpp) do not look
-// themselves and do not include this header; check_file(), list_connections() and run_tests() call
-// both. Internal.
+// those values into findings (config.hpp, check.hpp, connect.hpp, scenario.hpp) do not include
+// this header; check_file(), list_connections() and run_tests() call both. One look is still on the
+// rules' side: bridge_working_directory() (connect.cpp) makes a relative directory absolute.
+// Internal.
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"
