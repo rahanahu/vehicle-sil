@@ -389,6 +389,87 @@
         "reason": null,
         "id": null
       },
+      "launcher_state": {
+        "seq": 149,
+        "rev": 8,
+        "phase": "stopping",
+        "paused": false,
+        "holding": false,
+        "speed": "max",
+        "pacing": "not-paced",
+        "stop": {
+          "requests": 1,
+          "by": "stop command"
+        },
+        "scenario": false,
+        "allowed": {
+          "pause": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): pause works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "resume": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): resume works from the start of the run until the simulation ends",
+            "caution": null
+          },
+          "step": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): step works from the start of the run until the simulation ends",
+            "caution": null,
+            "min_ms": 1,
+            "max_ms": 1000000000000
+          },
+          "speed": {
+            "ok": false,
+            "reason": "not-running",
+            "message": "the simulation is not running (it is over, or it did not start): speed works from the start of the run until the simulation ends",
+            "caution": null,
+            "min": 1e-06,
+            "max": 1000000.0
+          },
+          "run_until": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can send run_until: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          },
+          "stop": {
+            "ok": true,
+            "reason": null,
+            "message": null,
+            "caution": null
+          },
+          "write": {
+            "ok": false,
+            "reason": "no-control-server",
+            "message": "this run has no control server, and only a control server's client can write a variable: start the run with --control <address> (docs/control-api.md)",
+            "caution": null
+          }
+        },
+        "outside": []
+      },
+      "allowed": {
+        "rev": 9,
+        "start": {
+          "ok": false,
+          "reason": "already-running",
+          "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another"
+        },
+        "stop": {
+          "ok": false,
+          "reason": "already-stopping",
+          "message": "a stop was already asked for: wait for the run to end, or stop it without waiting (force)"
+        },
+        "force": {
+          "ok": false,
+          "reason": "already-forced",
+          "message": "the stop was already forced: wait for the run to end"
+        }
+      },
       "result": null,
       "log": {
         "vehicle_sil_launch": {

@@ -53,10 +53,13 @@ const PASSED_THROUGH: readonly string[] = [
   'event participant: command',
   'event participant: log',
   'event log: colour',
-  // Why a command was not accepted, as a code, and the sender's number of a stdin command (null: the GUI server
-  // sends none yet)
-  'event command: reason',
-  'event command: id',
+  // The ranges of step and speed, whether the run waits at a gate, and what is connected outside (empty now)
+  'event state: allowed.speed.max',
+  'event state: allowed.speed.min',
+  'event state: allowed.step.max_ms',
+  'event state: allowed.step.min_ms',
+  'event state: holding',
+  'event state: outside',
 ];
 
 /**
@@ -66,8 +69,6 @@ const PASSED_THROUGH: readonly string[] = [
  */
 const UNKNOWN_EVENTS: Record<string, string> = {
   mystery: 'an event that a newer launcher may write',
-  // Where the run stands and which operations it accepts now (docs/simulation-events.md): not read here yet
-  state: 'the state of the run, which every run writes',
 };
 
 /** Events whose parser puts the event's fields into one property (`finding`, `step`, `link`). */
@@ -101,7 +102,13 @@ interface LauncherObject {
 }
 
 /** Objects that the parsers copy as plain records (every key typed, so they have no `raw`). */
-const RECORDS: readonly string[] = ['event participant: environment', 'event log_dropped: sources'];
+const RECORDS: readonly string[] = [
+  'event participant: environment',
+  'event log_dropped: sources',
+  // the operations by name (each entry has its own raw), and the stop requests
+  'event state: allowed',
+  'event state: stop',
+];
 
 interface Reach {
   /** Keys that only `raw` has. */

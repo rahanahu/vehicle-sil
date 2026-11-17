@@ -83,9 +83,9 @@ Every `api/` request has these conditions:
 | `POST api/check` `{file, disable, manual, scenario, variant, params}` | `{file, disable, manual, scenario, exit_code, check}` | `check-*.json` |
 | `POST api/run` `{file, disable, manual, speed, start_paused, scenario, variant, params}` | `{session}` (the summary of the run it started), or 422 `check-failed` with the findings ("Check and start" below) | `run.json`, `error-check-failed.json` |
 | `POST api/stop` `{force}` | `{session}` (the current summary; `null` if there is no run) | `stop*.json` |
-| `POST api/time` `{command, ms, value}` | `{session_id, command}` (the command sent to the launcher) | `time.json` |
+| `POST api/time` `{command, ms, value, id}` | `{session_id, command}` (the command sent to the launcher, with its `id` if given) | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}` (the operation number; the result arrives as `operation` over WebSocket) | `write.json` |
-| `GET api/session` | `{session}` (`null` if none) | `session-*.json` |
+| `GET api/session` | `{session, allowed}` (`session` is `null` if none; `allowed` as in "What the server accepts (`allowed`)" below) | `session-*.json` |
 | `GET api/dashboard?file=<configuration file>` | The dashboard file next to the configuration file: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | The scenarios in `scenarios` next to the configuration file: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | The applied writes of the current (last) run as scenario YAML: `{recording}` (`null` if there is no run) | `recording.json` |
@@ -125,7 +125,7 @@ Send a value for `speed` (`null`, `"max"` or a number) and `start_paused` (boole
 
 ### Check and start (`api/check`, `api/run`)
 
-- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `already-running` while a run is starting or running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
+- **Start**: of several `api/run` requests sent at the same time, only one starts a run. The others get 409 `starting` while a run is starting, and 409 `already-running` while a run is running. A screen applies the summary in the response to its local state at once (the `session` that arrives later has the same contents).
 - **Start after a check**: `api/run` first checks what the run is made of (`file`, `disable`, `manual`, `scenario`, `variant`, `params`), in the same queue as `api/check`. If the check does not pass (`result` is not `passed`), no run is started and the response is 422 `check-failed`. Its `detail` is `{result, findings}`: `result` is the check's `result` (`failed`, `unreadable` or `usage`), and `findings` are the `findings` that `api/check` returns for the same request (the same objects). A check that passes with warnings or notes starts the run. Fix the findings, then send `api/run` again; the request is refused before anything is started, so there is nothing to stop. Example: `error-check-failed.json`.
 - **Variant and parameters**: `variant` (a string, or `null` for none) is the variant of the configuration file (`--variant`), and `params` (an object of parameter name to a string or a number) sets the scenario's parameters (`--param <name>=<value>`; only with a `scenario`). Both go to the check and to the run. A variant name that starts with `-` gives 400 `name-like-option`; a `params` that is not an object, has a name that is not letters, digits and `_` (not starting with a digit), has another kind of value, or has no `scenario` gives 400 `invalid-field`. Whether the file has the variant, and the scenario the parameter, is the launcher's check: it shows as a finding (`api/check`) or as 422 `check-failed` (`api/run`). The names that `disable` and `manual` may take are those of the check of that variant.
 - **Check**: `api/check` requests sent at the same time are not rejected; they run one at a time. If too many requests are waiting, or the wait exceeds the check time limit (`limits.check_timeout_s` in `api/app`), the response is 503 `check-busy`. `api/run` also runs a check in the same queue.
@@ -155,10 +155,12 @@ The body is one of the following (any other field gives 400 `invalid-field`).
 | `{"command": "step", "ms": <integer>}` | 1 to `limits.step_ms_max` |
 | `{"command": "speed", "value": <"max" or a number>}` | Same range as `speed` |
 
+Each body may also have `"id"`, a whole number from 0 to 2^53. The server passes it to the launcher in the command line, and the launcher returns it as `id` in the `command` event that answers that line (`null` when the line had none). A screen uses it to tell the answer to its own command from the answers to the commands of other screens or of the launcher's stdin; the server does not read it. The response carries the command with its `id`. An `id` that is not such a number gives 400 `invalid-field`; a launcher without the feature `state` gives 400 `unsupported` for a command with an `id`.
+
 The server writes the command as one line to the stdin of the running run's launcher and returns without waiting for an answer. This keeps a request from hanging on a stuck launcher.
 
-- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, and for `step` the actual `ms` it advances). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
-- If no run is running (it ended, it is starting, the launcher's input is closed), the response is 409 `not-running`.
+- Whether the command was accepted, and why not, arrives in the launcher's `command` event (`accepted`, `message`, `reason` (the code of why not), `id`, and for `step` the actual `ms` it advances). The `time` event shows that the command took effect. Both stay in `last_command` and `time` of the summary.
+- If no run is running (it ended, it is starting, the launcher's input is closed, or the launcher's last `state` says `not-running`), the response is 409 `not-running`. The server does not refuse a command for any other reason in the launcher's `allowed`: that `allowed` may be a moment old, so the launcher answers the command itself.
 - If the launcher of that run (`version --json` at the start) lacks `time-commands` in `features`, the response is 400 `unsupported`.
 - Even if the launcher never reads its input, the request returns within about 2 seconds (the command stays in the launcher's input).
 - What the commands mean (a pause takes effect at a step boundary, stepping works only while paused and so on) is defined by the launcher (see "Stdin commands (`run --stdin-commands`)" in [docs/simulation-events.md](../../docs/simulation-events.md#stdin-commands-run---stdin-commands)).
@@ -189,7 +191,8 @@ The codes that screens look at. The names do not change (new ones may be added).
 | 404 | `not-found` | No such API or screen file |
 | 404 | `no-timeline` | `api/timeline/<session id>`: the server has no timeline file of that run (see "Timeline of a scenario run (`api/timeline`)") |
 | 405 | `method-not-allowed` | A method other than `GET` on a screen file |
-| 409 | `already-running` | A run is starting or running |
+| 409 | `already-running` | `api/run`: a run is running |
+| 409 | `starting` | `api/run`: another `api/run` is starting a run (the launcher has not been registered yet) |
 | 422 | `check-failed` | `api/run`: the check of what the run is made of did not pass, so no run was started (`detail` holds `{result, findings}`; "Check and start" above). Example: `error-check-failed.json` |
 | 409 | `not-running` | `api/time`, `api/write`: no run is running |
 | 409 | `scenario-running` | `api/write`: the running run is running a scenario (not written, so that the scenario result does not change). Example: `error-scenario-running.json` |
@@ -255,11 +258,11 @@ Even with `session_without_check`, the `hello` summary includes `check`, and the
 
 After authentication, the server sends, in this order:
 
-1. `hello`: `instance`, `session` (the summary, or `null`), `replay` (`from_seq`: where the replay starts; `null` means from the beginning). The screen rebuilds its state from this summary.
+1. `hello`: `instance`, `session` (the summary, or `null`), `allowed` (the same as `session.allowed` when there is a run; with no run, what the server accepts), `replay` (`from_seq`: where the replay starts; `null` means from the beginning). The screen rebuilds its state from this summary.
 2. `dropped` (if any): the number of log lines from `from_seq` on that the server cannot send because it no longer keeps them (per source).
 3. `event`: the kept log lines from `from_seq` on, in `seq` order.
 4. `synced`: `{session, last_seq}`. The end of the replay.
-5. From then on, as things happen: `event`, `session`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
+5. From then on, as things happen: `event`, `session`, `allowed`, `error`, `dropped`, `resync`, `variables`, `values`, `operation`.
 
 If `session` differs from the `id` of the `hello` summary, or `from_seq` does not belong to the current session, the replay starts from the beginning (`replay.from_seq` is `null`).
 
@@ -273,6 +276,7 @@ After authentication, a screen can send variable `watch` and `unwatch` messages 
 | `event` | `{session, event}`. The launcher event as is (after the server checked its shape) | `ws-pass.json`, `ws-log-dropped.json`, `ws-time.json` (time commands), `ws-late.json` (lateness) |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}` (the summary) | `ws-pass.json`, `ws-without-check.json` |
+| `allowed` | `{session, allowed}`. What the server accepts changed, and no `session` follows to carry it ("What the server accepts (`allowed`)" below). `session` is the id of the current run, or `null` | `ws-allowed.json` |
 | `error` | `{session, code, message, detail}`. Something the server noticed ("The `code` of `error` messages" below). Also kept in `problems` of the summary | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`. Counts of what was not sent to this screen | `ws-dropped.json`, `ws-slow-client.json` |
 | `resync` | `{reason, message}`. The screen receives too slowly, and even notifications that must not be dropped overflowed. Right after this, the server sends everything again from `hello` | `ws-resync.json` |
@@ -304,7 +308,7 @@ Source names are the same as in `log` of the summary (sources from the 65th on a
 For a screen that receives slowly, the server does the following, in order:
 
 1. Drops log lines, `log_dropped` and unknown events (`dropped`).
-2. Collapses `time` into the last one, and drops `heartbeat` without counting.
+2. Collapses `time` and `state` events into the last one of each, and drops `heartbeat` without counting.
 3. Only if it still cannot catch up: `resync`.
 
 `values` is built from the latest values when it is sent (the queue has room for one per watch; values are not stored while they cannot be sent). `variables` and `operation` are never dropped.
@@ -336,9 +340,9 @@ Notifications from the server.
 - `invalid-message`: `session` is `null`. Sent only to that connection; the connection stays open.
 - `invalid-watch`, `too-many-watches`: `session` is `null` and `detail.id` holds the watch id. Sent only to that connection; the connection stays open.
 - `launcher-output`: a line that is not a JSON object, has no `event`, or whose `seq` is not an integer from 0 to 2^53. Lines that contain a non-finite number such as `1e999` also go here.
-- `bad-event`: includes a `t_ms` that is not an integer from 0 to 2^53, and a `count` or `sources` value of `log_dropped` that is not a number. The event is discarded (neither relayed nor applied to the summary).
+- `bad-event`: includes a `t_ms` that is not an integer from 0 to 2^53, a `count` or `sources` value of `log_dropped` that is not a number, a `rev` of `state` that is not an integer from 0 to 2^53 or an `allowed` that is not an object, and an `id` of `command` that is neither `null` nor an integer from 0 to 2^53. The event is discarded (neither relayed nor applied to the summary).
 - `launcher-stderr`: the first 20 lines are sent at once. After that, only the last 30 lines are sent, when the run ends. If lines were dropped in between, one message comes before them (`detail.skipped`: the number of dropped lines).
-- `kept-limit`: `detail.what` is `check`, `result`, `findings`, `participants`, or the kind of an event that exceeded 4 KiB (`phase`, `time`, `registry`, `command`, `participant`). An event that exceeds 4 KiB keeps its required fields ("Limits" below), gets as many of the other fields as fit, and lists the names of the fields that did not fit in `omitted_fields`. Notified once per kind.
+- `kept-limit`: `detail.what` is `check`, `result`, `findings`, `participants`, `state`, or the kind of an event that exceeded 4 KiB (`phase`, `time`, `registry`, `command`, `participant`). An event that exceeds 4 KiB keeps its required fields ("Limits" below), gets as many of the other fields as fit, and lists the names of the fields that did not fit in `omitted_fields`. Notified once per kind.
 - `launcher-silent`: the launcher writes a `heartbeat` every second, so it may be stuck. Sent once each time it falls silent (`detail.seconds`). While the silence lasts, `launcher.silent_s` in the summary grows; it returns to `null` when the launcher writes again.
 
 ## Summary (`session`)
@@ -360,6 +364,8 @@ Notifications from the server.
 | `participants_omitted` | Number of participant events not kept because the limit (256 participants) was exceeded |
 | `findings`, `findings_omitted` | `finding` events (without `event`, `seq` and `t_ms`), and the number not kept because the limit was exceeded |
 | `last_command` | The last `command` event without `event` and `t_ms` (`null` if none) |
+| `launcher_state` | The last `state` event of the launcher without `event` and `t_ms` (what the launcher accepts now; `null` if none yet). Only the last is kept |
+| `allowed` | What this server accepts now: `{start, stop, force}` ("What the server accepts (`allowed`)" below) |
 | `result` | `result` of the `result` event (`null` if none) |
 | `variables` | The state of the ECU variable feature, the variables of each participant, recent operations ("ECU variables" below) |
 | `log` | `{kept, dropped}` per source: the number of lines the server keeps and the number it dropped |
@@ -373,7 +379,8 @@ Notes on the fields:
 - **`launcher`**: `running` tells whether the launcher process is running; it decides whether the run can be stopped. When the launcher exits, `exit_code` is set (if it ended by a signal, `null`, with the signal number in `signal`; POSIX only). `silent_s` is the number of seconds a running launcher has written nothing (updated only past `--silent-after`, at each multiple of it; `null` once it writes).
 - **`time`**: virtual time `sim_ms`, current speed `speed`, `paused`, actual speed `actual_speed`, and the lateness figures `late_steps`, `max_late_ms`, `slipped_ms` and `late_ms` (older launchers write only `sim_ms`). A screen opened midway learns the current time state from this.
 - **`check`**: includes `required`, `enabled` and `variables` of each participant. `session` notifications to a connection that asked for `session_without_check` lack this field (`hello` and HTTP responses have it).
-- **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, and `ms` of an accepted `step`. `seq` tells a new answer from the same answer as before.
+- **`last_command`**: `seq`, `command`, `source`, `accepted`, `message`, `reason`, `id`, and `ms` of an accepted `step`. `seq` tells a new answer from the same answer as before. A launcher before `state` writes no `reason` and `id`.
+- **`launcher_state`**: the launcher's `state` event as it wrote it (see "`state`" in [docs/simulation-events.md](../../docs/simulation-events.md)) with its `seq`: `rev`, `phase`, `paused`, `speed`, `stop`, `allowed` (what the launcher accepts: `pause`, `resume`, `step`, `speed`, `run_until`, `stop`, `write`, each `{ok, reason, message, caution}`) and so on. The server does not change it. `rev` goes up with each change, so a screen tells a newer one from the same one sent again. It is the answer of the launcher at the moment it wrote it: `ok` says that the launcher would accept the command, not that it would change anything. Events after `state` (a `command`, a `time`) may be newer. The `state` event also comes as an `event` message; the summary holds only the last, so a screen opened later reads it from the summary and the earlier ones are not replayed. A launcher without the feature `state` writes none, and the field is `null`.
 - **`omitted_fields`**: `time`, `registry`, `last_command` and each element of `participants` have an array `omitted_fields` with the names of the fields that were too large to keep. For a participant, a name disappears when a later event brings that field (example: `ws-large-fields.json`).
 - **`variables`**: present in the `hello` summary and in HTTP responses. **The summary in a `session` notification does not have this field.** It is large and rarely changes, so it comes in a `variables` notification when it changes. On a `session` notification for the same run, the client keeps using its local value. Right after a `session` notification for another run, that run's `variables` notification arrives.
 - **`log`**: dropped lines are the lines the server dropped instead of keeping, and the lines the launcher could not write because its reader was slow (the latter are `sources` of `log_dropped`). A `log_dropped` event is kept at the position where it arrived in the log of each source it names. A screen that reconnects receives it at the same position, and each event is sent only once. The screen shows "N lines dropped here" there.
@@ -386,6 +393,29 @@ Each element of `participants` merges, per name, the fields of the `participant`
 - When a `stop_requested` event arrives for a participant, the server sets `stop_requested: true` on it and keeps it in later states. This tells an exit after a stop request from a failure.
 
 If the launcher exits without writing `result`, the summary has `launcher.running: false` with `exit_code`, `state: ended`, and the notification `no-result`.
+
+## What the server accepts (`allowed`)
+
+`allowed` is `{rev, start, stop, force}`. Each of the last three is `{ok, reason, message}`: `ok` says whether the server would take the request now, `reason` is a code (`null` when `ok`), and `message` is one English sentence for a person (`null` when `ok`). It is in `session` (the summary), in the `allowed` message, and, so that it is also there when there is no run, at the top of `hello` and of the answer of `api/session`. A screen can enable a button from `ok` and show `message`, without a table of its own. `api/run` that is sent anyway answers with the same code as the error of `start` (409 `already-running` and `starting`, 503 `shutting-down` and `launcher-unusable`). `api/stop` does not answer with an error: it always answers 200 with the summary (and does nothing when `stop` or `force` has a reason), so the reasons of `stop` and `force` are only in `allowed`.
+
+| Field | `reason` | When |
+|---|---|---|
+| `start` | `shutting-down` | The server is ending |
+| | `already-running` | A run is running (its output is not yet read to the end), including the run that has just been registered while its `api/run` has not answered |
+| | `starting` | A run is starting (`api/run` has not answered) and no run is running |
+| | `launcher-unusable` | The launcher that was found cannot be used (`launcher.problems` of `api/app`). It is as the last probe found it |
+| `stop` | `shutting-down` | The server is ending, and stops the run itself |
+| | `not-running` | There is no run that has a launcher running |
+| | `already-stopping` | A stop was already asked for (`stop` is `requested` or `forced`) |
+| `force` | `shutting-down`, `not-running` | As for `stop` |
+| | `already-forced` | The stop was already forced |
+
+- Only the first reason that holds is given, in the order of the table. While a run is starting, `stop` and `force` are `ok`: the request waits and applies when the launcher has started ("Stop (`api/stop`)").
+- What the launcher accepts (pause, step, speed, writes) is not here: it is `allowed` of `launcher_state`, as the launcher wrote it. `ok` there means the launcher would accept the command, not that it would change anything (a `pause` is `ok` while paused).
+- **`rev`** is one number for the whole server. It goes up by one each time what `allowed` says changes, and is the same in every place that carries `allowed` (`hello`, `api/session`, the summary, the `allowed` message). A screen that gets `allowed` from several places keeps the one with the larger `rev`. It does not restart when a new run starts. It starts again at 1 when the server is started again, so compare `rev` only within one `instance` (the `instance` of `hello`); a `hello` replaces what the screen has.
+- **When it is sent**: `allowed` goes out with each `session` message, as it is at that moment. When it changes and no `session` message follows to carry that change, the server sends the `allowed` message instead: a start begins (`starting`), a start fails and `start` is `ok` again, and the server begins to end (`shutting-down`). It does not send the `allowed` message when a `session` message carries the change (a run is registered, a stop is requested, the run ends). The `allowed` message is small and is never dropped for a slow connection. A reader that does not know the message type ignores it (see "Versioning and compatibility"), and then still has `allowed` from `hello`, `api/session` and each summary.
+- With no run there is no summary, and `allowed` of `hello`, `api/session` and the `allowed` message is all there is.
+- A new code may be added; the meaning of a code does not change.
 
 ## ECU variables
 
@@ -712,6 +742,7 @@ What the server keeps is limited; whatever exceeds a limit is counted and report
 | `findings` | 1000 and 1 MiB | Counted in `findings_omitted` |
 | `participants` | 256 participants, 4 KiB each | Counted in `participants_omitted` |
 | `phase`, `time`, `registry`, `command` | 4 KiB each | Required fields are kept |
+| `launcher_state` | 64 KiB | The one kept before stays, and the server says so once (`kept-limit`) |
 | Unknown events | Not kept | Only relayed (screens that reconnect do not receive them) |
 
 Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is not kept.
@@ -722,7 +753,7 @@ Required fields kept even beyond 4 KiB. If these alone exceed 4 KiB, the item is
 | `phase` | The phase name |
 | `time` | `sim_ms`, `speed`, `paused`, `late_steps`, `max_late_ms`, `slipped_ms`, `late_ms` |
 | `registry` | `uri` |
-| `command` | `seq`, `command`, `accepted`, `ms` |
+| `command` | `seq`, `command`, `accepted`, `ms`, `reason`, `id` |
 
 ### `problems`
 
