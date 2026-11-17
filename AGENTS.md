@@ -75,6 +75,26 @@ Write the title in the [Conventional Commits](https://www.conventionalcommits.or
 
 Do not rewrite existing commit history. Ignore settings alone do not untrack a tracked file, so do not delete, move or untrack tracked files without permission.
 
+## Before you change code
+
+These steps are a trial. They are advice: no CI check enforces them, and their effect on the quality of the work is not established. If a step gets in the way, say so in your report instead of working around it.
+
+- **Build small.** Choose the smallest design that meets the request and the constraints in `docs/` (safety, thread safety, the standards the code implements, compatibility); those constraints are part of what the work must satisfy.
+  - A new abstraction, dependency, setting or extension point needs a reason that comes from the request or from such a constraint.
+  - Reuse what exists before you add something.
+  - Stop when the request and the constraints are met. Put further improvements in a separate task.
+  - When you review, check for unnecessary complexity as well as for what is missing.
+- **Placement note.** For a `feat` or `refactor`, write this line in the plan and in the pull request description. If the type changes while you work (a `fix` turns into a `feat`), write it then. When the change reads or interprets data that another place already reads, you can add a second line that names those readers and the way you looked (search terms, code-map page).
+
+  ```text
+  Placement: <new responsibility or state> -> <file or class>. Why: <relation to what is already there>
+  ```
+
+  The optional second line has the form `Same data elsewhere: <existing readers of the same input or data, and how you looked>`.
+
+- **hotspots (optional).** `scripts/hotspots.py <paths you plan to touch>` shows which of those files are large, busy or touched by other work; see its `--help`. "attention" is a hint, not a request for another step or for a split.
+- **Verification.** Choose it by risk with "[Choose the verification by risk](docs/code-map-testing.md#choose-the-verification-by-risk)", and end the report and the pull request description with `Verified:` and `Not run:` lines.
+
 ## Verification and scripts
 
 `scripts/` contains the scripts used in development and CI. They are written with the Python 3.11+ standard library only. Every script prints only a summary (the details are in logs under `build/logs/`, and the summary names the location) and exits with 0 on success, 1 on failure and 2 on a usage error. Each script's `--help` gives its arguments and the details of its behavior. In CI (GitHub Actions), the scripts that CI calls also write the same summary to the job's Summary (`scripts/job_summary.py`; a failure names the artifact that holds the logs).
@@ -86,6 +106,7 @@ Do not rewrite existing commit history. Ignore settings alone do not untrack a t
 | `scripts/check-commits.py` | Checks the format of commit messages, and that no file that must not be committed is included |
 | `scripts/check-docs.py` | Checks the relative links in the tracked Markdown files, and the section names quoted after a link in the form `の「…」`. Also checks that each English page (`docs/`, `README.md`) and its Japanese page (`docs/ja/`, `README.ja.md`) agree in the sequence of heading levels, the code blocks and the link targets (a page without its English edition is only counted; with `--require-english` it is an error) |
 | `scripts/mutate.py` | Applies the mutations written in a TOML file one at a time and checks that the tests fail |
+| `scripts/hotspots.py` | Optional information before you change code: which of the files you plan to touch are large, busy or touched by other work (it judges nothing, exits with 0 whatever it finds and with 2 on a usage error; see "Before you change code") |
 | `scripts/verify-web.py` | Formatting, lint, unit tests, build and e2e tests of the screens (`gui/web`) and the client library (`gui/client`) |
 | `scripts/verify-gui.py` | The whole GUI: the tests of the GUI server (`gui/server`), the client examples, then `verify-web.py` (`--skip-web` for the server only, `--launcher` to also use the real launcher) |
 | `scripts/verify-python.py` | Creates environments with uv and checks the Python code that needs no C++ build (on 3.11, on the version in `.python-version`, and with the lower bounds of the dependencies) |
@@ -103,6 +124,7 @@ scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
 scripts/check-commits.py                             # the staged changes (--range origin/main..HEAD: each commit in the range)
 scripts/check-docs.py                                # after you change docs
 scripts/mutate.py mutations.toml --check             # only checks that the places to mutate are found
+scripts/hotspots.py libs/launch tests/launch         # optional: large, busy or shared files among the paths you plan to touch
 scripts/verify-python.py                             # Python code
 scripts/verify-gui.py                                # GUI (--skip-web: the server only)
 scripts/run-gui.py                                   # starts the GUI from the repository

@@ -50,6 +50,30 @@ Rules for areas (the directories directly under `tests/`):
 - To select one prefix only, write the pattern up to and including `\.`. `^j1939` also matches `j1939_parts.`, `j1939_codec.`, `j1939_silkit.` and `j1939_spy.`.
 - To select by label, use `-L` (see [Test labels](#test-labels)).
 
+### Choose the verification by risk
+
+Run on your computer what the change can break; leave the full matrix of presets to CI. The page of the area you change lists its tests and the `ctest -R` expression for each (see [Find by change area](code-map.md#find-by-change-area)).
+
+| Change | Run on your computer |
+|---|---|
+| Any change (the default) | One preset and the tests of what you touched: `scripts/verify.py linux-gcc-debug --tests '<regular expression>'` |
+| Concurrency, threads or time | The same tests also with `linux-clang-tsan` |
+| A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
+| What the launcher prints or counts (findings, events, `run` output), or the documentation that copies it | `^launch`, `^multi_host\.`, `^schema\.` and `^template\.` (the ECU project template), which compare the documentation (see [Documentation examples and tests](#documentation-examples-and-tests)) |
+| Launcher output that the GUI replays (`gui/server/tests/recordings/`), or the Control API | `scripts/verify.py linux-gcc-control --tests '^control'`, then `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
+| The browser GUI only | `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only the matching e2e tests) |
+| Documentation only | `scripts/check-docs.py` |
+| A script only | `python3 tests/scripts/test_<name>.py` |
+
+End the report of the work and the description of the pull request with two lines:
+
+```text
+Verified: <what you ran and what it covered>
+Not run: <what you left to CI or did not run, and why>
+```
+
+Do not list under `Verified:` what was not run. If you ran nothing, say so on both lines.
+
 ### Ports and locks
 
 Tests do not listen on fixed ports. They can run on the same computer at the same time as the tests of a build in another work tree.
