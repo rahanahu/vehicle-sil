@@ -23,10 +23,10 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
+from .launcher import (CHECK_FIELDS, FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
                        FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
-                       Launcher, check_command, check_disable, check_manual, check_speed, check_time_command,
-                       command_line, run_command)
+                       RUN_FIELDS, Launcher, check_command, check_disable, check_fields, check_manual, check_speed,
+                       check_time_command, command_line, run_command)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
 from .scenarios import list_scenarios, resolve_scenario
@@ -450,6 +450,7 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request)
+            check_fields("api/check", body, CHECK_FIELDS)
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
@@ -464,6 +465,7 @@ class GuiServer:
         try:
             self._not_closing()
             body = await self._body(request)
+            check_fields("api/run", body, RUN_FIELDS)
             self._not_closing()
             if self._starting or (self.session is not None and self.session.state == "running"):
                 raise Refused(409, "already-running", "a simulation is starting or running: stop it (POST api/stop) "
