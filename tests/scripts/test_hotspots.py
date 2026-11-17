@@ -93,7 +93,7 @@ class HotspotsTest(unittest.TestCase):
             manifest.write_text(json.dumps(prs), encoding="utf-8")
             gh_code = ("import sys; a = sys.argv[1:]; "
                        "assert a[:4] == ['pr', 'list', '--state', 'all'] and '--limit' in a "
-                       f"and a[a.index('--json') + 1] == {hotspots.GH_FIELDS!r}, a; "
+                       "and a[a.index('--json') + 1] == 'number,state,mergedAt,baseRefName,headRefName,headRefOid', a; "
                        f"sys.stdout.write(open({str(manifest)!r}).read())")
         parsed = hotspots.build_parser().parse_args(argv)
         with self.fake_gh(gh_code or "raise SystemExit(1)"):
@@ -355,7 +355,8 @@ class HotspotsTest(unittest.TestCase):
         self.repo.commit({"libs/a/x.cpp": lines(3)})
         data, text = self.run_tool("libs/lunch", "a/x.cpp")
         self.assertEqual(data["not_at_head"], ["libs/lunch", "a/x.cpp"])
-        self.assertIn("not in HEAD (a new file, or a path that is not relative to the repository root): libs/lunch, a/x.cpp", text)
+        self.assertIn("not in HEAD (a new file, or a path that is not relative to the repository root; pass paths relative to it): "
+                      "libs/lunch, a/x.cpp", text)
 
     def test_the_summary_ends_with_what_was_not_observed_and_says_none_only_among_observed_refs(self):
         self.repo.commit({"f.cpp": lines(1600)}, date=iso(9))

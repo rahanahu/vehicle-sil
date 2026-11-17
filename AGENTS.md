@@ -84,12 +84,13 @@ These steps are a trial. They are advice: no CI check enforces them, and their e
   - Reuse what exists before you add something.
   - Stop when the request and the constraints are met. Put further improvements in a separate task.
   - When you review, check for unnecessary complexity as well as for what is missing.
-- **Placement note.** For a `feat` or `refactor`, write this line in the plan and in the pull request description. If the type changes while you work (a `fix` turns into a `feat`), write it then. When the change reads or interprets data that another place already reads, you can add a second line, with the way you looked (search terms, code-map page); do not write "none" without a search.
+- **Placement note.** For a `feat` or `refactor`, write this line in the plan and in the pull request description. If the type changes while you work (a `fix` turns into a `feat`), write it then. When the change reads or interprets data that another place already reads, you can add a second line that names those readers and the way you looked (search terms, code-map page).
 
   ```text
   Placement: <new responsibility or state> -> <file or class>. Why: <relation to what is already there>
-  Same data elsewhere: <existing readers of the same input or data, and how you looked> / none found by <how>
   ```
+
+  The optional second line has the form `Same data elsewhere: <existing readers of the same input or data, and how you looked>`.
 
 - **hotspots (optional).** `scripts/hotspots.py <paths you plan to touch>` shows which of those files are large, busy or touched by other work; see its `--help`. "attention" is a hint, not a request for another step or for a split.
 - **Verification.** Choose it by risk with "[Choose the verification by risk](docs/code-map-testing.md#choose-the-verification-by-risk)", and end the report and the pull request description with `Verified:` and `Not run:` lines.

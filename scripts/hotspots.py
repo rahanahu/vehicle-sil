@@ -457,17 +457,20 @@ def classify(git, obs, refs, base, head, anc_base, anc_head, chain_lower, chain_
 
 
 def target_files(git: Git, args, head: str, own: dict) -> dict:
+    missing: list[str] = []
     if args.paths:
         paths: list[str] = []
         for p in args.paths:
             found = git.run("ls-tree", "-r", "--name-only", head, "--", p, check=False).splitlines()
             paths += found or [p]
+            if not found:
+                missing.append(p)
     else:
         paths = sorted(own)
     paths = list(dict.fromkeys(paths))
     return {"source": [p for p in paths if is_source(p)],
             "excluded": [p for p in paths if p.endswith(SOURCE_SUFFIXES) and not is_source(p)],
-            "not_at_head": [p for p in paths if args.paths and not git.run("ls-tree", "--name-only", head, "--", p, check=False).strip()]}
+            "not_at_head": list(dict.fromkeys(missing))}
 
 
 def file_signals(git, obs, args, base, head, refs, worktrees, own, path) -> dict:
@@ -544,19 +547,19 @@ def render(result: dict) -> tuple[str, str]:
     sig = [f for f in result["files"] if f["signals"]]
     lines.append(f"files: {len(result['files'])} source file(s) checked, {len(sig)} with a signal"
                  + (f", {len(result['excluded_files'])} excluded by path" if result["excluded_files"] else ""))
+    if result["not_at_head"]:
+        lines.append("not in HEAD (a new file, or a path that is not relative to the repository root; pass paths relative "
+                     "to it): " + ", ".join(result["not_at_head"]))
     ranked = sorted(sig, key=lambda f: (not f["attention"], -f["size_lines"]))
     lines += [file_line(f, qualifier) for f in ranked[:result["top"]]]
     if len(ranked) > result["top"]:
         lines.append(f"  +{len(ranked) - result['top']} more file(s) with a signal (see the log)")
-    if result["not_at_head"]:
-        lines.append("not in HEAD (a new file, or a path that is not relative to the repository root): "
-                     + ", ".join(result["not_at_head"]))
     quiet = len(result["files"]) - len(sig)
     if quiet:
         lines.append(f"  {quiet} file(s) with no signal among observed refs")
     lines.append("attention (size with stack or parallel; a hint to look at where the change goes and who else changes "
                  "the file, not a requirement): "
-                 + (", ".join(result["attention"]) or "none" + (" among observed refs (see observed)" if qualifier else "")))
+                 + (", ".join(result["attention"]) or "none among observed refs" + (f" ({qualifier})" if qualifier else "")))
     if result["large_busy"]:
         lines.append("large and busy, information only: " + ", ".join(result["large_busy"]))
     layers = result["layers"]

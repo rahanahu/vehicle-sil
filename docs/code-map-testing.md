@@ -58,7 +58,7 @@ Run on your computer what the change can break; leave the full matrix of presets
 |---|---|
 | Any change (the default) | One preset and the tests of what you touched: `scripts/verify.py linux-gcc-debug --tests '<regular expression>'` |
 | Concurrency, threads or time | The same tests also with `linux-clang-tsan` |
-| A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `cmake --build --preset linux-clang-tsan --target <target>` |
+| A public header or a class or function template that many targets include | Build the touched targets with `linux-clang-tsan`: `scripts/verify.py linux-clang-tsan --targets <target> --tests '<regex>'` |
 | What the launcher prints or counts (findings, events, `run` output), or the documentation that copies it | `^launch`, `^multi_host\.`, `^schema\.` and `^template\.` (the ECU project template), which compare the documentation (see [Documentation examples and tests](#documentation-examples-and-tests)) |
 | Launcher output that the GUI replays (`gui/server/tests/recordings/`), or the Control API | `scripts/verify.py linux-gcc-control --tests '^control'`, then `scripts/verify-gui.py --skip-web --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch` |
 | The browser GUI only | `scripts/verify-web.py --skip-install` (`--e2e-grep <pattern>` runs only the matching e2e tests) |
