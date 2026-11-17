@@ -36,6 +36,8 @@ grep -qxF '/.local/' .git/info/exclude || echo '/.local/' >> .git/info/exclude
 mkdir -p .local/research .local/decisions .local/reviews .local/experiments .local/plans
 ```
 
+[tools/knowledge/README.md](tools/knowledge/README.md) describes how to classify, find, update, expire and hand over this local material, and the tool and the templates for it. `tools/knowledge/init_local.py --apply` does the set-up above and creates the missing local files from the templates without overwriting anything.
+
 ### Design decisions
 
 Record the deliberation and the settled decisions separately.
