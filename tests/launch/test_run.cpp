@@ -11,7 +11,14 @@
 #include "run_close.hpp"
 #include "run_connection.hpp"
 #include "run_notes.hpp"
+#include "run_samples.hpp"
 #include "run_start_limit.hpp"
+#include "silkit_test_util.hpp"
+
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
+#include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -24,6 +31,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <initializer_list>
 #include <vector>
 
@@ -658,6 +666,118 @@ TEST_CASE(a_connection_whose_close_was_left_keeps_itself_and_the_hub_until_the_c
     CHECK(going->order == (std::vector<std::string>{"transport", "controller", "registry", "hub"}));
     CHECK(going->hub_was_there);
     CHECK(hub.expired());
+}
+
+namespace {
+
+/// The hub's transport of a connection made of the real parts, whose end waits for a latch
+/// first: a close that does not end for as long as the test wants.
+struct HeldTransport
+{
+    struct Latch
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = false;
+    };
+
+    HeldTransport(std::shared_ptr<Latch> l, control::Hub& hub, ParticipantRuntime& runtime) :
+      latch(std::move(l)), transport(hub, runtime)
+    {
+    }
+    ~HeldTransport()
+    {
+        // The real transport goes after this body, when the latch is open.
+        std::unique_lock lock(latch->mutex);
+        latch->changed.wait(lock, [this] { return latch->open; });
+    }
+
+    std::shared_ptr<Latch> latch;
+    control_silkit::HubTransport transport;
+};
+
+using HeldConnection =
+    launch::detail::ConnectionOf<control::Hub, vehicle_sil::unit::InProcessRegistry, SimulationController, HeldTransport>;
+
+/// What a run has beside its connection, and the connection's parts are given pointers to (as
+/// the Runner of run.cpp): what the start window's function names, and the hub's tap.
+struct RunParts
+{
+    explicit RunParts(std::shared_ptr<control::Hub> h) : hub(std::move(h)) {}
+    std::shared_ptr<control::Hub> hub;
+    launch::detail::RunSamples samples{{}, {}};
+    int windows = 0; ///< the start window's thread; read once start() has returned
+};
+
+} // namespace
+
+TEST_CASE(what_a_run_has_beside_its_connection_can_be_destroyed_while_a_close_that_was_left_still_goes_on)
+{
+    // The real hub, registry, controller and transport, a simulation that started (the start
+    // window's function ran) and ended, and a close that stands in the transport's end beyond its
+    // limit. The run's own parts are destroyed then, as run_file() destroys its Runner; the
+    // closing thread ends later and must not have used them (under AddressSanitizer and
+    // ThreadSanitizer this is the test; the count of the window's calls says it everywhere).
+    const auto latch = std::make_shared<HeldTransport::Latch>();
+    const auto window_calls = std::make_shared<std::atomic<int>>(0);
+    // Where the hub was destroyed, told once it has gone.
+    std::promise<std::thread::id> hub_gone;
+    std::future<std::thread::id> hub_went = hub_gone.get_future();
+    std::weak_ptr<HeldConnection> watched;
+    std::optional<launch::detail::CloseLeft> left;
+    {
+        auto parts = std::make_unique<RunParts>(std::shared_ptr<control::Hub>(new control::Hub, [&hub_gone](control::Hub* hub) {
+            delete hub;
+            hub_gone.set_value(std::this_thread::get_id());
+        }));
+        auto connection = std::make_shared<HeldConnection>(parts->hub);
+        watched = connection;
+        connection->registry = std::make_unique<vehicle_sil::unit::InProcessRegistry>();
+        SimulationControllerOptions options;
+        options.registry_uri = connection->registry->uri;
+        options.required_participants = {"Ecu"};
+        options.stop_at = 10ms;
+        connection->controller = std::make_unique<SimulationController>(options);
+        connection->transport = std::make_unique<HeldTransport>(latch, *connection->hub, connection->controller->runtime());
+        connection->controller->set_start_window([run = parts.get(), window_calls](const StartWindow&) {
+            ++run->windows;
+            ++*window_calls;
+        });
+        parts->samples.tap(*parts->hub, 1ms, [c = connection->controller.get()] { return c->runtime().now(); });
+        {
+            // The run's one participant, which ends before the close as a run's participants do.
+            ParticipantRuntime ecu(vehicle_sil::unit::coordinated_options("Ecu", connection->registry->uri, VirtualTimeOptions{1ms}));
+            ecu.set_step_handler([](SimTime, SimDuration) {});
+            std::thread start_ecu([&ecu] { ecu.start(60s); });
+            connection->controller->start(60s);
+            start_ecu.join();
+            CHECK_EQ(parts->windows, 1);
+            CHECK(connection->controller->wait_until_finished(vehicle_sil::test::scaled_timeout(30s)).has_value());
+            ecu.stop("done");
+        }
+        parts->samples.untap();
+        left = launch::detail::close_connection_within(std::move(connection), 100ms, 5ms, [] { return false; });
+        // Here the run's parts go: the tap's owner, what the window's function names, and the
+        // run's hold of the hub.
+    }
+    CHECK(left.has_value());
+    CHECK(!watched.expired());
+    CHECK(hub_went.wait_for(0s) == std::future_status::timeout); // the connection keeps the hub
+    {
+        const std::lock_guard lock(latch->mutex);
+        latch->open = true;
+    }
+    latch->changed.notify_all();
+    // The closing thread destroys the transport, the controller and the registry, and then the
+    // hub, as its last holder.
+    const bool ended = hub_went.wait_for(vehicle_sil::test::scaled_timeout(60s)) == std::future_status::ready;
+    CHECK(ended);
+    if (ended)
+    {
+        CHECK(hub_went.get() != std::this_thread::get_id());
+    }
+    CHECK(watched.expired());
+    CHECK_EQ(window_calls->load(), 1); // not called again by the controller's end
 }
 
 TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)

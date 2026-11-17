@@ -364,7 +364,7 @@ Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Lat
 
 ### 変数の対応表（`set_variable_map()`）
 
-`set_variable_map(participant, map)`（`control/variable_map.hpp` の `MappedSchema`）は、その participant の変数を、読む側と書く側の全員に、対応の後の名前と値で見せます。ランチャーが、設定ファイルの `participants[].variables` から渡します（`RunControl::hub()` の最初の呼び出しで、Agent が接続する前）。
+`set_variable_map(participant, map)`（`control/variable_map.hpp` の `MappedSchema`）は、その participant の変数を、読む側と書く側の全員に、対応の後の名前と値で見せます。ランチャーが、設定ファイルの `participants[].variables` から渡します（`RunControl::shared_hub()` の最初の呼び出しで。実行の初めで、Agent が接続する前）。
 
 変換は Hub の中の 4 か所だけです。見せる一覧はロックの外で作ってロックの中で入れ替え、ほかの 3 つはロックの中で行います。トランスポートと読む API（tap、最新の値、購読、Control Server）は、変換を知りません。
 
