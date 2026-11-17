@@ -5,7 +5,7 @@
 // with the file (check_rules.cpp), reads the scenario (scenario.cpp). The outputs are in
 // check_format.cpp.
 #include "vehicle_sil/launch/check.hpp"
-#include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/time_plan.hpp"
 
 #include "vehicle_sil/core/participant_configuration.hpp"
 #include "vehicle_sil/process/child_process.hpp"
