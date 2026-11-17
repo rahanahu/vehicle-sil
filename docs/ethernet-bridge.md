@@ -942,7 +942,7 @@ A frame passes in both directions through SIL Kit's `IEthernetController`, `Ethe
 - Argument parsing (`parse_bridge_options()`)
 - What the executable prints (`bridge_app.hpp`: the startup line, the backends available on each OS, the promiscuous mode hint)
 
-For the source locations, see "Ethernet Bridge" in [code-map.md](code-map.md#ethernet-bridge).
+For the source locations, see "Ethernet Bridge" in [code-map-bridges.md](code-map-bridges.md#ethernet-bridge).
 
 ## External link (`ExternalLink`)
 
