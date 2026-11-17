@@ -29,14 +29,13 @@ Put the material below in `.local/` at the repository root and do not commit it.
 | `.local/experiments/` | Experiment logs, working notes of performance measurements |
 | `.local/plans/` | Temporary implementation plans, working notes of AI agents |
 
-In a new clone, set up the exclusion and the directories with these commands:
+In a new clone, or in an existing one, set up the exclusion, the directories and the missing local files with:
 
 ```sh
-grep -qxF '/.local/' .git/info/exclude || echo '/.local/' >> .git/info/exclude
-mkdir -p .local/research .local/decisions .local/reviews .local/experiments .local/plans
+python3 tools/knowledge/init_local.py --apply    # without --apply it only shows what it would do
 ```
 
-[tools/knowledge/README.md](tools/knowledge/README.md) describes how to classify, find, update, expire and hand over this local material, and the tool and the templates for it. `tools/knowledge/init_local.py --apply` does the set-up above and creates the missing local files from the templates without overwriting anything.
+It never overwrites an existing file. [tools/knowledge/README.md](tools/knowledge/README.md) describes how to classify, find, update, expire and hand over this local material, and the tool and the templates for it.
 
 ### Design decisions
 
