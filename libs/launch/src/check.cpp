@@ -10,7 +10,7 @@
 #include "vehicle_sil/launch/time_plan.hpp"
 #include "seen_ecu.hpp"
 
-#include "vehicle_sil/core/participant_configuration.hpp"
+#include "vehicle_sil/core/registry_uri.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
 #include <algorithm>
