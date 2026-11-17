@@ -104,6 +104,7 @@ Implementation:
 | Code shared by the readers of configuration files and scenarios | `src/yaml_reader.hpp` |
 | The overall flow of `run` | `src/run.cpp` |
 | The classes that share the work of `run` | `src/run_*.cpp`, `src/time_commands.cpp` |
+| The Hub of a run with the registry, the controller and the Hub's transport, as one thing (`detail::ConnectionOf`): the order in which they close, and who holds them. `Runner::run()` makes it and holds it alone; at the end the closing thread takes it over (`detail::close_connection_within()`, on `close_within()` in `src/run_close.hpp`) and keeps it if it is left at its limit. The list of what a closing thread that was left can still reach is the comment at the top of `src/run.cpp` | `src/run_connection.hpp` |
 | This computer's addresses (the URI shown to other computers) | `src/host_addresses.cpp` |
 | The watch of the running simulation (`RunWatch::watch()`), what is settled when it is over (`RunWatch::settle()`: the scenario's end, the timing, the traffic, how the simulation ended), and `StandStill`, which reports that virtual time does not advance | `src/run_watch.cpp` |
 | The command line, and the stdin and stdout threads | `tools/launch/main.cpp` |

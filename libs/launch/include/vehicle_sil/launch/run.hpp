@@ -259,8 +259,8 @@ struct RunOutcome
     /// registry) had not closed when the launcher stopped waiting for it, after the participants
     /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
     /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
-    /// closing it, with the parts of the run it may use (they are never destroyed). The result is
-    /// complete all the same. The caller ends the process without destroying what it gave the run
+    /// closing it; it keeps the three and the run's hub, and uses nothing else of the run (whose
+    /// parts are never destroyed all the same). The result is complete. The caller ends the process without destroying what it gave the run
     /// (RunOptions) and without running the destructors of static objects (std::_Exit(); Windows:
     /// TerminateProcess()) when it has written the result.
     std::optional<std::int64_t> connection_not_closed_ms{};
@@ -382,31 +382,30 @@ struct RunOptions
     /// The longest the simulation may run, from its start to its end (wall clock); then it is
     /// aborted (RunOutcome::timed_out). Empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
-    /// The hub that the ECUs' control agents connect to (over SIL Kit, on the controller's
-    /// participant), from the start window to the end of the run; it must outlive run_file().
-    /// Null: the run has a hub of its own. With a hub of the caller, other threads read and write
-    /// the ECUs' variables through it while the simulation runs.
-    control::Hub* hub = nullptr;
     /// Called in the window before the start (SimulationController::set_start_window()), on a
     /// thread of the controller, after the wait for the agents' hellos: every participant waits
     /// before its first step, and a write that an agent accepts now (control::Hub::write(),
     /// wait_queued()) takes effect in its step at 0. The simulation starts when it returns. If it
     /// throws, the launcher aborts the simulation as soon as it has started
     /// (RunOutcome::before_start_error). Not called if the start was given up before the window.
-    std::function<void(control::Hub& hub)> before_start{};
+    /// `hub`: the run's hub (never null), which the ECUs' control agents connect to over SIL Kit,
+    /// on the controller's participant. The run makes it. A caller that keeps the pointer may use
+    /// the hub from any thread while the simulation runs and after run_file() has returned (it
+    /// then holds what the agents said last).
+    std::function<void(const std::shared_ptr<control::Hub>& hub)> before_start{};
     /// How long the start waits for the hello of each required ECU that describes variables and
     /// offers them in the launcher's version of the messages (it is there before the wait begins,
     /// by the order in which SIL Kit sets the participants up: the limit is a last line).
     std::chrono::milliseconds control_hello_timeout{5000};
-    /// run --control: starts the control server on the run's hub (the argument) and says where it
+    /// run --control: starts the control server on the run's hub (the argument, never null; as for
+    /// before_start, the server keeps the pointer for as long as it uses the hub) and says where it
     /// listens. Called once, on the main thread, when the check has passed and before the registry
     /// starts; the run writes the event "control_server" and the line "control server at
     /// <address>". If it throws, nothing is started (RunOutcome::setup_error). The server must
     /// stay usable while run_file() runs (its time operations go to the time commands of
-    /// `controls`, which must be set) and outlive the hub's use by run_file(); the caller ends it
-    /// after run_file().
+    /// `controls`, which must be set); the caller ends it after run_file().
     /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
-    std::function<ControlServerInfo(control::Hub& hub)> serve_control{};
+    std::function<ControlServerInfo(const std::shared_ptr<control::Hub>& hub)> serve_control{};
 };
 
 /// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation; with

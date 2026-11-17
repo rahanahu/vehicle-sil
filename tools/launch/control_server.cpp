@@ -316,10 +316,11 @@ public:
     }
     ~Server() override { end(); }
 
-    launch::ControlServerInfo start(control::Hub& hub) override
+    launch::ControlServerInfo start(std::shared_ptr<control::Hub> hub) override
     {
+        hub_ = std::move(hub);
         control_grpc::ServerOptions o = options_;
-        o.external_hub = &hub;
+        o.external_hub = hub_.get();
         o.time = time_.get();
         server_ = std::make_unique<control_grpc::ControlServer>(std::move(o));
         launch::ControlServerInfo info;
@@ -341,6 +342,7 @@ private:
     control_grpc::ServerOptions options_;
     std::unique_ptr<LaunchTimeControl> time_; ///< outlives the server
     std::shared_ptr<std::ofstream> audit_;
+    std::shared_ptr<control::Hub> hub_; ///< the run's, from start(); before server_, which serves it: it goes after it
     std::unique_ptr<control_grpc::ControlServer> server_;
 };
 

@@ -5,7 +5,9 @@
 //
 //   run_context.hpp      RunContext       what the run is given; never written
 //   run_output.*         RunOutput        the lines, the log files, the events
-//   run_control.*        RunControl       the hub, the participants' control links
+//   run_connection.hpp   ConnectionOf     the hub with the registry, the controller and the hub's
+//                        transport: what the closing thread takes over at the end
+//   run_control.*        RunControl       the participants' control links, their variable maps on the hub
 //   run_participants.*   RunParticipants  the participants' processes: start, look, end
 //   run_notes.*          RunNotes         run --events: what has been written already
 //   run_samples.*        RunSamples       the hub's tap: every sample, for the scenario and the traffic
@@ -44,8 +46,9 @@
 //   takes the last ones, with their event, into the result after the end (take_counts()), before
 //   the result's event).
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
-//   transport, the controller and the registry, and touches nothing else of the run. The main
-//   thread waits for it with a limit.
+//   transport, the controller and the registry (the RunConnection, which it holds from then on),
+//   and touches nothing else of the run. The main thread waits for it with a limit. What a closing
+//   thread that was left at the limit may still reach is listed below.
 // - Whoever applies a time command (the thread that reads commands, a control server's):
 //   TimeCommands.
 //
@@ -66,12 +69,37 @@
 // taken already).
 //
 // A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
-// hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
-// TimeCommands. With a scenario the server only shows the run: its clients' calls that would
-// write a variable or move the time are refused in the server, before they reach either.
+// hub (thread safe; its subscriptions are bounded and never make the simulation wait; the server
+// holds the hub itself, so it may use it after the run) and the TimeCommands. With a scenario the
+// server only shows the run: its clients' calls that would write a variable or move the time are
+// refused in the server, before they reach either.
+//
+// What the closing thread reaches, also when it is left at the limit and ends later (or never).
+// Everything that the three SIL Kit objects call was read for this list; a change that gives the
+// controller, its participant or the hub a new function must keep it true.
+// - The RunConnection itself (the thread's own hold): the transport, the controller, the registry,
+//   and through the transport's destructor the hub (control::Hub::agent_ended() for every link
+//   that is still open). The hub then tells its subscriptions, which keep themselves (the hub
+//   holds them weakly), and no tap: Runner::run() takes the tap off before the hand-over.
+// - The functions given to the controller's participant by the transport (the observer of the
+//   peers' states, the three subscribers) hold the transport's own state, which keeps itself and
+//   does nothing once the transport has gone. Those of the controller (the step, the hold, the
+//   stop observer, the opening of the start window) use the controller's members only.
+// - The start window's function (Runner::run() gives it to the controller; it names the Runner,
+//   the transport and the controller): never called by the closing thread. It runs only inside
+//   SimulationController::start(), which waits for it before it returns or throws, and the
+//   controller's destructor completes a window that opens later without calling it.
+// - Nothing of TimeCommands: it is detached on the main thread before the hand-over, and has no
+//   function in the controller (it calls the controller, never the other way round). The same
+//   holds for the watch of the simulation (FailureCheck, SimulationWatch: they ask the controller
+//   on the main thread and leave nothing in it) and for the scenario's thread (joined before).
+// So a closing thread that was left touches the RunConnection only. run_file() still never
+// destroys the Runner of such a run (and the caller ends the process without destructors): that
+// is kept as it was, and is no longer what the closing thread's safety rests on.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "run_close.hpp"
+#include "run_connection.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "run_notes.hpp"
@@ -123,6 +151,10 @@ namespace {
 using detail::one_line;
 using detail::RunContext;
 using detail::RunControl;
+/// What a run has of SIL Kit, with its hub (run_connection.hpp).
+using RunConnection = detail::ConnectionOf<control::Hub, SilKit::Vendor::Vector::ISilKitRegistry, SimulationController,
+                                           control_silkit::HubTransport>;
+
 using detail::RunNotes;
 /// The controls of a run that was given none (RunOptions::controls): made by run_file() for that
 /// run, on the caller's stop requests if there are any. Its phases go to RunOptions::events.
@@ -160,9 +192,10 @@ using detail::RunStart;
 using detail::RunWatch;
 using detail::uri_for_participants;
 
-/// One run: its parts, and the order of its phases (run()). The registry, the controller and the
-/// hub's transport live in run() only; the parts are given the controller in the calls that need
-/// it.
+/// One run: its parts, and the order of its phases (run()). The hub is made with the Runner and
+/// lives as long as it (and as whoever else holds it). The registry, the controller and the hub's
+/// transport live in run() only, in a RunConnection; the parts are given the controller in the
+/// calls that need it.
 class Runner
 {
     static std::vector<std::string> participant_names(const SimulationConfig& config)
@@ -183,7 +216,7 @@ public:
       own_controls_(std::move(own)), check_(std::move(checked)),
       ctx_{*check_.config, check_, options, check_.scenario && check_.scenario->scenario ? &*check_.scenario->scenario : nullptr,
            controls, controls.time()},
-      out_(ctx_), control_(ctx_, out_),
+      out_(ctx_), hub_(std::make_shared<control::Hub>()), control_(ctx_, out_, hub_),
       samples_(participant_names(*check_.config), detail::traffic_plan(*check_.config, check_)),
       notes_(ctx_, participants_), scenario_(ctx_, out_, control_, samples_),
       start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
@@ -232,12 +265,12 @@ public:
 
     RunOutcome run()
     {
-        // Before the guard below, so that they go after it.
-        std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
-        std::unique_ptr<SimulationController> controller;
-        // The hub's end of the ECUs' control agents, on the controller's participant: after the
-        // controller, so that it goes before it.
-        std::unique_ptr<control_silkit::HubTransport> transport;
+        // The registry, the controller and the hub's transport of this run (the hub's end of the
+        // ECUs' control agents, on the controller's participant), with the hub. Before the guards
+        // below, so that it goes after them: if run() leaves before close_connection(), the three
+        // go here, on this thread, in the connection's order (transport, controller, registry).
+        // run() is its only holder until it gives it to close_connection().
+        auto connection = std::make_shared<RunConnection>(hub_);
         // Whatever happens, the time commands end with the run (they are refused from then on),
         // and before the controller they are given to goes: the thread that reads the commands
         // may apply one at any time.
@@ -272,7 +305,7 @@ public:
         {
             try
             {
-                const ControlServerInfo server = ctx_.options.serve_control(control_.hub());
+                const ControlServerInfo server = ctx_.options.serve_control(control_.shared_hub());
                 out_.event([&server](EventStream& e) { e.control_server(server.address, server.tls, server.credentials); });
                 out_.say("control server at " + server.address);
             }
@@ -286,7 +319,7 @@ public:
         std::string listened;
         try
         {
-            registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
+            connection->registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
                 SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
             // A participant started by hand gets a command that stays the same from run to run.
             const bool fixed = !ctx_.config.registry_uri && waits_for_manual(ctx_.config);
@@ -294,7 +327,7 @@ public:
                 ctx_.config.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
             try
             {
-                listened = registry->StartListening(listen);
+                listened = connection->registry->StartListening(listen);
                 uri = uri_for_participants(listened);
             }
             catch (const std::exception& e)
@@ -341,22 +374,26 @@ public:
             // answer; beyond it, stop_timeout_ms as for every other wait of the end, but never
             // less than kCloseMargin: a small stop_timeout_ms must not cut a close that is going on.
             close_limit_ = c.shutdown_timeout + std::max(std::chrono::milliseconds(ctx_.config.stop_timeout_ms), kCloseMargin);
-            controller = std::make_unique<SimulationController>(std::move(c));
+            connection->controller = std::make_unique<SimulationController>(std::move(c));
             // Before the participants start and before the controller does: SIL Kit connects the
             // publisher of the commands and the subscribers with every participant that starts.
-            transport = std::make_unique<control_silkit::HubTransport>(control_.hub(), controller->runtime());
-            controller->set_start_window([this, t = transport.get(), c = controller.get()](const StartWindow& window) {
-                start_.window(*t, *c, window);
-            });
-            ctx_.commands.attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
+            connection->transport =
+                std::make_unique<control_silkit::HubTransport>(control_.hub(), connection->controller->runtime());
+            // Called inside SimulationController::start() only (wait_for_start() below), never
+            // once that has returned: not by the closing thread.
+            connection->controller->set_start_window(
+                [this, t = connection->transport.get(), c = connection->controller.get()](const StartWindow& window) {
+                    start_.window(*t, *c, window);
+                });
+            ctx_.commands.attach(*connection->controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
             // Every sample the hub takes, in every run: for the traffic of the result, and for
             // the scenario.
             samples_.tap(control_.hub(), std::chrono::milliseconds(outcome_.timing.time_step_ms),
-                         [c = controller.get()] { return c->runtime().now(); });
+                         [c = connection->controller.get()] { return c->runtime().now(); });
             if (ctx_.scenario != nullptr)
             {
                 // The scenario decides at every step of the controller, from the one at 0 on.
-                controller->guard_from(SimTime{});
+                connection->controller->guard_from(SimTime{});
                 scenario_.prepare(std::chrono::milliseconds(outcome_.timing.time_step_ms));
             }
         }
@@ -370,21 +407,21 @@ public:
         // The bridges of --connect first, each Running in SIL Kit before an ECU starts: a frame an
         // ECU sends before its bridge has joined would not reach the bus outside. A bridge does not
         // take part in the coordinated start (it runs in real time), so it does not hold it up.
-        if (participants_.start_children(uri, RunParticipants::Which::Bridges) && start_.wait_for_bridges(*controller) &&
-            participants_.start_children(uri, RunParticipants::Which::Others))
+        if (participants_.start_children(uri, RunParticipants::Which::Bridges) &&
+            start_.wait_for_bridges(*connection->controller) && participants_.start_children(uri, RunParticipants::Which::Others))
         {
             ctx_.controls.set_phase(Phase::Waiting);
-            if (start_.wait_for_start(*controller, *transport))
+            if (start_.wait_for_start(*connection->controller, *connection->transport))
             {
                 ran = true;
-                scenario_.start(*controller, outcome_);
-                const RunWatch::Watched watched = watch_.watch(*controller);
-                interrupts_at_end_ = watch_.settle(*controller, watched);
+                scenario_.start(*connection->controller, outcome_);
+                const RunWatch::Watched watched = watch_.watch(*connection->controller);
+                interrupts_at_end_ = watch_.settle(*connection->controller, watched);
                 if (outcome_.simulation != SimulationEnd::Aborted && outcome_.interrupted_by.empty())
                 {
                     participants_.note_bridges_ended_with_run();
                 }
-                control_.note_late_values(outcome_, *transport);
+                control_.note_late_values(outcome_, *connection->transport);
                 control_.note_late_maps(outcome_);
             }
         }
@@ -402,7 +439,7 @@ public:
         publish_findings(false);
         ctx_.controls.set_phase(Phase::Stopping);
         participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
-        participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
+        participants_.end_manual(*connection->controller, ran || start_.before_start_failed(), interrupts_at_end_);
         // Their output is read to the end: the line connect-failed and connect-lost quote.
         participants_.note_last_lines();
         // The agents have said their last word and waited for this side's answer (their processes
@@ -410,7 +447,8 @@ public:
         // word did not arrive within its wait) is settled here. No sample is taken any more: the
         // tap goes before the transport does (a run that did not get to its watch still has it).
         samples_.untap();
-        close_connection(std::move(transport), std::move(controller), std::move(registry));
+        // From here on the connection is the closing thread's: nothing of it is named after this.
+        close_connection(std::move(connection));
         return outcome_;
     }
 
@@ -488,32 +526,17 @@ private:
     /// destroyed, and a connection that does not close would keep the run from its result for
     /// ever (seen on Windows before its connections were TCP ones, with a participant whose
     /// threads were suspended: docs/dependencies.md). So the three are destroyed on a thread of
-    /// their own (detail::close_within()); if it has not ended in time, it is left with them
-    /// (RunOutcome::connection_not_closed_ms), and the run goes on to its result.
-    void close_connection(std::unique_ptr<control_silkit::HubTransport> transport, std::unique_ptr<SimulationController> controller,
-                          std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry)
+    /// their own (detail::close_connection_within()), which takes over `connection`, the only
+    /// hold of them; if it has not ended in time, it is left with them and with its share of the
+    /// hub (RunOutcome::connection_not_closed_ms), and the run goes on to its result.
+    void close_connection(std::shared_ptr<RunConnection> connection)
     {
-        struct Closing
-        {
-            // In the order of their making: destroyed by hand below, in the reverse order.
-            std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
-            std::unique_ptr<SimulationController> controller;
-            std::unique_ptr<control_silkit::HubTransport> transport;
-        };
-        const auto closing = std::make_shared<Closing>();
-        closing->registry = std::move(registry);
-        closing->controller = std::move(controller);
-        closing->transport = std::move(transport);
         const int interrupts = ctx_.interrupts();
-        // The thread keeps the three (the shared pointer). What they use of this run stays too if
-        // it is left: run_file() never destroys the Runner of such a run.
-        const auto left = detail::close_within(
-            [closing] {
-                closing->transport.reset();
-                closing->controller.reset();
-                closing->registry.reset();
-            },
-            close_limit_, ctx_.options.poll, [this, interrupts] { return ctx_.interrupts() > interrupts; });
+        // The thread keeps the connection, and reaches nothing else of this run (the list at the
+        // top of this file). run_file() never destroys the Runner of a run whose thread was left
+        // all the same.
+        const auto left = detail::close_connection_within(std::move(connection), close_limit_, ctx_.options.poll,
+                                                          [this, interrupts] { return ctx_.interrupts() > interrupts; });
         if (!left)
         {
             return;
@@ -536,7 +559,11 @@ private:
     const RunContext ctx_;
     RunOutcome outcome_; ///< the main thread's: the other threads of the run never see it
     RunOutput out_;
-    RunControl control_; ///< before scenario_: the scenario's engine and port use its hub
+    /// The hub of this run. Before the parts that use it (control_, samples_, scenario_), so that it
+    /// outlives them; the RunConnection of run() and whoever was given it by a callback of
+    /// RunOptions hold it too.
+    const std::shared_ptr<control::Hub> hub_;
+    RunControl control_; ///< before scenario_: the scenario's engine and port use the hub through it
     RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
     RunNotes notes_;
     RunScenario scenario_;
