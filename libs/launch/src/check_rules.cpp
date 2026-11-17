@@ -8,7 +8,7 @@
 #include "check_words.hpp"
 #include "seen_ecu.hpp"
 #include "vehicle_sil/control/wire.hpp"
-#include "vehicle_sil/core/participant_runtime.hpp"
+#include "vehicle_sil/core/participant_configuration.hpp"
 #include "vehicle_sil/json/json_writer.hpp"
 
 #include <algorithm>

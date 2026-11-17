@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/config.hpp"
 
-#include "vehicle_sil/core/participant_runtime.hpp"
+#include "vehicle_sil/core/participant_configuration.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_reader.hpp"
