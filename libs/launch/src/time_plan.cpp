@@ -4,7 +4,7 @@
 // coarser than the ECUs' (coarse_time_step()). See time_plan.hpp.
 #include "vehicle_sil/launch/time_plan.hpp"
 
-#include "run_words.hpp"
+#include "check_words.hpp"
 #include "seen_ecu.hpp"
 
 #include <algorithm>
