@@ -1,0 +1,1 @@
+When working in <absolute path of the repository> (or any of its working trees), read <absolute path of the repository>/.local/CONSTRAINTS.md before anything else and follow it. Do not open the files it forbids. In any other repository, ignore this paragraph.

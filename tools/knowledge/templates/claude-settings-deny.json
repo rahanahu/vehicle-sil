@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(.local/vendor/**)",
+      "Read(//<absolute path of the repository>/.local/vendor/**)"
+    ]
+  }
+}
