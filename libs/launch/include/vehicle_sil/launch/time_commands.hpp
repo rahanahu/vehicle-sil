@@ -6,6 +6,7 @@
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/launch/command.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -20,9 +21,6 @@ class SimulationController;
 } // namespace vehicle_sil
 
 namespace vehicle_sil::launch {
-
-class EventStream;
-struct Command;
 
 /// A time command that changed how the simulation's time goes: a pause (also at a time), a step,
 /// a run_until, or a speed other than 1 (also max). A resume, a speed of 1 and run --start-paused
@@ -61,9 +59,14 @@ struct TimeChange
 class TimeCommands
 {
 public:
+    /// What apply() calls with each command as decided and its source, under this object's mutex,
+    /// before the command is done: the writer of the command events (EventStream::command()). Must
+    /// not wait and must not call this object.
+    using OnCommand = std::function<void(const Command& command, std::string_view source)>;
+
     /// `start_paused`: run --start-paused (a step is accepted before anything has been paused).
-    /// `events`: where apply() writes the command events (may be null).
-    explicit TimeCommands(bool start_paused = false, EventStream* events = nullptr);
+    /// `on_command`: where apply() writes the command events (may be empty).
+    explicit TimeCommands(bool start_paused = false, OnCommand on_command = {});
     ~TimeCommands();
     TimeCommands(const TimeCommands&) = delete;
     TimeCommands& operator=(const TimeCommands&) = delete;

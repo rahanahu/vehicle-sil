@@ -726,7 +726,8 @@ int write_or_fail(const std::string& text, int code)
 int finish_events(launch::EventStream& events, const launch::RunReport& report, int code)
 {
     const int requests = g_stops.count();
-    const bool written = events.result(report, [requests] { return g_stops.count() > std::min(requests, 1); });
+    const bool written = events.result(launch::format_result_event(report),
+                                       [requests] { return g_stops.count() > std::min(requests, 1); });
     finish_threads();
     if (!written && report.result() != launch::RunResult::Interrupted)
     {
@@ -1111,7 +1112,14 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (args.flag("stdin-commands") || control)
     {
         // Never destroyed: the reader of stdin may use it until the process ends.
-        shared().time_commands = new launch::TimeCommands(options.start_paused, events);
+        launch::TimeCommands::OnCommand on_command;
+        if (events != nullptr)
+        {
+            on_command = [events](const launch::Command& command, std::string_view source) {
+                events->command(command, source);
+            };
+        }
+        shared().time_commands = new launch::TimeCommands(options.start_paused, std::move(on_command));
         options.time_commands = shared().time_commands;
     }
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER

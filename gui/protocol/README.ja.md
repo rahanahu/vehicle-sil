@@ -168,7 +168,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | HTTP | `code` | いつ |
 |---|---|---|
 | 400 | `invalid-json` | 本文が JSON のオブジェクトでない |
-| 400 | `invalid-field` | フィールドの型か範囲が違う（対象は表の下） |
+| 400 | `invalid-field` | フィールドの型か範囲が違う、または `api/check` か `api/run` の本文に、そのリクエストが受けないフィールドがある（対象は表の下） |
 | 400 | `invalid-path` | `file` が root からの相対パスの文字列でない（空、長すぎる、`\`、NUL、`:`、対のないサロゲート） |
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
@@ -206,6 +206,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 | 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
 | 504 | `write-timeout` | `api/write`: Control Server が時間内（`limits.write_timeout_s`）に応答しなかった。受け取られたかもしれない（送り直さない） |
 
+- `api/check` が受けるフィールドは `file`、`disable`、`manual`、`scenario` で、`api/run` はそれらと `speed`、`start_paused` です。ほかのフィールド（打ち間違い、`api/check` の `speed`）は 400 `invalid-field` で、メッセージに未知のフィールドをすべてと、そのリクエストが受けるフィールドの一覧が入ります。フィールドが気づかれずに無視されることはありません。
 - `invalid-field` の対象: `speed`、`start_paused`、`force`、`disable`、`manual`（`disable` と同じ名前も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値です。変数の値のときは、`detail` に `{peer, name}` が入ります。
 - `unsupported` の対象: ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った。
 

@@ -209,6 +209,28 @@ def test_a_participant_named_like_an_option_is_refused_before_the_launcher(gui: 
     run_async(main, gui)
 
 
+def test_a_field_that_the_request_does_not_take_is_refused_not_ignored(gui: Gui) -> None:
+    """A field that is ignored would leave its sender believing it had an effect: api/check and api/run answer 400
+    invalid-field and name every unknown field and the fields they take (api/check does not take speed)."""
+    async def main(c: Client) -> None:
+        for path, takes in (("api/check", "file, disable, manual, scenario"),
+                            ("api/run", "file, disable, manual, scenario, speed, start_paused")):
+            status, body = await c.post(path, {"file": "simulation.yaml", "variant": "b"})
+            assert (status, body["error"]["code"]) == (400, "invalid-field"), body
+            assert body["error"]["message"] == f"{path} takes no 'variant': the fields it takes are {takes}"
+            status, body = await c.post(path, {"file": "simulation.yaml", "zeta": 1, "alpha": 2})
+            assert (status, body["error"]["code"]) == (400, "invalid-field"), body
+            assert "no 'alpha', 'zeta':" in body["error"]["message"]
+        status, body = await c.post("api/check", {"file": "simulation.yaml", "speed": 1})
+        assert (status, body["error"]["code"]) == (400, "invalid-field") and "'speed'" in body["error"]["message"]
+        status, body = await c.get("api/session")
+        assert body["session"] is None  # nothing was started
+        status, body = await c.post("api/check", {"file": "simulation.yaml", "disable": [], "manual": [],
+                                                  "scenario": None})
+        assert status == 200, body  # the fields it takes are as before
+    run_async(main, gui)
+
+
 # ---------------------------------------------------------------- lines the server no longer has
 
 

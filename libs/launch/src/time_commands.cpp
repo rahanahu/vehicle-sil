@@ -6,12 +6,13 @@
 // State and lock: everything is in TimeCommands::State, guarded by its mutex. Any thread applies
 // a command (the thread that reads the commands, a control server's); the run's main thread
 // attaches and detaches the controller; the start window's thread holds before the first step.
-// Taken while that mutex is held: the event stream's (the "command" event), the controller's
-// gate's (pause, resume, run_until, set_speed, time_state) and whatever on_detach takes.
+// Taken while that mutex is held: whatever on_command takes (the event stream's, for the "command"
+// event), the controller's gate's (pause, resume, run_until, set_speed, time_state) and whatever
+// on_detach takes.
 // hold_before_start() calls on_hold and give_up without it.
 #include "vehicle_sil/launch/time_commands.hpp"
 
-#include "vehicle_sil/launch/events.hpp"
+#include "vehicle_sil/launch/config.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
 
@@ -28,7 +29,8 @@ struct TimeCommands::State
     std::mutex mutex;
     /// hold_before_start() and wait_paused(): a command released the hold, or detach().
     std::condition_variable cv;
-    EventStream* events = nullptr;
+    /// Called in apply() with each command as decided (the writer of the command events).
+    OnCommand on_command{};
     /// A pause was asked for (or the run starts paused) and no resume since.
     bool paused = false;
     /// The last speed command before attach() (the inner empty: "max").
@@ -57,10 +59,10 @@ std::int64_t whole_steps(std::int64_t ms, std::int64_t step_ms)
 
 } // namespace
 
-TimeCommands::TimeCommands(bool start_paused, EventStream* events) : state_(std::make_unique<State>())
+TimeCommands::TimeCommands(bool start_paused, OnCommand on_command) : state_(std::make_unique<State>())
 {
     state_->paused = start_paused;
-    state_->events = events;
+    state_->on_command = std::move(on_command);
 }
 
 TimeCommands::~TimeCommands() = default;
@@ -126,9 +128,9 @@ Command TimeCommands::apply(const Command& command, std::string_view source, con
     {
         out.at_ms = whole_steps(*command.at_ms, s.step_ms);
     }
-    if (s.events != nullptr)
+    if (s.on_command)
     {
-        s.events->command(out, source);
+        s.on_command(out, source);
     }
     if (!out.accepted)
     {

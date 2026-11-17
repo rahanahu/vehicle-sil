@@ -358,6 +358,10 @@ struct CheckReport
 
 void sort_findings(std::vector<Finding>& findings);
 
+/// The catalog of a checked configuration, for read_scenario() (CheckReport::config must be set):
+/// each participant as a scenario can use it, from its entry and what its executable described.
+[[nodiscard]] ScenarioCatalog scenario_catalog(const CheckReport& check);
+
 /// The report for people: the participants and the networks as tables, then each error and
 /// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
 /// summary line. LF line ends; the same report gives the same text.

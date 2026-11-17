@@ -313,6 +313,10 @@ struct RunReport
 /// The report as JSON (format kRunFormat), with the check's JSON as "check".
 [[nodiscard]] std::string format_run_json(const RunReport& report);
 
+/// The members of the event "result" (EventStream::result()): the same object as the member
+/// "result" of a compact JSON object.
+[[nodiscard]] std::string format_result_event(const RunReport& report);
+
 /// The JSON of `vehicle_sil_launch <command> --json` when the launcher itself failed unexpectedly
 /// (`message`): the form of the command's result (`run`: "vehicle_sil_run"; else the check's),
 /// result "unreadable", one finding with the code "internal".

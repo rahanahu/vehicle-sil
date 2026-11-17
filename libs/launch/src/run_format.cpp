@@ -5,6 +5,7 @@
 #include "vehicle_sil/launch/run.hpp"
 
 #include "check_format.hpp"
+#include "run_format.hpp"
 #include "run_words.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
@@ -413,6 +414,15 @@ std::string format_run_json(const RunReport& report)
     std::string out = w.take();
     out += '\n';
     return out;
+}
+
+std::string format_result_event(const RunReport& report)
+{
+    vehicle_sil::json::JsonWriter w(true);
+    w.begin_object();
+    detail::write_run_json(w, "result", report);
+    w.end_object();
+    return w.take();
 }
 
 void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view key, const RunReport& report)
