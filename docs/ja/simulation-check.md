@@ -118,8 +118,9 @@
 | `connect-tool-failed` | 誤り | `--connect` の引数でのブリッジの `--describe` が失敗した（終了コード、時間切れ、説明でない出力）か、ブリッジが別の名前やネットワークを出力しました。 | 指摘の文にあるブリッジの行のとおりに直す（先、`external`）か、`vehicle_sil_launch` と同じ vehicle-sil のブリッジを使います。 |
 | `connect-loop` | 誤り | 有効な `role: bridge` の participant が、つなぐネットワークを `--describe` に出力しています（2 つのブリッジの間でフレームが回ります）。 | どちらかを外します（`--disable <name>` か、その `--connect` を外す）。 |
 | `connect-maybe-loop` | 警告 | 有効な `role: bridge` の participant が `describe: false` で、つなぐネットワークがあります（そのネットワークを中継するかもしれません）。 | そのネットワークを中継するなら、2 つのブリッジのどちらかを外します。 |
-| `connect-not-real-time` | 警告 | つなぐネットワークがあり、速さが 1 ではありません（速さがない、つまり最速のときも）。`check` はファイルの `speed` で、`run` は実際に動かす速さ（`--speed`、なければファイルの値）で判断します。 | 速さ 1 で動かします（ファイルに `speed: 1`、または `run --speed 1`）。 |
-| `connect-start-paused` | 警告 | `run` だけ: つなぐネットワークがあり、`--start-paused` があります。シミュレーションが止まっていても、バスの機器は動き続けます。 | シミュレーションを止めて調べるなら、`--connect` なしで動かします。 |
+| `outside-real-time` | エラー | 実行がシミュレーションの外につながっていて（`--connect` でつなぐネットワーク、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。そこへ `run` に 1 以外の `--speed` か `--start-paused` が付いています。何も起動しません。 | `--speed` と `--start-paused` を外します。ほかの速さで動かす、または止めるなら、つながずに動かす（`--connect` を外す、ブリッジを `--disable` する）か、`--time-policy free` を付けます。 |
+| `outside-speed-set` | 注記 | 実行がシミュレーションの外につながっていて、実時間を保ちます。ファイルの `speed`（速さがない、つまり最速のときも）でなく、速さ 1 で動きます。 | 直すものはありません。ほかの速さにするには `outside-real-time` を見ます。 |
+| `outside-not-real-time` | 注記 | `--time-policy free` のとき: 実行がシミュレーションの外につながっていて、速さが 1 でない（`--speed`、なければファイルの値。速さがなければ最速）か、`--start-paused` が付いています。ブリッジは両方向にフレームを運び続けます。 | 実時間で動かすなら、`--time-policy free` を外します。 |
 | `not-checked` | 注記 | `describe: false` の participant です（照合していない）。 | 対応は不要です。 |
 | `participant-disabled` | 注記 | 無効にした participant です（`enabled: false`、`--disable`。照合も起動もしない）。 | 対応は不要です。 |
 | `participant-manual` | 注記 | 自分で起動する participant です（`manual: true`、`--manual`。`run` は起動せず、コマンドを表示して待つ）。 | `run` が表示するコマンドで起動します。 |
@@ -447,6 +448,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `networks[].kind` | 種類（読めなかったときは `null`） |
 | `networks[].line` | 設定ファイルの行 |
 | `networks[].participants` | ネットワークを使う participant 名（設定ファイルの順。`network_names` を当てた後の名前で数える） |
+| `time_lock.locked` | 実行がシミュレーションの外につながっているために実時間を保つなら `true` です。速さ 1 で動き、照合は 1 以外の `--speed` と `--start-paused` を断ります（[simulation-run.md](simulation-run.md#外につながる実行の時間--time-policy) の「外につながる実行の時間（`--time-policy`）」）。設定ファイルを読めないとき、`time_lock` は `null` です |
+| `time_lock.because` | 実行を外につなぐもの: `--connect` でつなぐネットワーク（先が `none` でないもの）の名前、その後に有効な `role: bridge` の participant の名前。`--time-policy free` では `locked` が `false` で、名前は同じように並びます。外につなぐものがなければ空です |
 | `networks[].outside` | `--connect` でつなぐネットワークでは、そのブリッジです（下のキー）。ほかのネットワークでは `null` です（ブリッジを探さないので、出力がその PC の道具で変わりません） |
 | `networks[].outside.tool` | ブリッジの実行ファイル（`vehicle_sil_ethernet_bridge`、`vehicle_sil_vector_xl_bridge`） |
 | `networks[].outside.tool_path` | 見つけた場所（見つからなければ `null`） |
@@ -579,6 +582,10 @@ participants:
       "outside": null
     }
   ],
+  "time_lock": {
+    "locked": false,
+    "because": []
+  },
   "findings": [
     {
       "severity": "error",

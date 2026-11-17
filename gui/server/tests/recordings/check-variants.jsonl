@@ -1,8 +1,9 @@
 {"vehicle_sil_recording": 1, "case": "check-variants", "about": "the check of a file with variants, none chosen (the launcher says to choose one)", "shape": ["check", "--json", "--", "<file>"], "config": "variants.yaml", "config_sha256": "ae23682745d516ba933d830e2233bdb114e6161bdbeb120c017e67d5beeee767"}
-{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "variant": null, "variants": ["small", "quiet"], "participants": [], "networks": [], "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)", "detail": null}]}}
+{"print": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "variant": null, "variants": ["small", "quiet"], "participants": [], "networks": [], "time_lock": null, "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)", "detail": null}]}}
 {"err": "error: the file defines variants, and a check or a run is of one of them: give --variant <name> with one of small, quiet (none of them is the default)"}
 {"err": "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]"}
 {"err": "                                [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
+{"err": "                                [--time-policy realtime|free]"}
 {"err": "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
 {"err": "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]"}
 {"err": "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>"}
@@ -11,9 +12,10 @@
 {"err": "                              [--speed <speed>] [--strict] [--log-dir <dir>]"}
 {"err": "                              [--timeout-ms <ms>]"}
 {"err": "                              [--describe-timeout-ms <ms>] [--connect <network>=<target>]..."}
+{"err": "                              [--time-policy realtime|free]"}
 {"err": "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
 {"err": "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]..."}
-{"err": "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>]"}
+{"err": "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--time-policy realtime|free]"}
 {"err": "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>..."}
 {"err": "       vehicle_sil_launch connections [--json] [--network <name>] [--] <file>"}
 {"err": "       vehicle_sil_launch version [--json]"}
@@ -86,6 +88,12 @@
 {"err": "                              network's bridge (next to vehicle_sil_launch or on PATH) and asks it --describe;"}
 {"err": "                              run starts it before the other participants (as bridge.<network>) and fails if"}
 {"err": "                              it ends. Repeatable, each network once"}
+{"err": "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by"}
+{"err": "                              an enabled participant with role: bridge). realtime (the default): it goes at"}
+{"err": "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the"}
+{"err": "                              error outside-real-time. free: the speed and the time are yours to change as"}
+{"err": "                              in any run; the bridge still carries frames both ways, so what is connected"}
+{"err": "                              there sees the simulation pause or run ahead. No effect on other runs"}
 {"err": "  --network <name>            connections: only the network <name>"}
 {"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
 {"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}

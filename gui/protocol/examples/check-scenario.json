@@ -261,6 +261,10 @@
           "outside": null
         }
       ],
+      "time_lock": {
+        "locked": false,
+        "because": []
+      },
       "findings": [
         {
           "severity": "note",

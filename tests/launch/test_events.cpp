@@ -1406,13 +1406,14 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "connect",
     "connections",
     "connect-counts",
-    "state"
+    "state",
+    "time-policy"
   ]
 }
 )");
     // A build with the control server adds its features last.
     const std::string with = format_version_json({kControlServerFeature, kScenarioControlFeature});
-    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"connect-counts\",\n    \"state\",\n    \"time-policy\",\n    \"control-server\",\n    \"scenario-control\"\n  ]") != std::string::npos);
 }
 
 TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)

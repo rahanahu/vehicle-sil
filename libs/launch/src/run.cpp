@@ -196,7 +196,8 @@ public:
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
         outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
         outcome_.stop_at_ms = config.stop_at_ms;
-        const std::optional<double> speed = options.speed ? *options.speed : config.speed;
+        // 1 with the time lock, whatever was asked for (the check refuses another --speed).
+        const std::optional<double> speed = planned_speed(check.time_lock, options.speed, config.speed);
         if (ctx_.scenario != nullptr)
         {
             outcome_.scenario = scenario_not_run(*ctx_.scenario);
@@ -586,12 +587,12 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     RunReport report;
     report.strict = options.check.strict;
     controls.set_phase(Phase::Checking);
-    report.check = check_file(path, shown_as, options.check);
-    if (options.speed)
-    {
-        // The check's coarse-time-step is for the file's speed: the run reports its own.
-        std::erase_if(report.check.findings, [](const Finding& f) { return f.code == "coarse-time-step"; });
-    }
+    // The check judges the time by what this run does: its speed and --start-paused are written
+    // in RunOptions only. A test's speed is its default, not one the user asked for.
+    CheckOptions check = options.check;
+    check.run_speed = check.fastest_by_default ? std::optional<std::optional<double>>{} : options.speed;
+    check.start_paused = options.start_paused;
+    report.check = check_file(path, shown_as, check);
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config || !report.check.passed())
     {

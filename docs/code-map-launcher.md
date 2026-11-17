@@ -383,6 +383,7 @@ Where to change:
 - `TimeCommands` in `libs/launch/src/time_commands.cpp`
 - Whether a time command, a stop or a write is taken, and the message of the refusal: the rows in `libs/launch/src/control_rules.cpp` (one place for `TimeCommands::apply()`, `RunControls::allowed()` and the control server's `observe_only`; the rows are tested in `tests/launch/test_control_rules.cpp`)
 - `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` in `time_plan.cpp` (declared in `time_plan.hpp`; `check.cpp` uses it without `run.hpp`)
+- `time_lock()`, `planned_speed()` and `time_lock_findings()` in `time_plan.cpp`: whether a run that is connected outside the simulation keeps real time (`--time-policy`), the speed it starts at, and the findings `outside-*` of the check. `check_file()` puts the result in `CheckReport::time_lock`, and the run reads the speed from there
 - `RunNotes::note_time()` in `run_notes.cpp` (how `paused` of `time` is decided: `detail::noted_paused()` in `run_notes.hpp`)
 - The event `state`: what is in it and when it is told, `RunControls::compose()` and `publish()` in `run_controls.cpp` (`paused` and `speed` come from `facts_of()` in `time_commands.cpp`, `pacing` from `detail::PacingWatch` in `run_pacing.hpp`); that only the latest one waits to be written, `EventStream::emit()` in `events.cpp`
 - `RunWatch::note_timing()` in `run_watch.cpp`

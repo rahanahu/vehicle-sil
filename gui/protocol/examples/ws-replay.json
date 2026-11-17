@@ -31,8 +31,8 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 42,
-        "last_t_ms": 420,
+        "last_seq": 43,
+        "last_t_ms": 430,
         "time": {
           "event": "time",
           "seq": 29,
@@ -291,6 +291,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -747,6 +751,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",
@@ -776,7 +784,7 @@
         "scenario": null,
         "variables": {
           "state": "off",
-          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
           "peers": [],
           "peers_omitted": 0,
           "variables_omitted": 0,
@@ -882,8 +890,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 30,
-        "t_ms": 300,
+        "seq": 31,
+        "t_ms": 310,
         "source": "vehicle_sil_launch",
         "line": "the simulation ended"
       }
@@ -893,8 +901,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 33,
-        "t_ms": 330,
+        "seq": 34,
+        "t_ms": 340,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -904,8 +912,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 35,
-        "t_ms": 350,
+        "seq": 36,
+        "t_ms": 360,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -915,8 +923,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 37,
-        "t_ms": 370,
+        "seq": 38,
+        "t_ms": 380,
         "source": "vehicle_sil_launch",
         "line": "asking Logger to stop (SIGTERM)"
       }
@@ -924,7 +932,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 42
+      "last_seq": 43
     }
   ]
 }

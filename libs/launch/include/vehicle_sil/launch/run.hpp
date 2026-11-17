@@ -336,9 +336,13 @@ struct ControlServerInfo
 struct RunOptions
 {
     CheckOptions check{};
-    /// --speed: replaces the configuration's speed (the inner empty: "max").
+    /// --speed: replaces the configuration's speed (the inner empty: "max"). With the time lock
+    /// (CheckReport::time_lock) the run goes at speed 1 whatever this says (planned_speed()), and
+    /// its check refuses another speed: run_file() gives the check this speed and `start_paused`
+    /// (CheckOptions::run_speed, CheckOptions::start_paused), so they are written here only.
     std::optional<std::optional<double>> speed{};
-    /// --start-paused: the simulation stands still at 0 until a resume or step command.
+    /// --start-paused: the simulation stands still at 0 until a resume or step command. With the
+    /// time lock the check refuses it.
     bool start_paused = false;
     /// The run's controls (run_controls.hpp), the caller's: the stop requests the run reads (as
     /// `stops` below says), the time commands it attaches its controller to (--stdin-commands, a

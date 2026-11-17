@@ -590,6 +590,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -859,8 +863,8 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 46,
-        "last_t_ms": 460,
+        "last_seq": 47,
+        "last_t_ms": 470,
         "time": {
           "event": "time",
           "seq": 35,
@@ -1119,6 +1123,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -1583,6 +1591,10 @@
                 "outside": null
               }
             ],
+            "time_lock": {
+              "locked": false,
+              "because": []
+            },
             "findings": [
               {
                 "severity": "note",

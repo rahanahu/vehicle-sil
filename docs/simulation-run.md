@@ -189,6 +189,8 @@ With `speed` (configuration file) or `run --speed`, the controller paces virtual
 
 Pacing only adds waits, so it never makes the simulation faster than its slowest participant. At maximum speed (`max`), there is no pacing and no lateness is counted.
 
+A run that is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) goes at speed 1 whatever speed is set here, unless you pass `--time-policy free` (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
+
 Real-time devices do not wait for the simulation. When the simulation falls behind real time, the devices see different results. That is why `run` measures lateness with the definitions below and reports it.
 
 ### Definition of lateness
@@ -286,7 +288,7 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
 
-With `--connect`, the devices on the real bus do not stop or change speed with the simulation: the run warns with `connect-time-changed` (see [Connecting a bus outside](#connecting-a-bus-outside---connect)).
+With `--connect`, the devices on the real bus do not stop or change speed with the simulation: `--start-paused` and a `--speed` other than 1 are refused unless you pass `--time-policy free`, and the run warns with `connect-time-changed` when a command changes the time (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
 
 ## Connecting a bus outside (`--connect`)
 
@@ -320,7 +322,30 @@ A bridge is not a participant of the file. It appears in the result (`participan
 
 The messages say how the bridge ended and quote the line in which it said why: its last line that starts with `error:` or `FAIL`, after its tag such as `[eth-bridge]`. A bridge that was killed, or ended without such a line, has none quoted (its last line would be about something else, such as `stopped`). `run` watches the bridge's process: a bridge that ends before it connects to SIL Kit fails the start at once, without waiting for `start_timeout_ms`.
 
-A real bus does not wait for the virtual time. The check warns with `connect-not-real-time` when the run's speed is not 1 (`--speed`, or else `speed` in the file; without a speed the run goes as fast as possible), and with `connect-start-paused` for `--start-paused` (see [simulation-check.md](simulation-check.md)). Both are warnings of the check, so with `--strict` the run fails before anything starts. Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. The first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended.
+A real bus does not wait for the virtual time: see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy) below.
+
+### Time of a run that is connected outside (`--time-policy`)
+
+A run is connected outside the simulation if at least one of these holds:
+
+- `--connect` connects a network (a target other than `none`).
+- The file has an enabled participant with `role: bridge` (also one with `describe: false`). A participant that is disabled (`enabled: false`, `--disable`) does not count.
+
+What is connected there does not wait for the virtual time, so by default such a run keeps real time. `--time-policy` chooses:
+
+| `--time-policy` | Speed of the run | `--speed` other than 1, `--start-paused` |
+|---|---|---|
+| `realtime` (the default) | 1, whatever `speed` the file has. The note `outside-speed-set` says so when the file's speed is not 1 (also without a speed). | The error `outside-real-time` of the check: nothing starts. |
+| `free` | As in any run: `--speed`, or else `speed` in the file, or else as fast as possible. | Accepted. The note `outside-not-real-time` says that the run is not in real time. |
+
+- `--time-policy` has no effect on a run that is not connected outside.
+- `check`, `run` and `test` take it. `check` judges the file's `speed`; `run` also its `--speed` and `--start-paused`. `check --json` has the decision in `time_lock` (see [simulation-check.md](simulation-check.md#json---json)).
+- `test` runs each scenario as fast as possible, but at speed 1 when the file has an enabled `role: bridge` participant (the note `outside-speed-set`). The table of `test` then has the note `test-speed-set` after it, once for all the runs. To run them as fast as possible all the same, pass `--time-policy free` or `--disable` the bridge.
+- `free` changes only what you may do with the time. The bridge still carries frames both ways: while the simulation is paused, frames from outside pile up, and what the ECUs sent before stays sent.
+- The notes do not fail a run with `--strict`.
+- A real-time participant of your own (an ECU or a `role: test` participant without a step) does not make the run keep real time.
+
+Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. In a run with `--connect`, the first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended. A run that only a `role: bridge` participant connects outside does not get this warning.
 
 ### Counting the frames to and from the bus
 
@@ -341,7 +366,7 @@ When the simulation ran and a bridge sent frames to the bus but none came from a
 network 'ETH_EXT': nothing came from a device on the real bus (vEthernet (A)) before the run ended: bridge.ETH_EXT sent 152 frames there and got none from a device (frames that this computer sent do not count). If a device is meant to answer, check that it is on, its cable, and that --connect names the adapter it is on; a short run can end before a device answers
 ```
 
-For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`, because it runs each scenario as fast as possible.
+For an automatic test with a device on the bus, run one scenario at speed 1 with `--strict`. `test` does not take `--connect`: it is made for runs that go as fast as possible, one after the other, and a real bus does not wait for the virtual time.
 
 ```sh
 vehicle_sil_launch run --scenario <scenario> --speed 1 --strict --connect <network>=<target> <file>
@@ -1312,6 +1337,10 @@ For a program that decides whether frames arrived, read `delivered` of each netw
         "outside": null
       }
     ],
+    "time_lock": {
+      "locked": false,
+      "because": []
+    },
     "findings": []
   }
 }
@@ -1717,7 +1746,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 - For a `FAILED` run that has only warnings under `--strict`, the right column shows the first warning.
 - A configuration file without variants gives no `variant` column.
 
-The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
+The command to rerun one run alone (`to see a failed run in full, ...`) is for the first failed run. It lists the options given to `test` that apply to that run, so it reproduces the same run. The options listed are `--param` (only names that are in that run's scenario), `--disable`, `--enable`, `--strict`, `--timeout-ms` and `--describe-timeout-ms`. The command has `--speed max`, as `test` runs; it has none for a run that went at speed 1 because a `role: bridge` participant connects it outside (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)), and `--time-policy free` if `test` had it. Paths and values that contain white space or similar characters are enclosed in `'...'` so that you can paste them into a POSIX shell (sh, bash). In the Windows Command Prompt, `'` does not quote, so change them to `"..."`.
 
 The last line is `passed`, `FAILED` or `interrupted`, followed by the counts of runs. The counts of `interrupted` and `not run` appear only when there are such runs.
 
@@ -1734,6 +1763,7 @@ Findings for the whole `test` are written after the table, one line each, as `<s
 |---|---|---|
 | `test-nothing-run` | Warning | No run was carried out (every run is `skipped`), so nothing was checked (a failure with `--strict`) |
 | `test-runs-left` | Error | Some runs were not carried out although `test` was not interrupted |
+| `test-speed-set` | Note | Some runs went at speed 1, not as fast as possible, because a `role: bridge` participant connects them outside the simulation (once for the whole `test`, with the note `outside-speed-set` of the first such run) |
 
 `test-runs-left` appears when the launcher's own SIL Kit connection did not close after a run (that run has the warning `connection-not-closed`; see [Stopping a run](#stopping-a-run)). `test` then ends without starting another simulation in the same process. Select the `not run` runs with `--variant` and `--scenarios` and run them again.
 
@@ -1767,7 +1797,7 @@ One JSON object. The rules (key order, `null`, indentation, line breaks, how ver
 | `scenarios` | The scenarios to run (names as shown in the table, in run order) |
 | `passed`, `failed`, `skipped`, `interrupted`, `not_run` | Number of runs with each result |
 | `runs[]` | Result per run (see the table below), in run order |
-| `findings[]` | Why nothing was run (when `result` is `"usage"` or `"unreadable"`), and the findings for the whole `test` (`test-nothing-run`, `test-runs-left`). Empty if there are none |
+| `findings[]` | Why nothing was run (when `result` is `"usage"` or `"unreadable"`), and the findings for the whole `test` (`test-nothing-run`, `test-runs-left`, `test-speed-set`). Empty if there are none |
 
 `findings[]` has the same form as `findings[]` of the check.
 

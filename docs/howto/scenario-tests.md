@@ -608,7 +608,7 @@ to see a failed run in full, run it alone: vehicle_sil_launch run simulation.var
 FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 ```
 
-When a run fails, the remaining runs still run. The command on the `to see a failed run in full` line reruns only the failed run, as `test` ran it (`--speed max`: as fast as possible).
+When a run fails, the remaining runs still run. The command on the `to see a failed run in full` line reruns only the failed run, as `test` ran it (`--speed max`: as fast as possible). If the file has an enabled `role: bridge` participant, `test` runs at speed 1 and the command has no `--speed max` (see [Time of a run that is connected outside](../simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
 
 | Goal | How |
 |---|---|

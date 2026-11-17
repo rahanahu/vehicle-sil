@@ -1353,6 +1353,10 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "outside": null
     }
   ],
+  "time_lock": {
+    "locked": false,
+    "because": []
+  },
   "findings": [
     {
       "severity": "error",
@@ -1393,6 +1397,27 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
           std::string::npos);
 }
 
+TEST_CASE(the_json_report_has_the_time_lock_and_what_it_is_because_of)
+{
+    CheckReport r;
+    r.file = "x.yaml";
+    r.config = SimulationConfig{};
+    r.time_lock = TimeLock{true, {"ETH", "CAN1"}, {"Gateway"}};
+    CHECK(format_json(r).find("  \"networks\": [],\n"
+                              "  \"time_lock\": {\n"
+                              "    \"locked\": true,\n"
+                              "    \"because\": [\n"
+                              "      \"ETH\",\n"
+                              "      \"CAN1\",\n"
+                              "      \"Gateway\"\n"
+                              "    ]\n"
+                              "  },\n"
+                              "  \"findings\": []\n") != std::string::npos);
+    // Not locked (--time-policy free), but connected outside: the names all the same.
+    r.time_lock.locked = false;
+    CHECK(format_json(r).find("  \"time_lock\": {\n    \"locked\": false,\n    \"because\": [\n      \"ETH\",\n") != std::string::npos);
+}
+
 TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
 {
     CheckReport r;
@@ -1414,6 +1439,7 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
   "registry_uri": null,
   "participants": [],
   "networks": [],
+  "time_lock": null,
   "findings": [
     {
       "severity": "error",
@@ -1450,6 +1476,7 @@ TEST_CASE(the_json_report_of_a_wrong_command_line)
   "registry_uri": null,
   "participants": [],
   "networks": [],
+  "time_lock": null,
   "findings": [
     {
       "severity": "error",
@@ -3239,7 +3266,7 @@ TEST_CASE(check_connections_says_when_a_bridge_is_missing_or_fails)
                                                                0) == 0);
 }
 
-TEST_CASE(check_connections_leaves_the_time_to_connect_time_findings)
+TEST_CASE(check_connections_leaves_the_time_to_time_lock_findings)
 {
     Setup s = connect_setup();
     s.config.speed.reset();
@@ -3247,42 +3274,194 @@ TEST_CASE(check_connections_leaves_the_time_to_connect_time_findings)
     check_text(connect_lines(s, {{"ETH", "eth0"}, {"CAN1", "virtual:1"}}, fake), "");
 }
 
-TEST_CASE(connect_time_findings_judge_the_speed_the_simulation_runs_at)
+namespace {
+
+/// A configuration with these participants (each enabled, role: ecu, unless changed).
+SimulationConfig time_config(std::vector<ParticipantConfig> participants)
 {
-    const NetworkOutside eth{"ETH", "vehicle_sil_ethernet_bridge", {}, "eth0", "bridge.ETH", std::nullopt};
-    const NetworkOutside can{"CAN1", "vehicle_sil_vector_xl_bridge", {}, "virtual:1", "bridge.CAN1", std::nullopt};
-    const std::vector<NetworkOutside> both{eth, can};
-    const std::vector<NetworkOutside> one{eth};
-    using RunSpeed = std::optional<std::optional<double>>;
-    // check, or run without --speed: the file's speed.
-    check_text(lines(connect_time_findings(both, std::nullopt, RunSpeed{}, false)),
-               "W 0 connect-not-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the "
-               "virtual time, and the file runs the simulation as fast as possible (no speed): the devices there get the "
-               "messages at the wrong times. Run in real time: write speed: 1 in the file, or run with --speed 1 (--strict "
-               "makes this a failure, for an automatic test)\n");
-    check_text(lines(connect_time_findings(one, 2.0, RunSpeed{}, false)),
-               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and the file runs the simulation at speed 2: the devices there get the messages at the wrong times. Run in "
-               "real time: write speed: 1 in the file, or run with --speed 1 (--strict makes this a failure, for an "
-               "automatic test)\n");
-    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{}, false)), "");
-    // run --speed: that speed, whatever the file has.
-    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{std::optional<double>(2.0)}, false)),
-               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and --speed 2 runs the simulation at that speed: the devices there get the messages at the wrong times. Run "
-               "in real time: --speed 1 (--strict makes this a failure, for an automatic test)\n");
-    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{std::optional<double>{}}, false)),
-               "W 0 connect-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
-               "and --speed max runs the simulation as fast as possible: the devices there get the messages at the wrong "
-               "times. Run in real time: --speed 1 (--strict makes this a failure, for an automatic test)\n");
-    check_text(lines(connect_time_findings(one, std::nullopt, RunSpeed{std::optional<double>(1.0)}, false)), "");
-    // --start-paused.
-    check_text(lines(connect_time_findings(one, 1.0, RunSpeed{}, true)),
-               "W 0 connect-start-paused: --connect connects ETH to a real bus, which does not stand still: with "
-               "--start-paused, the devices there go on while the simulation waits for its first step. To stop the "
-               "simulation and look at it, run it without --connect (on SIL Kit only)\n");
-    // Nothing connected (no --connect, or only none): nothing to say.
-    check_text(lines(connect_time_findings({}, std::nullopt, RunSpeed{std::optional<double>(2.0)}, true)), "");
+    SimulationConfig config;
+    config.participants = std::move(participants);
+    return config;
+}
+
+ParticipantConfig disabled(ParticipantConfig p)
+{
+    p.enabled = false;
+    return p;
+}
+
+/// "E outside-real-time\n" for each finding.
+std::string codes(const std::vector<Finding>& findings)
+{
+    std::string out;
+    for (const Finding& f : findings)
+    {
+        out += std::string(f.severity == Severity::Error ? "E " : f.severity == Severity::Warning ? "W " : "N ") + f.code + "\n";
+    }
+    return out;
+}
+
+using AskedSpeed = std::optional<std::optional<double>>;
+const AskedSpeed kNoSpeedAsked{};
+const AskedSpeed kSpeedMax{std::optional<double>{}};
+AskedSpeed asked_speed(double speed) { return AskedSpeed{std::optional<double>(speed)}; }
+
+} // namespace
+
+TEST_CASE(time_policy_names)
+{
+    CHECK(std::string(to_string(TimePolicy::Realtime)) == "realtime" && std::string(to_string(TimePolicy::Free)) == "free");
+    CHECK(time_policy_named("realtime") == TimePolicy::Realtime && time_policy_named("free") == TimePolicy::Free);
+    CHECK(!time_policy_named("Realtime") && !time_policy_named("") && !time_policy_named("warn"));
+    CHECK(CheckOptions{}.time_policy == TimePolicy::Realtime);
+}
+
+TEST_CASE(time_lock_counts_the_connect_requests_and_the_enabled_bridges)
+{
+    const ParticipantConfig ecu = participant("Engine", 5);
+    const ParticipantConfig bridge = with_role(participant("Gateway", 8), ParticipantRole::Bridge);
+    const ParticipantConfig blind = with_role(participant("Tap", 11, std::nullopt, false), ParticipantRole::Bridge);
+    const ParticipantConfig tester = with_role(participant("Tester", 14), ParticipantRole::Test);
+    const std::vector<ConnectRequest> none{};
+    const std::vector<ConnectRequest> off{{"ETH", "none"}};
+    const std::vector<ConnectRequest> on{{"ETH", "eth0"}};
+    const std::vector<ConnectRequest> mixed{{"CAN1", "virtual:1"}, {"LIN", "none"}, {"ETH", "eth0"}};
+    const auto names = [](const TimeLock& lock) {
+        std::string out;
+        for (const std::string& name : lock.because())
+        {
+            out += (out.empty() ? "" : ", ") + name;
+        }
+        return (lock.locked ? "locked: " : "not locked: ") + out;
+    };
+    for (const TimePolicy policy : {TimePolicy::Realtime, TimePolicy::Free})
+    {
+        const std::string is = policy == TimePolicy::Realtime ? "locked: " : "not locked: ";
+        // Nothing outside: no --connect or only none; ECUs, test participants (real-time peers too).
+        CHECK(time_lock(time_config({ecu, tester}), none, policy) == TimeLock{});
+        CHECK(time_lock(time_config({ecu, tester}), off, policy) == TimeLock{});
+        // A disabled bridge does not count.
+        CHECK(time_lock(time_config({ecu, disabled(bridge), disabled(blind)}), off, policy) == TimeLock{});
+        // --connect to something.
+        check_text(names(time_lock(time_config({ecu}), on, policy)), is + "ETH");
+        check_text(names(time_lock(time_config({ecu}), mixed, policy)), is + "CAN1, ETH");
+        // An enabled role: bridge participant, also with describe: false.
+        check_text(names(time_lock(time_config({ecu, bridge}), none, policy)), is + "Gateway");
+        check_text(names(time_lock(time_config({ecu, blind}), off, policy)), is + "Tap");
+        check_text(names(time_lock(time_config({bridge, ecu, disabled(blind)}), none, policy)), is + "Gateway");
+        // Both: the networks first.
+        const TimeLock both = time_lock(time_config({blind, ecu, bridge}), mixed, policy);
+        check_text(names(both), is + "CAN1, ETH, Tap, Gateway");
+        CHECK(both.connected == std::vector<std::string>({"CAN1", "ETH"}) && both.bridges == std::vector<std::string>({"Tap", "Gateway"}));
+    }
+}
+
+TEST_CASE(planned_speed_is_1_with_the_time_lock)
+{
+    const TimeLock locked{true, {"ETH"}, {}};
+    const TimeLock free{false, {"ETH"}, {}};
+    for (const AskedSpeed& asked : {kNoSpeedAsked, kSpeedMax, asked_speed(1.0), asked_speed(4.0)})
+    {
+        for (const std::optional<double>& otherwise : {std::optional<double>{}, std::optional<double>(1.0), std::optional<double>(2.0)})
+        {
+            CHECK(planned_speed(locked, asked, otherwise) == std::optional<double>(1.0));
+            for (const TimeLock& open : {free, TimeLock{}})
+            {
+                CHECK(planned_speed(open, asked, otherwise) == (asked ? *asked : otherwise));
+            }
+        }
+    }
+}
+
+TEST_CASE(time_lock_findings_refuse_another_speed_and_a_paused_start_with_the_lock)
+{
+    const TimeLock locked{true, {"ETH"}, {}};
+    const TimeLock free{false, {"ETH"}, {}};
+    const TimeLock nothing{};
+    const std::optional<double> max{};
+    // Nothing connected outside: nothing to say, whatever is asked.
+    check_text(codes(time_lock_findings(nothing, asked_speed(2.0), max, true)), "");
+    check_text(codes(time_lock_findings(nothing, kNoSpeedAsked, 2.0, true)), "");
+
+    // No speed asked for, and none in the file.
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, false)), "N outside-speed-set\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, max, false)), "N outside-not-real-time\n");
+    // The file's speed.
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 2.0, false)), "N outside-speed-set\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 2.0, false)), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, false)), "");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, false)), "");
+    // --speed: an error with the lock unless it is 1, whatever the file has.
+    for (const std::optional<double>& file : {max, std::optional<double>(1.0), std::optional<double>(2.0)})
+    {
+        check_text(codes(time_lock_findings(locked, asked_speed(2.0), file, false)), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, asked_speed(0.5), file, false)), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, kSpeedMax, file, false)), "E outside-real-time\n");
+        check_text(codes(time_lock_findings(locked, asked_speed(1.0), file, false)), "");
+        check_text(codes(time_lock_findings(free, asked_speed(2.0), file, false)), "N outside-not-real-time\n");
+        check_text(codes(time_lock_findings(free, kSpeedMax, file, false)), "N outside-not-real-time\n");
+        check_text(codes(time_lock_findings(free, asked_speed(1.0), file, false)), "");
+    }
+    // --start-paused, alone and with a speed.
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, 1.0, true)), "E outside-real-time\n");
+    check_text(codes(time_lock_findings(free, kNoSpeedAsked, 1.0, true)), "N outside-not-real-time\n");
+    check_text(codes(time_lock_findings(locked, asked_speed(2.0), 1.0, true)), "E outside-real-time\nE outside-real-time\n");
+    check_text(codes(time_lock_findings(locked, kNoSpeedAsked, max, true)), "N outside-speed-set\nE outside-real-time\n");
+    check_text(codes(time_lock_findings(free, asked_speed(2.0), 1.0, true)), "N outside-not-real-time\nN outside-not-real-time\n");
+}
+
+TEST_CASE(time_lock_findings_say_what_is_connected_and_how_to_go_on)
+{
+    const std::string freely = "pass --time-policy free if what is connected there can take messages that do not come in real "
+                               "time (the bridge still carries frames both ways)";
+    const TimeLock networks{true, {"ETH", "CAN1"}, {}};
+    check_text(lines(time_lock_findings(networks, asked_speed(2.0), 1.0, true)),
+               "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the virtual "
+               "time, so the run goes at speed 1: --speed 2 is refused. Leave --speed out; to go at another speed, run "
+               "without --connect, or " + freely + "\n"
+               "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not stand still: "
+               "--start-paused is refused. To stop the simulation and look at it, run without --connect, or " + freely + "\n");
+    check_text(lines(time_lock_findings(networks, kSpeedMax, 1.0, false)),
+               "E 0 outside-real-time: --connect connects ETH and CAN1 to a real bus, which does not wait for the virtual "
+               "time, so the run goes at speed 1: --speed max is refused. Leave --speed out; to go at another speed, run "
+               "without --connect, or " + freely + "\n");
+    const TimeLock bridge{true, {}, {"Gateway"}};
+    check_text(lines(time_lock_findings(bridge, kNoSpeedAsked, 2.0, false)),
+               "N 0 outside-speed-set: participant 'Gateway' is a bridge (role: bridge) to something outside the "
+               "simulation, which does not wait for the virtual time: the run goes at speed 1 (real time), not at the "
+               "speed 2 of the file. To go at another speed, run with --disable Gateway, or " + freely + "\n");
+    const TimeLock all{true, {"ETH"}, {"Gateway", "Tap"}};
+    check_text(lines(time_lock_findings(all, kNoSpeedAsked, std::nullopt, false)),
+               "N 0 outside-speed-set: --connect connects ETH to a real bus, and participants 'Gateway' and 'Tap' are "
+               "bridges (role: bridge) to something outside the simulation, which does not wait for the virtual time: the "
+               "run goes at speed 1 (real time), not as fast as possible. To go at another speed, run without --connect "
+               "and with --disable Gateway --disable Tap, or " + freely + "\n");
+    // free: notes, which say that the bridge goes on in both directions.
+    const TimeLock free{false, {"ETH"}, {}};
+    check_text(lines(time_lock_findings(free, asked_speed(2.0), 1.0, true)),
+               "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and with --time-policy free --speed 2 runs the simulation at that speed: what is connected there gets the "
+               "messages at the wrong times, and the bridge still carries frames both ways. To run in real time, leave "
+               "--time-policy free and --speed out\n"
+               "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not stand still, and with "
+               "--time-policy free --start-paused makes the simulation wait before its first step: the bridge still "
+               "carries frames both ways, so frames from outside pile up while the simulation stands still. To run in "
+               "real time, leave --time-policy free and --start-paused out\n");
+    check_text(lines(time_lock_findings(free, kSpeedMax, 1.0, false)),
+               "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and with --time-policy free --speed max runs the simulation as fast as possible: what is connected there "
+               "gets the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
+               "leave --time-policy free and --speed out\n");
+    check_text(lines(time_lock_findings(free, kNoSpeedAsked, 2.0, false)),
+               "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and with --time-policy free the simulation runs at the speed 2 of the file: what is connected there gets "
+               "the messages at the wrong times, and the bridge still carries frames both ways. To run in real time, "
+               "leave --time-policy free out\n");
+    check_text(lines(time_lock_findings(free, kNoSpeedAsked, std::nullopt, false)),
+               "N 0 outside-not-real-time: --connect connects ETH to a real bus, which does not wait for the virtual time, "
+               "and with --time-policy free the simulation runs as fast as possible: what is connected there gets the "
+               "messages at the wrong times, and the bridge still carries frames both ways. To run in real time, leave "
+               "--time-policy free out\n");
 }
 
 TEST_CASE(check_connections_without_tools_reads_only_the_requests)

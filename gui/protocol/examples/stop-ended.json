@@ -25,13 +25,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 271,
-      "last_t_ms": 2710,
+      "last_seq": 162,
+      "last_t_ms": 1620,
       "time": {
         "event": "time",
-        "seq": 253,
-        "t_ms": 2530,
-        "sim_ms": 110420,
+        "seq": 144,
+        "t_ms": 1440,
+        "sim_ms": 55740,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -285,6 +285,10 @@
             "outside": null
           }
         ],
+        "time_lock": {
+          "locked": false,
+          "because": []
+        },
         "findings": [
           {
             "severity": "note",
@@ -374,7 +378,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 265,
+        "seq": 156,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -400,7 +404,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 110420,
+          "sim_ms": 55740,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -468,7 +472,7 @@
         ],
         "outside": [],
         "traffic": {
-          "before_ms": 110420,
+          "before_ms": 55740,
           "unplaced": [
             {
               "participant": "Logger",
@@ -495,8 +499,8 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110410,
-                  "frames_sent": 1106,
+                  "at_ms": 55730,
+                  "frames_sent": 559,
                   "frames_received": 0
                 },
                 {
@@ -504,9 +508,9 @@
                   "counted": true,
                   "not_counted": null,
                   "virtual_time": true,
-                  "at_ms": 110410,
+                  "at_ms": 55730,
                   "frames_sent": 0,
-                  "frames_received": 1106
+                  "frames_received": 559
                 }
               ]
             }
@@ -769,6 +773,10 @@
               "outside": null
             }
           ],
+          "time_lock": {
+            "locked": false,
+            "because": []
+          },
           "findings": [
             {
               "severity": "note",
@@ -789,7 +797,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 221,
+          "kept": 112,
           "dropped": 0
         }
       },
@@ -798,7 +806,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-motion-expect, scenario-points-file, timeline, timeline-lines, scenario-inputs, network-names, run-traffic, j1939-nodes, connect, connections, connect-counts, state, time-policy, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
