@@ -21,6 +21,11 @@ struct Command
     /// The value of "command" if the line is a JSON object whose "command" is a string.
     std::optional<std::string> name{};
     bool accepted = false;
+    /// Only in what TimeCommands::apply() returns: the command waits to be decided (the run has
+    /// not read its configuration yet, so it is not known whether its time is locked). It is
+    /// neither accepted nor refused (`accepted` is false, no reason), and no command event has
+    /// been written: both come when it is decided. Never in a command event.
+    bool pending = false;
     /// Why it was not accepted (one line), or "".
     std::string message{};
     /// Not accepted: the code of why (reason::* of control_rules.hpp; the command event's

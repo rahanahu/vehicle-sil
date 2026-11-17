@@ -229,6 +229,8 @@ public:
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
         outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
         outcome_.stop_at_ms = config.stop_at_ms;
+        outcome_.time_lock = check.time_lock;
+        outcome_.real_time_peers = detail::real_time_peers(config, check);
         // 1 with the time lock, whatever was asked for (the check refuses another --speed).
         const std::optional<double> speed = planned_speed(check.time_lock, options.speed, config.speed);
         if (ctx_.scenario != nullptr)
@@ -619,9 +621,18 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     CheckOptions check = options.check;
     check.run_speed = check.fastest_by_default ? std::optional<std::optional<double>>{} : options.speed;
     check.start_paused = options.start_paused;
-    report.check = check_file(path, shown_as, check);
+    // The controls get the time lock as soon as the configuration has been read, before any
+    // --describe: the time commands that came until then wait for it, and are decided there.
+    report.check = check_file(path, shown_as, check, [&controls](const TimeLock& lock) { controls.set_time_lock(lock); });
     event([&report](EventStream& e) { e.check(report.check); });
-    if (!report.check.config || !report.check.passed())
+    if (!report.check.config)
+    {
+        // No lock was given, and nothing starts: the time commands that waited for it are refused
+        // (each with its command event), as every command is from here on.
+        controls.end_without_time_lock();
+        return report;
+    }
+    if (!report.check.passed())
     {
         controls.set_phase(Phase::Ended);
         return report;

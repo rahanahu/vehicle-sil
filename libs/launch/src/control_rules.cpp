@@ -106,8 +106,9 @@ struct Rule
 //                            control server  all but write                      detached
 //   not-a-time-command       both            unknown                            always
 //                            standard input  write                              always
-//   outside-real-time        both            pause step run_until,              the time is locked
-//                                            speed other than 1 (also max)
+//   outside-real-time        both            pause step run_until,              the time is locked (the run is
+//                                            speed other than 1 (also max)      connected outside, --time-policy
+//                                                                               realtime)
 //   out-of-range (speed)     both            speed                              value not kMinSpeed..kMaxSpeed
 //   out-of-range (step)      both            step                               ms not 1..kMaxMillis
 //   missing-argument         both            run_until                          no at_ms
@@ -123,6 +124,11 @@ struct Rule
 //     takes one until the process ends); a control server's is refused once the simulation is over.
 // A write goes to the hub, not through the time commands: whether the run is over does not
 // matter to it here.
+//
+// The time lock and a scenario: the lock's row refuses whatever the scenario's row leaves (the
+// commands of standard input while a scenario plays). A control server's clients are refused by
+// the scenario's row, which stays first: the server refuses those calls itself, with that one
+// reason, before they come here (always_refused()), and the table must answer as it does.
 constexpr std::array<Rule, 10> kRules{{
     {reason::kScenarioRunning,
      [](const Query& q) {
@@ -151,8 +157,6 @@ constexpr std::array<Rule, 10> kRules{{
          return "'" + q.name_text() +
                 "' is no time command: the time commands are pause, resume, step, run_until and speed";
      }},
-    // Nothing locks the time yet (ControlSituation::time_locked); the wording is settled with
-    // what does.
     {reason::kOutsideRealTime,
      [](const Query& q) {
          return q.situation.time_locked &&
@@ -161,9 +165,14 @@ constexpr std::array<Rule, 10> kRules{{
                   q.arguments->speed != std::optional<double>(1.0)));
      },
      [](const Query& q) {
-         return "this run keeps to real time, because something connected to it does not wait for the virtual "
-                "time: " +
-                q.name_text() + " is refused (a resume, a speed of 1 and a stop are taken)";
+         return "this run is connected outside the simulation and keeps to real time (--time-policy realtime, the "
+                "default): " +
+                q.name_text() +
+                (q.is(Operation::Speed) ? std::string(" other than 1") : std::string()) +
+                " is refused, because what is connected does not wait while the virtual time stands still, jumps or "
+                "goes at another speed (a resume, a speed of 1 and a stop are taken). To move the time all the same, "
+                "start the run again with --time-policy free, or without the connection (no --connect, --disable for a "
+                "participant with role: bridge)";
      }},
     {reason::kOutOfRange,
      [](const Query& q) {
@@ -227,6 +236,20 @@ Allowed allowed(const ControlSituation& situation, Entry entry, Operation operat
 {
     Decision d = decide(situation, entry, operation, operation_name(operation), nullptr);
     Allowed out{d.ok, std::move(d.reason), std::move(d.message), std::nullopt, std::nullopt};
+    // What the lock would refuse is taken in a run whose time is the user's although it is
+    // connected outside: it is told with the answer.
+    if (out.ok && situation.time_free &&
+        (operation == Operation::Pause || operation == Operation::Step || operation == Operation::RunUntil ||
+         operation == Operation::Speed))
+    {
+        out.caution = Caution{
+            caution::kOutsideNotRealTime,
+            std::string("this run is connected outside the simulation with --time-policy free: ") +
+                operation_name(operation) + (operation == Operation::Speed ? " other than 1" : "") +
+                " is taken, but what is connected does not wait for the virtual time and its bridge still carries "
+                "frames both ways (frames from outside pile up while the simulation stands still); the run then ends "
+                "with the note outside-time-changed"};
+    }
     if (operation == Operation::Step)
     {
         out.range = ArgumentRange{1, static_cast<double>(kMaxMillis)};
@@ -246,13 +269,14 @@ std::optional<Decision> always_refused(bool scenario, Entry entry)
     {
         for (const bool paused : {false, true})
         {
-            for (const bool locked : {false, true})
+            // No lock, the lock, and the time left to the user (never both of the last two).
+            for (const int outside : {0, 1, 2})
             {
                 for (const Operation o : {Operation::Pause, Operation::Resume, Operation::Step, Operation::RunUntil,
                                           Operation::Speed, Operation::Write})
                 {
-                    Decision d = decide(ControlSituation{stage, paused, scenario, locked}, entry, o, operation_name(o),
-                                        nullptr);
+                    Decision d = decide(ControlSituation{stage, paused, scenario, outside == 1, outside == 2}, entry, o,
+                                        operation_name(o), nullptr);
                     if (d.ok || (first && first->reason != d.reason))
                     {
                         return std::nullopt;

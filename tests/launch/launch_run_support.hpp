@@ -510,6 +510,7 @@ void connect_lost_exit0(const Options& o);
 void connect_dies_while_waiting(const Options& o);
 void connect_speed(const Options& o);
 void connect_time_changed(const Options& o);
+void connect_time_locked(const Options& o);
 void docs(const Options& o);
 void check(const Options& o);
 void crash(const Options& o);

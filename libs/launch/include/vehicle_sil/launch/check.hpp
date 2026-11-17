@@ -412,7 +412,13 @@ struct CheckOptions
 /// looked for nor run. With CheckOptions::scenario, the scenario file is read and checked against
 /// the participants' descriptions as well (if the configuration could be read). Never throws for a
 /// problem of a file or of an executable: they are findings.
+///
+/// `on_time_lock`, if given, is called once with CheckReport::time_lock as soon as the
+/// configuration has been read (with --variant, --disable and --enable applied), before any
+/// executable is looked for or run; not at all if the configuration could not be read. A run
+/// gives its controls the lock there (run_file()), so that they know it before anything starts.
 [[nodiscard]] CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as,
-                                     const CheckOptions& options);
+                                     const CheckOptions& options,
+                                     const std::function<void(const TimeLock& lock)>& on_time_lock = {});
 
 } // namespace vehicle_sil::launch

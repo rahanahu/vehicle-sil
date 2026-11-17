@@ -62,9 +62,15 @@ struct ControlSituation
     bool paused = false;
     /// The run plays a scenario (run --scenario). Fixed for the run.
     bool scenario = false;
-    /// Something that does not wait for the virtual time keeps the run to real time
-    /// (TimeCommands::set_time_lock()). Fixed for the run once given; nothing gives it yet.
+    /// The run is connected outside the simulation and keeps to real time (TimeLock::locked of
+    /// time_plan.hpp, as TimeCommands::set_time_lock() was given it): what moves the time away
+    /// from real time is refused. Fixed for the run once given.
     bool time_locked = false;
+    /// The run is connected outside the simulation, and --time-policy free leaves its time to the
+    /// user (a TimeLock that names something and is not locked): nothing is refused for it, and
+    /// what moves the time away from real time has a caution (Allowed::caution). Fixed for the
+    /// run once given; never with time_locked.
+    bool time_free = false;
 };
 
 /// The codes of the refusals (lower case with hyphens), for a program to tell them apart without
@@ -88,6 +94,15 @@ inline constexpr const char* kUnknownSource = "unknown-source";     ///< apply()
 // Of the state alone (RunControls): no command is refused with it, as nothing could send one.
 inline constexpr const char* kNoControlServer = "no-control-server"; ///< the operation is a control server's, and the run has none
 } // namespace reason
+
+/// The codes of the cautions (Allowed::caution), as the reasons. Codes are added; the meaning of
+/// one stays.
+namespace caution {
+/// The run is connected outside the simulation with --time-policy free: the operation is taken,
+/// and what is outside does not wait for it (the check's note of the same name says so before
+/// the run).
+inline constexpr const char* kOutsideNotRealTime = "outside-not-real-time";
+} // namespace caution
 
 /// The answer of the rules.
 struct Decision
@@ -130,8 +145,9 @@ struct Allowed
     bool ok = true;
     std::string reason{};  ///< as Decision::reason
     std::string message{}; ///< as Decision::message
-    /// Taken, but with something to know. No row of the table gives one yet: the place is here so
-    /// that the state's form (allowed.<operation>.caution) does not change when one does.
+    /// Taken, but with something to know (never with a refusal). The one there is:
+    /// caution::kOutsideNotRealTime for pause, step, run_until and speed in a run that is connected
+    /// outside with --time-policy free (ControlSituation::time_free).
     std::optional<Caution> caution{};
     /// Step and Speed, taken or not: what the argument may be.
     std::optional<ArgumentRange> range{};
@@ -142,7 +158,7 @@ struct Allowed
 [[nodiscard]] Allowed allowed(const ControlSituation& situation, Entry entry, Operation operation);
 
 /// Whether `entry` is refused everything but a stop for the whole run (every stage, paused or not,
-/// with or without the time lock), all for one reason: that refusal, else empty. A control server
+/// whatever the time lock is), all for one reason: that refusal, else empty. A control server
 /// asks it once, before the run, to refuse those calls itself in one place (it only shows the run).
 [[nodiscard]] std::optional<Decision> always_refused(bool scenario, Entry entry);
 

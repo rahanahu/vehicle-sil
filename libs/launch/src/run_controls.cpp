@@ -67,6 +67,18 @@ void RunControls::set_phase(Phase phase)
     publish();
 }
 
+void RunControls::end_without_time_lock()
+{
+    phase_.store(Phase::Ended);
+    if (on_phase_)
+    {
+        on_phase_(Phase::Ended);
+    }
+    // Tells the state (the phase with it), then the commands that waited.
+    time_.detach();
+    publish();
+}
+
 RunState RunControls::compose(const TimeFacts& facts) const
 {
     RunState out;

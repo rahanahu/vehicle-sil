@@ -105,6 +105,18 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 
 拒否の理由は、trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。呼び出しごとの表と保証は [scenario.md](scenario.md) の「実行中に変数を見る」にあります。
 
+### 外につながる実行
+
+シミュレーションの外につながる実行（`--connect`、または有効な `role: bridge` の participant）は、`--time-policy free` で始めなければ、実時間を保ちます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」）。
+
+| 呼び出し | 実時間を保つ実行 |
+|---|---|
+| `Pause`、`Step`、`RunUntil`、1 以外の速度の `SetSpeed` | `FAILED_PRECONDITION` で拒否します。trailing metadata の `vehicle-sil-reason` は `outside-real-time` です。 |
+| `Resume`、速度 1 の `SetSpeed`、`Stop` | いつもどおりです。 |
+| 読む・待つ・書く呼び出し | いつもどおりです（この規則は時刻だけのものです）。 |
+
+`--time-policy free` では、どの呼び出しもいつもどおりです。止める、ステップで進める、速度を変える最初の呼び出しの後、実行は注記 `outside-time-changed` を付けて終わります。
+
 ### 始まる前に書く（`--start-paused`）
 
 `--control` と `--start-paused` を一緒に付けると、全員がそろった後、どの participant も時刻 0 のステップを始める前で止まり、`resume`、`step`、`run_until` のどれかを待ちます（標準入力からでも、クライアントからでもかまいません）。この間に書いた値は、各 ECU の時刻 0 のステップで反映されます（Parameter も書けます）。
@@ -194,10 +206,10 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 
 クライアントへのレスポンスは、受け付けなければ gRPC のエラーで、メッセージはイベントの `message` と同じです。
 
-| 受け付けない理由 | 状態コード |
-|---|---|
-| 引数のエラー（範囲の外の速度、0 以下のステップ） | `INVALID_ARGUMENT` |
-| 今はできないコマンド | `FAILED_PRECONDITION` |
+| 受け付けない理由 | 状態コード | trailing metadata の `vehicle-sil-reason` |
+|---|---|---|
+| 引数のエラー（範囲の外の速度、0 以下のステップ） | `INVALID_ARGUMENT` | ありません。 |
+| 今はできないコマンド | `FAILED_PRECONDITION` | イベントの `reason` です（`not-paused`、`not-running`、`outside-real-time` など。[simulation-events.md](simulation-events.md) の「理由のコード」）。 |
 
 `Stop` は、標準入力の `{"command":"stop"}` と同じです。
 
@@ -590,12 +602,12 @@ python -m vehicle_sil_control stop
 | `ControlError` のメンバー | 内容 |
 |---|---|
 | `code` | gRPC の状態コードです。 |
-| `reason` | Server が理由を付けて拒否したときの、その語です（なければ空）。 |
+| `reason` | Server が理由を付けて拒否したときの、その語です（trailing metadata の `vehicle-sil-reason`）。`scenario-running`、`outside-real-time` と、今はできない時刻のコマンドのほかの理由です（なければ空）。 |
 
 | 状態コード | 返るとき |
 |---|---|
 | `INVALID_ARGUMENT` | 引数のエラーです（範囲の外の速度、0 以下のステップ、`snapshot()` の名前が 1024 個を超える）。 |
-| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込みと時刻の操作）。 |
+| `FAILED_PRECONDITION` | 今はできない呼び出しです（一時停止していないときの `step`、終わった後の `Stop`、シナリオの実行中の書き込みと時刻の操作、外につながっていて実時間を保つ実行での一時停止や速度の変更）。 |
 | `CANCELLED` | 待っている間に、サーバーが閉じました（`WaitPaused`。`FAILED_PRECONDITION` のこともあります）。 |
 | `RESOURCE_EXHAUSTED` | `snapshot()` のレスポンスが、1 つのメッセージの上限（4 MiB）を超えました。 |
 | `UNIMPLEMENTED` | Server が、その呼び出しを持たない前のバージョンです。 |

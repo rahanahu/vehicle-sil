@@ -234,8 +234,15 @@ struct RunOutcome
     std::vector<RunOutside> outside{};
     /// The first time command of the simulation that changed how its time goes (a pause, a step, a
     /// run_until, a speed other than 1), if any: TimeCommands::first_time_change() once the
-    /// simulation is over. With --connect, the warning connect-time-changed.
+    /// simulation is over. The notes outside-time-changed (a run that is connected outside, which
+    /// accepts such a command only with --time-policy free) and unsynchronized-time-changed (a run
+    /// with real_time_peers).
     std::optional<TimeChange> time_changed{};
+    /// CheckReport::time_lock of the run: whether it kept to real time, and what connected it
+    /// outside the simulation.
+    TimeLock time_lock{};
+    /// The participants of the file that ran in real time (detail::real_time_peers()).
+    std::vector<std::string> real_time_peers{};
     /// What went over the networks; empty if the simulation did not start.
     std::optional<RunTraffic> traffic{};
     /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did

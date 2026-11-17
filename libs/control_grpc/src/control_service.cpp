@@ -498,7 +498,7 @@ public:
     template <typename F>
     grpc::Status with_time(v1::TimeState* reply, F&& f, const Call* call = nullptr, const char* what = nullptr)
     {
-        auto status = with_time_impl(reply, std::forward<F>(f));
+        auto status = with_time_impl(reply, std::forward<F>(f), call != nullptr ? call->context : nullptr);
         if (call != nullptr)
         {
             audit(*call, what != nullptr ? what : std::string(call->rule->what), status.ok() ? "ok" : status.error_message());
@@ -507,7 +507,7 @@ public:
     }
 
     template <typename F>
-    grpc::Status with_time_impl(v1::TimeState* reply, F&& f)
+    grpc::Status with_time_impl(v1::TimeState* reply, F&& f, grpc::ServerContext* context)
     {
         if (options_.time == nullptr)
         {
@@ -523,6 +523,16 @@ public:
             // The watches see the change at once, not only at the monitor's next read.
             monitor_->poll();
             detail::time_to_proto(options_.time->state(), *reply);
+        }
+        catch (const Refused& e)
+        {
+            // Why, for a program: sent as metadata, so only a word that is one there.
+            if (context != nullptr && !e.reason().empty() &&
+                e.reason().find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string::npos)
+            {
+                context->AddTrailingMetadata(kRefusalReasonKey, e.reason());
+            }
+            return error_status(e);
         }
         catch (const std::exception& e)
         {

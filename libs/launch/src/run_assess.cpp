@@ -117,20 +117,20 @@ std::optional<Finding> bridge_failure(const RunOutcome& outcome, const Participa
                    p.line, p.name, p.for_network};
 }
 
-/// connect-time-changed: a run --connect whose time a command paused, stepped or changed the speed
-/// of (the first such command), or nothing.
-std::optional<Finding> time_changed_finding(const RunOutcome& outcome)
+/// What a time command that changed how the time goes (the first such command of the run) means
+/// for what does not follow the virtual time; none without such a command:
+/// - the note outside-time-changed, in a run that is connected outside the simulation (it took
+///   the command, so its --time-policy is free);
+/// - the note unsynchronized-time-changed, in a run with participants that run in real time.
+std::vector<Finding> time_changed_findings(const RunOutcome& outcome)
 {
-    if (!outcome.time_changed || outcome.outside.empty())
+    std::vector<Finding> out;
+    const std::string outside = detail::connected_outside(outcome.time_lock);
+    if (!outcome.time_changed || (outside.empty() && outcome.real_time_peers.empty()))
     {
-        return std::nullopt;
+        return out;
     }
     const TimeChange& t = *outcome.time_changed;
-    std::vector<std::string> networks;
-    for (const RunOutside& o : outcome.outside)
-    {
-        networks.push_back(o.network);
-    }
     // The command as its event says it.
     std::string command = t.command;
     if (t.command == "step" && t.ms)
@@ -152,15 +152,44 @@ std::optional<Finding> time_changed_finding(const RunOutcome& outcome)
     const std::string effect = t.command != "speed" ? std::string("the simulation stood still")
                                : t.speed            ? "the simulation ran at speed " + speed_text(t.speed)
                                                     : std::string("the simulation ran as fast as possible");
-    return Finding{Severity::Warning, "connect-time-changed",
-                   "--connect connects " + detail::and_list(networks) +
-                       " to a real bus, which does not wait for the virtual time, and the run took the time command '" +
-                       command + "' from " + t.source + " at " + std::to_string(t.sim_ms) + " ms: " + effect +
-                       " while the devices there went on in real time, so from then on they got the messages at the wrong "
-                       "times. It is the first command of the run that paused, stepped or changed the speed (the command "
-                       "events show each one). To pause, step or change the speed, run without --connect (on SIL Kit "
-                       "only); --strict makes this a failure, for an automatic test",
-                   0, "", ""};
+    const std::string took = "the run took the time command '" + command + "' from " + t.source + " at " +
+                             std::to_string(t.sim_ms) + " ms";
+    const std::string first = "It is the first command of the run that paused, stepped or changed the speed (the command "
+                              "events show each one)";
+    if (!outside.empty())
+    {
+        out.push_back(Finding{Severity::Note, "outside-time-changed",
+                              outside + ", which does not wait for the virtual time, and with --time-policy free " + took +
+                                  ": " + effect +
+                                  " while what is connected there went on in real time, so from then on it got the messages "
+                                  "at the wrong times, and the bridge carried frames both ways all the while (frames from "
+                                  "outside pile up while the simulation stands still). " +
+                                  first + ". To keep the run to real time, leave --time-policy free out; to pause, step or "
+                                          "change the speed with nothing outside, run " +
+                                  detail::not_connected(outcome.time_lock),
+                              0, "", ""});
+    }
+    if (!outcome.real_time_peers.empty())
+    {
+        std::vector<std::string> quoted;
+        for (const std::string& name : outcome.real_time_peers)
+        {
+            quoted.push_back("'" + name + "'");
+        }
+        const bool one = quoted.size() == 1;
+        out.push_back(Finding{Severity::Note, "unsynchronized-time-changed",
+                              std::string(one ? "participant " : "participants ") + detail::and_list(quoted) +
+                                  (one ? " runs" : " run") + " in real time (no step: the virtual time does not move " +
+                                  (one ? "it" : "them") + "), and " + took + ": " + effect + " while " +
+                                  (one ? "that participant" : "those participants") +
+                                  " went on, so what " + (one ? "it" : "they") +
+                                  " sent and saw from then on does not fit the virtual time, and another run with the same "
+                                  "commands may go differently. " +
+                                  first + ". For a run that repeats, give " + (one ? "the participant" : "each of them") +
+                                  " a step (so that it follows the virtual time), or do not pause, step or change the speed",
+                              0, "", ""});
+    }
+    return out;
 }
 
 /// connect-nothing-received: a bridge of --connect that sent frames to the real bus while the
@@ -485,17 +514,19 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 "goes on at the speed from there, so the simulation came " +
                 std::to_string(t.slipped_ms) + " ms behind in all" +
                 (actual ? " and ran at " + speed_text(actual) + " times real time (pauses not counted)" : std::string{}) +
-                "; a device attached in real time got the ECUs' messages late by up to that. Lower the speed (speed, run "
+                "; a device attached in real time got the ECUs' messages late by up to that" +
+                (outcome.time_lock.locked
+                     ? " (" + detail::connected_outside(outcome.time_lock) +
+                           ": what is connected there does not wait, so the run was that far off from it)"
+                     : std::string{}) +
+                ". Lower the speed (speed, run "
                 "--speed), or find what is slow: an ECU whose step takes long needs a lighter step (a larger step of that "
                 "ECU does not help), and many ECUs with small steps cost a round of synchronisation per step (larger ECU "
                 "steps and a larger time_step_ms help then). The launcher cannot tell which participant is slow: leave ECUs "
                 "out one at a time (--disable <name>) and compare",
             nullptr);
     }
-    if (auto f = time_changed_finding(outcome))
-    {
-        out.push_back(std::move(*f));
-    }
+    std::ranges::move(time_changed_findings(outcome), std::back_inserter(out));
     std::ranges::move(nothing_received_findings(outcome), std::back_inserter(out));
     if (!outcome.timing.coarse_step_checked)
     {

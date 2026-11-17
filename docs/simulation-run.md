@@ -288,7 +288,7 @@ Pause, single-step and change the speed during a run with stdin commands and wit
 | Only `--stdin-commands` | After it has executed the step at time 0. |
 | `--control` | Before the step at time 0. |
 
-With `--connect`, the devices on the real bus do not stop or change speed with the simulation: `--start-paused` and a `--speed` other than 1 are refused unless you pass `--time-policy free`, and the run warns with `connect-time-changed` when a command changes the time (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
+With `--connect`, the devices on the real bus do not stop or change speed with the simulation: `--start-paused` and a `--speed` other than 1 are refused unless you pass `--time-policy free`, and so are the commands that pause, step or change the speed while the run lasts (see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)).
 
 ## Connecting a bus outside (`--connect`)
 
@@ -345,7 +345,21 @@ What is connected there does not wait for the virtual time, so by default such a
 - The notes do not fail a run with `--strict`.
 - A real-time participant of your own (an ECU or a `role: test` participant without a step) does not make the run keep real time.
 
-Pause, step, `run_until` and speed commands during the run are accepted, but the devices on the bus do not stop. In a run with `--connect`, the first accepted command that pauses or steps the simulation, or sets a speed other than 1, gives the run the warning `connect-time-changed` once, when the run ends: it names the command, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count. With `--strict` this warning fails the run after it has ended. A run that only a `role: bridge` participant connects outside does not get this warning.
+The commands during the run (stdin, a Control Server client, the GUI) follow the same choice:
+
+| Command | `realtime` (the default) | `free` |
+|---|---|---|
+| `pause`, `step`, `run_until`, `speed` other than 1 (also `max`) | Refused with the reason `outside-real-time`. Nothing changes. | Accepted. The run ends with the note `outside-time-changed`. |
+| `resume`, `speed` 1 | Accepted (they change nothing). | Accepted. |
+| `stop` | Accepted. | Accepted. |
+
+- The answer is the same from every entry: the `command` event has `accepted: false` and `reason: "outside-real-time"`, a Control Server client gets `FAILED_PRECONDITION` with that reason (see "In a run that is connected outside" in [control-api.md](control-api.md#in-a-run-that-is-connected-outside)), and without `--events` a refused stdin line is a line on stderr. The message says what to do: start the run again with `--time-policy free`, or without the connection.
+- The `state` event says it before you send anything: with `realtime`, `allowed.pause`, `allowed.step` and `allowed.run_until` have `ok: false` with that reason, and `allowed.speed` has `min` and `max` 1. With `free` they have `ok: true` and a `caution` with the code `outside-not-real-time` (see "The `state` event" in [simulation-events.md](simulation-events.md#the-state-event)).
+- A run with a scenario follows the same table.
+- A command that arrives before the launcher has read the configuration file waits, and is answered once the file is read: nothing gets past the rule by being early (see "When time commands are accepted" in [simulation-events.md](simulation-events.md#when-time-commands-are-accepted)).
+- `outside-time-changed` is written once, when the run ends: it names the first accepted command that paused or stepped the simulation or set a speed other than 1, where it came from and the virtual time it came at (the `command` events show every command). `resume`, a speed of 1 and `--start-paused` itself do not count.
+
+A real-time participant of your own does not stop either while the simulation is paused. In a run that has one (an ECU or a `role: test` participant whose `--describe` output has no step), the first such command gives the run the note `unsynchronized-time-changed` when it ends: what that participant sent and saw from then on does not fit the virtual time, and another run with the same commands can go differently. A participant with `describe: false`, and one that joins without being in the file, are not known to the launcher and get no note.
 
 ### Counting the frames to and from the bus
 
@@ -846,7 +860,8 @@ When the simulation started, the result shows after the participant table whethe
 | `participant-failed` | Error | A required participant failed during the run, and the simulation was aborted |
 | `connect-failed` | Error | The bridge of `--connect` did not get to run before the simulation started, so the simulation was not started; if it failed before the participants of the file were started, they were not (see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
 | `connect-lost` | Error | The bridge of `--connect` ended while the simulation was running, and the simulation was aborted; or it had ended when the simulation ended |
-| `connect-time-changed` | Warning | With `--connect`, a command paused or stepped the simulation, or set a speed other than 1, while the devices on the real bus went on (one for the run, about the first such command; see [Connecting a bus outside](#connecting-a-bus-outside---connect)) |
+| `outside-time-changed` | Note | In a run that is connected outside with `--time-policy free`, a command paused or stepped the simulation, or set a speed other than 1, while what is connected went on (one for the run, about the first such command; see [Time of a run that is connected outside](#time-of-a-run-that-is-connected-outside---time-policy)) |
+| `unsynchronized-time-changed` | Note | In a run with a participant that runs in real time (no step), a command paused or stepped the simulation, or set a speed other than 1, while that participant went on (one for the run, about the first such command) |
 | `connect-nothing-received` | Note | With `--connect`, the bridge of a network sent frames to the real bus, and none came from a device there (one for each such network; see [Counting the frames to and from the bus](#counting-the-frames-to-and-from-the-bus)) |
 | `exit-code` | Error (warning for `required: false`) | A participant's exit code is not 0, or it ended by a signal (when none of the above applies) |
 | `did-not-end` | Error | A required participant was still running `stop_timeout_ms` after the end of the simulation |
@@ -880,7 +895,7 @@ Notes on individual codes:
 | `control-link-late-values` | The ECU sends from outside its step (an error in hand-written communication code). |
 | `variable-map-not-applied` | Says which entries do not match, and why. |
 | `before-start` | The action is supplied by the code that calls `run` as a function (internal use). |
-| `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. |
+| `behind-real-time` | Gives the number of late time steps, the largest lateness, the total slip, the overall actual speed and, if the run ended while standing still, the lateness at that moment. In a run that keeps real time because it is connected outside, it also says that what is connected does not wait: the run was that far off from it. |
 | `coarse-time-step` | Gives by how many ms at most ECU steps are delayed and run bunched together, and the value to write in `time_step_ms`. |
 | `timeline-write` | The file holds only part of the record, so do not use it. The scenario result does not change, but this finding fails the run (exit code 1). Free some disk space or name another file, then run again (see [Recording a scenario run on a timeline](#recording-a-scenario-run-on-a-timeline---timeline)). |
 | `timeline-limit` | Gives the number of dropped points. The points at the end are all kept. The series and times are in `limits.dropped` of the file. If you need every point, make the scenario shorter. |

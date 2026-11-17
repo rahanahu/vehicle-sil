@@ -174,9 +174,11 @@ constexpr const char* kUsage =
     "  --time-policy realtime|free the time of a run that is connected outside the simulation (by --connect, or by\n"
     "                              an enabled participant with role: bridge). realtime (the default): it goes at\n"
     "                              speed 1 whatever speed <file> has; another --speed and --start-paused are the\n"
-    "                              error outside-real-time. free: the speed and the time are yours to change as\n"
-    "                              in any run; the bridge still carries frames both ways, so what is connected\n"
-    "                              there sees the simulation pause or run ahead. No effect on other runs\n"
+    "                              error outside-real-time, and the commands that pause or step it or change its\n"
+    "                              speed are refused while it runs. free: the speed and the time are yours to\n"
+    "                              change as in any run; the bridge still carries frames both ways, so what is\n"
+    "                              connected there sees the simulation pause or run ahead. No effect on other\n"
+    "                              runs\n"
     "  --network <name>            connections: only the network <name>\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -629,27 +631,37 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
 
 // --- the commands on standard input (run --stdin-commands) ---
 
+/// Without --events: a line of standard input that was not accepted, as a line on stderr.
+void note_stdin_ignored(const launch::Command& command)
+{
+    note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + command.message);
+}
+
 /// Reads standard input to its end on a thread of its own: each command as an event (or, without
-/// --events, a line on stderr for one that was not accepted); a stop as one Ctrl+C. Its end is a
-/// stop unless one was requested before.
+/// --events, a line on stderr for one that was not accepted: a time command's from the controls'
+/// observer, which also has the answer of one that waited for the run to read its configuration);
+/// a stop as one Ctrl+C. Its end is a stop unless one was requested before.
 void start_reading_commands()
 {
     std::thread([] {
         launch::EventStream* events = shared().events;
         launch::RunControls* controls = shared().controls;
         launch::CommandInput input([events, controls](const launch::Command& command) {
-            // The time commands: the run decides whether one can be done now, and writes its event
-            // before it does it (neither waits for the run or the reader of the events).
-            const launch::Command done =
-                command.is_time() && controls != nullptr ? controls->time().apply(command, "stdin") : command;
+            // The time commands: the run decides whether one can be done (now, or once it has read
+            // its configuration), and writes its event before it does it (neither waits for the run
+            // or the reader of the events). What it answers goes to the controls' observer.
+            if (command.is_time() && controls != nullptr)
+            {
+                static_cast<void>(controls->time().apply(command, "stdin"));
+            }
             // The event first: it comes before what the stop does (it does not wait for its reader).
-            if (events != nullptr && !command.is_time())
+            else if (events != nullptr && !command.is_time())
             {
                 events->command(command, "stdin");
             }
-            else if (events == nullptr && !done.accepted)
+            else if (events == nullptr && !command.accepted)
             {
-                note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + done.message);
+                note_stdin_ignored(command);
             }
             if (command.is_stop())
             {
@@ -1138,6 +1150,16 @@ int run(const cli::Args& args, launch::EventStream* events)
             };
             observers.on_phase = [events](launch::Phase phase) { events->phase(phase); };
             observers.on_state = [events](const launch::RunState& state) { events->state(state); };
+        }
+        else
+        {
+            // No event says what became of a command: a refused one of standard input is a line.
+            observers.on_command = [](const launch::Command& command, std::string_view source) {
+                if (!command.accepted && source == "stdin")
+                {
+                    note_stdin_ignored(command);
+                }
+            };
         }
         shared().controls =
             new launch::RunControls(g_stops, options.start_paused, std::move(observers), args.has("scenario"));

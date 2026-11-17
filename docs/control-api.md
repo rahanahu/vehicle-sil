@@ -105,6 +105,18 @@ In a scenario run (`--scenario`), a client can only read, wait and stop.
 
 `vehicle-sil-reason` in the trailing metadata (value `scenario-running`) identifies this rejection. For the table of calls and the guarantees, see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control).
 
+### In a run that is connected outside
+
+A run that is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) keeps real time unless it was started with `--time-policy free` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)).
+
+| Call | In a run that keeps real time |
+|---|---|
+| `Pause`, `Step`, `RunUntil`, `SetSpeed` with a speed other than 1 | Rejected with `FAILED_PRECONDITION`; `vehicle-sil-reason` in the trailing metadata is `outside-real-time`. |
+| `Resume`, `SetSpeed` with the speed 1, `Stop` | Work as usual. |
+| Read, wait and write calls | Work as usual (the rule is about time only). |
+
+With `--time-policy free` every call works as usual, and the run ends with the note `outside-time-changed` after the first call that pauses, steps or changes the speed.
+
 ### Write before the start (`--start-paused`)
 
 With both `--control` and `--start-paused`, once all participants have joined, every participant stops before its step at time 0 and waits for `resume`, `step` or `run_until`, from stdin or from a client. Values written during this wait are applied in each ECU's step at time 0. Parameters can be written too.
@@ -194,10 +206,10 @@ For example, if a `step` from a client and a `resume` from stdin overlap, the or
 
 If the launcher does not accept a command, the client gets a gRPC error whose message is the same as `message` of the event.
 
-| Reason for not accepting | Status code |
-|---|---|
-| An argument error (a speed out of range, a step of 0 or less) | `INVALID_ARGUMENT` |
-| A command that is not possible now | `FAILED_PRECONDITION` |
+| Reason for not accepting | Status code | `vehicle-sil-reason` in the trailing metadata |
+|---|---|---|
+| An argument error (a speed out of range, a step of 0 or less) | `INVALID_ARGUMENT` | None. |
+| A command that is not possible now | `FAILED_PRECONDITION` | The `reason` of the event (`not-paused`, `not-running`, `outside-real-time` and the others in "Reason codes" in [simulation-events.md](simulation-events.md#reason-codes)). |
 
 `Stop` is the same as `{"command":"stop"}` on stdin.
 
@@ -590,12 +602,12 @@ A failed call returns a gRPC status code. In Python, it raises the exception `Co
 | `ControlError` member | Details |
 |---|---|
 | `code` | The gRPC status code. |
-| `reason` | The word the server gave when it rejected the call with a reason. Empty otherwise. |
+| `reason` | The word the server gave when it rejected the call with a reason (`vehicle-sil-reason` in the trailing metadata): `scenario-running`, `outside-real-time`, and the other reasons of a time command that is not possible now. Empty otherwise. |
 
 | Status code | Returned when |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is wrong (a speed out of range, a step of 0 or less, more than 1024 names for `snapshot()`). |
-| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes and time control during a scenario). |
+| `FAILED_PRECONDITION` | The call is not possible now (`step` while not paused, `Stop` after the end, writes and time control during a scenario, a pause or another speed in a run that is connected outside and keeps real time). |
 | `CANCELLED` | The server closed while the call was waiting (`WaitPaused`; it can also get `FAILED_PRECONDITION`). |
 | `RESOURCE_EXHAUSTED` | The response of `snapshot()` was larger than the limit of one message (4 MiB). |
 | `UNIMPLEMENTED` | The server is an earlier version without that call. |

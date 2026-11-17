@@ -231,17 +231,25 @@ private:
     /// The command through the run's time commands (its event, its rules; `accepted` as
     /// TimeCommands::apply() calls it); a refusal as the
     /// exception the server answers with: std::invalid_argument (INVALID_ARGUMENT) for a
-    /// `bad_argument` while the run lasts, else std::logic_error (FAILED_PRECONDITION).
+    /// `bad_argument` while the run lasts, else control_grpc::Refused (FAILED_PRECONDITION, with
+    /// the code of the refusal, as the command event's "reason", for the client's program).
     void apply(const launch::Command& c, bool bad_argument, const std::function<void()>& accepted = {})
     {
         const launch::Command done = commands_.apply(c, kSource, accepted);
+        if (done.pending)
+        {
+            // Not while this server listens: the run gives its time commands the time lock before
+            // it starts the server. If it ever happens, the client is told what became of its call.
+            throw std::logic_error("the run has not read its configuration yet: the command waits and is decided once "
+                                   "it has (its command event says how); it is not sent again by this call");
+        }
         if (!done.accepted)
         {
             if (bad_argument && commands_.inspect([](SimulationController&, bool) {}) != launch::TimeCommands::Stage::Detached)
             {
                 throw std::invalid_argument(done.message);
             }
-            throw std::logic_error(done.message);
+            throw control_grpc::Refused(done.reason, done.message);
         }
     }
 

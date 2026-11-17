@@ -288,7 +288,7 @@ ECU と `vehicle_sil_launch` の間に認証はありません。registry に参
 | `--stdin-commands` だけ | 時刻 0 のステップを実行してから止まります。 |
 | `--control` がある | 時刻 0 のステップの前で止まります。 |
 
-`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。`--time-policy free` を付けなければ、`--start-paused` と 1 以外の `--speed` は断られます。命令が時間を変えると、実行は `connect-time-changed` を警告します（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
+`--connect` があると、実機のバスの機器はシミュレーションと一緒に止まらず、速さも変わりません。`--time-policy free` を付けなければ、`--start-paused` と 1 以外の `--speed` は断られます。実行中に止める、ステップで進める、速さを変えるコマンドも同じです（[外につながる実行の時間](#外につながる実行の時間--time-policy)）。
 
 ## バスを外につなぐ（`--connect`）
 
@@ -345,7 +345,21 @@ vehicle_sil_launch run --speed 1 --connect "ETH_EXT=vEthernet (A)" simulation.ya
 - 注記は、`--strict` でも実行を失敗にしません。
 - 自分で作った実時間の participant（ステップのない ECU や `role: test` の participant）は、実行を実時間に固定しません。
 
-実行中の一時停止、ステップ、`run_until`、速さの命令は受け付けますが、バスの機器は止まりません。`--connect` のある実行では、受け付けた命令のうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、実行の終わりに警告 `connect-time-changed` を 1 回出します。命令の名前と、どこから来たかと、来たときの仮想時間を書きます（命令はどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。`--strict` では、この警告で、実行が終わった後に失敗します。外とつなぐものが `role: bridge` の participant だけの実行には、この警告は出ません。
+実行中のコマンド（標準入力、Control Server のクライアント、GUI）も、同じ選択に従います。
+
+| コマンド | `realtime`（既定） | `free` |
+|---|---|---|
+| `pause`、`step`、`run_until`、1 以外の `speed`（`max` も） | 理由 `outside-real-time` で断ります。何も変わりません。 | 受け付けます。実行は、注記 `outside-time-changed` を付けて終わります。 |
+| `resume`、`speed` 1 | 受け付けます（何も変わりません）。 | 受け付けます。 |
+| `stop` | 受け付けます。 | 受け付けます。 |
+
+- 答えは、どの入口からでも同じです。`command` イベントは `accepted: false` と `reason: "outside-real-time"` になり、Control Server のクライアントには、その理由の付いた `FAILED_PRECONDITION` が返ります（[control-api.md](control-api.md) の「外につながる実行」）。`--events` がなければ、断った標準入力の行は標準エラーの 1 行になります。メッセージに、どうすればよいかがあります（`--time-policy free` で始め直すか、外につながずに実行する）。
+- 送る前に、`state` イベントで分かります。`realtime` では、`allowed.pause`、`allowed.step`、`allowed.run_until` が、この理由の `ok: false` になり、`allowed.speed` の `min` と `max` が 1 になります。`free` では `ok: true` で、コード `outside-not-real-time` の `caution` が付きます（[simulation-events.md](simulation-events.md) の「`state` のイベント」）。
+- シナリオつきの実行も、同じ表に従います。
+- ランチャーが構成ファイルを読む前に届いたコマンドは待たされ、ファイルを読んだ後に答えが出ます。早く送っても、この規則をすり抜けません（[simulation-events.md](simulation-events.md) の「時間のコマンドを受け付ける条件」）。
+- `outside-time-changed` は、実行の終わりに 1 回書きます。受け付けたコマンドのうち、シミュレーションを止めるかステップで進めるか、1 以外の速さにした最初の 1 つについて、コマンドの名前と、どこから来たかと、来たときの仮想時間を書きます（コマンドはどれも `command` イベントにあります）。`resume`、速さ 1、`--start-paused` そのものは数えません。
+
+自分で作った実時間の participant も、シミュレーションが止まっている間、止まりません。そういう participant（`--describe` の出力にステップのない ECU や `role: test` の participant）のいる実行では、最初のそういうコマンドについて、実行の終わりに注記 `unsynchronized-time-changed` を書きます。その participant がそれ以後に送ったものと見たものは仮想時間に合わず、同じコマンドでもう一度実行しても、同じ動きになるとは限りません。`describe: false` の participant と、ファイルにないまま参加した participant は、ランチャーには分からないので、注記は出ません。
 
 ### 外のバスとやりとりしたフレームの数
 
@@ -846,7 +860,8 @@ passed: 0 errors, 1 warning, 1 note
 | `participant-failed` | エラー | 実行中に必須の participant が失敗し、シミュレーションを中断した |
 | `connect-failed` | エラー | シミュレーションが始まる前に、`--connect` のブリッジが動き出せなかったので、シミュレーションを始めなかった。ファイルの participant を起動する前の失敗なら、それらも起動しなかった（[バスを外につなぐ](#バスを外につなぐ--connect)） |
 | `connect-lost` | エラー | 実行中に `--connect` のブリッジが終わったので、シミュレーションを中断した。または、シミュレーションが終わったときに、もう終わっていた |
-| `connect-time-changed` | 警告 | `--connect` のある実行で、命令がシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も実機のバスの機器は動いていた（実行に 1 つ。最初のそういう命令について。[バスを外につなぐ](#バスを外につなぐ--connect)） |
+| `outside-time-changed` | 注記 | 外につながる実行を `--time-policy free` で動かし、コマンドがシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も、つながっている相手は動いていた（実行に 1 つ。最初のそういうコマンドについて。[外につながる実行の時間](#外につながる実行の時間--time-policy)） |
+| `unsynchronized-time-changed` | 注記 | 実時間で動く participant（ステップがない）のいる実行で、コマンドがシミュレーションを止めたかステップで進めたか、1 以外の速さにした。その間も、その participant は動いていた（実行に 1 つ。最初のそういうコマンドについて） |
 | `connect-nothing-received` | 注意 | `--connect` のある実行で、ネットワークのブリッジが実機のバスへフレームを送ったのに、そこの機器から 1 つも来なかった（そういうネットワークごとに 1 つ。[外のバスとやりとりしたフレームの数](#外のバスとやりとりしたフレームの数)） |
 | `exit-code` | エラー（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | エラー | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
@@ -880,7 +895,7 @@ passed: 0 errors, 1 warning, 1 note
 | `control-link-late-values` | ステップの外から送信しています（自作の通信の側のエラー）。 |
 | `variable-map-not-applied` | どれが、なぜ合わないかを書きます。 |
 | `before-start` | 処理は、`run` を関数として呼ぶ側が渡すものです（内部用）。 |
-| `behind-real-time` | 遅れたタイムステップの数、最大の遅れ、ずれの合計、全体の実際の速度、止まったまま終わったならそのときの遅れを書きます。 |
+| `behind-real-time` | 遅れたタイムステップの数、最大の遅れ、ずれの合計、全体の実際の速度、止まったまま終わったならそのときの遅れを書きます。外につながっていて実時間を保つ実行では、つながっている相手は待たないので、遅れた分だけ相手とずれたことも書きます。 |
 | `coarse-time-step` | ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます。 |
 | `timeline-write` | ファイルの中身は途中までなので使いません。シナリオの結果は変わりませんが、この指摘で実行は失敗です（終了コード 1）。空きを作るか、別のファイルを指定して、もう一度実行します（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)）。 |
 | `timeline-limit` | 捨てた点の数を書きます。終わりの側の点は全部あります。どの系列のどの時刻かは、ファイルの `limits.dropped` にあります。全部の点が要るなら、シナリオを短くします。 |

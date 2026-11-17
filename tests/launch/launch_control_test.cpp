@@ -650,13 +650,15 @@ void an_interrupt_ends_the_hold(const fs::path& ecu, const fs::path& helper, con
             "the run was interrupted after the start" + shown(run));
 }
 
-/// A resume before the window: the run does not hold (and runs to stop_at_ms).
+/// A resume before the window: the run does not hold (and runs to stop_at_ms). It comes before
+/// the run has read its configuration, so it waits for the run's time lock and is accepted then.
 void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
 {
     launch::StopRequests stops;
     launch::RunControls controls(stops, true);
     launch::TimeCommands& commands = controls.time();
-    require(commands.apply(resume_command(), "control_server").accepted, "the resume was refused");
+    const launch::Command early = commands.apply(resume_command(), "control_server");
+    require(early.pending && !early.accepted, "the resume before the run was decided without the run's time lock");
     const HoldRun run = hold_run(ecu, helper, dir, false, true, controls, std::nullopt, [] {});
     require(!run.held && run.report.result() == launch::RunResult::Passed && run.report.run &&
                 run.report.run->simulation == launch::SimulationEnd::ReachedStopAt,
