@@ -77,8 +77,8 @@ If something goes wrong, find the symptom in this table.
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels [--json]
-vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
-vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-channel <n> [options]
+vehicle_sil_vector_xl_bridge --registry-uri <silkit://host:port> --network <name> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--name <name>] [--start-timeout-ms <ms>] [--stats-every-ms <ms>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
+vehicle_sil_vector_xl_bridge --describe --network <name> --xl-target <virtual|physical> --xl-channel <n> [options]
 ```
 
 | Argument | Meaning |
@@ -89,7 +89,7 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `--xl-target <virtual\|physical>` | `virtual` selects Vector Virtual CAN (`XL_HWTYPE_VIRTUAL`); `physical` selects the CAN channels of all other hardware, such as CANcase and VN16xx (required). |
 | `--xl-channel <n>` | 1-based channel number among the CAN channels of that target (required). |
 | `--bitrate <bit/s>` | Sets the bit rate of the XL channel, 15000–1000000 bit/s (the range of `xlCanSetChannelBitrate`). |
-| `--network <name>` | Name of the SIL Kit CAN network (default `J1939_CAN1`). |
+| `--network <name>` | Name of the SIL Kit CAN network (required; there is no default, so that the bridge never joins a network by mistake). |
 | `--name <name>` | Participant name (default `VectorXlBridge`). |
 | `--participant <name>` | The same as `--name` (give one of them). |
 | `--start-timeout-ms <ms>` | How long the bridge waits for its participant to reach Running in SIL Kit (1–10^12, default 15000). If it does not, the bridge exits with code 3. |

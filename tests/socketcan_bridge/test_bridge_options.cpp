@@ -41,9 +41,9 @@ TEST_CASE(options_full_command_line)
 
 TEST_CASE(options_defaults)
 {
-    const auto options = parse({"--registry-uri", "silkit://x:1", "--interface", "vcan0"});
+    const auto options = parse({"--registry-uri", "silkit://x:1", "--network", "CAN", "--interface", "vcan0"});
     CHECK(options.participant == std::string("SocketCanBridge"));
-    CHECK(options.network == std::string("J1939_CAN1"));
+    CHECK(options.network == std::string("CAN"));
     CHECK(!options.bitrate);
     CHECK(!options.tx_timeout);
     CHECK(!options.statistics_interval);
@@ -51,39 +51,51 @@ TEST_CASE(options_defaults)
 
 TEST_CASE(options_name_and_participant_are_one_option)
 {
-    CHECK(parse({"--registry-uri", "r", "--interface", "can0", "--name", "A"}).participant == std::string("A"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--name", "A", "--participant", "B"}, "the same option"));
+    CHECK(parse({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--name", "A"}).participant == std::string("A"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--name", "A", "--participant", "B"}, "the same option"));
 }
 
 TEST_CASE(options_need_registry_and_interface)
 {
-    CHECK(usage_error({"--interface", "can0"}, "missing --registry-uri"));
-    CHECK(usage_error({"--registry-uri", "r"}, "missing --interface (see --list-channels)"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "a_name_longer_than_fifteen"}, "longer than 15"));
+    CHECK(usage_error({"--network", "CAN", "--interface", "can0"}, "missing --registry-uri"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN"}, "missing --interface (see --list-channels)"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "a_name_longer_than_fifteen"}, "longer than 15"));
+}
+
+TEST_CASE(options_need_network_there_is_no_default)
+{
+    const std::string missing = "missing --network: name the SIL Kit CAN network to bridge (there is no default";
+    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0"}, missing));
+    CHECK(usage_error({"--describe", "--interface", "can0"}, missing));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "", "--interface", "can0"}, missing));
+    CHECK(parse({"--list-channels"}).list_channels); // the list forms need no --network
+    CHECK(parse({"--list-channels", "--json"}).json);
+    CHECK(bridge_usage().find("(no default)") != std::string::npos);
+    CHECK(bridge_usage().find("J1939_CAN1") == std::string::npos);
 }
 
 TEST_CASE(options_describe_and_list_need_no_registry)
 {
-    CHECK(parse({"--describe", "--interface", "can0"}).describe);
+    CHECK(parse({"--describe", "--network", "CAN", "--interface", "can0"}).describe);
     const auto list = parse({"--list-channels", "--json"});
     CHECK(list.list_channels && list.json);
     CHECK(usage_error({"--list-channels", "--describe"}, "exclude each other"));
-    CHECK(usage_error({"--json", "--registry-uri", "r", "--interface", "can0"}, "--json is for --list-channels"));
+    CHECK(usage_error({"--json", "--registry-uri", "r", "--network", "CAN", "--interface", "can0"}, "--json is for --list-channels"));
 }
 
 TEST_CASE(options_bounds)
 {
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--bitrate", "14999"}, "between 15000 and 1000000"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--bitrate", "1000001"}, "invalid value for --bitrate"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--tx-timeout-ms", "99"}, "between 100 and 60000"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--stats-every-ms", "99"}, "between 100 and 3600000"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--start-timeout-ms", "0"}, "between 1 and"));
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--bitrate", "fast"}, "invalid value for --bitrate: fast"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--bitrate", "14999"}, "between 15000 and 1000000"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--bitrate", "1000001"}, "invalid value for --bitrate"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--tx-timeout-ms", "99"}, "between 100 and 60000"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--stats-every-ms", "99"}, "between 100 and 3600000"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--start-timeout-ms", "0"}, "between 1 and"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--bitrate", "fast"}, "invalid value for --bitrate: fast"));
 }
 
 TEST_CASE(options_unknown_and_missing_values)
 {
-    CHECK(usage_error({"--registry-uri", "r", "--interface", "can0", "--xl-target", "virtual"}, "unknown option: --xl-target"));
+    CHECK(usage_error({"--registry-uri", "r", "--network", "CAN", "--interface", "can0", "--xl-target", "virtual"}, "unknown option: --xl-target"));
     CHECK(usage_error({"--registry-uri", "r", "--interface"}, "missing value for --interface"));
     CHECK(usage_error({"can0"}, "unexpected argument: can0"));
 }

@@ -428,6 +428,9 @@ def refused(world: World) -> None:
     # The usage error is exit code 4.
     u = world.run([world.bridge_path, "--registry-uri", REGISTRY_URI])
     check(u.wait() == 4 and "error: missing --interface" in u.text(), f"a missing --interface is a usage error:\n{u.text()}")
+    n = world.run([world.bridge_path, "--registry-uri", REGISTRY_URI, "--interface", "vcan0"])
+    check(n.wait() == 4 and "error: missing --network: name the SIL Kit CAN network to bridge" in n.text(),
+          f"a missing --network is a usage error, the bridge joins no network by default:\n{n.text()}")
     say("refused: no interface, an interface down and no registry end with exit code 3 and the way to fix it")
 
     text = subprocess.run([world.bridge_path, "--list-channels"], capture_output=True, text=True)

@@ -11,7 +11,6 @@
 
 #include <filesystem>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -64,12 +63,6 @@ struct ConnectBackend
     bool listed_on_linux;  ///< `connections` lists it on Linux
     bool listed_on_windows;
 };
-
-/// Every backend of every kind (all OSes): the one place that says which bridge connects what.
-/// ethernet: npcap (Windows), packet and tap (Linux), all in vehicle_sil_ethernet_bridge. can: xl
-/// (vehicle_sil_vector_xl_bridge, named on any OS, listed on Windows) and socketcan
-/// (vehicle_sil_socketcan_bridge, Linux). LIN has none.
-[[nodiscard]] std::span<const ConnectBackend> connect_backends();
 
 /// The row of `name` for `kind` (a backend of any OS), or null.
 [[nodiscard]] const ConnectBackend* find_backend(NetworkKind kind, std::string_view name);

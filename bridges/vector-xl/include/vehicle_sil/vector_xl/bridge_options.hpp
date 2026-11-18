@@ -42,7 +42,7 @@ struct BridgeOptions
     /// --stats-every-ms: print the statistics line while running, at this interval where it
     /// changed. Unset: only once, when the bridge stops.
     std::optional<std::chrono::milliseconds> statistics_interval;
-    std::string network = "J1939_CAN1";
+    std::string network;
 
     XlTarget target = XlTarget::Virtual;
     unsigned channel = 0; ///< 1-based, see selectable_channels()
