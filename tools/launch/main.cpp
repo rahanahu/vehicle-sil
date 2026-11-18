@@ -705,19 +705,25 @@ void start_reading_commands()
         launch::EventStream* events = shared().events;
         launch::RunControls* controls = shared().controls;
         launch::CommandInput input([events, controls](const launch::Command& command) {
-            // The time commands: the run decides whether one can be done (now, or once it has read
-            // its configuration), and writes its event before it does it (neither waits for the run
-            // or the reader of the events). What it answers goes to the controls' observer.
-            if (command.is_time() && controls != nullptr)
+            // The time commands and a stop: the run's rules decide whether one is taken (a time
+            // command now, or once the run has read its configuration; a stop at once), as for a
+            // control server's, and its event is written before it is done (neither waits for the
+            // run or the reader of the events). What it answers goes to the controls' observer. An
+            // accepted stop is one Ctrl+C, asked under the time commands' mutex, so the state that
+            // follows the command's event says the request.
+            if ((command.is_time() || command.is_stop()) && controls != nullptr)
             {
-                static_cast<void>(controls->time().apply(command, "stdin"));
+                static_cast<void>(command.is_stop()
+                                      ? controls->time().apply(command, "stdin", [] { g_stops.request(kStopCommand); })
+                                      : controls->time().apply(command, "stdin"));
                 if (events == nullptr)
                 {
                     write_stdin_notes(false);
                 }
+                return;
             }
-            // The event first: it comes before what the stop does (it does not wait for its reader).
-            else if (events != nullptr && !command.is_time())
+            // Without controls (not in a run): no time command is taken, a stop is still one Ctrl+C.
+            if (events != nullptr && !command.is_time())
             {
                 events->command(command, "stdin");
             }
@@ -728,11 +734,6 @@ void start_reading_commands()
             if (command.is_stop())
             {
                 g_stops.request(kStopCommand);
-                // The state says the request now, not at the run's next look.
-                if (controls != nullptr)
-                {
-                    controls->publish();
-                }
             }
         });
         char buffer[4096];
