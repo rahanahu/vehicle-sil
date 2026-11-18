@@ -141,8 +141,13 @@ export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
  */
 export const FEATURE_MANUAL = 'manual-participants';
 
-/** State of a scenario step. running only appears in events (not in the steps of the result). */
-export type ScenarioStepStatus = Open<'running' | 'passed' | 'failed' | 'unfinished' | 'not_run'>;
+/**
+ * State of a scenario step. running only appears in events (not in the steps of the result). skipped: the step
+ * uses a variable that this run does not have; it does not make the scenario fail.
+ */
+export type ScenarioStepStatus = Open<
+  'running' | 'passed' | 'failed' | 'unfinished' | 'not_run' | 'skipped'
+>;
 
 /** Overall result of a scenario. */
 export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'>;
