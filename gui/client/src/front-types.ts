@@ -95,7 +95,8 @@ export interface FrontControls {
   resume: Control;
   step: Control & { min_ms: number; max_ms: number };
   run_until: Control;
-  speed: Control & { min: number; max: number };
+  /** `fastest`: whether the speed `'max'` is accepted besides the numbers from `min` to `max`. */
+  speed: Control & { min: number; max: number; fastest: boolean };
 }
 
 /** The operations that have a control. */

@@ -115,7 +115,7 @@ export function fakeFront(): FakeFront {
     resume: ok(),
     step: { ...ok(), min_ms: 1, max_ms: 1000 },
     run_until: ok(),
-    speed: { ...ok(), min: 0.1, max: 100 },
+    speed: { ...ok(), min: 0.1, max: 100, fastest: true },
   });
   const scenario = new Cell<FrontScenario | null>(null);
   const outside = new Cell<readonly Outside[]>([]);

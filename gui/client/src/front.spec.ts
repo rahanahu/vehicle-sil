@@ -266,7 +266,7 @@ describe('the front door', () => {
         message: 'resume works while the simulation is paused',
       });
       expect(c.step).toMatchObject({ ok: false, min_ms: 10, max_ms: 5000 });
-      expect(c.speed).toMatchObject({ ok: true, min: 0.5, max: 100 });
+      expect(c.speed).toMatchObject({ ok: true, min: 0.5, max: 100, fastest: true });
       expect(c.start.reason).toEqual({ code: 'already-running', message: alreadyRunning.message });
       expect(c.stop.ok).toBe(true);
       expect(c.force_stop).toMatchObject({
@@ -304,6 +304,13 @@ describe('the front door', () => {
         code: 'outside-real-time',
         message: 'it keeps to real time',
       });
+      // A range of one speed does not take the fastest (the launcher's promise)
+      expect(c.speed).toMatchObject({ min: 1, max: 1, fastest: false });
+    });
+
+    it('accepts the fastest speed while the range has more than one speed', async () => {
+      const { front } = await running();
+      expect(front.controls.get().speed).toMatchObject({ min: 0.5, max: 100, fastest: true });
     });
 
     it('keeps the same object while nothing changed', async () => {

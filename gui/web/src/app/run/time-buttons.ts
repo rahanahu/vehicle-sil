@@ -1,12 +1,12 @@
 import { Component, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { SimulationTime } from '../core/session/simulation-time';
-import { WAITING_TEXT } from './labels';
+import { WAITING_TEXT, controlLine } from './labels';
 
 /**
  * 一時停止と再開のボタン（実行している間、状態の帯の開始と停止の後に置く）。2 つは別のボタンで、いつもこの順に同じ
  * 場所にあり、使えない方は押せなくする（押している最中に、同じ位置のボタンの意味が入れ替わらない）。押せない間も
- * フォーカスは受け、理由は帯の文が言う（送った命令の答えを待っている間と、答えが来なかったときは、その文）。
+ * フォーカスは受け、理由（正面の口の `controls`）は各ボタンの説明（`aria-describedby`）にある。見える文は時刻のカード。
  */
 @Component({
   selector: 'app-time-buttons',
@@ -18,9 +18,7 @@ import { WAITING_TEXT } from './labels';
       data-testid="pause"
       [disabled]="!controls().pause.ok"
       disabledInteractive
-      [attr.aria-describedby]="
-        why() ? 'time-buttons-why' : controls().pause.ok ? null : 'run-outcome'
-      "
+      [attr.aria-describedby]="pauseWhy() ? 'time-pause-why' : null"
       (click)="pause()"
     >
       <span class="mark" aria-hidden="true">‖</span>
@@ -32,16 +30,27 @@ import { WAITING_TEXT } from './labels';
       data-testid="resume"
       [disabled]="!controls().resume.ok"
       disabledInteractive
-      [attr.aria-describedby]="
-        why() ? 'time-buttons-why' : controls().resume.ok ? null : 'run-outcome'
-      "
+      [attr.aria-describedby]="resumeWhy() ? 'time-resume-why' : null"
       (click)="resume()"
     >
       <span class="mark" aria-hidden="true">▶</span>
       <span class="text">{{ resumeText }}</span>
     </button>
-    <!-- ボタンの説明だけ（見た目には出さない。カードにも同じことが出る） -->
-    <span class="why" id="time-buttons-why" data-testid="time-buttons-why">{{ why() }}</span>
+    <!-- ボタンの説明だけ（見た目には出さない。時刻のカードにも出る） -->
+    <span
+      class="why"
+      id="time-pause-why"
+      data-testid="pause-why"
+      [attr.lang]="pauseWhy()?.english ? 'en' : null"
+      >{{ pauseWhy()?.text }}</span
+    >
+    <span
+      class="why"
+      id="time-resume-why"
+      data-testid="resume-why"
+      [attr.lang]="resumeWhy()?.english ? 'en' : null"
+      >{{ resumeWhy()?.text }}</span
+    >
   `,
   styles: `
     /* ボタンは、置いた場所（状態の帯の操作の並び）にそのまま並ぶ */
@@ -85,11 +94,19 @@ export class TimeButtons {
   protected readonly controls = this.time.controls;
   protected readonly pauseText = $localize`一時停止`;
   protected readonly resumeText = $localize`再開`;
-  /** 押せない（または前の命令がうまくいかなかった）理由のうち、帯の文にないもの。なければ ''。 */
-  protected readonly why = computed(() => {
-    if (this.time.waiting()) return WAITING_TEXT;
-    return this.time.error() ?? '';
-  });
+  /**
+   * ボタンの説明: 送った命令の答えを待っている間と、前の命令がうまくいかなかったときはその文、それ以外は正面の口の
+   * 理由（押せないとき）か注意（`caution`）。なければ null。
+   */
+  protected readonly pauseWhy = computed(() => this.why('pause'));
+  protected readonly resumeWhy = computed(() => this.why('resume'));
+
+  private why(op: 'pause' | 'resume'): { text: string; english: boolean } | null {
+    if (this.time.waiting()) return { text: WAITING_TEXT, english: false };
+    const error = this.time.error();
+    if (error) return { text: error, english: this.time.errorFromServer() };
+    return controlLine(op, this.controls()[op]);
+  }
 
   protected pause(): void {
     if (this.controls().pause.ok) this.time.pause();

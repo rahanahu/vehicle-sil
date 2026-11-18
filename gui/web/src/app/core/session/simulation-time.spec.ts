@@ -44,22 +44,36 @@ describe('SimulationTime', () => {
     sessionStorage.clear();
   });
 
-  /** サービスを作り、サーバーの情報に答えて、WebSocket を開き、一時停止したところまで流す。 */
-  function openPaused(): SimulationTime {
+  interface Event {
+    event?: string;
+    sim_ms?: number;
+    phase?: string;
+  }
+
+  /** サービスを作り、サーバーの情報に答えて、WebSocket を開き、`last` が真になる事象まで流す。 */
+  function openUntil(last: (event: Event) => boolean): SimulationTime {
     const time = TestBed.inject(SimulationTime);
     TestBed.inject(ServerInfo).features();
     TestBed.tick();
     http.expectOne('api/app').flush(app);
     fake.last().open();
-    // 止めて始めた実行: state が一時停止と言い、その後の time が時刻 0 を言う
     for (const message of server.get('ws-time') ?? []) {
       fake.last().send(message);
-      const event = (message as { event?: { event?: string; sim_ms?: number } }).event;
-      if (event?.event === 'time' && event.sim_ms === 0) break;
+      const event = (message as { event?: Event }).event;
+      if (event && last(event)) break;
     }
     vi.advanceTimersByTime(BATCH_MS);
     return time;
   }
+
+  /** 止めて始めた実行: state が一時停止と言い、その後の time が時刻 0 を言うところまで。 */
+  const openPaused = () => openUntil((e) => e.event === 'time' && e.sim_ms === 0);
+
+  it('says that a run started paused is paused while it waits for the participants', () => {
+    const time = openUntil((e) => e.event === 'state' && e.phase === 'waiting');
+    expect(time.paused()).toBe(true);
+    expect(time.speed()).toBe('max');
+  });
 
   it('follows the time of the run, and sends a command with the token', async () => {
     const time = openPaused();

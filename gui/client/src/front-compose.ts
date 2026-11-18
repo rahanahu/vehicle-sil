@@ -365,6 +365,8 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
 
   const stepItem = state?.allowed['step'];
   const speedItem = state?.allowed['speed'];
+  const speedMin = numberOf(speedItem, 'min') ?? s.limits.speed_min;
+  const speedMax = numberOf(speedItem, 'max') ?? s.limits.speed_max;
   const runUntilBase = timeControl('run_until', 'run until');
   const runUntil = s.features.includes(FEATURE_RUN_UNTIL)
     ? runUntilBase
@@ -388,8 +390,10 @@ function composeControls(s: Snapshot, run: RunState): { controls: FrontControls;
     run_until: runUntil,
     speed: {
       ...timeControl('speed', 'speed change'),
-      min: numberOf(speedItem, 'min') ?? s.limits.speed_min,
-      max: numberOf(speedItem, 'max') ?? s.limits.speed_max,
+      min: speedMin,
+      max: speedMax,
+      // The launcher's promise (docs/simulation-events.md, `allowed`): "max" is accepted unless min equals max
+      fastest: speedMin !== speedMax,
     },
   };
   return { controls, write: timeControl('write', 'write') };
