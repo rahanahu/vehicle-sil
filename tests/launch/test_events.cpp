@@ -319,7 +319,8 @@ TEST_CASE(the_check_and_the_result_are_their_json_on_one_line_and_nothing_follow
     CHECK(e.result(format_result_event(report)));
     CHECK(sink.lines().size() >= 2 && sink.lines().back().find("\"event\":\"result\"") != std::string::npos);
     // The scenario of the check is in the event "check".
-    CHECK(std::any_of(sink.lines().begin(), sink.lines().end(), [](const std::string& line) {
+    const std::vector<std::string> written = sink.lines(); // a copy: begin() and end() of one vector
+    CHECK(std::any_of(written.begin(), written.end(), [](const std::string& line) {
         return line.find("\"event\":\"check\"") != std::string::npos && line.find("\"scenario\":{\"file\":\"drive.yaml\"") != std::string::npos;
     }));
     const std::size_t count = sink.lines().size();
