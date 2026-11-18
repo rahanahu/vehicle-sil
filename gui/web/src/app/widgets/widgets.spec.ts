@@ -6,6 +6,8 @@ import { BATCH_MS, VariableRef } from '@vehicle-sil/gui-client';
 import { FakeWebSockets } from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { SOCKET_FACTORY } from '../core/session/gui-client';
+import { provideVisibleNow, VisibleNow } from '../testing/visible-now';
+import { Visibility } from './visibility';
 import { BusConnection } from './bus-connection';
 import { GraphWidget } from './graph-widget';
 import { LampWidget } from './lamp-widget';
@@ -120,6 +122,8 @@ describe('variable widgets', () => {
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
         { provide: SOCKET_FACTORY, useValue: fake.factory },
+        // 見えているかは本物の IntersectionObserver に任せない（描画待ちで、偽のタイマーで進まない）
+        provideVisibleNow(),
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -191,6 +195,22 @@ describe('variable widgets', () => {
   it('says that a variable is not in this run', async () => {
     const fixture = await render(ValueWidget, 'engine.nothing');
     expect(text(fixture, 'widget-condition')).toBe('⚠ この実行にない変数です');
+  });
+
+  it('watches its variable only while it is shown on the screen', async () => {
+    const fixture = await render(ValueWidget, 'engine.speed');
+    const watches = () =>
+      (fake.sockets[0].sent as { type: string }[])
+        .map((m) => m.type)
+        .filter((type) => type.endsWith('watch'));
+    const visibility = TestBed.inject(Visibility) as unknown as VisibleNow;
+    expect(watches()).toEqual(['watch']);
+    visibility.tell(false);
+    await deliver(fixture);
+    expect(watches()).toEqual(['watch', 'unwatch']);
+    visibility.tell(true);
+    await deliver(fixture);
+    expect(watches()).toEqual(['watch', 'unwatch', 'watch']);
   });
 
   it('shows a lamp as on or off in words, not by its colour only', async () => {
