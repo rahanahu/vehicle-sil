@@ -86,7 +86,7 @@ Implementation:
 | The reported networks under the names after `network_names` of the configuration file, with the J1939 nodes after `j1939_nodes` (`seen_networks()`) | `src/check_networks.cpp` |
 | The check rules (one function per network kind) | `src/check_rules.cpp` |
 | The check of `--connect` (`check_connections()`: the requests, the bridges found and their `--describe`); the rules that need the whole simulation (the bridge as a participant of its network, `connect-loop`) are in `check_rules.cpp` | `src/check_connect.cpp` |
-| The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `src/probe.cpp` | `src/connect.cpp` |
+| The forms of `--connect` and the bridges' arguments. `find_tool()` (next to the launcher, then `PATH`) and the search of `PATH` that it shares with `find_executable()` (`detail::find_on_path()`) are in `libs/launch/src/probe.cpp` | `src/connect.cpp` |
 | Code shared by the readers of configuration files and scenarios | `config/detail/yaml_reader.hpp` |
 | The time lock and the planned speed, `detail::plan_time_step()` (the default time step of the controller), `detail::coarse_time_step()` and `RunTiming::actual_speed()` | `src/time_plan.cpp` |
 

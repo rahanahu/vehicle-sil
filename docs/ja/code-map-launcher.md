@@ -86,7 +86,7 @@
 | 自己申告のネットワークを、設定ファイルの `network_names` を当てた名前で、J1939 のノードを `j1939_nodes` を当てた値で渡す（`seen_networks()`） | `src/check_networks.cpp` |
 | 照合のルール（ネットワークは種類ごとの関数） | `src/check_rules.cpp` |
 | `--connect` の照合（`check_connections()`: 要求、見つけたブリッジとその `--describe`）。シミュレーション全体が要るルール（ブリッジをネットワークの participant に数える、`connect-loop`）は `check_rules.cpp` | `src/check_connect.cpp` |
-| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `src/probe.cpp` | `src/connect.cpp` |
+| `--connect` の形とブリッジの引数。`find_tool()`（ランチャーの隣、次に `PATH`）と、それが `find_executable()` と共有する `PATH` の探索（`detail::find_on_path()`）は `libs/launch/src/probe.cpp` | `src/connect.cpp` |
 | 設定ファイルとシナリオの読み取りの共通の部分 | `config/detail/yaml_reader.hpp` |
 | 時間の固定と計画した速さ、`detail::plan_time_step()`（コントローラーの既定のステップ）、`detail::coarse_time_step()`、`RunTiming::actual_speed()` | `src/time_plan.cpp` |
 

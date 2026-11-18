@@ -229,7 +229,7 @@ struct NetworkOutside
 {
     std::string network;
     std::string tool;                ///< the bridge_tool() of the target's backend
-    std::filesystem::path tool_path; ///< find_tool(); empty: not found (or not looked for)
+    std::filesystem::path tool_path; ///< find_tool() (launch/probe.hpp); empty: not found (or not looked for)
     std::string target;              ///< as given
     std::string participant;         ///< bridge_participant()
     /// bridge_arguments(): what a run gives the bridge. Empty if an error of the check is about
@@ -255,7 +255,7 @@ inline constexpr std::int64_t kBridgeStatisticsEveryMs = 1000;
 /// connections_of() to ask it for its list.
 struct ConnectTools
 {
-    /// Where the tool of that name is (find_tool()), or empty.
+    /// Where the tool of that name is (find_tool() in launch/probe.hpp), or empty.
     std::function<std::optional<std::filesystem::path>(std::string_view)> find;
     /// The first place `find` looks (RunHost::tool_directory), for the message when it finds nothing.
     std::filesystem::path launcher_dir{};
