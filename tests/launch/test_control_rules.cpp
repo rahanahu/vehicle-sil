@@ -4,7 +4,8 @@
 // its code and its message, the order of the rows, where the two entries differ, the answer
 // without arguments (allowed()) and the server that only shows the run (always_refused()). Then
 // the same rules where they are used: what TimeCommands::allowed() says and what apply() does
-// agree, in every state of the time commands.
+// agree, in every state of the time commands. Last, the time lock in the time commands: the
+// commands that come before it wait and are decided with it, in their order.
 
 #include "test_harness.hpp"
 
@@ -21,7 +22,9 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -40,10 +43,17 @@ constexpr Operation kTimeOperations[] = {Operation::Pause, Operation::Resume, Op
 constexpr Entry kEntries[] = {Entry::Stdin, Entry::ControlServer};
 constexpr ControlStage kStages[] = {ControlStage::SettingUp, ControlStage::Attached, ControlStage::Detached};
 
-ControlSituation situation(ControlStage stage, bool paused = false, bool scenario = false, bool locked = false)
+ControlSituation situation(ControlStage stage, bool paused = false, bool scenario = false, bool locked = false,
+                           bool free = false)
 {
-    return ControlSituation{stage, paused, scenario, locked};
+    return ControlSituation{stage, paused, scenario, locked, free};
 }
+
+/// A run that is connected outside the simulation: with the lock (--time-policy realtime), or with
+/// its time left to the user (free). kNotOutside: a run that is not connected.
+const TimeLock kNotOutside{};
+const TimeLock kLocked{true, {"CAN1"}, {}};
+const TimeLock kFree{false, {}, {"Gateway"}};
 
 /// A command of `operation` as it comes, with arguments that are in range.
 Command command(Operation operation)
@@ -261,9 +271,13 @@ TEST_CASE(control_rules_row_outside_real_time_refuses_what_moves_the_time_away_f
             {
                 const Command c = command(o); // the speed: 2
                 check_refused(decide_command(s, entry, c), "outside-real-time",
-                              "this run keeps to real time, because something connected to it does not wait for the "
-                              "virtual time: " +
-                                  *c.name + " is refused (a resume, a speed of 1 and a stop are taken)");
+                              "this run is connected outside the simulation and keeps to real time (--time-policy "
+                              "realtime, the default): " +
+                                  *c.name + (o == Operation::Speed ? " other than 1" : "") +
+                                  " is refused, because what is connected does not wait while the virtual time stands "
+                                  "still, jumps or goes at another speed (a resume, a speed of 1 and a stop are taken). To "
+                                  "move the time all the same, start the run again with --time-policy free, or without the "
+                                  "connection (no --connect, --disable for a participant with role: bridge)");
             }
             // A speed of max is refused, a speed of 1 is taken; so are a resume and a stop.
             Command speed = command(Operation::Speed);
@@ -293,8 +307,22 @@ TEST_CASE(control_rules_row_outside_real_time_refuses_what_moves_the_time_away_f
           "scenario-running");
     CHECK(decide_command(situation(ControlStage::Attached, false, true, true), Entry::Stdin, pause).reason ==
           "outside-real-time");
-    // Unlocked, the row refuses nothing: the same commands are taken.
+    // Unlocked, the row refuses nothing: the same commands are taken. So in a run that is
+    // connected outside with its time left to the user.
     CHECK(decide_command(situation(ControlStage::Attached, true), Entry::Stdin, pause).ok);
+    for (const Entry entry : kEntries)
+    {
+        for (const Operation o : kTimeOperations)
+        {
+            const ControlSituation free = situation(ControlStage::Attached, true, false, false, true);
+            const Command c = command(o);
+            const Decision d = decide_command(free, entry, c);
+            CHECK(d.ok);
+            // The lock's row is the only one that looks at it.
+            const Decision plain = decide_command(situation(ControlStage::Attached, true), entry, c);
+            CHECK_EQ(d.ok, plain.ok);
+        }
+    }
 }
 
 TEST_CASE(control_rules_rows_of_the_arguments_refuse_what_is_out_of_range_or_missing)
@@ -402,7 +430,8 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
             CHECK(!a.range);
         }
         // Refused: the code and the message of the row, by the operation's name; the range all
-        // the same (what the argument would have to be), and no caution anywhere yet.
+        // the same (what the argument would have to be), and no caution in a run that is not
+        // connected outside.
         const Allowed early = allowed(situation(ControlStage::Attached, false), entry, Operation::Step);
         CHECK(!early.ok);
         check_text(early.reason, "not-paused");
@@ -437,7 +466,33 @@ TEST_CASE(control_rules_allowed_answers_without_arguments_and_gives_the_ranges)
         }
         CHECK(allowed(locked, entry, Operation::Resume).ok);
         CHECK(allowed(locked, entry, Operation::Stop).ok);
+        CHECK(!one.caution && !allowed(locked, entry, Operation::Pause).caution);
+        // Connected outside with the time left to the user: what the lock would refuse is taken
+        // with a caution; what it would take has none. The ranges are those without a lock.
+        const ControlSituation free = situation(ControlStage::Attached, true, false, false, true);
+        for (const Operation o : {Operation::Pause, Operation::Step, Operation::RunUntil, Operation::Speed})
+        {
+            const Allowed a = allowed(free, entry, o);
+            CHECK(a.ok);
+            CHECK(a.caution.has_value());
+            check_text(a.caution->code, "outside-not-real-time");
+            check_text(a.caution->message,
+                       std::string("this run is connected outside the simulation with --time-policy free: ") +
+                           operation_name(o) + (o == Operation::Speed ? " other than 1" : "") +
+                           " is taken, but what is connected does not wait for the virtual time and its bridge still "
+                           "carries frames both ways (frames from outside pile up while the simulation stands still); the "
+                           "run then ends with the note outside-time-changed");
+        }
+        CHECK_EQ(allowed(free, entry, Operation::Speed).range->max, kMaxSpeed);
+        CHECK(!allowed(free, entry, Operation::Resume).caution);
+        CHECK(!allowed(free, entry, Operation::Stop).caution);
+        // A refusal has no caution: the reason says what there is to know.
+        const Allowed not_paused = allowed(situation(ControlStage::Attached, false, false, false, true), entry, Operation::Step);
+        CHECK(!not_paused.ok && !not_paused.caution);
+        CHECK(!allowed(situation(ControlStage::Detached, false, false, false, true), entry, Operation::Speed).caution);
     }
+    // A write is not about the time: no caution.
+    CHECK(!allowed(situation(ControlStage::Attached, true, false, false, true), Entry::ControlServer, Operation::Write).caution);
     // The entries: a write, a scenario, a stop once detached.
     CHECK(allowed(paused, Entry::ControlServer, Operation::Write).ok);
     check_text(allowed(paused, Entry::Stdin, Operation::Write).reason, "not-a-time-command");
@@ -496,20 +551,21 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
         After,        ///< detached
     };
     // What each state is to the rules.
-    const auto expected = [](State state, bool scenario, bool locked) {
+    const auto expected = [](State state, bool scenario, const TimeLock& lock) {
         const ControlStage stage = state == State::Before || state == State::BeforePaused ? ControlStage::SettingUp
                                    : state == State::After                                 ? ControlStage::Detached
                                                                                            : ControlStage::Attached;
         const bool paused = state == State::BeforePaused || state == State::Paused || state == State::Holding;
-        return ControlSituation{stage, paused, scenario, locked};
+        return ControlSituation{stage, paused, scenario, lock.locked, !lock.locked && !lock.because().empty()};
     };
     int refused = 0;
     int taken = 0;
+    int locked_out = 0;
     for (const State state : {State::Before, State::BeforePaused, State::Running, State::Paused, State::Holding, State::After})
     {
         for (const bool scenario : {false, true})
         {
-            for (const bool locked : {false, true})
+            for (const TimeLock* const lock : {&kNotOutside, &kLocked, &kFree})
             {
                 for (const Entry entry : kEntries)
                 {
@@ -521,10 +577,7 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
                         StopRequests stops;
                         RunControls controls(stops, start_paused, RunControls::Observers{}, scenario);
                         TimeCommands& commands = controls.time();
-                        if (locked)
-                        {
-                            controls.set_time_lock(true);
-                        }
+                        controls.set_time_lock(*lock);
                         std::thread window;
                         if (state != State::Before && state != State::BeforePaused)
                         {
@@ -556,11 +609,13 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
                             commands.detach();
                         }
                         const Allowed asked = controls.allowed(o, entry);
-                        const Allowed by_the_rules = allowed(expected(state, scenario, locked), entry, o);
+                        const Allowed by_the_rules = allowed(expected(state, scenario, *lock), entry, o);
                         CHECK_EQ(asked.ok, by_the_rules.ok);
                         check_text(asked.reason, by_the_rules.reason, "reason");
                         check_text(asked.message, by_the_rules.message, "message");
                         CHECK_EQ(asked.range.has_value(), by_the_rules.range.has_value());
+                        CHECK(asked.caution == by_the_rules.caution);
+                        CHECK(asked.range == by_the_rules.range);
                         // A speed of 1: the one that is in range under the lock too.
                         Command c = command(o);
                         if (o == Operation::Speed)
@@ -568,8 +623,20 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
                             c.speed = 1.0;
                         }
                         const Command done = commands.apply(c, entry_name(entry));
+                        CHECK(!done.pending);
                         CHECK_EQ(done.accepted, asked.ok);
                         check_text(done.message, asked.message, "the refusal");
+                        check_text(done.reason, asked.reason, "the refusal's code");
+                        // The lock is the answer for what moves the time away from real time, from
+                        // either entry, with or without a scenario, unless the row before it has
+                        // refused already (a control server's scenario, the end of the run).
+                        if (lock->locked && (o == Operation::Pause || o == Operation::Step || o == Operation::RunUntil))
+                        {
+                            CHECK(!done.accepted);
+                            const bool before = (scenario && entry == Entry::ControlServer) || state == State::After;
+                            CHECK_EQ(done.reason == "outside-real-time", !before);
+                            ++locked_out;
+                        }
                         ++(done.accepted ? taken : refused);
                         commands.detach();
                         if (window.joinable())
@@ -583,6 +650,7 @@ TEST_CASE(control_rules_allowed_and_apply_agree_in_every_state_of_the_time_comma
     }
     CHECK(taken > 0);
     CHECK(refused > 0);
+    CHECK(locked_out > 0);
 }
 
 TEST_CASE(time_commands_take_a_stop_of_stdin_after_the_run_and_refuse_under_the_time_lock)
@@ -590,20 +658,21 @@ TEST_CASE(time_commands_take_a_stop_of_stdin_after_the_run_and_refuse_under_the_
     // A stop from standard input: taken once detached too (the row of the entries; the launcher's
     // reader does not send its stop through apply(), and would get the same answer).
     TimeCommands over;
+    over.set_time_lock(kNotOutside);
     over.detach();
     const Command stop = command(Operation::Stop);
     CHECK(over.apply(stop, "stdin").accepted);
     CHECK(!over.apply(stop, "control_server").accepted);
 
-    // The time lock: false until it is given; then what moves the time away from real time is
-    // refused with its event, and nothing of it is kept for the controller.
+    // The time lock: what moves the time away from real time is refused with its event, and
+    // nothing of it is kept for the controller.
     std::vector<std::string> events;
     TimeCommands commands(false, [&events](const Command& c, std::string_view source) {
         events.push_back(*c.name + " " + std::string(source) + (c.accepted ? " accepted" : " refused: " + c.message));
     });
     const Command pause = command(Operation::Pause);
-    CHECK(commands.allowed(Operation::Pause, Entry::Stdin).ok);
-    commands.set_time_lock(true);
+    CHECK(commands.allowed(Operation::Pause, Entry::Stdin).ok); // not known yet: as without a lock
+    commands.set_time_lock(kLocked);
     const Allowed asked = commands.allowed(Operation::Pause, Entry::Stdin);
     CHECK(!asked.ok);
     check_text(asked.reason, "outside-real-time");
@@ -619,4 +688,347 @@ TEST_CASE(time_commands_take_a_stop_of_stdin_after_the_run_and_refuse_under_the_
     check_text(events[2], "speed control_server accepted");
     CHECK(!commands.first_time_change()); // nothing changed how the time goes
     CHECK(commands.hold_before_start([] { return true; }, std::chrono::milliseconds(1)) == TimeCommands::Hold::None);
+}
+
+namespace {
+
+/// What on_command was told, one line each: "<name> <source> accepted" or "<name> <source> <reason>",
+/// with the command's id in front if it has one.
+struct Told
+{
+    std::mutex mutex;
+    std::vector<std::string> lines;
+
+    TimeCommands::OnCommand writer()
+    {
+        return [this](const Command& c, std::string_view source) {
+            const std::lock_guard lock(mutex);
+            lines.push_back((c.id ? std::to_string(*c.id) + " " : std::string()) + *c.name + " " + std::string(source) + " " +
+                            (c.accepted ? std::string("accepted") : c.reason));
+        };
+    }
+    std::vector<std::string> all()
+    {
+        const std::lock_guard lock(mutex);
+        return lines;
+    }
+};
+
+Command speed_of(std::optional<double> value)
+{
+    Command c = command(Operation::Speed);
+    c.speed = value;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE(time_commands_before_the_time_lock_wait_and_are_refused_by_it_in_their_order)
+{
+    Told told;
+    TimeCommands commands(false, told.writer());
+    // Nothing is decided: no answer, no event, nothing kept for the controller.
+    const Command pause = commands.apply(command(Operation::Pause), "stdin");
+    CHECK(pause.pending);
+    CHECK(!pause.accepted);
+    CHECK(pause.reason.empty());
+    CHECK(pause.message.empty());
+    CHECK(commands.apply(speed_of(5.0), "stdin").pending);
+    CHECK(commands.apply(command(Operation::Resume), "control_server").pending);
+    CHECK(commands.apply(speed_of(1.0), "stdin").pending);
+    CHECK(commands.apply(command(Operation::Step), "stdin").pending);
+    CHECK(commands.apply(command(Operation::RunUntil), "control_server").pending);
+    CHECK(commands.apply(speed_of(std::nullopt), "stdin").pending);
+    CHECK(commands.apply(command(Operation::Unknown), "stdin").pending);
+    CHECK(commands.apply(command(Operation::Pause), "elsewhere").pending);
+    CHECK(told.all().empty());
+    CHECK(!commands.first_time_change());
+    bool looked = false;
+    commands.look([&looked](const TimeFacts& facts) {
+        looked = true;
+        CHECK(!facts.standing);
+        CHECK(!facts.speed);
+        CHECK(!facts.situation.time_locked);
+    });
+    CHECK(looked);
+
+    // The lock decides them, each with its event, in the order they came.
+    commands.set_time_lock(kLocked);
+    const std::vector<std::string> lines = told.all();
+    CHECK_EQ(lines.size(), std::size_t{9});
+    if (lines.size() == 9)
+    {
+        check_text(lines[0], "pause stdin outside-real-time");
+        check_text(lines[1], "speed stdin outside-real-time");
+        check_text(lines[2], "resume control_server accepted");
+        check_text(lines[3], "speed stdin accepted");
+        check_text(lines[4], "step stdin outside-real-time");
+        check_text(lines[5], "run_until control_server outside-real-time");
+        check_text(lines[6], "speed stdin outside-real-time");
+        check_text(lines[7], "jump stdin not-a-time-command");
+        check_text(lines[8], "pause elsewhere unknown-source");
+    }
+    // Nothing of what was refused is kept: the simulation would go on at speed 1 from the start.
+    CHECK(!commands.first_time_change());
+    commands.look([](const TimeFacts& facts) {
+        CHECK(!facts.standing);
+        CHECK(facts.situation.time_locked);
+        CHECK(!facts.situation.time_free);
+        CHECK(facts.speed == std::optional<std::optional<double>>(std::optional<double>(1.0)));
+    });
+    CHECK(commands.hold_before_start([] { return true; }, std::chrono::milliseconds(1)) == TimeCommands::Hold::None);
+    // From now on a command is decided when it comes.
+    const Command late = commands.apply(command(Operation::Pause), "stdin");
+    CHECK(!late.pending);
+    CHECK(!late.accepted);
+    check_text(late.reason, "outside-real-time");
+    CHECK_EQ(told.all().size(), std::size_t{10});
+    // The lock is the run's for good: a second one changes nothing.
+    commands.set_time_lock(kNotOutside);
+    CHECK(!commands.apply(command(Operation::Pause), "stdin").accepted);
+    CHECK(!commands.allowed(Operation::Pause, Entry::Stdin).ok);
+}
+
+TEST_CASE(time_commands_before_the_time_lock_are_taken_in_their_order_without_a_lock)
+{
+    for (const TimeLock* const lock : {&kNotOutside, &kFree})
+    {
+        Told told;
+        TimeCommands commands(false, told.writer());
+        int accepted = 0;
+        CHECK(commands.apply(speed_of(5.0), "stdin").pending);
+        CHECK(commands.apply(command(Operation::Pause), "stdin", [&accepted] { ++accepted; }).pending);
+        CHECK(commands.apply(command(Operation::Step), "stdin", [&accepted] { ++accepted; }).pending);
+        CHECK_EQ(accepted, 0);
+        commands.set_time_lock(*lock);
+        const std::vector<std::string> lines = told.all();
+        CHECK_EQ(lines.size(), std::size_t{3});
+        if (lines.size() == 3)
+        {
+            check_text(lines[0], "speed stdin accepted");
+            check_text(lines[1], "pause stdin accepted");
+            // As a step that comes before the run is set up: decided where the run stands then.
+            check_text(lines[2], "step stdin not-set-up");
+        }
+        // `accepted` of the one that was accepted, when it was decided; not of the refused one.
+        CHECK_EQ(accepted, 1);
+        // What they asked for is kept for the controller, as of commands that come after the lock.
+        commands.look([lock](const TimeFacts& facts) {
+            CHECK(facts.standing);
+            CHECK(facts.speed == std::optional<std::optional<double>>(std::optional<double>(5.0)));
+            CHECK_EQ(facts.situation.time_free, lock == &kFree);
+            CHECK(!facts.situation.time_locked);
+        });
+        const std::optional<TimeChange> first = commands.first_time_change();
+        CHECK(first.has_value());
+        if (first)
+        {
+            check_text(first->command, "speed");
+        }
+    }
+}
+
+TEST_CASE(time_commands_take_a_stop_at_once_before_the_time_lock)
+{
+    Told told;
+    TimeCommands commands(false, told.writer());
+    CHECK(commands.apply(command(Operation::Pause), "stdin").pending);
+    int stopped = 0;
+    for (const char* const source : {"stdin", "control_server"})
+    {
+        const Command stop = commands.apply(command(Operation::Stop), source, [&stopped] { ++stopped; });
+        CHECK(!stop.pending);
+        CHECK(stop.accepted);
+    }
+    CHECK_EQ(stopped, 2);
+    // The stops have their events; the pause still waits behind them.
+    std::vector<std::string> lines = told.all();
+    CHECK_EQ(lines.size(), std::size_t{2});
+    commands.set_time_lock(kLocked);
+    lines = told.all();
+    CHECK_EQ(lines.size(), std::size_t{3});
+    if (lines.size() == 3)
+    {
+        check_text(lines[0], "stop stdin accepted");
+        check_text(lines[1], "stop control_server accepted");
+        check_text(lines[2], "pause stdin outside-real-time");
+    }
+}
+
+TEST_CASE(time_commands_that_wait_are_refused_when_the_run_ends_without_a_time_lock)
+{
+    Told told;
+    TimeCommands commands(true, told.writer());
+    CHECK(commands.apply(command(Operation::Pause), "stdin").pending);
+    CHECK(commands.apply(speed_of(1.0), "stdin").pending);
+    CHECK(commands.apply(command(Operation::Resume), "control_server").pending);
+    // The configuration could not be read: no lock, nothing starts.
+    commands.detach();
+    std::vector<std::string> lines = told.all();
+    CHECK_EQ(lines.size(), std::size_t{3});
+    if (lines.size() == 3)
+    {
+        check_text(lines[0], "pause stdin not-running");
+        check_text(lines[1], "speed stdin not-running");
+        check_text(lines[2], "resume control_server not-running");
+    }
+    CHECK(!commands.first_time_change());
+    // What comes now is decided at once, as after any run.
+    const Command late = commands.apply(command(Operation::Pause), "stdin");
+    CHECK(!late.pending);
+    check_text(late.reason, "not-running");
+    check_text(late.message, "the simulation is not running (it is over, or it did not start): pause works from the start of "
+                             "the run until the simulation ends");
+    commands.detach();
+    commands.set_time_lock(kNotOutside); // too late to change anything
+    CHECK_EQ(told.all().size(), std::size_t{4});
+    CHECK(!commands.apply(command(Operation::Pause), "stdin").accepted);
+}
+
+TEST_CASE(time_commands_keep_a_limited_number_of_commands_for_the_time_lock)
+{
+    Told told;
+    TimeCommands commands(false, told.writer());
+    for (std::size_t i = 0; i < kMaxWaitingCommands; ++i)
+    {
+        Command c = speed_of(1.0);
+        c.id = static_cast<std::int64_t>(i);
+        CHECK(commands.apply(c, "stdin").pending);
+    }
+    CHECK(told.all().empty());
+    // One more is refused at once, with its event; it does not wait.
+    Command more = command(Operation::Pause);
+    more.id = 9999;
+    const Command refused = commands.apply(more, "stdin");
+    CHECK(!refused.pending);
+    CHECK(!refused.accepted);
+    check_text(refused.reason, "not-set-up");
+    check_text(refused.message, "the run has not read its configuration yet and keeps 256 commands to answer once it has: "
+                                "pause is refused; send it again after the run's check event (the configuration is read then)");
+    std::vector<std::string> lines = told.all();
+    CHECK_EQ(lines.size(), std::size_t{1});
+    check_text(lines.empty() ? std::string() : lines[0], "9999 pause stdin not-set-up");
+    // A stop is taken all the same.
+    CHECK(commands.apply(command(Operation::Stop), "stdin").accepted);
+    commands.set_time_lock(kNotOutside);
+    lines = told.all();
+    CHECK_EQ(lines.size(), kMaxWaitingCommands + 2);
+    for (std::size_t i = 0; i < kMaxWaitingCommands && i + 2 < lines.size(); ++i)
+    {
+        check_text(lines[i + 2], std::to_string(i) + " speed stdin accepted");
+    }
+    // Nothing waits any more: the next is decided at once.
+    CHECK(commands.apply(command(Operation::Pause), "stdin").accepted);
+}
+
+TEST_CASE(time_commands_refuse_a_controller_before_the_time_lock)
+{
+    vehicle_sil::unit::InProcessRegistry registry;
+    SimulationControllerOptions options;
+    options.registry_uri = registry.uri;
+    options.required_participants = {"NeverJoins"};
+    options.time_control = TimeControlOptions{.step = std::chrono::milliseconds(10)};
+    SimulationController controller(options);
+    TimeCommands commands;
+    CHECK(commands.apply(command(Operation::Pause), "stdin").pending);
+    bool thrown = false;
+    try
+    {
+        commands.attach(controller, 10, std::nullopt);
+    }
+    catch (const std::logic_error& e)
+    {
+        thrown = true;
+        CHECK(std::string(e.what()).find("set_time_lock() has not been called") != std::string::npos);
+    }
+    CHECK(thrown);
+    CHECK(commands.inspect([](SimulationController&, bool) {}) == TimeCommands::Stage::SettingUp);
+    // With the lock, the command that waited is given to the controller when it is attached.
+    commands.set_time_lock(kFree);
+    commands.attach(controller, 10, std::nullopt);
+    commands.look([](const TimeFacts& facts) { CHECK(facts.standing); });
+    commands.detach();
+}
+
+TEST_CASE(time_commands_from_several_threads_never_pass_the_time_lock_that_comes_meanwhile)
+{
+    // Threads send commands while the run gives the lock: whichever side of it a command falls
+    // on, it is decided with the lock, every command has exactly one event, and each thread's
+    // events are in the order it sent them.
+    constexpr int kThreads = 4;
+    constexpr int kEach = 50; // 200 in all: fewer than kMaxWaitingCommands, so none is refused for the limit
+    for (int round = 0; round < 20; ++round)
+    {
+        Told told;
+        StopRequests stops;
+        RunControls::Observers observers;
+        observers.on_command = told.writer();
+        // The states are told under the same mutex, each after what made it: the last one is the
+        // lock's, whatever the threads did.
+        std::atomic<int> states{0};
+        std::atomic<bool> last_takes_a_pause{true};
+        observers.on_state = [&](const RunState& state) {
+            ++states;
+            last_takes_a_pause = state.allowed.pause.ok;
+        };
+        RunControls controls(stops, false, std::move(observers));
+        TimeCommands& commands = controls.time();
+        std::atomic<int> go{0};
+        std::atomic<int> slipped{0};
+        std::vector<std::thread> threads;
+        for (int t = 0; t < kThreads; ++t)
+        {
+            threads.emplace_back([&, t] {
+                while (go.load() == 0)
+                {
+                    std::this_thread::yield();
+                }
+                for (int i = 0; i < kEach; ++i)
+                {
+                    Command c = i % 2 == 0 ? command(Operation::Pause) : speed_of(5.0);
+                    c.id = t * 1000 + i;
+                    const Command done = commands.apply(c, t % 2 == 0 ? "stdin" : "control_server");
+                    if (done.accepted)
+                    {
+                        ++slipped;
+                    }
+                    if (i % 8 == 0)
+                    {
+                        controls.publish();
+                    }
+                }
+            });
+        }
+        go = 1;
+        // Somewhere among the commands (round 0: most likely before them all).
+        for (int i = 0; i < round * 40; ++i)
+        {
+            std::this_thread::yield();
+        }
+        controls.set_time_lock(kLocked);
+        for (std::thread& thread : threads)
+        {
+            thread.join();
+        }
+        CHECK_EQ(slipped.load(), 0);
+        const std::vector<std::string> lines = told.all();
+        CHECK_EQ(lines.size(), static_cast<std::size_t>(kThreads * kEach));
+        std::vector<int> next(kThreads, 0);
+        for (const std::string& line : lines)
+        {
+            const int id = std::stoi(line);
+            const int thread = id / 1000;
+            CHECK_EQ(id % 1000, next[static_cast<std::size_t>(thread)]);
+            ++next[static_cast<std::size_t>(thread)];
+            CHECK(line.find("outside-real-time") != std::string::npos);
+        }
+        CHECK(!commands.first_time_change());
+        commands.look([](const TimeFacts& facts) {
+            CHECK(!facts.standing);
+            CHECK(!facts.speed);
+        });
+        CHECK(!controls.state().allowed.pause.ok);
+        CHECK(states.load() >= 1);
+        CHECK(!last_takes_a_pause.load());
+    }
 }

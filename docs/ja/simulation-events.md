@@ -189,13 +189,15 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `ok` | いまその操作を受け付けるか（引数が範囲の中なら） |
 | `reason` | 受け付けない理由のコード（[理由のコード](#理由のコード)。`ok` が `true` なら `null`）。いまコマンドを送ると、同じ `reason` で断られます |
 | `message` | 受け付けない理由と、代わりにすること。英語の 1 文（`ok` が `true` なら `null`） |
-| `caution` | `null` か `{"code", "message"}`: 受け付けるが、先に知っておくことがある操作。いまは、これを設定するものはありません |
+| `caution` | `null` か `{"code", "message"}`: 受け付けるが、先に知っておくことがある操作（[注意のコード](#注意のコード)）。`ok` が `false` の間は、いつも `null` |
 | `min_ms`、`max_ms` | `step` にだけあります。`ms` の範囲（`ok` が `false` の間も） |
 | `min`、`max` | `speed` にだけあります。値の範囲（`ok` が `false` の間も）。`min` と `max` が同じでなければ、`"max"` も受け付けます |
 
 `ok` は「受け付けるか」の答えで、「何かが変わるか」ではありません。一時停止中も `pause` は `ok` です（受け付けて、何もしません）。`paused` が `false` でも `step` が `ok` のことがあります: `pause` を受け付けた直後でシミュレーションが止まるまでの間と、ステップを進めている間です。
 
 `pause`、`resume`、`step`、`run_until`、`speed`、`stop` は、標準入力のコマンドとして答えます。`write`（変数の書き込み）は Control Server のクライアントにしかないので、クライアントとして答えます。Control Server のない実行（`--control` なし）では、`write` を送る口がないので、実行の間ずっと、`ok` が `false`、理由は `no-control-server` です。シナリオの間は、この 2 つの入口で答えが違います: クライアントは時間を動かせず（`scenario-running`）、標準入力のコマンドは動かせます。上の 6 つは標準入力の答えです。
+
+シミュレーションの外につながっていて実時間を保つ実行（`--time-policy realtime`、既定）では、`pause`、`step`、`run_until` は、理由 `outside-real-time` で `ok` が `false` になります。`speed` は `min` と `max` が 1 になります（受け付けるのは速さ 1 だけです）。`--time-policy free` では、`ok` は `true` で、`caution` に `outside-not-real-time` が付きます。実行を外につないでいるものは、`check` イベントの `time_lock.because` にあります。
 
 `state` を書くとき:
 
@@ -241,12 +243,12 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 | コード | 意味 |
 |---|---|
-| `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`） |
+| `not-set-up` | ランチャーがまだシミュレーションを準備していません（`step`、`run_until`、時刻つきの `pause`）。ランチャーが構成ファイルを読む前に、256 個を超えるコマンドが届いたときも、これです（[時間のコマンドを受け付ける条件](#時間のコマンドを受け付ける条件)） |
 | `not-paused` | 一時停止していないときの `step` |
 | `not-running` | シミュレーションが終わった、または始まりませんでした |
 | `scenario-running` | シナリオを再生する実行です。クライアントは変数を書けず、時間も動かせません |
 | `no-control-server` | `state` の `allowed` にだけ出ます。Control Server のない実行（`--control` なし）で、Control Server のクライアントだけが送れる操作（`write`）です |
-| `outside-real-time` | 実行につながっているものが仮想時間を待たないので、実行は実時間を保ちます。いまは、これを設定するものはありません |
+| `outside-real-time` | 実行がシミュレーションの外につながっていて（`--connect`、または有効な `role: bridge` の participant）、実時間を保ちます（`--time-policy realtime`、既定）。`pause`、`step`、`run_until`、1 以外の `speed` は断ります。`resume`、`speed` 1、`stop` は受け付けます。時間を動かすには、`--time-policy free` で実行を始めます（[simulation-run.md](simulation-run.md) の「外につながる実行の時間」） |
 | `out-of-range` | 引数が範囲の外です（クライアントの速度、ステップ、時刻） |
 | `missing-argument` | クライアントの `run_until` に時刻がありません（標準入力では `invalid-argument`） |
 | `not-a-time-command` | 時間のコマンドの名前ではありません |
@@ -254,6 +256,14 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `unknown-command` | 標準入力が受け付けない名前のコマンド |
 | `invalid-argument` | 標準入力の行の引数か `id` がない、形が違う、範囲の外 |
 | `unknown-source` | ランチャーは書きません: ランチャーのライブラリが、知らない入口からのコマンドを断るときのコードです |
+
+### 注意のコード
+
+`state` の `allowed` の `caution` の `code` です。コードは増えることがあります。コードの意味は変わりません。
+
+| コード | 意味 |
+|---|---|
+| `outside-not-real-time` | 実行がシミュレーションの外につながっていて、`--time-policy free` で始めました。`pause`、`step`、`run_until`、`speed` は受け付けますが、つながっている相手は仮想時間を待たず、ブリッジは両方向にフレームを運び続けます（シミュレーションが止まっている間、外から来たフレームは溜まります）。最初のそういうコマンドの後、実行は注記 `outside-time-changed` を付けて終わります |
 
 ### `participant` の `state`
 
@@ -550,10 +560,20 @@ participant の `log` の終わりの側には、保証がありません。part
 | シミュレーションが終わった後（始まらなかったときも）の時間のコマンド | 受け付けません。 |
 | 一時停止しているときの `pause`、動いているときの `resume` | 受け付けて、何もしません。 |
 | controller ができる前（照合の間など）に受けた `pause`、`resume`、`speed` | 覚えておき、controller ができたときに渡します。 |
+| ランチャーが構成ファイルを読む前に受けた時間のコマンド | 決めずに待たせます。ファイルを読んだ後に答えます（下）。 |
+| 外につながっていて実時間を保つ実行での `pause`、`step`、1 以外の `speed` | 受け付けません（`outside-real-time`）。 |
 
 受け付けなかった理由は `message`（文）と `reason`（コード。[理由のコード](#理由のコード)）に書きます。コマンドを送る前には、`state` のイベントの `allowed` が同じことを伝えます。controller ができる前に受けた `pause` は、`--start-paused` と同じく 0 で止まります。
 
 一時停止しても、`phase` は `running` のままです。一時停止は `state` と `time` の `paused` で通知します。
+
+実行が実時間を保つかどうか（`--connect`、`role: bridge` の participant、`--time-policy`）は、ランチャーが構成ファイルを読むまで分かりません。それより前に届いた時間のコマンドは、届いたときには決めません。
+
+- 待たせます。`command` イベントは、ファイルを読んだ後に、そのときの答えで書きます。待たせたコマンドには、届いた順に、後から届くどのコマンドよりも先に答えます。`command` イベントの順は、コマンドが効いた順のままです。
+- `stop` は待たせません。待っているものがあっても、すぐ受け付けます。
+- 待たせるのは 256 個までです。それを超えたコマンドは、理由 `not-set-up` ですぐ断ります。`check` イベントの後に、送り直してください（そのときにはファイルを読み終えています。最初の `state` イベントは、それより前に出ます）。
+- ファイルが読めなければ、何も始まりません。待たせたコマンドは、理由 `not-running` で断ります。
+- ファイルを読む前に書いた `state` イベントは、まだこの規則を知りません。その `allowed` は、外につながっていない実行としての答えです。次の `state` から、この規則が入ります。
 
 `--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`run_until`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
 
@@ -707,7 +727,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `connections` | `vehicle_sil_launch connections` とその `--json` と `--network`、`formats` の `connections`、指摘 `connect-target` と `connect-failed` が挙げる `vehicle_sil_launch connections` |
 | `connect-counts` | イベント `outside`、結果の `outside[].to_outside` と `from_outside` の数（この機能の前は `null`）、人向けの結果の `outside:` の行の末尾の数、指摘 `connect-nothing-received`、`run` が起こすブリッジのコマンドの `--stats-every-ms 1000` |
 | `state` | イベント `state`、イベント `command` の `reason` と `id`、標準入力のコマンドの `id` |
-| `time-policy` | `--time-policy`、照合の JSON の `time_lock`、指摘 `outside-real-time`、`outside-speed-set`、`outside-not-real-time`（この機能の前は、警告 `connect-not-real-time` と `connect-start-paused` で、`--connect` のある実行はファイルの速さで動きました） |
+| `time-policy` | `--time-policy`、照合の JSON の `time_lock`、指摘 `outside-real-time`、`outside-speed-set`、`outside-not-real-time`、`outside-time-changed`、`unsynchronized-time-changed`、断ったコマンドと `allowed` の理由 `outside-real-time`、注意 `outside-not-real-time`（この機能の前は、警告 `connect-not-real-time`、`connect-start-paused`、`connect-time-changed` で、`--connect` のある実行はファイルの速さで動き、時間のコマンドをすべて受け付けました） |
 | `control-server` | イベント `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
 `scenario-control` のあるビルドでは、シナリオの実行中、クライアントは読む・待つ・止めるだけです。書く呼び出しと時刻を動かす呼び出しは、`FAILED_PRECONDITION`（理由 `scenario-running`）で拒否します（[scenario.md](scenario.md) の「実行中に変数を見る」）。

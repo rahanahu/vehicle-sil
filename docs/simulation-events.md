@@ -189,13 +189,15 @@ How late the run is, and how fast it actually goes, are `late_ms`, `slipped_ms` 
 | `ok` | Whether the run accepts the operation now (with arguments that are in range) |
 | `reason` | The code of why not (see [Reason codes](#reason-codes); `null` if `ok` is `true`). A command sent now is refused with the same `reason` |
 | `message` | Why not, and what to do instead: one English sentence (`null` if `ok` is `true`) |
-| `caution` | `null`, or `{"code", "message"}`: the run accepts the operation, but there is something to know first. Nothing sets it yet |
+| `caution` | `null`, or `{"code", "message"}`: the run accepts the operation, but there is something to know first (see [Caution codes](#caution-codes)). Always `null` while `ok` is `false` |
 | `min_ms`, `max_ms` | Only in `step`: the range of its `ms` (also while `ok` is `false`) |
 | `min`, `max` | Only in `speed`: the range of its value (also while `ok` is `false`). `"max"` is accepted as well, unless `min` equals `max` |
 
 `ok` answers "would the run accept it", not "would it change anything": `pause` is `ok` while the simulation is paused (the command is accepted and does nothing). `step` can be `ok` while `paused` is `false`: right after a `pause` was accepted and until the simulation has paused, and while a step is being done.
 
 `pause`, `resume`, `step`, `run_until`, `speed` and `stop` are answered as for a stdin command. `write` (writing a variable) exists only for Control Server clients, so it is answered as for a client. In a run without a Control Server (no `--control`) nothing can send a write, so `write` has `ok` `false` with the reason `no-control-server` for the whole run. During a scenario the two entries differ: clients cannot move time (`scenario-running`), stdin commands can, and those six show the answer for stdin.
+
+In a run that is connected outside the simulation and keeps real time (`--time-policy realtime`, the default), `pause`, `step` and `run_until` have `ok` `false` with the reason `outside-real-time`, and `speed` has `min` and `max` 1 (only a speed of 1 is accepted). With `--time-policy free` they have `ok` `true` and the `caution` `outside-not-real-time`. What connects the run outside is `time_lock.because` of the `check` event.
 
 When `state` is written:
 
@@ -241,12 +243,12 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 
 | Code | Meaning |
 |---|---|
-| `not-set-up` | The launcher has not set up the simulation yet (`step`, `run_until`, `pause` with a time) |
+| `not-set-up` | The launcher has not set up the simulation yet (`step`, `run_until`, `pause` with a time). Also: more than 256 commands arrived before the launcher had read the configuration file (see [When time commands are accepted](#when-time-commands-are-accepted)) |
 | `not-paused` | `step` while the simulation is not paused |
 | `not-running` | The simulation has ended, or did not start |
 | `scenario-running` | The run plays a scenario: a client can neither write variables nor move time |
 | `no-control-server` | Only in `allowed` of `state`: the run has no Control Server (`--control`), and only a Control Server client can send the operation (`write`) |
-| `outside-real-time` | Something connected to the run does not wait for virtual time, so the run keeps to real time. Nothing sets this yet |
+| `outside-real-time` | The run is connected outside the simulation (`--connect`, or an enabled `role: bridge` participant) and keeps real time (`--time-policy realtime`, the default): `pause`, `step`, `run_until` and a `speed` other than 1 are refused. `resume`, a `speed` of 1 and `stop` are accepted. To move time, start the run with `--time-policy free` (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)) |
 | `out-of-range` | An argument is out of range (a client's speed, step or time) |
 | `missing-argument` | A client's `run_until` without a time (on stdin it is `invalid-argument`) |
 | `not-a-time-command` | The name is not a time command |
@@ -254,6 +256,14 @@ The `reason` of a `command` event that was not accepted, and of `allowed` in `st
 | `unknown-command` | A stdin line with a command name that stdin does not accept |
 | `invalid-argument` | A stdin line whose argument or `id` is missing, of the wrong form or out of range |
 | `unknown-source` | Not written by the launcher: the launcher library refuses a command from a source it does not know |
+
+### Caution codes
+
+The `code` of `caution` in `allowed` of `state`. Codes can be added; the meaning of a code does not change.
+
+| Code | Meaning |
+|---|---|
+| `outside-not-real-time` | The run is connected outside the simulation and was started with `--time-policy free`: `pause`, `step`, `run_until` and `speed` are accepted, but what is connected does not wait for virtual time, and its bridge still carries frames both ways (frames from outside pile up while the simulation is paused). After the first such command, the run ends with the note `outside-time-changed` |
 
 ### The `state` of `participant`
 
@@ -550,10 +560,20 @@ For a time command (`pause`, `resume`, `step`, `run_until`, `speed`), the thread
 | A time command after the simulation has ended (or did not start) | Not accepted. |
 | `pause` while paused, `resume` while running | Accepted; does nothing. |
 | `pause`, `resume` or `speed` received before the controller exists (during the check, for example) | Kept, and handed to the controller when it exists. |
+| Any time command received before the launcher has read the configuration file | Waits, undecided. Answered once the file is read (see below). |
+| `pause`, `step` or a `speed` other than 1 in a run that is connected outside and keeps real time | Not accepted (`outside-real-time`). |
 
 The reason for not accepting goes into `message` (a sentence) and `reason` (a code; see [Reason codes](#reason-codes)). `allowed` of the `state` event says the same before a command is sent. A `pause` received before the controller exists pauses at 0, as `--start-paused` does.
 
 A pause leaves `phase` at `running`. The `paused` of `state` and of `time` reports the pause.
+
+Whether a run keeps real time (`--connect`, a `role: bridge` participant, `--time-policy`) is known only once the launcher has read the configuration file, so a time command that arrives earlier is not decided when it arrives:
+
+- It waits. Its `command` event is written when the file has been read, with the answer of that moment. The commands that waited are answered in the order in which they arrived, before any command that arrives later, so the order of the `command` events is still the order in which the commands took effect.
+- `stop` does not wait: it is accepted at once, whatever waits.
+- At most 256 commands wait. One more is refused at once with the reason `not-set-up`; send it again after the `check` event (the file has been read then; the first `state` event comes before that).
+- If the file cannot be read, nothing starts, and the commands that waited are refused with the reason `not-running`.
+- The `state` event written before the file is read does not know the rule yet: its `allowed` is the answer for a run that is not connected outside. The next `state` has the rule.
 
 In a run with `--control` and `--start-paused` that pauses before the step at time 0, a `resume`, `step`, `run_until` or `pause` accepted before the pause also decides how the run pauses afterwards (see "Write before the start (`--start-paused`)" in [control-api.md](control-api.md#write-before-the-start---start-paused)).
 
@@ -707,7 +727,7 @@ Each name indicates that the following are present:
 | `connections` | `vehicle_sil_launch connections` with `--json` and `--network`, `connections` in `formats`, and `vehicle_sil_launch connections` named by the findings `connect-target` and `connect-failed` |
 | `connect-counts` | The event `outside`, the counts in `outside[].to_outside` and `from_outside` of the result (`null` before this feature), the counts at the end of the `outside:` lines of the human-readable result, the finding `connect-nothing-received`, and `--stats-every-ms 1000` in the command of a bridge that `run` starts |
 | `state` | The event `state`, `reason` and `id` in the event `command`, and `id` in the stdin commands |
-| `time-policy` | `--time-policy`, `time_lock` in the check JSON, the findings `outside-real-time`, `outside-speed-set` and `outside-not-real-time` (before this feature: the warnings `connect-not-real-time` and `connect-start-paused`, and a run with `--connect` went at the file's speed) |
+| `time-policy` | `--time-policy`, `time_lock` in the check JSON, the findings `outside-real-time`, `outside-speed-set`, `outside-not-real-time`, `outside-time-changed` and `unsynchronized-time-changed`, the reason `outside-real-time` of a refused command and of `allowed`, and the caution `outside-not-real-time` (before this feature: the warnings `connect-not-real-time`, `connect-start-paused` and `connect-time-changed`, and a run with `--connect` went at the file's speed and accepted every time command) |
 | `control-server` | The event `control_server`, `"control_server"` as the `source` of `command` and its `at_ms`, `--control-credentials`, `--control-tls-cert`, `--control-tls-key`, `--control-audit-log`, `"control server stop"` as `interrupted_by`, and pausing before the step at time 0 with `--start-paused` |
 
 In a build with `scenario-control`, clients can only read, wait and stop while a scenario runs. Calls that write and calls that move time are rejected with `FAILED_PRECONDITION` (reason `scenario-running`) (see "Watching variables during a run (`--control`)" in [scenario.md](scenario.md#watching-variables-during-a-run---control)).

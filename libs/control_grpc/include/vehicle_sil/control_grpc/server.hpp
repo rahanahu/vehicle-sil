@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -39,7 +40,9 @@ struct TimeView
 };
 
 /// The time operations the server offers. All are thread safe and do not wait, except
-/// wait_paused(). Errors: std::invalid_argument or std::logic_error (reported to the client).
+/// wait_paused(). Errors: std::invalid_argument or std::logic_error (reported to the client as
+/// INVALID_ARGUMENT and FAILED_PRECONDITION); Refused, a std::logic_error, also tells the client
+/// a code for why.
 class TimeControl
 {
 public:
@@ -116,8 +119,21 @@ struct SecurityOptions
 [[nodiscard]] std::string unix_socket_path_problem(const std::string& listen);
 
 /// The name of the trailing metadata that says why a call was refused, for a client that must
-/// tell the refusals apart without reading the message (ObserveOnly::reason).
+/// tell the refusals apart without reading the message (ObserveOnly::reason, Refused::reason()).
 inline constexpr const char* kRefusalReasonKey = "vehicle-sil-reason";
+
+/// What a TimeControl operation throws when it refuses the call for a reason that a program must
+/// tell apart: the client gets FAILED_PRECONDITION with what(), and reason() as the trailing
+/// metadata kRefusalReasonKey (left out unless it is a word of a-z, 0-9 and '-').
+class Refused : public std::logic_error
+{
+public:
+    Refused(std::string reason, const std::string& message) : std::logic_error(message), reason_(std::move(reason)) {}
+    [[nodiscard]] const std::string& reason() const noexcept { return reason_; }
+
+private:
+    std::string reason_;
+};
 
 /// A server that only shows the simulation (ServerOptions::observe_only).
 struct ObserveOnly

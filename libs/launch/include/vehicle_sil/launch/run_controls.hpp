@@ -152,15 +152,23 @@ public:
     /// Whether `entry` is refused everything but a stop for the whole run, and why
     /// (TimeCommands::always_refused()): a control server then only shows the run.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const { return time_.always_refused(entry); }
-    /// Whether something that does not wait for the virtual time keeps this run to real time
-    /// (TimeCommands::set_time_lock()): once, right after the configuration has been read.
-    void set_time_lock(bool locked) { time_.set_time_lock(locked); }
+    /// Whether this run is connected outside the simulation and keeps to real time
+    /// (TimeCommands::set_time_lock()): once, right after the configuration has been read. Until
+    /// then the time commands wait undecided; this decides them, each with its command event.
+    void set_time_lock(const TimeLock& lock) { time_.set_time_lock(lock); }
 
     /// The phase the run entered last; Phase::Checking before it has said any.
     [[nodiscard]] Phase phase() const noexcept { return phase_.load(); }
     /// The run enters `phase`: phase() has it from now on, then Observers::on_phase is called,
     /// then publish().
     void set_phase(Phase phase);
+
+    /// The run ends before it could give the time lock (its configuration could not be read, so
+    /// nothing starts): as set_phase(Phase::Ended), with the time commands detached before the
+    /// state is told. The commands that waited for the lock are refused there, each with its
+    /// command event, and one state tells both the end and that no time command is taken any
+    /// more. The run's alone, as set_phase().
+    void end_without_time_lock();
 
     /// How the first stop request is called in the state (RunState::stopped_by): as the result's
     /// interrupted_by (RunOptions::interrupt_name). Without it: "interrupt". Called while the

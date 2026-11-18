@@ -8,8 +8,10 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/command.hpp"
 #include "vehicle_sil/launch/control_rules.hpp"
+#include "vehicle_sil/launch/time_plan.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,6 +39,10 @@ struct TimeChange
     std::optional<std::int64_t> at_ms{};
     std::optional<double> speed{}; ///< speed: its value (empty: max)
 };
+
+/// How many commands wait at most for the time lock (TimeCommands::set_time_lock()); one more is
+/// refused at once.
+inline constexpr std::size_t kMaxWaitingCommands = 256;
 
 /// What the time commands know of where the run stands, at one moment: the part of the run's
 /// state (RunState of run_controls.hpp) that changes under their mutex.
@@ -68,8 +74,21 @@ struct TimeFacts
 /// Whether a command is taken is the rules' answer (control_rules.hpp: decide()) for where this
 /// object stands; allowed() gives the same answer without doing anything.
 ///
+/// The time lock comes first. Whether the run's time is locked (it is connected outside the
+/// simulation: TimeLock) is known only once the run has read its configuration, and a command
+/// that came before must not be decided without it. So until set_time_lock() every command but a
+/// stop waits, undecided, in the order it came (at most kMaxWaitingCommands; one more is refused
+/// at once with reason::kNotSetUp): apply() returns it with Command::pending and writes no event.
+/// set_time_lock() then decides the commands that waited, in that order, each with its command
+/// event, before any command that comes after: the order of the events is still the order in
+/// which the commands took effect, only later than they came. If the lock never comes (the
+/// configuration could not be read, so nothing starts), detach() decides them: they are refused
+/// as every command is once detached (reason::kNotRunning). A stop never waits. A TimeCommands
+/// that nothing gives the lock answers no command: the run does (run_file()), and a test gives
+/// TimeLock{} for a run that is not connected outside.
+///
 /// Before the run attaches its controller (the check, the start), what the commands ask for is
-/// kept and given to the controller when it is attached. While attached, each command goes to the
+/// kept and given to the controller when it is attached (attach() needs the lock to be given). While attached, each command goes to the
 /// gate at once. Once detached (the simulation is over, or did not start), the rules refuse the
 /// commands (but a stop from standard input, which is a stop request whenever it comes).
 ///
@@ -106,28 +125,36 @@ public:
     /// the table's alone to say (the rows of control_rules.cpp). A "stop" is only decided and
     /// written here; the caller asks the run to stop.
     ///
+    /// Before set_time_lock() (and detach()), a command other than a stop is not decided here: it
+    /// is returned with Command::pending (not accepted, no reason), and its event, its effect and
+    /// OnCommand come when the lock is given (see above). The command events are the answer then.
+    ///
     /// `source` must be the entry_name() of an entry ("stdin", "control_server"): a command of
     /// any other source is refused (reason::kUnknownSource) and written with that source, so that
     /// a misspelt or new source is never taken by the rules of another entry.
     Command apply(const Command& command, std::string_view source);
     /// As apply(command, source), and if the command is accepted, `accepted` is called before
     /// apply() returns, under this object's mutex (short, must not wait): before any later
-    /// command and before detach(). A control server's stop asks the run to stop there, so that
+    /// command and before detach(). For a command that waits for the time lock, a copy of
+    /// `accepted` is kept and called when the command is decided and accepted (on the thread that
+    /// gives the lock): what it refers to must live until then. A control server's stop asks the run to stop there, so that
     /// a stop that is accepted reaches the run before the simulation is over.
     Command apply(const Command& command, std::string_view source, const std::function<void()>& accepted);
 
     /// Whether `operation` from `entry` would be taken now, and the range of its argument
     /// (launch::allowed()): what apply() decides for a command of that operation whose arguments
-    /// are in range, at this moment (another thread's command may change it right after). Changes
-    /// nothing and writes nothing. Takes this object's mutex: not to be called from what runs
+    /// are in range, at this moment (another thread's command may change it right after). Before
+    /// set_time_lock(), when apply() decides nothing yet: the answer without a lock, which the
+    /// lock may change. Changes nothing and writes nothing. Takes this object's mutex: not to be called from what runs
     /// under it (OnCommand, OnChange, `accepted`, the `f` of inspect() and look(), on_detach), which
     /// would wait for itself.
     [[nodiscard]] Allowed allowed(Operation operation, Entry entry);
 
     /// What is called, under this object's mutex, whenever the facts may have changed: at the end
     /// of apply() (after the command is done, also for one that was refused), attach(), detach(),
-    /// set_time_lock(), and when a hold begins or ends. It must be short, must not wait and must
-    /// not call this object; it may take the event stream's mutex (as OnCommand). Set once,
+    /// set_time_lock() (if the run is connected outside, and after each command it or detach()
+    /// decides), and when a hold begins or ends. It must be short, must not wait and must not
+    /// call this object; it may take the event stream's mutex (as OnCommand). Set once,
     /// before any other thread uses this object (RunControls sets it in its constructor).
     using OnChange = std::function<void(const TimeFacts& facts)>;
     void set_on_change(OnChange on_change);
@@ -137,16 +164,20 @@ public:
     /// launch::always_refused() for this run: whether `entry` is refused everything but a stop for
     /// the whole run. The same answer whenever it is asked.
     [[nodiscard]] std::optional<Decision> always_refused(Entry entry) const;
-    /// Whether something that does not wait for the virtual time keeps this run to real time
-    /// (ControlSituation::time_locked; false until this is called). For the run: once, right after
-    /// it has read the configuration, and not again. Nothing calls it yet.
-    void set_time_lock(bool locked);
+    /// Whether this run is connected outside the simulation, and whether that keeps it to real time
+    /// (ControlSituation::time_locked for `lock.locked`; time_free for a lock that names something
+    /// and is not locked). For the run: once, right after it has read the configuration and
+    /// before anything of it starts (run_file(): from the check, before --describe). Tells
+    /// OnChange if the run is connected outside (the lock changes what is taken), then decides the commands that waited for it, in their order (see above). The
+    /// first call is the run's for good: a later one changes nothing.
+    void set_time_lock(const TimeLock& lock);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
-    /// made with `step_ms`); first it is given the speed (`speed`, or the last speed command) and
-    /// the pause (start paused, or the last pause or resume command, and the steps since). detach():
-    /// before the controller goes; the commands are refused from then on, a hold ends and
-    /// wait_paused() returns.
+    /// made with `step_ms`); std::logic_error before set_time_lock(). First it is given the speed
+    /// (`speed`, or the last speed command) and the pause (start paused, or the last pause or
+    /// resume command, and the steps since). detach(): before the controller goes; the commands
+    /// are refused from then on (those that still wait for the time lock too, each with its
+    /// event), a hold ends and wait_paused() returns.
     void attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed);
     void detach();
     /// `f` is called in detach() with the controller (if one is attached), under this object's
@@ -181,7 +212,7 @@ public:
 
     /// The first accepted command that changed how the time goes (TimeChange), or empty. apply()
     /// notes it under this object's mutex; the run reads it after detach(), when no command is
-    /// accepted any more (run --connect: the warning connect-time-changed).
+    /// accepted any more (the notes outside-time-changed and unsynchronized-time-changed).
     std::optional<TimeChange> first_time_change();
 
 private:

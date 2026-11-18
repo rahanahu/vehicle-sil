@@ -816,12 +816,22 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 | gRPC のスレッド（時間の操作） | `TimeCommands::apply()`（`source` は `control_server`） | `TimeCommands` のミューテックスの中で、controller の時間ゲートに渡す |
 | gRPC のスレッド（値の読み書き） | Hub | Hub のロック |
 
+時間のロック（[simulation-run.md](../simulation-run.md) の「外につながる実行の時間」）:
+
+- run が `TimeCommands` に時間のロックを渡す（`set_time_lock()`。run のスレッドが、構成を読んだ直後、どの `--describe` よりも前に呼ぶ）まで、`apply()` は停止のほかを決めません。それより前に届いたコマンドは、届いた順に溜め（256 個まで）、保留として返します。イベントは書きません。
+- `set_time_lock()` は、溜めたコマンドを、その順に、ミューテックスの中で、後から届くどのコマンドよりも先に決め、それぞれの `command` イベントを書きます。構成が読めなければ、`detach()` が同じことをし、溜めたコマンドはすべて断られます。
+- だから、ロックなしで決まるコマンドはなく、`command` イベントの順は、コマンドが効いた順のままです。
+- `attach()` は、ロックを渡される前の controller を断ります（`std::logic_error`）。
+- Control Server が listen を始めるのは照合の後なので、クライアントの呼び出しがこの形で待つことはありません。
+- 規則が断った時刻の呼び出しは、理由のコードを持つ `control_grpc::Refused` で知らせます。サーバーは、それを `FAILED_PRECONDITION` の trailing metadata `vehicle-sil-reason` として送ります。
+
 ### 見るだけのサーバー（`observe_only`）
 
 - シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server は、run の間ずっと、停止のほかをすべて断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
 - 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があります。
 - `observe_only` のサーバーは、「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。
 - 拒否した呼び出しは、Hub にも `TimeControl` にも届きません。
+- 実時間も保つシナリオの実行では、クライアントの時刻の呼び出しは、時間のロックの規則が見る前に、ここでシナリオの理由で拒否します。標準入力のコマンドは、時間のロックが断ります（`outside-real-time`）。
 - 読む呼び出しがアクセスするのは、Hub（スレッド安全。購読は上限つきで、トランスポートのスレッドを待たせない）と `TimeCommands::inspect()` だけで、シナリオの tap、書き込み、ガードとは何も共有しません。
 
 ### 起動と終了の時期

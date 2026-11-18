@@ -2,7 +2,8 @@
 //
 // A server that only shows the simulation (ServerOptions::observe_only): which calls it refuses,
 // how, and that a refused call reaches neither the hub nor the time. The expected table is
-// written out here, apart from the server's code.
+// written out here, apart from the server's code. Last, a time operation that refuses a call
+// itself, with a code (control_grpc::Refused): the same metadata.
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
@@ -42,6 +43,8 @@ class CountingTime final : public control_grpc::TimeControl
 public:
     std::atomic<int> changes{0};
     std::atomic<int> stops{0};
+    /// Not empty: pause() refuses with this code, and step() with a code that cannot be sent.
+    std::string refuse{};
 
     [[nodiscard]] control_grpc::TimeView state() const override
     {
@@ -51,10 +54,24 @@ public:
         v.now = SimTime{} + 30ms;
         return v;
     }
-    void pause(std::optional<SimTime>) override { ++changes; }
+    void pause(std::optional<SimTime>) override
+    {
+        if (!refuse.empty())
+        {
+            throw control_grpc::Refused(refuse, "the time is kept: no pause");
+        }
+        ++changes;
+    }
     void resume() override { ++changes; }
     void run_until(SimTime) override { ++changes; }
-    void step(SimDuration) override { ++changes; }
+    void step(SimDuration) override
+    {
+        if (!refuse.empty())
+        {
+            throw control_grpc::Refused("Not A Word", "no step either");
+        }
+        ++changes;
+    }
     void set_speed(std::optional<double>) override { ++changes; }
     std::optional<SimTime> wait_paused(std::chrono::milliseconds) override { return SimTime{} + 30ms; }
     void stop(const std::string&) override { ++stops; }
@@ -366,4 +383,26 @@ TEST_CASE(control_server_observe_only_needs_a_reason_that_can_be_sent)
         }
         CHECK(refused);
     }
+}
+
+TEST_CASE(control_server_sends_the_code_of_a_time_operation_that_refuses_a_call)
+{
+    Server s(false);
+    s.time.refuse = "outside-real-time";
+    const std::map<std::string, Call> all = calls();
+    // The code as the trailing metadata, with FAILED_PRECONDITION and the operation's message.
+    const Answer pause = all.at("Pause")(*s.channel, nullptr);
+    CHECK(pause.status.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
+    CHECK(pause.status.error_message() == "the time is kept: no pause");
+    CHECK(pause.reason == "outside-real-time");
+    // A code that is no word for metadata is left out; the refusal stands.
+    const Answer step = all.at("Step")(*s.channel, nullptr);
+    CHECK(step.status.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
+    CHECK(step.status.error_message() == "no step either");
+    CHECK(step.reason.empty());
+    // A call that is served has none.
+    const Answer resume = all.at("Resume")(*s.channel, nullptr);
+    CHECK(resume.status.ok());
+    CHECK(resume.reason.empty());
+    CHECK_EQ(s.time.changes.load(), 1);
 }

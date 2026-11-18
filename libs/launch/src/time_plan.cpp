@@ -80,10 +80,7 @@ std::optional<double> planned_speed(const TimeLock& lock, const std::optional<st
     return asked ? *asked : otherwise;
 }
 
-namespace {
-
-/// "--connect connects CAN1 to a real bus", "participant 'Gateway' is a bridge (role: bridge)", or both.
-std::string connected_outside(const TimeLock& lock)
+std::string detail::connected_outside(const TimeLock& lock)
 {
     std::string out;
     if (!lock.connected.empty())
@@ -104,9 +101,7 @@ std::string connected_outside(const TimeLock& lock)
     return out;
 }
 
-/// How to run on SIL Kit only: "without --connect", "with --disable Gateway --disable Tap", or
-/// both ("without --connect and with --disable Gateway": it takes both).
-std::string not_connected(const TimeLock& lock)
+std::string detail::not_connected(const TimeLock& lock)
 {
     std::string out = lock.connected.empty() ? "" : "without --connect";
     for (std::size_t i = 0; i < lock.bridges.size(); ++i)
@@ -115,6 +110,11 @@ std::string not_connected(const TimeLock& lock)
     }
     return out;
 }
+
+namespace {
+
+using detail::connected_outside;
+using detail::not_connected;
 
 constexpr const char* kFreeCarries = "the bridge still carries frames both ways";
 
@@ -203,6 +203,22 @@ std::optional<double> RunTiming::actual_speed() const
         return std::nullopt;
     }
     return std::round(static_cast<double>(sim_ms) / static_cast<double>(ran) * 1000.0) / 1000.0;
+}
+
+std::vector<std::string> detail::real_time_peers(const SimulationConfig& config, const CheckReport& check)
+{
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < config.participants.size() && i < check.participants.size(); ++i)
+    {
+        const ParticipantConfig& p = config.participants[i];
+        if (p.enabled && p.for_network.empty() && p.role != ParticipantRole::Bridge &&
+            check.participants[i].status == ParticipantStatus::Described && check.participants[i].ecu &&
+            !SeenEcu(p, *check.participants[i].ecu).step())
+        {
+            out.push_back(p.name);
+        }
+    }
+    return out;
 }
 
 RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, const std::optional<double>& speed,

@@ -205,7 +205,8 @@ namespace {
 
 } // namespace
 
-CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options)
+CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options,
+                       const std::function<void(const TimeLock& lock)>& on_time_lock)
 {
     CheckReport report;
     report.file = shown_as;
@@ -247,6 +248,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
             time_lock_findings(report.time_lock, options.run_speed,
                                options.fastest_by_default ? std::optional<double>{} : report.config->speed, options.start_paused);
         report.findings.insert(report.findings.end(), time.begin(), time.end());
+        if (on_time_lock)
+        {
+            on_time_lock(report.time_lock);
+        }
     }
     if (report.config && options.file_only && !options.connect.empty())
     {
