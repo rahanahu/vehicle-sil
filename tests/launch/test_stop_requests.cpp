@@ -5,7 +5,7 @@
 
 #include "test_harness.hpp"
 
-#include "vehicle_sil/launch/stop_requests.hpp"
+#include "vehicle_sil/runner/stop_requests.hpp"
 
 #include <atomic>
 #include <string>

@@ -9,7 +9,7 @@
 #include "vehicle_sil/config/detail/check_words.hpp"
 #include "exit_codes.hpp"
 #include "run_format.hpp"
-#include "run_words.hpp"
+#include "vehicle_sil/runner/detail/run_words.hpp"
 
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/launch/probe.hpp"

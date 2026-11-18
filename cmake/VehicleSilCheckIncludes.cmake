@@ -6,7 +6,7 @@
 # in registry_uri.hpp),
 # vehicle_sil/process/child_process.hpp, vehicle_sil/process/process.hpp,
 # vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
-# headers named events.hpp, time_commands.hpp, stop_requests.hpp, runner.hpp or run_*.hpp
+# headers named events.hpp, time_commands.hpp, stop_requests.hpp, runner.hpp, runner_impl.hpp or run_*.hpp
 # (run_controls.hpp among them). The check follows the vehicle_sil/... includes (found in the project's include
 # directories) and the "..." includes of a header in the same directory as the including file (the
 # private headers of libs/launch/src). A failure names the listed file and the chain of includes
@@ -21,8 +21,10 @@
 # layer are named as its public ones.
 # A prefix that ends with "/" names a directory of headers (vehicle_sil/launch/ matches every
 # header of the launcher's library).
+# ONLY_PREFIXES (optional, ON): check FORBIDDEN_PREFIXES only, not the headers listed above: for a layer
+# that is meant to use them (the runner), to keep it from the layers that depend on it.
 # Usage: cmake -DROOT=<directory> (-DFILES=<file>[,<file>...] | -DDIR=<directory>[,<directory>...])
-#        [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]] -P VehicleSilCheckIncludes.cmake
+#        [-DFORBIDDEN_PREFIXES=<prefix>[,<prefix>...]] [-DONLY_PREFIXES=ON] -P VehicleSilCheckIncludes.cmake
 cmake_minimum_required(VERSION 3.21)
 if(NOT DEFINED ROOT OR (NOT DEFINED FILES AND NOT DEFINED DIR))
   message(FATAL_ERROR "VehicleSilCheckIncludes.cmake: ROOT and FILES or DIR are required")
@@ -86,9 +88,10 @@ foreach(listed IN LISTS FILES)
       string(SUBSTRING "${spelled}" 1 -1 path)
       string(TOLOWER "${path}" lower)
       get_filename_component(base "${path}" NAME)
-      if(lower MATCHES "^silkit/" OR lower MATCHES "_silkit/" OR path IN_LIST forbidden_exact
+      if(NOT ONLY_PREFIXES AND (lower MATCHES "^silkit/" OR lower MATCHES "_silkit/" OR path IN_LIST forbidden_exact
          OR base STREQUAL "events.hpp" OR base STREQUAL "time_commands.hpp"
-         OR base STREQUAL "stop_requests.hpp" OR base STREQUAL "runner.hpp" OR base MATCHES "^run_[^/]*\\.hpp$")
+         OR base STREQUAL "stop_requests.hpp" OR base STREQUAL "runner.hpp" OR base STREQUAL "runner_impl.hpp"
+         OR base MATCHES "^run_[^/]*\\.hpp$"))
         list(APPEND bad "${chain} ${path}")
         continue()
       endif()

@@ -205,7 +205,7 @@ flowchart TD
 
 - `libs/core/src/participant_configuration.cpp` の `default_participant_configuration()` など（待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP）
 - 渡された設定に重ねる `merged_participant_configuration()` と、ecu_main の `--silkit-config`
-- 既定を使う所: `libs/launch/src/run.cpp` の controller と、ほかの PC に向けた行
+- 既定を使う所: `libs/runner/src/run.cpp` の controller と、ほかの PC に向けた行
 - 既定を使う所: `run_participants.cpp` の環境変数、manual のコマンドの `environment`
 - 既定を使う所: `config.cpp` の注記 `registry-on-network` と、`inherited_listen_variable()`（注記 `listen-variable-ignored`）
 

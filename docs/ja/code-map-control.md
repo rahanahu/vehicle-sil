@@ -146,7 +146,7 @@ flowchart TD
 | 読むコード | `libs/config/src/config.cpp` の `read_variables()` |
 | ルールと変換 | `libs/control/src/variable_map.cpp` の `MappedSchema` |
 | 変換を適用する所 | `control::Hub`（`set_variable_map()`） |
-| Hub に渡す所 | `libs/launch/src/run_control.cpp` の `RunControl::shared_hub()` |
+| Hub に渡す所 | `libs/runner/src/run_control.cpp` の `RunControl::shared_hub()` |
 | 照合 | `seen_ecu.cpp` の `seen_variables()`（`SeenEcu::variables()`）、`check_rules.cpp` の `variable_map_code()` |
 
 合わせて直すドキュメント:
@@ -225,7 +225,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 変える場所:
 
 - `ServerOptions::observe_only` と、その範囲（`ObserveOnly::Refuses`: 変える呼び出しの全部か、書き込みだけか）
-- ランチャーが尋ねる規則: `libs/launch/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
+- ランチャーが尋ねる規則: `libs/runner/src/control_rules.cpp` の `scenario-running` の行と `always_refused()`
 - `libs/control_grpc/src/auth.hpp` の `Effect` と、`auth.cpp` の `rpc_rules()`
 - 拒否するコード: `control_service.cpp` の `guarded()`
 - 設定するコード: `libs/launch/src/control_server.cpp`
@@ -323,7 +323,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 - 開始前の窓: `libs/core/src/simulation_controller.cpp` の `run_window()` と `cancel_window()`
 - 開始前の窓: `libs/core/src/participant_runtime.cpp` の `set_communication_ready_handler_async()`
 - `ecu_main()` がトランスポートを付ける所（`libs/simulation/src/ecu_main.cpp`）
-- ランチャーの Hub: `libs/launch/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`
+- ランチャーの Hub: `libs/runner/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`
 
 合わせて直すドキュメント:
 

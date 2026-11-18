@@ -843,7 +843,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ### 見るだけのサーバー（`observe_only`）
 
-- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を「書き込みだけ」の範囲（`ObserveOnly::Refuses::Writes`）で付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server の書き込みは、run の間ずっと断られるか」を尋ね（`libs/launch/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
+- シナリオの実行（`run --scenario`）では、ランチャーが `ServerOptions::observe_only` を「書き込みだけ」の範囲（`ObserveOnly::Refuses::Writes`）で付けます。ランチャーは自分で決めず、run の操作盤の規則に「Control Server の書き込みは、run の間ずっと断られるか」を尋ね（`libs/runner/src/control_rules.cpp` の `always_refused()`）、理由と文をそこから取ります。
 - 呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（`Effect`: 読む、書く、時刻、終える）があります。
 - `observe_only` のサーバーは、権限の確認の直後、本体に入る前の 1 か所で呼び出しを拒否します（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。どれを拒否するかは範囲で決まります。`Refuses::Changes`（ライブラリの既定）は書く呼び出しと時刻の呼び出しを、`Refuses::Writes` は書く呼び出し（`Write`、`ForgetPeer`）だけを拒否します。
 - 拒否した呼び出しは、Hub に届きません。
@@ -939,7 +939,7 @@ Agent の hello の上限は、「SIL Kit の上のトランスポート」の�
 
 ## ランチャーが受け取るサンプル（`RunSamples`）
 
-`vehicle_sil_launch run` は、どの実行でも Hub の tap を 1 つ付けます（`libs/launch/src/run_samples.hpp` の `RunSamples`）。使うのは、シナリオ（次の節）と、結果の `traffic`（[simulation-run.md](../simulation-run.md) の「ネットワークの送受信（`traffic:`）」）です。
+`vehicle_sil_launch run` は、どの実行でも Hub の tap を 1 つ付けます（`libs/runner/include/vehicle_sil/runner/detail/run_samples.hpp` の `RunSamples`）。使うのは、シナリオ（次の節）と、結果の `traffic`（[simulation-run.md](../simulation-run.md) の「ネットワークの送受信（`traffic:`）」）です。
 
 ```mermaid
 flowchart LR
@@ -949,7 +949,7 @@ flowchart LR
     latest -- "finish(E)" --> result["結果の traffic"]
 ```
 
-- **`traffic` のために列は持ちません。** 数は積み上げなので、要るのは participant ごとの「実行の終わりの時刻 E より前に始まった最後のステップ」の 1 組だけです。tap は、サンプルを participant ごとの「最新の数組」（`libs/launch/src/run_traffic.hpp` の `TrafficLatest`）に入れます。実行の間は誰も取り出さず、終わりに主スレッドが 1 回読みます（`finish(E)`）。あふれることがないので、一時停止の間や始まる前の待ちの間に実時間の `Peer` がサンプルを送り続けても、何も失いません。
+- **`traffic` のために列は持ちません。** 数は積み上げなので、要るのは participant ごとの「実行の終わりの時刻 E より前に始まった最後のステップ」の 1 組だけです。tap は、サンプルを participant ごとの「最新の数組」（`libs/runner/src/run_traffic.hpp` の `TrafficLatest`）に入れます。実行の間は誰も取り出さず、終わりに主スレッドが 1 回読みます（`finish(E)`）。あふれることがないので、一時停止の間や始まる前の待ちの間に実時間の `Peer` がサンプルを送り続けても、何も失いません。
 - **どの組を残すか**: E は controller のステップの始まりで、tap が呼ばれた時点の controller の時刻 N（`ParticipantRuntime::now()`。原子的に読めます）も同じです（N ≤ E）。N のステップが始まった時点で、N より前のステップのサンプルは全部届いているので（上の「[受信の順序の保証](#受信の順序の保証)」）、その中で残すのは最後の 1 組です。N 以後のサンプルは、controller のタイムステップごとに、そのタイムステップの中で始まった最後の 1 組を残します（E がどのタイムステップになっても、数に使う組はその中にあります）。仮想時間で動く participant は controller より 1 タイムステップほどしか先に進まないので、残るのは 2、3 組です。残る組は、N 以後のサンプルがいつ届いたかにも、誰も見ていなかった時間の長さにもよりません。
 - **新しい上限が 1 つあります**: サンプルの時刻が controller より 64 タイムステップ（`TrafficLatest::kMaxAhead`）より先に進んだ participant は、実行の時刻に沿っていないとみなして、それ以後は何も残さず、数えません（`real_time`）。シミュレーションが止まっている間も進み続ける実時間の `Peer` がこうなります。仮想時間で動く participant は届きません。
 - **シナリオの列**: シナリオが始まってから終わるまで、シナリオが始まったときにつながっていた Agent のサンプルだけを列に積みます。上限はありません（集計を追加する前と同じです。シナリオのスレッドは controller のステップを保留したまま取り出すので、ふつうは 1 タイムステップ分です。一時停止の間は、仮想時間の ECU はサンプルを送りません）。シナリオが使わない participant のサンプルは、この列に入りません。

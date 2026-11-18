@@ -64,7 +64,8 @@ vehicle-sil/
 ├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ、行ごとの受け渡しと止める要求とプロセスの木ごとの終了。POSIX と Win32。内部用）
 ├── libs/config/      vehicle_sil::config  シミュレーションの設定ファイルと、ECU の実行ファイルの --describe の出力との照合（純粋: プロセスも SIL Kit も使わない。内部用）
 ├── libs/scenario/    vehicle_sil::scenario  シナリオ: ファイル、手順を進めるエンジン、タイムラインの記録（純粋: プロセスも SIL Kit も使わない。内部用）
-├── libs/launch/      vehicle_sil::launch  シミュレーション全体の実行、check と run の出力（内部用）
+├── libs/runner/      vehicle_sil::runner  シミュレーション全体の実行: レジストリ、コントローラー、子プロセス、Hub、シナリオのステップ、時刻と停止のコマンド（SIL Kit とプロセスを使う。内部用）
+├── libs/launch/      vehicle_sil::launch  check、run、test の利用場面、要求、check と run の出力（内部用）
 ├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）、両者の間のメッセージのバイト列の形式。通信と SIL Kit に依存しない
 ├── libs/control_silkit/ vehicle_sil::control_silkit  Agent と Hub の間を SIL Kit の publish/subscribe で運ぶ層（AgentTransport、HubTransport）
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
@@ -223,18 +224,19 @@ flowchart LR
     pure["純粋な側<br>libs/config（config、照合の規則、connect の規則、time plan）、<br>libs/scenario（scenario、timeline の記録）、<br>check の書式"]
     assemble["check_file()、list_connections()、run_tests()"]
     probe["計算機を調べる側<br>launch/probe.hpp、src/probe.cpp"]
-    run["実行の側<br>run、events、time_commands、run_*"]
+    run["実行の側<br>libs/runner（run、time_commands、run_*）、events"]
     assemble --> pure
     assemble --> probe
     run --> pure
     run --> probe
 ```
 
-- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
+- 純粋な側は、値から指摘を作り、計算機を調べません。SIL Kit、`process`、`participant_runtime`、`participant_configuration`、`launch/run.hpp`、`launch/probe.hpp`、`events`、`stop_requests`、`runner.hpp`、`runner_impl.hpp`、`time_commands`、`run_*.hpp` を、直接にも、include するヘッダーを通しても含みません。
 - ランチャーが計算機について調べること（ファイルシステム、環境、起動したプロセスの出力）は `probe` に置きます。`check_file()`、`list_connections()`、`run_tests()` が `probe` を呼び、調べた結果を値か関数として純粋な側に渡します。実行の側（シミュレーションの実行）は両方に依存します。
 - この向きは試験 `launch.pure_files_include_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake`）で守ります。純粋な側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_pure_files` に足します。
 - 構成とその照合は、ライブラリ `vehicle_sil::config`（`libs/config`）です。`core` も `control_silkit` もリンクせず、`vehicle_sil/launch/` のヘッダーも、`process` の `process.hpp` と `child_process.hpp` も含みません。リンクだけでは守りきれない（SIL Kit の要らない `core` のヘッダーはコンパイルでき、`process` は `paths.hpp` のためにリンクしています）ので、2 つの試験がディレクトリを読みます。`config.no_silkit_boundary`（`cmake/VehicleSilCheckNoSilKit.cmake`）と `config.includes_no_runtime`（`cmake/VehicleSilCheckIncludes.cmake` の `DIR` と `FORBIDDEN_PREFIXES`）です。`libs/config` に足すファイルは、一覧に足す必要がありません。
 - シナリオは、ライブラリ `vehicle_sil::scenario`（`libs/scenario`）です。`config`、`control`、`sim_base` をリンクし、`core` も `control_silkit` もリンクしません。同じ形で守ります（`scenario.no_silkit_boundary`、`scenario.includes_no_runtime`: `vehicle_sil/launch/` 以下のヘッダー、`child_process.hpp`、`process.hpp` を含まない）。`config.includes_no_runtime` は、`libs/config` が `vehicle_sil/scenario/` を含まないことも守ります。
+- 実行は、ライブラリ `vehicle_sil::runner`（`libs/runner`）です。`scenario`、`config`、`control`、`process`、`sim_base` を PUBLIC に、`core` と `control_silkit` を PRIVATE にリンクします。実行の SIL Kit の部分は `RunnerImpl` の後ろにあるので、ライブラリの公開ヘッダー（`vehicle_sil/runner/`）は SIL Kit に届かず、`launch` が `core` をリンクするのは Control Server のためだけです。これに依存する `vehicle_sil/launch/` のヘッダーは含みません。ディレクトリを読む試験が 2 つあります。`runner.public_headers_need_no_silkit`（`libs/runner/include` に `cmake/VehicleSilCheckNoSilKit.cmake`）と `runner.includes_no_launcher`（`cmake/VehicleSilCheckIncludes.cmake` の `ONLY_PREFIXES`。runner 自身が、この検査が純粋な側に禁じるものを使うため）です。`config.includes_no_runtime` と `scenario.includes_no_runtime` は、それぞれのライブラリが `vehicle_sil/runner/` を含まないことも守ります。
 - 構成の照合（`config/check.hpp` の `CheckReport`）はシナリオを知りません。シナリオが構成に依存し、逆はありません。`check --scenario` が読んだものは `ScenarioCheck`（`scenario/scenario_check.hpp`）で、`check_file()` は `CheckReport` にシナリオを足した `Checked`（`launch/checked.hpp`）で返します。CheckReport に写すとシナリオが落ちるので、受けるときは `Checked` で受けます。試験 `launch.config_files_do_not_reach_the_scenario` が守ります。構成の側に新しいファイルを足したら、`tests/launch/CMakeLists.txt` の `_launch_config_files` に足します。
 - 例外が 1 つ残っています。`connect.cpp` の `bridge_working_directory()` が、相対のディレクトリを絶対にします。
 - 純粋な側に、計算機を調べる処理を足さないでください。`probe` に置き、結果を渡します。各部分のファイルは [code-map-launcher.md](code-map-launcher.md) にあります。
@@ -245,7 +247,7 @@ flowchart LR
 
 - 実行は 2 段です。`Runner::prepare()` は中断を確かめ、ログとタイムラインを開き、実行の Hub を返します（続けられないときは何も返しません）。2 段の間に `run_file()` が、その Hub の上で Control Server を始めます（`ControlEndpoint::start()`。実行が持つときだけ）。registry より先に待ち受けるためです。`Runner::run()` は registry から終わりまでを行います。
 - Hub と SIL Kit の部品（registry、controller、transport）は実行が作り、1 つの接続として、作った順の逆（transport、controller、registry）に閉じます。Control Server は Hub を借りるだけです（`std::shared_ptr` を持ち、SIL Kit の部品は持ちません）。そのため、期限で放置された閉じるスレッドが触るのは接続だけで、`Runner` はほかの実行と同じように破棄できます。
-- `run_file()` は `Runner` を `launch/detail/runner.hpp` から見ます。このヘッダーは、SIL Kit のヘッダーにも、コントローラーのヘッダー（`core/simulation_controller.hpp`）にも、実行の私的なヘッダーにも届きません。実行の部品はポインターの先（`RunnerImpl`、`src/runner.hpp`）にあります。
+- `run_file()` は `Runner` を `runner/detail/runner.hpp` から見ます。このヘッダーは、SIL Kit のヘッダーにも、コントローラーのヘッダー（`core/simulation_controller.hpp`）にも、実行の私的なヘッダーにも届きません。実行の部品はポインターの先（`RunnerImpl`、`src/runner_impl.hpp`）にあります。
 - `run_file()` が実行に渡すものは 3 種類です。
   - `RunPlan`: 値です。通った照合、そのシナリオ、実行に選んだもの（`RunChoices`。`run_choices()` が要求から写します）、`RunLimits` から、純粋な `plan_run()` が作ります。`plan_run()` は要求（`RunRequest`）も、`check_file()` の結果の型（`Checked`）も知りません。実行は計画に書きません。
   - `RunObservers`: 実行が呼び返す、呼び出し側の関数です（行、中断の名前、`before_start`）。

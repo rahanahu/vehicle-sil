@@ -9,7 +9,7 @@
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/request.hpp"
 #include "vehicle_sil/launch/run.hpp"
-#include "vehicle_sil/launch/run_plan.hpp"
+#include "vehicle_sil/runner/run_plan.hpp"
 #include "vehicle_sil/launch/test.hpp"
 
 #include <chrono>

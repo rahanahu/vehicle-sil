@@ -9,8 +9,8 @@
 #include "launch_test_util.hpp"
 
 #include "check_format.hpp"
-#include "run_samples.hpp"
-#include "run_traffic.hpp"
+#include "vehicle_sil/runner/detail/run_samples.hpp"
+#include "vehicle_sil/runner/detail/run_traffic.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/launch/run.hpp"

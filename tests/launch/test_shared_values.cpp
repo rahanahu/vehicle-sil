@@ -168,7 +168,7 @@ TEST_CASE(the_gui_reads_the_launchers_manual_stays_line)
     const std::size_t end = text.find('\'', start);
     const std::string gui = text.substr(start, end - start);
     // The launcher writes the line as <name> + this text + the rest (run_participants.cpp).
-    const std::string writer = "libs/launch/src/run_participants.cpp";
+    const std::string writer = "libs/runner/src/run_participants.cpp";
     if (read_source(writer).find("\"" + gui) == std::string::npos)
     {
         throw unit::Failure(page + " looks for MANUAL_STAYS \"" + gui + "\", but " + writer +

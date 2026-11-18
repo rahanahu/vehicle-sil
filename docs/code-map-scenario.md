@@ -86,10 +86,10 @@ Where to change:
 | The functions that compute `ramp` and `wave` values (implementations of `Waveform`) | `libs/scenario/src/scenario_shapes.cpp` |
 | Reading `points` from a CSV file | `read_csv()` in `libs/scenario/src/scenario_csv.cpp` splits the file into cells. `files_beside()` in `libs/launch/src/probe.cpp` reads it from the scenario file's directory. `path_problem()`, `file_points()` and `cell_value()` in `scenario_waves.cpp` check the path and convert the cells |
 | Waveform calculation | `signal/waveform.hpp` in `libs/signal` |
-| Integration into the launcher | `RunScenario` in `libs/launch/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
+| Integration into the launcher | `RunScenario` in `libs/runner/src/run_scenario.cpp` (`begin()`, `loop()`, `finish()`) |
 | The time gate's guard | `SimulationController::guard_from()` and `wait_guarded()` |
 | The tap that receives every sample | `control::Hub::set_values_tap()` |
-| The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/launch/src/run_samples.cpp` |
+| The run's tap, from which the scenario takes its samples | `RunSamples` in `libs/runner/src/run_samples.cpp` |
 | Reading `dither` (top-level `inputs`, the step) | `read_inputs()`, `read_dither()` and `read_overlay()` in `scenario_inputs.cpp`. The waveform is read by `read_shape()`, shared with `read_wave_of()` |
 | The findings `scenario-dither-*` and the list of what is placed on the inputs (`Scenario::lines`) | `note_lines()` and `check_dithers()` in `scenario_inputs.cpp` |
 | The writes of a dither in the engine | In `scenario_run.cpp`: `submit()` (one write per ECU step while no motion runs; it belongs to no step, and writes for the same time are combined into one request), `place()` (places the dither on the line), `fail_grid()` (when such a write is refused, fails the first step not yet decided). The contract is "Dithers" in the comment of `ScenarioEngine` |

@@ -20,7 +20,7 @@ The mutation list is a TOML file:
     [[mutation]]
     name = "limit_same"
     group = "unit"                           # or targets/tests directly in the mutation
-    file = "libs/launch/src/run.cpp"         # relative to the repository root
+    file = "libs/runner/src/run.cpp"         # relative to the repository root
     old = '''    return a + b;'''                 # must occur exactly once in the file
     new = '''    return a;'''
 

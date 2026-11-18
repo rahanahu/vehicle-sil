@@ -146,7 +146,7 @@ Where to change:
 | The code that reads it | `read_variables()` in `libs/config/src/config.cpp` |
 | Rules and conversion | `MappedSchema` in `libs/control/src/variable_map.cpp` |
 | Where the conversion is applied | `control::Hub` (`set_variable_map()`) |
-| Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/launch/src/run_control.cpp` |
+| Where it is passed to the Hub | `RunControl::shared_hub()` in `libs/runner/src/run_control.cpp` |
 | Check | `seen_variables()` in `seen_ecu.cpp` (`SeenEcu::variables()`), `variable_map_code()` in `check_rules.cpp` |
 
 Documentation to update:
@@ -225,7 +225,7 @@ While a scenario runs, the Control Server refuses writes. Its clients read, move
 Where to change:
 
 - `ServerOptions::observe_only` and its scope (`ObserveOnly::Refuses`: every change, or the writes alone)
-- The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/launch/src/control_rules.cpp`
+- The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/runner/src/control_rules.cpp`
 - `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
 - The code that rejects calls: `guarded()` in `control_service.cpp`
 - The code that sets it up: `libs/launch/src/control_server.cpp`
@@ -323,7 +323,7 @@ Where to change:
 - The start window: `run_window()` and `cancel_window()` in `libs/core/src/simulation_controller.cpp`
 - The start window: `set_communication_ready_handler_async()` in `libs/core/src/participant_runtime.cpp`
 - Where `ecu_main()` attaches the transport (`libs/simulation/src/ecu_main.cpp`)
-- The launcher's Hub: `RunStartWindow::run()` in `libs/launch/src/run_start.cpp`, `RunControl::note_links()` in `run_control.cpp`
+- The launcher's Hub: `RunStartWindow::run()` in `libs/runner/src/run_start.cpp`, `RunControl::note_links()` in `run_control.cpp`
 
 Documentation to update:
 

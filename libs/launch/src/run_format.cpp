@@ -6,7 +6,7 @@
 
 #include "check_format.hpp"
 #include "run_format.hpp"
-#include "run_words.hpp"
+#include "vehicle_sil/runner/detail/run_words.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
 

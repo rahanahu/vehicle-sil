@@ -22,6 +22,7 @@
 | `launch_cli.*` | `vehicle_sil_launch check` を実行ファイルとして動かす |
 | `launch_run.*` | `vehicle_sil_launch run` を実行ファイルとして動かす |
 | `config.*` | `libs/config` の境界（ヘッダーとソースが何を include してよいか） |
+| `runner.*` | `libs/runner` の境界（公開ヘッダーが SIL Kit に届かないこと。`libs/launch` を include しないこと） |
 | `scenario.*` | `libs/scenario` の境界（ヘッダーとソースが何を include してよいか） |
 | `process.*` | 子プロセスのテスト |
 
@@ -112,6 +113,42 @@
 - 試験: `tests/launch`（読み手とエンジン）、`tests/scenario`（境界）
 - `ctest -R`: `^launch\.`（読み手とエンジン）、`^scenario\.`（境界）
 
+### `libs/runner`
+
+シミュレーションの実行（レジストリ、コントローラー、子プロセス、Hub、シナリオのステップ、時刻と停止のコマンドとその規則、実行が見たこと。内部用。`launch.*` が試験し、`runner.*` が境界を守ります）。SIL Kit とプロセスを使い、要求ファイル、出力の形式、コマンドラインは知りません。`libs/launch` がこれをリンクし、逆はありません。公開ヘッダーは SIL Kit のヘッダーに届かず、実行の部品は `RunnerImpl` の後ろにあります。`runner/detail/` のヘッダーは、ランチャー自身の部品（出力が `run_words.hpp` を読みます）と試験が読むためのものです。
+
+公開ヘッダー:
+
+| 名前 | 場所 |
+|---|---|
+| 実行が見たこと。部分に分けた値: `RunOutcome` の `setup`、`start`、`end`（シミュレーションがどう、なぜ終わったか）、`control`（制御の agent が捨てたもの）、`scenario`（シナリオとタイムラインのファイル）、`close`（ランチャーの接続の閉じ方）と、`timing`、`participants`、`outside`、`time_changed`、`time_lock`、`real_time_peers`、`traffic`。`assess_run()` が判定し、`end_reason()` が終わった理由を言う | `runner/run_outcome.hpp` |
+| 実行の前に決まることを値にしたもの: `RunPlan`（通った check に `--connect` のブリッジを末尾に足したもの、`members`: participant ごとの `RunMember`。実行が `--connect` のために足したブリッジかどうかと、つなぐ先を持つ、ファイルのディレクトリ、コントローラーの刻みと開始時の速さ、最初の刻みの前で保留するか、期限、ログとタイムラインの書き先）、`plan_run()`（純粋: check、そのシナリオ、`RunChoices`、`RunLimits` から。後の 2 つも同じヘッダー。要求は知らない）、`planned_outcome()`（実行が最初に持つ `RunOutcome`）。`run_file()` は、要求（`RunRequest`）、観察者（`runner/run_events.hpp` の `RunObservers`: `write_line`、`interrupt_name`、`before_start`）、実行が借りるもの（`RunLent`: 操作盤か停止の要求、Control Server、イベントの流れ）、試験だけが短くする待ち時間（`RunLimits`）を受けます。計画が読む要求の欄を `RunChoices` に写し（`launch/run.hpp` の `run_choices()`）、それと待ち時間からこの計画を作り、要求は持ち続けないので、実行のどのスレッドも要求を読みません。実行の部品は、計画、観察者、操作盤を `detail::RunContext` から読みます。プロセスなしの試験は `tests/launch/test_run_plan.cpp` | `runner/run_plan.hpp`、`src/run_plan.cpp` |
+| `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `runner/stop_requests.hpp` |
+| `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `runner/run_controls.hpp` |
+| `TimeCommands` | `runner/time_commands.hpp` |
+| 実行の部品が共有し、試験も読む道具: participant の引数（`detail::participant_arguments()`）、待ち、この PC のアドレス、`--connect` のブリッジの数とリンクの行、participant の行とログの名前 | `runner/detail/run_detail.hpp` |
+| 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（ある操作が run の間ずっと断られるか。シナリオの実行中の Control Server の書き込み）、理由のコード `reason::*`。純粋 | `runner/control_rules.hpp` |
+| `RunTraffic`（結果の `traffic`） | `runner/traffic.hpp` |
+| `RunEvents`。run の部品が、実行中の出来事（レジストリ、参加者、行、所見、仮想時刻）を知らせるインターフェースと、渡す値（`ParticipantState`、`TimeEvent`）。実行が呼び返す呼ぶ側の関数（`RunObservers`）と、Control Server の待ち受ける所（`ControlServerInfo`）。run の部品は、このヘッダーを include し、`events.hpp` を include しません。イベントの書き方を知りません | `runner/run_events.hpp` |
+| `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `runner/command.hpp` |
+
+実装:
+
+| 内容 | 場所 |
+|---|---|
+| `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。そのブリッジの印は、構成の欄ではなく、計画の `RunMember::outside`（`RunPlan::members`。`plan_run()` が作る）。ファイルに role を `bridge` と書いた participant には付かない。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()` の `detail::stops_run()`。`gone_before_start()` は計画の印を読む）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
+| `run --connect`: ブリッジの数。`detail::read_outside_counts()` がブリッジの統計の行を読む（キーは `ethernet_bridge::format_statistics()` と `can_bridge::format_statistics()` のもの。`launch.read_outside_counts_reads_the_lines_the_bridges_print` が両側を守る）。`detail::OutsideNote` が `outside` イベントを出す時を決める（時刻は引数）。`RunOutput::on_line()`（読み手のスレッド）が、出力の鍵の下で行を読み、数を覚え、イベントを書き、行は出さない（最後に読んだ 1 行だけを `take_counts()` が 1 回出す）。主スレッドは `RunWatch::watch()` の見回りごとに控えの数を書き（`outside_due()`）、`RunParticipants::note_last_lines()` が出力を読み終えた後に最後の数を結果に取る（`take_counts()`。結果のイベントより前）。`detail::OutsideState` が、ブリッジのリンクの行（`read_outside_link_line()`）と統計の行の数のすべて（`read_outside_stats()`）から、リンクやバスが落ちていた区間と error passive の時間を足し上げる（時刻は引数）。`RunOutput` が同じ鍵の下でブリッジごとに 1 つ持ち、リンクの変化を言い、`outside_lost()` が、リンクやバスが `RunLimits::outside_lost_after` 落ちたことを `RunWatch` に知らせる（ブリッジが終わったときと同じに実行を止める。`connect-lost`）。`take_link()` が合計と数を `RunOutside::link` に入れる。リンクの行の共有のキー（`device`、`marked`、`shared`、`peers`）も同じ `OutsideState` にあり、`detail::foreign_sharing()`（純粋）が、ブリッジの `shared` から自分の実行のブリッジを引く（`RunParticipants::own_bridges()` がそのプロセス ID と生きているかを渡す）。`RunOutput::outside_shared()` が見つけたものを鍵の下で持ち、`--strict` では止めるブリッジを挙げる。`RunStart::wait_for_bridges()` が何かを起こす前に 1 度、`RunWatch` が見るたびに（`kOutsideSharedAfter`）これを呼ぶ。所見 `outside-device-shared` は `run_assess.cpp` で作る。フレームを失った数のキーの表は 1 つだけ（`run_detail.hpp` の `kOutsideDroppedKeys`）。注意 `connect-nothing-received` とバスの警告 `outside-*` は `run_assess.cpp` | `src/run_outside.cpp` |
+| 準備から participant の終わりまでの、1 回の実行の順（`Runner`）。`run_file()` は `runner/detail/runner.hpp` から見る。このヘッダーは SIL Kit のヘッダーにも、実行の私的なヘッダーにも届かない。実行の部品はポインターの先（`src/runner_impl.hpp` の `RunnerImpl`） | `runner/detail/runner.hpp`、`src/runner_impl.hpp`、`src/run.cpp` |
+| `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
+| 1 回の実行の Hub と、registry、コントローラー、Hub の transport を 1 つにまとめたもの（`detail::ConnectionOf`）: 閉じる順と、持ち主。`Runner::run()` が、`RunControl` の作った Hub の上に作り、1 人で持つ。終わりに、閉じるスレッドが引き取り（`detail::close_connection_within()`。`src/run_close.hpp` の `close_within()` の上）、期限を過ぎて放置されたら持ち続ける。放置されたスレッドは実行のほかのものに触らないので、`run_file()` は `Runner` をほかの実行の後と同じに破棄する。放置された閉じるスレッドが触りうるものの一覧は `src/run.cpp` の頭のコメント | `src/run_connection.hpp` |
+| この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
+| 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
+
+`run` を分担するクラスの役割と、どのスレッドがどの状態をどのロックで扱うかは、`run.cpp` の先頭のコメントと、各 `run_*.hpp` のクラスのコメントにあります。
+
+- 試験: `tests/launch`（実行の部品）、`tests/runner`（境界）
+- `ctest -R`: `^launch\.`、`^launch_run\.`（部品と実行）、`^runner\.`（境界）
+
 ### `libs/launch`、`tools/launch`
 
 公開ヘッダー:
@@ -122,20 +159,10 @@
 | ランチャーが、動いているコンピューターに尋ねること: `find_executable()` と `executable_status()`（participant の実行ファイル）、`find_tool()` と `bridge_tools()`（ブリッジ）、`run_tool()`（`--describe` やブリッジの一覧の 1 回の実行）、`read_config_file()`、`read_scenario_file()`、`files_beside()`、`environment_value()` | `launch/probe.hpp` |
 | `vehicle_sil_launch connections` の `list_connections()`、`connections_of()`（backend ごとに各ブリッジに 1 回だけ聞く。`prefix_targets()` が `--connect` の受ける値にする）、`interpret_list()`（ブリッジの一覧か、ランチャーが作る一覧: `tool-*`）、`check_requested()`（`--request`: 要求ファイルの先が一覧にあるか。backend と名前で比べる。ファイルを読み構成に合わせて切るのは、要求ファイルの行の関数）、`quoted_for_shells()`、出力 | `launch/connections.hpp` |
 | `run_file()`、その結果（`RunReport`。書くのは `format_run_text()` と `format_run_json()`）、実行が借りるもの（`RunLent`）、実行から見た Control Server（`ControlEndpoint`） | `launch/run.hpp` |
-| 実行が見たこと。部分に分けた値: `RunOutcome` の `setup`、`start`、`end`（シミュレーションがどう、なぜ終わったか）、`control`（制御の agent が捨てたもの）、`scenario`（シナリオとタイムラインのファイル）、`close`（ランチャーの接続の閉じ方）と、`timing`、`participants`、`outside`、`time_changed`、`time_lock`、`real_time_peers`、`traffic`。`assess_run()` が判定し、`end_reason()` が終わった理由を言う | `launch/run_outcome.hpp` |
-| 実行の前に決まることを値にしたもの: `RunPlan`（通った check に `--connect` のブリッジを末尾に足したもの、`members`: participant ごとの `RunMember`。実行が `--connect` のために足したブリッジかどうかと、つなぐ先を持つ、ファイルのディレクトリ、コントローラーの刻みと開始時の速さ、最初の刻みの前で保留するか、期限、ログとタイムラインの書き先）、`plan_run()`（純粋: check、そのシナリオ、`RunChoices`、`RunLimits` から。後の 2 つも同じヘッダー。要求は知らない）、`planned_outcome()`（実行が最初に持つ `RunOutcome`）。`run_file()` は、要求（`RunRequest`）、観察者（`launch/run_events.hpp` の `RunObservers`: `write_line`、`interrupt_name`、`before_start`）、実行が借りるもの（`RunLent`: 操作盤か停止の要求、Control Server、イベントの流れ）、試験だけが短くする待ち時間（`RunLimits`）を受けます。計画が読む要求の欄を `RunChoices` に写し（`launch/run.hpp` の `run_choices()`）、それと待ち時間からこの計画を作り、要求は持ち続けないので、実行のどのスレッドも要求を読みません。実行の部品は、計画、観察者、操作盤を `detail::RunContext` から読みます。プロセスなしの試験は `tests/launch/test_run_plan.cpp` | `launch/run_plan.hpp`、`src/run_plan.cpp` |
 | check、run、test が何を頼まれたかを、値にしたもの: `RunRequest`。2 つの部分に分かれる。`RunIntent`（利用者のもの: variant、パラメーター、利用者が書いたとおりのシナリオ、`--disable`、`--enable`、`--manual`、`--connect`、`--time-policy`、速さ、`--start-paused`、`--strict`）と `RunHost`（呼ぶ側のもの: 利用者が書いたとおりのファイル、道具とログの場所、`--describe` と実行の期限、利用者が書いたとおりのタイムラインのファイル、求められた Control Server（アドレスとファイルの名前）、標準入力の命令を求めているか）。`validate_request()`（純粋）が、一緒には使えない欄の規則（`--param` と `--timeline` にはシナリオが要る、`--start-paused` をシナリオと使う、続ける手段なしに使う）を、code が `usage` の指摘として持つ。`check_file()`、`run_file()`、`test_file()`（`TestOptions::request`）がこれを受け、名前からパスを作る。`CheckOptions` に残るのは、頼まれたことではないものだけ（`file_only`、`params_for_many`、`fastest_by_default`）。`tools/launch/main.cpp` の `read_request()` と `run()` が、誤りを報告する順に引数を読み、3 か所で `validate_request()` を呼んで最初の指摘を断る（`--request` があるときは、全部の引数を読んだ後に 1 度）。プロセスなしの試験は `tests/launch/test_request.cpp`（規則と、check と計画が欄ごとに読むもの） | `launch/request.hpp`、`src/request.cpp` |
 | `--request` の要求ファイル（意図を JSON にしたもの）: `read_request_file()` が文を読む（純粋。この形式の読み手は 1 つで、`YamlReader` から作ってあるので、知らないキーと 2 回書いたキーの文がほかのファイルと同じになる）。`with_request_file()` が欄ごとに引数を重ね、`connect` は `merge_connect()` が重ねる。`RunRequest::origin`（`config/config.hpp` の `RequestOrigin`: ファイルの名前と、値がファイルから来たキーとネットワーク）を見て、`validate_request()` と `time_lock_findings()` の文がファイル名を書く。`connect_for_config()`（`config/check.hpp`。実体は `check_report.cpp`）が、設定ファイルにないファイルのネットワークを外す（`connect-network-unused`）。`check_file()` は、ファイルのシナリオを設定ファイルのディレクトリから読む。ファイルを読むのは `probe.cpp`（`read_request_file_text()`）で、`tools/launch/main.cpp` は名前を渡すだけ（`read_request_argument()`）。プロセスなしの試験は `tests/launch/test_request_file.cpp`、ランチャーを使う試験は `launch_cli.request`、`launch_cli.connect`、`launch_run.connect_request` | `launch/request.hpp`、`src/request_read.cpp`、`src/request.cpp` |
-| `StopRequests`。`run_file()` や `test_file()` を呼ぶ側が持って貸す、停止の要求（run が読む回数と、最初の要求の出どころ）、`StopKind`（operator、signal、supervisor）、ライブラリが知る 4 つの出どころ（`stop_source::kStopCommand` など）とその名前、`stop_kind()`。シグナルとコンソールのイベントの名前は CLI に残る | `launch/stop_requests.hpp` |
-| `RunControls`。1 回の run の操作盤で、run が呼ぶ側から借りるか、自分で作ります: 停止の要求（借りたもの）、`TimeCommands`、覚えて観察者に知らせる段階。`Phase`、`phase_name()`。`RunState`（イベント `state` が書く run の状態）。`RunControls::publish()` が、その 3 つから組み立て、変わったときに観察者に知らせます | `launch/run_controls.hpp` |
-| `TimeCommands` | `launch/time_commands.hpp` |
-| 実行の部品が共有し、試験も読む道具: participant の引数（`detail::participant_arguments()`）、待ち、この PC のアドレス、`--connect` のブリッジの数とリンクの行、participant の行とログの名前 | `launch/run_detail.hpp` |
-| 操作盤の規則: `decide()`（run がいまその操作を受けるか。入口と run の状態で決まります。行の表は `src/control_rules.cpp`）、`allowed()`（引数なしの同じ答えと、引数の範囲）、`always_refused()`（ある操作が run の間ずっと断られるか。シナリオの実行中の Control Server の書き込み）、理由のコード `reason::*`。純粋 | `launch/control_rules.hpp` |
-| `RunTraffic`（結果の `traffic`） | `launch/traffic.hpp` |
-| `RunEvents`。run の部品が、実行中の出来事（レジストリ、参加者、行、所見、仮想時刻）を知らせるインターフェースと、渡す値（`ParticipantState`、`TimeEvent`）。実行が呼び返す呼ぶ側の関数（`RunObservers`）と、Control Server の待ち受ける所（`ControlServerInfo`）。run の部品は、このヘッダーを include し、`events.hpp` を include しません。イベントの書き方を知りません | `launch/run_events.hpp` |
 | `EventStream`（`run --events` のイベントを書き、`RunEvents` を実装します） | `launch/events.hpp` |
 | `parse_command()` と `CommandInput`（`--stdin-commands` のコマンドを読む） | `launch/command_input.hpp` |
-| `Command`（読んだコマンドと、`TimeCommands` が決めた結果） | `launch/command.hpp` |
 | 記録とシナリオの結果から `run --timeline` のファイルを作る `format_timeline_json()` | `launch/timeline_format.hpp` |
 
 実装:
@@ -148,19 +175,10 @@
 | `connections`: ブリッジの一覧を読み（`TargetReader`）、キーをすべてそのまま渡す（`write_node()`）こと、ランチャーが作る一覧、文と JSON。ブリッジは、`--describe` と同じく `src/probe.cpp` の `run_tool()`（`bridge_tools()`）で起こします | `src/connections.cpp` |
 | 照合の出力 | `src/check_format.cpp` |
 | 間違ったコマンドラインや内部の誤りの結果（JSON、結果のイベント） | `src/error_result.cpp` |
-| `run --connect`: ブリッジを、ファイルの participant の後に、その実行だけの participant として足す（`detail::with_bridges()`）。そのブリッジの印は、構成の欄ではなく、計画の `RunMember::outside`（`RunPlan::members`。`plan_run()` が作る）。ファイルに role を `bridge` と書いた participant には付かない。先に起こして待つ所（`RunStart::wait_for_bridges()`）と、終わったら実行を止める所（`look_at_children()`、`RunWatch::watch()` の `detail::stops_run()`。`gone_before_start()` は計画の印を読む）は `run.cpp`、`run_participants.cpp`、`run_start.cpp`、`run_watch.cpp`。指摘 `connect-failed` と `connect-lost` は `run_assess.cpp`。`connect-time-changed` は、時間を変えた最初の命令を `TimeCommands::apply()` が鍵の下で覚え（命令のスレッド）、`RunWatch::settle()` が `detach()` の後に読み（主スレッド）、`run_assess.cpp` で判断する。最後の行は `RunOutput::on_line()`（読み手のスレッドが出力の鍵の下で書く） | `src/run_connect.cpp` |
-| `run --connect`: ブリッジの数。`detail::read_outside_counts()` がブリッジの統計の行を読む（キーは `ethernet_bridge::format_statistics()` と `can_bridge::format_statistics()` のもの。`launch.read_outside_counts_reads_the_lines_the_bridges_print` が両側を守る）。`detail::OutsideNote` が `outside` イベントを出す時を決める（時刻は引数）。`RunOutput::on_line()`（読み手のスレッド）が、出力の鍵の下で行を読み、数を覚え、イベントを書き、行は出さない（最後に読んだ 1 行だけを `take_counts()` が 1 回出す）。主スレッドは `RunWatch::watch()` の見回りごとに控えの数を書き（`outside_due()`）、`RunParticipants::note_last_lines()` が出力を読み終えた後に最後の数を結果に取る（`take_counts()`。結果のイベントより前）。`detail::OutsideState` が、ブリッジのリンクの行（`read_outside_link_line()`）と統計の行の数のすべて（`read_outside_stats()`）から、リンクやバスが落ちていた区間と error passive の時間を足し上げる（時刻は引数）。`RunOutput` が同じ鍵の下でブリッジごとに 1 つ持ち、リンクの変化を言い、`outside_lost()` が、リンクやバスが `RunLimits::outside_lost_after` 落ちたことを `RunWatch` に知らせる（ブリッジが終わったときと同じに実行を止める。`connect-lost`）。`take_link()` が合計と数を `RunOutside::link` に入れる。リンクの行の共有のキー（`device`、`marked`、`shared`、`peers`）も同じ `OutsideState` にあり、`detail::foreign_sharing()`（純粋）が、ブリッジの `shared` から自分の実行のブリッジを引く（`RunParticipants::own_bridges()` がそのプロセス ID と生きているかを渡す）。`RunOutput::outside_shared()` が見つけたものを鍵の下で持ち、`--strict` では止めるブリッジを挙げる。`RunStart::wait_for_bridges()` が何かを起こす前に 1 度、`RunWatch` が見るたびに（`kOutsideSharedAfter`）これを呼ぶ。所見 `outside-device-shared` は `run_assess.cpp` で作る。フレームを失った数のキーの表は 1 つだけ（`run_detail.hpp` の `kOutsideDroppedKeys`）。注意 `connect-nothing-received` とバスの警告 `outside-*` は `run_assess.cpp` | `src/run_outside.cpp` |
 | `run_file()`: 照合、実行が自分で作る操作盤と Control Server、`Runner` の 2 つの段、タイムラインのファイル | `src/run_file.cpp` |
-| 準備から participant の終わりまでの、1 回の実行の順（`Runner`）。`run_file()` は `launch/detail/runner.hpp` から見る。このヘッダーは SIL Kit のヘッダーにも、実行の私的なヘッダーにも届かない。実行の部品はポインターの先（`src/runner.hpp` の `RunnerImpl`） | `launch/detail/runner.hpp`、`src/runner.hpp`、`src/run.cpp` |
-| `run` を分担するクラス | `src/run_*.cpp`、`src/time_commands.cpp` |
-| 1 回の実行の Hub と、registry、コントローラー、Hub の transport を 1 つにまとめたもの（`detail::ConnectionOf`）: 閉じる順と、持ち主。`Runner::run()` が、`RunControl` の作った Hub の上に作り、1 人で持つ。終わりに、閉じるスレッドが引き取り（`detail::close_connection_within()`。`src/run_close.hpp` の `close_within()` の上）、期限を過ぎて放置されたら持ち続ける。放置されたスレッドは実行のほかのものに触らないので、`run_file()` は `Runner` をほかの実行の後と同じに破棄する。放置された閉じるスレッドが触りうるものの一覧は `src/run.cpp` の頭のコメント | `src/run_connection.hpp` |
-| この PC のアドレス（ほかの PC に示す URI） | `src/host_addresses.cpp` |
-| 動いているシミュレーションの見張り（`RunWatch::watch()`）、終わったときに確定すること（`RunWatch::settle()`: シナリオの終わり、時間、traffic、シミュレーションの終わり方）、仮想時間が進まないことを報告する `StandStill` | `src/run_watch.cpp` |
 | `--stdin-commands` のコマンドを読む | `src/command_input.cpp` |
 | コマンドラインと、標準入力・標準出力のスレッド | `tools/launch/main.cpp` |
 | `run --control` の Control Server（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）。実行からは `ControlEndpoint` として見える（`launch/run.hpp`）。`run_file()` が、照合の前に要求（`RunHost::control`）から作り、実行の 2 つの段（`src/run.cpp` の `Runner::prepare()` と `Runner::run()`）の間で起動し、戻るときに終える。破棄は、呼ぶ側が結果の後に行う（`RunReport::ended_control_server`） | `libs/launch/src/control_server.cpp`（サーバーと、要求がそのために指すものの読み取りと検査）、`libs/launch/src/run_control_server.hpp`（`run_file()` が呼ぶもの） |
-
-`run` を分担するクラスの役割と、どのスレッドがどの状態をどのロックで扱うかは、`run.cpp` の先頭のコメントと、各 `run_*.hpp` のクラスのコメントにあります。
 
 - テスト: `tests/launch`、`tests/multi_host`
 - `ctest -R`: `^launch\.`（プロセスなし）、`^launch_cli\.`（`check`）、`^launch_run\.`（`run`）、`^multi_host\.`
@@ -369,7 +387,7 @@
 守ること:
 
 - 照合のルール、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/config/src/check_networks.cpp`。対応を当てるただ 1 つの関数。`SeenEcu::seen_networks()`（`libs/config/include/vehicle_sil/config/detail/seen_ecu.hpp`）が呼ぶ）からだけ読みます。`description.networks` を自分で読むルールは、名前を替えたネットワークを実行ファイルの名前で見てしまいます。`launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確認します。設定の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします。ルールや出力を追加したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に追加します。
-- `run` の引数は `detail::participant_arguments()`（`libs/launch/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
+- `run` の引数は `detail::participant_arguments()`（`libs/runner/src/run_participants.cpp`）の 1 か所で作ります。起動、`manual` のコマンド、イベント `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
 
 合わせて直すドキュメント:
 
@@ -458,10 +476,10 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 変える場所:
 
-- `libs/launch/src/time_commands.cpp` の `TimeCommands`
+- `libs/runner/src/time_commands.cpp` の `TimeCommands`
 - 操作盤の時間のロック: `check_file()` が、構成を読んだ直後（どの `--describe` よりも前）に `on_time_lock` を呼び、`run_file()` がそこで `RunControls::set_time_lock()` にロックを渡します。それまで `TimeCommands::apply()` は停止のほかを決めません。コマンドは届いた順に待ち、`set_time_lock()` が決めます（構成が読めなければ `detach()` が断ります）。ロックの行と `--time-policy free` の注意は `control_rules.cpp`（`ControlSituation::time_locked`、`time_free`）
 - 注記 `outside-time-changed` と `unsynchronized-time-changed`: `run_assess.cpp` の `time_changed_findings()`。材料は `RunOutcome::time_changed`、`time_lock`、`real_time_peers`（`time_plan.cpp` の `detail::real_time_peers()`）
-- 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/launch/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。標準入力の停止も、Control Server の停止と同じく `TimeCommands::apply()` を通ります。行のテストは `tests/launch/test_control_rules.cpp`）
+- 時刻のコマンド、停止、書き込みを受けるかどうかと、断るときの文: `libs/runner/src/control_rules.cpp` の行（`TimeCommands::apply()`、`RunControls::allowed()`、Control Server の `observe_only` が読む 1 か所。標準入力の停止も、Control Server の停止と同じく `TimeCommands::apply()` を通ります。行のテストは `tests/launch/test_control_rules.cpp`）
 - `time_plan.cpp` の `detail::plan_time_step()`（controller のタイムステップの既定）、`detail::coarse_time_step()`、`RunTiming::actual_speed()`（宣言は `time_plan.hpp`。`check.cpp` は `run.hpp` なしで使います）
 - `time_plan.cpp` の `time_lock()`、`planned_speed()`、`time_lock_findings()`: シミュレーションの外につながる実行が実時間を保つかどうか（`--time-policy`）、始めるときの速さ、照合の指摘 `outside-*`。`check_file()` が結果を `CheckReport::time_lock` に置き、実行はそこから速さを読みます
 - `run_notes.cpp` の `RunNotes::note_time()`（`time` を書く時点。止まっていると数えるかは `run_notes.hpp` の `detail::noted_standing()`。`state` の `paused` は `run_controls.cpp` の `RunControls`）
@@ -498,7 +516,7 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 変える場所:
 
 - 読むコード: `libs/config/src/config.cpp`
-- 起動の代わりにコマンドを書くコード: `libs/launch/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`
+- 起動の代わりにコマンドを書くコード: `libs/runner/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`
 - 開始の待ち: `run_start.cpp` の `RunStart::wait_for_start()`
 - 終わり: `RunParticipants::end_manual()`
 
@@ -526,8 +544,8 @@ GUI が消費するイベントやコマンドを変える場合は、[GUI の�
 
 | 内容 | 場所 |
 |---|---|
-| tap とシナリオの列 | `libs/launch/src/run_samples.cpp` の `RunSamples` |
-| participant ごとに残す最新の数組 | `libs/launch/src/run_traffic.cpp` の `TrafficLatest` |
+| tap とシナリオの列 | `libs/runner/src/run_samples.cpp` の `RunSamples` |
+| participant ごとに残す最新の数組 | `libs/runner/src/run_traffic.cpp` の `TrafficLatest` |
 | 結果を作る | `count_traffic()` |
 | ネットワークの `senders`、`receivers`、`delivered` | `TrafficNetwork` の関数 |
 | hello のスキーマから、ネットワーク名と数の出力の位置を取り出す | `traffic_schema()` |

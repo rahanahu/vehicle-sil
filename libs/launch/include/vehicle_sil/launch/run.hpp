@@ -9,11 +9,11 @@
 
 #include "vehicle_sil/launch/checked.hpp"
 #include "vehicle_sil/launch/request.hpp"
-#include "vehicle_sil/launch/run_controls.hpp"
-#include "vehicle_sil/launch/run_events.hpp"
-#include "vehicle_sil/launch/run_outcome.hpp"
-#include "vehicle_sil/launch/run_plan.hpp"
-#include "vehicle_sil/launch/stop_requests.hpp"
+#include "vehicle_sil/runner/run_controls.hpp"
+#include "vehicle_sil/runner/run_events.hpp"
+#include "vehicle_sil/runner/run_outcome.hpp"
+#include "vehicle_sil/runner/run_plan.hpp"
+#include "vehicle_sil/runner/stop_requests.hpp"
 
 #include <cstddef>
 #include <memory>

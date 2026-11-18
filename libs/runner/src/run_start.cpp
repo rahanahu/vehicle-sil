@@ -1,0 +1,566 @@
+// SPDX-License-Identifier: MIT
+#include "run_start.hpp"
+
+#include "vehicle_sil/runner/detail/run_words.hpp"
+
+#include <silkit/services/orchestration/string_utils.hpp>
+
+#include <algorithm>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace vehicle_sil::launch::detail {
+
+namespace {
+
+namespace orch = SilKit::Services::Orchestration;
+
+/// The first enabled required participant, or bridge of --connect, that has left the simulation
+/// before it started (a process that ended is seen as Error: "Connection Lost"), as "participant
+/// '<name>' left ... (state <state>)"; "" if none. Thread safe: it reads the run's context (fixed)
+/// and the controller's runtime's peer statuses only.
+[[nodiscard]] std::string gone_before_start(const RunContext& ctx, SimulationController& controller)
+{
+    std::vector<std::string> names = controller.required_participants();
+    for (std::size_t i = 0; i < ctx.config.participants.size(); ++i)
+    {
+        const ParticipantConfig& p = ctx.config.participants[i];
+        if (p.enabled && ctx.plan.members[i].outside)
+        {
+            names.push_back(p.name);
+        }
+    }
+    for (const std::string& name : names)
+    {
+        const PeerStatus status = controller.runtime().peer_status(name);
+        if (has_finished(status))
+        {
+            const bool manual = std::any_of(ctx.config.participants.begin(), ctx.config.participants.end(),
+                                            [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
+            return "participant '" + name + "' left the simulation before it started (state " +
+                   std::string(orch::to_string(*status.state)) + ")" +
+                   (manual ? "; you started it yourself (manual), and it cannot join this run again: to start it "
+                             "again, start vehicle_sil_launch again as well"
+                           : "");
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationController& controller, const StartWindow& window)
+{
+    const auto cancelled = [this, &window] { return window.cancelled() || ctx_.interrupts() > 0; };
+    // Not beyond the start's limit, and with room for the start to go on after it.
+    const auto deadline = std::min(std::chrono::steady_clock::now() + ctx_.plan.control_hello_timeout,
+                                   shared_.limit.at() - std::chrono::milliseconds(500));
+    control_silkit::HelloReport report = transport.wait_for_hellos(control_.expected_agents(), deadline, cancelled);
+    {
+        // The links as they are now, before any step: the simulation may be over by the time
+        // the main thread looks (a short one at full speed), and an agent that has ended by
+        // then was connected at the start all the same.
+        const std::lock_guard lock(shared_.found_mutex);
+        shared_.control_start = ControlStart{std::move(report), transport.links()};
+    }
+    if (ctx_.observers.before_start && !cancelled())
+    {
+        // The simulation starts whatever happens here: a failure is kept, and the run ends
+        // the simulation for it once it has started (wait_for_start()).
+        std::string error;
+        try
+        {
+            ctx_.observers.before_start(control_.shared_hub());
+        }
+        catch (const std::exception& e)
+        {
+            error = *e.what() != '\0' ? e.what() : "exception without message";
+        }
+        catch (...)
+        {
+            error = "unknown exception";
+        }
+        const std::lock_guard lock(shared_.found_mutex);
+        shared_.before_start_error = std::move(error);
+    }
+    if (ctx_.scenario != nullptr && !cancelled())
+    {
+        scenario_.begin(transport, cancelled);
+    }
+    if (ctx_.holds() && !cancelled())
+    {
+        // Every participant waits before its step at 0, with its subscriptions connected:
+        // what a control client writes now (and is queued) takes effect in the steps at 0.
+        std::chrono::steady_clock::time_point began{};
+        const auto on_hold = [&] {
+            // The start has no limit while it holds; --timeout-ms counts from here.
+            began = std::chrono::steady_clock::now();
+            shared_.hold_began_ns.store(began.time_since_epoch().count());
+            shared_.limit.begin_hold();
+            out_.say("standing still before the first step until a resume, step or run_until command (--start-paused "
+                "with a control server)");
+        };
+        const auto give_up = [&] {
+            // With a participant started by hand, --timeout-ms counts from the wait for the participants.
+            const auto from = shared_.manual_wait_began().value_or(began);
+            if (ctx_.plan.timeout && std::chrono::steady_clock::now() >= from + *ctx_.plan.timeout)
+            {
+                shared_.hold_timed_out.store(true);
+                return true;
+            }
+            return cancelled() || !gone_before_start(ctx_, controller).empty();
+        };
+        if (ctx_.commands.hold_before_start(give_up, std::chrono::milliseconds(20), on_hold) != TimeCommands::Hold::None)
+        {
+            shared_.hold_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
+            // From here on, the participants have start_timeout_ms to get to their first step
+            // (with a participant started by hand: from when those are ready, as before the hold).
+            shared_.limit.end_hold(std::chrono::steady_clock::now(), std::chrono::milliseconds(ctx_.config.start_timeout_ms),
+                                   waits_for_manual(ctx_.config));
+        }
+    }
+}
+
+namespace {
+
+/// A pause that takes effect at the time the simulation is at (--start-paused, a pause command
+/// before the start): the gate stops in the controller's step at 0, and that step may begin a
+/// moment after start() has returned. Waits for it, so that the first time event says "paused"
+/// when the simulation stands still and the time the result counts as standing still has begun.
+/// Not for long, and not once the pause has been taken back or the simulation has ended: the
+/// event then says what it said without the wait.
+void wait_for_pause_at_start(SimulationController& controller)
+{
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < give_up)
+    {
+        const TimeState s = controller.time_state();
+        if (s.paused || !s.pause_target || *s.pause_target > s.now || has_finished(PeerStatus{controller.runtime().state()}) ||
+            controller.wait_until_paused(std::chrono::milliseconds(20)))
+        {
+            return;
+        }
+    }
+}
+
+} // namespace
+
+RunStart::RunStart(const RunContext& ctx, RunOutput& out, RunControl& control, RunNotes& notes, RunScenario& scenario,
+                   RunParticipants& participants, RunOutcome& outcome) :
+  ctx_(ctx), out_(out), control_(control), notes_(notes), participants_(participants), outcome_(outcome),
+  window_(ctx, out, control, scenario, shared_)
+{
+}
+
+std::string RunStart::start_given_up(SimulationController& controller)
+{
+    // With a participant started by hand, a stop request ends the start too: without a limit,
+    // it would wait for ever for one that stands still in a debugger. (Without one, the start
+    // has its limit and a stop takes effect once it is over, as it always did.)
+    if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
+    {
+        return ctx_.stop_text();
+    }
+    if (const auto from = shared_.manual_wait_began(); from && ctx_.plan.timeout && std::chrono::steady_clock::now() >= *from + *ctx_.plan.timeout)
+    {
+        manual_timed_out_ = "not at their first step: " + not_ready(controller);
+        return "--timeout-ms";
+    }
+    if (std::string gone = gone_before_start(ctx_, controller); !gone.empty())
+    {
+        return gone;
+    }
+    // With a participant started by hand, the limit begins once every such participant is
+    // ready for its first step (not while the run stands still before it).
+    const bool manualReady = waits_for_manual(ctx_.config) && manual_ready(controller);
+    const StartLimit::Now limit = shared_.limit.take(std::chrono::steady_clock::now(), manualReady);
+    if (std::chrono::steady_clock::now() < limit.at)
+    {
+        return {};
+    }
+    return "the participants did not all get to their first step within " + std::to_string(limit.length.count()) +
+           " ms" + (limit.after_hold ? " after the run stopped standing still before it" : "") +
+           (waits_for_manual(ctx_.config) ? " after the participants you start yourself (manual) were ready" : "") +
+           " (start_timeout_ms; a participant may hang while it starts): not ready: " + not_ready(controller);
+}
+
+std::string RunStart::not_ready(SimulationController& controller) const
+{
+    std::string waiting;
+    std::string all;
+    for (const std::string& name : controller.required_participants())
+    {
+        const PeerStatus status = controller.runtime().peer_status(name);
+        const auto state = status.state.value_or(orch::ParticipantState::Invalid);
+        if (state == orch::ParticipantState::Running)
+        {
+            continue;
+        }
+        const std::string item = name + " (" + std::string(orch::to_string(state)) + ")";
+        all += (all.empty() ? "" : ", ") + item;
+        if (state != orch::ParticipantState::ReadyToRun)
+        {
+            waiting += (waiting.empty() ? "" : ", ") + item;
+        }
+    }
+    return waiting.empty() ? (all.empty() ? std::string("the launcher's controller") : all) : waiting;
+}
+
+bool RunStart::manual_ready(SimulationController& controller) const
+{
+    return std::all_of(ctx_.config.participants.begin(), ctx_.config.participants.end(), [&controller](const ParticipantConfig& p) {
+        if (!p.enabled || !p.required || !p.manual)
+        {
+            return true;
+        }
+        const auto state = controller.runtime().peer_status(p.name).state;
+        return state && (*state == orch::ParticipantState::ReadyToRun || *state == orch::ParticipantState::Running ||
+                         *state == orch::ParticipantState::Paused);
+    });
+}
+
+void RunStart::note_control(control_silkit::HubTransport& transport)
+{
+    std::optional<ControlStart> start;
+    {
+        const std::lock_guard lock(shared_.found_mutex);
+        start = shared_.control_start;
+    }
+    control_.note_links(outcome_, start, transport.links(), [this](std::size_t i) { return participants_.in_run(i); });
+}
+
+bool StrangerWait::look(const std::string& name, State state, std::chrono::steady_clock::time_point now)
+{
+    if (state != State::ServicesCreated)
+    {
+        since_.erase(name);
+        return state == State::Error;
+    }
+    return since_.emplace(name, now).first->second + kHold <= now;
+}
+
+void RunStart::tell_strangers(SimulationController& controller)
+{
+    std::vector<std::string> ours{std::string(kControllerName)};
+    std::vector<std::string> waited;
+    for (const auto& p : ctx_.config.participants)
+    {
+        if (p.enabled)
+        {
+            ours.push_back(p.name);
+        }
+    }
+    for (const auto& name : controller.missing_participants())
+    {
+        waited.push_back(name);
+    }
+    for (const auto& name : controller.runtime().peer_names())
+    {
+        if (std::find(ours.begin(), ours.end(), name) != ours.end() ||
+            std::find(strangers_told_.begin(), strangers_told_.end(), name) != strangers_told_.end())
+        {
+            continue;
+        }
+        // Only one that waits for the start (coordinated): it stays in ServicesCreated while the
+        // run waits (the controller tells the participants which are required only once they all
+        // have joined), and SIL Kit puts it in Error after that. One outside the file that runs on
+        // its own (autonomous: a peer in real time, a bridge) goes on to Running at once: it is
+        // part of the simulation and is not named.
+        const auto state = controller.runtime().peer_status(name).state;
+        const auto seen = state == orch::ParticipantState::ServicesCreated ? StrangerWait::State::ServicesCreated
+                          : state == orch::ParticipantState::Error         ? StrangerWait::State::Error
+                                                                            : StrangerWait::State::Other;
+        if (!stranger_wait_.look(name, seen, std::chrono::steady_clock::now()))
+        {
+            continue;
+        }
+        strangers_told_.push_back(name);
+        const std::string guess = detail::closest(name, waited);
+        out_.say("participant '" + name + "' joined the simulation, but this run has no participant of that name" +
+                 (guess.empty() ? std::string{} : " (did you mean '" + guess + "'?)") +
+                 (state == orch::ParticipantState::Error
+                      ? ": SIL Kit put it in the Error state, as it waits for the simulation's start, which only the "
+                        "participants of the file get"
+                      : ": it waits for the simulation's start, which only the participants of the file get") +
+                 "; start it with the name the file gives it (--name)");
+    }
+}
+
+bool RunStart::stopped_for_shared_device(const std::vector<std::size_t>& bridges)
+{
+    // The first link line comes before the bridge's lifecycle starts, so it is read by now, but the
+    // thread that reads the bridge's output may be a moment behind.
+    const Waited waited = detail::wait_for(
+        kOutsideFirstLineWait, std::chrono::milliseconds(5), [&] { return out_.link_lines_read(bridges); },
+        [this] { return ctx_.interrupts() > 0; });
+    if (waited == Waited::Interrupted)
+    {
+        interrupted_before_start();
+        return true;
+    }
+    // A bridge that did not write its line (another version) says nothing of sharing: not shared.
+    const auto stop = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(), std::chrono::milliseconds(0));
+    if (!stop)
+    {
+        return false;
+    }
+    out_.say("not starting the participants of the file: " + outcome_.participants[*stop].name +
+             " uses a device that another vehicle-sil bridge uses too, and --strict does not run on a shared device "
+             "(the finding outside-device-shared says what to do)");
+    return true;
+}
+
+bool RunStart::wait_for_bridges(SimulationController& controller)
+{
+    std::vector<std::size_t> bridges;
+    for (std::size_t i = 0; i < outcome_.participants.size(); ++i)
+    {
+        if (stops_run(outcome_.participants[i]) && participants_.in_run(i))
+        {
+            bridges.push_back(i);
+        }
+    }
+    if (bridges.empty())
+    {
+        return true;
+    }
+    const std::chrono::milliseconds limit(ctx_.config.start_timeout_ms);
+    // What went wrong, with the bridge it is about.
+    std::string why;
+    std::size_t failed = 0;
+    const auto state_of = [&controller](const ParticipantRun& run) {
+        return controller.runtime().peer_status(run.name).state;
+    };
+    const Waited waited = detail::wait_for(
+        limit, std::chrono::milliseconds(5),
+        [&] {
+            // "joined" as each comes, so that a bridge's comes before any ECU's "started".
+            notes_.note_joined(controller, outcome_);
+            // A bridge that ended before it connected to SIL Kit has no state: its process says so.
+            if (const int ended = participants_.look_at_children(true); ended >= 0)
+            {
+                failed = static_cast<std::size_t>(ended);
+                const ParticipantRun& run = outcome_.participants[failed];
+                why = run.exit ? exit_text(*run.exit) : std::string("ended");
+                return true;
+            }
+            for (const std::size_t i : bridges)
+            {
+                const auto state = state_of(outcome_.participants[i]);
+                if (state && (*state == orch::ParticipantState::Error || *state == orch::ParticipantState::Shutdown))
+                {
+                    failed = i;
+                    why = "left the simulation (state " + std::string(orch::to_string(*state)) + ")";
+                    return true;
+                }
+            }
+            return std::all_of(bridges.begin(), bridges.end(), [&](std::size_t i) {
+                return state_of(outcome_.participants[i]) == orch::ParticipantState::Running;
+            });
+        },
+        [this] { return ctx_.interrupts() > 0; });
+    if (waited == Waited::Interrupted)
+    {
+        interrupted_before_start();
+        return false;
+    }
+    if (waited == Waited::TimedOut)
+    {
+        std::string names;
+        for (const std::size_t i : bridges)
+        {
+            ParticipantRun& run = outcome_.participants[i];
+            if (state_of(run) != orch::ParticipantState::Running)
+            {
+                run.missing_at_start = true;
+                names += (names.empty() ? "" : ", ") + run.name;
+            }
+        }
+        out_.say(names + " did not start: not running in SIL Kit within " + std::to_string(limit.count()) +
+                 " ms (start_timeout_ms); nothing else is started");
+        return false;
+    }
+    if (why.empty())
+    {
+        // The "joined" of a bridge whose state came between the two looks of the last round.
+        notes_.note_joined(controller, outcome_);
+        return !ctx_.plan.strict || !stopped_for_shared_device(bridges);
+    }
+    const ParticipantRun& run = outcome_.participants[failed];
+    outcome_.end.failed_participant = run.name;
+    if (!run.exit)
+    {
+        outcome_.end.failure_reason = why;
+    }
+    notes_.note_failed(outcome_, run.name, run.exit ? "ended_before_start" : "left_simulation");
+    out_.say(run.name + " did not start: " + (run.exit ? "its process " : "it ") + why + "; nothing else is started");
+    return false;
+}
+
+bool RunStart::wait_for_start(SimulationController& controller, control_silkit::HubTransport& transport)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ctx_.config.start_timeout_ms);
+    // The participants someone starts by hand have no time limit: they may take any time.
+    const auto manual = [this](const std::string& name) {
+        return std::any_of(ctx_.config.participants.begin(), ctx_.config.participants.end(),
+                           [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
+    };
+    bool saidWaiting = false;
+    // A run that waits for a participant started by hand: --timeout-ms counts from here (an
+    // automatic run with manual: true in its file must end too).
+    if (waits_for_manual(ctx_.config) && ctx_.plan.timeout)
+    {
+        shared_.manual_wait_began_ns.store(std::chrono::steady_clock::now().time_since_epoch().count());
+        outcome_.start.timeout_from_wait = true;
+    }
+    while (true)
+    {
+        if (ctx_.interrupts() > 0)
+        {
+            interrupted_before_start();
+            return false;
+        }
+        if (const auto from = shared_.manual_wait_began(); from && std::chrono::steady_clock::now() >= *from + *ctx_.plan.timeout)
+        {
+            std::string names;
+            const std::vector<std::string> left = controller.missing_participants();
+            for (const auto& name : left)
+            {
+                names += (names.empty() ? "" : ", ") + name + (manual(name) ? " (manual)" : "");
+            }
+            return start_timed_out(names + (left.size() == 1 ? " has not joined" : " have not joined"));
+        }
+        // Who has not joined is read before the ends of the processes: at the deadline, who
+        // did not come is named even if a process ends in the same round.
+        const std::vector<std::string> missing = controller.missing_participants();
+        const bool onlyManual = std::all_of(missing.begin(), missing.end(), manual);
+        const bool late = !onlyManual && std::chrono::steady_clock::now() >= deadline;
+        notes_.note_joined(controller, outcome_);
+        tell_strangers(controller);
+        const int ended = participants_.look_at_children(true);
+        if (ended >= 0 && !late)
+        {
+            outcome_.end.failed_participant = outcome_.participants[static_cast<std::size_t>(ended)].name;
+            notes_.note_failed(outcome_, outcome_.end.failed_participant, "ended_before_start");
+            return false;
+        }
+        if (missing.empty())
+        {
+            break;
+        }
+        if (onlyManual && !saidWaiting)
+        {
+            saidWaiting = true;
+            std::string names;
+            for (const auto& name : missing)
+            {
+                names += (names.empty() ? "" : ", ") + name;
+            }
+            out_.say("waiting for " + names + " to join (manual): start " + (missing.size() == 1 ? "it" : "them") +
+                " with the command above; Ctrl+C stops the run");
+        }
+        if (late)
+        {
+            outcome_.start.timed_out = true;
+            std::string names;
+            for (auto& run : outcome_.participants)
+            {
+                if (std::find(missing.begin(), missing.end(), run.name) != missing.end() && !run.manual)
+                {
+                    run.missing_at_start = true;
+                    names += (names.empty() ? "" : ", ") + run.name;
+                }
+            }
+            out_.say("the simulation did not start: not joined within " + std::to_string(ctx_.config.start_timeout_ms) +
+                " ms: " + names);
+            return false;
+        }
+        std::this_thread::sleep_for(ctx_.plan.poll);
+    }
+    try
+    {
+        // The start's limits are the run's own (StartLimit): until the hold, what is left of
+        // start_timeout_ms (with room for the wait for the agents' hellos); in the hold, none
+        // (it ends with a command, a stop, --timeout-ms or a participant that leaves); after
+        // it, start_timeout_ms anew. A required participant that leaves ends the start at
+        // once: the others would wait for it until the limit.
+        // With a participant started by hand, none until every such participant is ready for its
+        // first step (it may stand in a debugger before), then start_timeout_ms (start_given_up()).
+        if (waits_for_manual(ctx_.config))
+        {
+            shared_.limit.set_once_manual_ready(std::chrono::milliseconds(ctx_.config.start_timeout_ms));
+        }
+        else
+        {
+            const auto left =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            const auto limit = std::max(left, ctx_.plan.control_hello_timeout + std::chrono::milliseconds(1000));
+            shared_.limit.set(std::chrono::steady_clock::now() + limit, limit);
+        }
+        controller.start(kNoStartLimit, [this, &controller] { return start_given_up(controller); });
+    }
+    catch (const std::exception& e)
+    {
+        // A stop request and --timeout-ms end the start of a run with a participant started by
+        // hand as they end the wait above.
+        if (waits_for_manual(ctx_.config) && ctx_.interrupts() > 0)
+        {
+            interrupted_before_start();
+            return false;
+        }
+        if (!manual_timed_out_.empty())
+        {
+            return start_timed_out(manual_timed_out_);
+        }
+        if (const int gone = participants_.gone_process(!gone_before_start(ctx_, controller).empty()); gone >= 0)
+        {
+            // A participant's process ended before the simulation started: as in the wait above.
+            outcome_.end.failed_participant = outcome_.participants[static_cast<std::size_t>(gone)].name;
+            notes_.note_failed(outcome_, outcome_.end.failed_participant, "ended_before_start");
+            return false;
+        }
+        outcome_.start.error = one_line(e.what());
+        out_.say("the simulation did not start: " + outcome_.start.error);
+        return false;
+    }
+    note_control(transport);
+    {
+        const std::lock_guard lock(shared_.found_mutex);
+        outcome_.start.before_start_error = shared_.before_start_error;
+    }
+    if (!outcome_.start.before_start_error.empty())
+    {
+        // It runs (every participant got to its first step), but not as it was to: ended here.
+        out_.say("the simulation started, but what was to be done before it failed (" + outcome_.start.before_start_error +
+            "): aborting it");
+        controller.abort();
+        outcome_.end.simulation = SimulationEnd::Aborted;
+        before_start_failed_ = true;
+        return false;
+    }
+    ctx_.controls.set_phase(Phase::Running);
+    out_.say("simulation running");
+    // Every participant starts at virtual time 0.
+    wait_for_pause_at_start(controller);
+    notes_.note_time(controller, TimeNote::Start);
+    return true;
+}
+
+void RunStart::interrupted_before_start()
+{
+    ctx_.note_interrupt(outcome_.end);
+    out_.say(outcome_.end.stop_text() + " before the simulation started");
+}
+
+bool RunStart::start_timed_out(const std::string& waiting_for)
+{
+    outcome_.end.timed_out = true;
+    outcome_.start.timed_out_before_start = true;
+    outcome_.start.timed_out_waiting_for = waiting_for;
+    out_.say("the simulation did not start within --timeout-ms (" + std::to_string(ctx_.plan.timeout->count()) +
+        " ms): " + waiting_for);
+    return false;
+}
+
+} // namespace vehicle_sil::launch::detail
