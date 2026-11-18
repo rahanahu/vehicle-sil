@@ -159,7 +159,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
                     o.link.lost = lost->second;
                 }
             }
-            outcome_.failed_participant = run.name;
+            outcome_.end.failed_participant = run.name;
             processFailed = true;
             return true;
         }
@@ -168,7 +168,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         if (const auto shared = out_.outside_shared(std::chrono::steady_clock::now(), participants_.own_bridges(),
                                                     ctx_.plan.strict ? std::optional(kOutsideSharedAfter) : std::nullopt))
         {
-            outcome_.failed_participant = outcome_.participants[*shared].name;
+            outcome_.end.failed_participant = outcome_.participants[*shared].name;
             processFailed = true;
             return true;
         }
@@ -185,7 +185,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
             // ends with 0, and the network is not connected any more all the same.
             if (!known[i] && ((run.required && failed_exit(run)) || (stops_run(run) && run.exit)))
             {
-                outcome_.failed_participant = run.name;
+                outcome_.end.failed_participant = run.name;
                 processFailed = true;
                 return true;
             }
@@ -198,14 +198,14 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         const std::int64_t held = start_.hold_began_ns();
         if (const std::int64_t heldMs = start_.hold_ms(); heldMs >= 0)
         {
-            outcome_.held_before_start_ms = heldMs;
+            outcome_.start.held_before_start_ms = heldMs;
         }
         // With a participant started by hand: from when the launcher began to wait.
         watch.deadline = start_.manual_wait_began().value_or(
                              held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
                                        : std::chrono::steady_clock::now()) +
                          *ctx_.plan.timeout;
-        outcome_.timed_out_while_holding = start_.hold_timed_out();
+        outcome_.end.timed_out_while_holding = start_.hold_timed_out();
     }
     watch.before_abort = [this](const WatchResult& why) {
         if (why.end == WatchEnd::TimedOut)
@@ -215,7 +215,7 @@ RunWatch::Watched RunWatch::watch(SimulationController& controller)
         }
         else
         {
-            const std::string who = why.failure ? why.failure->participant : outcome_.failed_participant;
+            const std::string who = why.failure ? why.failure->participant : outcome_.end.failed_participant;
             notes_.note_failed(outcome_, who, why.failure ? "left_simulation" : "process_ended");
             out_.say("participant '" + who + "' failed" + (why.failure ? ": it " + why.failure->reason : std::string{}) +
                 "; aborting the simulation");
@@ -258,45 +258,45 @@ int RunWatch::settle(SimulationController& controller, const Watched& over)
     case WatchEnd::Ended:
         if (watched.state == orch::ParticipantState::Shutdown)
         {
-            outcome_.simulation = ctx_.config.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
+            outcome_.end.simulation = ctx_.config.stop_at_ms && controller.wall_time_to_stop_at() ? SimulationEnd::ReachedStopAt
                                                                                            : SimulationEnd::Ended;
         }
         else
         {
-            outcome_.simulation = SimulationEnd::Ended;
-            outcome_.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+            outcome_.end.simulation = SimulationEnd::Ended;
+            outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
         }
         out_.say("the simulation ended");
         break;
     case WatchEnd::TimedOut:
-        outcome_.simulation = SimulationEnd::Aborted;
-        outcome_.timed_out = true;
+        outcome_.end.simulation = SimulationEnd::Aborted;
+        outcome_.end.timed_out = true;
         out_.say("the simulation was aborted: it did not end within --timeout-ms");
         break;
     case WatchEnd::Failed:
-        outcome_.simulation = SimulationEnd::Aborted;
-        if (watched.failure && outcome_.failed_participant.empty())
+        outcome_.end.simulation = SimulationEnd::Aborted;
+        if (watched.failure && outcome_.end.failed_participant.empty())
         {
-            outcome_.failed_participant = watched.failure->participant;
-            outcome_.failure_reason = watched.failure->reason;
+            outcome_.end.failed_participant = watched.failure->participant;
+            outcome_.end.failure_reason = watched.failure->reason;
         }
-        out_.say("the simulation was aborted: participant '" + outcome_.failed_participant + "' failed");
+        out_.say("the simulation was aborted: participant '" + outcome_.end.failed_participant + "' failed");
         break;
     case WatchEnd::Interrupted:
         if (forScenario)
         {
-            outcome_.simulation = SimulationEnd::Ended;
-            outcome_.stopped_by_scenario = true;
+            outcome_.end.simulation = SimulationEnd::Ended;
+            outcome_.end.stopped_by_scenario = true;
             if (watched.state != orch::ParticipantState::Shutdown)
             {
-                outcome_.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+                outcome_.end.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
             }
             out_.say("the scenario is over: the simulation was stopped");
             break;
         }
-        outcome_.simulation = SimulationEnd::Interrupted;
-        outcome_.interrupted_by = ctx_.interrupt_name();
-        out_.say("interrupted (" + outcome_.interrupted_by + "): the simulation was stopped");
+        outcome_.end.simulation = SimulationEnd::Interrupted;
+        outcome_.end.interrupted_by = ctx_.interrupt_name();
+        out_.say("interrupted (" + outcome_.end.interrupted_by + "): the simulation was stopped");
         break;
     }
     return interrupts_at_end;

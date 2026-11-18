@@ -205,7 +205,7 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
         CHECK(plan.poll == options.poll && plan.outside_lost_after == kOutsideLostAfter && !plan.timeout &&
               plan.control_hello_timeout == options.control_hello_timeout && !plan.strict && plan.log_dir.empty() &&
               plan.timeline.empty() && plan.timeline_shown.empty() && !plan.timing.coarse_step_checked);
-        CHECK(!planned_outcome(plan).timeout_ms);
+        CHECK(!planned_outcome(plan).end.timeout_ms);
     }
     options.check.strict = true;
     options.log_dir = "logs";
@@ -226,13 +226,13 @@ TEST_CASE(the_plan_takes_the_limits_and_the_files_as_given_and_the_outcome_begin
           plan.control_hello_timeout == 10ms);
     CHECK(plan.timing.coarse_step_checked && plan.timing.late_tolerance_ms == 77);
     const RunOutcome outcome = planned_outcome(plan);
-    CHECK(outcome.start_timeout_ms == 1234 && outcome.stop_timeout_ms == 2345 && outcome.control_hello_timeout_ms == 10 &&
-          outcome.stop_at_ms == std::optional<std::int64_t>(500) && outcome.timeout_ms == std::optional<std::int64_t>(9000));
+    CHECK(outcome.start.timeout_ms == 1234 && outcome.end.stop_timeout_ms == 2345 && outcome.start.control_hello_timeout_ms == 10 &&
+          outcome.end.stop_at_ms == std::optional<std::int64_t>(500) && outcome.end.timeout_ms == std::optional<std::int64_t>(9000));
     CHECK(outcome.timing.time_step_ms == plan.timing.time_step_ms && outcome.timing.speed == plan.timing.speed &&
           outcome.timing.coarse_step_checked && outcome.timing.late_tolerance_ms == 77 && outcome.timing.sim_ms == 0);
     // The scenario as not run, with its file; nothing of what a run finds.
-    CHECK(outcome.scenario.has_value() && outcome.scenario->file == "drive.yaml");
-    CHECK(outcome.simulation == SimulationEnd::NotStarted && outcome.setup_error.empty() && outcome.registry_uri.empty());
+    CHECK(outcome.scenario.result.has_value() && outcome.scenario.result->file == "drive.yaml");
+    CHECK(outcome.end.simulation == SimulationEnd::NotStarted && outcome.setup.error.empty() && outcome.setup.registry_uri.empty());
     // Without a scenario: none in the outcome.
-    CHECK(!planned_outcome(plan_run(checked({10000}), "dir", options)).scenario);
+    CHECK(!planned_outcome(plan_run(checked({10000}), "dir", options)).scenario.result);
 }

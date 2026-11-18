@@ -110,7 +110,7 @@ struct TestReport
     bool usage = false;
     bool unreadable = false;
     bool interrupted = false;
-    /// A run left the launcher's SIL Kit connection open (RunOutcome::connection_not_closed_ms):
+    /// A run left the launcher's SIL Kit connection open (OutcomeClose::not_closed_ms):
     /// the test stopped there (the rest is NotRun, and the test failed), and the caller ends the
     /// process as it does for such a run.
     bool connection_not_closed = false;

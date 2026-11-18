@@ -47,21 +47,21 @@ RunOutcome planned_outcome(const RunPlan& plan)
     const SimulationConfig& config = plan.config();
     const CheckReport& check = plan.check;
     RunOutcome outcome;
-    outcome.start_timeout_ms = config.start_timeout_ms;
-    outcome.stop_timeout_ms = config.stop_timeout_ms;
-    outcome.control_hello_timeout_ms = plan.control_hello_timeout.count();
-    outcome.stop_at_ms = config.stop_at_ms;
+    outcome.start.timeout_ms = config.start_timeout_ms;
+    outcome.end.stop_timeout_ms = config.stop_timeout_ms;
+    outcome.start.control_hello_timeout_ms = plan.control_hello_timeout.count();
+    outcome.end.stop_at_ms = config.stop_at_ms;
     outcome.time_lock = check.time_lock;
     outcome.real_time_peers = detail::real_time_peers(config, check);
     if (const Scenario* scenario = plan.scenario(); scenario != nullptr)
     {
-        outcome.scenario = scenario_not_run(*scenario);
-        outcome.scenario->file = check.scenario->file;
+        outcome.scenario.result = scenario_not_run(*scenario);
+        outcome.scenario.result->file = check.scenario->file;
     }
     outcome.timing = plan.timing;
     if (plan.timeout)
     {
-        outcome.timeout_ms = plan.timeout->count();
+        outcome.end.timeout_ms = plan.timeout->count();
     }
     for (const auto& p : config.participants)
     {

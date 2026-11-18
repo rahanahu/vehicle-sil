@@ -209,19 +209,49 @@ namespace detail {
 [[nodiscard]] inline bool stops_run(const ParticipantRun& run) { return !run.for_network.empty(); }
 } // namespace detail
 
-/// What a run saw.
-struct RunOutcome
+/// What the run could not set up before it started anything: the registry or the controller.
+struct OutcomeSetup
 {
     /// The registry or the controller could not be set up (nothing was started): why.
-    std::string setup_error{};
+    std::string error{};
     /// Where the registry of the run listens, as its participants get it (with the port it took
     /// for port 0), or "" if none was started.
     std::string registry_uri{};
-    SimulationEnd simulation = SimulationEnd::NotStarted;
-    /// The required participants did not all join within start_timeout_ms.
-    bool start_timed_out = false;
+};
+
+/// How the start went: the wait for the participants, the start of the simulation, and the
+/// limits it kept to.
+struct OutcomeStart
+{
+    /// The required participants did not all join within timeout_ms.
+    bool timed_out = false;
     /// They all joined, but the controller could not start the simulation: why.
-    std::string start_error{};
+    std::string error{};
+    /// RunOptions::before_start threw: the simulation had started, and the launcher aborted it. Why.
+    std::string before_start_error{};
+    std::int64_t timeout_ms = 0;
+    /// How long the start waited at most for the hello of the control agents.
+    std::int64_t control_hello_timeout_ms = 0;
+    /// With --timeout-ms: how long the run stood still before its first step (the hold of
+    /// --start-paused with a control server) until a command let it go on, if it did; --timeout-ms
+    /// counts from the beginning of the hold.
+    std::optional<std::int64_t> held_before_start_ms{};
+    /// OutcomeEnd::timed_out before the simulation started: a run that waits for a participant
+    /// someone starts by hand, whose --timeout-ms counts from when the launcher began to wait for
+    /// the participants.
+    bool timed_out_before_start = false;
+    /// timed_out_before_start: what the start still waited for ("Late (manual) has not joined", ...).
+    std::string timed_out_waiting_for{};
+    /// --timeout-ms counted from when the launcher began to wait for the participants (a run that
+    /// waits for a participant someone starts by hand), not from the start.
+    bool timeout_from_wait = false;
+};
+
+/// How the simulation ended and why: the part that tells the run's end (what ended it, who
+/// failed, which limit passed).
+struct OutcomeEnd
+{
+    SimulationEnd simulation = SimulationEnd::NotStarted;
     /// The simulation ended in this state instead of shutting down normally (SIL Kit's name), or "".
     std::string controller_state{};
     /// The interrupt that ended the run ("SIGINT", "SIGTERM", "Ctrl+C", ...), or "".
@@ -236,36 +266,73 @@ struct RunOutcome
     /// timed_out: --timeout-ms passed while the run stood still before the first step (the hold of
     /// --start-paused with a control server); the simulation was aborted right after it started.
     bool timed_out_while_holding = false;
-    /// With --timeout-ms: how long the run stood still before its first step (the hold of
-    /// --start-paused with a control server) until a command let it go on, if it did; --timeout-ms
-    /// counts from the beginning of the hold.
-    std::optional<std::int64_t> held_before_start_ms{};
-    /// timed_out before the simulation started: a run that waits for a participant someone starts
-    /// by hand, whose --timeout-ms counts from when the launcher began to wait for the participants.
-    bool timed_out_before_start = false;
-    /// timed_out_before_start: what the start still waited for ("Late (manual) has not joined", ...).
-    std::string timed_out_waiting_for{};
-    /// --timeout-ms counted from when the launcher began to wait for the participants (a run that
-    /// waits for a participant someone starts by hand), not from the start.
-    bool timeout_from_wait = false;
-    /// What the launcher's end of the control agents dropped in the run (HubTransportStats):
-    /// hellos it did not take, messages it could not decode, and messages that fit no agent it
-    /// knows or no schema.
-    std::uint64_t control_refused_hellos = 0;
-    std::uint64_t control_undecodable = 0;
-    std::uint64_t control_unknown = 0;
-    /// RunOptions::before_start threw: the simulation had started, and the launcher aborted it. Why.
-    std::string before_start_error{};
     /// The participant whose failure ended the run (it ended, or the controller saw it leave), or "".
     std::string failed_participant{};
     /// Why the controller saw it fail (FailureCheck, without the name), or "" if the launcher saw
     /// its process end.
     std::string failure_reason{};
-    std::int64_t start_timeout_ms = 0;
     std::int64_t stop_timeout_ms = 0;
-    /// How long the start waited at most for the hello of the control agents.
-    std::int64_t control_hello_timeout_ms = 0;
     std::optional<std::int64_t> stop_at_ms{};
+    /// The scenario was over (passed or failed) and the launcher stopped the simulation for it,
+    /// at ScenarioRun::over_at (SimulationEnd::Ended).
+    bool stopped_by_scenario = false;
+};
+
+/// What the launcher's end of the control agents dropped in the run (HubTransportStats): hellos it
+/// did not take, messages it could not decode, and messages that fit no agent it knows or no schema.
+struct OutcomeControl
+{
+    std::uint64_t refused_hellos = 0;
+    std::uint64_t undecodable = 0;
+    std::uint64_t unknown = 0;
+};
+
+/// run --scenario and --timeline: what became of the scenario and of its timeline file.
+struct OutcomeScenario
+{
+    /// What became of the scenario (ScenarioStatus::NotRun if the simulation did not start).
+    std::optional<ScenarioRun> result{};
+    /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
+    std::string error{};
+    /// The timeline file as the user named it (RunOptions::timeline_shown), once it was opened; ""
+    /// without one.
+    std::string timeline{};
+    /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
+    std::shared_ptr<const TimelineRecord> timeline_record{};
+    /// The timeline file could be opened, but not written when the run was over: why (finding
+    /// "timeline-write"; the scenario's result stands). (A record that dropped points at its
+    /// limits is the note "timeline-limit".)
+    std::string timeline_error{};
+};
+
+/// How the launcher's own SIL Kit connection closed after the participants had ended.
+struct OutcomeClose
+{
+    /// Set if the launcher's own SIL Kit connection (the hub's transport, the controller, the
+    /// registry) had not closed when the launcher stopped waiting for it, after the participants
+    /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
+    /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
+    /// closing it; it keeps the three and the run's hub, and uses nothing else of the run or of
+    /// what the caller gave the run (RunOptions): both may be destroyed. The result is complete.
+    /// The caller ends the process without running the destructors of static objects (std::_Exit();
+    /// Windows: TerminateProcess()) when it has written the result: the thread is inside SIL Kit.
+    std::optional<std::int64_t> not_closed_ms{};
+    /// not_closed_ms: one more interrupt ended the wait before its limit (the person asked for the
+    /// end at once: no finding). false: the limit passed (finding "connection-not-closed").
+    bool interrupted = false;
+};
+
+/// What a run saw, in parts: what was set up, how it started, how it ended, what the control
+/// agents dropped, what became of the scenario, and how the connection closed; then what is not
+/// part of one of them.
+struct RunOutcome
+{
+    OutcomeSetup setup{};
+    OutcomeStart start{};
+    OutcomeEnd end{};
+    OutcomeControl control{};
+    OutcomeScenario scenario{};
+    OutcomeClose close{};
     RunTiming timing{};
     /// In the order of the configuration, then the bridges that run started for --connect.
     std::vector<ParticipantRun> participants{};
@@ -284,36 +351,6 @@ struct RunOutcome
     std::vector<std::string> real_time_peers{};
     /// What went over the networks; empty if the simulation did not start.
     std::optional<RunTraffic> traffic{};
-    /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did
-    /// not start).
-    std::optional<ScenarioRun> scenario{};
-    /// The scenario was over (passed or failed) and the launcher stopped the simulation for it,
-    /// at ScenarioRun::over_at (SimulationEnd::Ended).
-    bool stopped_by_scenario = false;
-    /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
-    std::string scenario_error{};
-    /// run --timeline: the timeline file as the user named it (RunOptions::timeline_shown), once
-    /// it was opened; "" without one.
-    std::string timeline{};
-    /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
-    std::shared_ptr<const TimelineRecord> timeline_record{};
-    /// The timeline file could be opened, but not written when the run was over: why (finding
-    /// "timeline-write"; the scenario's result stands). (A record that dropped points at its
-    /// limits is the note "timeline-limit".)
-    std::string timeline_error{};
-    /// Set if the launcher's own SIL Kit connection (the hub's transport, the controller, the
-    /// registry) had not closed when the launcher stopped waiting for it, after the participants
-    /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
-    /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
-    /// closing it; it keeps the three and the run's hub, and uses nothing else of the run or of
-    /// what the caller gave the run (RunOptions): both may be destroyed. The result is complete.
-    /// The caller ends the process without running the destructors of static objects (std::_Exit();
-    /// Windows: TerminateProcess()) when it has written the result: the thread is inside SIL Kit.
-    std::optional<std::int64_t> connection_not_closed_ms{};
-    /// connection_not_closed_ms: one more interrupt ended the wait before its limit (the person
-    /// asked for the end at once: no finding). false: the limit passed (finding
-    /// "connection-not-closed").
-    bool connection_close_interrupted = false;
 };
 
 /// Judges a run: the errors (they fail it), warnings and notes, each about the participant (with
@@ -430,7 +467,7 @@ struct RunOptions
     std::filesystem::path log_dir{};
     /// run --timeline, with a scenario: the timeline file of the run (timeline.hpp; its directory
     /// is created if needed), and its name as the user gave it; empty: none. The file is opened
-    /// before anything starts (RunOutcome::setup_error if that fails) and written when the run
+    /// before anything starts (OutcomeSetup::error if that fails) and written when the run
     /// is over, whatever became of the scenario.
     std::filesystem::path timeline{};
     std::string timeline_shown{};
@@ -460,14 +497,14 @@ struct RunOptions
     /// before the launcher stops the run as for a bridge that ended (OutsideState::lost()). Only tests make it shorter.
     std::chrono::milliseconds outside_lost_after = kOutsideLostAfter;
     /// The longest the simulation may run, from its start to its end (wall clock); then it is
-    /// aborted (RunOutcome::timed_out). Empty: no limit.
+    /// aborted (OutcomeEnd::timed_out). Empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
     /// Called in the window before the start (SimulationController::set_start_window()), on a
     /// thread of the controller, after the wait for the agents' hellos: every participant waits
     /// before its first step, and a write that an agent accepts now (control::Hub::write(),
     /// wait_queued()) takes effect in its step at 0. The simulation starts when it returns. If it
     /// throws, the launcher aborts the simulation as soon as it has started
-    /// (RunOutcome::before_start_error). Not called if the start was given up before the window.
+    /// (OutcomeStart::before_start_error). Not called if the start was given up before the window.
     /// `hub`: the run's hub (never null), which the ECUs' control agents connect to over SIL Kit,
     /// on the controller's participant. The run makes it. A caller that keeps the pointer may use
     /// the hub from any thread while the simulation runs and after run_file() has returned (it
@@ -481,7 +518,7 @@ struct RunOptions
     /// it on the run's hub (ControlEndpoint::start()) once, on the main thread, when the check has
     /// passed and the run's files are open, before the registry starts; the run then writes the
     /// event "control_server" and the line "control server at <address>". If the start throws,
-    /// nothing is started (RunOutcome::setup_error). The server must stay usable while run_file()
+    /// nothing is started (OutcomeSetup::error). The server must stay usable while run_file()
     /// runs (its time operations go to the time commands of `controls`, which must be set); the
     /// caller ends it after run_file().
     /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).

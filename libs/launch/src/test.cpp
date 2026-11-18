@@ -107,7 +107,7 @@ std::string failure_reason(const RunReport& report)
     }
     if (first == nullptr)
     {
-        return report.run && report.run->simulation != SimulationEnd::Ended && report.run->simulation != SimulationEnd::ReachedStopAt
+        return report.run && report.run->end.simulation != SimulationEnd::Ended && report.run->end.simulation != SimulationEnd::ReachedStopAt
                    ? "the simulation did not run to its end"
                    : "";
     }
@@ -133,16 +133,16 @@ void judge(TestRun& run, RunReport report)
     {
     case RunResult::Passed:
         run.result = TestRunResult::Passed;
-        if (report.run && report.run->scenario && report.run->scenario->skipped() > 0)
+        if (report.run && report.run->scenario.result && report.run->scenario.result->skipped() > 0)
         {
-            const std::size_t skipped = report.run->scenario->skipped();
-            run.reason = std::to_string(skipped) + " of " + std::to_string(report.run->scenario->steps.size()) +
+            const std::size_t skipped = report.run->scenario.result->skipped();
+            run.reason = std::to_string(skipped) + " of " + std::to_string(report.run->scenario.result->steps.size()) +
                          (skipped == 1 ? " steps was skipped" : " steps were skipped");
         }
         // Expects beside a ramp or a wave that were not checked: the steps ran, but did not look.
-        if (report.run && report.run->scenario && report.run->scenario->unchecked_expects() > 0)
+        if (report.run && report.run->scenario.result && report.run->scenario.result->unchecked_expects() > 0)
         {
-            const std::size_t unchecked = report.run->scenario->unchecked_expects();
+            const std::size_t unchecked = report.run->scenario.result->unchecked_expects();
             run.reason += (run.reason.empty() ? "" : ", ") + std::to_string(unchecked) +
                           (unchecked == 1 ? " expect was not checked" : " expects were not checked");
         }
@@ -154,7 +154,7 @@ void judge(TestRun& run, RunReport report)
         break;
     case RunResult::Interrupted:
         run.result = TestRunResult::Interrupted;
-        run.reason = report.run && !report.run->interrupted_by.empty() ? "by " + report.run->interrupted_by : "";
+        run.reason = report.run && !report.run->end.interrupted_by.empty() ? "by " + report.run->end.interrupted_by : "";
         break;
     default:
         run.result = TestRunResult::Failed;
@@ -628,7 +628,7 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
             // Of the command line, so of every run: nothing more is run.
             return refuse(std::move(result.check.findings));
         }
-        const bool notClosed = result.run && result.run->connection_not_closed_ms;
+        const bool notClosed = result.run && result.run->close.not_closed_ms;
         judge(run, std::move(result));
         say(which + ": " + result_text(run.result) + (run.reason.empty() ? "" : " (" + run.reason + ")"));
         if (interrupted())

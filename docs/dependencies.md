@@ -454,7 +454,7 @@ A status that arrives between 2 and 3 does not reach the new handler. If it is t
 
 **Enforcement**: The test `core.silkit_configuration_defaults` (`cmake/VehicleSilCheckSilKitConfiguration.cmake`) checks that every place in `libs/`, `tools/`, `bridges/` and `tests/` that builds a SIL Kit configuration from a string (`ParticipantConfigurationFromString(`) goes through the functions above.
 
-**Safety net**: `vehicle_sil_launch run` destroys its own SIL Kit objects (the variable endpoints, the controller, the registry) on a dedicated thread and waits until a deadline. If the destruction does not return, it adds the finding `connection-not-closed`, writes the result, and ends the process without destroying static objects (`RunOutcome::connection_not_closed_ms`; see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). In the situation under "Observed" above, the result was written, but the process remained.
+**Safety net**: `vehicle_sil_launch run` destroys its own SIL Kit objects (the variable endpoints, the controller, the registry) on a dedicated thread and waits until a deadline. If the destruction does not return, it adds the finding `connection-not-closed`, writes the result, and ends the process without destroying static objects (`OutcomeClose::not_closed_ms`; see "Stopping a run" in [simulation-run.md](simulation-run.md#stopping-a-run)). In the situation under "Observed" above, the result was written, but the process remained.
 
 **Reported upstream**: Not yet.
 

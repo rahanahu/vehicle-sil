@@ -70,10 +70,10 @@ ParticipantRun exited(ParticipantRun p, int code)
 RunOutcome passed_run()
 {
     RunOutcome o;
-    o.simulation = SimulationEnd::ReachedStopAt;
-    o.stop_at_ms = 1000;
-    o.start_timeout_ms = 30000;
-    o.stop_timeout_ms = 10000;
+    o.end.simulation = SimulationEnd::ReachedStopAt;
+    o.end.stop_at_ms = 1000;
+    o.start.timeout_ms = 30000;
+    o.end.stop_timeout_ms = 10000;
     o.participants = {exited(participant("Engine", 5), 0), exited(participant("Brake", 7), 0)};
     o.timing.time_step_ms = 10;
     o.timing.late_tolerance_ms = 10;
@@ -123,15 +123,15 @@ TEST_CASE(a_run_that_ended_normally_has_no_finding_and_passes)
     CHECK_EQ(r.exit_code(), 0);
     // A participant that stopped the simulation: it ended, also fine.
     RunOutcome ended = passed_run();
-    ended.simulation = SimulationEnd::Ended;
+    ended.end.simulation = SimulationEnd::Ended;
     CHECK(report_of(ended).result() == RunResult::Passed);
 }
 
 TEST_CASE(the_participant_that_failed_the_run_is_named_with_how_its_process_ended)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "Engine";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "Engine";
     o.participants[0] = exited(participant("Engine", 5), 7);
     const RunReport r = report_of(o);
     check_text(lines(r.findings),
@@ -143,7 +143,7 @@ TEST_CASE(the_participant_that_failed_the_run_is_named_with_how_its_process_ende
     // The controller saw it leave, and its process did not end by itself: the controller's reason.
     o.participants[0] = participant("Engine", 5);
     o.participants[0].ending = Ending::Killed;
-    o.failure_reason = "left the simulation (state Error): it failed or lost its connection; see its log for the cause";
+    o.end.failure_reason = "left the simulation (state Error): it failed or lost its connection; see its log for the cause";
     check_text(lines(assess_run(o)),
                "E 5 participant-failed: participant 'Engine': it failed while the simulation was running, and the "
                "launcher aborted the simulation: it left the simulation (state Error): it failed or lost its connection; "
@@ -176,24 +176,24 @@ TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
         return out;
     };
     RunOutcome o = passed_run();
-    o.timeline = "out/t.json";
-    o.timeline_record = record(5);
+    o.scenario.timeline = "out/t.json";
+    o.scenario.timeline_record = record(5);
     check_text(lines(assess_run(o)),
                "N 0 timeline-limit: the timeline out/t.json does not have the whole run: 3 older points were dropped at its "
                "limits (the newest points, up to the end of the scenario, are all there). limits.dropped in the file says of "
                "which series and of which time; for a file with every point, record a shorter scenario\n");
-    o.timeline_record = record(3);
+    o.scenario.timeline_record = record(3);
     CHECK(lines(assess_run(o)).find("1 older point was dropped") != std::string::npos);
     // Nothing dropped, and a record without a file (no --timeline): nothing is said.
-    o.timeline_record = record(2);
+    o.scenario.timeline_record = record(2);
     check_text(lines(assess_run(o)), "");
-    o.timeline_record = record(5);
-    o.timeline.clear();
+    o.scenario.timeline_record = record(5);
+    o.scenario.timeline.clear();
     check_text(lines(assess_run(o)), "");
     // The file could not be written: an error, whatever the scenario made.
-    o.timeline = "out/t.json";
-    o.timeline_record = record(2);
-    o.timeline_error = "writing 10 bytes to it failed (is the disk full?)";
+    o.scenario.timeline = "out/t.json";
+    o.scenario.timeline_record = record(2);
+    o.scenario.timeline_error = "writing 10 bytes to it failed (is the disk full?)";
     check_text(lines(assess_run(o)),
                "E 0 timeline-write: the timeline out/t.json could not be written: writing 10 bytes to it failed (is the disk "
                "full?); what is in the file is not complete: do not use it. The scenario's result is not changed by this. Make "
@@ -210,37 +210,37 @@ TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_
     };
     RunOutcome o = passed_run();
     middles.push_back(running(o));
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "Engine";
-    o.failure_reason = "left the simulation (state Error): it failed or lost its connection; see its log for the cause";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "Engine";
+    o.end.failure_reason = "left the simulation (state Error): it failed or lost its connection; see its log for the cause";
     middles.push_back(running(o));
-    o.failure_reason.clear();
-    middles.push_back(running(o));
-    o = passed_run();
-    o.simulation = SimulationEnd::Aborted;
-    o.timed_out = true;
-    o.timeout_ms = 500;
+    o.end.failure_reason.clear();
     middles.push_back(running(o));
     o = passed_run();
-    o.simulation = SimulationEnd::Interrupted;
-    o.interrupted_by = "SIGINT";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.timed_out = true;
+    o.end.timeout_ms = 500;
     middles.push_back(running(o));
     o = passed_run();
-    o.simulation = SimulationEnd::Ended;
-    o.controller_state = "Error";
+    o.end.simulation = SimulationEnd::Interrupted;
+    o.end.interrupted_by = "SIGINT";
     middles.push_back(running(o));
     o = passed_run();
-    o.simulation = SimulationEnd::NotStarted;
-    o.start_timed_out = true;
+    o.end.simulation = SimulationEnd::Ended;
+    o.end.controller_state = "Error";
+    middles.push_back(running(o));
+    o = passed_run();
+    o.end.simulation = SimulationEnd::NotStarted;
+    o.start.timed_out = true;
     middles.push_back(running(o));
     middles.back().participants[1].missing_at_start = true;
-    o.start_timed_out = false;
-    o.failed_participant = "Engine";
+    o.start.timed_out = false;
+    o.end.failed_participant = "Engine";
     middles.push_back(running(o));
     middles.back().participants[0] = exited(participant("Engine", 5), 3);
     middles.back().participants[0].ending = Ending::ExitedBeforeStart;
-    o.failed_participant.clear();
-    o.start_error = "the controller said no";
+    o.end.failed_participant.clear();
+    o.start.error = "the controller said no";
     middles.push_back(running(o));
     // ... and every way each of them may end after that.
     const auto ends = [](const ParticipantRun& p) {
@@ -282,10 +282,10 @@ TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_
                     {
                         RunOutcome end = middle;
                         end.participants = {engine, brake, tool};
-                        if (lateInterrupt && end.interrupted_by.empty())
+                        if (lateInterrupt && end.end.interrupted_by.empty())
                         {
-                            end.interrupted_by = "SIGINT";
-                            end.interrupted_while_ending = true;
+                            end.end.interrupted_by = "SIGINT";
+                            end.end.interrupted_while_ending = true;
                         }
                         const std::vector<Finding> final = assess_run(end);
                         for (const Finding& f : settled)
@@ -361,9 +361,9 @@ TEST_CASE(a_participant_that_exits_with_another_code_is_an_error_or_for_an_optio
 TEST_CASE(a_required_participant_that_ends_before_the_start_or_does_not_join_is_an_error)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::NotStarted;
-    o.start_timeout_ms = 2000;
-    o.failed_participant = "Quitter";
+    o.end.simulation = SimulationEnd::NotStarted;
+    o.start.timeout_ms = 2000;
+    o.end.failed_participant = "Quitter";
     ParticipantRun quitter = exited(participant("Quitter", 9), 0);
     quitter.ending = Ending::ExitedBeforeStart;
     ParticipantRun ghost = participant("Ghost", 11);
@@ -398,7 +398,7 @@ TEST_CASE(a_required_participant_that_ends_before_the_start_or_does_not_join_is_
 TEST_CASE(a_participant_that_does_not_end_after_the_simulation_is_an_error)
 {
     RunOutcome o = passed_run();
-    o.stop_timeout_ms = 300;
+    o.end.stop_timeout_ms = 300;
     ParticipantRun stuck = participant("Stuck", 5);
     stuck.stopped_after_end = true;
     stuck.ending = Ending::Stopped;
@@ -428,8 +428,8 @@ TEST_CASE(a_participant_that_does_not_end_after_the_simulation_is_an_error)
                "with the processes it started; a participant should end when the simulation ends (the lines [Alone] above "
                "show what it wrote)\n");
     // When the simulation never ran, stopping is not the participant's fault.
-    o.simulation = SimulationEnd::NotStarted;
-    o.start_error = "it did not start";
+    o.end.simulation = SimulationEnd::NotStarted;
+    o.start.error = "it did not start";
     check_text(lines(assess_run(o)), "E 0 simulation-start: the simulation did not start: it did not start\n");
 }
 
@@ -455,14 +455,14 @@ TEST_CASE(processes_left_behind_and_a_participant_that_cannot_start)
 TEST_CASE(a_connection_of_the_launcher_that_did_not_close_is_a_warning_beside_the_result)
 {
     RunOutcome o = passed_run();
-    o.connection_not_closed_ms = 8000;
+    o.close.not_closed_ms = 8000;
     check_text(lines(assess_run(o)),
                "W 0 connection-not-closed: the launcher's own connection to the simulation (SIL Kit) had not closed 8000 "
                "ms after the participants had ended: the launcher ended without closing it. The result is complete. This "
                "is not expected of any configuration: it is a defect of the launcher or of SIL Kit. Report it with this "
                "result, the launcher's output and what the participants were doing (was one stopped in a debugger?)\n");
     // One more interrupt ended the wait: the launcher did as it was asked, and that is no finding.
-    o.connection_close_interrupted = true;
+    o.close.interrupted = true;
     check_text(lines(assess_run(o)), "");
 }
 
@@ -787,7 +787,7 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
     // Nothing to connect, connected, and variables that are not offered (the check notes that):
     // nothing for the run to say.
     RunOutcome o = passed_run();
-    o.control_hello_timeout_ms = 5000;
+    o.start.control_hello_timeout_ms = 5000;
     check_text(lines(assess_run(o)), "");
     o.participants[0].control = ControlLink::Connected;
     o.participants[0].control_variables = 12;
@@ -862,7 +862,7 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
 
     // A hello, and no answer to the launcher's probe: no_hello as well, said apart.
     RunOutcome mute = passed_run();
-    mute.control_hello_timeout_ms = 5000;
+    mute.start.control_hello_timeout_ms = 5000;
     mute.participants[0].control = ControlLink::NoHello;
     mute.participants[0].control_hello_seen = true;
     check_text(lines(assess_run(mute)),
@@ -875,23 +875,23 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
 
     // What the launcher's end dropped is said once, with the numbers.
     RunOutcome dropped = passed_run();
-    dropped.control_refused_hellos = 2;
-    dropped.control_unknown = 40;
+    dropped.control.refused_hellos = 2;
+    dropped.control.unknown = 40;
     const std::string said = lines(assess_run(dropped));
     CHECK(said.rfind("W 0 control-link-dropped: the launcher dropped messages of control agents: 2 hellos it did not take, 0 "
                      "messages it could not read and 40 messages (or samples) that fit no agent it knows. Hellos are not taken "
                      "beyond 256 participants with control agents",
                      0) == 0);
     CHECK(lines(launch::detail::settled_findings(dropped)) == said);
-    dropped.control_refused_hellos = 0;
-    dropped.control_unknown = 0;
-    dropped.control_undecodable = 1;
+    dropped.control.refused_hellos = 0;
+    dropped.control.unknown = 0;
+    dropped.control.undecodable = 1;
     CHECK(lines(assess_run(dropped)).find("0 hellos it did not take, 1 messages it could not read and 0 messages") != std::string::npos);
 
     // What was to be done before the start failed: the simulation had started and was aborted.
     RunOutcome failed = passed_run();
-    failed.simulation = SimulationEnd::Aborted;
-    failed.before_start_error = "no answer from Engine";
+    failed.end.simulation = SimulationEnd::Aborted;
+    failed.start.before_start_error = "no answer from Engine";
     check_text(lines(assess_run(failed)),
                "E 0 before-start: what was to be done before the simulation started failed, and the launcher aborted the "
                "simulation at once: no answer from Engine\n");
@@ -901,30 +901,30 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
 TEST_CASE(the_simulation_findings_setup_state_abort_and_interrupt)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::Ended;
-    o.controller_state = "Aborting";
+    o.end.simulation = SimulationEnd::Ended;
+    o.end.controller_state = "Aborting";
     check_text(lines(assess_run(o)), "E 0 simulation: the simulation ended in state Aborting instead of shutting down "
                                      "normally: the lines above show what the participants wrote\n");
     CHECK(report_of(o).result() == RunResult::Failed);
-    o.controller_state.clear();
-    o.simulation = SimulationEnd::Aborted;
+    o.end.controller_state.clear();
+    o.end.simulation = SimulationEnd::Aborted;
     check_text(lines(assess_run(o)), "E 0 simulation: the simulation was aborted: the lines above show what the "
                                      "participants wrote\n");
     CHECK(report_of(o).result() == RunResult::Failed);
-    o.simulation = SimulationEnd::Interrupted;
-    o.interrupted_by = "SIGINT";
+    o.end.simulation = SimulationEnd::Interrupted;
+    o.end.interrupted_by = "SIGINT";
     const RunReport interrupted = report_of(o);
     check_text(lines(interrupted.findings),
                "N 0 interrupted: interrupted (SIGINT): the launcher stopped the simulation and the participants\n");
     CHECK(interrupted.result() == RunResult::Interrupted);
     CHECK_EQ(interrupted.exit_code(), kExitInterrupted);
     CHECK_EQ(kExitInterrupted, 130);
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     check_text(lines(assess_run(o)),
                "N 0 interrupted: interrupted (SIGINT): the launcher stopped the participants before the simulation "
                "started\n");
     RunOutcome setup;
-    setup.setup_error = "the registry cannot listen at silkit://127.0.0.1:8500: in use";
+    setup.setup.error = "the registry cannot listen at silkit://127.0.0.1:8500: in use";
     const RunReport failed = report_of(setup);
     check_text(lines(failed.findings),
                "E 0 setup: cannot set up the simulation: the registry cannot listen at silkit://127.0.0.1:8500: in use\n");
@@ -950,8 +950,8 @@ TEST_CASE(the_result_when_nothing_was_started)
 TEST_CASE(the_text_for_people)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "Engine";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "Engine";
     o.participants[0] = exited(participant("Engine", 5), 7);
     ParticipantRun logger = participant("Logger", 9, false);
     logger.ending = Ending::Stopped;
@@ -1010,25 +1010,25 @@ TEST_CASE(the_text_for_people)
           std::string::npos);
     RunOutcome s = passed_run();
     check_text(state_line(s), "run: the simulation ran to stop_at_ms (1000 ms) and ended");
-    s.simulation = SimulationEnd::Ended;
+    s.end.simulation = SimulationEnd::Ended;
     check_text(state_line(s), "run: the simulation ran until a participant ended it");
-    s.controller_state = "Aborting";
+    s.end.controller_state = "Aborting";
     check_text(state_line(s), "run: the simulation ended in state Aborting");
-    s.controller_state.clear();
-    s.simulation = SimulationEnd::Interrupted;
-    s.interrupted_by = "Ctrl+C";
+    s.end.controller_state.clear();
+    s.end.simulation = SimulationEnd::Interrupted;
+    s.end.interrupted_by = "Ctrl+C";
     check_text(state_line(s), "run: interrupted (Ctrl+C): the simulation was stopped");
-    s.simulation = SimulationEnd::NotStarted;
+    s.end.simulation = SimulationEnd::NotStarted;
     check_text(state_line(s), "run: interrupted (Ctrl+C) before the simulation started");
-    s.interrupted_by.clear();
+    s.end.interrupted_by.clear();
     check_text(state_line(s), "run: the simulation did not start");
-    s.setup_error = "x";
+    s.setup.error = "x";
     check_text(state_line(s), "run: the simulation could not be set up");
     // The last line.
     const std::string interrupted = format_run_text(report_of([] {
         RunOutcome i = passed_run();
-        i.simulation = SimulationEnd::Interrupted;
-        i.interrupted_by = "SIGINT";
+        i.end.simulation = SimulationEnd::Interrupted;
+        i.end.interrupted_by = "SIGINT";
         return i;
     }()));
     CHECK(interrupted.ends_with("\ninterrupted: 0 errors, 0 warnings, 1 note\n"));
@@ -1073,9 +1073,9 @@ TEST_CASE(the_text_when_the_check_found_errors)
 TEST_CASE(the_json_report)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::Interrupted;
-    o.interrupted_by = "SIGINT";
-    o.registry_uri = "silkit://127.0.0.1:41234";
+    o.end.simulation = SimulationEnd::Interrupted;
+    o.end.interrupted_by = "SIGINT";
+    o.setup.registry_uri = "silkit://127.0.0.1:41234";
     ParticipantRun killed = participant("Brake", 7);
     killed.ending = Ending::Killed;
     killed.left_processes = true;
@@ -1384,7 +1384,7 @@ TEST_CASE(the_text_for_people_has_a_line_of_the_time_when_a_speed_was_set)
     CHECK(time_line(changed).starts_with("time: speed max, ran at 0.5 times real time; 37 of 100"));
     // The simulation did not start: no line.
     RunOutcome notStarted = late_run();
-    notStarted.simulation = SimulationEnd::NotStarted;
+    notStarted.end.simulation = SimulationEnd::NotStarted;
     check_text(time_line(notStarted), "");
 }
 
@@ -1911,7 +1911,7 @@ TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
     ParticipantRun unknown = participant("Odd", 9);
     unknown.ending = Ending::ExitedBeforeStart;
     o.participants = {unknown};
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     check_text(lines(assess_run(o)), "E 9 ended-before-start: participant 'Odd': it ended before the simulation started: "
                                      "its process ended, so the simulation could not start; the lines [Odd] above show "
                                      "what it wrote\n");
@@ -1920,17 +1920,17 @@ TEST_CASE(a_participant_that_ended_just_before_the_stop_request_ended_by_itself)
 TEST_CASE(a_run_that_ends_before_stop_at_ms_gets_a_note_and_a_timeout_is_an_error)
 {
     RunOutcome o = passed_run();
-    o.simulation = SimulationEnd::Ended;
+    o.end.simulation = SimulationEnd::Ended;
     const RunReport early = report_of(o, true);
     check_text(lines(early.findings), "N 0 ended-before-stop-at: the simulation ended before stop_at_ms (1000 ms): a "
                                       "participant stopped it; if that is not expected, the lines above show which one\n");
     CHECK(early.result() == RunResult::Passed); // a note, also with --strict
-    o.stop_at_ms.reset();
+    o.end.stop_at_ms.reset();
     check_text(lines(assess_run(o)), ""); // nothing to end before
     RunOutcome t = passed_run();
-    t.simulation = SimulationEnd::Aborted;
-    t.timed_out = true;
-    t.timeout_ms = 5000;
+    t.end.simulation = SimulationEnd::Aborted;
+    t.end.timed_out = true;
+    t.end.timeout_ms = 5000;
     const RunReport timed = report_of(t);
     check_text(lines(timed.findings), "E 0 timeout: the simulation did not end within 5000 ms of wall-clock time "
                                       "(--timeout-ms), so the launcher aborted it: a participant may hang in a step (the "
@@ -1940,7 +1940,7 @@ TEST_CASE(a_run_that_ends_before_stop_at_ms_gets_a_note_and_a_timeout_is_an_erro
     CHECK(format_run_text(timed).find("\nrun: the simulation was aborted: it did not end within --timeout-ms (5000 ms)\n") !=
           std::string::npos);
     // It stood still before its first step for a while: --timeout-ms counted that too.
-    t.held_before_start_ms = 4200;
+    t.start.held_before_start_ms = 4200;
     check_text(lines(assess_run(t)), "E 0 timeout: the simulation did not end within 5000 ms of wall-clock time "
                                      "(--timeout-ms), so the launcher aborted it: a participant may hang in a step (the "
                                      "lines above show what the participants wrote); if it is only slow, raise "
@@ -1952,8 +1952,8 @@ TEST_CASE(a_run_that_ends_before_stop_at_ms_gets_a_note_and_a_timeout_is_an_erro
 TEST_CASE(an_interrupt_while_the_launcher_waits_for_the_end_is_no_did_not_end)
 {
     RunOutcome o = passed_run();
-    o.interrupted_by = "SIGINT";
-    o.interrupted_while_ending = true;
+    o.end.interrupted_by = "SIGINT";
+    o.end.interrupted_while_ending = true;
     ParticipantRun stuck = participant("Stuck", 5);
     stuck.ending = Ending::Stopped;
     stuck.exit = ExitStatus{9, std::nullopt};
@@ -2266,8 +2266,8 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     ended.exit = ExitStatus{3, std::nullopt};
     ended.last_line = "[eth-bridge] FAIL: no such interface: eth0";
     RunOutcome o = connected_run(ended);
-    o.simulation = SimulationEnd::NotStarted;
-    o.failed_participant = "bridge.ETH";
+    o.end.simulation = SimulationEnd::NotStarted;
+    o.end.failed_participant = "bridge.ETH";
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
     const RunReport r = report_of(o);
@@ -2283,7 +2283,7 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     CHECK(launch::detail::settled_findings(o).empty());
     // The other of two bridges that ended at once: seen when the launcher ended the run.
     o.participants[2].ending = Ending::Exited;
-    o.failed_participant.clear();
+    o.end.failed_participant.clear();
     CHECK(lines(report_of(o).findings).rfind("E 3 connect-failed: network 'ETH' could not be connected to the real bus "
                                              "(eth0): bridge.ETH ended before the simulation started (its process exited "
                                              "with code 3; ", 0) == 0);
@@ -2291,7 +2291,7 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     ParticipantRun unstarted;
     unstarted.start_error = "no such file";
     o = connected_run(unstarted);
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
     check_text(lines(report_of(o).findings),
@@ -2303,7 +2303,7 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
     ParticipantRun slow = stopped_bridge(0);
     slow.missing_at_start = true;
     o = connected_run(slow);
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
     check_text(lines(report_of(o).findings),
@@ -2314,9 +2314,9 @@ TEST_CASE(a_bridge_that_ends_before_the_start_is_connect_failed_and_nothing_else
                "connected), or give --connect ETH=none to run the network on SIL Kit only\n");
     // It left the simulation before the start while its process ran (the launcher stopped it).
     o = connected_run(stopped_bridge(0));
-    o.simulation = SimulationEnd::NotStarted;
-    o.failed_participant = "bridge.ETH";
-    o.failure_reason = "left the simulation (state Error)";
+    o.end.simulation = SimulationEnd::NotStarted;
+    o.end.failed_participant = "bridge.ETH";
+    o.end.failure_reason = "left the simulation (state Error)";
     o.participants[0] = participant("Engine", 5);
     o.participants[1] = participant("Brake", 7);
     CHECK(lines(report_of(o).findings).find("bridge.ETH ended before the simulation started (it left the simulation (state "
@@ -2335,8 +2335,8 @@ TEST_CASE(a_bridge_that_ends_while_the_simulation_runs_is_connect_lost_whatever_
         gone.exit = ExitStatus{code, std::nullopt};
         gone.last_line = "[eth-bridge] FAIL: interface eth0 went down";
         RunOutcome o = connected_run(gone);
-        o.simulation = SimulationEnd::Aborted;
-        o.failed_participant = "bridge.ETH";
+        o.end.simulation = SimulationEnd::Aborted;
+        o.end.failed_participant = "bridge.ETH";
         const RunReport r = report_of(o);
         check_text(lines(r.findings),
                    "E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost while the simulation "
@@ -2372,9 +2372,9 @@ TEST_CASE(a_bridge_that_follows_an_abort_for_another_participant_is_no_finding)
     followed.exit = ExitStatus{1, std::nullopt};
     followed.last_line = "[eth-bridge] FAIL: SIL Kit participant left Running (state Shutdown)";
     RunOutcome o = connected_run(followed);
-    o.simulation = SimulationEnd::Aborted;
+    o.end.simulation = SimulationEnd::Aborted;
     o.participants[0] = exited(participant("Engine", 5), 7);
-    o.failed_participant = "Engine";
+    o.end.failed_participant = "Engine";
     const RunReport r = report_of(o);
     CHECK(lines(r.findings).find("bridge.ETH") == std::string::npos);
     CHECK(lines(r.findings).find("participant-failed") != std::string::npos);
@@ -2608,14 +2608,14 @@ TEST_CASE(a_bridge_that_sent_and_got_nothing_from_a_device_is_a_note)
     CHECK(assess_run(counted(152, std::nullopt)).empty());
     // The simulation did not start.
     o = counted(152, 0);
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     CHECK(lines(assess_run(o)).find("connect-nothing-received") == std::string::npos);
     // The bridge failed the run: connect-lost says it.
     o = counted(152, 0);
     o.participants.back().ending = Ending::Exited;
     o.participants.back().exit = ExitStatus{1, std::nullopt};
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "bridge.ETH";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "bridge.ETH";
     const std::string found = lines(assess_run(o));
     CHECK(found.find("connect-lost") != std::string::npos && found.find("connect-nothing-received") == std::string::npos);
 }
@@ -2678,7 +2678,7 @@ TEST_CASE(what_a_bridge_saw_of_the_real_bus_is_a_warning_for_each_kind)
     CHECK(assess_run(seen(loop)).empty());
     // The simulation did not start: none.
     o = seen(down);
-    o.simulation = SimulationEnd::NotStarted;
+    o.end.simulation = SimulationEnd::NotStarted;
     CHECK(lines(assess_run(o)).find("outside-link-down") == std::string::npos);
 }
 
@@ -2718,8 +2718,8 @@ TEST_CASE(a_strict_run_that_was_stopped_for_a_shared_device_says_so_as_an_error)
     o.outside[0].link.shared_peers = {4321};
     o.outside[0].link.shared_first = 12500ms;
     o.outside[0].link.shared_stop = OutsideLink::SharedStop::AfterDelay;
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "bridge.ETH";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "bridge.ETH";
     const std::string found = lines(assess_run(o));
     CHECK(found.find("E 3 outside-device-shared: network 'ETH' -> eth0: the device was also used by another vehicle-sil bridge "
                      "(process 4321) that is not part of this run from 12.50 s on, and --strict stopped the run after 3 s of it: ") == 0);
@@ -2732,7 +2732,7 @@ TEST_CASE(a_strict_run_that_was_stopped_for_a_shared_device_says_so_as_an_error)
     start.outside[0].link.shared_most = 1;
     start.outside[0].link.shared_first = 100ms;
     start.outside[0].link.shared_stop = OutsideLink::SharedStop::AtStart;
-    start.simulation = SimulationEnd::NotStarted;
+    start.end.simulation = SimulationEnd::NotStarted;
     const std::string before = lines(assess_run(start));
     CHECK(before.find("E 3 outside-device-shared: network 'ETH' -> eth0: the device is also used by another vehicle-sil bridge that is not "
                       "part of this run, and --strict does not start a run on it: ") == 0);
@@ -2775,8 +2775,8 @@ TEST_CASE(a_link_that_stayed_down_is_connect_lost_with_the_time_it_was_waited_fo
     o.outside[0].link.down_count = 1;
     o.outside[0].link.down_total = 31s;
     o.outside[0].link.lost = "link down for 30 s";
-    o.simulation = SimulationEnd::Aborted;
-    o.failed_participant = "bridge.ETH";
+    o.end.simulation = SimulationEnd::Aborted;
+    o.end.failed_participant = "bridge.ETH";
     const std::string found = lines(assess_run(o));
     CHECK(found.find("E 3 connect-lost: network 'ETH': the connection to the real bus (eth0) was lost while the simulation was "
                      "running: bridge.ETH reported link down for 30 s") == 0);
