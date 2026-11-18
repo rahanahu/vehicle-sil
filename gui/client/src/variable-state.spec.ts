@@ -62,7 +62,12 @@ describe('the condition of a value and whether it can be written', () => {
 
   it('lets a parameter be written only before the first step', () => {
     const parameter = info({ role: 'parameter' });
-    const ready = { status: 'ready', connected: true, peerConnected: true } as const;
+    const ready = {
+      status: 'ready',
+      connected: true,
+      peerConnected: true,
+      launcherRefuses: false,
+    } as const;
     expect(writeBlock({ ...ready, info: parameter, beforeStart: true })).toBeNull();
     expect(writeBlock({ ...ready, info: parameter, beforeStart: false })).toBe('parameter');
     expect(writeBlock({ ...ready, info: info({}), beforeStart: false })).toBeNull();
@@ -80,6 +85,37 @@ describe('the condition of a value and whether it can be written', () => {
     expect(writeBlock({ ...ready, status: 'failed', info: info({}), beforeStart: false })).toBe(
       'not-ready',
     );
+  });
+
+  it("puts the launcher's answer after the facts of the variable and before the client's prediction", () => {
+    const ready = { status: 'ready', connected: true, launcherRefuses: true } as const;
+    // The launcher refuses: a parameter says so, not "start the run paused" (which would not help)
+    expect(
+      writeBlock({
+        ...ready,
+        info: info({ role: 'parameter' }),
+        beforeStart: false,
+        peerConnected: true,
+      }),
+    ).toBe('launcher');
+    expect(writeBlock({ ...ready, info: info({}), beforeStart: true, peerConnected: true })).toBe(
+      'launcher',
+    );
+    expect(
+      writeBlock({ ...ready, info: info(OUTPUT), beforeStart: true, peerConnected: true }),
+    ).toBe('read-only');
+    expect(writeBlock({ ...ready, info: info({}), beforeStart: true, peerConnected: false })).toBe(
+      'peer-disconnected',
+    );
+    expect(
+      writeBlock({
+        ...ready,
+        status: 'ended',
+        info: info({}),
+        beforeStart: true,
+        peerConnected: true,
+      }),
+    ).toBe('ended');
   });
 
   it('compares two conditions by their kind, value and reason', () => {

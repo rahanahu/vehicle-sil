@@ -10,7 +10,8 @@ import type { ValueCondition, WriteBlock, WriteValue } from './variable-state';
 import { Readable, Writable } from './values';
 import { VariableRef, WriteError } from './variables';
 
-const WHY_BLOCKED: Record<WriteBlock, string> = {
+// `launcher` is not here: its sentence is the launcher's own (BoundVariable.launcherReason)
+const WHY_BLOCKED: Record<Exclude<WriteBlock, 'launcher'>, string> = {
   'read-only': 'this variable is an output of the ECU: it cannot be written',
   disconnected: 'the connection to the GUI server is down: wait until it is back',
   'not-ready': 'the variables are not available now (no run, or the run has no Control Server)',
@@ -20,7 +21,6 @@ const WHY_BLOCKED: Record<WriteBlock, string> = {
   parameter: 'a parameter can be written only before the first step: start the run paused',
   'no-range': 'the variable has no range (min and max)',
   'no-value': 'there is no value yet',
-  scenario: 'a scenario is running: it writes the variables; you can only watch them',
 };
 
 /** The sentence for a value that is not a live one (null while it is live). */
@@ -75,9 +75,17 @@ interface Track {
   problem: Reason | null;
 }
 
+function whyOf(bound: BoundVariable, launcher: Control): Reason | null {
+  if (bound.block === null) return launcher.reason;
+  // bind sets launcherReason whenever block is `launcher`
+  if (bound.block === 'launcher') return bound.launcherReason ?? launcher.reason;
+  return { code: bound.block, message: WHY_BLOCKED[bound.block] };
+}
+
 /**
  * `launcher` is what the launcher accepts for a write now (`state.allowed.write`, with the connection and the run). The
- * variable's own reason (it is an output, the ECU is not connected, ...) comes first; otherwise the launcher's.
+ * variable's own reason (it is an output, the ECU is not connected, ...) comes first; otherwise the launcher's, as
+ * `bind` reports it (`block` `launcher`) or as `launcher` has it.
  */
 export function viewOf(bound: BoundVariable, track: Track, launcher: Control): VariableView {
   const status = bound.writeStatus;
@@ -100,10 +108,7 @@ export function viewOf(bound: BoundVariable, track: Track, launcher: Control): V
     note: noteOf(bound.condition),
     availability: bound.availability,
     can_write: bound.block === null && launcher.ok,
-    why:
-      bound.block === null
-        ? launcher.reason
-        : { code: bound.block, message: WHY_BLOCKED[bound.block] },
+    why: whyOf(bound, launcher),
     writing:
       track.writing ||
       status.kind === 'sending' ||
