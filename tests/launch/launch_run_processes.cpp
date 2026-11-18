@@ -328,25 +328,34 @@ void quitter(const Options& o)
         throw Skip("no console to send Ctrl+Break through (the participants are ended at once)");
     }
     // The start would wait 10 minutes: the launcher must not wait for it once Quitter has ended.
+    // Engine is only the other side: a helper that sleeps and ends with 130 on a stop request. It does not
+    // join the simulation, so no wait inside SIL Kit can keep the request from reaching it (under the thread
+    // sanitizer a signal is held back while a thread sleeps in such a wait); that ecu_main ends at once on a
+    // stop request before the start is checked by not_joined.
     const fs::path dir = scenario_dir(o, "vehicle_sil_simulation: 1\n"
                                          "stop_at_ms: 1000\n"
                                          "start_timeout_ms: 600000\n"
                                          "networks: []\n"
                                          "participants:\n"
                                          "  - name: Engine\n"
-                                         "    command: [" + ecu(o) + "]\n"
+                                         "    command: [" + helper(o) + ", --sleep-ms, \"600000\", --on-stop, \"130\", --uri, \"{registry_uri}\"]\n"
+                                         "    describe: false\n"
                                          "  - name: Quitter\n"
                                          "    command: [" + helper(o) + ", --err, \"no configuration\\n\", --exit, \"2\", --uri, \"{registry_uri}\"]\n"
                                          "    describe: false\n");
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 1, "run with a participant that ends before the start");
-    // Engine is told to stop right after it was started. On a slow machine that is before it handles the request,
-    // and it ends by the signal itself. Both endings are right: this scenario is about Quitter.
+    // Engine is told to stop right after it was started. On a slow machine that is before it installs its handler,
+    // and it ends by the signal itself (on Windows, by Ctrl+Break with the code 0xC000013A). Both endings are right:
+    // this scenario is about Quitter.
     std::string shown = run_part(run.standard_output);
-    const std::string by_signal = "stopped (" + kStop + "), signal " + kStop + "\n";
-    if (const auto at = shown.find(by_signal); at != std::string::npos)
+    for (const std::string& by_signal : {"stopped (" + kStop + "), signal " + kStop + "\n",
+                                         "stopped (" + kStop + "), exit code 0xC000013A\n"})
     {
-        shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+        if (const auto at = shown.find(by_signal); at != std::string::npos)
+        {
+            shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+        }
     }
     try
     {
@@ -357,17 +366,15 @@ void quitter(const Options& o)
                     "Engine       yes       stopped (" + kStop + "), exit code 130\n"
                     "Quitter      yes       exit code 2\n"
                     "\n"
-                    "error: sim.yaml:8: participant 'Quitter': it ended before the simulation started: its process exited "
+                    "error: sim.yaml:9: participant 'Quitter': it ended before the simulation started: its process exited "
                     "with code 2, so the simulation could not start; the lines [Quitter] above show what it wrote [ended-before-start]\n"
                     "\n"
-                    "failed: 1 error, 0 warnings, 1 note\n",
+                    "failed: 1 error, 0 warnings, 2 notes\n",
                     "run with a participant that ends before the start");
     }
     catch (const std::runtime_error& e)
     {
-        // What Engine wrote and when the launcher asked it to stop tell why it ended another way
-        // (an Engine that had to be ended wrote no "interrupted" line: the request did not reach
-        // its handling).
+        // Show what the participants wrote: it tells how Engine ended.
         throw std::runtime_error(std::string(e.what()) + "\n--- stderr ---\n" + run.standard_error);
     }
 }
