@@ -596,6 +596,24 @@ void usage(const Options& o)
                      "--time-policy must be realtime (a run that is connected outside the simulation goes at speed 1; the "
                      "default) or free (its speed and time can be changed), not 'warn'");
     }
+    // Two mistakes in one command line: the one that is read first is reported. The rule that
+    // two fields do not go together is reported where the later field would be read, before the
+    // mistakes of the fields that follow.
+    const std::string paramNeedsScenario =
+        "--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out";
+    expect_usage({"run", "a.yaml", "--param", "x=1", "--connect", "nowhere"}, paramNeedsScenario);
+    expect_usage({"run", "a.yaml", "--param", "x=1", "--speed", "fast"}, paramNeedsScenario);
+    expect_usage({"run", "a.yaml", "--param", "x=1", "--scenario", ""}, "--scenario needs a scenario file");
+    expect_usage({"run", "a.yaml", "--timeline", "t.json", "--timeout-ms", "0"},
+                 "--timeline writes what a scenario did over the time: give --scenario <file> too, or leave --timeline out");
+    expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused", "--speed", "fast"},
+                 "--speed must be a number of simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, "
+                 "2: twice as fast) or max (as fast as possible), not 'fast'");
+    expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused"},
+                 "--scenario cannot be used with --start-paused: the scenario writes its values for 0 before the first step and "
+                 "runs by itself; pause and step it with --stdin-commands if needed");
+    expect_usage({"run", "a.yaml", "--start-paused", "--control-audit-log", "a.log"},
+                 "--control-audit-log is for --control: without it there is no control server");
     expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");
     expect_usage({"check", "a.yaml", "--stdin-commands"}, "--stdin-commands is for run: check starts no participant");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"--help"}, {"check", "x.yaml", "-h"}})

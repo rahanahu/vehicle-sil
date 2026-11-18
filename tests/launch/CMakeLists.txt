@@ -14,6 +14,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_control_rules.cpp
     test_events.cpp
     test_j1939_nodes_match.cpp
+    test_request.cpp
     test_run.cpp
     test_run_controls.cpp
     test_run_plan.cpp
@@ -81,7 +82,8 @@ set(_launch_pure_files
     libs/launch/include/vehicle_sil/launch/traffic.hpp libs/launch/include/vehicle_sil/launch/command.hpp
     libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp libs/launch/src/check_networks.cpp
     libs/launch/src/timeline_format.cpp
-    libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp)
+    libs/launch/src/control_rules.cpp libs/launch/include/vehicle_sil/launch/control_rules.hpp
+    libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp)
 list(JOIN _launch_pure_files "," _launch_pure_files_arg)
 add_test(NAME launch.pure_files_include_no_runtime
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}

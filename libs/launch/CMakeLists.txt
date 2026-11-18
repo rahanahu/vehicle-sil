@@ -22,6 +22,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/events.cpp
   src/host_addresses.cpp
   src/probe.cpp
+  src/request.cpp
   src/run.cpp
   src/run_assess.cpp
   src/run_connect.cpp
@@ -34,6 +35,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_participants.cpp
   src/run_plan.cpp
   src/run_report.cpp
+  src/run_request_options.cpp
   src/run_samples.cpp
   src/run_scenario.cpp
   src/run_start.cpp
