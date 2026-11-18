@@ -164,7 +164,7 @@ Contents of `libs/eth_link/src/pcap`:
 | Executable with the fake external link | `fake_link_factory.cpp` in `tests/ethernet_bridge` |
 | Executable that loads the fake pcap library | `fake_pcap_library.cpp` in `tests/ethernet_bridge` |
 | Namespace tests | `bridge_netns.py` in `tests/ethernet_bridge` |
-| The device mark of the fake devices per process (`VEHICLE_SIL_FAKE_DEVICE_SCOPE`) | `fake_device_scope.hpp` in `tests/ethernet_bridge`; for the fake XL driver `mark_identity()` in `tests/vector_xl/fake_xl` |
+| The device mark of the fake devices per process (`VEHICLE_SIL_FAKE_DEVICE_SCOPE`) | `fake_device_scope.hpp` in `tests/ethernet_bridge` (used by the fake Ethernet links and the fake XL driver) |
 | ECU of the test that starts the bridge from a configuration file (`pcap-launcher`) | `eth_bridge_it_ecu.cpp` in `tests/ethernet_bridge` |
 
 ## Dependency direction

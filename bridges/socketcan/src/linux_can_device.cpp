@@ -120,7 +120,6 @@ public:
         result.frame.length = frame.len > 8 ? 8 : frame.len;
         std::memcpy(result.frame.data.data(), frame.data, sizeof(frame.data));
         result.frame.confirm = (message.msg_flags & MSG_CONFIRM) != 0;
-        result.frame.sent_here = (message.msg_flags & MSG_DONTROUTE) != 0;
         return result;
     }
 

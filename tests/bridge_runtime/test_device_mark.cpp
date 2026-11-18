@@ -178,9 +178,15 @@ TEST_CASE(device_mark_shared_warning_comes_when_more_bridges_share_the_device)
     // Windows: no process ids.
     CHECK(detail::shared_warning("interface 'Ethernet'", {}, {1, {}}).value_or("").starts_with(
         "interface 'Ethernet' is also used by another vehicle-sil bridge: "));
-    // Fewer or as many: nothing.
+    // Fewer, or as many without a new process: nothing.
     CHECK(!detail::shared_warning("interface 'eth0'", {2, {1, 2}}, {1, {2}}).has_value());
-    CHECK(!detail::shared_warning("interface 'eth0'", {1, {1}}, {1, {2}}).has_value());
+    CHECK(!detail::shared_warning("interface 'eth0'", {1, {1}}, {1, {1}}).has_value());
+    CHECK(!detail::shared_warning("interface 'Ethernet'", {1, {}}, {1, {}}).has_value());
+    // One bridge left and another came: the count is the same, the warning comes.
+    CHECK_SAME(detail::shared_warning("interface 'eth0'", {1, {1}}, {1, {2}}).value_or(""),
+             std::string("interface 'eth0' is also used by another vehicle-sil bridge (process 2): the frames of both "
+                         "mix there: if that is not meant, connect them to different devices, or stop a bridge left over "
+                         "from an earlier run"));
 }
 
 TEST_CASE(device_mark_in_use_text_of_the_lists)

@@ -203,12 +203,9 @@ int run(const BridgeOptions& options)
     log(kTag, "XL channel: %s %u = \"%s\" (hwType=%u, serial=%u)", std::string(to_string(options.target)).c_str(),
         options.channel, channel.name.c_str(), channel.hw_type, channel.serial_number);
     const std::string xlChannel = "XL '" + channel.name + "'";
-    // The mark on the bus behind the channel, before the port opens it; the first count is in the
-    // first link line.
-    bridge_runtime::DeviceShareWatch share(
-        bridge_runtime::DeviceMark::place(bridge_runtime::kCanDevice, driver->device_identity(channel)),
-        channel.is_virtual ? xlChannel + " (Vector Virtual CAN, whose channels are all one bus)" : xlChannel);
-
+    // The mark on the bus behind the channel is placed once the port is open (and goes after the port
+    // is closed: it is declared first); the first count is in the first link line.
+    std::optional<bridge_runtime::DeviceShareWatch> share;
     std::unique_ptr<ParticipantRuntime> runtime;
     std::unique_ptr<XlCanPort> port;
     std::unique_ptr<CanBridge> bridge;
@@ -236,6 +233,9 @@ int run(const BridgeOptions& options)
         port = std::make_unique<XlCanPort>(*driver, channel, portOptions);
         log(kTag, "XL port open, init access: %s%s", port->has_init_access() ? "yes" : "no",
             options.bitrate ? (", bit rate " + std::to_string(*options.bitrate)).c_str() : ", bit rate unchanged");
+        share.emplace(
+            bridge_runtime::DeviceMark::place(bridge_runtime::kCanDevice, driver->device_identity(channel)),
+            channel.is_virtual ? xlChannel + " (Vector Virtual CAN, whose channels are all one bus)" : xlChannel);
 
         // Start forwarding before the lifecycle reaches Running: peers may start sending as soon as
         // they see this participant Running, and the SIL Kit handler must be ready by then. The
@@ -245,8 +245,8 @@ int run(const BridgeOptions& options)
         bridge->start();
         // The first link line, before the lifecycle starts (a program that waits for Running has read it),
         // with a count as of now: connecting to the registry may have taken a while since the mark.
-        share.count();
-        firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state)) + share.link_keys();
+        share->count();
+        firstLinkLine = bridge_runtime::format_link_line("bus", link_line_value(bridge->health().bus_state)) + share->link_keys();
         log(kTag, "%s", firstLinkLine.c_str());
         runtime->start(options.start_timeout);
     }
@@ -282,7 +282,7 @@ int run(const BridgeOptions& options)
                             + "', " + options.registry_uri + ") <-> " + xlChannel + "; Ctrl+C to stop";
     runOptions.statistics_interval = options.statistics_interval;
     runOptions.link_line_printed = firstLinkLine;
-    XlBridgeHooks hooks(*bridge, xlChannel, share);
+    XlBridgeHooks hooks(*bridge, xlChannel, *share);
     return bridge_runtime::run_bridge(*runtime, hooks, runOptions);
 }
 

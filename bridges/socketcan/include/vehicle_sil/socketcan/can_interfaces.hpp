@@ -24,7 +24,7 @@ struct CanInterfaceInfo
 {
     std::string name;
     unsigned index = 0;
-    /// "vcan" for a virtual CAN interface, "can" for every other kind (an adapter's driver).
+    /// "can" for an adapter's driver (or a driver that names no kind), else the name of the kind: "vcan", "vxcan", ...
     std::string kind = "can";
     bool up = false;
     /// The bit rate the interface is configured with ("can" only; unset while it has none).
@@ -36,8 +36,12 @@ struct CanInterfaceInfo
     /// How long the kernel waits after a bus-off before it restarts the controller; 0: never
     /// ("can" only).
     std::optional<std::uint32_t> restart_ms;
+    /// The controller's transmit and receive error counters (IFLA_CAN_BERR_COUNTER), where the answer has them; at most 255
+    /// (the bus state's range). Not in the list output.
+    std::optional<std::uint8_t> tx_errors;
+    std::optional<std::uint8_t> rx_errors;
 
-    [[nodiscard]] bool is_virtual() const noexcept { return kind == "vcan"; }
+    [[nodiscard]] bool is_virtual() const noexcept { return kind != "can"; }
     [[nodiscard]] bool operator==(const CanInterfaceInfo&) const noexcept = default;
 };
 

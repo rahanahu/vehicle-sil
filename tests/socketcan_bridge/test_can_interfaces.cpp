@@ -191,6 +191,34 @@ TEST_CASE(netlink_adapter_without_bit_rate_or_linkinfo)
     CHECK(result.interfaces[1].kind == std::string("can") && result.interfaces[1].state.empty());
 }
 
+TEST_CASE(netlink_reads_the_error_counters_where_the_answer_has_them)
+{
+    can_berr_counter counter{};
+    counter.txerr = 300;
+    counter.rxerr = 7;
+    Bytes counter_bytes;
+    put(counter_bytes, counter);
+    const Bytes data = cat({attribute(IFLA_CAN_STATE, u32(CAN_STATE_ERROR_PASSIVE)), attribute(IFLA_CAN_BERR_COUNTER, counter_bytes)});
+    const auto with = parse_link_messages(cat({link_message("can0", ARPHRD_CAN, 4, true, "can", data)}));
+    CHECK(with.interfaces[0].tx_errors == std::uint8_t{255});
+    CHECK(with.interfaces[0].rx_errors == std::uint8_t{7});
+    const auto without = parse_link_messages(cat({link_message("can1", ARPHRD_CAN, 5, true, "can", can_data(250000, CAN_STATE_ERROR_ACTIVE, 100))}));
+    CHECK(!without.interfaces[0].tx_errors && !without.interfaces[0].rx_errors);
+}
+
+TEST_CASE(netlink_names_other_kinds_as_they_are_and_treats_them_as_virtual)
+{
+    const auto result = parse_link_messages(cat({link_message("vxcan0", ARPHRD_CAN, 7, true, "vxcan")}));
+    CHECK_EQ(result.interfaces.size(), std::size_t{1});
+    CHECK(result.interfaces[0].kind == std::string("vxcan"));
+    CHECK(result.interfaces[0].is_virtual());
+    CHECK(!result.interfaces[0].bitrate);
+    CHECK(check_interface(result.interfaces[0], 250000).warnings.size() == 1);
+    CHECK(!check_interface(result.interfaces[0], 250000).failure);
+    const auto down = check_interface(parse_link_messages(cat({link_message("vxcan0", ARPHRD_CAN, 7, false, "vxcan")})).interfaces[0], std::nullopt);
+    CHECK(down.failure && !contains(*down.failure, "type can bitrate"));
+}
+
 TEST_CASE(netlink_error_ends_the_answer_with_the_reason)
 {
     Bytes body;

@@ -164,7 +164,7 @@ E2E で確認すること:
 | 偽の外部リンクの実行ファイル | `tests/ethernet_bridge` の `fake_link_factory.cpp` |
 | 偽の pcap のライブラリを読む実行ファイル | `tests/ethernet_bridge` の `fake_pcap_library.cpp` |
 | 名前空間のテスト | `tests/ethernet_bridge` の `bridge_netns.py` |
-| 偽のデバイスのプロセスごとの使用中の印（`VEHICLE_SIL_FAKE_DEVICE_SCOPE`） | `tests/ethernet_bridge` の `fake_device_scope.hpp`。偽の XL ドライバーは `tests/vector_xl/fake_xl` の `mark_identity()` |
+| 偽のデバイスのプロセスごとの使用中の印（`VEHICLE_SIL_FAKE_DEVICE_SCOPE`） | `tests/ethernet_bridge` の `fake_device_scope.hpp`（偽の Ethernet のリンクと偽の XL ドライバーが使う） |
 | 設定ファイルからブリッジを起こす試験（`pcap-launcher`）の ECU | `tests/ethernet_bridge` の `eth_bridge_it_ecu.cpp` |
 
 ## 依存の向き

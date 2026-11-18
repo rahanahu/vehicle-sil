@@ -2,6 +2,7 @@
 //
 // TEST-ONLY in-process fake of the XL backend interface (bridges/vector-xl/src/xl_backend.hpp);
 // see fake_xl_control.hpp for the modelled behaviour. Every entry point takes one global mutex.
+#include "fake_device_scope.hpp"
 #include "fake_xl_control.hpp"
 #include "xl_backend.hpp"
 
@@ -14,11 +15,6 @@
 #include <mutex>
 #include <string_view>
 
-#ifdef _WIN32
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
 
 namespace backend = vehicle_sil::vector_xl::detail::backend;
 
@@ -593,15 +589,7 @@ Status read_channels(std::vector<XlChannelInfo>& out)
 std::string mark_identity(std::string identity)
 {
     // "<identity>@<scope>": this process, unless the test names a scope that its bridges share.
-    if (const char* scope = std::getenv("VEHICLE_SIL_FAKE_DEVICE_SCOPE"); scope != nullptr && *scope != '\0')
-    {
-        return identity + "@" + scope;
-    }
-#ifdef _WIN32
-    return identity + "@pid" + std::to_string(_getpid());
-#else
-    return identity + "@pid" + std::to_string(::getpid());
-#endif
+    return vehicle_sil::test::fake_device_identity(identity);
 }
 
 OpenedPort open_port(const std::string& application_name, ChannelMask channels, ChannelMask request_init_access,

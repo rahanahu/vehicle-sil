@@ -59,7 +59,7 @@ CAN interfaces (--interface):
   can0  CAN, up, 250000 bit/s, error-active; in use by a vehicle-sil bridge (process 4321)
 ```
 
-Each target has `can: {kind, up, bitrate, state, restart_ms}` (`kind` is `vcan` or `can`; `state` is the controller's state, `null` for vcan), and `in_use`, `in_use_by` and `in_use_count` as in "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)". An interface that is down is listed and `usable`; its `detail` says down. The list is read from the kernel (netlink) without privileges.
+Each target has `can: {kind, up, bitrate, state, restart_ms}` (`kind` is `can` for an adapter, else the kernel's name of the kind: `vcan`, `vxcan`, ...; every kind but `can` is treated as virtual; `state` is the controller's state, `null` for a virtual interface), and `in_use`, `in_use_by` and `in_use_count` as in "[Device in use by another bridge](bridge-contract.md#device-in-use-by-another-bridge)". An interface that is down is listed and `usable`; its `detail` says down. The list is read from the kernel (netlink) without privileges.
 
 ## Starting
 
