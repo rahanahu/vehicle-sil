@@ -208,8 +208,8 @@ The Python stubs are generated in the test build (`python -m vehicle_sil_control
 
 Where to change:
 
-- `libs/launch/src/control_server.cpp`: reads and checks what the request names for `--control` (`RunHost::control` in `launch/request.hpp`; the usage errors), and the server, made from the checked `ServerOptions`. `tools/launch/main.cpp` only copies the arguments into the request; in a build without the Control Server it refuses `--control`, and the library has `src/control_server_none.cpp` instead
-- `launch::ControlEndpoint` (`launch/run.hpp`); `run_file()` in `libs/launch/src/run_file.cpp` makes the Server before the check (`make_control_server_of_run()` in `src/run_control_server.hpp`), starts it between `Runner::prepare()` and `Runner::run()`, and ends it when it returns; the caller destroys it after the result (`RunReport::ended_control_server`). `RunLent::control_endpoint` lends a server of the caller's own instead (the tests')
+- `libs/launch/src/endpoints/control_server.cpp`: reads and checks what the request names for `--control` (`RunHost::control` in `launch/request.hpp`; the usage errors), and the server, made from the checked `ServerOptions`. `tools/launch/main.cpp` only copies the arguments into the request; in a build without the Control Server it refuses `--control`, and the library has `src/control_server_none.cpp` instead
+- `launch::ControlEndpoint` (`launch/run.hpp`); `run_file()` in `libs/launch/src/usecases/run_file.cpp` makes the Server before the check (`make_control_server_of_run()` in `src/run_control_server.hpp`), starts it between `Runner::prepare()` and `Runner::run()`, and ends it when it returns; the caller destroys it after the result (`RunReport::ended_control_server`). `RunLent::control_endpoint` lends a server of the caller's own instead (the tests')
 - `hold_before_start()`, `inspect()` and `wait_paused()` of `TimeCommands`
 - `ServerOptions::external_hub`
 - `python/vehicle_sil_control/launcher.py`
@@ -244,7 +244,7 @@ Where to change:
 - The rule that the launcher asks: the row `scenario-running` and `always_refused()` in `libs/runner/src/control_rules.cpp`
 - `Effect` in `libs/control_grpc/src/auth.hpp`, and `rpc_rules()` in `auth.cpp`
 - The code that rejects calls: `guarded()` in `control_service.cpp`
-- The code that sets it up: `libs/launch/src/control_server.cpp`
+- The code that sets it up: `libs/launch/src/endpoints/control_server.cpp`
 
 Documentation to update:
 

@@ -84,7 +84,7 @@
 | 手順を進める処理 | `libs/scenario/src/scenario_run.cpp` |
 | 手順が失敗した理由: 満たさなかった条件と、反映されなかった書き込み。メッセージと記録（`failed.conditions[]`、`failed.writes[]`）の両方 | `libs/scenario/src/scenario_failure.cpp`（`unmet()`、`unmet_values()`、`failed_write()`、`applied_text()`、`during()`） |
 | `ramp` と `wave` の値を計算する関数（`Waveform` の実装） | `libs/scenario/src/scenario_shapes.cpp` |
-| `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
+| `points` の CSV ファイル | 分けるのは `libs/scenario/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `libs/launch/src/probe/probe.cpp` の `files_beside()`、パスの検査とセルの意味は `scenario_waves.cpp` の `path_problem()`、`file_points()`、`cell_value()` |
 | 波形の計算 | `libs/signal` の `signal/waveform.hpp` |
 | ランチャーへの組み込み | `libs/runner/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`） |
 | 時間のゲートのガード | `SimulationController::guard_from()` と `wait_guarded()` |
@@ -210,7 +210,7 @@
 
 `vehicle_sil_launch test` です。1 組の中身は `run` のままなので、`run --json` を変えたら `runs[].run` も変わります。
 
-変える場所（`libs/launch/include/vehicle_sil/launch/test.hpp` と `src/test.cpp`）:
+変える場所（`libs/launch/include/vehicle_sil/launch/test.hpp` と `src/usecases/test.cpp`）:
 
 | 関数など | 内容 |
 |---|---|

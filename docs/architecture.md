@@ -219,29 +219,56 @@ Messages sent reactively from a receive handler are outside SIL Kit's delivery g
 
 ### Layers in `libs/launch`
 
+`libs/launch` assembles and translates: it calls the layers below it in order and writes what they found as output. It holds no judgement (whether a configuration is valid, whether something can be done now, whether a run passed); that lives in `config`, `scenario` and `runner`. The libraries and the parts of `launch` are drawn apart, one picture each.
+
+The four libraries (`process`, `control_grpc` and the others are left out):
+
 ```mermaid
 flowchart LR
-    pure["Pure side<br>libs/config (config, check rules, connect rules, time plan),<br>libs/scenario (scenario, timeline records),<br>check format"]
-    assemble["check_file(), list_connections(), run_tests()"]
-    probe["Computer side<br>launch/probe.hpp, src/probe.cpp"]
-    run["Run side<br>libs/runner (run, time_commands, run_*)"]
-    run_file["run_file(), events<br>(launch)"]
-    assemble --> pure
-    assemble --> probe
-    run --> pure
-    run_file --> run
-    run_file --> pure
+    launch["launch (libs/launch)<br>assembles and translates"]
+    runner["runner (libs/runner)<br>the run"]
+    scenario["scenario (libs/scenario)<br>scenario, timeline records"]
+    config["config (libs/config)<br>config, check rules,<br>connect rules, time plan"]
+    launch --> runner
+    launch --> scenario
+    launch --> config
+    runner --> scenario
+    runner --> config
+    scenario --> config
 ```
 
-- The pure side turns values into findings and does not look at the computer. It includes none of SIL Kit, `process`, `participant_runtime`, `participant_configuration`, `launch/run.hpp`, `launch/probe.hpp`, `events`, `stop_requests`, `runner.hpp`, `runner_impl.hpp`, `time_commands` or `run_*.hpp`, neither directly nor through the headers it includes.
-- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe`. `check_file()`, `list_connections()` and `run_tests()` call `probe` and pass what it found to the pure side as values or as functions. The run side (`libs/runner`, running the simulation) depends on the pure side and does not use `probe` (it takes the check that passed).
-- The test `launch.pure_files_include_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake`) guards this. Add a new file of the pure side to `_launch_pure_files` in `tests/launch/CMakeLists.txt`.
+The five parts of `libs/launch/src` (the public headers in `include/vehicle_sil/launch/` stay flat and belong to the part that implements them: `request.hpp` to `request/`, `probe.hpp` to `probe/`, `events.hpp`, `error_result.hpp` and `timeline_format.hpp` to `format/`, `command_input.hpp` to `endpoints/`, and `run.hpp`, `checked.hpp`, `connections.hpp` and `test.hpp` to `usecases/`):
+
+```mermaid
+flowchart TB
+    usecases["usecases/<br>check, run, test, connections:<br>calls the other parts in order"]
+    request["request/<br>RunRequest, reading argv and JSON"]
+    probe["probe/<br>looks at the computer"]
+    format["format/<br>outputs, exit codes"]
+    endpoints["endpoints/<br>stdin commands, Control Server"]
+    usecases --> request
+    usecases --> probe
+    usecases --> format
+    usecases --> endpoints
+```
+
+| Part | Holds | Does not include |
+|---|---|---|
+| `usecases/` | `check_file()`, `list_connections()`, `run_file()`, `run_tests()`: probe, then the rules, then the plan, then the runner, then the output | (no limit) |
+| `request/` | `RunRequest`, reading a request file, the rules about fields that do not go together | `runner`, `scenario`, `process`, SIL Kit, any other part, the headers of the use cases |
+| `probe/` | Looking at the computer (files, environment, the tools it starts); returns values | `runner`, SIL Kit, the outputs, the endpoints, the use cases |
+| `format/` | The outputs of check, run, test, events, timeline and connections (JSON and text), the table of exit codes | `probe.hpp`, SIL Kit, `control_grpc`, the endpoints, the use cases |
+| `endpoints/` | The commands on standard input and the Control Server, as calls on the run's controls | `probe.hpp`, the outputs of check, run and timeline (`*_format.hpp`) |
+
+- `endpoints/` may read the configuration's value types and its YAML reader (`config/detail/`): the commands on standard input are YAML or JSON, and `parse_command()` in `command_input.cpp` reads them there, not in `format/` (which writes). The Control Server uses the run's controller and SIL Kit's types, because it stops the simulation and checks failures; only the Control Server's file does, and only with `VEHICLE_SIL_BUILD_CONTROL_SERVER`.
+- What the launcher finds out from the computer (the file system, the environment, the output of the processes it runs) goes into `probe/`. The use cases call it and pass what it found to the rules as values or as functions. The runner does not use `probe` (it takes the check that passed).
+- One test for each of `request/`, `probe/`, `format/` and `endpoints/` guards the direction: `launch.request_boundary`, `launch.probe_boundary`, `launch.format_boundary` and `launch.endpoints_boundary` (`cmake/VehicleSilCheckIncludes.cmake` with `DIR`, `FORBIDDEN_PREFIXES` and `ONLY_PREFIXES`, in `tests/launch/CMakeLists.txt`). They read the files of the part and its public headers, and the headers those include. The private headers between the parts are included with the part's directory (`"format/check_format.hpp"`), so a forbidden prefix ending in `/` names a part. `launch.parts_include_check_rejects_a_forbidden_include` shows that the check rejects a file that reaches a forbidden header, also through a private header of another part. A new file goes into the directory of its part and needs no entry; a file that would break the direction is moved or split, not listed as an exception.
 - The configuration and its check are the library `vehicle_sil::config` (`libs/config`). It links neither `core` nor `control_silkit`, includes nothing of `vehicle_sil/launch/`, nor `process.hpp` or `child_process.hpp` of `process`. The link does not show all of that (a header of `core` that needs no SIL Kit compiles, and `process` is linked for `paths.hpp`), so two tests read the directory: `config.no_silkit_boundary` (`cmake/VehicleSilCheckNoSilKit.cmake`) and `config.includes_no_runtime` (`cmake/VehicleSilCheckIncludes.cmake` with `DIR` and `FORBIDDEN_PREFIXES`). A new file in `libs/config` needs no entry.
 - The scenario is the library `vehicle_sil::scenario` (`libs/scenario`). It links `config`, `control` and `sim_base`, and neither `core` nor `control_silkit`. It is guarded the same way (`scenario.no_silkit_boundary`, `scenario.includes_no_runtime`: no header under `vehicle_sil/launch/`, no `child_process.hpp` or `process.hpp`), and `config.includes_no_runtime` also keeps `libs/config` from including `vehicle_sil/scenario/`.
-- The run is the library `vehicle_sil::runner` (`libs/runner`). It links `scenario`, `config`, `control`, `process` and `sim_base` publicly, and `core` and `control_silkit` privately: the SIL Kit parts of a run are behind `RunnerImpl`, so no public header of the library (`vehicle_sil/runner/`) reaches SIL Kit, and `launch` links `core` only for the Control Server. It includes nothing of `vehicle_sil/launch/`, which depends on it. Two tests read the directories: `runner.public_headers_need_no_silkit` (`cmake/VehicleSilCheckNoSilKit.cmake` on `libs/runner/include`) and `runner.includes_no_launcher` (`cmake/VehicleSilCheckIncludes.cmake` with `ONLY_PREFIXES`, because the runner itself uses what that check forbids to the pure side). `config.includes_no_runtime` and `scenario.includes_no_runtime` also keep their libraries from including `vehicle_sil/runner/`.
-- The check of the configuration (`config/check.hpp`, `CheckReport`) does not know the scenario: the scenario depends on the configuration, not the other way round. What `check --scenario` read is `ScenarioCheck` (`scenario/scenario_check.hpp`), and `check_file()` returns it with the `CheckReport` as `Checked` (a `CheckReport` plus the scenario; copying it into a `CheckReport` drops the scenario, so take the result as a `Checked`) (`launch/checked.hpp`). The test `launch.config_files_do_not_reach_the_scenario` guards this; add a new file of the configuration side to `_launch_config_files` in `tests/launch/CMakeLists.txt`.
+- The run is the library `vehicle_sil::runner` (`libs/runner`). It links `scenario`, `config`, `control`, `process` and `sim_base` publicly, and `core` and `control_silkit` privately: the SIL Kit parts of a run are behind `RunnerImpl`, so no public header of the library (`vehicle_sil/runner/`) reaches SIL Kit, and `launch` links `core` only for the Control Server. It includes nothing of `vehicle_sil/launch/`, which depends on it. Two tests read the directories: `runner.public_headers_need_no_silkit` (`cmake/VehicleSilCheckNoSilKit.cmake` on `libs/runner/include`) and `runner.includes_no_launcher` (`cmake/VehicleSilCheckIncludes.cmake` with `ONLY_PREFIXES`, because the runner itself uses the process and SIL Kit headers that the check forbids by default). `runner.pure_files_include_no_runtime` keeps the plain data and rules of a run (`command.hpp`, `traffic.hpp`, `control_rules.*`) free of SIL Kit, process, run and event headers. `config.includes_no_runtime` and `scenario.includes_no_runtime` also keep their libraries from including `vehicle_sil/runner/`.
+- The check of the configuration (`config/check.hpp`, `CheckReport`) does not know the scenario: the scenario depends on the configuration, not the other way round. What `check --scenario` read is `ScenarioCheck` (`scenario/scenario_check.hpp`), and `check_file()` returns it with the `CheckReport` as `Checked` (a `CheckReport` plus the scenario; copying it into a `CheckReport` drops the scenario, so take the result as a `Checked`) (`launch/checked.hpp`). The test `launch.config_files_do_not_reach_the_scenario` keeps `connections.hpp` from including the scenario, and `launch.request_boundary` does the same for the request.
 - One exception is left: `bridge_working_directory()` in `connect.cpp` makes a relative directory absolute.
-- Do not add code that looks at the computer to the pure side. Put it in `probe` and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
+- Do not add code that looks at the computer outside `probe/`. Put it there and pass the result in. The files of each part are listed in [code-map-launcher.md](code-map-launcher.md).
 
 ### How a run is planned, observed and closed
 
@@ -259,9 +286,9 @@ The details of each part are in [code-map-launcher.md](code-map-launcher.md); th
 - What a check, a run or a test is asked to do is one value, `RunRequest` (`launch/request.hpp`), in two parts: the user's choices (`RunIntent`) and the caller's (`RunHost`: where the tools and logs are, the limits, whether it asks for a Control Server or for commands on standard input). `check_file()`, `run_file()` and `test_file()` take it; the command line and a request file are two ways to fill it. `validate_request()` (pure) is the one place for the rules about fields that do not go together. `tools/launch` only turns arguments into fields, so a `cli::UsageError` there means a malformed argument, never a rule about meaning.
 - `--request <file>` reads the intent from a JSON file (`schema/run-request.schema.json`). There is one reader of the format (`read_request_file()`); an argument wins over the file field by field. Messages name the file when a value came from it.
 - The bridges that `--connect` adds are marked in the plan (`RunMember::outside`, one `RunMember` for each participant). `ParticipantConfig` keeps only what the file says. The step plan is made from the configuration of the file, before the bridges are added.
-- What a run saw is a `RunOutcome` in parts: `setup`, `start`, `end`, `control`, `scenario` and `close`, then `timing`, `participants` and the rest. Its shape is not the shape of the JSON output: `format_run_json()` writes the JSON, and `assess_run()` judges the outcome. Why the run ended is `end_reason()` of the outcome (`EndReason`: what asked first to stop decides between stopped and interrupted). The exit code and whether the result is a success come from one table (`libs/launch/src/exit_codes.hpp`, used by `RunReport::exit_code()`, `RunReport::ok()`, `check_exit_code()` and `ConnectionsReport::exit_code()`); the sentence for people is `RunReport::message()`, next to `RunReport::result()` in `libs/launch/src/run_report.cpp`.
+- What a run saw is a `RunOutcome` in parts: `setup`, `start`, `end`, `control`, `scenario` and `close`, then `timing`, `participants` and the rest. Its shape is not the shape of the JSON output: `format_run_json()` writes the JSON, and `assess_run()` judges the outcome. Why the run ended is `end_reason()` of the outcome (`EndReason`: what asked first to stop decides between stopped and interrupted). The exit code and whether the result is a success come from one table (`libs/launch/src/format/exit_codes.hpp`, used by `RunReport::exit_code()`, `RunReport::ok()`, `check_exit_code()` and `ConnectionsReport::exit_code()`); the sentence for people is `RunReport::message()`, next to `RunReport::result()` in `libs/launch/src/format/run_report.cpp`.
 - The exit codes: 0 for a pass or a stop by the operator, 1 for a failure, 3 for an unreadable file or a setup that failed, 4 for a usage error (also a request file that cannot be read), a code of its own for a scenario that was cut short and for an interruption.
-- The code of the Control Server is in `libs/launch` (`src/control_server.cpp`, built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; no public header of the library includes gRPC's). `run_file()` makes the server from what the request names for `--control` (`RunHost::control`), starts it and ends it; the caller destroys it after the result. `tools/launch` only copies the arguments into the request.
+- The code of the Control Server is in `libs/launch` (`src/endpoints/control_server.cpp`, built only with `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; no public header of the library includes gRPC's). `run_file()` makes the server from what the request names for `--control` (`RunHost::control`), starts it and ends it; the caller destroys it after the result. `tools/launch` only copies the arguments into the request.
 
 ### How the GUI server hands a run to the launcher
 

@@ -4,14 +4,14 @@
 // connected, read and passed on, and the outputs for people and as JSON.
 #include "vehicle_sil/launch/connections.hpp"
 
-#include "exit_codes.hpp"
+#include "format/exit_codes.hpp"
 
 #include "vehicle_sil/json/json_writer.hpp"
 #include "vehicle_sil/config/connect.hpp"
 #include "vehicle_sil/launch/probe.hpp"
 #include "vehicle_sil/process/paths.hpp"
 
-#include "check_format.hpp"
+#include "format/check_format.hpp"
 #include "vehicle_sil/config/detail/check_words.hpp"
 #include "vehicle_sil/config/detail/yaml_tree.hpp"
 

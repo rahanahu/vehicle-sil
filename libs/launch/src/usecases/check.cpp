@@ -6,7 +6,7 @@
 // computer (the files, the executables and their output, the environment) it gets from probe.cpp,
 // in the order of the steps. The outputs are in check_format.cpp; the counts of the report in
 // check_report.cpp.
-#include "exit_codes.hpp"
+#include "format/exit_codes.hpp"
 
 #include "vehicle_sil/config/check.hpp"
 #include "vehicle_sil/launch/checked.hpp"

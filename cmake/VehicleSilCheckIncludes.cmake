@@ -8,8 +8,9 @@
 # vehicle_sil/launch/run.hpp, vehicle_sil/launch/probe.hpp (what looks at the computer), and
 # headers named events.hpp, time_commands.hpp, stop_requests.hpp, runner.hpp, runner_impl.hpp or run_*.hpp
 # (run_controls.hpp among them). The check follows the vehicle_sil/... includes (found in the project's include
-# directories) and the "..." includes of a header in the same directory as the including file (the
-# private headers of libs/launch/src). A failure names the listed file and the chain of includes
+# directories) and the "..." includes of a header in the same directory as the including file or in a
+# directory above it (the private headers of libs/launch/src, also the ones between its parts:
+# "format/check_format.hpp"). A failure names the listed file and the chain of includes
 # to the forbidden header; to fix it, move what the file needs out of that header, or take the file
 # off the list (or put it in another directory) if it is meant to depend on it. The check reads the text: an include inside #if 0 or
 # a comment counts, which errs on the safe side.
@@ -122,8 +123,23 @@ foreach(listed IN LISTS FILES)
             break()
           endif()
         endforeach()
-      elseif(open STREQUAL "\"" AND EXISTS "${here}/${path}")
-        set(next "${here}/${path}")
+      elseif(open STREQUAL "\"")
+        # beside the including file, or beside a directory above it ("format/check_format.hpp" from
+        # src/usecases/, found in src/)
+        set(dir "${here}")
+        while(TRUE)
+          if(EXISTS "${dir}/${path}")
+            set(next "${dir}/${path}")
+            break()
+          endif()
+          get_filename_component(parent "${dir}" DIRECTORY)
+          string(LENGTH "${ROOT}" root_length)
+          string(LENGTH "${parent}" parent_length)
+          if(parent STREQUAL dir OR parent_length LESS root_length)
+            break()
+          endif()
+          set(dir "${parent}")
+        endwhile()
       endif()
       if(next)
         list(APPEND queue "${next}|${chain} ${path} ->")

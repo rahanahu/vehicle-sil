@@ -822,7 +822,7 @@ For the limits on an Agent's hello, see "Size limits" under "Transport over SIL 
 
 ## The launcher's Control Server (`vehicle_sil_launch run --control`)
 
-Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it (`libs/launch/src/control_server.cpp`). `libs/launch` links `vehicle_sil::control_grpc` only in that build, and only `control_server.cpp` includes it; the rest of the library does not depend on gRPC. The launcher passes the Hub of `run` (to which the ECUs' Agents connect over SIL Kit; see "Transport over SIL Kit" above) to `ControlServer` with `ServerOptions::external_hub`.
+Only a `vehicle_sil_launch` built with `VEHICLE_SIL_BUILD_CONTROL_SERVER` has it (`libs/launch/src/endpoints/control_server.cpp`). `libs/launch` links `vehicle_sil::control_grpc` only in that build, and only `control_server.cpp` includes it; the rest of the library does not depend on gRPC. The launcher passes the Hub of `run` (to which the ECUs' Agents connect over SIL Kit; see "Transport over SIL Kit" above) to `ControlServer` with `ServerOptions::external_hub`.
 
 ### Threads and what they call
 

@@ -34,7 +34,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
        # the statistics lines as the bridges print them, which run reads (test_run_outside.cpp)
        vehicle_sil::ethernet_bridge_core vehicle_sil::can_bridge_core)
 # libs/runner/src: the run's private headers that the tests read (run_pacing.hpp, run_notes.hpp,
-# run_connection.hpp). libs/launch/src: the outputs' private header (check_format.hpp).
+# run_connection.hpp). libs/launch/src: the outputs' private header (format/check_format.hpp).
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src
                            ${PROJECT_SOURCE_DIR}/libs/runner/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
@@ -48,7 +48,7 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
 # through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
          COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/config,libs/launch,tools/launch
-                 -DFILES=libs/config/src/check_networks.cpp,libs/config/src/describe_read.cpp,libs/launch/src/reported_networks.cpp
+                 -DFILES=libs/config/src/check_networks.cpp,libs/config/src/describe_read.cpp,libs/launch/src/format/reported_networks.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
 add_test(NAME launch.described_networks_check_rejects_a_direct_read
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/network_fixtures/direct -DDIR=launch
@@ -60,60 +60,84 @@ set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPE
                      PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: if \\(\\(result\\.ecu->description\\.\\*\\(&EcuDescription::networks\\)\\)\\.empty\\(\\)\\)[^:]*launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
-# The files of the launcher that make up its pure layer (the outputs; the configuration and its check
-# are in libs/config, the scenario in libs/scenario, guarded by config.includes_no_runtime and
-# scenario.includes_no_runtime) include no
-# SIL Kit header, no process header, no run, events, time-command or
-# stop-request header (the run's controls are a run header),
-# no probe.hpp (what looks at the computer),
-# directly or through the headers they include (the private ones of libs/launch/src too). Add a
-# file to the list when it no longer includes them. The check itself must reject a fixture that
-# reaches them, and name the chain.
-set(_launch_pure_files
-    libs/launch/include/vehicle_sil/launch/timeline_format.hpp
-    libs/launch/include/vehicle_sil/launch/connections.hpp
-    libs/runner/include/vehicle_sil/runner/traffic.hpp libs/runner/include/vehicle_sil/runner/command.hpp
-    libs/runner/src/control_rules.cpp libs/runner/include/vehicle_sil/runner/control_rules.hpp
-    libs/launch/src/check_format.hpp libs/launch/src/check_format.cpp
-    libs/launch/src/timeline_format.cpp
-    libs/launch/src/request.cpp libs/launch/include/vehicle_sil/launch/request.hpp
-    libs/launch/src/request_read.cpp
-    libs/launch/include/vehicle_sil/launch/checked.hpp
-    libs/launch/src/reported_networks.cpp
-    libs/launch/src/command_input.cpp libs/launch/include/vehicle_sil/launch/command_input.hpp)
-list(JOIN _launch_pure_files "," _launch_pure_files_arg)
-add_test(NAME launch.pure_files_include_no_runtime
-         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_pure_files_arg}
-                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+# The five parts of libs/launch/src (usecases/, request/, probe/, format/, endpoints/) and the public
+# headers that belong to them keep to the include direction below, directly or through the headers
+# they include (ONLY_PREFIXES: the check's built-in list of forbidden headers does not apply, because a part
+# may use events.hpp or a process header; only the prefixes named here count). usecases/ calls the other parts in
+# order and has no limit. The private headers between the parts are included as "format/..." and the like,
+# so a prefix ending in "/" names a part.
+#  - request/ reads the request and checks the shape of its fields: configuration values only. It
+#    reaches no run, scenario, process or SIL Kit header, no other part, no use case's header.
+#  - probe/ looks at the computer and returns values: no run, no SIL Kit, no output, no endpoint, no
+#    use case.
+#  - format/ writes the outputs: it does not look at the computer (probe.hpp), reaches no endpoint, no
+#    SIL Kit header and no other use case.
+#  - endpoints/ translate stdin commands and the Control Server's calls: they do not look at the
+#    computer and do not write the outputs of check, run and timeline (*_format.hpp). They may read the
+#    configuration's value types and its YAML reader (command_input.cpp), and events.hpp.
+# To let a part include more, take the prefix off the list for that part here and say so in
+# docs/architecture.md ("Layers in libs/launch"); a file that breaks the direction is moved or split,
+# not listed as an exception.
+set(_launch_silkit_prefixes silkit/ vehicle_sil/control_silkit/ vehicle_sil/can_silkit/ vehicle_sil/eth_silkit/
+                            vehicle_sil/lin_silkit/ vehicle_sil/core/participant_)
+set(_launch_probe_headers vehicle_sil/launch/probe)
+set(_launch_output_headers vehicle_sil/launch/events vehicle_sil/launch/timeline_format vehicle_sil/launch/error_result)
+set(_launch_endpoint_headers vehicle_sil/launch/command_input)
+set(_launch_usecase_headers vehicle_sil/launch/run. vehicle_sil/launch/connections vehicle_sil/launch/test
+                            vehicle_sil/launch/checked)
+set(_launch_include_check ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DONLY_PREFIXES=ON)
+set(_launch_include_script -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+
+# name, the directory of the part under libs/launch/src, the part's public headers (a list), then
+# the prefixes the part must not reach.
+function(_launch_part_test name dir headers)
+  set(_files ${headers})
+  list(TRANSFORM _files PREPEND libs/launch/include/vehicle_sil/launch/)
+  list(JOIN _files "," _files)
+  list(JOIN ARGN "," _prefixes)
+  add_test(NAME launch.${name}
+           COMMAND ${_launch_include_check} -DDIR=libs/launch/src/${dir} -DFILES=${_files}
+                   -DFORBIDDEN_PREFIXES=${_prefixes} ${_launch_include_script})
+  set_tests_properties(launch.${name} PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+endfunction()
+_launch_part_test(request_boundary request "request.hpp"
+    vehicle_sil/runner/ vehicle_sil/scenario/ vehicle_sil/process/ ${_launch_silkit_prefixes}
+    ${_launch_probe_headers} ${_launch_output_headers} ${_launch_endpoint_headers} ${_launch_usecase_headers}
+    usecases/ probe/ format/ endpoints/)
+_launch_part_test(probe_boundary probe "probe.hpp"
+    vehicle_sil/runner/ ${_launch_silkit_prefixes}
+    ${_launch_output_headers} ${_launch_endpoint_headers} ${_launch_usecase_headers}
+    usecases/ format/ endpoints/)
+_launch_part_test(format_boundary format "timeline_format.hpp;error_result.hpp"
+    ${_launch_silkit_prefixes} vehicle_sil/control_grpc/ ${_launch_probe_headers} ${_launch_endpoint_headers}
+    probe/ endpoints/ usecases/)
+_launch_part_test(endpoints_boundary endpoints "command_input.hpp"
+    ${_launch_probe_headers} vehicle_sil/launch/timeline_format probe/ format/)
+# The check itself must reject a file that reaches a forbidden header through a header beside it
+# and through a private header of another part (found in the directory above: "request/shared.hpp"
+# included from probe/), and name the chain.
+add_test(NAME launch.parts_include_check_rejects_a_forbidden_include
+         COMMAND ${_launch_include_check} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/direct -DDIR=launch/src
+                 -DFORBIDDEN_PREFIXES=silkit/,vehicle_sil/launch/run. ${_launch_include_script})
+set_tests_properties(launch.parts_include_check_rejects_a_forbidden_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
+                     PASS_REGULAR_EXPRESSION "chain\\.cpp: request/shared\\.hpp -> silkit/SilKit\\.hpp.*pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
+                     FAIL_REGULAR_EXPRESSION "clean\\.hpp:")
 # The files that read the configuration do not reach the scenario
 # (vehicle_sil/scenario/): the scenario depends on the configuration, not the other way
-# round. The configuration's check itself (vehicle_sil/config/check.hpp) is in libs/config, which
-# includes nothing of vehicle_sil/launch/; the scenario's result of a check is scenario_check.hpp.
-# check.cpp (check_file(), the use case) and the outputs (check_format.*, reported_networks.cpp),
-# which take the scenario of --scenario too, are not listed.
-set(_launch_config_files
-    libs/launch/include/vehicle_sil/launch/connections.hpp libs/launch/include/vehicle_sil/launch/request.hpp
-    libs/launch/src/request.cpp libs/launch/src/request_read.cpp)
-list(JOIN _launch_config_files "," _launch_config_files_arg)
+# round. request/ is guarded by launch.request_boundary; connections.hpp is the one use-case header
+# that reads the configuration's values.
 add_test(NAME launch.config_files_do_not_reach_the_scenario
-         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DFILES=${_launch_config_files_arg}
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+                 -DFILES=libs/launch/include/vehicle_sil/launch/connections.hpp
                  -DFORBIDDEN_PREFIXES=vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
-add_test(NAME launch.pure_files_check_rejects_a_forbidden_include
-         COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/direct
-                 -DFILES=launch/src/pure.cpp,launch/src/clean.hpp
-                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
-set_tests_properties(launch.pure_files_include_no_runtime launch.pure_files_check_rejects_a_forbidden_include
-                     launch.config_files_do_not_reach_the_scenario PROPERTIES LABELS "unit;launch" TIMEOUT 60)
+set_tests_properties(launch.config_files_do_not_reach_the_scenario PROPERTIES LABELS "unit;launch" TIMEOUT 60)
 add_test(NAME launch.config_files_check_rejects_a_scenario_include
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/include_fixtures/scenario
                  -DFILES=launch/src/config.cpp -DFORBIDDEN_PREFIXES=vehicle_sil/scenario/
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
 set_tests_properties(launch.config_files_check_rejects_a_scenario_include PROPERTIES LABELS "unit;launch" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "config\\.cpp: vehicle_sil/scenario/scenario_x\\.hpp")
-set_tests_properties(launch.pure_files_check_rejects_a_forbidden_include PROPERTIES
-                     PASS_REGULAR_EXPRESSION "pure\\.cpp: helper\\.hpp -> silkit/SilKit\\.hpp"
-                     FAIL_REGULAR_EXPRESSION "clean\\.hpp:")
 
 # vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of

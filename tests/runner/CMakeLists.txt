@@ -37,3 +37,13 @@ vehicle_sil_target_defaults(vehicle_sil_runner_link_only)
 add_test(NAME runner.links_without_the_launcher
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target vehicle_sil_runner_link_only)
 set_tests_properties(runner.links_without_the_launcher PROPERTIES LABELS "unit;runner" TIMEOUT 600)
+
+# The files of the runner that hold the plain data and rules of a run (no SIL Kit, process, run,
+# events, time-command or stop-request header, directly or through the headers they include): the
+# commands, the traffic counts and the rules of the control. They were checked as part of the
+# launcher's pure files before the launcher's library was split.
+add_test(NAME runner.pure_files_include_no_runtime
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}
+                 -DFILES=libs/runner/include/vehicle_sil/runner/traffic.hpp,libs/runner/include/vehicle_sil/runner/command.hpp,libs/runner/src/control_rules.cpp,libs/runner/include/vehicle_sil/runner/control_rules.hpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckIncludes.cmake)
+set_tests_properties(runner.pure_files_include_no_runtime PROPERTIES LABELS "unit;runner" TIMEOUT 60)
