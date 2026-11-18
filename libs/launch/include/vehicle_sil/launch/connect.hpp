@@ -74,6 +74,28 @@ inline constexpr bool kCanBridgeOnThisOs = false;
 [[nodiscard]] std::vector<std::string> bridge_arguments(const NetworkConfig& network, std::string_view target,
                                                         const std::vector<eth::MacAddress>& macs);
 
+/// true where adapter names are compared without regard to case (Windows).
+#ifdef _WIN32
+inline constexpr bool kAdapterNamesIgnoreCase = true;
+#else
+inline constexpr bool kAdapterNamesIgnoreCase = false;
+#endif
+
+/// The device that `target` names for a network of `kind`, as a string to compare, or empty if it
+/// names none (kNoTarget, or a target that target_problem() refuses). Two networks whose targets
+/// have the same key use the same device. Ethernet: the interface name (lower case if
+/// `ignore_case`). CAN: "physical:<n>" per channel number; every "virtual:<n>" is "virtual" (the
+/// Vector Virtual CAN channels are one bus). Strings only: a connection name and the pcap name
+/// of the same adapter are not told apart.
+[[nodiscard]] std::string connect_device_key(NetworkKind kind, std::string_view target,
+                                             bool ignore_case = kAdapterNamesIgnoreCase);
+
+/// true if the networks `a` and `b` are in one connected group when each entry of
+/// `participant_networks` (the networks one participant is on) joins its networks: they are on
+/// one participant, or on a chain of participants (a-G1-c-G2-b).
+[[nodiscard]] bool networks_are_joined(const std::vector<std::vector<std::string>>& participant_networks,
+                                       const std::string& a, const std::string& b);
+
 namespace detail {
 /// The length in bytes of the Unicode control character at the start of UTF-8 `text`: a C1
 /// control (U+0080 to U+009F: 2) or a control of the direction of text (U+202A to U+202E, U+2066
