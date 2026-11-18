@@ -2,8 +2,8 @@
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
 Steps, in order: npm ci, npm run format:check, npm run lint (gui/web, gui/client and gui/timeline), npm test, npm run
-test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
-DOM), npm run test:timeline (the timeline element gui/timeline: whether vehicle-sil-timeline.js is what its sources
+test:client (the client library gui/client: a type check, then its unit tests: the library on Node without
+Angular, the parts in a headless Chromium that Playwright provides; scripts/doctor.py checks that it is installed), npm run test:timeline (the timeline element gui/timeline: whether vehicle-sil-timeline.js is what its sources
 make, then the unit tests of viewer.js on Node, no DOM),
 i18n (npm run i18n:extract, then the
 extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
@@ -95,6 +95,11 @@ SUMMARY_LINES = {
     "e2e": E2E_SUMMARY,
     "e2e-dev": E2E_SUMMARY,
 }
+
+# The unit tests of the parts (gui/client/src/elements) run in Chromium; Playwright says this when it is not installed.
+BROWSER_MISSING = re.compile(r"Executable doesn't exist|npx playwright install")
+BROWSER_HINT = ("The browser of the unit tests is not installed. Install it with `npx playwright install "
+                "--only-shell chromium` in gui/web (add --with-deps on a fresh Linux); scripts/doctor.py checks it.")
 
 # Steps that wait while timing-sensitive work runs on the machine.
 HEAVY = {"test", "client", "i18n", "build", "e2e", "e2e-dev"}
@@ -229,6 +234,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
     if not step.ok:
         errors = [ln for ln in lines if ln.strip() and ERROR_LINES[step.name].search(ln)]
         step.errors = errors[:MAX_ERROR_LINES] or [ln for ln in lines if ln.strip()][-8:]
+        if any(BROWSER_MISSING.search(ln) for ln in lines):
+            step.errors.insert(0, BROWSER_HINT)
 
 
 def check_translations(step: Step, log: Path, allow_untranslated: bool) -> None:

@@ -63,6 +63,11 @@ module.exports = defineConfig([
     rules: { 'no-restricted-globals': 'off' },
   },
   {
+    // The tests of the parts run in a browser and use its test API (vitest/browser); the parts themselves import nothing
+    files: ['src/elements/**/*.spec.ts'],
+    rules: { 'no-restricted-imports': 'off' },
+  },
+  {
     // The test helpers load Node built-ins (node:fs) at run time
     files: ['src/testing/**/*.ts'],
     rules: { 'no-restricted-syntax': 'off' },

@@ -14,7 +14,8 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "typeRoots": ["../web/node_modules"],
-    "types": ["vitest/globals"]
+    "paths": { "vitest/browser": ["../web/node_modules/vitest/browser/context.d.ts"] },
+    "types": ["vitest/globals", "@vitest/browser/matchers"]
   },
   "include": ["src/**/*.ts"]
 }
