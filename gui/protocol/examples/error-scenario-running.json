@@ -16,7 +16,7 @@
   "response": {
     "error": {
       "code": "scenario-running",
-      "message": "the run 1 plays the scenario scenarios/throttle.yaml: variables cannot be written while it runs (the scenario must give the same result every time); read them, or start a run without a scenario to write",
+      "message": "this run plays a scenario, and until it ends only the scenario writes variables, so that the same scenario always gives the same result; a client can read values, pause, step and change the speed (the result stays the same), and stop the run",
       "detail": null
     }
   }

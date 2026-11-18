@@ -22,7 +22,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
-from .allowed import Facts, Numbered, allowed as allowed_of
+from .allowed import Facts, Numbered, allowed as allowed_of, allowed_start
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (CONNECTIONS_FIELDS, NO_CONNECTION, REQUEST_FIELDS, FEATURE_TIMELINE, SPEED_MAX, SPEED_MIN,
                        STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_connect, check_disable,
@@ -622,12 +622,11 @@ class GuiServer:
             body = await self._body(request)
             check_fields("api/run", body, REQUEST_FIELDS)
             self._not_closing()
-            if self.session is not None and self.session.state == "running":
-                raise Refused(409, "already-running", "a simulation is running: stop it and wait for it to "
-                                                      "end before starting another")
-            if self._starting:  # no run is running: another request is starting one
-                raise Refused(409, "starting", "a run is starting: wait until it has started, then "
-                                               "stop it before starting another")
+            # The rules of a start are `allowed_start`'s (the same as the `allowed.start` the screens see).
+            running = self.session is not None and self.session.state == "running"
+            start = allowed_start(self.facts(), running)
+            if start["reason"] in ("already-running", "starting"):  # the others are answered below, in order
+                raise Refused(409, start["reason"], start["message"])
         except (InvalidRequest, Refused) as e:
             return self._refusal(e)
         # From here until the launcher is registered (or the start fails), no other run may start.
@@ -827,12 +826,18 @@ class GuiServer:
                 raise Refused(409, "session-changed", f"the write is meant for the run {meant}, but the run that is "
                                                       f"running is {run.session.id}: nothing was written; look at "
                                                       "the variables of this run before writing to it")
-            if run.session.scenario is not None:
-                raise Refused(409, "scenario-running", f"the run {run.session.id} plays the scenario "
-                                                       f"{run.session.scenario}: variables cannot be written while "
-                                                       "it runs (the scenario must give the same result every "
-                                                       "time); read them, or start a run without a scenario to "
-                                                       "write")
+            # Whether the run accepts a write is the launcher's rule (its `state`: `allowed.write`, for example
+            # scenario-running); this server does not repeat it. `no-control-server` is answered below (unsupported).
+            said = self._launcher_refuses(run, "write")
+            if said is None and run.session.launcher_state is None and run.session.scenario is not None:
+                # The launcher's first `state` has not come yet: the control server would refuse the write, but
+                # with another answer than this one, so the scenario's rule is applied until the state comes.
+                said = ("scenario-running", f"the run {run.session.id} plays the scenario {run.session.scenario}: "
+                                            "variables cannot be written while it runs (the scenario must give the "
+                                            "same result every time); read them, or start a run without a scenario "
+                                            "to write")
+            if said is not None and said[0] != "no-control-server":
+                raise Refused(409, said[0], said[1])
             if control.FEATURE not in run.features:
                 raise Refused(400, "unsupported", "the launcher of this run was built without a control server: "
                                                   "its ECUs' variables cannot be written")
