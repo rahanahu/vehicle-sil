@@ -216,4 +216,34 @@ describe('TimePanel: why an operation cannot be used', () => {
     await fixture.whenStable();
     expect(query('step-ms-error')!.textContent).toContain('5 から 1000');
   });
+
+  it('shows a reason once on the card, leaves the connection to the band, and keeps both in the descriptions', async () => {
+    const all = (code: string, message: string): FrontControls => ({
+      ...realTime(),
+      pause: no(code, message),
+      resume: no(code, message),
+      step: { ...no(code, message), min_ms: 1, max_ms: 1000 },
+      speed: { ...no(code, message), min: 0.5, max: 10, fastest: true },
+    });
+    const shownText = (testId: string) =>
+      [...(query(testId)?.querySelectorAll('span:not(.quiet)') ?? [])]
+        .map((s) => s.textContent?.trim())
+        .join(' ');
+    // 帯が言う接続の理由は、カードに見せない（ボタンの説明には残る）
+    controls.set(all('offline', 'the connection to the GUI server is down'));
+    await fixture.whenStable();
+    expect(query('pause-hint')).toBeNull();
+    expect(shownText('step-hint')).toBe('');
+    expect(shownText('speed-hint')).toBe('');
+    expect(described(query('step')!)).toContain('サーバーとの接続が切れています');
+    expect(described(query('set-speed')!)).toContain('サーバーとの接続が切れています');
+    // 3 つの操作の同じ文は、カードに 1 回
+    const unsupported = 'this launcher does not say what it accepts';
+    controls.set(all('unsupported', unsupported));
+    await fixture.whenStable();
+    expect(query('pause-hint')!.textContent?.trim()).toBe(unsupported);
+    expect(shownText('step-hint')).toBe('');
+    expect(shownText('speed-hint')).toBe('');
+    expect(described(query('set-speed')!)).toBe(unsupported);
+  });
 });

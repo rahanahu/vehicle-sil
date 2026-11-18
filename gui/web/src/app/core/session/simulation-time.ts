@@ -12,7 +12,7 @@ export { ANSWER_TIMEOUT } from './gui-client';
  *
  * - 中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。操作の可否と理由は正面の口の `controls`、命令は
  *   正面の口の `time`（Promise）で、ここは自分で可否を推測しない。仮想時間と速さは正面の口の `clock`、一時停止は
- *   `status.run`、遅れの数と最後の命令は `front.low.time`。
+ *   ランチャーの `state`（セッションの写しの `launcherState`）、遅れの数と最後の命令は `front.low.time`。
  * - 画面の部品はここの signal を読むだけにする（どの部品からも同じ状態が見える）。
  */
 @Injectable({ providedIn: 'root' })
@@ -40,10 +40,13 @@ export class SimulationTime {
   readonly simMs = computed(() => this.clock().sim_ms);
   /** いまの速さ（数か 'max'。正面の口の `clock`。ランチャーがまだ言っていなければ null）。 */
   readonly speed = computed(() => this.clock().speed);
-  /** 一時停止しているか（正面の口の `status.run`。動いても止まってもいないとき（待っている、止めている）は null）。 */
+  /**
+   * 一時停止しているか（実行中のランチャーの `state` の `paused`。まだなければ null）。止めて始めた実行の、参加を待つ間と、
+   * 一時停止中に停止を頼んだ後も true（`status.run` はそのとき `waiting`・`stopping` で、一時停止と言わない）。
+   */
   readonly paused = computed(() => {
-    const run = this.status().run;
-    return run === 'paused' ? true : run === 'running' ? false : null;
+    const session = this.session();
+    return session?.launcher.running ? (session.launcherState?.paused ?? null) : null;
   });
   /** 直近 1 秒ほどの実際の速さ。正面の口の `clock`（一時停止中は null。最後の time の値は止まる前のもの）。 */
   readonly actualSpeed = computed(() => this.clock().actual_speed);

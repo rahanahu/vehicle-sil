@@ -9,8 +9,16 @@ import { SimulationTime } from '../core/session/simulation-time';
 import { controlLine, latenessText, reasonLine, speedLabel } from './labels';
 import { SpeedPicker } from './speed-picker';
 
-/** 一時停止と再開の理由のうち、時刻のカードに出さない code（ほかの所が言う）。 */
-const SAID_ELSEWHERE = new Set(['paused', 'not-paused', 'not-running', 'busy']);
+/**
+ * 時刻のカードに見せない理由の code（説明としてボタンには残す）: 接続（`offline`、`connecting`）は帯の 1 行が言う。
+ * 部品の QUIET（not-running、offline）より多いのは、カードがいつも帯の隣にあるため。
+ */
+const BAND_SAYS = new Set(['offline', 'connecting']);
+/**
+ * 一時停止と再開の理由のうち、時刻のカードに出さない code: 接続のほか、押しても何も変わらない（`paused`、
+ * `not-paused`: 状態の欄が言う）、実行がない（`not-running`）、答えを待っている（`busy`: 帯のボタンの説明が言う）。
+ */
+const SAID_ELSEWHERE = new Set([...BAND_SAYS, 'paused', 'not-paused', 'not-running', 'busy']);
 
 /** ステップ送りの量の最初の値（ミリ秒）。 */
 export const DEFAULT_STEP_MS = 100;
@@ -86,7 +94,7 @@ export const DEFAULT_STEP_MS = 100;
     @if (time.supported()) {
       <!-- 一時停止と再開（ボタンは状態の帯）の、見える説明。押しても何も変わらないことと、実行がないことは言わない -->
       @if (pauseLines().length > 0) {
-        <p class="hint" data-testid="pause-hint">
+        <p class="hint" id="time-pause-hint" data-testid="pause-hint">
           @for (line of pauseLines(); track line.text) {
             <span [attr.lang]="line.english ? 'en' : null">{{ line.text }}</span>&ngsp;
           }
@@ -134,7 +142,9 @@ export const DEFAULT_STEP_MS = 100;
       </p>
       <p class="hint" id="time-step-why" data-testid="step-hint">
         @if (stepWhy(); as why) {
-          <span [attr.lang]="why.english ? 'en' : null">{{ why.text }}</span>&ngsp;
+          <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
+            why.text
+          }}</span>&ngsp;
         }
         {{ stepMoved() }}
       </p>
@@ -165,7 +175,9 @@ export const DEFAULT_STEP_MS = 100;
       </div>
       @if (speedWhy(); as why) {
         <p class="hint" id="time-speed-why" data-testid="speed-hint">
-          <span [attr.lang]="why.english ? 'en' : null">{{ why.text }}</span>
+          <span [class.quiet]="!why.shown" [attr.lang]="why.english ? 'en' : null">{{
+            why.text
+          }}</span>
         </p>
       }
     }
@@ -229,6 +241,15 @@ export const DEFAULT_STEP_MS = 100;
     .late:not(.shown) {
       display: none;
     }
+    /* ボタンの説明には残し、見た目からは消す文（帯か、カードの上の行が同じことを言う） */
+    .quiet {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
     /* 読み上げの領域は中身がない間も置き、見た目からは消す */
     .error:not(.shown) {
       position: absolute;
@@ -281,8 +302,16 @@ export class TimePanel {
   );
   /** ステップ送りを押せるか: 正面の口が許し、量の欄が整数として読める。 */
   protected readonly canStep = computed(() => this.controls().step.ok && this.stepMs() !== null);
-  /** ステップ送りの説明: 押せない理由か、押せるなら注意（正面の口の `controls.step`）。 */
-  protected readonly stepWhy = computed(() => controlLine('step', this.controls().step));
+  /**
+   * ステップ送りの説明: 押せない理由か、押せるなら注意（正面の口の `controls.step`）。shown: カードに見せるか（帯が
+   * 言う接続の理由と、一時停止と再開の行と同じ文は、ボタンの説明にだけ残す）。
+   */
+  protected readonly stepWhy = computed(() =>
+    this.cardLine(
+      'step',
+      this.pauseLines().map((l) => l.text),
+    ),
+  );
   /** 前のステップ送りで実際に進む量（ランチャーが受け付けたとき）。 */
   protected readonly stepMoved = computed(() => {
     const last = this.time.lastCommand();
@@ -312,8 +341,12 @@ export class TimePanel {
   protected readonly canSetSpeed = computed(
     () => this.controls().speed.ok && !this.newSpeedInvalid() && this.newSpeed() !== null,
   );
-  /** 「速度を変える」の説明: 押せない理由か、押せるなら注意（正面の口の `controls.speed`）。 */
-  protected readonly speedWhy = computed(() => controlLine('speed', this.controls().speed));
+  /** 「速度を変える」の説明（stepWhy と同じ決まり。ステップの行と同じ文も見せない）。 */
+  protected readonly speedWhy = computed(() => {
+    const step = this.stepWhy();
+    const above = this.pauseLines().map((l) => l.text);
+    return this.cardLine('speed', step?.shown ? [...above, step.text] : above);
+  });
   /** 速度の欄を触れなくする: 実行が速度を受け付けない間（応答を待っている間は触れる）。 */
   protected readonly speedLocked = computed(() => {
     const speed = this.controls().speed;
@@ -329,6 +362,17 @@ export class TimePanel {
       ? { text: last.message ?? last.name ?? '', english: true }
       : null;
   });
+
+  private cardLine(
+    op: 'step' | 'speed',
+    above: readonly string[],
+  ): { text: string; english: boolean; shown: boolean } | null {
+    const control = this.controls()[op];
+    const line = controlLine(op, control);
+    if (!line) return null;
+    const code = (control.reason ?? control.caution)?.code ?? '';
+    return { ...line, shown: !BAND_SAYS.has(code) && !above.includes(line.text) };
+  }
 
   protected typeStep(text: string): void {
     this.stepText.set(text);
