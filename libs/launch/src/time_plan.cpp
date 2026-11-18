@@ -211,7 +211,7 @@ std::vector<std::string> detail::real_time_peers(const SimulationConfig& config,
     for (std::size_t i = 0; i < config.participants.size() && i < check.participants.size(); ++i)
     {
         const ParticipantConfig& p = config.participants[i];
-        if (p.enabled && p.for_network.empty() && p.role != ParticipantRole::Bridge &&
+        if (p.enabled && p.role != ParticipantRole::Bridge &&
             check.participants[i].status == ParticipantStatus::Described && check.participants[i].ecu &&
             !SeenEcu(p, *check.participants[i].ecu).step())
         {
@@ -230,8 +230,7 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
     std::vector<std::int64_t> steps;
     for (std::size_t i = 0; i < config.participants.size(); ++i)
     {
-        // A bridge of --connect runs in real time: the gate does not move it.
-        if (!config.participants[i].enabled || !config.participants[i].for_network.empty())
+        if (!config.participants[i].enabled)
         {
             continue;
         }

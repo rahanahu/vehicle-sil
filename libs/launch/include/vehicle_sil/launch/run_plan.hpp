@@ -15,8 +15,21 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace vehicle_sil::launch {
+
+/// What the plan knows of one participant of the run beside its entry in the configuration: what
+/// the run itself adds to the file. The configuration (ParticipantConfig) is what the file says.
+struct RunMember
+{
+    /// Set for a bridge that the run starts for --connect (detail::with_bridges() added its
+    /// participant): the network it connects, the target as given, its tool and its arguments
+    /// (the entry of CheckReport::outside). Such a participant is started before the others, is
+    /// waited for, and stops the run when it ends. Empty for a participant of the file, also one
+    /// whose role in the file is bridge.
+    std::optional<NetworkOutside> outside{};
+};
 
 /// One run as it is settled before anything starts: a value, made by plan_run() and never written
 /// while the run lasts. What the run calls back (the lines, the events) and what it borrows (its
@@ -27,6 +40,11 @@ struct RunPlan
     /// (detail::with_bridges()): the participants of the run, in the order the run keeps
     /// everywhere (config->participants[i], participants[i], RunOutcome::participants[i]).
     CheckReport check;
+    /// One for each participant of `check`, in the same order (members[i] is of
+    /// config().participants[i]): which of them are bridges of --connect, and what each connects.
+    /// What changes while a bridge runs (its link, its counts) is kept per participant by the
+    /// run's output, under its lock; this says only where to look.
+    std::vector<RunMember> members;
     /// The directory of the simulation file: what the participants' relative paths start from.
     std::filesystem::path base;
     /// The step of the launcher's controller, the speed the run starts at (empty: as fast as
@@ -59,11 +77,14 @@ struct RunPlan
 /// The plan of the run that `options` asks for. `check`: the check of the file, which passed (as
 /// check_file() returned it: the bridges of --connect are added here); `base`: the directory of
 /// the file. Throws std::invalid_argument for a check without a configuration (CheckReport::config
-/// is empty: the file could not be read, so there is nothing to run). Reads the values of `options` only (of its pointers, whether there is a control
-/// server), and calls nothing of it.
+/// is empty: the file could not be read, so there is nothing to run).
+/// Reads the values of `options` only (of its pointers, whether there is a control server), and
+/// calls nothing of it.
 /// - The speed is planned_speed(): 1 with the time lock, else RunOptions::speed, else the file's.
 /// - With a scenario the step does not follow the speed: the same steps at every speed.
-/// - The bridges are participants at the end of the plan's check and do not count for the step.
+/// - The bridges are participants at the end of the plan's check, marked in RunPlan::members, and
+///   do not count for the step: the step is planned from the participants of the file. One whose
+///   role in the file is bridge is a participant of the file, and counts as any other.
 [[nodiscard]] RunPlan plan_run(const CheckReport& check, std::filesystem::path base, const RunOptions& options);
 
 /// The outcome a run of `plan` begins with: what the plan already says of the result (the limits,

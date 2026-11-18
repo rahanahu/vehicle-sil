@@ -25,9 +25,10 @@ namespace orch = SilKit::Services::Orchestration;
 [[nodiscard]] std::string gone_before_start(const RunContext& ctx, SimulationController& controller)
 {
     std::vector<std::string> names = controller.required_participants();
-    for (const ParticipantConfig& p : ctx.config.participants)
+    for (std::size_t i = 0; i < ctx.config.participants.size(); ++i)
     {
-        if (p.enabled && !p.for_network.empty())
+        const ParticipantConfig& p = ctx.config.participants[i];
+        if (p.enabled && ctx.plan.members[i].outside)
         {
             names.push_back(p.name);
         }
