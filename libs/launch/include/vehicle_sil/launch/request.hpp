@@ -47,19 +47,15 @@ struct RunIntent
 /// What the caller that starts the launcher decides: where things are and how long they may take.
 struct RunHost
 {
-    /// The configuration file and its name as the user gave it.
-    std::filesystem::path config{};
-    std::string config_shown{};
-    /// The scenario of RunIntent::scenario, as a path.
-    std::filesystem::path scenario{};
+    /// The configuration file as the user gave it, in UTF-8 (process::path_from_utf8() makes the path).
+    std::string config{};
     /// Where the launcher is, for the bridges of RunIntent::connect (empty: none is looked for next to it).
     std::filesystem::path tool_directory{};
-    std::chrono::milliseconds describe_timeout{10000};
+    std::chrono::milliseconds describe_timeout = CheckOptions{}.describe_timeout;
     /// A file of each participant's output in this directory; empty: none.
     std::filesystem::path log_dir{};
-    /// The file of the scenario's timeline and its name as the user gave it; empty: none.
-    std::filesystem::path timeline{};
-    std::string timeline_shown{};
+    /// The file of the scenario's timeline as the user gave it; empty: none.
+    std::string timeline{};
     /// The longest the simulation may run (wall clock); empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
     /// A control server is asked for.

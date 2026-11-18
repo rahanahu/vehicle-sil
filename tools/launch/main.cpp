@@ -1027,10 +1027,8 @@ launch::RunRequest read_request(const cli::Args& args, launch::RequestCommand co
         {
             throw cli::UsageError("--scenario needs a scenario file");
         }
-        host.scenario = process::path_from_utf8(*intent.scenario);
     }
-    host.config_shown = positionals[1];
-    host.config = process::path_from_utf8(host.config_shown);
+    host.config = positionals[1];
     return request;
 }
 
@@ -1046,8 +1044,9 @@ int check(const cli::Args& args)
         }
     }
     const launch::RunRequest request = read_request(args, launch::RequestCommand::Check);
-    const std::string& file = request.host.config_shown;
-    const launch::CheckReport report = launch::check_file(request.host.config, file, launch::check_options_of(request));
+    const std::string& file = request.host.config;
+    const launch::CheckReport report =
+        launch::check_file(process::path_from_utf8(file), file, launch::check_options_of(request));
     if (report.usage)
     {
         return usage_error(report.findings, args.flag("json"), Command::Check, file, nullptr, report.variants);
@@ -1094,7 +1093,7 @@ int run(const cli::Args& args, launch::EventStream* events)
 {
     launch::RunRequest request = read_request(args, launch::RequestCommand::Run);
     launch::RunHost& host = request.host;
-    const std::string& file = host.config_shown;
+    const std::string& file = host.config;
     if (args.has("log-dir") && args.str("log-dir", "").empty())
     {
         throw cli::UsageError("--log-dir needs a directory");
@@ -1122,13 +1121,12 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     if (args.has("timeline"))
     {
-        host.timeline_shown = args.str("timeline", "");
-        if (host.timeline_shown.empty())
+        host.timeline = args.str("timeline", "");
+        if (host.timeline.empty())
         {
             throw cli::UsageError("--timeline needs a file to write: --timeline <file>.json");
         }
         require_valid(request, launch::RequestCommand::Run);
-        host.timeline = process::path_from_utf8(host.timeline_shown);
     }
     if (args.has("timeout-ms"))
     {
@@ -1243,7 +1241,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         start_reading_commands();
     }
     options.interrupt_name = interrupt_name;
-    const launch::RunReport report = launch::run_file(host.config, file, options);
+    const launch::RunReport report = launch::run_file(process::path_from_utf8(file), file, options);
     if (events == nullptr)
     {
         write_stdin_notes(true); // before the result
@@ -1343,7 +1341,7 @@ int test(const cli::Args& args)
         }
     }
     launch::RunRequest request = read_request(args, launch::RequestCommand::Test);
-    const std::string& file = request.host.config_shown;
+    const std::string& file = request.host.config;
     const bool json = args.flag("json");
     launch::TestOptions options;
     options.variants = args.all("variant");
@@ -1384,7 +1382,7 @@ int test(const cli::Args& args)
     options.run.write_line = write_stderr_line;
     options.run.stops = &g_stops;
     options.run.interrupt_name = interrupt_name;
-    const launch::TestReport report = launch::test_file(request.host.config, file, options);
+    const launch::TestReport report = launch::test_file(process::path_from_utf8(file), file, options);
     if (report.usage)
     {
         return usage_error(report.findings, json, Command::Test, file, nullptr);

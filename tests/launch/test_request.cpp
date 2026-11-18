@@ -88,7 +88,7 @@ TEST_CASE(a_parameter_needs_a_scenario_except_in_a_test)
 TEST_CASE(a_timeline_needs_a_scenario)
 {
     RunRequest r;
-    r.host.timeline_shown = "out.json";
+    r.host.timeline = "out.json";
     CHECK(messages(r) == list(kTimelineNeedsScenario));
     r.intent.scenario = "drive.yaml";
     CHECK(messages(r).empty());
@@ -125,7 +125,7 @@ TEST_CASE(a_start_paused_needs_a_way_to_go_on)
 TEST_CASE(the_rules_are_reported_in_the_order_of_the_checks)
 {
     RunRequest r = with_params();
-    r.host.timeline_shown = "out.json";
+    r.host.timeline = "out.json";
     r.intent.start_paused = true;
     CHECK(messages(r) == list(kParamNeedsScenario, kTimelineNeedsScenario, kPausedNeedsCommands));
 }
@@ -159,8 +159,7 @@ TEST_CASE(check_options_take_every_field_of_the_request_that_the_check_reads)
     CHECK(check_options_of(r).params.size() == 1 && check_options_of(r).params[0].name == "x");
     r = {};
     r.intent.scenario = "drive.yaml";
-    r.host.scenario = "dir/drive.yaml";
-    CHECK(check_options_of(r).scenario_shown == "drive.yaml" && check_options_of(r).scenario == "dir/drive.yaml");
+    CHECK(check_options_of(r).scenario_shown == "drive.yaml" && check_options_of(r).scenario == "drive.yaml");
     r = {};
     r.intent.connect.push_back({"ETH_EXT", "none"});
     CHECK(check_options_of(r).connect.size() == 1 && check_options_of(r).connect[0].network == "ETH_EXT");
@@ -200,8 +199,7 @@ TEST_CASE(run_options_take_every_field_of_the_request_that_the_run_reads)
     CHECK(run_options_of(r).log_dir == "logs");
     r = {};
     r.host.timeline = "out/t.json";
-    r.host.timeline_shown = "t.json";
-    CHECK(run_options_of(r).timeline == "out/t.json" && run_options_of(r).timeline_shown == "t.json");
+    CHECK(run_options_of(r).timeline == "out/t.json" && run_options_of(r).timeline_shown == "out/t.json");
     r = {};
     r.host.timeout = 900ms;
     CHECK(run_options_of(r).timeout == std::optional(900ms));

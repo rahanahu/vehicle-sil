@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/request.hpp"
 
+#include "vehicle_sil/process/paths.hpp"
+
 namespace vehicle_sil::launch {
 namespace {
 
@@ -24,7 +26,7 @@ std::vector<Finding> validate_request(const RunRequest& request, RequestCommand 
     {
         out.push_back(usage("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out"));
     }
-    if (!host.timeline_shown.empty() && !intent.scenario)
+    if (!host.timeline.empty() && !intent.scenario)
     {
         out.push_back(usage("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
                             "--timeline out"));
@@ -56,8 +58,8 @@ CheckOptions check_options_of(const RunRequest& request)
     out.overrides.enable = intent.enable;
     out.overrides.manual = intent.manual;
     out.params = intent.params;
-    out.scenario = host.scenario;
     out.scenario_shown = intent.scenario.value_or("");
+    out.scenario = process::path_from_utf8(out.scenario_shown);
     out.connect = intent.connect;
     out.tool_directory = host.tool_directory;
     out.time_policy = intent.time_policy;
