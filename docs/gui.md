@@ -218,8 +218,8 @@ For the files that are served, CSP, the token, development servers and the rules
 | Feature | Requirement |
 |---|---|
 | Starting the GUI server | Python 3.11 or later and [uv](https://docs.astral.sh/uv/) |
-| Checking and running a simulation | A `vehicle_sil_launch` whose `features` in `version --json` include `events` and `stdin-commands` (`run --events`, `run --stdin-commands`; see [simulation-events.md](simulation-events.md)) |
-| Time control | `speed`, `start-paused` and `time-commands` in `features` (with a launcher that lacks them, the screen does not show those controls) |
+| Checking and running a simulation | A `vehicle_sil_launch` whose `features` in `version --json` include `events`, `stdin-commands`, `request`, `time-commands`, `stdin-run-until` and `state` (every launcher of the same vehicle-sil version has them; see [simulation-events.md](simulation-events.md)) |
+| Time control | `time-commands` in `features` (required, see above), and `speed` and `start-paused` (with a launcher that lacks them, the screen does not show those controls) |
 | Reading and writing ECU variables | A launcher with a Control Server (`control-server` in `features`; built with `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON`; see [control-api.md](control-api.md)), and Python gRPC for the GUI server (`grpcio`, `protobuf`; `uv sync` installs them) |
 | A simulation to run | A configuration file and the ECU executables it lists (the launcher starts them for check and run) |
 | Screens | A build of the sample screens (the output of `npm run build` in `gui/web`) or a build of your own screen (`--web`) |
@@ -273,7 +273,7 @@ The GUI server looks for the launcher in `--launcher <path>`, the environment va
 | Situation | What happens |
 |---|---|
 | The launcher found on `PATH` is in the current directory | The server does not use it and exits with exit code 2. |
-| The launcher lacks `events` or `stdin-commands` in `features` | The server prints what is missing and exits with exit code 2. |
+| The launcher lacks one of the features above in `features` | The server prints what is missing (use the `vehicle_sil_launch` of the same vehicle-sil version) and exits with exit code 2. A launcher replaced while the server runs is refused the same way (`launcher-unusable`). |
 
 The server refuses a launcher in the current directory because Windows searches the current directory before `PATH`: starting the GUI in a folder you received from someone would run whatever program is in it. To use that launcher, name it with `--launcher`.
 
@@ -371,7 +371,7 @@ The launcher advances time; the GUI only passes commands and shows the results. 
 | During the run | The **Time** card | See the virtual time, the current speed, the actual speed and whether the run is paused; step (enter milliseconds) and change the speed. |
 | After the end | The **Result** card | See how time went (speed, virtual time, real time taken, actual speed, time paused, lateness when the speed was paced). |
 
-- If the launcher's `features` lack `speed`, `start-paused` or `time-commands`, the screen does not show the matching control (with a launcher that has only `speed`, the **Time** card is view-only). Whether time commands are accepted is decided by the launcher of the running run (its `version --json` at the start).
+- If the launcher's `features` lack `speed` or `start-paused`, the screen does not show the matching control. `time-commands`, `stdin-run-until` and `state` are required when the server starts, so the server does not check them per command.
 - In a run that is connected outside the simulation (a `role: bridge` participant in the file, or `connect` in the request of the run), the launcher refuses pause, step and a speed other than 1 with the reason `outside-real-time`, as it does on the command line (see "Time of a run that is connected outside (`--time-policy`)" in [simulation-run.md](simulation-run.md#time-of-a-run-that-is-connected-outside---time-policy)). The rule is the launcher's: the GUI server has none of its own and passes the answer on. `time_policy` (`"free"`) in the request lifts it, and the check's `time_lock` says whether the run keeps real time. The **Time** card shows the launcher's reason under pause and step, and the speeds other than **Real time** cannot be chosen (the card says that this run can go at real time only).
 - Whether each time control can be used, why not, and the range of a step and of the speed come from the client library's `controls` (see [gui/client/README.md](../gui/client/README.md)); the screen has no rule of its own. A reason that the screen has words for appears in the screen's language; any other reason appears in the launcher's English sentence. A caution (the command is accepted, but something is worth knowing first, such as `outside-not-real-time`) appears in the same place.
 - A screen opened during a run, and other tabs, show the same time state (the server's summary holds the last `time` and `command` events).
@@ -433,7 +433,7 @@ Select and run a scenario ([scenario.md](scenario.md); a file that sets ECU vari
 - The step table advances with the launcher's `scenario_step` events. When the result arrives, it shows every step, including those that did not run. A screen opened during the run shows the same table.
 - A scenario cannot start paused (**Start paused** is disabled).
 - Pause, step, speed changes and stop work as in a run without a scenario (the scenario result does not change). The GUI sends them as commands on the launcher's stdin; a Control Server client's time calls get the same answers.
-- If the launcher's `features` have `scenario-control`, the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without it, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
+- If the launcher has a Control Server (`control-server` in `features`; it then also has `scenario-control`), the Variables screen shows the values (writing widgets are disabled and show "Cannot write while a scenario runs (view only)"). With a launcher without a Control Server, a scenario run has no variables, and the Variables screen shows "Variables are not available while a scenario runs:".
 - The server API is `GET api/scenarios?file=<configuration file>` and `scenario` of `api/check` and `api/run` (see "Scenarios" in [gui/protocol/README.md](../gui/protocol/README.md#scenarios)); in the library, `client.scenarios(file)`, `scenario` of `check` and `run.start`, and `scenario` of the session copy.
 
 ### Timeline of a scenario run
@@ -1409,7 +1409,7 @@ python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> <cas
 | `test_real_variables.py` (with a launcher that has a Control Server) | Reading and writing variables, that a saved scenario passes the real check and runs, and the example `examples/gui_client/variables.mjs` |
 | Screen end-to-end tests (`gui/web/e2e/real/`) | That writing the Engine throttle on the Variables screen changes the engine speed, that the example dashboard file's layout is followed, and that the custom panel shows the engine speed |
 
-If the launcher's `features` have `scenario-control`, the screen end-to-end tests also check that values are visible while a scenario runs, that writing widgets show the reason and do not write, and that pause, resume and stop work.
+If the launcher has a Control Server, the screen end-to-end tests also check that values are visible while a scenario runs, that writing widgets show the reason and do not write, and that pause, resume and stop work.
 
 ## See also
 

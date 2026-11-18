@@ -18,7 +18,7 @@ import { RUN_TIMEOUT } from './support/run-page';
 
 // The launcher features that the variables and the scenario need (as the replaying launcher is told to say)
 const CONTROL_FEATURES =
-  'events,stdin-commands,request,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
+  'events,stdin-commands,request,stdin-run-until,state,check-variables,speed,start-paused,time-commands,control-links,control-server,' +
   'scenario,timeline';
 const BUILD = join(REPOSITORY, 'build', 'gui-client');
 const BUNDLES = ['vehicle-sil-gui-client.mjs', 'vehicle-sil-gui-elements.mjs'];
@@ -164,10 +164,14 @@ test('a refusal of the page own button shows in the status part: the connection 
   expect(sockets).toHaveLength(1);
 });
 
+// A launcher without a Control Server: there is no recording yet of a scenario run with a Control Server and a
+// timeline (the GUI server asks for both when the launcher has both), and this test writes no variable.
+const SCENARIO_FEATURES = CONTROL_FEATURES.replace(',control-server', '');
+
 test('the start button runs the scenario that the scenario part chose, and the result part shows it', async ({
   page,
 }) => {
-  const server = await serve('simulation.yaml', CONTROL_FEATURES);
+  const server = await serve('simulation.yaml', SCENARIO_FEATURES);
   cleanups.push(() => server.stop());
   const runs: unknown[] = [];
   page.on('request', (request) => {

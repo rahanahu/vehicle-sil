@@ -18,8 +18,11 @@ from . import process
 LAUNCHER_NAME = "vehicle_sil_launch"
 ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
 # `request`: run --request and check --request read the run's intent from a file (schema/run-request.schema.json), which
-# is how this server gives the launcher everything that the browser chose.
-REQUIRED_FEATURES = ("events", "stdin-commands", "request")
+# is how this server gives the launcher everything that the browser chose. `time-commands`, `stdin-run-until` and
+# `state`: the time commands (with their `id`) that the server writes to the launcher's input, and the `state` event
+# that says what it accepts now. Every launcher of the same version has all of them, so the server does not ask per
+# run; a launcher without one is refused when the server starts (and when the launcher is replaced).
+REQUIRED_FEATURES = ("events", "stdin-commands", "request", "time-commands", "stdin-run-until", "state")
 VERSION_TIMEOUT_S = 10
 # The words of vehicle_sil_launch that this server uses, in one place ("Running at a set speed (`speed`)" in docs/simulation-run.md,
 # and docs/simulation-events.md): the range of a speed (the same for speed and the speed command), the most milliseconds
@@ -30,10 +33,6 @@ SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12
 TIME_COMMANDS = ("pause", "resume", "step", "run_until", "speed")
 MAX_ID = 2 ** 53  # the largest id of a time command (an integer that JavaScript reads exactly)
-FEATURE_TIME_COMMANDS = "time-commands"
-FEATURE_STDIN_RUN_UNTIL = "stdin-run-until"
-# The launcher's `state` event (what it accepts now), and the "id" of a stdin command that its `command` event returns.
-FEATURE_STATE = "state"
 # The control links (the launcher's side of the ECUs' variables): the event that says, once per started participant
 # before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
 # (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read
@@ -42,9 +41,8 @@ FEATURE_CONTROL_LINKS = "control-links"
 CONTROL_EVENT = "control_link"
 CONTROL_SUMMARY_FIELD = "control_link"
 # Scenarios (docs/scenario.md): run --scenario plays one and ends the run with its outcome; check --scenario checks it.
-# A launcher with scenario-control also has its control server during a scenario (read, time commands; it refuses
-# writes); without it, --scenario cannot be used with --control or --start-paused.
-FEATURE_SCENARIO_CONTROL = "scenario-control"
+# A launcher with a control server (`control-server`) also has it during a scenario (read, time commands; it refuses
+# writes): the two features are always printed together.
 SCENARIO_STEP_EVENT = "scenario_step"
 # A scenario run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --scenario
 # --timeline <file> writes what the scenario wrote and saw to that file after the run.
@@ -123,8 +121,9 @@ class Launcher:
         missing = [f for f in REQUIRED_FEATURES if f not in self.features]
         self._set(version, [{"code": "missing-feature",
                              "message": f"{self.path} has no '{f}' (its features: "
-                                        f"{', '.join(self.features) or 'none'}): this {LAUNCHER_NAME} is older "
-                                        "than this GUI"} for f in missing])
+                                        f"{', '.join(self.features) or 'none'}): this {LAUNCHER_NAME} is not "
+                                        f"the version of this GUI; use the {LAUNCHER_NAME} of the same "
+                                        "vehicle-sil version"} for f in missing])
 
     def _set(self, version: dict | None, problems: list[dict]) -> None:
         self.version = version
@@ -175,6 +174,7 @@ CONNECTIONS_FIELDS = ("file", "network")
 NO_CONNECTION = "none"
 # The launcher's features `connect`, `connections` and `time-policy` are not in REQUIRED_FEATURES: every launcher with
 # `request` has them (the launcher's features are only added, and these came before `request`, on every OS).
+# `timeline` is the only feature of the always-printed ones that the server still asks per run (see FEATURE_TIMELINE).
 
 
 def check_fields(endpoint: str, body: dict, allowed: tuple[str, ...]) -> None:
