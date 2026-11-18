@@ -622,7 +622,7 @@ The bridge asks the library for promiscuous mode as "[Promiscuous mode](#promisc
 
 | Item | Behavior |
 |---|---|
-| Link state | The bridge does not watch the link going up and down (the health line shows no link state). |
+| Link state | The bridge does not watch the link going up and down (the health line shows `link state unknown`). |
 | When the adapter disappears | Detected only when a read from the library fails. |
 | Frames the bridge sends | Do not come back to the bridge (`ExternalLink::echoes_own_transmissions()` is false). |
 | Disabled adapters | Not in the Npcap list, so giving one to `--interface` gives the "no interface" error (`no interface ...`). |
@@ -831,6 +831,8 @@ So with these external links, all of "When a loop is stopped" applies: if a fram
 - With `--no-mac-guard`, the bridge warns once, as described in "[With `--no-mac-guard`](#with---no-mac-guard)".
 
 ### When the same MAC address is on both sides
+
+Give the ECUs MAC addresses that differ from the MAC address of the NIC the bridge connects and from those of the other NICs of this computer: with the same address, the ARP and IPv6 frames of this computer's OS look like frames from the SIL Kit side, the bridge takes the address for one on both sides, and `loop_suspected` grows and the frames stop.
 
 Frames from an address on both sides are dropped in both directions, so if devices with the same MAC address really are on both sides, frames from that address no longer pass. The warning names the address, so you can find the wrong setup. However, with an external link that echoes its own transmissions, an address first remembered on the SIL Kit side and then seen outside cannot be told from an echo, so its frames are dropped silently.
 

@@ -351,9 +351,12 @@ public:
     /// (SIL Kit does not end the simulation; the system controller has to abort it), and stop()
     /// and request_stop() wait for that Error. Only the first failure (this or the step
     /// handler's) is reported. Callable from any thread, but not once the destructor has begun.
-    /// Before start() it does nothing (SIL Kit would ignore the error). A call made while start()
-    /// is starting the lifecycle (from a CommunicationReady handler of an autonomous participant,
-    /// which SIL Kit can call before start() is back from it) is kept, and start() reports it.
+    /// Before start() it does nothing (SIL Kit would ignore the error). In a CommunicationReady
+    /// handler and after it, the failure is reported at once, also when start() is not yet back
+    /// from starting the lifecycle (SIL Kit calls the handler only after the lifecycle was
+    /// started). Any other call made while start() is starting the lifecycle is kept, and
+    /// reported by start() or when SIL Kit calls the CommunicationReady handler, whichever comes
+    /// first.
     /// Never throws.
     /// step_error() does not change.
     void report_failure(std::string_view reason) noexcept;
@@ -429,8 +432,13 @@ private:
     StepHold step_hold_;
     /// Runs added_communication_ready_ (the SIL Kit thread).
     void run_added_communication_ready();
+    /// From here on report_failure() gives a failure to SIL Kit at once; one kept until now is
+    /// reported. Called by start() after StartLifecycle(), and at the head of SIL Kit's
+    /// CommunicationReady handler: SIL Kit calls that only after StartLifecycle(), possibly before
+    /// start() is back from it, and a failure kept until then could come after the end of a short
+    /// run, where SIL Kit drops it.
+    void open_error_reporting() noexcept;
     std::vector<std::function<void()>> added_communication_ready_; ///< add_communication_ready_handler()
-    bool communication_ready_registered_ = false; ///< SIL Kit has a handler that runs the added ones
     std::function<void()> communication_ready_; ///< set_communication_ready_handler_async()
     std::mutex communication_ready_mutex_;      ///< guards communication_ready_state_
     enum class CommunicationReady
@@ -474,7 +482,9 @@ private:
     /// Guarded by control_mutex_; a failure was reported: ReportError() is queued (both happen
     /// under the lock).
     bool failed_ = false;
-    bool error_reportable_ = false; ///< guarded by control_mutex_; start() is past StartLifecycle()
+    /// Guarded by control_mutex_; report_failure() gives a failure to SIL Kit at once: start() is
+    /// past StartLifecycle(), or SIL Kit has called the CommunicationReady handler.
+    bool error_reportable_ = false;
     /// guarded by control_mutex_; a failure reported while start() was in StartLifecycle()
     std::optional<std::string> early_failure_;
 

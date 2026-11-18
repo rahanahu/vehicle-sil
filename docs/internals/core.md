@@ -119,9 +119,10 @@ What `report_failure()` does depends on when it is called:
 | When it is called | What happens |
 |---|---|
 | Before `start()` begins the lifecycle (before `start()`) | Nothing (SIL Kit ignores it) |
-| While `start()` is beginning the lifecycle | Remembered; `start()` reports it |
+| In a CommunicationReady handler, or after SIL Kit has called it | Reported at once, also when `start()` has not yet returned from beginning the lifecycle |
+| Otherwise, while `start()` is beginning the lifecycle | Remembered; reported by `start()`, or when SIL Kit calls the CommunicationReady handler, whichever comes first |
 
-A call can happen during the start because the CommunicationReady handler of an autonomous participant may be called before `start()` returns from beginning the lifecycle. The tests `core.participant_start_reports_a_failure_*` check this, using the test hook to force the order.
+SIL Kit calls the CommunicationReady handler only after the lifecycle was started, so it takes an error reported there. The handler can be called before `start()` returns from beginning the lifecycle, and a short run can even end before that: a failure remembered until then would be reported after Shutdown, where SIL Kit drops it. `ParticipantRuntime` registers a CommunicationReady handler with SIL Kit for every participant, so this also holds for a participant that was given none. The tests `core.participant_start_reports_a_failure_*` and `core.participant_start_does_not_lose_*` check this, using the test hook to force the order.
 
 ### `bind_host()`
 
