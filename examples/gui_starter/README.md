@@ -35,11 +35,13 @@ The browser opens the URL that the server printed (with `#token=`) and shows thi
 
 | Action | What happens |
 |---|---|
-| Open the screen | The status line says the connection is online and no run is going. |
-| Click **Start** | The run starts and the status line shows it and the virtual time. |
+| Open the screen | The status line at the top says `ready`. The variables say they are not available now (no run). |
+| Click **Start** | The status line says `running` and the virtual time (`running 2820 ms`). The slider and the values come alive. |
 | Move the **Throttle** slider | The value is written when you release the knob. **Engine speed** changes. |
 | Click **Throttle to 100 %** (your own button) | The slider moves to 100 and the meter under "Your own script" follows. Before a run, the button shows why it was refused. |
-| Pick a scenario under **Scenario** and click **Start** | The scenario runs, its steps and result show, and the timeline of the run appears. |
+| Click **Pause**, **Step**, then **Resume** | The status line says `paused` and the time; **Step** moves it by 10 ms (the field next to it); **Resume** goes on. |
+| Click **Stop** | The status line says `the run was stopped`. The slider is disabled, and the values say they are the last ones of a run that has ended. |
+| Pick a scenario under **Scenario** and click **Start** | The run ends by itself. The result says `passed` (or `failed`) with each step, and the timeline of the run appears. |
 
 Variables appear when the launcher has a Control Server. In the example ECUs, the throttle drives `Engine.engine.speed`.
 

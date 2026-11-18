@@ -35,11 +35,13 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 | 操作 | 起きること |
 |---|---|
-| 画面を開く | 状態の行に、接続していることと、実行がないことが出ます。 |
-| 「Start」を押す | 実行が始まり、状態の行にそれと仮想時間が出ます。 |
+| 画面を開く | 一番上の状態の行に `ready` と出ます。変数は、いまは使えない（実行がない）と言います。 |
+| 「Start」を押す | 状態の行が `running` と仮想時間（`running 2820 ms`）になります。スライダーと値が動き出します。 |
 | 「Throttle」のスライダーを動かす | つまみを離したときに値を書き込みます。「Engine speed」が変わります。 |
 | 「Throttle to 100 %」（自分のボタン）を押す | スライダーが 100 になり、「Your own script」のメーターがそれに続きます。実行がないときは、断られた理由が出ます。 |
-| 「Scenario」でシナリオを選んで「Start」を押す | シナリオが走り、ステップと結果が出て、実行の時間の軸が現れます。 |
+| 「Pause」、「Step」、「Resume」を順に押す | 状態の行が `paused` と時間になります。「Step」は 10 ms（隣の欄）進め、「Resume」で続きます。 |
+| 「Stop」を押す | 状態の行が `the run was stopped` になります。スライダーは使えなくなり、値は、終わった実行の最後の値だと言います。 |
+| 「Scenario」でシナリオを選んで「Start」を押す | 実行は自分で終わります。結果が `passed`（か `failed`）と各ステップで出て、実行の時間の軸が現れます。 |
 
 変数は、ランチャーが Control Server を持つときに出ます。例の ECU では、スロットルが `Engine.engine.speed` を動かします。
 
