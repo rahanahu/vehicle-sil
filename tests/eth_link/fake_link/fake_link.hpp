@@ -111,6 +111,8 @@ public:
     eth_link::TransmitResult transmit(std::span<const std::uint8_t> frame) override;
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return echo_own_.load(); }
     [[nodiscard]] std::string describe() const override;
+    /// The name given to the constructor.
+    [[nodiscard]] std::string device_identity() const override { return name_; }
     [[nodiscard]] std::string last_error() const override;
     [[nodiscard]] std::optional<bool> promiscuous() const noexcept override
     {

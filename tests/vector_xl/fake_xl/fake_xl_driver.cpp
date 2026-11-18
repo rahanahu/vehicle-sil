@@ -14,6 +14,12 @@
 #include <mutex>
 #include <string_view>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace backend = vehicle_sil::vector_xl::detail::backend;
 
 namespace fake_xl {
@@ -582,6 +588,20 @@ Status read_channels(std::vector<XlChannelInfo>& out)
         out.push_back(std::move(info));
     }
     return status(fake_xl::kStatusOk);
+}
+
+std::string mark_identity(std::string identity)
+{
+    // "<identity>@<scope>": this process, unless the test names a scope that its bridges share.
+    if (const char* scope = std::getenv("VEHICLE_SIL_FAKE_DEVICE_SCOPE"); scope != nullptr && *scope != '\0')
+    {
+        return identity + "@" + scope;
+    }
+#ifdef _WIN32
+    return identity + "@pid" + std::to_string(_getpid());
+#else
+    return identity + "@pid" + std::to_string(::getpid());
+#endif
 }
 
 OpenedPort open_port(const std::string& application_name, ChannelMask channels, ChannelMask request_init_access,

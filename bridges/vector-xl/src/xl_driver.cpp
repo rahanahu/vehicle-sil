@@ -114,6 +114,11 @@ std::vector<XlChannelInfo> XlDriver::channels() const
     return channels;
 }
 
+std::string XlDriver::device_identity(const XlChannelInfo& channel) const
+{
+    return backend::mark_identity(vector_xl::device_identity(channel));
+}
+
 struct XlCanPort::Impl
 {
     XlChannelInfo channel;

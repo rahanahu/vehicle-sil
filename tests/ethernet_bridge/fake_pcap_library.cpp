@@ -5,6 +5,7 @@
 // VEHICLE_SIL_TEST_PCAP_LIBRARY names (the fake library of tests/eth_link/fake_pcap), and the pcap
 // backend of the OS without --backend. Everything else of that executable is the installed one's
 // code, with its factory of the links of the OS.
+#include "fake_device_scope.hpp"
 #include "pcap_library.hpp"
 
 #include <cstdlib>
@@ -20,6 +21,11 @@ std::string pcap_library()
         throw std::runtime_error("this is the bridge built for tests: set VEHICLE_SIL_TEST_PCAP_LIBRARY to the fake pcap library");
     }
     return path;
+}
+
+std::string device_mark_identity(const std::string& device)
+{
+    return test::fake_device_identity(device);
 }
 
 std::optional<Backend> default_backend() noexcept

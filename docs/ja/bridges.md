@@ -128,6 +128,9 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
       "detail": "virtual 1; hwType=1 hwIndex=0 hwChannel=0 serial=0 Virtual CAN",
       "usable": true,
       "reason": null,
+      "in_use": false,
+      "in_use_by": [],
+      "in_use_count": 0,
       "can": {
         "target": "virtual",
         "number": 1,
@@ -153,7 +156,8 @@ vehicle_sil_vector_xl_bridge --describe --xl-target <virtual|physical> --xl-chan
 | `targets[].value` | `<target>:<number>` です。`:` の前を `--xl-target` に、番号を `--xl-channel` に渡します。 |
 | `targets[].label` | ドライバが返すチャネルの名前です。 |
 | `targets[].detail` | ターゲットと番号、続けて文の一覧の行の内容です。 |
-| `targets[].usable` | いつも `true` です。 |
+| `targets[].usable` | いつも `true` です。使用中のチャネルも同じです。 |
+| `targets[].in_use`、`in_use_by`、`in_use_count` | いま vehicle-sil のブリッジがチャネルのバスを使っているかで、Ethernet ブリッジの一覧と同じです（「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」）。Vector Virtual CAN のチャネルは 1 つのバスなので、どれか 1 つにブリッジがあれば、全部が使用中になります。 |
 | `targets[].can` | `target`、`number`、`name`、`hw_type`、`hw_index`、`hw_channel`、`serial`、`transceiver`（ドライバが返さないときは `null`）です。 |
 | `notes` | 空です。 |
 
@@ -316,10 +320,10 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 
 ## リンクの行
 
-出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジは外側のバスの状態を、人向けの監視の行とは別に 1 行で出します。形は `link bus=<値>` で、統計の行と同じようにタグの後ろに付きます。
+出力を読むプログラム（ランチャーや自作のスクリプト）のために、ブリッジは外側のバスの状態を、人向けの監視の行とは別に 1 行で出します。形は `link bus=<値>` で、統計の行と同じようにタグの後ろに付き、その後にデバイスの使用中の印のキー（`device`、`marked`、`shared`、Linux では `peers`）が続きます（「[別のブリッジが使っているデバイス](#別のブリッジが使っているデバイス)」）。
 
 ```
-[bridge] link bus=active
+[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=0
 ```
 
 | 値 | 意味 |
@@ -330,11 +334,51 @@ nothing has come from a device on XL 'Virtual Channel 1' in the 10 s since the b
 | `unknown` | エラー状態の問い合わせの最初の答えがまだ来ていない、または答えが来ない（`--no-bus-monitor`、答えないドライバー。「[エラー状態の問い合わせ](#エラー状態の問い合わせ)」） |
 
 - 最初の行は、XL のポートを開いた後、ブリッジが SIL Kit のライフサイクルを始める前に出ます（開始の行より前で、参加者が Running になりうる前）。最初の答えが来るまでは `unknown` で、答えは後から来ます。
-- その後は、監視の行と同じく 1 秒ごとに確かめ、値が変わったときだけ行を出します。同じ値が続けて出ることはありません。
+- その後は、監視の行と同じく 1 秒ごとに確かめ、値か使用中の印のキーが変わったときだけ行を出します。同じ行が続けて出ることはありません。
 - ブリッジが終わるとき（`FAIL:`、停止）には出ません。参加者の状態で分かります。
-- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()` が作ります（`bridges/common`。Ethernet のブリッジと共通）。
+- 値は `link_line_value()`、行は `bridge_runtime::format_link_line()`、使用中の印のキーは `bridge_runtime::DeviceShareWatch` が作ります（`bridges/common`。Ethernet のブリッジと共通）。
 - 行を読むプログラムは、知らないキーと値を読み飛ばしてください。キーと値は増えることがあります。
 - `vehicle_sil_launch run --connect` は、統計の行と同じく、この行を実行の出力に出しません。
+
+## 別のブリッジが使っているデバイス
+
+同じデバイスを開いた 2 つのブリッジは、互いのフレームを受け取ります。2 つのネットワーク（または 2 つの実行）がそこで混ざります。どのブリッジも（このブリッジも Ethernet ブリッジも）、開いたデバイスに印を置き、ほかの vehicle-sil のブリッジの印を数えます。起動のときに 1 回、その後は動いている間 1 秒ごとに数えるので、先にいたブリッジも、後から来たブリッジを見つけます。印は誰も締め出しません。ほかのブリッジを見つけたブリッジは、警告を出して動き続けます。
+
+```
+[bridge] link bus=active device=552dd508e2f03efe marked=1 shared=1 peers=4321
+[bridge] warning: XL 'Virtual Channel 1' (Vector Virtual CAN, whose channels are all one bus) is also used by another vehicle-sil bridge (process 4321): the frames of both mix there: if that is not meant, connect them to different devices, or stop a bridge left over from an earlier run
+```
+
+| リンクの行のキー | 意味 |
+|---|---|
+| `device` | デバイスを表すハッシュ（16 進 16 桁）です。backend が違っても、同じデバイスのブリッジでは同じです |
+| `marked` | `1`: ブリッジが印を置けました。`0`: 置けず、理由を警告で出しました。ほかのブリッジからは見えませんが、このブリッジはほかを見つけます |
+| `shared` | いまデバイスに印を置いている、ほかのブリッジの数です |
+| `peers` | それらのプロセス ID で、`,` で区切ります（Linux だけ。いなければキーごと出ません） |
+
+- 最初の数は、最初のリンクの行（SIL Kit のライフサイクルを始める前）にあります。警告は `shared` が増えるたびに、来たブリッジのプロセス ID を付けて出ます。リンクの行は、キーが変わるたびに出ます。ほかのブリッジが終わったときも出ます。
+- 一覧（`--list-channels --json`、`--list-interfaces --json`）は、印のあるデバイスに `in_use: true`、`in_use_by`（プロセス ID。Windows では空）、`in_use_count` を出し、`detail` と文の一覧の行に「in use by a vehicle-sil bridge (process 4321)」を足します。`usable` は `true` のままです。一覧は印を置きません。
+- デバイスは、バスにつながる口です。Ethernet のインターフェース、Vector のハードウェアの CAN チャネル（XL ドライバが返すハードウェアの種類、番号、シリアル番号、チャネル）、Vector Virtual CAN（全チャネルで 1 つのデバイス）です。1 台の Vector の機器の 2 つのチャネルは、2 つのデバイスです。
+
+| 印で見つかるもの | 印で見つからないもの |
+|---|---|
+| この PC の vehicle-sil のブリッジ: 別の実行、別の利用者、手で起こしたもの、同じ印を置く自作のブリッジ | デバイスを開く vehicle-sil の外のプログラム（Wireshark、candump、CANoe）。ブリッジがつなぐ外側そのものです |
+| | Linux で、別のネットワーク名前空間のブリッジ（見えるインターフェースが違います） |
+| | Windows で、印がセッションの名前空間（下の `Local\`）にあるときの、別のセッションのブリッジ |
+
+Linux の `peers` のプロセス ID は、印を置いたブリッジの PID 名前空間での番号です。PID 名前空間が別で、ネットワーク名前空間が同じコンテナーのブリッジは、コンテナーの中の番号で出ます。
+
+印の置き方です（自作のブリッジ、設定ファイルの `role: bridge` も、同じ印を置けば、ほかのブリッジに見つかります）。
+
+| OS | 印 |
+|---|---|
+| Linux | 抽象名前空間の名前 `vehicle-sil/device/<kind>/<identity>/<pid>/<random>` に bind した Unix ソケット（close-on-exec）を、ブリッジが動いている間開いておきます（`<random>` は 16 進 16 桁。名前が使われていれば別の値でやり直します）。数えるときは、`/proc/net/unix` から、同じ `vehicle-sil/device/<kind>/<identity>/` で始まる名前を探します |
+| Windows | 名前つきの mutex `Global\vehicle-sil-device-<device>-<n>` を、所有せず、継承させずに、0 から 15 のうち最初に空いている `<n>` で作り、ブリッジが動いている間開いておきます。セキュリティ記述子は、誰でも `SYNCHRONIZE` で開けるようにします。この利用者がグローバルな名前を作れないときは、`Local\`（このセッション）に置きます。数えるときは、両方のほかの番号を開いて、すぐ閉じます |
+
+- `<kind>` は `ethernet` か `can` です。`<identity>` は、インターフェースの名前（Linux）、pcap の名前（Npcap）、Vector のハードウェアのチャネルなら `xl-<hwType>-<hwIndex>-<serial>-<hwChannel>`、Vector Virtual CAN なら `xl-virtual` です。ASCII の英字、数字、`._:@+-` 以外の文字があるとき、または名前が抽象名前空間の 107 バイトを超えるときは、`<identity>` の代わりに `device` のハッシュを使います。
+- `<device>` は `device` のキーで、`<kind>/<identity>` のハッシュ（FNV-1a、64 ビット）です。
+- C++ のブリッジは `bridge_runtime::DeviceMark` と `DeviceShareWatch`（`bridges/common`）を使います。
+- 試験用にビルドしたブリッジは、偽物のデバイスにプロセスごとの印を置きます。同時に走る試験が互いを見つけないためです。2 つのブリッジにデバイスを共有させたい試験は、両方に同じ `VEHICLE_SIL_FAKE_DEVICE_SCOPE` を渡します。
 
 ## 物理 CAN と仮想時間
 
@@ -542,6 +586,7 @@ XL バックエンドは 2 つに分かれます。
 - フェイクは、XL の次の制約も模擬します: 送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。
 - `tests/vector_xl/xl_bridge_it_launcher` の `no-answers` のシナリオは、後ろにノードのないチャンネルへ `--stats-every-ms 100` で送信し、動いている間に統計の行が、変わったときだけ、すべてのキーを順に並べて出て、`xl_to_silkit=0` であること、リンクの行が開始の行より前に出て、値ごとに 1 回であることを確かめます。何も来ないときのヒントは、単体試験（`bridge_runtime.nothing_came_hint_*`）でだけ、テストが時刻を与えて確かめます。
+- `device-shared` のシナリオは、Vector Virtual CAN にブリッジを起こします。偽のドライバーの既定のスコープでは、2 つのブリッジは互いを見つけません。同じスコープでは、`virtual:2` のブリッジと `virtual:1` のブリッジが、起動のときにも動いている間にも互いを見つけ、先のブリッジが警告し、一覧が両方の virtual のチャネルを使用中と言い、先のブリッジが終わると `shared` が 0 に戻ります。印そのもの（Linux と Windows、1 つのプロセスの中）は `bridge_runtime.device_mark_*` が確かめます。
 
 ### 確認したこと（Windows 11、Vector Virtual CAN と VN5620）
 
@@ -570,4 +615,5 @@ VN5620 のループバックで、次の点も確認しています。
 - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
 - `tests/vector_xl/xl_bridge_it_launcher` の往復の E2E テストは、Windows では bridge を強制終了するため、統計と終了コードを検査しません。止める要求（POSIX は SIGTERM、Windows はプロセスグループへの Ctrl+Break）で止めたときの統計の 1 行と終了コード 0 は、`stop-request` のシナリオが確認します。Windows では、テストの実行ファイルとブリッジが共有するコンソールがないと Ctrl+Break を送信できないので、このシナリオはスキップされます（`device-lost` のシナリオは、ブリッジが自分で終わるので、どこでも検査します）。
 - `ExternalPortAdapter` で XL のチャネルにプロトコルスタックを載せた動作（自動テストは `ExternalCanPort` のフェイクに対してだけです）
+- Windows のデバイスの使用中の印が、セッションをまたいで効くか。管理者でない利用者がグローバルな名前（`Global\`）を作れるか、セッションの名前（`Local\`）に切り替わるか。自動の試験は、1 つのセッションの中の印を確かめます。
 - `vehicle_sil_launch` の設定ファイルからブリッジを起こす形。自動の試験は、フェイクのドライバーで `--describe` を確かめます（`tests/vector_xl/xl_bridge_it_launcher` の `describe`）。設定ファイルからの実行は、Ethernet ブリッジでだけ確かめています（`ethernet_bridge.integration.pcap-launcher`）。

@@ -73,6 +73,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
   SCENARIOS
     backend-not-here
     bad-usage
+    device-shared
     echo-roundtrip
     link-fault
     list-interfaces

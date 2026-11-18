@@ -8,6 +8,11 @@ std::string pcap_library()
     return {};
 }
 
+std::string device_mark_identity(const std::string& device)
+{
+    return device;
+}
+
 std::optional<Backend> default_backend() noexcept
 {
 #if defined(_WIN32)

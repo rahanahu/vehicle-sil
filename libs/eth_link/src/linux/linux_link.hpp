@@ -79,6 +79,8 @@ public:
     /// test ethernet_bridge.netns.* holds this against the kernel).
     [[nodiscard]] bool echoes_own_transmissions() const noexcept final { return false; }
     [[nodiscard]] std::string last_error() const final;
+    /// The interface's name.
+    [[nodiscard]] std::string device_identity() const final { return name_; }
     /// This computer's Ethernet addresses as start() found them (ethernet_addresses()). Frames
     /// this computer sends on the interface come from one of them, or are marked sent_here (the
     /// packet link tells).

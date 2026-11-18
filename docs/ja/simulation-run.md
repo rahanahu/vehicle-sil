@@ -479,6 +479,9 @@ BODY_LIN (lin): SIL Kit only (there is no bridge for LIN)
             "detail": "up, connected; Hyper-V Virtual Ethernet Adapter; \\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
             "usable": true,
             "reason": null,
+            "in_use": false,
+            "in_use_by": [],
+            "in_use_count": 0,
             "ethernet": {
               "pcap_name": "\\Device\\NPF_{0A1B2C3D-0000-1111-2222-333344445555}",
               "connection": "vEthernet (A)",

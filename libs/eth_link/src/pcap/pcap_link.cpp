@@ -146,7 +146,8 @@ public:
       api_(library_->api()),
       flavor_(library_->flavor()),
       options_(std::move(options)),
-      described_(std::string(backend_name(flavor_)) + " '" + options_.name + "'")
+      described_(std::string(backend_name(flavor_)) + " '" + options_.name + "'"),
+      identity_(options_.name)
     {
     }
     ~PcapLink() override { stop(); }
@@ -167,6 +168,12 @@ public:
     {
         const std::lock_guard lock(text_mutex_);
         return last_error_;
+    }
+    /// The pcap name of the device start() opened.
+    [[nodiscard]] std::string device_identity() const override
+    {
+        const std::lock_guard lock(text_mutex_);
+        return identity_;
     }
     [[nodiscard]] std::optional<bool> promiscuous() const noexcept override
     {
@@ -239,6 +246,7 @@ private:
     mutable std::mutex text_mutex_;
     std::string last_error_;
     std::string described_;
+    std::string identity_; ///< device_identity()
     std::optional<std::vector<MacAddress>> this_computer_; // under text_mutex_
 };
 
@@ -416,6 +424,7 @@ void PcapLink::start(EventHandler handler)
         const std::lock_guard lock(text_mutex_);
         last_error_.clear();
         this_computer_ = thisComputer.empty() ? std::nullopt : std::optional<std::vector<MacAddress>>(std::move(thisComputer));
+        identity_ = device.name;
         described_ = std::string(backend_name(flavor_)) + " '" + display_name(device) + "' (";
         if (device.name != display_name(device))
         {
@@ -981,7 +990,7 @@ PcapInterfaceList pcap_interfaces(const std::string& library)
     return detail::pcap_interface_list_of(detail::pcap_devices(*loaded), loaded->flavor(), loaded->version());
 }
 
-std::string format_pcap_interface_list(const PcapInterfaceList& list)
+std::string format_pcap_interface_list(const PcapInterfaceList& list, std::span<const std::string> device_notes)
 {
     std::string text = "interfaces " + list.library + " offers";
     if (!list.version.empty())
@@ -994,14 +1003,19 @@ std::string format_pcap_interface_list(const PcapInterfaceList& list)
     {
         width = std::max(width, detail::display_width(detail::as_typed(detail::display_name(device))));
     }
-    for (const auto& device : list.devices)
+    for (std::size_t i = 0; i < list.devices.size(); ++i)
     {
+        const auto& device = list.devices[i];
         const std::string name = detail::as_typed(detail::display_name(device));
         text += "  --interface " + name + std::string(width - detail::display_width(name) + 2, ' ') + detail::state_text(device.flags);
         const std::string more = detail::more_text(device);
         if (!more.empty())
         {
             text += "  (" + more + ")";
+        }
+        if (i < device_notes.size() && !device_notes[i].empty())
+        {
+            text += "; " + device_notes[i];
         }
         text += "\n";
     }

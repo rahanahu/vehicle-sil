@@ -27,6 +27,7 @@ file(GLOB include_roots LIST_DIRECTORIES true
 
 set(forbidden_exact vehicle_sil/core/participant_runtime.hpp vehicle_sil/process/child_process.hpp
                     vehicle_sil/process/process.hpp vehicle_sil/launch/run.hpp vehicle_sil/launch/probe.hpp
+                    vehicle_sil/launch/control_server.hpp
                     vehicle_sil/core/participant_configuration.hpp)
 set(bad "")
 set(checked 0)

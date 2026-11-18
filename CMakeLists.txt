@@ -71,6 +71,13 @@ add_subdirectory(libs/eth_link ${_vehicle_sil_exclude})
 add_subdirectory(libs/eth_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/json ${_vehicle_sil_exclude})
+# The control server (gRPC). Before libs/launch, which builds its entry point (the
+# control_server.cpp that run --control uses), and proto before control_grpc, which links the
+# generated code.
+if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
+  add_subdirectory(proto ${_vehicle_sil_exclude})
+  add_subdirectory(libs/control_grpc ${_vehicle_sil_exclude})
+endif()
 add_subdirectory(libs/launch ${_vehicle_sil_exclude})
 add_subdirectory(libs/lin ${_vehicle_sil_exclude})
 add_subdirectory(libs/lin_silkit ${_vehicle_sil_exclude})
@@ -82,12 +89,6 @@ add_subdirectory(libs/simulation ${_vehicle_sil_exclude})
 add_subdirectory(libs/spy ${_vehicle_sil_exclude})
 add_subdirectory(libs/step ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
-# The control server (gRPC). After the libraries above, and proto before control_grpc, which
-# links the generated code.
-if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
-  add_subdirectory(proto ${_vehicle_sil_exclude})
-  add_subdirectory(libs/control_grpc ${_vehicle_sil_exclude})
-endif()
 
 # What the bridge executables share: run_bridge() (stop handling, monitor loop, exit code).
 add_subdirectory(bridges/common ${_vehicle_sil_exclude})

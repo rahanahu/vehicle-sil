@@ -109,6 +109,11 @@ Status read_channels(std::vector<XlChannelInfo>& out)
     return status;
 }
 
+std::string mark_identity(std::string identity)
+{
+    return identity;
+}
+
 OpenedPort open_port(const std::string& application_name, ChannelMask channels, ChannelMask request_init_access,
                      std::uint32_t rx_queue_size)
 {

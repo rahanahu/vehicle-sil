@@ -10,6 +10,8 @@
 #include "vehicle_sil/ethernet_bridge/interface_list.hpp"
 
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace vehicle_sil::ethernet_bridge {
 
@@ -42,13 +44,26 @@ std::string interface_list(const BridgeOptions& options)
         throw std::logic_error("no backend: the executable gives parse_bridge_options() the default of this OS");
     }
     const Backend backend = *options.backend;
+    // The marks of the bridges that use an interface, looked at without placing one.
+    std::vector<bridge_runtime::DevicePeers> inUse;
+    const auto look = [&inUse](const std::string& device) {
+        inUse.push_back(bridge_runtime::look_for_marks(bridge_runtime::kEthernetDevice, device_mark_identity(device)));
+    };
     if (backend == Backend::Npcap || backend == Backend::Pcap)
     {
         const auto list = eth_link::pcap_interfaces(pcap_library());
-        return options.json ? pcap_interfaces_json(backend, list) : eth_link::format_pcap_interface_list(list);
+        for (const auto& device : list.devices)
+        {
+            look(device.name);
+        }
+        return options.json ? pcap_interfaces_json(backend, list, inUse) : format_pcap_list(list, inUse);
     }
     const auto interfaces = eth_link::list_interfaces();
-    return options.json ? os_interfaces_json(backend, interfaces) : format_os_interface_list(interfaces);
+    for (const auto& entry : interfaces)
+    {
+        look(entry.name);
+    }
+    return options.json ? os_interfaces_json(backend, interfaces, inUse) : format_os_interface_list(interfaces, inUse);
 }
 
 } // namespace vehicle_sil::ethernet_bridge

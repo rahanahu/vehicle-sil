@@ -12,6 +12,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | どの名前が公開されているか                                  | [エントリーポイント](#エントリーポイント)、[公開 API](#公開-api) |
 | 接続して実行を始めるまでのコード                            | [基本の使い方](#基本の使い方)                                    |
 | 変数の値を読む、書き込む                                    | [ECU の変数](#ecu-の変数)                                        |
+| 画面が見せるものと、押せるボタン: `connect()`               | [正面の口（`connect()`）](#正面の口connect)                      |
 | スライダーやランプを作る（`condition`、`block` の値の一覧） | [コンポーネントを作る（`bind`）](#コンポーネントを作るbind)      |
 | `connect()` と `close()` の後に何が起きるか                 | [ライフサイクル](#ライフサイクル)                                |
 | ライブラリを開発する                                        | [コーディングのルール](#コーディングのルール)、[テスト](#テスト) |
@@ -65,6 +66,14 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 | 型   | `GuiClient`（`connection`、`session`、`run`、`time`、`variables`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`check()`、`fetchSession()`、`dashboard(file)`、`scenarios(file)`、`recording()`） |
 | 定数 | `DEFAULT_LIMITS`                                                                                                                                                                                                        |
 
+### 正面の口
+
+| 種類   | 名前                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 関数   | `connect(options?)`、`watch(source, fn)`、`until(source, test, options?)`                                                                                                                                                                                                                                                                                                                                                                  |
+| クラス | `ActionError`（`code`、`message`、`outcome`、`findings`）                                                                                                                                                                                                                                                                                                                                                                                  |
+| 型     | `ConnectOptions`（`base_url`、`token`、`origin`、`http`、`socket`、`answer_timeout_ms`、`on_error`）、`Front`（`low`、`status`、`clock`、`controls`、`scenario`、`run`、`time`、`variable()`、`close()`）、`FrontStatus`、`FrontResult`、`FrontClock`、`FrontControls`、`Control`、`Reason`、`FrontScenario`、`FrontRun`、`FrontTime`、`FrontVariable`、`VariableView`、`Intent`、`Link`、`RunState`、`EndKind`、`Pacing`、`OperationName` |
+
 ### トークン
 
 | 種類 | 名前                |
@@ -85,11 +94,13 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ### セッションのコピー
 
-| 種類 | 名前                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 型   | `ClientSession`（`session`、`ready`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
-| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`          |
-| 関数 | `runOutcome`、`phaseIndex`                                                                                                           |
+| 種類 | 名前                                                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 型   | `ClientSession`（`session`、`ready`、`allowed`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`） |
+| 型   | `Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`                     |
+| 関数 | `runOutcome`、`phaseIndex`                                                                                                                      |
+
+`ClientSession.allowed` は、GUI サーバーがいま受けるものです（`start`、`stop`、`force`。それぞれ `ok`、理由のコード `reason`、文 `message`。`rev` の大きい方が勝ちます。サーバーが言うまでは `null`）。`SessionView.launcherState` は、ランチャーの最後の `state` イベントです（実行の状態と、いま受けるもの。`rev` の大きい方が勝ちます。届くまでは `null`）。
 
 ### 実行の操作
 
@@ -245,6 +256,108 @@ const strict = result?.raw?.['strict']; // 型のないキー: unknown
 - HTTP の実装を変えるときは `http`（`HttpTransport`）を、WebSocket を変えるときは `socket`（`SocketFactory`）を渡します。
 
 ライブラリが肩代わりしないルール（ランチャーの `features` に合わせたリクエストのフィールド、変数を書けるか、値が古いか）は、[docs/gui.md](../../docs/ja/gui.md) の「画面を作るときのルール」にあります。
+
+## 正面の口（`connect()`）
+
+`connect()` は、ライブラリの正面の口を返します。画面が見せるもの（`status`、`clock`、`controls`、`scenario`）、Promise で返す操作（`run`、`time`）、変数 1 つ（`variable()`）です。ここまでに説明したクライアントの上に作ってあり、そちらは何も変えません。`front.low` は同じ `GuiClient`（イベント、ログ、所見、参加者）で、`createClient` もこれまでどおり使えます。画面が決めなければならないこと（「いまはどの状態か」「このボタンはいま押せるか、押せないなら理由は何か」）には正面の口を使い、それ以外には `low` を使います。
+
+```ts
+import { ActionError, connect, until, watch } from '@vehicle-sil/gui-client';
+
+// GUI サーバーが配信し、サーバーが表示した URL から開いたページ: 引数なし。最初の呼び出しがつなぎ、次からの呼び出し
+// （ページの別の部品）は同じ接続を受け取る。Node か 2 本目の接続では、サーバーの URL とトークンを渡す。
+const client = await connect();
+// const client = await connect({ base_url: 'http://127.0.0.1:8765/', token });
+
+const stop = watch([client.status, client.controls], (status, controls) => {
+  startButton.disabled = !controls.start.ok;
+  startButton.title = controls.start.reason?.message ?? '';
+  banner.textContent = status.problem?.message ?? '';
+});
+
+try {
+  await client.time.step(100); // 時刻が着いて、実行がまた一時停止したときに解決する
+} catch (error) {
+  if (error instanceof ActionError) console.log(error.code, error.message, error.outcome);
+}
+```
+
+| 名前                                                | 内容                                                                                                                                                                                                                                                           |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                            | 見せる状態 1 つ: `link`、`run`、`file`、`result`、`problem`（下）。離散の値だけです                                                                                                                                                                            |
+| `clock`                                             | `sim_ms`、`speed`、`actual_speed`、`pacing`（`not-paced`、`on-time`、`late`）。よく変わるので `status` と分けています                                                                                                                                          |
+| `controls`                                          | 操作ごとの、いま使えるか: `start`、`stop`、`force_stop`、`pause`、`resume`、`step`（`min_ms` と `max_ms` つき）、`run_until`、`speed`（`min` と `max` つき）                                                                                                   |
+| `scenario`                                          | いまの（か最後の）実行のシナリオ: `file`、`name`、`status`、`steps`、`timeline_url`。シナリオのない実行では `null`                                                                                                                                             |
+| `run`                                               | `start(intent?, { file }?)`、`stop()`、`forceStop()`                                                                                                                                                                                                           |
+| `time`                                              | `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`、`runUntil(ms)`                                                                                                                                                                                           |
+| `variable(ref)`                                     | 変数 1 つ。`"ECU.変数"`（最初の点で切る）か `{ peer, name }`（名前に点を含む ECU）で指します                                                                                                                                                                   |
+| `low`、`close()`                                    | 同じ接続の `GuiClient`。`close()` は切ります（共有している接続は、次の `connect()` がつなぎ直します）                                                                                                                                                          |
+| `watch(source, fn)`、`until(source, test, options)` | `watch` は、いますぐ `fn` を呼び、変わるたびに呼びます（複数の元は `watch([a, b], (a, b) => ...)`）。戻り値で止めます。`until` は、`test` を満たす最初の値で解決します。時間切れと中止は `ActionError`（`timeout`、`aborted`。どちらも `unknown`）で拒否します |
+
+データの欄は wire の名前（`force_stop`、`sim_ms`）、関数は JavaScript の慣習（`forceStop`、`runUntil`）です。状態はどれも `Readable` です。変わっていなければ `get()` は同じオブジェクトを返し、`get` と `subscribe` は `this` なしで動きます（`useSyncExternalStore` にそのまま渡せます）。
+
+### `status`
+
+| 欄        | 値                                                                                                                                                                                                                         |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `link`    | `connecting`、`online`、`offline`、`rejected`（トークンが断られた）、`incompatible`（プロトコルの版が違う）。`online` はコピーがサーバーと揃っていることです                                                               |
+| `run`     | `none`、`starting`（開始が向かっている。このページのでも別のページのでも）、`waiting`（参加者がそろうのを待っている）、`running`、`paused`、`stopping`、`ended`（結果がある）、`crashed`（ランチャーが結果なしで終わった） |
+| `file`    | 実行の構成ファイル（走っていなければ最後のもの）。最初の実行の前は、サーバーの起動時のファイル                                                                                                                             |
+| `result`  | `run` が `ended` か `crashed` の間: `end`（`completed`、`stopped`、`interrupted`、`failed`、`setup_failed`、`crashed`）、`scenario`、`ok`、`message`（英語の 1 文）。操作者の停止は `ok` です                              |
+| `problem` | いま利用者に知らせる問題 1 件（`{ code, message }`）か `null`                                                                                                                                                              |
+
+`problem` は次の順で選びます。まず接続（トークンの拒否、プロトコルの版の違い、切断）。なければ、ランチャーの異常終了、直前の操作の失敗、失敗した実行（`result.ok` が偽）のうち、新しいものです。異常終了と失敗した実行は、次の実行が始まると消えます。操作の失敗は、次の操作か、`status.run` が変わったときに消えます。操作者の停止は問題にしません。変数の書き込みの失敗は、ここでなく、その変数の `problem` に出ます。サーバーの知らせ（`low.session.session` の `problems`）と `notices` は `low` のままです。
+
+`result.ok` と `result.message` は、ランチャーが結果に書くようになるまで、ライブラリが結果の名前から作ります。書くようになったら、そのまま渡します。
+
+### `controls`
+
+各項目は `{ ok, reason, caution }` です。`ok` が偽のとき `reason` は `{ code, message }`、`caution` は、受けるが先に知っておくことがある操作に付く同じ形です。コードは変わりません（増えることはありますが、意味は変わりません）。文は英語で、規則の持ち主が書いたものです。
+
+| 項目                                            | 出どころ                                                                                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                                         | GUI サーバーの `allowed.start`（`starting`、`already-running`、`launcher-unusable`、`shutting-down`）とその文                                                                                           |
+| `stop`、`force_stop`                            | GUI サーバーの `allowed.stop` と `allowed.force`。`stop` は、最後に知った実行（か、向かっている開始）があれば、切断中でも `ok`。`force_stop` は、1 回目の停止の後だけ `ok`（それまでは `not-stopping`） |
+| `pause`、`resume`、`step`、`speed`、`run_until` | ランチャーの `state.allowed`（理由、文、`caution` はランチャーが書いたまま。`step` と `speed` の範囲も）。コピーに実行がなければ `not-running`、`state` を出さないランチャーなら `unsupported`          |
+| `pause`、`resume`（何も変わらないとき）         | 一時停止中は `pause` が `ok` でなく（`paused`）、止まっていなければ `resume` が `ok` でありません（`not-paused`）。ランチャーはどちらも受けますが、ボタンにはすることがありません                       |
+| `run_until`                                     | ランチャーが機能 `stdin-run-until` を持つまで `unsupported`                                                                                                                                             |
+| すべて                                          | 接続: `rejected`、`incompatible`、`offline`、`connecting` では不可になります（`stop` と `force_stop` は上のとおり）。このページの同じ操作が答えを待つ間は `busy`                                        |
+
+### 操作
+
+操作はすべて Promise で、うまくいかなければ `ActionError` で拒否します。`code`、文（`message`）、`findings`（`check-failed` のとき）、`outcome` を持ちます。`outcome` は `refused`（持ち主が断った。何も起きていない）か `unknown`（実行されたかもしれない。送り直す前に `status` と `clock` を見る）です。
+
+`run.start(intent, { file })` の `intent` は、いま GUI サーバーが受ける部分です: `disable`、`manual`、`scenario`、`variant`、`params`、`speed`、`start_paused`（ほかの欄は `unknown-field` で断ります）。`file` の既定は、サーバーの起動時のファイルです。
+
+| 操作                               | 解決する時                                                                                                                                                                                                                                                                                                            | 拒否の理由                                                                                                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.start`                        | サーバーが受け付けた時。走り出したかは `status.run`（待つなら `until(client.status, s => s.run !== 'starting')` の後で `run` を見る）                                                                                                                                                                                 | 断り（`check-failed` と `findings`、`already-running` など）。時間内に答えがなければ `no-answer`（`unknown`: 始まったかもしれない）                                                                                                                   |
+| `run.stop`、`run.forceStop`        | サーバーが受け付けた時。接続の状態に関係なく送る（WebSocket が切れていても HTTP が届くことがある）。向かっている間にもう一度頼んでも、同じ要求                                                                                                                                                                        | 同じ                                                                                                                                                                                                                                                  |
+| `time.pause`、`resume`、`setSpeed` | ランチャーが答えた時。一時停止中の `pause` と、走行中の `resume` は、何も送らずに解決する（接続が `online` で、実行がその操作を受けるときだけ）                                                                                                                                                                       | ランチャーの `reason` と文（`refused`）。5 秒以内に答えがなければ `no-answer`（`unknown`）。答えの前に実行が終わったら `not-running`（`unknown`）                                                                                                     |
+| `time.step`、`time.runUntil`       | 時刻が着いて、実行がまた一時停止した時。`await` の後で `clock` を読める。`runUntil(t)` は `t` に着いた時（一時停止中の実行がもう過ぎた `t` なら、すぐに解決し、時刻は動かない）、`step(ms)` は、ランチャーが答えに書く `at_ms` に着いた時（古いランチャーでは、受け付けた時刻にランチャーが丸めた `ms` を足した推定） | 上と同じ。着く前に、ほかの送り手（別のページ、stdin）の再開か一時停止が来たら `interrupted`（`unknown`）（このページの一時停止と再開、停止でも同じく拒否しますが、`status.problem` には出しません）。途中で送った別のステップは、これを終わらせません |
+
+送る前に client が断るのは、client が持ち主であるものだけです。接続（`rejected`、`incompatible`）、同じ操作が答えを待っていること（`busy`。`start()` も含む）、引数の形（`invalid-argument`）です。それ以外は、`controls` が不可でも送り、持ち主の答えを返します（コピーが古いことがあるため）。5 秒は正面の口が持つ時間で、着くまでの待ちには適用しません（着くまでの待ちは、実行の終わりか、別の命令の割り込みで終わります）。
+
+時刻の命令には、ページが選んだ要求の番号（`id`）を付け、答えは、同じ `id` を持つランチャーの `command` イベントです。ほかのページや stdin の、同じ名前の命令への答えは、自分のものとして取りません。`state` を出すランチャーが要ります（古いランチャーには GUI サーバーが命令を断ります（`unsupported`））。
+
+### 変数 1 つ
+
+```ts
+const throttle = client.variable('Engine.engine.throttle');
+const stop = throttle.subscribe((view) => {
+  slider.value = String(view.value ?? 0);
+  slider.disabled = !view.can_write;
+  slider.title = view.why?.message ?? view.note ?? '';
+});
+await throttle.write(40); // ECU のステップで適用されたときに解決する
+stop(); // 最後の購読を解除すると、サーバーに値を頼むのをやめる
+```
+
+見え方（view）は、`value`、`text`（enum は項目の名前）、`unit`、`min`、`max`、`step`、`sim_ms`、`stale`、`note`（値が生きたものでないときの 1 文）、`can_write`（変数自身の条件と、ランチャーが受けるか（`state.allowed.write`））、`why`（書けない理由の `{ code, message }`。変数自身の理由が先、次にランチャーの理由）、`writing`、`problem`（このページの直前の書き込みが通らなかった理由）と、`client.low.variables.bind` の値（`condition`、`block`、`write_status`）を持ちます。
+
+- 最初の購読がサーバーに値を頼み、最後の購読の解除がやめます。`close()` はありません。
+- `write(value)` は購読がなくても書けます（その 1 回だけ送ります）。`ActionError` で拒否します。`no-answer` は `unknown` で、答えの来なかった書き込みは送り直しません。
+- バインド（`client.low.variables.bind`）は、書き込みが向かっている間、次の値を保留してまとめます（スライダーのため）。正面の口の `write()` は、呼ぶたびに送ります。
 
 ## ECU の変数
 
@@ -557,4 +670,5 @@ throttle.close();
 | ---------------------- | ---------------------------------------------------------------------- |
 | `run.mjs`              | ライブラリを使わずにサーバーの API を呼ぶ                              |
 | `run-with-library.mjs` | ライブラリを 1 つにまとめたファイルを、素の JavaScript（Node）から使う |
+| `front.mjs`            | 正面の口（`connect()`、`status`）を Node から使う                      |
 | `variables.mjs`        | 同じくライブラリで、ECU の変数を読み書きする                           |

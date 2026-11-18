@@ -5,9 +5,10 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 add_executable(vehicle_sil_launch main.cpp)
 target_link_libraries(vehicle_sil_launch PRIVATE vehicle_sil::launch vehicle_sil::process vehicle_sil_cli)
-# run --control: the Control Server (gRPC) on the run's hub, only with VEHICLE_SIL_BUILD_CONTROL_SERVER.
+# run --control: the command line of the Control Server (gRPC); the server itself is in vehicle_sil::launch.
+# Only with VEHICLE_SIL_BUILD_CONTROL_SERVER.
 if(TARGET vehicle_sil::control_grpc)
-  target_sources(vehicle_sil_launch PRIVATE control_arguments.cpp control_server.cpp)
+  target_sources(vehicle_sil_launch PRIVATE control_arguments.cpp)
   target_link_libraries(vehicle_sil_launch PRIVATE vehicle_sil::control_grpc vehicle_sil::core)
   target_compile_definitions(vehicle_sil_launch PRIVATE VEHICLE_SIL_LAUNCH_CONTROL_SERVER)
 endif()

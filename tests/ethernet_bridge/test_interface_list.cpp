@@ -65,6 +65,9 @@ TEST_CASE(list_json_of_npcap_has_what_to_give_as_interface_and_what_cannot_be_us
                "\\\\Device\\\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}\",\n"
                "      \"usable\": true,\n"
                "      \"reason\": null,\n"
+               "      \"in_use\": false,\n"
+               "      \"in_use_by\": [],\n"
+               "      \"in_use_count\": 0,\n"
                "      \"ethernet\": {\n"
                "        \"pcap_name\": \"\\\\Device\\\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}\",\n"
                "        \"connection\": \"Ethernet 2\",\n"
@@ -81,6 +84,9 @@ TEST_CASE(list_json_of_npcap_has_what_to_give_as_interface_and_what_cannot_be_us
                "      \"detail\": \"up, loopback; Adapter for loopback traffic capture\",\n"
                "      \"usable\": false,\n"
                "      \"reason\": \"loopback: not an Ethernet adapter\",\n"
+               "      \"in_use\": false,\n"
+               "      \"in_use_by\": [],\n"
+               "      \"in_use_count\": 0,\n"
                "      \"ethernet\": {\n"
                "        \"pcap_name\": \"\\\\Device\\\\NPF_Loopback\",\n"
                "        \"connection\": null,\n"
@@ -179,6 +185,9 @@ TEST_CASE(list_json_of_the_os_interfaces_does_not_offer_what_is_not_ethernet)
                "      \"detail\": \"not Ethernet (link type 772), up\",\n"
                "      \"usable\": false,\n"
                "      \"reason\": \"not Ethernet (link type 772)\",\n"
+               "      \"in_use\": false,\n"
+               "      \"in_use_by\": [],\n"
+               "      \"in_use_count\": 0,\n"
                "      \"ethernet\": {\n"
                "        \"name\": \"lo\",\n"
                "        \"ethernet\": false,\n"
@@ -192,6 +201,9 @@ TEST_CASE(list_json_of_the_os_interfaces_does_not_offer_what_is_not_ethernet)
                "      \"detail\": \"Ethernet, down\",\n"
                "      \"usable\": true,\n"
                "      \"reason\": null,\n"
+               "      \"in_use\": false,\n"
+               "      \"in_use_by\": [],\n"
+               "      \"in_use_count\": 0,\n"
                "      \"ethernet\": {\n"
                "        \"name\": \"enp3s0\",\n"
                "        \"ethernet\": true,\n"
@@ -230,4 +242,43 @@ TEST_CASE(list_json_of_an_error_has_its_code_and_the_message)
     // Where no backend works on the OS, there is none to name.
     CHECK(contains(interface_list_error_json(std::nullopt, BackendUnavailableError("there is no interface to list here")),
                    "  \"backend\": null,\n"));
+}
+
+TEST_CASE(list_says_which_interfaces_vehicle_sil_bridges_use)
+{
+    using vehicle_sil::bridge_runtime::DevicePeers;
+    const std::vector<InterfaceInfo> interfaces{{"eth0", true, 1, true}, {"eth1", true, 1, true}};
+    const std::vector<DevicePeers> inUse{{2, {4321, 4400}}};
+    const std::string json = os_interfaces_json(Backend::Packet, interfaces, inUse);
+    CHECK(contains(json, "      \"detail\": \"Ethernet, up; in use by 2 vehicle-sil bridges (processes 4321, 4400)\",\n"
+                         "      \"usable\": true,\n"
+                         "      \"reason\": null,\n"
+                         "      \"in_use\": true,\n"
+                         "      \"in_use_by\": [\n"
+                         "        4321,\n"
+                         "        4400\n"
+                         "      ],\n"
+                         "      \"in_use_count\": 2,\n"));
+    CHECK(contains(json, "      \"detail\": \"Ethernet, up\",\n"
+                         "      \"usable\": true,\n"
+                         "      \"reason\": null,\n"
+                         "      \"in_use\": false,\n"
+                         "      \"in_use_by\": [],\n"
+                         "      \"in_use_count\": 0,\n"));
+    CHECK(contains(format_os_interface_list(interfaces, inUse),
+                   "  --interface eth0  Ethernet, up; in use by 2 vehicle-sil bridges (processes 4321, 4400)\n"
+                   "  --interface eth1  Ethernet, up\n"));
+
+    // Windows: the number of bridges without their processes.
+    const auto list = npcap_list({{kNpf, "Intel(R) Ethernet", "Ethernet 2", kPcapIfUp | kPcapIfConnected}});
+    const std::vector<DevicePeers> windows{{1, {}}};
+    CHECK(contains(pcap_interfaces_json(Backend::Npcap, list, windows),
+                   "\\\\Device\\\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}; in use by a vehicle-sil bridge\",\n"
+                   "      \"usable\": true,\n"
+                   "      \"reason\": null,\n"
+                   "      \"in_use\": true,\n"
+                   "      \"in_use_by\": [],\n"
+                   "      \"in_use_count\": 1,\n"));
+    CHECK(contains(format_pcap_list(list, windows), "(Intel(R) Ethernet; \\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}); "
+                                                    "in use by a vehicle-sil bridge\n"));
 }

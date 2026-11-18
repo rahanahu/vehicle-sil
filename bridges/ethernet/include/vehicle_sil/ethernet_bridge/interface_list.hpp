@@ -6,12 +6,14 @@
 // Platform independent so it can be tested anywhere.
 #pragma once
 
+#include "vehicle_sil/bridge_runtime/device_mark.hpp"
 #include "vehicle_sil/eth_link/os_links.hpp"
 #include "vehicle_sil/eth_link/pcap_link.hpp"
 #include "vehicle_sil/ethernet_bridge/bridge_options.hpp"
 
 #include <exception>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,18 +24,27 @@ namespace vehicle_sil::ethernet_bridge {
 /// where it can connect.
 inline constexpr int kTargetsFormat = 1;
 
+/// The marks of vehicle-sil bridges on the listed interfaces (bridge_runtime::look_for_marks()), by
+/// position in the list; an interface past the end has none. A device in use stays usable: the
+/// lists say so in the text, in "detail" and in "in_use", "in_use_by" and "in_use_count".
+using InUse = std::span<const bridge_runtime::DevicePeers>;
+
 /// The text of --list-interfaces for the interfaces of this computer (packet, tap): a heading,
 /// then eth_link::format_interface_list().
-[[nodiscard]] std::string format_os_interface_list(const std::vector<eth_link::InterfaceInfo>& interfaces);
+[[nodiscard]] std::string format_os_interface_list(const std::vector<eth_link::InterfaceInfo>& interfaces, InUse in_use = {});
+
+/// The text of --list-interfaces for npcap and pcap: eth_link::format_pcap_interface_list().
+[[nodiscard]] std::string format_pcap_list(const eth_link::PcapInterfaceList& list, InUse in_use = {});
 
 /// --list-interfaces --json for packet and tap: one target per interface, "value" its name;
 /// one that is not Ethernet is not usable. Ends with a newline.
-[[nodiscard]] std::string os_interfaces_json(Backend backend, const std::vector<eth_link::InterfaceInfo>& interfaces);
+[[nodiscard]] std::string os_interfaces_json(Backend backend, const std::vector<eth_link::InterfaceInfo>& interfaces,
+                                             InUse in_use = {});
 
 /// --list-interfaces --json for npcap and pcap: one target per device of `list`, "value"
 /// eth_link::pcap_interface_argument(); a loopback device, and "any" of libpcap, are not usable.
 /// "source" is the library's version, "notes" the list's notes. Ends with a newline.
-[[nodiscard]] std::string pcap_interfaces_json(Backend backend, const eth_link::PcapInterfaceList& list);
+[[nodiscard]] std::string pcap_interfaces_json(Backend backend, const eth_link::PcapInterfaceList& list, InUse in_use = {});
 
 /// The "code" of the JSON for a list that could not be made: "library-missing" and
 /// "permission-denied" (eth_link::LinkError of that kind), "backend-unavailable"

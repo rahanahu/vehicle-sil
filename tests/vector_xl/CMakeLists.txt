@@ -49,6 +49,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
     bad-usage
     describe
     device-lost
+    device-shared
     echo-roundtrip
     echo-roundtrip-physical
     echo-roundtrip-receipts

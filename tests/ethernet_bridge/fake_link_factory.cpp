@@ -12,6 +12,7 @@
 //   other       no such interface (LinkError)
 //
 // Without --backend it uses packet.
+#include "fake_device_scope.hpp"
 #include "fake_link.hpp"
 #include "link_factory.hpp"
 #include "pcap_library.hpp"
@@ -46,6 +47,7 @@ public:
     eth_link::TransmitResult transmit(std::span<const std::uint8_t> frame) override { return link_.transmit(frame); }
     [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return link_.echoes_own_transmissions(); }
     [[nodiscard]] std::string describe() const override { return link_.describe(); }
+    [[nodiscard]] std::string device_identity() const override { return link_.device_identity(); }
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
     [[nodiscard]] std::optional<std::vector<eth_link::MacAddress>> this_computer_addresses() const override
     {
@@ -151,12 +153,28 @@ std::unique_ptr<eth_link::ExternalLink> make_external_link(const BridgeOptions& 
 
 std::string interface_list(const BridgeOptions& options)
 {
+    const std::vector<eth_link::InterfaceInfo> interfaces{{"fake0", true, 1, true}, {"fake-fault", true, 1, true}};
+    std::vector<bridge_runtime::DevicePeers> inUse;
+    for (const auto& entry : interfaces)
+    {
+        inUse.push_back(bridge_runtime::look_for_marks(bridge_runtime::kEthernetDevice, device_mark_identity(entry.name)));
+    }
     if (options.json)
     {
-        return os_interfaces_json(options.backend.value_or(Backend::Packet),
-                                  {{"fake0", true, 1, true}, {"fake-fault", true, 1, true}});
+        return os_interfaces_json(options.backend.value_or(Backend::Packet), interfaces, inUse);
     }
-    return "fake interfaces:\n  --interface fake0\n  --interface fake-fault\n";
+    std::string text = "fake interfaces:\n";
+    for (std::size_t i = 0; i < interfaces.size(); ++i)
+    {
+        const std::string note = bridge_runtime::in_use_text(inUse[i]);
+        text += "  --interface " + interfaces[i].name + (note.empty() ? "" : "  " + note) + "\n";
+    }
+    return text;
+}
+
+std::string device_mark_identity(const std::string& device)
+{
+    return test::fake_device_identity(device);
 }
 
 std::optional<Backend> default_backend() noexcept

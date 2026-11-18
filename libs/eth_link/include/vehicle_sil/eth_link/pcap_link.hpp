@@ -94,7 +94,10 @@ struct PcapInterfaceList
 
 /// The text of --list-interfaces: a heading with the library's version, then one line per
 /// interface as --interface takes it ("  --interface <name>  <pcap_device_detail()>"), then the notes.
-[[nodiscard]] std::string format_pcap_interface_list(const PcapInterfaceList& list);
+/// `device_notes`: by position in list.devices, a text that ends the device's line ("; <note>");
+/// an empty one or none adds nothing.
+[[nodiscard]] std::string format_pcap_interface_list(const PcapInterfaceList& list,
+                                                     std::span<const std::string> device_notes = {});
 
 /// format_pcap_interface_list(pcap_interfaces(library)).
 [[nodiscard]] std::string pcap_interface_list(const std::string& library = {});

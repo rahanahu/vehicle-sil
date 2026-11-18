@@ -19,6 +19,7 @@
 #include "vehicle_sil/eth_link/external_link.hpp"
 
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -45,7 +46,9 @@ struct InterfaceInfo
 /// One line per interface, for --list-interfaces:
 ///   "  --interface enp3s0  Ethernet, up"
 ///   "  --interface lo      not Ethernet (link type 772), up"
-[[nodiscard]] std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces);
+/// `notes`: by position, a text that ends the line ("; <note>"); an empty one or none adds nothing.
+[[nodiscard]] std::string format_interface_list(const std::vector<InterfaceInfo>& interfaces,
+                                                std::span<const std::string> notes = {});
 
 /// What a line of format_interface_list() says after the name: "Ethernet, up",
 /// "not Ethernet (link type 772), up".
